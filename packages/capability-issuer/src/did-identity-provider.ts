@@ -130,48 +130,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
     // TODO: Initialize DID resolver client
     // TODO: Initialize VC verification library
     // TODO: Load supported DID methods
+    // TODO: Implement _resolveDID, _verifyVPSignature, _verifyVCSignature helpers
     // For now, this is a no-op
-  }
-
-  /**
-   * Resolve a DID to its DID Document
-   *
-   * @param did - The DID to resolve (e.g., "did:ion:abc123")
-   * @returns DID Document containing public keys and service endpoints
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async _resolveDID(_did: string): Promise<any> {
-    // TODO: Implement using universal DID resolver
-    // const resolverUrl = this.didConfig.resolverEndpoint || 'https://dev.uniresolver.io/1.0/identifiers';
-    // const response = await fetch(`${resolverUrl}/${did}`);
-    // return response.json();
-    throw new Error('Not implemented');
-  }
-
-  /**
-   * Verify a Verifiable Presentation signature
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async _verifyVPSignature(_vp: any, _didDocument: any): Promise<boolean> {
-    // TODO: Implement VP signature verification
-    // Extract proof from VP
-    // Get verification method from DID Document
-    // Verify signature using public key
-    throw new Error('Not implemented');
-  }
-
-  /**
-   * Verify a Verifiable Credential signature
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async _verifyVCSignature(_vc: any): Promise<boolean> {
-    // TODO: Implement VC signature verification
-    // Resolve issuer DID
-    // Verify credential signature
-    // Check revocation status
-    throw new Error('Not implemented');
   }
 }

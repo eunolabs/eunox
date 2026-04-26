@@ -116,7 +116,7 @@ export class OktaIdentityProvider extends IdentityAdapter {
 ### Step 3: Register Your Provider
 
 ```typescript
-import { defaultIdentityRegistry } from '@euno/capability-issuer';
+import { defaultIdentityRegistry } from '@euno/capability-issuer/adapters';
 import { OktaIdentityProvider } from './okta-identity-provider';
 
 // Register the custom provider
@@ -239,7 +239,7 @@ export class HSMSigner extends SigningAdapter {
 ### Step 3: Register Your Signer
 
 ```typescript
-import { defaultSigningRegistry } from '@euno/capability-issuer';
+import { defaultSigningRegistry } from '@euno/capability-issuer/adapters';
 import { HSMSigner } from './hsm-signer';
 
 // Register the custom signer
@@ -270,7 +270,7 @@ You can load providers dynamically based on configuration:
 import {
   defaultIdentityRegistry,
   defaultSigningRegistry,
-} from '@euno/capability-issuer';
+} from '@euno/capability-issuer/adapters';
 
 interface ProviderConfig {
   identity: {
@@ -319,7 +319,7 @@ const providers = await initializeProviders({
 
 ```typescript
 // In your application startup code
-import { defaultIdentityRegistry } from '@euno/capability-issuer';
+import { defaultIdentityRegistry, defaultSigningRegistry } from '@euno/capability-issuer/adapters';
 
 // Import third-party provider from npm package
 import { Auth0IdentityProvider } from '@acme/euno-auth0-provider';
@@ -480,7 +480,7 @@ npm install @acme/euno-okta-provider
 ## Usage
 
 \`\`\`typescript
-import { defaultIdentityRegistry } from '@euno/capability-issuer';
+import { defaultIdentityRegistry } from '@euno/capability-issuer/adapters';
 import { OktaIdentityProvider } from '@acme/euno-okta-provider';
 
 defaultIdentityRegistry.register('okta', OktaIdentityProvider);
@@ -488,7 +488,7 @@ defaultIdentityRegistry.register('okta', OktaIdentityProvider);
 
 ## Configuration
 
-See [full documentation](./docs/configuration.md).
+See the `README.md` in the `@euno/capability-issuer` package for configuration details.
 ```
 
 ## Support and Contributions
@@ -499,14 +499,13 @@ For questions or issues with:
 
 ## Examples
 
-See the [examples directory](./examples/) for complete working examples of:
-- Custom OAuth2 provider
-- Custom JWT signer with local keys
-- AWS Cognito integration
-- Google Cloud KMS signer
+Example implementations can be found in the package source under `packages/capability-issuer/src`:
+- `azure-identity-provider.ts` - Azure AD identity provider
+- `azure-signer.ts` - Azure Key Vault token signer
+- `did-identity-provider.ts` - DID identity provider stub
+- `did-signer.ts` - DID token signer stub
 
 ## Related Documentation
 
 - [Adapter Pattern Guide](./ADAPTER_PATTERN.md) - Core adapter architecture
-- [API Reference](./docs/api-reference.md) - Complete API documentation
-- [Security Best Practices](./docs/security.md) - Security guidelines for providers
+- Source code: `packages/capability-issuer/src/`

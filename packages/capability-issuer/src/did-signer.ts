@@ -10,7 +10,6 @@
 import {
   SigningAdapter,
   SigningAdapterConfig,
-  SigningAlgorithm,
   CapabilityTokenPayload,
   CapabilityError,
   ErrorCode,
@@ -120,64 +119,8 @@ export class DIDSigner extends SigningAdapter {
     // TODO: Load private key from configuration or secure storage
     // TODO: Resolve DID Document to get public key and algorithm
     // TODO: Validate key pair matches
-
-    // if (this.didConfig.privateKey) {
-    //   if (this.didConfig.privateKeyFormat === 'jwk') {
-    //     this.privateKeyCache = await jose.importJWK(JSON.parse(this.didConfig.privateKey));
-    //   } else if (this.didConfig.privateKeyFormat === 'pem') {
-    //     this.privateKeyCache = await jose.importPKCS8(this.didConfig.privateKey, 'RS256');
-    //   }
-    // }
+    // TODO: Implement _resolveDID, _findVerificationMethod, _extractPublicKey, _determineAlgorithm helpers
 
     // For now, this is a no-op
-  }
-
-  /**
-   * Resolve DID Document for the issuer
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async _resolveDID(_did: string): Promise<any> {
-    // TODO: Implement using DID resolver
-    throw new Error('Not implemented');
-  }
-
-  /**
-   * Find the verification method in DID Document
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private _findVerificationMethod(_didDocument: any, _keyId?: string): any {
-    // TODO: Search verificationMethod array in DID Document
-    // If keyId provided, find matching method
-    // Otherwise, use first available signing key
-    throw new Error('Not implemented');
-  }
-
-  /**
-   * Extract public key from verification method
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private _extractPublicKey(_verificationMethod: any): string {
-    // TODO: Convert verification method to PEM format
-    // Handle different key types (RSA, EC, Ed25519)
-    throw new Error('Not implemented');
-  }
-
-  /**
-   * Determine signing algorithm from key type
-   */
-  // @ts-expect-error - Stub method for future implementation
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private _determineAlgorithm(): SigningAlgorithm {
-    // Use configured algorithm if available
-    if (this.config.algorithm) {
-      return this.config.algorithm;
-    }
-
-    // TODO: Detect from DID Document verification method key type
-    // For now, return the default from base class
-    return this.algorithm;
   }
 }
