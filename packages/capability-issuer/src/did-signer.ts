@@ -42,8 +42,6 @@ export interface DIDSigningAdapterConfig extends SigningAdapterConfig {
  */
 export class DIDSigner extends SigningAdapter {
   private didConfig: DIDSigningAdapterConfig;
-  private privateKeyCache?: any;
-  private publicKeyCache?: string;
 
   constructor(config: DIDSigningAdapterConfig) {
     super(config);
@@ -59,7 +57,7 @@ export class DIDSigner extends SigningAdapter {
    * 3. Sign token using key algorithm from DID Document
    * 4. Return signed JWT
    */
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
+  async sign(_payload: CapabilityTokenPayload): Promise<string> {
     throw new CapabilityError(
       ErrorCode.INTERNAL_ERROR,
       'DID signer not yet implemented. This is a placeholder for future DID-based signing support.',
@@ -136,7 +134,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Resolve DID Document for the issuer
    */
-  private async resolveDID(did: string): Promise<any> {
+  private async resolveDID(_did: string): Promise<any> {
     // TODO: Implement using DID resolver
     throw new Error('Not implemented');
   }
@@ -144,7 +142,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Find the verification method in DID Document
    */
-  private findVerificationMethod(didDocument: any, keyId?: string): any {
+  private findVerificationMethod(_didDocument: any, _keyId?: string): any {
     // TODO: Search verificationMethod array in DID Document
     // If keyId provided, find matching method
     // Otherwise, use first available signing key
@@ -154,7 +152,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Extract public key from verification method
    */
-  private extractPublicKey(verificationMethod: any): string {
+  private extractPublicKey(_verificationMethod: any): string {
     // TODO: Convert verification method to PEM format
     // Handle different key types (RSA, EC, Ed25519)
     throw new Error('Not implemented');

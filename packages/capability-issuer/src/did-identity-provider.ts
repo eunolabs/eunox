@@ -42,11 +42,9 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
  */
 export class DIDIdentityProvider extends IdentityAdapter {
   public readonly name = 'did';
-  private didConfig: DIDIdentityAdapterConfig;
 
   constructor(config: DIDIdentityAdapterConfig) {
     super(config);
-    this.didConfig = config;
   }
 
   /**
@@ -60,7 +58,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    * 5. Verify each VC signature by resolving issuer DID
    * 6. Extract claims and capabilities from VCs
    */
-  async validateToken(token: string): Promise<UserContext> {
+  async validateToken(_token: string): Promise<UserContext> {
     throw new CapabilityError(
       ErrorCode.INTERNAL_ERROR,
       'DID identity provider not yet implemented. This is a placeholder for future W3C DID/VC support.',
@@ -94,7 +92,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    *
    * TODO: Implement role extraction from VCs
    */
-  async getUserRoles(userId: string): Promise<string[]> {
+  async getUserRoles(_userId: string): Promise<string[]> {
     throw new CapabilityError(
       ErrorCode.INTERNAL_ERROR,
       'DID identity provider not yet implemented.',
@@ -112,7 +110,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    *
    * TODO: Implement permission checking via VC queries
    */
-  async hasPermission(userId: string, permission: string): Promise<boolean> {
+  async hasPermission(_userId: string, _permission: string): Promise<boolean> {
     throw new CapabilityError(
       ErrorCode.INTERNAL_ERROR,
       'DID identity provider not yet implemented.',
@@ -141,7 +139,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    * @param did - The DID to resolve (e.g., "did:ion:abc123")
    * @returns DID Document containing public keys and service endpoints
    */
-  private async resolveDID(did: string): Promise<any> {
+  private async resolveDID(_did: string): Promise<any> {
     // TODO: Implement using universal DID resolver
     // const resolverUrl = this.didConfig.resolverEndpoint || 'https://dev.uniresolver.io/1.0/identifiers';
     // const response = await fetch(`${resolverUrl}/${did}`);
@@ -152,7 +150,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Presentation signature
    */
-  private async verifyVPSignature(vp: any, didDocument: any): Promise<boolean> {
+  private async verifyVPSignature(_vp: any, _didDocument: any): Promise<boolean> {
     // TODO: Implement VP signature verification
     // Extract proof from VP
     // Get verification method from DID Document
@@ -163,7 +161,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Credential signature
    */
-  private async verifyVCSignature(vc: any): Promise<boolean> {
+  private async verifyVCSignature(_vc: any): Promise<boolean> {
     // TODO: Implement VC signature verification
     // Resolve issuer DID
     // Verify credential signature
