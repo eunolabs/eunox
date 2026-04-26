@@ -15,8 +15,10 @@ import {
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
   private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
-  // Maps revoked JTI → token expiry (Unix seconds).  Entries whose expiry has
-  // passed are pruned on access so the set does not grow without bound.
+  // Maps revoked JTI → token expiry (Unix seconds).  isRevoked() prunes only
+  // the queried entry when it has expired (O(1)), while revokeToken() bulk-prunes
+  // all stale entries before inserting so the map stays bounded to the active-
+  // token window and does not grow without bound.
   // NOTE: this is an in-process store. In a multi-instance deployment each
   // replica holds its own copy, so a revocation issued to one instance will
   // not be seen by others.  For distributed deployments replace this with a
