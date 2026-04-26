@@ -1,0 +1,33 @@
+{
+  "name": "@euno/cli",
+  "version": "1.0.0",
+  "description": "Command-line interface for Euno capability management",
+  "main": "dist/index.js",
+  "bin": {
+    "euno": "./bin/euno.js",
+    "agentcap": "./bin/agentcap.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@euno/common": "^1.0.0",
+    "commander": "^11.0.0",
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "inquirer": "^8.2.5",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/inquirer": "^8.2.6",
+    "@types/js-yaml": "^4.0.9",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  }
+}

@@ -361,6 +361,117 @@ export class CapabilityIssuerService {
   }
 
   /**
+   * Renew an existing capability token with a fresh expiration
+   * Token keeps same capabilities but gets new TTL
+   */
+  async renewCapability(
+    currentToken: string,
+    ttl?: number
+  ): Promise<IssueCapabilityResponse> {
+    try {
+      // Step 1: Verify and decode the current token
+      this.logger.info('Renewing capability token');
+      const publicKey = await this.signer.getPublicKey();
+      const publicKeyObj = await jose.importSPKI(publicKey, 'RS256');
+
+      const { payload } = await jose.jwtVerify(currentToken, publicKeyObj, {
+        issuer: this.issuerDid,
+        audience: 'tool-gateway',
+      });
+
+      const currentPayload = payload as unknown as CapabilityTokenPayload;
+
+      // Step 2: Create renewed token with same capabilities but fresh expiration
+      const now = getCurrentTimestamp();
+      const expiresAt = getExpirationTimestamp(ttl || this.defaultTTL);
+      const tokenId = generateId();
+
+      const renewedPayload: CapabilityTokenPayload = {
+        iss: this.issuerDid,
+        sub: currentPayload.sub, // Same agent
+        aud: currentPayload.aud,
+        iat: now,
+        exp: expiresAt,
+        jti: tokenId,
+        capabilities: currentPayload.capabilities, // Same capabilities
+        parentCapabilityId: currentPayload.jti, // Link to previous token for audit trail
+        authorizedBy: currentPayload.authorizedBy,
+      };
+
+      // Step 3: Sign the renewed token
+      this.logger.info('Signing renewed capability token', {
+        tokenId,
+        previousTokenId: currentPayload.jti,
+        agentId: currentPayload.sub,
+      });
+      const token = await this.signer.sign(renewedPayload);
+
+      // Step 4: Audit log the renewal
+      await this.logRenewal(
+        currentPayload.sub,
+        tokenId,
+        currentPayload.jti,
+        currentPayload.capabilities
+      );
+
+      this.logger.info('Capability token renewed successfully', {
+        tokenId,
+        previousTokenId: currentPayload.jti,
+        agentId: currentPayload.sub,
+      });
+
+      return {
+        token,
+        expiresAt,
+        tokenId,
+        capabilities: currentPayload.capabilities,
+      };
+    } catch (error) {
+      this.logger.error('Failed to renew capability token', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
+
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        `Failed to renew capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
+  /**
+   * Log capability renewal for audit trail
+   */
+  private async logRenewal(
+    agentId: string,
+    tokenId: string,
+    previousTokenId: string,
+    capabilities: CapabilityConstraint[]
+  ): Promise<void> {
+    const auditEntry: AuditLogEntry = {
+      id: generateId(),
+      timestamp: new Date(),
+      eventType: 'renewal',
+      agentId,
+      capabilityId: tokenId,
+      decision: 'allow',
+      metadata: {
+        previousCapabilityId: previousTokenId,
+        capabilities: capabilities.map(c => ({
+          resource: c.resource,
+          actions: c.actions,
+        })),
+      },
+    };
+
+    this.auditLogger.info('Capability token renewed', auditEntry);
+  }
+
+  /**
    * Get public key for token verification
    */
   async getPublicKey(): Promise<string> {

@@ -179,6 +179,35 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
 });
 
 /**
+ * Renew capability token endpoint
+ * POST /api/v1/renew
+ * Refreshes an existing capability token with new expiration
+ */
+app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Extract current token from authorization header
+    const currentToken = parseBearerToken(req.headers.authorization);
+    if (!currentToken) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token (current capability) is required',
+        401
+      );
+    }
+
+    // Renew the capability
+    const response = await issuerService.renewCapability(
+      currentToken,
+      req.body.ttl
+    );
+
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Get public key endpoint
  * GET /api/v1/public-key
  */
