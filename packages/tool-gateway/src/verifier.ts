@@ -15,8 +15,19 @@ import {
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
   private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
-  private revokedTokens: Set<string> = new Set();
+  // Maps revoked JTI → token expiry (Unix seconds).  isRevoked() prunes only
+  // the queried entry when it has expired (O(1)), while revokeToken() bulk-prunes
+  // all stale entries before inserting so the map stays bounded to the active-
+  // token window and does not grow without bound.
+  // NOTE: this is an in-process store. In a multi-instance deployment each
+  // replica holds its own copy, so a revocation issued to one instance will
+  // not be seen by others.  For distributed deployments replace this with a
+  // shared store (e.g. Redis) by overriding isRevoked / revokeToken.
+  private revokedTokens: Map<string, number> = new Map();
   private algorithms: SigningAlgorithm[];
+
+  /** Default revocation TTL used when the caller does not supply an expiry. */
+  private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
 
   constructor(publicKey: string, algorithms?: SigningAlgorithm[]) {
     this.publicKey = publicKey;
@@ -92,17 +103,43 @@ export class JWTTokenVerifier implements TokenVerifier {
   }
 
   /**
-   * Check if a token is revoked
+   * Check if a token is revoked.
+   * Performs an O(1) lookup; the entry is considered absent if its associated
+   * token has already expired (so an expired revocation is never reported as
+   * active, and the entry will be cleaned up the next time revokeToken runs).
    */
   async isRevoked(tokenId: string): Promise<boolean> {
-    return this.revokedTokens.has(tokenId);
+    const expiry = this.revokedTokens.get(tokenId);
+    if (expiry === undefined) {
+      return false;
+    }
+    if (expiry <= Math.floor(Date.now() / 1000)) {
+      this.revokedTokens.delete(tokenId);
+      return false;
+    }
+    return true;
   }
 
   /**
-   * Revoke a token (for admin operations)
+   * Revoke a token (for admin operations).
+   * @param tokenId - The JWT ID (jti) of the token to revoke.
+   * @param expiresAt - Unix timestamp (seconds) when the token expires.
+   *   Provide the token's own `exp` value so the revocation entry can be
+   *   automatically pruned once the token is no longer valid anyway.
+   *   Defaults to {@link JWTTokenVerifier.DEFAULT_REVOCATION_TTL_SECONDS} from now when omitted.
    */
-  revokeToken(tokenId: string): void {
-    this.revokedTokens.add(tokenId);
+  revokeToken(tokenId: string, expiresAt?: number): void {
+    // Prune all expired entries before adding the new one so the map does
+    // not grow indefinitely. This is amortized over revokeToken calls, which
+    // are far less frequent than isRevoked calls.
+    const now = Math.floor(Date.now() / 1000);
+    for (const [jti, expiry] of this.revokedTokens) {
+      if (expiry <= now) {
+        this.revokedTokens.delete(jti);
+      }
+    }
+    const expiry = expiresAt ?? (now + JWTTokenVerifier.DEFAULT_REVOCATION_TTL_SECONDS);
+    this.revokedTokens.set(tokenId, expiry);
   }
 
   /**
