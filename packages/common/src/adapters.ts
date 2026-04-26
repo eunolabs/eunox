@@ -155,7 +155,7 @@ export interface IdentityAdapterFactory {
   /**
    * Create an identity adapter from configuration
    */
-  createIdentityAdapter(config: IdentityAdapterConfig): Promise<IdentityAdapter>;
+  createIdentityAdapter<T extends IdentityAdapterConfig>(config: T): Promise<IdentityAdapter>;
 
   /**
    * Get supported adapter types
@@ -170,7 +170,7 @@ export interface SigningAdapterFactory {
   /**
    * Create a signing adapter from configuration
    */
-  createSigningAdapter(config: SigningAdapterConfig): Promise<SigningAdapter>;
+  createSigningAdapter<T extends SigningAdapterConfig>(config: T): Promise<SigningAdapter>;
 
   /**
    * Get supported adapter types
@@ -182,19 +182,25 @@ export interface SigningAdapterFactory {
  * Adapter registry for managing multiple identity providers
  */
 export class IdentityAdapterRegistry implements IdentityAdapterFactory {
-  private adapters: Map<string, new (config: IdentityAdapterConfig) => IdentityAdapter> = new Map();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private adapters: Map<string, new (config: any) => IdentityAdapter> = new Map();
 
   /**
-   * Register an identity adapter type
+   * Register an identity adapter type.
+   * Accepts adapter classes whose constructors require a narrower config type
+   * (e.g. AzureADAdapterConfig) so concrete adapters type-check correctly.
    */
-  register(type: string, adapterClass: new (config: IdentityAdapterConfig) => IdentityAdapter): void {
+  register<T extends IdentityAdapterConfig>(
+    type: string,
+    adapterClass: new (config: T) => IdentityAdapter
+  ): void {
     this.adapters.set(type, adapterClass);
   }
 
   /**
    * Create an identity adapter from configuration
    */
-  async createIdentityAdapter(config: IdentityAdapterConfig): Promise<IdentityAdapter> {
+  async createIdentityAdapter<T extends IdentityAdapterConfig>(config: T): Promise<IdentityAdapter> {
     const AdapterClass = this.adapters.get(config.type);
     if (!AdapterClass) {
       throw new Error(`Unknown identity adapter type: ${config.type}`);
@@ -217,19 +223,25 @@ export class IdentityAdapterRegistry implements IdentityAdapterFactory {
  * Adapter registry for managing multiple signing providers
  */
 export class SigningAdapterRegistry implements SigningAdapterFactory {
-  private adapters: Map<string, new (config: SigningAdapterConfig) => SigningAdapter> = new Map();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private adapters: Map<string, new (config: any) => SigningAdapter> = new Map();
 
   /**
-   * Register a signing adapter type
+   * Register a signing adapter type.
+   * Accepts adapter classes whose constructors require a narrower config type
+   * (e.g. AzureKeyVaultAdapterConfig) so concrete adapters type-check correctly.
    */
-  register(type: string, adapterClass: new (config: SigningAdapterConfig) => SigningAdapter): void {
+  register<T extends SigningAdapterConfig>(
+    type: string,
+    adapterClass: new (config: T) => SigningAdapter
+  ): void {
     this.adapters.set(type, adapterClass);
   }
 
   /**
    * Create a signing adapter from configuration
    */
-  async createSigningAdapter(config: SigningAdapterConfig): Promise<SigningAdapter> {
+  async createSigningAdapter<T extends SigningAdapterConfig>(config: T): Promise<SigningAdapter> {
     const AdapterClass = this.adapters.get(config.type);
     if (!AdapterClass) {
       throw new Error(`Unknown signing adapter type: ${config.type}`);

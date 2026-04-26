@@ -59,9 +59,9 @@ export class DIDSigner extends SigningAdapter {
    */
   async sign(_payload: CapabilityTokenPayload): Promise<string> {
     throw new CapabilityError(
-      ErrorCode.INTERNAL_ERROR,
+      ErrorCode.NOT_IMPLEMENTED,
       'DID signer not yet implemented. This is a placeholder for future DID-based signing support.',
-      501 // Not Implemented
+      501
     );
 
     // Future implementation pseudocode:
@@ -88,7 +88,7 @@ export class DIDSigner extends SigningAdapter {
    */
   async getPublicKey(): Promise<string> {
     throw new CapabilityError(
-      ErrorCode.INTERNAL_ERROR,
+      ErrorCode.NOT_IMPLEMENTED,
       'DID signer not yet implemented.',
       501
     );

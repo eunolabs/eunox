@@ -44,7 +44,7 @@ The Euno capability governance system now implements a clean adapter pattern for
 ### Creating an Azure AD Identity Provider
 
 ```typescript
-import { AzureADIdentityProvider, AzureADAdapterConfig } from '@euno/capability-issuer';
+import { AzureADIdentityProvider, AzureADAdapterConfig } from '@euno/capability-issuer/adapters';
 
 const config: AzureADAdapterConfig = {
   type: 'azure-ad',
@@ -67,7 +67,7 @@ const roles = await identityProvider.getUserRoles(userContext.userId);
 ### Creating an Azure Key Vault Signer
 
 ```typescript
-import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from '@euno/capability-issuer';
+import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from '@euno/capability-issuer/adapters';
 
 const config: AzureKeyVaultAdapterConfig = {
   type: 'azure-keyvault',
@@ -94,8 +94,8 @@ import {
   IdentityAdapterRegistry,
   SigningAdapterRegistry,
 } from '@euno/common';
-import { AzureADIdentityProvider } from './azure-ad-identity-provider';
-import { DIDIdentityProvider } from './did-identity-provider';
+import { AzureADIdentityProvider, AzureADAdapterConfig } from '@euno/capability-issuer/adapters';
+import { DIDIdentityProvider } from '@euno/capability-issuer/adapters';
 
 // Create registries
 const identityRegistry = new IdentityAdapterRegistry();
@@ -105,12 +105,13 @@ const signingRegistry = new SigningAdapterRegistry();
 identityRegistry.register('azure-ad', AzureADIdentityProvider);
 identityRegistry.register('did', DIDIdentityProvider);
 
-// Create adapters from configuration
-const identityProvider = await identityRegistry.createIdentityAdapter({
+// Create adapters from configuration (generic config type prevents excess-property errors)
+const azureConfig: AzureADAdapterConfig = {
   type: 'azure-ad',
   name: 'Production Identity Provider',
-  azureAD: { /* config */ },
-});
+  azureAD: { tenantId: '...', clientId: '...' },
+};
+const identityProvider = await identityRegistry.createIdentityAdapter(azureConfig);
 ```
 
 ## Implementing Custom Adapters

@@ -60,9 +60,9 @@ export class DIDIdentityProvider extends IdentityAdapter {
    */
   async validateToken(_token: string): Promise<UserContext> {
     throw new CapabilityError(
-      ErrorCode.INTERNAL_ERROR,
+      ErrorCode.NOT_IMPLEMENTED,
       'DID identity provider not yet implemented. This is a placeholder for future W3C DID/VC support.',
-      501 // Not Implemented
+      501
     );
 
     // Future implementation pseudocode:
@@ -94,7 +94,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    */
   async getUserRoles(_userId: string): Promise<string[]> {
     throw new CapabilityError(
-      ErrorCode.INTERNAL_ERROR,
+      ErrorCode.NOT_IMPLEMENTED,
       'DID identity provider not yet implemented.',
       501
     );
@@ -112,7 +112,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
    */
   async hasPermission(_userId: string, _permission: string): Promise<boolean> {
     throw new CapabilityError(
-      ErrorCode.INTERNAL_ERROR,
+      ErrorCode.NOT_IMPLEMENTED,
       'DID identity provider not yet implemented.',
       501
     );
