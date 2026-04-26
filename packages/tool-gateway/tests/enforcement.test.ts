@@ -26,7 +26,10 @@ describe('EnforcementEngine', () => {
     publicKey = await jose.exportSPKI(pubKey);
 
     verifier = new JWTTokenVerifier(publicKey);
-    engine = new EnforcementEngine(verifier, logger);
+    engine = new EnforcementEngine({
+      verifier,
+      logger,
+    });
   });
 
   async function createTestToken(

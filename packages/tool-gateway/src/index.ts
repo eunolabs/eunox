@@ -15,9 +15,11 @@ import {
   parseBearerToken,
   createLogger,
   ServiceConfig,
+  DefaultKillSwitchManager,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
+import { createAdminRouter } from './admin-api';
 import axios from 'axios';
 
 // Load environment variables
@@ -28,12 +30,18 @@ const config: ServiceConfig = {
   name: 'tool-gateway',
   port: parseInt(process.env.PORT || '3002', 10),
   environment: (process.env.NODE_ENV as any) || 'development',
+  enableCryptographicAudit: process.env.ENABLE_CRYPTOGRAPHIC_AUDIT === 'true',
+  policyVersion: process.env.POLICY_VERSION || '1.0.0',
 };
 
 const issuerPublicKeyUrl = process.env.ISSUER_PUBLIC_KEY_URL || 'http://localhost:3001/api/v1/public-key';
+const adminApiKey = process.env.ADMIN_API_KEY; // Optional: set to enable API key auth for admin endpoints
 
 // Create logger
 const logger = createLogger(config.name, config.environment);
+
+// Initialize kill-switch manager
+const killSwitchManager = new DefaultKillSwitchManager(logger);
 
 // Initialize verifier and enforcement engine
 let verifier: JWTTokenVerifier;
@@ -47,7 +55,14 @@ async function initializeServices() {
     const publicKey = response.data.publicKey;
 
     verifier = new JWTTokenVerifier(publicKey);
-    enforcementEngine = new EnforcementEngine(verifier, logger);
+    enforcementEngine = new EnforcementEngine({
+      verifier,
+      logger,
+      killSwitchManager,
+      // Evidence signer would be configured here for cryptographic audit
+      enableCryptographicAudit: config.enableCryptographicAudit,
+      policyVersion: config.policyVersion,
+    });
 
     logger.info('Tool Gateway services initialized successfully');
   } catch (error) {
@@ -82,6 +97,23 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'healthy', service: 'tool-gateway' });
 });
+
+/**
+ * Admin API endpoints
+ * Mount admin API after initialization
+ */
+let adminRouter: express.Router | null = null;
+function mountAdminApi() {
+  if (!adminRouter) {
+    adminRouter = createAdminRouter({
+      killSwitchManager,
+      logger,
+      adminApiKey,
+    });
+    app.use('/admin', adminRouter);
+    logger.info('Admin API mounted');
+  }
+}
 
 /**
  * Capability validation middleware
@@ -257,6 +289,9 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
 async function startServer() {
   try {
     await initializeServices();
+
+    // Mount admin API after services are initialized
+    mountAdminApi();
 
     const server = app.listen(config.port, () => {
       logger.info(`Tool Gateway listening on port ${config.port}`, {

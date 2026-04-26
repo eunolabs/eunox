@@ -115,6 +115,71 @@ export interface AuditLogEntry {
 }
 
 /**
+ * Cryptographic audit evidence for privileged operations
+ * Following the pattern from Azure security reference:
+ * "Logs help you debug. Evidence helps you prove"
+ */
+export interface AuditEvidence {
+  /** Unique evidence ID */
+  id: string;
+  /** Session identifier */
+  sessionId: string;
+  /** User who initiated the action */
+  userId: string;
+  /** Hash of the prompt/input that triggered the action */
+  promptHash: string;
+  /** Hash of any documents or context provided */
+  documentsHash?: string;
+  /** Tool or action being executed */
+  tool: string;
+  /** Hash of the tool arguments */
+  argsHash: string;
+  /** Cryptographic nonce for uniqueness */
+  nonce: string;
+  /** Timestamp in ISO format */
+  ts: string;
+  /** Policy version that authorized this action */
+  policyVersion: string;
+  /** Agent identifier */
+  agentId: string;
+  /** Resource being accessed */
+  resource: string;
+  /** Action being performed */
+  action: string;
+  /** Capability token ID used */
+  capabilityId: string;
+  /** Decision outcome */
+  decision: 'allow' | 'deny';
+}
+
+/**
+ * Signed audit evidence with cryptographic signature
+ */
+export interface SignedAuditEvidence extends AuditEvidence {
+  /** Digital signature of the evidence */
+  signature: string;
+  /** Key ID used for signing */
+  keyId: string;
+  /** Signing algorithm */
+  algorithm: string;
+}
+
+/**
+ * Evidence signer interface for cryptographic audit trails
+ */
+export interface EvidenceSigner {
+  /**
+   * Sign audit evidence to create tamper-evident records
+   */
+  signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence>;
+
+  /**
+   * Verify a signed evidence record
+   */
+  verifyEvidence(signedEvidence: SignedAuditEvidence): Promise<boolean>;
+}
+
+/**
  * Identity provider interface for pluggable authentication
  */
 export interface IdentityProvider {
@@ -298,4 +363,65 @@ export interface ServiceConfig {
   defaultTokenTTL?: number;
   /** Enable detailed logging */
   enableDetailedLogging?: boolean;
+  /** Enable cryptographic audit evidence */
+  enableCryptographicAudit?: boolean;
+  /** Policy version for audit evidence */
+  policyVersion?: string;
+}
+
+/**
+ * Kill-switch configuration
+ */
+export interface KillSwitchConfig {
+  /** Global kill switch - if true, all agent requests are rejected */
+  globalKillSwitch: boolean;
+  /** Set of session IDs that have been killed */
+  killedSessions: Set<string>;
+  /** Set of agent IDs that have been killed */
+  killedAgents: Set<string>;
+}
+
+/**
+ * Kill-switch manager interface
+ */
+export interface KillSwitchManager {
+  /** Check if the global kill switch is active */
+  isGlobalKillActive(): boolean;
+
+  /** Activate the global kill switch */
+  activateGlobalKill(): void;
+
+  /** Deactivate the global kill switch */
+  deactivateGlobalKill(): void;
+
+  /** Kill a specific session */
+  killSession(sessionId: string): void;
+
+  /** Kill a specific agent */
+  killAgent(agentId: string): void;
+
+  /** Check if a session is killed */
+  isSessionKilled(sessionId: string): boolean;
+
+  /** Check if an agent is killed */
+  isAgentKilled(agentId: string): boolean;
+
+  /** Check if a request should be blocked (session, agent, or global) */
+  shouldBlock(sessionId?: string, agentId?: string): boolean;
+
+  /** Revive a killed session */
+  reviveSession(sessionId: string): void;
+
+  /** Revive a killed agent */
+  reviveAgent(agentId: string): void;
+
+  /** Get the current state of all kill switches */
+  getStatus(): {
+    globalKill: boolean;
+    killedSessionCount: number;
+    killedAgentCount: number;
+  };
+
+  /** Reset all kill switches */
+  resetAll(): void;
 }
