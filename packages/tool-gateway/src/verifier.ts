@@ -9,15 +9,19 @@ import {
   CapabilityTokenPayload,
   CapabilityError,
   ErrorCode,
+  SigningAlgorithm,
 } from '@euno/common';
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
   private cachedKeyObject: jose.KeyLike | Uint8Array | null = null;
   private revokedTokens: Set<string> = new Set();
+  private algorithms: SigningAlgorithm[];
 
-  constructor(publicKey: string) {
+  constructor(publicKey: string, algorithms?: SigningAlgorithm[]) {
     this.publicKey = publicKey;
+    // Default to RS256 for backward compatibility, but allow multiple algorithms
+    this.algorithms = algorithms || ['RS256'];
   }
 
   /**
@@ -27,12 +31,13 @@ export class JWTTokenVerifier implements TokenVerifier {
     try {
       // Import the public key (cached for performance; invalidated on key rotation)
       if (!this.cachedKeyObject) {
-        this.cachedKeyObject = await jose.importSPKI(this.publicKey, 'RS256');
+        // Try to detect the algorithm from the first configured algorithm
+        this.cachedKeyObject = await jose.importSPKI(this.publicKey, this.algorithms[0]);
       }
 
       // Verify the token signature and decode
       const { payload } = await jose.jwtVerify(token, this.cachedKeyObject, {
-        algorithms: ['RS256'],
+        algorithms: this.algorithms,
       });
 
       // Check if token is revoked

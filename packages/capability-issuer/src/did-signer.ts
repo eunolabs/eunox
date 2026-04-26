@@ -162,7 +162,13 @@ export class DIDSigner extends SigningAdapter {
    * Determine signing algorithm from key type
    */
   private determineAlgorithm(): string {
-    // TODO: Return appropriate algorithm (RS256, ES256, EdDSA)
-    return 'RS256';
+    // Use configured algorithm if available
+    if (this.config.algorithm) {
+      return this.config.algorithm;
+    }
+
+    // TODO: Detect from DID Document verification method key type
+    // For now, return the default from base class
+    return this.algorithm;
   }
 }

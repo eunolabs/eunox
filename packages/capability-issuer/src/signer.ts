@@ -3,9 +3,9 @@
  * Implements cryptographic signing using Azure Key Vault
  */
 
-import { CryptographyClient, SignResult } from '@azure/keyvault-keys';
+import { CryptographyClient, SignResult, KeyVaultKey } from '@azure/keyvault-keys';
 import { DefaultAzureCredential, ClientSecretCredential } from '@azure/identity';
-import { SigningAdapter, SigningAdapterConfig, CapabilityTokenPayload, AzureKeyVaultConfig } from '@euno/common';
+import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AzureKeyVaultConfig } from '@euno/common';
 import { KeyClient } from '@azure/keyvault-keys';
 import * as crypto from 'crypto';
 import * as jose from 'jose';
@@ -16,6 +16,34 @@ import * as jose from 'jose';
 export interface AzureKeyVaultAdapterConfig extends SigningAdapterConfig {
   type: 'azure-keyvault';
   keyVault: AzureKeyVaultConfig;
+}
+
+/**
+ * Determine the signing algorithm from Azure Key Vault key type and size
+ */
+function detectAlgorithmFromKey(key: KeyVaultKey): SigningAlgorithm {
+  const keyType = key.keyType;
+  const keySize = key.key?.n ? key.key.n.length * 8 : 0; // RSA key size in bits
+
+  if (keyType === 'RSA' || keyType === 'RSA-HSM') {
+    // Default to RS256 for RSA keys, but could be RS384 or RS512
+    // based on key size or configuration preference
+    return 'RS256';
+  } else if (keyType === 'EC' || keyType === 'EC-HSM') {
+    // Determine ES algorithm from curve
+    const curveName = key.key?.crv;
+    if (curveName === 'P-256' || curveName === 'P-256K') {
+      return 'ES256';
+    } else if (curveName === 'P-384') {
+      return 'ES384';
+    } else if (curveName === 'P-521') {
+      return 'ES512';
+    }
+    return 'ES256'; // Default for EC
+  }
+
+  // Default to RS256 if unable to determine
+  return 'RS256';
 }
 
 export class AzureKeyVaultSigner extends SigningAdapter {
@@ -68,9 +96,23 @@ export class AzureKeyVaultSigner extends SigningAdapter {
     this.keyId = key.id;
     this.cryptoClient = new CryptographyClient(key, this.createCredential());
 
+    // Auto-detect algorithm from key type if not explicitly configured
+    if (!this.config.algorithm) {
+      this.algorithm = detectAlgorithmFromKey(key);
+    }
+
     // Cache the public key
-    if (key.key && key.key.n && key.key.e) {
-      // RSA public key - convert to base64url strings
+    if (key.key) {
+      await this.cachePublicKey(key);
+    }
+  }
+
+  /**
+   * Cache the public key in PEM format for verification
+   */
+  private async cachePublicKey(key: KeyVaultKey): Promise<void> {
+    if (key.key.n && key.key.e) {
+      // RSA public key
       const nBase64 = Buffer.from(key.key.n).toString('base64url');
       const eBase64 = Buffer.from(key.key.e).toString('base64url');
 
@@ -78,10 +120,46 @@ export class AzureKeyVaultSigner extends SigningAdapter {
         kty: 'RSA',
         n: nBase64,
         e: eBase64,
-        alg: 'RS256',
+        alg: this.algorithm,
         use: 'sig',
-      }, 'RS256') as jose.KeyLike;
+      }, this.algorithm) as jose.KeyLike;
       this.publicKeyCache = await jose.exportSPKI(publicKeyObj);
+    } else if (key.key.x && key.key.y && key.key.crv) {
+      // EC public key
+      const xBase64 = Buffer.from(key.key.x).toString('base64url');
+      const yBase64 = Buffer.from(key.key.y).toString('base64url');
+
+      const publicKeyObj = await jose.importJWK({
+        kty: 'EC',
+        crv: key.key.crv,
+        x: xBase64,
+        y: yBase64,
+        alg: this.algorithm,
+        use: 'sig',
+      }, this.algorithm) as jose.KeyLike;
+      this.publicKeyCache = await jose.exportSPKI(publicKeyObj);
+    }
+  }
+
+  /**
+   * Get the hash algorithm name for the signing algorithm
+   */
+  private getHashAlgorithm(): string {
+    switch (this.algorithm) {
+      case 'RS256':
+      case 'ES256':
+        return 'sha256';
+      case 'RS384':
+      case 'ES384':
+        return 'sha384';
+      case 'RS512':
+      case 'ES512':
+        return 'sha512';
+      case 'EdDSA':
+        // EdDSA doesn't use a separate hash step for Azure Key Vault
+        throw new Error('EdDSA is not currently supported with Azure Key Vault');
+      default:
+        return 'sha256';
     }
   }
 
@@ -94,7 +172,7 @@ export class AzureKeyVaultSigner extends SigningAdapter {
 
     // Create JWT header
     const header = {
-      alg: 'RS256',
+      alg: this.algorithm,
       typ: 'JWT',
       kid: await this.getKeyId(),
     };
@@ -105,13 +183,14 @@ export class AzureKeyVaultSigner extends SigningAdapter {
     const signingInput = `${encodedHeader}.${encodedPayload}`;
 
     // Hash the signing input locally (as per Azure Key Vault best practice)
+    const hashAlgorithm = this.getHashAlgorithm();
     const digest = crypto
-      .createHash('sha256')
+      .createHash(hashAlgorithm)
       .update(signingInput)
       .digest();
 
     // Sign the digest with Key Vault
-    const signResult: SignResult = await this.cryptoClient.sign('RS256', digest);
+    const signResult: SignResult = await this.cryptoClient.sign(this.algorithm, digest);
 
     // Encode the signature
     const encodedSignature = this.base64UrlEncode(Buffer.from(signResult.result));
