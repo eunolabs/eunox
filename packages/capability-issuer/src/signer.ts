@@ -5,37 +5,46 @@
 
 import { CryptographyClient, SignResult } from '@azure/keyvault-keys';
 import { DefaultAzureCredential, ClientSecretCredential } from '@azure/identity';
-import { TokenSigner, CapabilityTokenPayload, AzureKeyVaultConfig } from '@euno/common';
+import { SigningAdapter, SigningAdapterConfig, CapabilityTokenPayload, AzureKeyVaultConfig } from '@euno/common';
 import { KeyClient } from '@azure/keyvault-keys';
 import * as crypto from 'crypto';
 import * as jose from 'jose';
 
-export class AzureKeyVaultSigner implements TokenSigner {
+/**
+ * Azure Key Vault specific configuration extending the base adapter config
+ */
+export interface AzureKeyVaultAdapterConfig extends SigningAdapterConfig {
+  type: 'azure-keyvault';
+  keyVault: AzureKeyVaultConfig;
+}
+
+export class AzureKeyVaultSigner extends SigningAdapter {
   private cryptoClient: CryptographyClient;
   private keyClient: KeyClient;
-  private config: AzureKeyVaultConfig;
+  private keyVaultConfig: AzureKeyVaultConfig;
   private keyId?: string;
   private publicKeyCache?: string;
 
-  constructor(config: AzureKeyVaultConfig) {
-    this.config = config;
+  constructor(config: AzureKeyVaultAdapterConfig) {
+    super(config);
+    this.keyVaultConfig = config.keyVault;
 
     // Create credential based on configuration
     const credential = this.createCredential();
 
     // Initialize Key Vault clients
-    this.keyClient = new KeyClient(config.vaultUrl, credential);
+    this.keyClient = new KeyClient(this.keyVaultConfig.vaultUrl, credential);
 
     // The CryptographyClient will be initialized when we get the key
     this.cryptoClient = null as any; // Will be set in initialize()
   }
 
   private createCredential() {
-    if (this.config.credentialType === 'client-secret' && this.config.clientId && this.config.clientSecret && this.config.tenantId) {
+    if (this.keyVaultConfig.credentialType === 'client-secret' && this.keyVaultConfig.clientId && this.keyVaultConfig.clientSecret && this.keyVaultConfig.tenantId) {
       return new ClientSecretCredential(
-        this.config.tenantId,
-        this.config.clientId,
-        this.config.clientSecret
+        this.keyVaultConfig.tenantId,
+        this.keyVaultConfig.clientId,
+        this.keyVaultConfig.clientSecret
       );
     }
     // Default to managed identity or default credential chain
@@ -44,15 +53,16 @@ export class AzureKeyVaultSigner implements TokenSigner {
 
   /**
    * Initialize the cryptography client with the key
+   * Override from base SigningAdapter
    */
-  private async initialize(): Promise<void> {
+  async initialize(): Promise<void> {
     if (this.cryptoClient) {
       return;
     }
 
     const key = await this.keyClient.getKey(
-      this.config.keyName,
-      this.config.keyVersion ? { version: this.config.keyVersion } : undefined
+      this.keyVaultConfig.keyName,
+      this.keyVaultConfig.keyVersion ? { version: this.keyVaultConfig.keyVersion } : undefined
     );
 
     this.keyId = key.id;

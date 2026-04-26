@@ -7,7 +7,8 @@ import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import * as jose from 'jose';
 import {
-  IdentityProvider,
+  IdentityAdapter,
+  IdentityAdapterConfig,
   UserContext,
   AzureADConfig,
   CapabilityError,
@@ -16,13 +17,22 @@ import {
   CapabilityConstraint,
 } from '@euno/common';
 
-export class AzureADIdentityProvider implements IdentityProvider {
+/**
+ * Azure AD specific configuration extending the base adapter config
+ */
+export interface AzureADAdapterConfig extends IdentityAdapterConfig {
+  type: 'azure-ad';
+  azureAD: AzureADConfig;
+}
+
+export class AzureADIdentityProvider extends IdentityAdapter {
   public readonly name = 'azure-ad';
-  private config: AzureADConfig;
+  private azureConfig: AzureADConfig;
   private graphClient?: Client;
 
-  constructor(config: AzureADConfig) {
-    this.config = config;
+  constructor(config: AzureADAdapterConfig) {
+    super(config);
+    this.azureConfig = config.azureAD;
   }
 
   /**
@@ -31,7 +41,7 @@ export class AzureADIdentityProvider implements IdentityProvider {
   async validateToken(token: string): Promise<UserContext> {
     try {
       // Get JWKS for token verification
-      const authority = this.config.authority || `https://login.microsoftonline.com/${this.config.tenantId}`;
+      const authority = this.azureConfig.authority || `https://login.microsoftonline.com/${this.azureConfig.tenantId}`;
       const jwksUri = `${authority}/discovery/v2.0/keys`;
 
       // Create JWKS instance
@@ -40,7 +50,7 @@ export class AzureADIdentityProvider implements IdentityProvider {
       // Verify the token
       const { payload } = await jose.jwtVerify(token, JWKS, {
         issuer: `${authority}/v2.0`,
-        audience: this.config.clientId,
+        audience: this.azureConfig.clientId,
       });
 
       // Extract user context from token claims
@@ -101,7 +111,7 @@ export class AzureADIdentityProvider implements IdentityProvider {
       return this.graphClient;
     }
 
-    if (!this.config.clientSecret) {
+    if (!this.azureConfig.clientSecret) {
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
         'Client secret required for Graph API access',
@@ -110,9 +120,9 @@ export class AzureADIdentityProvider implements IdentityProvider {
     }
 
     const credential = new ClientSecretCredential(
-      this.config.tenantId,
-      this.config.clientId,
-      this.config.clientSecret
+      this.azureConfig.tenantId,
+      this.azureConfig.clientId,
+      this.azureConfig.clientSecret
     );
 
     // Get access token for Microsoft Graph

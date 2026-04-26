@@ -16,8 +16,8 @@ import {
   ServiceConfig,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
-import { AzureKeyVaultSigner } from './signer';
-import { AzureADIdentityProvider } from './identity-provider';
+import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './signer';
+import { AzureADIdentityProvider, AzureADAdapterConfig } from './identity-provider';
 
 // Load environment variables
 dotenv.config();
@@ -49,9 +49,21 @@ const config: ServiceConfig = {
 // Create logger
 const logger = createLogger(config.name, config.environment);
 
-// Initialize services
-const signer = new AzureKeyVaultSigner(config.keyVault!);
-const identityProvider = new AzureADIdentityProvider(config.azureAD!);
+// Initialize services with adapter configurations
+const signerConfig: AzureKeyVaultAdapterConfig = {
+  type: 'azure-keyvault',
+  name: 'Azure Key Vault Signer',
+  keyVault: config.keyVault!,
+};
+
+const identityConfig: AzureADAdapterConfig = {
+  type: 'azure-ad',
+  name: 'Azure AD Identity Provider',
+  azureAD: config.azureAD!,
+};
+
+const signer = new AzureKeyVaultSigner(signerConfig);
+const identityProvider = new AzureADIdentityProvider(identityConfig);
 const issuerService = new CapabilityIssuerService(
   signer,
   identityProvider,
