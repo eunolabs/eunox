@@ -1,0 +1,294 @@
+/**
+ * Tool Gateway API Server
+ * Express server with capability token validation and enforcement
+ */
+
+import express, { Request, Response, NextFunction } from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { createProxyMiddleware } from 'http-proxy-middleware';
+import {
+  ValidateActionRequest,
+  CapabilityError,
+  ErrorCode,
+  parseBearerToken,
+  createLogger,
+  ServiceConfig,
+} from '@euno/common';
+import { JWTTokenVerifier } from './verifier';
+import { EnforcementEngine } from './enforcement';
+import axios from 'axios';
+
+// Load environment variables
+dotenv.config();
+
+// Configuration
+const config: ServiceConfig = {
+  name: 'tool-gateway',
+  port: parseInt(process.env.PORT || '3002', 10),
+  environment: (process.env.NODE_ENV as any) || 'development',
+};
+
+const issuerPublicKeyUrl = process.env.ISSUER_PUBLIC_KEY_URL || 'http://localhost:3001/api/v1/public-key';
+
+// Create logger
+const logger = createLogger(config.name, config.environment);
+
+// Initialize verifier and enforcement engine
+let verifier: JWTTokenVerifier;
+let enforcementEngine: EnforcementEngine;
+
+// Fetch public key from Capability Issuer
+async function initializeServices() {
+  try {
+    logger.info('Fetching public key from Capability Issuer', { url: issuerPublicKeyUrl });
+    const response = await axios.get(issuerPublicKeyUrl);
+    const publicKey = response.data.publicKey;
+
+    verifier = new JWTTokenVerifier(publicKey);
+    enforcementEngine = new EnforcementEngine(verifier, logger);
+
+    logger.info('Tool Gateway services initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize services', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    throw error;
+  }
+}
+
+// Create Express app
+const app = express();
+
+// Middleware
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+
+// Request logging middleware
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  logger.info('Incoming request', {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+  });
+  next();
+});
+
+/**
+ * Health check endpoint
+ */
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy', service: 'tool-gateway' });
+});
+
+/**
+ * Capability validation middleware
+ * Validates the capability token before proxying the request
+ */
+async function validateCapabilityMiddleware(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) {
+  try {
+    // Extract capability token from Authorization header
+    const token = parseBearerToken(req.headers.authorization);
+    if (!token) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token is required',
+        401
+      );
+    }
+
+    // Extract action and resource from request
+    // For this implementation, we'll use a simple mapping:
+    // - GET -> read
+    // - POST/PUT/PATCH -> write
+    // - DELETE -> delete
+    const actionMap: Record<string, string> = {
+      GET: 'read',
+      POST: 'write',
+      PUT: 'write',
+      PATCH: 'write',
+      DELETE: 'delete',
+    };
+
+    const action = actionMap[req.method] || 'read';
+
+    // Extract resource from path, deriving canonical api:// URI
+    // req.path has the /proxy prefix already stripped by Express route mounting
+    const resourcePath = req.path.replace(/^\/+/, '');
+    const resource = `api://${resourcePath}`;
+
+    // Validate the action
+    const validationRequest: ValidateActionRequest = {
+      token,
+      action: action as any,
+      resource,
+      context: {
+        method: req.method,
+        path: req.path,
+      },
+    };
+
+    const result = await enforcementEngine.validateAction(validationRequest);
+
+    if (!result.allowed) {
+      throw new CapabilityError(
+        ErrorCode.AUTHORIZATION_FAILED,
+        result.reason || 'Action not allowed',
+        403
+      );
+    }
+
+    // Attach validation result to request for downstream use
+    (req as any).capabilityValidation = result;
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Validate action endpoint (for testing)
+ * POST /api/v1/validate
+ */
+app.post('/api/v1/validate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = parseBearerToken(req.headers.authorization);
+    if (!token) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token is required',
+        401
+      );
+    }
+
+    const validationRequest: ValidateActionRequest = {
+      token,
+      action: req.body.action,
+      resource: req.body.resource,
+      context: req.body.context,
+    };
+
+    const result = await enforcementEngine.validateAction(validationRequest);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Protected proxy endpoints
+ * All requests under /proxy/* are validated and then proxied to backend services
+ */
+app.use(
+  '/proxy',
+  validateCapabilityMiddleware,
+  createProxyMiddleware({
+    target: process.env.BACKEND_SERVICE_URL || 'http://localhost:4000',
+    changeOrigin: true,
+    pathRewrite: {
+      '^/proxy': '', // Remove /proxy prefix
+    },
+    onProxyReq: (proxyReq, req, _res) => {
+      logger.info('Proxying request', {
+        path: req.path,
+        target: proxyReq.path,
+      });
+    },
+    onProxyRes: (proxyRes, req, _res) => {
+      logger.info('Proxy response', {
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+      });
+    },
+    onError: (err, req, res) => {
+      logger.error('Proxy error', {
+        path: req.path,
+        error: err.message,
+      });
+      (res as Response).status(502).json({
+        error: {
+          code: 'PROXY_ERROR',
+          message: 'Failed to proxy request to backend service',
+        },
+      });
+    },
+  })
+);
+
+// Error handling middleware
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof CapabilityError) {
+    logger.warn('Request failed', {
+      code: error.code,
+      message: error.message,
+      path: req.path,
+    });
+
+    res.status(error.statusCode).json({
+      error: {
+        code: error.code,
+        message: error.message,
+      },
+    });
+  } else {
+    logger.error('Unexpected error', {
+      error: error.message,
+      stack: error.stack,
+      path: req.path,
+    });
+
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred',
+      },
+    });
+  }
+});
+
+// Start server
+async function startServer() {
+  try {
+    await initializeServices();
+
+    const server = app.listen(config.port, () => {
+      logger.info(`Tool Gateway listening on port ${config.port}`, {
+        environment: config.environment,
+      });
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM received, closing server gracefully');
+      server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+      });
+    });
+  } catch (error) {
+    logger.error('Failed to start server', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+export function getEnforcementEngine(): EnforcementEngine {
+  if (!enforcementEngine) {
+    throw new Error('Enforcement engine has not been initialized');
+  }
+  return enforcementEngine;
+}
+
+export { app };
