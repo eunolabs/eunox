@@ -58,7 +58,8 @@ export class EnforcementEngine {
       const payload = await this.verifier.verify(request.token);
 
       // Step 2: Check kill switch
-      const sessionId = request.context?.sessionId as string | undefined;
+      const rawSessionId = request.context?.sessionId;
+      const sessionId = typeof rawSessionId === 'string' ? rawSessionId : undefined;
       if (this.killSwitchManager && this.killSwitchManager.shouldBlock(sessionId, payload.sub)) {
         await this.logDenial(payload.sub, request.action, request.resource, 'Kill switch activated', sessionId);
         throw new CapabilityError(

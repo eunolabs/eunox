@@ -3,8 +3,9 @@
  * Creates cryptographically signed audit evidence for tamper-evident records
  */
 
+import * as crypto from 'crypto';
 import { AuditEvidence, SignedAuditEvidence, EvidenceSigner } from './types';
-import { sha256, generateId } from './utils';
+import { sha256String, safeSerialize, generateId } from './utils';
 
 /**
  * Interface for cryptographic signing operations
@@ -27,23 +28,24 @@ export class AuditEvidenceSigner implements EvidenceSigner {
   }
 
   /**
-   * Sign audit evidence to create a tamper-evident record
-   * The signature covers all fields of the evidence, ensuring any modification will be detected
+   * Sign audit evidence to create a tamper-evident record.
+   * keyId and algorithm are fetched BEFORE canonicalisation so they are
+   * covered by the signature and cannot be modified without detection.
    */
   async signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
-    // Create a canonical representation of the evidence for signing
-    const canonical = this.canonicalizeEvidence(evidence);
+    // Fetch signing metadata FIRST so it is included in the signed content
+    const keyId = await this.cryptoSigner.getKeyId();
+    const algorithm = this.cryptoSigner.getAlgorithm();
 
-    // Hash the canonical representation
-    const digest = Buffer.from(sha256(canonical), 'hex');
+    // Create a canonical representation that includes keyId and algorithm
+    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm);
+
+    // Hash the canonical UTF-8 bytes directly – no JSON.stringify wrapping
+    const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
 
     // Sign the digest
     const signatureBuffer = await this.cryptoSigner.signDigest(digest);
     const signature = signatureBuffer.toString('base64');
-
-    // Get signing metadata
-    const keyId = await this.cryptoSigner.getKeyId();
-    const algorithm = this.cryptoSigner.getAlgorithm();
 
     return {
       ...evidence,
@@ -54,29 +56,38 @@ export class AuditEvidenceSigner implements EvidenceSigner {
   }
 
   /**
-   * Verify a signed evidence record
-   * Note: This is a placeholder. Full verification would require access to the public key
+   * Verify a signed evidence record.
+   * Note: Full cryptographic verification is not implemented yet.
+   * This method fails closed so callers cannot treat unsigned or unverifiable
+   * evidence as successfully verified.
    */
   async verifyEvidence(signedEvidence: SignedAuditEvidence): Promise<boolean> {
-    // Extract the evidence without signature
+    // Reject malformed signed evidence records early
     const { signature, keyId, algorithm, ...evidence } = signedEvidence;
+    if (!signature || !keyId || !algorithm) {
+      return false;
+    }
 
-    // Create canonical representation
-    const canonical = this.canonicalizeEvidence(evidence);
+    // Ensure a canonical form can be produced
+    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm);
+    if (!canonical) {
+      return false;
+    }
 
-    // Hash it for future verification
-    // In a full implementation, we would:
-    // 1. Fetch the public key using keyId
-    // 2. Verify the signature against the digest: sha256(canonical)
-    // For now, we just check that the signature exists
-    return signature.length > 0 && keyId.length > 0 && algorithm.length > 0 && canonical.length > 0;
+    // Full verification would require:
+    // 1. Resolving the public key using keyId
+    // 2. Decoding and verifying the signature against sha256(canonical bytes)
+    // Until that is implemented, fail closed rather than returning a
+    // misleading success value based only on metadata presence.
+    return false;
   }
 
   /**
-   * Create a canonical string representation of evidence for signing
-   * Fields are sorted and formatted consistently to ensure the same input always produces the same signature
+   * Create a canonical pipe-delimited string representation of evidence for signing.
+   * Fields are ordered deterministically. keyId and algorithm are appended so they
+   * are covered by the signature and cannot be tampered with undetected.
    */
-  private canonicalizeEvidence(evidence: Partial<AuditEvidence>): string {
+  private canonicalizeEvidence(evidence: Partial<AuditEvidence>, keyId?: string, algorithm?: string): string {
     const fields = [
       evidence.id || '',
       evidence.sessionId || '',
@@ -93,6 +104,8 @@ export class AuditEvidenceSigner implements EvidenceSigner {
       evidence.action || '',
       evidence.capabilityId || '',
       evidence.decision || '',
+      keyId || '',
+      algorithm || '',
     ];
 
     return fields.join('|');
@@ -123,10 +136,10 @@ export function createAuditEvidence(params: {
     id: generateId(),
     sessionId: params.sessionId,
     userId: params.userId,
-    promptHash: params.prompt ? sha256(params.prompt) : sha256(''),
-    documentsHash: params.documents ? sha256(params.documents) : undefined,
+    promptHash: params.prompt !== undefined ? sha256String(params.prompt) : sha256String(''),
+    documentsHash: params.documents !== undefined ? sha256String(safeSerialize(params.documents)) : undefined,
     tool: params.tool,
-    argsHash: sha256(params.args),
+    argsHash: sha256String(safeSerialize(params.args)),
     nonce,
     ts,
     policyVersion: params.policyVersion,

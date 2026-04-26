@@ -59,10 +59,17 @@ async function initializeServices() {
       verifier,
       logger,
       killSwitchManager,
-      // Evidence signer would be configured here for cryptographic audit
+      // evidenceSigner must be supplied externally (e.g. Azure Key Vault backed)
       enableCryptographicAudit: config.enableCryptographicAudit,
       policyVersion: config.policyVersion,
     });
+
+    if (config.enableCryptographicAudit) {
+      logger.warn(
+        'Cryptographic audit is enabled but no evidenceSigner has been configured. ' +
+        'Signed evidence will not be generated until an evidenceSigner implementation is provided.'
+      );
+    }
 
     logger.info('Tool Gateway services initialized successfully');
   } catch (error) {

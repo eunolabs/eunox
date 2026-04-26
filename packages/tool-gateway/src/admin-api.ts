@@ -3,7 +3,8 @@
  * Provides administrative endpoints for kill-switch management and monitoring
  */
 
-import { Router, Request, Response } from 'express';
+import * as crypto from 'crypto';
+import { Router, Request, Response, NextFunction } from 'express';
 import { KillSwitchManager, Logger } from '@euno/common';
 
 export interface AdminApiOptions {
@@ -20,10 +21,19 @@ export function createAdminRouter(options: AdminApiOptions): Router {
   const { killSwitchManager, logger, adminApiKey } = options;
 
   // Authentication middleware for admin endpoints
-  const authenticateAdmin = (req: Request, res: Response, next: Function): void => {
+  const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
     if (adminApiKey) {
-      const providedKey = req.headers['x-admin-api-key'];
-      if (!providedKey || providedKey !== adminApiKey) {
+      // Normalise to a single string – Express allows headers to be string[]
+      const rawHeader = req.headers['x-admin-api-key'];
+      const providedKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+
+      // Use timing-safe comparison to prevent key-leakage via timing attacks
+      const isValid =
+        typeof providedKey === 'string' &&
+        providedKey.length === adminApiKey.length &&
+        crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminApiKey));
+
+      if (!isValid) {
         logger.warn('Unauthorized admin API access attempt', {
           ip: req.ip,
           path: req.path,

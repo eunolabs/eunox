@@ -5,15 +5,49 @@
 import * as crypto from 'crypto';
 
 /**
- * Generate SHA-256 hash of an object
- * This matches the pattern from the Azure security reference:
- * Hash locally before signing with Key Vault
+ * Generate SHA-256 hash of an object by serialising with JSON.stringify first.
+ * Use this only when you explicitly want JSON-encoded bytes (e.g. hashing an
+ * arbitrary object so that all callers agree on serialisation).
+ * Do NOT use for plain string inputs where double-encoding would produce a
+ * different digest than hashing the raw string bytes.
  */
 export function sha256(data: unknown): string {
   return crypto
     .createHash('sha256')
     .update(JSON.stringify(data))
     .digest('hex');
+}
+
+/**
+ * Generate SHA-256 hash of a string, hashing the raw UTF-8 bytes.
+ * Use this when you already have a canonical string representation and want
+ * cross-language interoperability (no surrounding quotes / JSON escaping).
+ */
+export function sha256String(data: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(data, 'utf8')
+    .digest('hex');
+}
+
+/**
+ * Serialise an arbitrary unknown value to a stable string suitable for
+ * hashing. Handles BigInt, circular references, and undefined gracefully.
+ */
+export function safeSerialize(data: unknown): string {
+  if (data === undefined || data === null) {
+    return '';
+  }
+  try {
+    return JSON.stringify(data, (_key, value) => {
+      if (typeof value === 'bigint') {
+        return value.toString() + 'n';
+      }
+      return value;
+    });
+  } catch {
+    return String(data);
+  }
 }
 
 /**
