@@ -114,4 +114,63 @@ describe('JWTTokenVerifier', () => {
       expect(await verifier.isRevoked('valid-id')).toBe(false);
     });
   });
+
+  describe('algorithm support', () => {
+    it('should verify ES256 tokens when configured', async () => {
+      // Generate an EC key pair for ES256
+      const { publicKey: ecPubKey, privateKey: ecPrivKey } = await jose.generateKeyPair('ES256');
+      const ecPublicKeyPEM = await jose.exportSPKI(ecPubKey);
+
+      // Create verifier with ES256 algorithm
+      const es256Verifier = new JWTTokenVerifier(ecPublicKeyPEM, ['ES256']);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        capabilities: [
+          { resource: 'api://test/endpoint', actions: ['read'] },
+        ],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'ES256' })
+        .sign(ecPrivKey);
+
+      const decoded = await es256Verifier.verify(token);
+
+      expect(decoded.iss).toBe(payload.iss);
+      expect(decoded.sub).toBe(payload.sub);
+    });
+
+    it('should support multiple algorithms', async () => {
+      // Generate both RSA and EC key pairs
+      const { publicKey: rsaPubKey, privateKey: rsaPrivKey } = await jose.generateKeyPair('RS256');
+      const rsaPublicKeyPEM = await jose.exportSPKI(rsaPubKey);
+
+      // Create verifier that accepts both RS256 and ES256
+      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, ['RS256', 'ES256']);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        capabilities: [],
+      };
+
+      // Should verify RS256 token
+      const rsaToken = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(rsaPrivKey);
+
+      const decoded = await multiAlgoVerifier.verify(rsaToken);
+      expect(decoded.iss).toBe(payload.iss);
+    });
+  });
 });

@@ -31,8 +31,9 @@ export class JWTTokenVerifier implements TokenVerifier {
     try {
       // Import the public key (cached for performance; invalidated on key rotation)
       if (!this.cachedKeyObject) {
-        // Try to detect the algorithm from the first configured algorithm
-        this.cachedKeyObject = await jose.importSPKI(this.publicKey, this.algorithms[0]);
+        // Use the first configured algorithm for key import
+        const algorithm = this.algorithms[0] || 'RS256';
+        this.cachedKeyObject = await jose.importSPKI(this.publicKey, algorithm);
       }
 
       // Verify the token signature and decode

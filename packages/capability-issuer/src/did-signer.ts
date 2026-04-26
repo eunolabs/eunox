@@ -134,6 +134,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Resolve DID Document for the issuer
    */
+  // @ts-expect-error - Stub implementation for future DID support
   private async resolveDID(_did: string): Promise<any> {
     // TODO: Implement using DID resolver
     throw new Error('Not implemented');
@@ -142,6 +143,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Find the verification method in DID Document
    */
+  // @ts-expect-error - Stub implementation for future DID support
   private findVerificationMethod(_didDocument: any, _keyId?: string): any {
     // TODO: Search verificationMethod array in DID Document
     // If keyId provided, find matching method
@@ -152,6 +154,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Extract public key from verification method
    */
+  // @ts-expect-error - Stub implementation for future DID support
   private extractPublicKey(_verificationMethod: any): string {
     // TODO: Convert verification method to PEM format
     // Handle different key types (RSA, EC, Ed25519)
@@ -161,6 +164,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Determine signing algorithm from key type
    */
+  // @ts-expect-error - Stub implementation for future DID support
   private determineAlgorithm(): string {
     // Use configured algorithm if available
     if (this.config.algorithm) {

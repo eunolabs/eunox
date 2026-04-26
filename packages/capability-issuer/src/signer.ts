@@ -23,7 +23,6 @@ export interface AzureKeyVaultAdapterConfig extends SigningAdapterConfig {
  */
 function detectAlgorithmFromKey(key: KeyVaultKey): SigningAlgorithm {
   const keyType = key.keyType;
-  const keySize = key.key?.n ? key.key.n.length * 8 : 0; // RSA key size in bits
 
   if (keyType === 'RSA' || keyType === 'RSA-HSM') {
     // Default to RS256 for RSA keys, but could be RS384 or RS512
@@ -111,6 +110,10 @@ export class AzureKeyVaultSigner extends SigningAdapter {
    * Cache the public key in PEM format for verification
    */
   private async cachePublicKey(key: KeyVaultKey): Promise<void> {
+    if (!key.key) {
+      return;
+    }
+
     if (key.key.n && key.key.e) {
       // RSA public key
       const nBase64 = Buffer.from(key.key.n).toString('base64url');
