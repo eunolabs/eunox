@@ -5,5 +5,7 @@
 export * from './issuer-service';
 export * from './identity-provider';
 export * from './signer';
+export * from './azure-identity-provider';
+export * from './azure-signer';
 export * from './did-identity-provider';
 export * from './did-signer';

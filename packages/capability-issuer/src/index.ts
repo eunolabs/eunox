@@ -16,8 +16,8 @@ import {
   ServiceConfig,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
-import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './signer';
-import { AzureADIdentityProvider, AzureADAdapterConfig } from './identity-provider';
+import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './azure-signer';
+import { AzureADIdentityProvider, AzureADAdapterConfig } from './azure-identity-provider';
 
 // Load environment variables
 dotenv.config();

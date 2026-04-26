@@ -75,7 +75,7 @@ describe('Capability Issuer API', () => {
 
 describe('Capability Issuance Logic', () => {
   it('should map roles to capabilities correctly', async () => {
-    const { AzureADIdentityProvider } = await import('../src/identity-provider');
+    const { AzureADIdentityProvider } = await import('../src/azure-identity-provider');
 
     const capabilities = AzureADIdentityProvider.mapRolesToCapabilities(['SalesManager']);
 
@@ -86,7 +86,7 @@ describe('Capability Issuance Logic', () => {
   });
 
   it('should handle multiple roles', async () => {
-    const { AzureADIdentityProvider } = await import('../src/identity-provider');
+    const { AzureADIdentityProvider } = await import('../src/azure-identity-provider');
 
     const capabilities = AzureADIdentityProvider.mapRolesToCapabilities([
       'Viewer',
