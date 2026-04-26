@@ -1,238 +1,493 @@
-%% SET A1 — End to End Architecture (Engineering)
-%% Legend: Solid arrows = data flow. Dashed arrows = verification or lookup. Subgraphs = trust boundaries.
+Comprehensive Mermaid Diagram Set: Capability‑Native Agent Governance
+
+Three diagram sets follow — each tailored to a distinct audience. Every diagram uses valid Mermaid syntax, labels entities and data objects explicitly, and marks trust boundaries via subgraphs. Azure services appear as reference implementations with generic alternatives noted in labels. 
+
+
+SET A — Engineering Implementation Diagrams
+
+These diagrams carry field-level detail on data objects, cryptographic operations, and protocol flows for implementation engineers. 
+
+
+A1 — End‑to‑End System Architecture
+
 flowchart LR
-  subgraph EnterpriseDomain
-    IdP[IdentityProvider_OIDC]
-    Issuer[CapabilityIssuer]
-    Agent[AgentRuntime_DID]
-    Attenuator[Attenuator_no_new_privs]
-    Gateway[ToolGateway_ReferenceMonitor]
-    Audit[AuditLedger]
-    Service[ProtectedService]
-  end
+    subgraph Enterprise["Enterprise Domain - Azure Reference"]
+        IdP["Identity Provider<br/>(Entra ID or any OIDC IdP)"]
+        Issuer["Capability Issuer<br/>policy eval + token minting<br/>signs via Key Vault or HSM"]
+        Agent["AI Agent<br/>DID identity + keypair<br/>sandboxed runtime"]
+        Attenuator["Attenuator<br/>issues subset tokens<br/>enforces no_new_privs"]
+        Gateway["Tool Gateway<br/>Reference Monitor<br/>(APIM validate-jwt or equivalent)"]
+        Audit["Audit Ledger<br/>append-only tamper-evident<br/>(Azure Monitor or any SIEM)"]
+        Service["Protected Service<br/>API - DB - Files"]
+    end
 
-  subgraph ExternalDomain
-    ExtIssuer[PartnerIssuer_DID]
-    ExtAgent[PartnerAgent_DID]
-    ExtService[ExternalService]
-  end
+    subgraph External["External or Partner Domain"]
+        ExtIssuer["Partner Issuer<br/>Partner DID authority"]
+        ExtAgent["External Agent<br/>DID identity"]
+        ExtService["External API"]
+    end
 
-  subgraph TrustLayer
-    DIDRegistry[DIDRegistry]
-    Revocation[RevocationService]
-  end
+    subgraph TrustInfra["Decentralized Trust Layer"]
+        DIDReg["DID Registry<br/>resolve public keys<br/>did:web via DNS or did:ion"]
+        RevList["Revocation Service<br/>status list or CRL"]
+    end
 
-  IdP -->|OIDC_token_sub_roles_aud_exp| Issuer
-  Issuer -->|CapabilityToken_sub_iss_actions_resources_exp_jti| Agent
-  Agent -.->|delegate_subset| Attenuator
-  Attenuator -.->|child_token_subset| Agent
-  Agent -->|request_token_DPoP| Gateway
-  Gateway -->|allow| Service
-  Gateway -->|audit_event| Audit
-  Gateway -.->|deny| Agent
+    IdP -->|"OIDC token: sub roles aud exp"| Issuer
+    Issuer -->|"Capability JWT or VC: sub=AgentDID<br/>iss actions resources constraints exp jti sig"| Agent
+    Agent -.->|"delegation request: subset of parent token"| Attenuator
+    Attenuator -.->|"child token: narrower scope"| Agent
+    Agent -->|"tool request + token + DPoP proof"| Gateway
+    Gateway -->|"authorized request"| Service
+    Gateway -.->|"DENY: no token or wrong scope"| Agent
+    Gateway -->|"audit event"| Audit
 
-  ExtIssuer -->|PartnerVC| ExtAgent
-  ExtAgent -->|request_PartnerVC| Gateway
-  Gateway -.-> DIDRegistry
-  Gateway -.-> Revocation
-  Agent -->|cross_org_request| ExtService
-  ExtService -.-> DIDRegistry
-%% SET A2 — Identity and Capability Issuance Flow (Engineering)
-%% Legend: Sequence shows token minting and signing.
+    ExtIssuer -->|"Partner VC with capabilities"| ExtAgent
+    ExtAgent -->|"request + Partner VC"| Gateway
+    Gateway -.->|"resolve Partner DID for pubkey"| DIDReg
+    Gateway -.->|"check revocation status"| RevList
+    Agent -->|"cross-org request + Enterprise VC"| ExtService
+    ExtService -.->|"resolve Enterprise DID for pubkey"| DIDReg
+    ExtService -.->|"check status"| RevList
+Data objects and key fields referenced in A1:
+Data Object
+Key Fields
+OIDC Token
+sub (userID), roles, aud, exp, iss (IdP)
+Capability Token (JWT/VC)
+sub (Agent DID), iss (Enterprise DID), actions[], resources[], constraints{ttl, max_calls, redact}, exp, jti (unique ID), signature
+DID Document
+id (DID), verificationMethod[] (public keys), service[] (endpoints for registry, revocation), authentication[]
+Audit Log Event
+timestamp, agentDID, capabilityId, action, resource, outcome (allow/deny), parentCapId (if delegated)
+The validate-jwt policy on Azure APIM enforces existence and validity of the JWT extracted from a specified HTTP header, checking issuer, audience, expiration, required claims, and signature against configured signing keys【6†L16-L22】. Any API gateway with JWT validation (AWS API Gateway + Lambda Authorizer, Envoy with JWT filter, NGINX with auth module) serves the same role. 
+
+
+A2 — Identity and Capability Issuance Flow
+
 sequenceDiagram
-  autonumber
-  participant User
-  participant IdP
-  participant Issuer
-  participant HSM
-  participant Agent
+    autonumber
+    participant User
+    participant IdP as OIDC IdP (Entra ID)
+    participant Issuer as Capability Issuer
+    participant HSM as Key Vault or HSM
+    participant Agent as Agent Instance
 
-  User->>IdP: authenticate
-  IdP-->>User: auth_code
-  User->>Issuer: create_agent(auth_code)
-  Issuer->>IdP: exchange_code
-  IdP-->>Issuer: id_token_sub_roles
-  Issuer->>Issuer: policy_eval_to_capabilities
-  Issuer->>HSM: sign_token_hash
-  HSM-->>Issuer: signature
-  Issuer-->>Agent: capability_token_JWT_or_VC
-%% SET A3 — Tool Invocation and Enforcement (Engineering)
-%% Legend: Gateway enforces signature scope TTL and revocation.
+    User->>IdP: Authenticate via OAuth 2.0 / OIDC
+    IdP-->>User: Authorization code
+    User->>Issuer: Request agent creation with auth code and agent type
+    Issuer->>IdP: Exchange code for tokens at token endpoint
+    IdP-->>Issuer: id_token with sub roles groups and access_token
+    Issuer->>Issuer: Evaluate policy and map user roles to capability set
+    Note over Issuer: Load Agent Capability Manifest template<br/>Intersect with user actual permissions
+    Issuer->>Issuer: Build token payload<br/>sub=AgentDID iss=EnterpriseDID<br/>actions resources constraints exp jti
+    Issuer->>HSM: Sign payload digest via ECDSA or Ed25519
+    Note over HSM: Key Vault does not hash content<br/>Hash locally then sign the digest
+    HSM-->>Issuer: JWS signature
+    Issuer->>Issuer: Assemble signed JWT/VC as header.payload.signature
+    Issuer-->>Agent: Capability Token (signed JWT/VC)
+Capability Token payload example: 
+{
+  "iss": "did:web:enterprise.example.com",
+  "sub": "did:web:enterprise.example.com:agents:triage-123",
+  "aud": "https://apim.enterprise.example.com",
+  "exp": 1745678400,
+  "jti": "8457e9ab-1234-abcd-ef01-567890abcdef",
+  "cap": {
+    "actions": ["read", "search"],
+    "resources": ["logs://cluster/A/*"],
+    "constraints": {
+      "ttl_seconds": 900,
+      "redact": ["pii", "secrets"],
+      "max_calls": 100
+    }
+  },
+  "no_new_privs": true
+}
+The signing step uses Azure Key Vault's sign operation, which creates a signature from a digest — the hash is computed locally before calling the Key Vault API【5†L287-L289】. On AWS the equivalent is KMS Sign; on GCP it is Cloud KMS asymmetricSign. 
+
+
+A3 — Tool Invocation and Enforcement Flow
+
 sequenceDiagram
-  autonumber
-  participant Agent
-  participant Gateway
-  participant Resolver
-  participant Revocation
-  participant Service
+    autonumber
+    participant Agent
+    participant Gateway as Tool Gateway (APIM)
+    participant Resolver as DID or JWKS Resolver
+    participant Rev as Revocation Service
+    participant Service as Protected API or Tool
 
-  Agent->>Gateway: request_with_token_and_DPoP
-  Gateway->>Resolver: fetch_public_key
-  Resolver-->>Gateway: public_key
-  Gateway->>Gateway: verify_signature_and_claims
-  Gateway->>Revocation: check_jti_status
-  Revocation-->>Gateway: active_or_revoked
+    Agent->>Gateway: HTTPS request<br/>Authorization: Bearer JWT/VC<br/>DPoP: signed nonce<br/>Body: tool parameters
+    Gateway->>Resolver: Fetch issuer public key from JWKS or DID Document
+    Resolver-->>Gateway: Public key (cached and refreshed periodically)
+    Gateway->>Gateway: Step 1 Verify JWS signature against public key
+    Gateway->>Gateway: Step 2 Validate standard claims iss aud exp
+    Gateway->>Gateway: Step 3 Enforce required claims match requested action and resource
+    Gateway->>Gateway: Step 4 Verify DPoP proof agent key matches token sub DID
+    Gateway->>Rev: Step 5 Check revocation status of jti or agentDID
+    Rev-->>Gateway: Status active or revoked
 
-  alt invalid_or_revoked
-    Gateway-->>Agent: deny_401_403
-  else valid
-    Gateway->>Service: forward_request
-    Service-->>Gateway: response
-    Gateway-->>Agent: result
-  end
-%% SET A4 — Delegation and Attenuation (Engineering)
-%% Legend: Child capabilities must be strict subset of parent.
+    alt Token invalid or expired or insufficient scope or revoked
+        Gateway-->>Agent: HTTP 401 or 403 DeniedAction
+        Note over Gateway: Log agentDID capId action resource outcome=DENIED reason ts
+    else All checks pass
+        Gateway->>Service: Forward authorized request with downstream context
+        Service-->>Gateway: Response data
+        Gateway-->>Agent: HTTP 200 Tool result
+        Note over Gateway: Log agentDID capId action resource outcome=ALLOWED ts
+    end
+APIM's validate-jwt policy checks that the token was issued by a trusted issuer, targets the correct audience, has not expired, and contains required claims matching the requested operation. Required claims configured via ensure that only tokens explicitly listing the needed action scope pass validation. Tokens lacking the correct scope are rejected with the configured failed-validation-httpcode (default 401)【6†L51-L52】【6†L68-L70】. 
+
+
+A4 — Delegation and Attenuation Flow
+
 sequenceDiagram
-  autonumber
-  participant Parent
-  participant Attenuator
-  participant HSM
-  participant Child
-  participant Gateway
+    autonumber
+    participant Parent as Parent Agent DID_P
+    participant Attenuator
+    participant HSM as Key Vault or HSM
+    participant Child as Child Agent DID_C
+    participant Gateway as Tool Gateway
 
-  Parent->>Attenuator: request_delegate_subset
-  Attenuator->>Attenuator: verify_subset_rule
+    Parent->>Attenuator: Delegate request<br/>parent_cap=jti123<br/>child=DID_C<br/>req_actions=[read] req_res=[logs:projectX] req_ttl=300
+    Attenuator->>Attenuator: Retrieve parent capability jti123
+    Attenuator->>Attenuator: Invariant check: requested subset of parent?
+    Note over Attenuator: Parent has actions=[read search]<br/>resources=[logs://cluster/A/*] ttl=900<br/>Child requests actions=[read]<br/>resources=[logs://cluster/A/node1] ttl=300<br/>Result VALID strict subset
 
-  alt violation
-    Attenuator-->>Parent: deny_no_new_privs
-  else ok
-    Attenuator->>HSM: sign_child_token
-    HSM-->>Attenuator: signature
-    Attenuator-->>Child: delegated_token
-  end
+    alt Requested scope exceeds parent
+        Attenuator-->>Parent: DENIED no_new_privs violation
+        Note over Attenuator: Log delegation_denied parent_cap_id reason
+    else Valid subset confirmed
+        Attenuator->>Attenuator: Build child token payload with narrower scope
+        Attenuator->>HSM: Sign child token digest
+        HSM-->>Attenuator: Signature
+        Attenuator-->>Child: Delegated Capability Token child_cap=jti456
+        Note over Attenuator: child token includes parent_cap_id for audit linkage
+        Attenuator->>Attenuator: Log CapabilityDelegated parent=jti123 child=jti456
+    end
 
-  Child->>Gateway: request_with_child_token
-  Gateway->>Gateway: enforce_subset_scope
-%% SET A5 — Revocation and Kill Switch (Engineering)
-%% Legend: Revocation via jti list. Kill switch via session blacklist.
+    Child->>Gateway: Tool request with delegated token
+    Gateway->>Gateway: Validate child token same enforcement as A3
+    Note over Gateway: Child token authorizes [read] on [logs://cluster/A/node1] only<br/>Any request outside this scope results in DENIED
+Attenuation rules:
+Parent Capability
+Attenuation Allowed
+Attenuation Denied
+actions: [read, search]
+actions: [read] (subset)
+actions: [read, write] (adds write)
+resources: [logs://cluster/A/*]
+resources: [logs://cluster/A/node1] (narrower)
+resources: [logs://cluster/B/*] (different resource)
+ttl: 900
+ttl: 300 (shorter)
+ttl: 1800 (longer)
+max_calls: 100
+max_calls: 50 (lower)
+max_calls: 200 (higher)
+
+
+A5 — Revocation and Kill‑Switch Propagation Flow
+
 sequenceDiagram
-  autonumber
-  participant Admin
-  participant Issuer
-  participant Revocation
-  participant Gateway
-  participant Agent
+    autonumber
+    participant Admin
+    participant Issuer as Capability Issuer or Registry
+    participant Rev as Revocation Store (Redis or Status List)
+    participant Gateway as Tool Gateway
+    participant Agent
 
-  Admin->>Issuer: revoke_capability_jti
-  Issuer->>Revocation: mark_revoked
-  Gateway->>Revocation: sync_revocations
-  Agent->>Gateway: request_with_revoked_token
-  Gateway-->>Agent: deny_revoked
+    rect rgb(255, 240, 240)
+        Note over Admin,Agent: Scenario Targeted Revocation
+        Admin->>Issuer: Revoke capability cap_id=jti123
+        Issuer->>Rev: Mark jti123 as revoked
+        Note over Rev: Entry jti=jti123 status=revoked revokedAt reason
+        Issuer->>Issuer: Log CapabilityRevoked cap_id revokedBy reason ts
+        Gateway->>Rev: Periodic poll or push notification delta sync
+        Rev-->>Gateway: Updated status jti123 REVOKED
+        Gateway->>Gateway: Cache revocation locally for fast lookup
+        Agent->>Gateway: Tool request with revoked token jti123
+        Gateway->>Gateway: Check jti against revocation cache and find match
+        Gateway-->>Agent: HTTP 401 Token revoked
+    end
 
-  Admin->>Gateway: kill_agent_session
-  Agent->>Gateway: any_request
-  Gateway-->>Agent: deny_killed
-%% SET B1 — Trust Boundaries and Attack Surfaces (Security)
-%% Legend: Left untrusted. Middle trusted computing base. Right protected resources.
+    rect rgb(255, 230, 230)
+        Note over Admin,Agent: Scenario Emergency Kill Switch
+        Admin->>Gateway: Kill session agentDID=did:web:...triage-123
+        Gateway->>Gateway: Add agentDID to session blacklist
+        Note over Gateway: All subsequent requests from this DID get immediate 403
+        Agent->>Gateway: Any tool request
+        Gateway-->>Agent: HTTP 403 AGENT_SESSION_KILLED
+        Gateway->>Gateway: Log SessionKilled agentDID killedBy ts
+    end
+Revocation models compared:
+Model
+Latency
+Complexity
+Best For
+Short TTL (5–15 min)
+Passive; expires naturally
+Low — no active revocation needed
+Default baseline; reduces window of abuse
+Revocation list (centralized)
+Seconds (push) to minutes (poll)
+Medium — requires distributed cache (e.g., Azure Cache for Redis)
+Targeted token invalidation
+DID Document status endpoint
+Depends on resolution method
+Higher — requires registry service discoverable via DID Document
+Cross-org credential revocation
+Kill-switch (session blacklist)
+Immediate (in-memory)
+Low — simple set lookup at Gateway
+Emergency response
+
+
+SET B — Security Review and Threat‑Modeling Diagrams
+
+These diagrams emphasize trust boundaries, attack surfaces, and containment mechanisms for security architects and threat-modeling sessions. 
+
+
+B1 — Trust Boundaries and Attack Surfaces
+
 flowchart TB
-  subgraph Untrusted
-    UserInput
-    AgentProcess
-    ExternalAgent
-  end
+    subgraph Untrusted["UNTRUSTED ZONE"]
+        user_input["Human and External Inputs<br/>prompts and web data"]
+        agent_process["Agent Process<br/>LLM reasoning<br/>untrusted decisions"]
+        ext_agent["External Agent or API<br/>untrusted identity"]
+    end
 
-  subgraph TCB
-    IdP
-    Issuer
-    Gateway
-    Sandbox
-    Monitor
-    KillSwitch
-  end
+    subgraph TCB["TRUSTED COMPUTING BASE"]
+        idp["Central IdP"]
+        issuer["Capability Issuer"]
+        gateway["Secure Gateway<br/>Reference Monitor"]
+        sandbox["Sandbox<br/>no default net or fs<br/>seccomp and AppArmor"]
+        monitor["Monitoring and SIEM"]
+        killswitch["Kill Switch<br/>admin only<br/>outside agent runtime"]
+    end
 
-  subgraph Resources
-    DataServices
-  end
+    subgraph Resources["PROTECTED RESOURCES"]
+        data_store["Enterprise Data and Services"]
+    end
 
-  UserInput --> AgentProcess
-  ExternalAgent -->|VC| Gateway
-  AgentProcess -->|token_request| Gateway
-  Gateway --> DataServices
-  Gateway -.-> AgentProcess
-  Gateway --> Monitor
-  Issuer --> AgentProcess
-  KillSwitch -.-> Gateway
-%% SET B2 — Token Replay vs Proof of Possession (Security)
-%% Legend: DPoP binds token to agent key.
+    user_input --> agent_process
+    ext_agent -->|"VC + DID"| gateway
+    agent_process -->|"action + token"| gateway
+    gateway -->|"ALLOW"| data_store
+    gateway -.->|"DENY"| agent_process
+    gateway --> monitor
+    idp --> issuer
+    issuer --> agent_process
+    sandbox -.->|"constrains agent process"| agent_process
+    monitor -.-> admin["Security Team"]
+    admin -.-> killswitch
+    killswitch -.->|"terminate session"| gateway
+Attack surfaces at each trust boundary crossing:
+Crossing Point
+Threat
+Mitigation
+User Input to Agent
+Direct prompt injection
+Capability enforcement ensures injected instructions cannot trigger unauthorized actions
+External Data to Agent
+Indirect prompt injection via hidden instructions in documents
+Agent may be influenced but lacks capability tokens for unauthorized operations
+Agent to Gateway
+Token forgery, replay, scope escalation
+Signature verification, DPoP proof-of-possession, strict scope matching【6†L16-L22】
+External Agent to Gateway
+Compromised partner credential
+Issuer DID verification, revocation checking, trust anchor validation
+Gateway to Protected Resources
+Confused deputy: Gateway acting on attacker behalf
+Gateway enforces object-specific capability tokens not identity-based; each action requires a matching token
+
+
+B2 — Token Replay vs Proof‑of‑Possession Defense
+
 sequenceDiagram
-  autonumber
-  participant LegitAgent
-  participant Attacker
-  participant Gateway
+    autonumber
+    participant Legit as Legitimate Agent with key
+    participant Attacker as Attacker without key
+    participant GW as Tool Gateway
 
-  LegitAgent->>Gateway: token_plus_DPoP
-  Gateway-->>LegitAgent: allow
+    rect rgb(230, 255, 230)
+        Note over Legit,GW: Normal flow Agent proves key ownership
+        Legit->>GW: Tool request + Capability JWT + DPoP signature
+        Note right of Legit: DPoP header contains<br/>htm POST htu /api/tool iat jti<br/>signed with Agent DID private key
+        GW->>GW: 1 Verify JWT signature with issuer key
+        GW->>GW: 2 Verify DPoP signature with agent DID public key
+        GW->>GW: 3 Confirm DPoP key thumbprint matches JWT sub claim
+        GW-->>Legit: 200 OK Action executed
+    end
 
-  Attacker->>Gateway: stolen_token_fake_DPoP
-  Gateway-->>Attacker: deny_invalid_PoP
-%% SET B3 — Confused Deputy Containment (Security)
-%% Legend: Child cannot exceed delegated scope.
+    rect rgb(255, 230, 230)
+        Note over Attacker,GW: Attack Stolen token replayed
+        Attacker->>GW: Same JWT stolen + forged DPoP attempt
+        Note right of Attacker: Attacker cannot produce valid DPoP<br/>because they lack DID-A private key
+        GW->>GW: 1 JWT signature valid issuer key matches
+        GW->>GW: 2 DPoP signature INVALID wrong key
+        GW-->>Attacker: 401 Unauthorized PoP check failed
+        Note over GW: Log DeniedAction reason=invalid_dpop ts
+    end
+Security rationale: Without proof-of-possession, a stolen bearer token grants the attacker full authority for the token's lifetime. With DPoP, the attacker must also possess the agent's private key to produce a valid signature. Since the private key is held in protected memory (never exposed to the LLM's token stream), token theft alone is insufficient for exploitation. 
+
+
+B3 — Confused Deputy Containment via Constrained Delegation
+
 flowchart LR
-  Parent[ParentAgent_caps_A_B_C]
-  Attenuator[Attenuator_subset_check]
-  Child[ChildAgent_caps_A_B]
-  Gateway[ToolGateway]
-  ResourceA[ResourceA]
-  DeniedC[Denied_C]
-  DeniedD[Denied_D]
+    P["Parent Agent<br/>capabilities A B C"]
+    ATT["Attenuator<br/>verifies subset rule"]
+    C["Child Agent<br/>capabilities A B only"]
+    GW["Tool Gateway"]
+    RA["Resource A<br/>ALLOWED"]
+    Denied_C["Action C<br/>DENIED 403"]
+    Denied_D["Action D<br/>DENIED 403"]
 
-  Parent -->|delegate_A_B| Attenuator
-  Attenuator -->|issue_child_token| Child
-  Child -->|action_A| Gateway
-  Gateway --> ResourceA
-  Child -->|action_C| Gateway
-  Gateway -.-> DeniedC
-  Child -->|action_D| Gateway
-  Gateway -.-> DeniedD
-%% SET B4 — Incident Response Flow (Security)
-%% Legend: Detect contain investigate.
+    P -->|"delegates A and B only"| ATT
+    ATT -->|"issues child token for A B"| C
+    C -->|"request action A with valid token"| GW
+    GW -->|"token covers A"| RA
+    C -->|"request action C not in token"| GW
+    GW -.->|"token lacks C"| Denied_C
+    C -->|"request action D never existed"| GW
+    GW -.->|"token lacks D"| Denied_D
+Blast radius analysis:
+Scenario
+Without Capability Model
+With Capability Model
+Child agent compromised via prompt injection
+Full access to parent permissions A B C plus potentially ambient credentials
+Access limited to delegated subset A B only
+Attacker tries to escalate via child
+Can invoke any API the parent identity has access to
+Gateway rejects any request outside A B
+Maximum damage
+Unlimited within parent identity scope
+Bounded to explicitly delegated actions on specific resources
+This is the mechanical solution to the confused deputy problem: the child agent's authority is provably bounded by the parent's explicit delegation, not by the child's claimed identity or the parent's ambient privileges. 
+
+
+B4 — Incident Response: Detection to Containment to Forensics
+
 flowchart TB
-  Alert --> Kill
-  Kill --> Revoke
-  Revoke --> AuditGraph
-  AuditGraph --> Evidence
+    subgraph Detection["1 Detection"]
+        Alert["Sentinel or SIEM Alert<br/>spike in DeniedAction events<br/>or anomalous tool-call pattern"]
+        Monitor["Monitoring Dashboard<br/>rate of denied vs allowed<br/>agent behavior anomaly"]
+    end
 
-  subgraph Detection
-    Alert
-  end
+    subgraph Containment["2 Containment within seconds"]
+        Kill["Kill Switch Activation<br/>admin API kill session"]
+        Revoke["Token Revocation<br/>add jti to revocation list"]
+        Isolate["Network Isolation<br/>block agent pod egress"]
+    end
 
-  subgraph Containment
-    Kill
-    Revoke
-  end
+    subgraph Forensics["3 Forensic Analysis"]
+        AuditGraph["Capability Audit Graph<br/>reconstruct authority chain"]
+        TraceBack["Trace action to capId<br/>to parentCapId to issuer<br/>to principal"]
+        Evidence["Evidence Package<br/>signed audit records<br/>verifiable via enterprise pubkey"]
+    end
 
-  subgraph Forensics
-    AuditGraph
-    Evidence
-  end
-%% SET C1 — High Level Capability Model (Architecture Communication)
-%% Legend: All actions gated by capability token.
+    Alert --> Kill
+    Monitor --> Kill
+    Kill --> Revoke
+    Kill --> Isolate
+    Revoke --> AuditGraph
+    Isolate --> AuditGraph
+    AuditGraph --> TraceBack
+    TraceBack --> Evidence
+Forensic query examples supported by the Capability Audit Graph:
+Question
+How the CAG Answers It
+What did the compromised agent do?
+Query all ActionExecuted events where agentDID = compromised_agent
+Who authorized this agent?
+Trace CapabilityIssued event via issuedBy field to human principal DID
+Could the agent have accessed Resource X?
+Check if any capability with resource = X was ever issued to this agent
+Did any sub-agent exceed parent authority?
+Compare CapabilityDelegated events: verify child scope is a subset of parent scope for every delegation
+Is the evidence tamper-proof?
+Each audit record is signed with the enterprise Key Vault key — verifiable by any party with the public key【5†L287-L289】
+
+
+SET C — Architecture Communication Diagrams
+
+Simplified diagrams for architects, leadership, and cross-functional stakeholders. Focus on roles, responsibilities, and data flows rather than low-level mechanics. 
+
+
+C1 — Capability‑Native Governance Overview
+
 flowchart LR
-  User --> IdP
-  IdP --> Issuer
-  Issuer --> Agent
-  Agent --> Gateway
-  Gateway --> Service
-  Gateway --> Audit
-%% SET C2 — Authorization Lifecycle (Architecture Communication)
-%% Legend: Token governs each action.
+    user["User or Owner"]
+    idp["Identity System<br/>(Azure AD or any IdP)"]
+    issuer["Capability Issuer"]
+    agent["AI Agent"]
+    gateway["Secure Gateway"]
+    service["Enterprise Service"]
+    audit["Audit Log"]
+
+    user --> idp
+    idp --> issuer
+    issuer -->|"gives capability token"| agent
+    agent -->|"requests action with token"| gateway
+    gateway -->|"verifies and forwards"| service
+    gateway -.->|"blocks if not authorized"| agent
+    gateway --> audit
+Key message for stakeholders: The agent never has direct access to enterprise resources. Every action must pass through the Secure Gateway, which mechanically verifies the agent's token before allowing any operation. If an agent is tricked by malicious input, it can attempt unauthorized actions — but those attempts are automatically blocked and logged. 
+
+
+C2 — Agent Authorization Lifecycle
+
 sequenceDiagram
-  autonumber
-  participant User
-  participant IdP
-  participant Issuer
-  participant Agent
-  participant Gateway
+    autonumber
+    actor User
+    participant IdP as Identity Provider
+    participant Issuer as Cap Issuer
+    participant Agent
+    participant Gateway as Secure Gateway
 
-  User->>IdP: login
-  IdP-->>Issuer: identity_context
-  Issuer-->>Agent: capability_token
-  Agent->>Gateway: action_request
-  Gateway-->>Agent: allow_or_deny
-%% SET C3 — Cross Organization Trust via DID and VC (Architecture Communication)
-%% Legend: Public DID resolution enables verification.
+    User->>IdP: Sign in and approve agent
+    IdP-->>Issuer: User identity and roles
+    Issuer-->>Agent: Capability token with scope limits
+    Agent->>Gateway: Action request with token
+
+    alt Token valid and allows action
+        Gateway-->>Agent: Action executed
+    else Token missing invalid or wrong scope
+        Gateway-->>Agent: Access denied
+    end
+Stakeholder takeaway: This system converts the security question from "Will the AI follow its instructions?" to "Does the AI hold a valid token for this specific action?" — a question with a deterministic, verifiable answer. 
+
+
+C3 — Cross‑Organization Agent Trust via Verifiable Credentials
+
 flowchart LR
-  IssuerA -->|issue_VC| AgentA
-  AgentA -->|present_VC| ServiceB
-  ServiceB -.-> DIDRegistry
-  ServiceB -->|verify_and_allow| ServiceB
+    subgraph OrgA["Organization A"]
+        issuerA["A Issuer<br/>DID: did:web:a.example.com"]
+        agentA["Agent A<br/>DID: did:web:a.example.com:agents:007"]
+    end
+
+    subgraph OrgB["Organization B"]
+        serviceB["Service B<br/>Verifier"]
+    end
+
+    subgraph PublicTrust["Public Trust Layer"]
+        DIDDoc["DID Documents<br/>public keys and<br/>service endpoints"]
+    end
+
+    issuerA -->|"1 Issue VC to Agent A<br/>signed by Company A DID"| agentA
+    agentA -->|"2 Present VC + proof of DID key"| serviceB
+    serviceB -.->|"3 Resolve Company A DID<br/>fetch public key from DID Doc"| DIDDoc
+    serviceB -->|"4 Verify VC signature<br/>5 If trusted issuer grant access"| serviceB
+How it works (for non-technical stakeholders): 
+Organization A issues a digital credential to its agent, cryptographically signed by Organization A's identity. 
+
+The agent presents this credential to Organization B's service. 
+
+Organization B looks up Organization A's public key from a public registry (no direct connection to Organization A's identity system needed). 
+
+Organization B verifies the credential's authenticity using that public key. 
+
+If Organization B trusts Organization A as an issuer (pre-configured), access is granted. 
+
+Research on AI agents equipped with W3C DIDs and VCs demonstrates that this approach enables agents to prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs【4†L14】. The same research reveals that security-critical procedures such as VC verification should not be orchestrated solely by the LLM — they must be implemented as deterministic external controls【4†L94】, reinforcing the core principle that enforcement belongs in the trusted computing base, not in the agent's reasoning layer.
