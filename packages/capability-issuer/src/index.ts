@@ -140,6 +140,45 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
 });
 
 /**
+ * Attenuate capability token endpoint
+ * POST /api/v1/attenuate
+ * Reduces the scope of an existing capability token
+ */
+app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Extract parent token from authorization header
+    const parentToken = parseBearerToken(req.headers.authorization);
+    if (!parentToken) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token (parent capability) is required',
+        401
+      );
+    }
+
+    // Validate required fields
+    if (!req.body.requestedCapabilities || !Array.isArray(req.body.requestedCapabilities)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'requestedCapabilities array is required',
+        400
+      );
+    }
+
+    // Attenuate the capability
+    const response = await issuerService.attenuateCapability(
+      parentToken,
+      req.body.requestedCapabilities,
+      req.body.ttl
+    );
+
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Get public key endpoint
  * GET /api/v1/public-key
  */
