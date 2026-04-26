@@ -113,5 +113,121 @@ describe('JWTTokenVerifier', () => {
     it('should return false for non-revoked tokens', async () => {
       expect(await verifier.isRevoked('valid-id')).toBe(false);
     });
+
+    it('should return false and prune an entry whose expiry has passed', async () => {
+      const pastExpiry = Math.floor(Date.now() / 1000) - 1; // already expired
+      verifier.revokeToken('stale-id', pastExpiry);
+      // Should report not-revoked because the entry is expired
+      expect(await verifier.isRevoked('stale-id')).toBe(false);
+      // Calling again confirms the entry was deleted (not just ignored)
+      expect(await verifier.isRevoked('stale-id')).toBe(false);
+    });
+
+    it('should return true for a revoked token with a future explicit expiry', async () => {
+      const futureExpiry = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+      verifier.revokeToken('future-id', futureExpiry);
+      expect(await verifier.isRevoked('future-id')).toBe(true);
+    });
+  });
+
+  describe('revokeToken', () => {
+    it('should use a default expiry (~24 h) when expiresAt is omitted', async () => {
+      const before = Math.floor(Date.now() / 1000);
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      freshVerifier.revokeToken('default-ttl-id');
+      expect(await freshVerifier.isRevoked('default-ttl-id')).toBe(true);
+      // Confirm the stored expiry is roughly 24 h from now
+      const after = Math.floor(Date.now() / 1000);
+      const expectedMin = before + 86400;
+      const expectedMax = after + 86400;
+      // Access the private map via bracket notation for white-box validation
+      const map = (freshVerifier as any).revokedTokens as Map<string, number>;
+      const stored = map.get('default-ttl-id')!;
+      expect(stored).toBeGreaterThanOrEqual(expectedMin);
+      expect(stored).toBeLessThanOrEqual(expectedMax);
+    });
+
+    it('should prune expired entries when a new revocation is added', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const pastExpiry = Math.floor(Date.now() / 1000) - 1;
+      // Add several already-expired entries
+      freshVerifier.revokeToken('old-1', pastExpiry);
+      freshVerifier.revokeToken('old-2', pastExpiry);
+      freshVerifier.revokeToken('old-3', pastExpiry);
+      // Trigger pruning by revoking a new token with a future expiry
+      const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
+      freshVerifier.revokeToken('new-1', futureExpiry);
+      // The map should only contain the new entry — the three stale ones are gone
+      const map = (freshVerifier as any).revokedTokens as Map<string, number>;
+      expect(map.size).toBe(1);
+      expect(map.has('new-1')).toBe(true);
+    });
+  });
+
+  describe('algorithm support', () => {
+    it('should verify ES256 tokens when configured', async () => {
+      // Generate an EC key pair for ES256
+      const { publicKey: ecPubKey, privateKey: ecPrivKey } = await jose.generateKeyPair('ES256');
+      const ecPublicKeyPEM = await jose.exportSPKI(ecPubKey);
+
+      // Create verifier with ES256 algorithm
+      const es256Verifier = new JWTTokenVerifier(ecPublicKeyPEM, ['ES256']);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        capabilities: [
+          { resource: 'api://test/endpoint', actions: ['read'] },
+        ],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'ES256' })
+        .sign(ecPrivKey);
+
+      const decoded = await es256Verifier.verify(token);
+
+      expect(decoded.iss).toBe(payload.iss);
+      expect(decoded.sub).toBe(payload.sub);
+    });
+
+    it('should support multiple algorithms', async () => {
+      // Generate an RSA key pair (same key can sign with RS256 or RS384)
+      const { publicKey: rsaPubKey, privateKey: rsaPrivKey } = await jose.generateKeyPair('RS256');
+      const rsaPublicKeyPEM = await jose.exportSPKI(rsaPubKey);
+
+      // Create verifier that accepts both RS256 and RS384
+      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, ['RS256', 'RS384']);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        capabilities: [],
+      };
+
+      // Should verify RS256 token
+      const rsaToken = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(rsaPrivKey);
+
+      const decoded = await multiAlgoVerifier.verify(rsaToken);
+      expect(decoded.iss).toBe(payload.iss);
+
+      // Should also verify RS384 token signed with the same RSA key
+      const rs384Token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS384' })
+        .sign(rsaPrivKey);
+
+      const decoded384 = await multiAlgoVerifier.verify(rs384Token);
+      expect(decoded384.iss).toBe(payload.iss);
+    });
   });
 });
