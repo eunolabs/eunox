@@ -27,6 +27,11 @@ export interface IdentityAdapterConfig {
 }
 
 /**
+ * Supported JWT signing algorithms
+ */
+export type SigningAlgorithm = 'RS256' | 'RS384' | 'RS512' | 'ES256' | 'ES384' | 'ES512' | 'EdDSA';
+
+/**
  * Base configuration for signing adapters
  */
 export interface SigningAdapterConfig {
@@ -34,6 +39,8 @@ export interface SigningAdapterConfig {
   type: string;
   /** Human-readable name */
   name: string;
+  /** JWT signing algorithm (defaults to RS256 for backward compatibility) */
+  algorithm?: SigningAlgorithm;
   /** Additional configuration options */
   options?: Record<string, unknown>;
 }
@@ -101,9 +108,12 @@ export abstract class IdentityAdapter implements IdentityProvider {
  */
 export abstract class SigningAdapter implements TokenSigner {
   protected config: SigningAdapterConfig;
+  protected algorithm: SigningAlgorithm;
 
   constructor(config: SigningAdapterConfig) {
     this.config = config;
+    // Default to RS256 for backward compatibility
+    this.algorithm = config.algorithm || 'RS256';
   }
 
   /**
@@ -123,6 +133,13 @@ export abstract class SigningAdapter implements TokenSigner {
    * Must be implemented by concrete adapters
    */
   abstract getKeyId(): Promise<string>;
+
+  /**
+   * Get the signing algorithm used by this adapter
+   */
+  getAlgorithm(): SigningAlgorithm {
+    return this.algorithm;
+  }
 
   /**
    * Get adapter configuration
