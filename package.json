@@ -1,0 +1,27 @@
+{
+  "name": "@euno/monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Capability-Native Agent Governance System with Azure Integration",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "clean": "npm run clean --workspaces && rm -rf node_modules"
+  },
+  "keywords": [
+    "agent-governance",
+    "capability-based-security",
+    "azure-integration",
+    "decentralized-identity"
+  ],
+  "author": "EdgeObs",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
