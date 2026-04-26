@@ -29,6 +29,9 @@ export class AzureADIdentityProvider extends IdentityAdapter {
   public readonly name = 'azure-ad';
   private azureConfig: AzureADConfig;
   private graphClient?: Client;
+  // Cached JWKS function — created once so jose's built-in TTL-based key cache
+  // is reused across calls instead of being thrown away on every validateToken invocation.
+  private jwks: ReturnType<typeof jose.createRemoteJWKSet> | null = null;
 
   constructor(config: AzureADAdapterConfig) {
     super(config);
@@ -42,10 +45,14 @@ export class AzureADIdentityProvider extends IdentityAdapter {
     try {
       // Get JWKS for token verification
       const authority = this.azureConfig.authority || `https://login.microsoftonline.com/${this.azureConfig.tenantId}`;
-      const jwksUri = `${authority}/discovery/v2.0/keys`;
 
-      // Create JWKS instance
-      const JWKS = jose.createRemoteJWKSet(new URL(jwksUri));
+      // Lazily create the JWKS instance once and reuse it so that jose's
+      // internal TTL-based key cache is effective across requests.
+      if (!this.jwks) {
+        const jwksUri = `${authority}/discovery/v2.0/keys`;
+        this.jwks = jose.createRemoteJWKSet(new URL(jwksUri));
+      }
+      const JWKS = this.jwks;
 
       // Verify the token
       const { payload } = await jose.jwtVerify(token, JWKS, {
