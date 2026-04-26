@@ -139,7 +139,9 @@ export class DIDIdentityProvider extends IdentityAdapter {
    * @param did - The DID to resolve (e.g., "did:ion:abc123")
    * @returns DID Document containing public keys and service endpoints
    */
-  private async resolveDID(_did: string): Promise<any> {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async _resolveDID(_did: string): Promise<any> {
     // TODO: Implement using universal DID resolver
     // const resolverUrl = this.didConfig.resolverEndpoint || 'https://dev.uniresolver.io/1.0/identifiers';
     // const response = await fetch(`${resolverUrl}/${did}`);
@@ -150,7 +152,9 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Presentation signature
    */
-  private async verifyVPSignature(_vp: any, _didDocument: any): Promise<boolean> {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async _verifyVPSignature(_vp: any, _didDocument: any): Promise<boolean> {
     // TODO: Implement VP signature verification
     // Extract proof from VP
     // Get verification method from DID Document
@@ -161,7 +165,9 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Credential signature
    */
-  private async verifyVCSignature(_vc: any): Promise<boolean> {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async _verifyVCSignature(_vc: any): Promise<boolean> {
     // TODO: Implement VC signature verification
     // Resolve issuer DID
     // Verify credential signature

@@ -135,7 +135,9 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Resolve DID Document for the issuer
    */
-  private async resolveDID(_did: string): Promise<any> {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async _resolveDID(_did: string): Promise<any> {
     // TODO: Implement using DID resolver
     throw new Error('Not implemented');
   }
@@ -143,7 +145,9 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Find the verification method in DID Document
    */
-  private findVerificationMethod(_didDocument: any, _keyId?: string): any {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private _findVerificationMethod(_didDocument: any, _keyId?: string): any {
     // TODO: Search verificationMethod array in DID Document
     // If keyId provided, find matching method
     // Otherwise, use first available signing key
@@ -153,7 +157,9 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Extract public key from verification method
    */
-  private extractPublicKey(_verificationMethod: any): string {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private _extractPublicKey(_verificationMethod: any): string {
     // TODO: Convert verification method to PEM format
     // Handle different key types (RSA, EC, Ed25519)
     throw new Error('Not implemented');
@@ -162,7 +168,9 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Determine signing algorithm from key type
    */
-  private determineAlgorithm(): SigningAlgorithm {
+  // @ts-expect-error - Stub method for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private _determineAlgorithm(): SigningAlgorithm {
     // Use configured algorithm if available
     if (this.config.algorithm) {
       return this.config.algorithm;
