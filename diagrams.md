@@ -12,28 +12,28 @@ A1 — End‑to‑End System Architecture
 
 flowchart LR
     subgraph Enterprise["Enterprise Domain - Azure Reference"]
-        IdP["Identity Provider<br/>(Entra ID or any OIDC IdP)"]
-        Issuer["Capability Issuer<br/>policy eval + token minting<br/>signs via Key Vault or HSM"]
-        Agent["AI Agent<br/>DID identity + keypair<br/>sandboxed runtime"]
-        Attenuator["Attenuator<br/>issues subset tokens<br/>enforces no_new_privs"]
-        Gateway["Tool Gateway<br/>Reference Monitor<br/>(APIM validate-jwt or equivalent)"]
-        Audit["Audit Ledger<br/>append-only tamper-evident<br/>(Azure Monitor or any SIEM)"]
-        Service["Protected Service<br/>API - DB - Files"]
+        IdP["Identity Provider - (Entra ID or any OIDC IdP)"]
+        Issuer["Capability Issuer - policy eval + token minting - signs via Key Vault or HSM"]
+        Agent["AI Agent - DID identity + keypair - sandboxed runtime"]
+        Attenuator["Attenuator - issues subset tokens - enforces no_new_privs"]
+        Gateway["Tool Gateway - Reference Monitor - (APIM validate-jwt or equivalent)"]
+        Audit["Audit Ledger - append-only tamper-evident - (Azure Monitor or any SIEM)"]
+        Service["Protected Service - API - DB - Files"]
     end
 
     subgraph External["External or Partner Domain"]
-        ExtIssuer["Partner Issuer<br/>Partner DID authority"]
-        ExtAgent["External Agent<br/>DID identity"]
+        ExtIssuer["Partner Issuer - Partner DID authority"]
+        ExtAgent["External Agent - DID identity"]
         ExtService["External API"]
     end
 
     subgraph TrustInfra["Decentralized Trust Layer"]
-        DIDReg["DID Registry<br/>resolve public keys<br/>did:web via DNS or did:ion"]
-        RevList["Revocation Service<br/>status list or CRL"]
+        DIDReg["DID Registry - resolve public keys - did:web via DNS or did:ion"]
+        RevList["Revocation Service - status list or CRL"]
     end
 
     IdP -->|"OIDC token: sub roles aud exp"| Issuer
-    Issuer -->|"Capability JWT or VC: sub=AgentDID<br/>iss actions resources constraints exp jti sig"| Agent
+    Issuer -->|"Capability JWT or VC: sub=AgentDID - iss actions resources constraints exp jti sig"| Agent
     Agent -.->|"delegation request: subset of parent token"| Attenuator
     Attenuator -.->|"child token: narrower scope"| Agent
     Agent -->|"tool request + token + DPoP proof"| Gateway
@@ -48,6 +48,7 @@ flowchart LR
     Agent -->|"cross-org request + Enterprise VC"| ExtService
     ExtService -.->|"resolve Enterprise DID for pubkey"| DIDReg
     ExtService -.->|"check status"| RevList
+
 Data objects and key fields referenced in A1:
 Data Object
 Key Fields
@@ -78,13 +79,14 @@ sequenceDiagram
     Issuer->>IdP: Exchange code for tokens at token endpoint
     IdP-->>Issuer: id_token with sub roles groups and access_token
     Issuer->>Issuer: Evaluate policy and map user roles to capability set
-    Note over Issuer: Load Agent Capability Manifest template<br/>Intersect with user actual permissions
-    Issuer->>Issuer: Build token payload<br/>sub=AgentDID iss=EnterpriseDID<br/>actions resources constraints exp jti
+    Note over Issuer: Load Agent Capability Manifest template - Intersect with user actual permissions
+    Issuer->>Issuer: Build token payload - sub=AgentDID iss=EnterpriseDID - actions resources constraints exp jti
     Issuer->>HSM: Sign payload digest via ECDSA or Ed25519
-    Note over HSM: Key Vault does not hash content<br/>Hash locally then sign the digest
+    Note over HSM: Key Vault does not hash content - Hash locally then sign the digest
     HSM-->>Issuer: JWS signature
     Issuer->>Issuer: Assemble signed JWT/VC as header.payload.signature
     Issuer-->>Agent: Capability Token (signed JWT/VC)
+
 Capability Token payload example: 
 {
   "iss": "did:web:enterprise.example.com",
@@ -103,6 +105,7 @@ Capability Token payload example:
   },
   "no_new_privs": true
 }
+
 The signing step uses Azure Key Vault's sign operation, which creates a signature from a digest — the hash is computed locally before calling the Key Vault API【5†L287-L289】. On AWS the equivalent is KMS Sign; on GCP it is Cloud KMS asymmetricSign. 
 
 
@@ -116,7 +119,7 @@ sequenceDiagram
     participant Rev as Revocation Service
     participant Service as Protected API or Tool
 
-    Agent->>Gateway: HTTPS request<br/>Authorization: Bearer JWT/VC<br/>DPoP: signed nonce<br/>Body: tool parameters
+    Agent->>Gateway: HTTPS request - Authorization: Bearer JWT/VC - DPoP: signed nonce - Body: tool parameters
     Gateway->>Resolver: Fetch issuer public key from JWKS or DID Document
     Resolver-->>Gateway: Public key (cached and refreshed periodically)
     Gateway->>Gateway: Step 1 Verify JWS signature against public key
@@ -135,6 +138,7 @@ sequenceDiagram
         Gateway-->>Agent: HTTP 200 Tool result
         Note over Gateway: Log agentDID capId action resource outcome=ALLOWED ts
     end
+
 APIM's validate-jwt policy checks that the token was issued by a trusted issuer, targets the correct audience, has not expired, and contains required claims matching the requested operation. Required claims configured via ensure that only tokens explicitly listing the needed action scope pass validation. Tokens lacking the correct scope are rejected with the configured failed-validation-httpcode (default 401)【6†L51-L52】【6†L68-L70】. 
 
 
@@ -148,10 +152,10 @@ sequenceDiagram
     participant Child as Child Agent DID_C
     participant Gateway as Tool Gateway
 
-    Parent->>Attenuator: Delegate request<br/>parent_cap=jti123<br/>child=DID_C<br/>req_actions=[read] req_res=[logs:projectX] req_ttl=300
+    Parent->>Attenuator: Delegate request - parent_cap=jti123 - child=DID_C - req_actions=[read] req_res=[logs:projectX] req_ttl=300
     Attenuator->>Attenuator: Retrieve parent capability jti123
     Attenuator->>Attenuator: Invariant check: requested subset of parent?
-    Note over Attenuator: Parent has actions=[read search]<br/>resources=[logs://cluster/A/*] ttl=900<br/>Child requests actions=[read]<br/>resources=[logs://cluster/A/node1] ttl=300<br/>Result VALID strict subset
+    Note over Attenuator: Parent has actions=[read search] - resources=[logs://cluster/A/*] ttl=900 - Child requests actions=[read] - resources=[logs://cluster/A/node1] ttl=300 - Result VALID strict subset
 
     alt Requested scope exceeds parent
         Attenuator-->>Parent: DENIED no_new_privs violation
@@ -167,7 +171,8 @@ sequenceDiagram
 
     Child->>Gateway: Tool request with delegated token
     Gateway->>Gateway: Validate child token same enforcement as A3
-    Note over Gateway: Child token authorizes [read] on [logs://cluster/A/node1] only<br/>Any request outside this scope results in DENIED
+    Note over Gateway: Child token authorizes [read] on [logs://cluster/A/node1] only - Any request outside this scope results in DENIED
+
 Attenuation rules:
 Parent Capability
 Attenuation Allowed
@@ -219,6 +224,7 @@ sequenceDiagram
         Gateway-->>Agent: HTTP 403 AGENT_SESSION_KILLED
         Gateway->>Gateway: Log SessionKilled agentDID killedBy ts
     end
+
 Revocation models compared:
 Model
 Latency
@@ -251,18 +257,18 @@ B1 — Trust Boundaries and Attack Surfaces
 
 flowchart TB
     subgraph Untrusted["UNTRUSTED ZONE"]
-        user_input["Human and External Inputs<br/>prompts and web data"]
-        agent_process["Agent Process<br/>LLM reasoning<br/>untrusted decisions"]
-        ext_agent["External Agent or API<br/>untrusted identity"]
+        user_input["Human and External Inputs - prompts and web data"]
+        agent_process["Agent Process - LLM reasoning - untrusted decisions"]
+        ext_agent["External Agent or API - untrusted identity"]
     end
 
     subgraph TCB["TRUSTED COMPUTING BASE"]
         idp["Central IdP"]
         issuer["Capability Issuer"]
-        gateway["Secure Gateway<br/>Reference Monitor"]
-        sandbox["Sandbox<br/>no default net or fs<br/>seccomp and AppArmor"]
+        gateway["Secure Gateway - Reference Monitor"]
+        sandbox["Sandbox - no default net or fs - seccomp and AppArmor"]
         monitor["Monitoring and SIEM"]
-        killswitch["Kill Switch<br/>admin only<br/>outside agent runtime"]
+        killswitch["Kill Switch - admin only - outside agent runtime"]
     end
 
     subgraph Resources["PROTECTED RESOURCES"]
@@ -281,6 +287,7 @@ flowchart TB
     monitor -.-> admin["Security Team"]
     admin -.-> killswitch
     killswitch -.->|"terminate session"| gateway
+
 Attack surfaces at each trust boundary crossing:
 Crossing Point
 Threat
@@ -313,7 +320,7 @@ sequenceDiagram
     rect rgb(230, 255, 230)
         Note over Legit,GW: Normal flow Agent proves key ownership
         Legit->>GW: Tool request + Capability JWT + DPoP signature
-        Note right of Legit: DPoP header contains<br/>htm POST htu /api/tool iat jti<br/>signed with Agent DID private key
+        Note right of Legit: DPoP header contains - htm POST htu /api/tool iat jti - signed with Agent DID private key
         GW->>GW: 1 Verify JWT signature with issuer key
         GW->>GW: 2 Verify DPoP signature with agent DID public key
         GW->>GW: 3 Confirm DPoP key thumbprint matches JWT sub claim
@@ -323,25 +330,26 @@ sequenceDiagram
     rect rgb(255, 230, 230)
         Note over Attacker,GW: Attack Stolen token replayed
         Attacker->>GW: Same JWT stolen + forged DPoP attempt
-        Note right of Attacker: Attacker cannot produce valid DPoP<br/>because they lack DID-A private key
+        Note right of Attacker: Attacker cannot produce valid DPoP - because they lack DID-A private key
         GW->>GW: 1 JWT signature valid issuer key matches
         GW->>GW: 2 DPoP signature INVALID wrong key
         GW-->>Attacker: 401 Unauthorized PoP check failed
         Note over GW: Log DeniedAction reason=invalid_dpop ts
     end
+
 Security rationale: Without proof-of-possession, a stolen bearer token grants the attacker full authority for the token's lifetime. With DPoP, the attacker must also possess the agent's private key to produce a valid signature. Since the private key is held in protected memory (never exposed to the LLM's token stream), token theft alone is insufficient for exploitation. 
 
 
 B3 — Confused Deputy Containment via Constrained Delegation
 
 flowchart LR
-    P["Parent Agent<br/>capabilities A B C"]
-    ATT["Attenuator<br/>verifies subset rule"]
-    C["Child Agent<br/>capabilities A B only"]
+    P["Parent Agent - capabilities A B C"]
+    ATT["Attenuator - verifies subset rule"]
+    C["Child Agent - capabilities A B only"]
     GW["Tool Gateway"]
-    RA["Resource A<br/>ALLOWED"]
-    Denied_C["Action C<br/>DENIED 403"]
-    Denied_D["Action D<br/>DENIED 403"]
+    RA["Resource A - ALLOWED"]
+    Denied_C["Action C - DENIED 403"]
+    Denied_D["Action D - DENIED 403"]
 
     P -->|"delegates A and B only"| ATT
     ATT -->|"issues child token for A B"| C
@@ -351,6 +359,7 @@ flowchart LR
     GW -.->|"token lacks C"| Denied_C
     C -->|"request action D never existed"| GW
     GW -.->|"token lacks D"| Denied_D
+
 Blast radius analysis:
 Scenario
 Without Capability Model
@@ -371,20 +380,20 @@ B4 — Incident Response: Detection to Containment to Forensics
 
 flowchart TB
     subgraph Detection["1 Detection"]
-        Alert["Sentinel or SIEM Alert<br/>spike in DeniedAction events<br/>or anomalous tool-call pattern"]
-        Monitor["Monitoring Dashboard<br/>rate of denied vs allowed<br/>agent behavior anomaly"]
+        Alert["Sentinel or SIEM Alert - spike in DeniedAction events - or anomalous tool-call pattern"]
+        Monitor["Monitoring Dashboard - rate of denied vs allowed - agent behavior anomaly"]
     end
 
     subgraph Containment["2 Containment within seconds"]
-        Kill["Kill Switch Activation<br/>admin API kill session"]
-        Revoke["Token Revocation<br/>add jti to revocation list"]
-        Isolate["Network Isolation<br/>block agent pod egress"]
+        Kill["Kill Switch Activation - admin API kill session"]
+        Revoke["Token Revocation - add jti to revocation list"]
+        Isolate["Network Isolation - block agent pod egress"]
     end
 
     subgraph Forensics["3 Forensic Analysis"]
-        AuditGraph["Capability Audit Graph<br/>reconstruct authority chain"]
-        TraceBack["Trace action to capId<br/>to parentCapId to issuer<br/>to principal"]
-        Evidence["Evidence Package<br/>signed audit records<br/>verifiable via enterprise pubkey"]
+        AuditGraph["Capability Audit Graph - reconstruct authority chain"]
+        TraceBack["Trace action to capId - to parentCapId to issuer - to principal"]
+        Evidence["Evidence Package - signed audit records - verifiable via enterprise pubkey"]
     end
 
     Alert --> Kill
@@ -395,6 +404,7 @@ flowchart TB
     Isolate --> AuditGraph
     AuditGraph --> TraceBack
     TraceBack --> Evidence
+
 Forensic query examples supported by the Capability Audit Graph:
 Question
 How the CAG Answers It
@@ -419,7 +429,7 @@ C1 — Capability‑Native Governance Overview
 
 flowchart LR
     user["User or Owner"]
-    idp["Identity System<br/>(Azure AD or any IdP)"]
+    idp["Identity System - (Azure AD or any IdP)"]
     issuer["Capability Issuer"]
     agent["AI Agent"]
     gateway["Secure Gateway"]
@@ -433,6 +443,7 @@ flowchart LR
     gateway -->|"verifies and forwards"| service
     gateway -.->|"blocks if not authorized"| agent
     gateway --> audit
+
 Key message for stakeholders: The agent never has direct access to enterprise resources. Every action must pass through the Secure Gateway, which mechanically verifies the agent's token before allowing any operation. If an agent is tricked by malicious input, it can attempt unauthorized actions — but those attempts are automatically blocked and logged. 
 
 
@@ -456,6 +467,7 @@ sequenceDiagram
     else Token missing invalid or wrong scope
         Gateway-->>Agent: Access denied
     end
+
 Stakeholder takeaway: This system converts the security question from "Will the AI follow its instructions?" to "Does the AI hold a valid token for this specific action?" — a question with a deterministic, verifiable answer. 
 
 
@@ -463,31 +475,32 @@ C3 — Cross‑Organization Agent Trust via Verifiable Credentials
 
 flowchart LR
     subgraph OrgA["Organization A"]
-        issuerA["A Issuer<br/>DID: did:web:a.example.com"]
-        agentA["Agent A<br/>DID: did:web:a.example.com:agents:007"]
+        issuerA["A Issuer - DID: did:web:a.example.com"]
+        agentA["Agent A - DID: did:web:a.example.com:agents:007"]
     end
 
     subgraph OrgB["Organization B"]
-        serviceB["Service B<br/>Verifier"]
+        serviceB["Service B - Verifier"]
     end
 
     subgraph PublicTrust["Public Trust Layer"]
-        DIDDoc["DID Documents<br/>public keys and<br/>service endpoints"]
+        DIDDoc["DID Documents - public keys and - service endpoints"]
     end
 
-    issuerA -->|"1 Issue VC to Agent A<br/>signed by Company A DID"| agentA
+    issuerA -->|"1 Issue VC to Agent A - signed by Company A DID"| agentA
     agentA -->|"2 Present VC + proof of DID key"| serviceB
-    serviceB -.->|"3 Resolve Company A DID<br/>fetch public key from DID Doc"| DIDDoc
-    serviceB -->|"4 Verify VC signature<br/>5 If trusted issuer grant access"| serviceB
+    serviceB -.->|"3 Resolve Company A DID - fetch public key from DID Doc"| DIDDoc
+    serviceB -->|"4 Verify VC signature - 5 If trusted issuer grant access"| serviceB
+
 How it works (for non-technical stakeholders): 
-Organization A issues a digital credential to its agent, cryptographically signed by Organization A's identity. 
+Organization A issues a digital credential to its agent, cryptographically signed by Organization A's identity.
 
-The agent presents this credential to Organization B's service. 
+The agent presents this credential to Organization B's service.
 
-Organization B looks up Organization A's public key from a public registry (no direct connection to Organization A's identity system needed). 
+Organization B looks up Organization A's public key from a public registry (no direct connection to Organization A's identity system needed).
 
-Organization B verifies the credential's authenticity using that public key. 
+Organization B verifies the credential's authenticity using that public key.
 
-If Organization B trusts Organization A as an issuer (pre-configured), access is granted. 
+If Organization B trusts Organization A as an issuer (pre-configured), access is granted.
 
 Research on AI agents equipped with W3C DIDs and VCs demonstrates that this approach enables agents to prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs【4†L14】. The same research reveals that security-critical procedures such as VC verification should not be orchestrated solely by the LLM — they must be implemented as deterministic external controls【4†L94】, reinforcing the core principle that enforcement belongs in the trusted computing base, not in the agent's reasoning layer.
