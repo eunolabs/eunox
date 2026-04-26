@@ -9,11 +9,11 @@ import {
   CapabilityTokenPayload,
   CapabilityError,
   ErrorCode,
-  isExpired,
 } from '@euno/common';
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
+  private cachedKeyObject: jose.KeyLike | Uint8Array | null = null;
   private revokedTokens: Set<string> = new Set();
 
   constructor(publicKey: string) {
@@ -25,22 +25,15 @@ export class JWTTokenVerifier implements TokenVerifier {
    */
   async verify(token: string): Promise<CapabilityTokenPayload> {
     try {
-      // Import the public key
-      const publicKeyObj = await jose.importSPKI(this.publicKey, 'RS256');
+      // Import the public key (cached for performance; invalidated on key rotation)
+      if (!this.cachedKeyObject) {
+        this.cachedKeyObject = await jose.importSPKI(this.publicKey, 'RS256');
+      }
 
       // Verify the token signature and decode
-      const { payload } = await jose.jwtVerify(token, publicKeyObj, {
+      const { payload } = await jose.jwtVerify(token, this.cachedKeyObject, {
         algorithms: ['RS256'],
       });
-
-      // Check expiration
-      if (payload.exp && isExpired(payload.exp as number)) {
-        throw new CapabilityError(
-          ErrorCode.EXPIRED_TOKEN,
-          'Token has expired',
-          401
-        );
-      }
 
       // Check if token is revoked
       const tokenId = payload.jti as string;
@@ -57,6 +50,15 @@ export class JWTTokenVerifier implements TokenVerifier {
     } catch (error) {
       if (error instanceof CapabilityError) {
         throw error;
+      }
+
+      // Map jose JWTExpired to EXPIRED_TOKEN so callers get the correct error code
+      if (error instanceof Error && (error as any).code === 'ERR_JWT_EXPIRED') {
+        throw new CapabilityError(
+          ErrorCode.EXPIRED_TOKEN,
+          'Token has expired',
+          401
+        );
       }
 
       throw new CapabilityError(
@@ -86,5 +88,6 @@ export class JWTTokenVerifier implements TokenVerifier {
    */
   updatePublicKey(publicKey: string): void {
     this.publicKey = publicKey;
+    this.cachedKeyObject = null; // Invalidate cache on key rotation
   }
 }

@@ -118,9 +118,10 @@ async function validateCapabilityMiddleware(
 
     const action = actionMap[req.method] || 'read';
 
-    // Extract resource from path
-    // Format: api://service-name/endpoint
-    const resource = `api:/${req.path}`;
+    // Extract resource from path, deriving canonical api:// URI
+    // req.path has the /proxy prefix already stripped by Express route mounting
+    const resourcePath = req.path.replace(/^\/+/, '');
+    const resource = `api://${resourcePath}`;
 
     // Validate the action
     const validationRequest: ValidateActionRequest = {
@@ -279,6 +280,15 @@ async function startServer() {
   }
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
 
-export { app, enforcementEngine };
+export function getEnforcementEngine(): EnforcementEngine {
+  if (!enforcementEngine) {
+    throw new Error('Enforcement engine has not been initialized');
+  }
+  return enforcementEngine;
+}
+
+export { app };

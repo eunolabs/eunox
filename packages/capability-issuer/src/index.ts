@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import {
   IssueCapabilityRequest,
   CapabilityError,
+  ErrorCode,
   parseBearerToken,
   createLogger,
   ServiceConfig,
@@ -94,7 +95,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     const authToken = parseBearerToken(req.headers.authorization);
     if (!authToken) {
       throw new CapabilityError(
-        'AUTHENTICATION_FAILED' as any,
+        ErrorCode.AUTHENTICATION_FAILED,
         'Authorization header with Bearer token is required',
         401
       );
@@ -111,7 +112,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     // Validate required fields
     if (!issueRequest.agentId) {
       throw new CapabilityError(
-        'INVALID_REQUEST' as any,
+        ErrorCode.INVALID_REQUEST,
         'agentId is required',
         400
       );
@@ -203,21 +204,23 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   }
 });
 
-// Start server
-const server = app.listen(config.port, () => {
-  logger.info(`Capability Issuer listening on port ${config.port}`, {
-    environment: config.environment,
-    issuerDid: config.issuerDid,
+if (require.main === module) {
+  // Start server
+  const server = app.listen(config.port, () => {
+    logger.info(`Capability Issuer listening on port ${config.port}`, {
+      environment: config.environment,
+      issuerDid: config.issuerDid,
+    });
   });
-});
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, closing server gracefully');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, closing server gracefully');
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
   });
-});
+}
 
 export { app, issuerService };

@@ -6,6 +6,7 @@ import { EnforcementEngine } from '../src/enforcement';
 import { JWTTokenVerifier } from '../src/verifier';
 import {
   CapabilityTokenPayload,
+  CapabilityConstraint,
   getCurrentTimestamp,
   getExpirationTimestamp,
   createLogger,
@@ -29,7 +30,7 @@ describe('EnforcementEngine', () => {
   });
 
   async function createTestToken(
-    capabilities: Array<{ resource: string; actions: string[] }>
+    capabilities: CapabilityConstraint[]
   ): Promise<string> {
     const payload: CapabilityTokenPayload = {
       iss: 'did:web:test.com',

@@ -70,14 +70,33 @@ export class CapabilityIssuerService {
       // Step 3: If specific capabilities were requested, validate they're allowed
       if (request.requestedCapabilities) {
         // Validate that requested capabilities are a subset of what the user's roles allow
-        const allowedResources = new Set(capabilities.map(c => c.resource));
+        const allowedCapabilitiesByResource = new Map<string, Set<string>>();
+        for (const capability of capabilities) {
+          const allowedActions = allowedCapabilitiesByResource.get(capability.resource) || new Set<string>();
+          for (const action of capability.actions) {
+            allowedActions.add(action);
+          }
+          allowedCapabilitiesByResource.set(capability.resource, allowedActions);
+        }
+
         for (const requested of request.requestedCapabilities) {
-          if (!allowedResources.has(requested.resource)) {
+          const allowedActions = allowedCapabilitiesByResource.get(requested.resource);
+          if (!allowedActions) {
             throw new CapabilityError(
               ErrorCode.INSUFFICIENT_PERMISSIONS,
               `User does not have permission for resource: ${requested.resource}`,
               403
             );
+          }
+
+          for (const action of requested.actions) {
+            if (!allowedActions.has(action)) {
+              throw new CapabilityError(
+                ErrorCode.INSUFFICIENT_PERMISSIONS,
+                `User does not have permission for action '${action}' on resource: ${requested.resource}`,
+                403
+              );
+            }
           }
         }
         capabilities = request.requestedCapabilities;

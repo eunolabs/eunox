@@ -88,12 +88,12 @@ export function matchesResource(resource: string, pattern: string): boolean {
   }
 
   if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -2);
+    const prefix = pattern.slice(0, -1);
     return resource.startsWith(prefix);
   }
 
   if (pattern.endsWith('/**')) {
-    const prefix = pattern.slice(0, -3);
+    const prefix = pattern.slice(0, -2);
     return resource.startsWith(prefix);
   }
 

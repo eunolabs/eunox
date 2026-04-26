@@ -6,8 +6,6 @@ import {
   sha256,
   generateId,
   isExpired,
-  getCurrentTimestamp,
-  getExpirationTimestamp,
   isValidDID,
   isValidResourceId,
   isActionAllowed,

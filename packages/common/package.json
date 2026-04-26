@@ -11,13 +11,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@azure/identity": "^4.0.0",
-    "@azure/keyvault-keys": "^4.8.0",
-    "jsonwebtoken": "^9.0.2",
-    "jose": "^5.2.0"
+    "winston": "^3.17.0"
   },
   "devDependencies": {
-    "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   }

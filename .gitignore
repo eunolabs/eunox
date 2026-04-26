@@ -38,6 +38,9 @@ yarn-error.log*
 coverage/
 .nyc_output/
 
+# TypeScript incremental build artifacts
+*.tsbuildinfo
+
 # Temporary files
 tmp/
 temp/
