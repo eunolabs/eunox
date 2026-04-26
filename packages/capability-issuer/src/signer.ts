@@ -31,8 +31,10 @@ function detectAlgorithmFromKey(key: KeyVaultKey): SigningAlgorithm {
   } else if (keyType === 'EC' || keyType === 'EC-HSM') {
     // Determine ES algorithm from curve
     const curveName = key.key?.crv;
-    if (curveName === 'P-256' || curveName === 'P-256K') {
+    if (curveName === 'P-256') {
       return 'ES256';
+    } else if (curveName === 'P-256K') {
+      throw new Error('Unsupported EC curve P-256K: ES256K is not supported by this signer');
     } else if (curveName === 'P-384') {
       return 'ES384';
     } else if (curveName === 'P-521') {

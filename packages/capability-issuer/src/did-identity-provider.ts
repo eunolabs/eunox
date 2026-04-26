@@ -139,7 +139,6 @@ export class DIDIdentityProvider extends IdentityAdapter {
    * @param did - The DID to resolve (e.g., "did:ion:abc123")
    * @returns DID Document containing public keys and service endpoints
    */
-  // @ts-expect-error - Stub implementation for future DID support
   private async resolveDID(_did: string): Promise<any> {
     // TODO: Implement using universal DID resolver
     // const resolverUrl = this.didConfig.resolverEndpoint || 'https://dev.uniresolver.io/1.0/identifiers';
@@ -151,7 +150,6 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Presentation signature
    */
-  // @ts-expect-error - Stub implementation for future DID support
   private async verifyVPSignature(_vp: any, _didDocument: any): Promise<boolean> {
     // TODO: Implement VP signature verification
     // Extract proof from VP
@@ -163,7 +161,6 @@ export class DIDIdentityProvider extends IdentityAdapter {
   /**
    * Verify a Verifiable Credential signature
    */
-  // @ts-expect-error - Stub implementation for future DID support
   private async verifyVCSignature(_vc: any): Promise<boolean> {
     // TODO: Implement VC signature verification
     // Resolve issuer DID

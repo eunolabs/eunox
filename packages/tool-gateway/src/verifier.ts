@@ -14,14 +14,15 @@ import {
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
-  private cachedKeyObject: jose.KeyLike | Uint8Array | null = null;
+  private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
   private revokedTokens: Set<string> = new Set();
   private algorithms: SigningAlgorithm[];
 
   constructor(publicKey: string, algorithms?: SigningAlgorithm[]) {
     this.publicKey = publicKey;
-    // Default to RS256 for backward compatibility, but allow multiple algorithms
-    this.algorithms = algorithms || ['RS256'];
+    // Default to RS256 for backward compatibility, but allow multiple algorithms.
+    // Normalize so that an explicitly passed empty array also falls back to RS256.
+    this.algorithms = algorithms?.length ? algorithms : ['RS256'];
   }
 
   /**
@@ -29,15 +30,20 @@ export class JWTTokenVerifier implements TokenVerifier {
    */
   async verify(token: string): Promise<CapabilityTokenPayload> {
     try {
-      // Import the public key (cached for performance; invalidated on key rotation)
-      if (!this.cachedKeyObject) {
-        // Use the first configured algorithm for key import
-        const algorithm = this.algorithms[0] || 'RS256';
-        this.cachedKeyObject = await jose.importSPKI(this.publicKey, algorithm);
+      // Read the algorithm from the token header so we import the key with the
+      // correct alg parameter (jose constrains key usage to the import alg).
+      const { alg } = jose.decodeProtectedHeader(token);
+      const algorithm = (alg ?? this.algorithms[0] ?? 'RS256') as string;
+
+      // Import the public key per algorithm (cached for performance; invalidated on key rotation)
+      if (!this.cachedKeyObjects.has(algorithm)) {
+        const keyObject = await jose.importSPKI(this.publicKey, algorithm);
+        this.cachedKeyObjects.set(algorithm, keyObject);
       }
+      const keyObject = this.cachedKeyObjects.get(algorithm)!;
 
       // Verify the token signature and decode
-      const { payload } = await jose.jwtVerify(token, this.cachedKeyObject, {
+      const { payload } = await jose.jwtVerify(token, keyObject, {
         algorithms: this.algorithms,
       });
 
@@ -94,6 +100,6 @@ export class JWTTokenVerifier implements TokenVerifier {
    */
   updatePublicKey(publicKey: string): void {
     this.publicKey = publicKey;
-    this.cachedKeyObject = null; // Invalidate cache on key rotation
+    this.cachedKeyObjects.clear(); // Invalidate cache on key rotation
   }
 }

@@ -147,12 +147,12 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('should support multiple algorithms', async () => {
-      // Generate both RSA and EC key pairs
+      // Generate an RSA key pair (same key can sign with RS256 or RS384)
       const { publicKey: rsaPubKey, privateKey: rsaPrivKey } = await jose.generateKeyPair('RS256');
       const rsaPublicKeyPEM = await jose.exportSPKI(rsaPubKey);
 
-      // Create verifier that accepts both RS256 and ES256
-      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, ['RS256', 'ES256']);
+      // Create verifier that accepts both RS256 and RS384
+      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, ['RS256', 'RS384']);
 
       const payload: CapabilityTokenPayload = {
         iss: 'did:web:test.com',
@@ -171,6 +171,14 @@ describe('JWTTokenVerifier', () => {
 
       const decoded = await multiAlgoVerifier.verify(rsaToken);
       expect(decoded.iss).toBe(payload.iss);
+
+      // Should also verify RS384 token signed with the same RSA key
+      const rs384Token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS384' })
+        .sign(rsaPrivKey);
+
+      const decoded384 = await multiAlgoVerifier.verify(rs384Token);
+      expect(decoded384.iss).toBe(payload.iss);
     });
   });
 });
