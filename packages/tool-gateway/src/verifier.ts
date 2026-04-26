@@ -33,7 +33,17 @@ export class JWTTokenVerifier implements TokenVerifier {
       // Read the algorithm from the token header so we import the key with the
       // correct alg parameter (jose constrains key usage to the import alg).
       const { alg } = jose.decodeProtectedHeader(token);
-      const algorithm = (alg ?? this.algorithms[0] ?? 'RS256') as string;
+      const algorithm = alg ?? this.algorithms[0] ?? 'RS256';
+
+      // Reject tokens whose algorithm is not in the configured allow-list before
+      // importing the key, so we fail fast rather than letting jose handle it.
+      if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Token uses disallowed algorithm: ${algorithm}`,
+          401
+        );
+      }
 
       // Import the public key per algorithm (cached for performance; invalidated on key rotation)
       if (!this.cachedKeyObjects.has(algorithm)) {
