@@ -32,7 +32,7 @@ export class CapabilityIssuerService {
   private auditLogger: Logger;
 
   /** Algorithms permitted for capability token signatures. */
-  private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'] as const;
+  private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'ES256K', 'EdDSA'] as const;
 
   constructor(
     signer: TokenSigner,
