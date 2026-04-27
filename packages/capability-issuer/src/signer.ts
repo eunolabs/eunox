@@ -31,3 +31,5 @@ export {
 // Re-export built-in signer implementations
 export { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './azure-signer';
 export { DIDSigner, DIDSigningAdapterConfig } from './did-signer';
+export { AWSKMSSigner, AWSKMSAdapterConfig } from './aws-kms-signer';
+export { GCPCloudKMSSigner, GCPCloudKMSAdapterConfig } from './gcp-cloudkms-signer';

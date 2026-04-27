@@ -22,6 +22,8 @@ The system includes these providers out of the box:
 
 **Token Signers:**
 - `azure-keyvault` - Azure Key Vault for cryptographic signing
+- `aws-kms` - AWS Key Management Service for cryptographic signing
+- `gcp-cloudkms` - Google Cloud Key Management Service for cryptographic signing
 - `did` - DID-based signing (placeholder for future implementation)
 
 ### Registry System
@@ -258,6 +260,63 @@ const signer = await defaultSigningRegistry.createSigningAdapter({
 
 // Use the signer
 const token = await signer.sign(payload);
+```
+
+## Using Built-in Cloud KMS Signers
+
+### AWS KMS Signer
+
+The AWS KMS signer is included as a built-in provider:
+
+```typescript
+import { defaultSigningRegistry } from '@euno/capability-issuer/adapters';
+
+// AWS KMS is already registered, just create an instance
+const awsSigner = await defaultSigningRegistry.createSigningAdapter({
+  type: 'aws-kms',
+  name: 'AWS KMS Production Signer',
+  algorithm: 'RS256',
+  awsKMS: {
+    region: 'us-east-1',
+    keyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012',
+    // Optional: Provide explicit credentials (otherwise uses default credential chain)
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+// Use the signer
+const token = await awsSigner.sign(payload);
+const publicKey = await awsSigner.getPublicKey();
+```
+
+### GCP Cloud KMS Signer
+
+The GCP Cloud KMS signer is also included as a built-in provider:
+
+```typescript
+import { defaultSigningRegistry } from '@euno/capability-issuer/adapters';
+
+// GCP Cloud KMS is already registered, just create an instance
+const gcpSigner = await defaultSigningRegistry.createSigningAdapter({
+  type: 'gcp-cloudkms',
+  name: 'GCP Cloud KMS Production Signer',
+  algorithm: 'RS256',
+  gcpKMS: {
+    projectId: 'my-project-id',
+    locationId: 'us-central1',
+    keyRingId: 'my-key-ring',
+    cryptoKeyId: 'my-crypto-key',
+    // Optional: Specify key version (uses primary if not provided)
+    cryptoKeyVersion: '1',
+    // Optional: Provide explicit credentials (otherwise uses default credential chain)
+    keyFilePath: '/path/to/service-account-key.json',
+  },
+});
+
+// Use the signer
+const token = await gcpSigner.sign(payload);
+const publicKey = await gcpSigner.getPublicKey();
 ```
 
 ## Dynamic Provider Loading
@@ -502,6 +561,8 @@ For questions or issues with:
 Example implementations can be found in the package source under `packages/capability-issuer/src`:
 - `azure-identity-provider.ts` - Azure AD identity provider
 - `azure-signer.ts` - Azure Key Vault token signer
+- `aws-kms-signer.ts` - AWS KMS token signer
+- `gcp-cloudkms-signer.ts` - GCP Cloud KMS token signer
 - `did-identity-provider.ts` - DID identity provider stub
 - `did-signer.ts` - DID token signer stub
 

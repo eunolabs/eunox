@@ -7,6 +7,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import * as jose from 'jose';
 import {
   IssueCapabilityRequest,
   CapabilityError,
@@ -14,10 +15,11 @@ import {
   parseBearerToken,
   createLogger,
   ServiceConfig,
+  TokenSigner,
+  IdentityProvider,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
-import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './azure-signer';
-import { AzureADIdentityProvider, AzureADAdapterConfig } from './azure-identity-provider';
+import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
 
 // Load environment variables
 dotenv.config();
@@ -27,20 +29,42 @@ const config: ServiceConfig = {
   name: 'capability-issuer',
   port: parseInt(process.env.PORT || '3001', 10),
   environment: (process.env.NODE_ENV as any) || 'development',
-  keyVault: {
-    vaultUrl: process.env.AZURE_KEYVAULT_URL || '',
+  signingProvider: (process.env.SIGNING_PROVIDER as any) || 'azure-keyvault',
+  identityProvider: (process.env.IDENTITY_PROVIDER as any) || 'azure-ad',
+  // Azure Key Vault configuration
+  keyVault: process.env.AZURE_KEYVAULT_URL ? {
+    vaultUrl: process.env.AZURE_KEYVAULT_URL,
     keyName: process.env.AZURE_KEYVAULT_KEY_NAME || 'capability-signing-key',
+    keyVersion: process.env.AZURE_KEYVAULT_KEY_VERSION,
     credentialType: (process.env.AZURE_CREDENTIAL_TYPE as any) || 'default',
     clientId: process.env.AZURE_CLIENT_ID,
     clientSecret: process.env.AZURE_CLIENT_SECRET,
     tenantId: process.env.AZURE_TENANT_ID,
-  },
-  azureAD: {
-    tenantId: process.env.AZURE_AD_TENANT_ID || '',
+  } : undefined,
+  // AWS KMS configuration
+  awsKMS: process.env.AWS_KMS_KEY_ID ? {
+    region: process.env.AWS_KMS_REGION || 'us-east-1',
+    keyId: process.env.AWS_KMS_KEY_ID,
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+  } : undefined,
+  // GCP Cloud KMS configuration
+  gcpCloudKMS: (process.env.GCP_PROJECT_ID && process.env.GCP_KEYRING_ID && process.env.GCP_CRYPTOKEY_ID) ? {
+    projectId: process.env.GCP_PROJECT_ID,
+    locationId: process.env.GCP_LOCATION_ID || 'us-central1',
+    keyRingId: process.env.GCP_KEYRING_ID,
+    cryptoKeyId: process.env.GCP_CRYPTOKEY_ID,
+    cryptoKeyVersion: process.env.GCP_CRYPTOKEY_VERSION,
+    keyFilePath: process.env.GCP_KEY_FILE_PATH,
+  } : undefined,
+  // Azure AD configuration
+  azureAD: process.env.AZURE_AD_TENANT_ID ? {
+    tenantId: process.env.AZURE_AD_TENANT_ID,
     clientId: process.env.AZURE_AD_CLIENT_ID || '',
     clientSecret: process.env.AZURE_AD_CLIENT_SECRET,
     authority: process.env.AZURE_AD_AUTHORITY,
-  },
+  } : undefined,
   issuerDid: process.env.ISSUER_DID || 'did:web:example.com',
   defaultTokenTTL: parseInt(process.env.DEFAULT_TOKEN_TTL || '900', 10),
   enableDetailedLogging: process.env.ENABLE_DETAILED_LOGGING === 'true',
@@ -49,28 +73,114 @@ const config: ServiceConfig = {
 // Create logger
 const logger = createLogger(config.name, config.environment);
 
-// Initialize services with adapter configurations
-const signerConfig: AzureKeyVaultAdapterConfig = {
-  type: 'azure-keyvault',
-  name: 'Azure Key Vault Signer',
-  keyVault: config.keyVault!,
-};
+// Initialize signer based on configuration
+async function createSigner(): Promise<TokenSigner> {
+  const signingProvider = config.signingProvider || 'azure-keyvault';
 
-const identityConfig: AzureADAdapterConfig = {
-  type: 'azure-ad',
-  name: 'Azure AD Identity Provider',
-  azureAD: config.azureAD!,
-};
+  logger.info(`Initializing ${signingProvider} signer`);
 
-const signer = new AzureKeyVaultSigner(signerConfig);
-const identityProvider = new AzureADIdentityProvider(identityConfig);
-const issuerService = new CapabilityIssuerService(
-  signer,
-  identityProvider,
-  config.issuerDid!,
-  config.defaultTokenTTL,
-  logger
-);
+  switch (signingProvider) {
+    case 'azure-keyvault':
+      if (!config.keyVault) {
+        throw new Error('Azure Key Vault configuration is required when SIGNING_PROVIDER=azure-keyvault');
+      }
+      return await defaultSigningRegistry.createSigningAdapter({
+        type: 'azure-keyvault',
+        name: 'Azure Key Vault Signer',
+        keyVault: config.keyVault,
+      });
+
+    case 'aws-kms':
+      if (!config.awsKMS) {
+        throw new Error('AWS KMS configuration is required when SIGNING_PROVIDER=aws-kms');
+      }
+      return await defaultSigningRegistry.createSigningAdapter({
+        type: 'aws-kms',
+        name: 'AWS KMS Signer',
+        awsKMS: config.awsKMS,
+      });
+
+    case 'gcp-cloudkms':
+      if (!config.gcpCloudKMS) {
+        throw new Error('GCP Cloud KMS configuration is required when SIGNING_PROVIDER=gcp-cloudkms');
+      }
+      return await defaultSigningRegistry.createSigningAdapter({
+        type: 'gcp-cloudkms',
+        name: 'GCP Cloud KMS Signer',
+        gcpKMS: config.gcpCloudKMS,
+      });
+
+    default:
+      throw new Error(`Unsupported signing provider: ${signingProvider}`);
+  }
+}
+
+// Initialize identity provider based on configuration
+async function createIdentityProvider(): Promise<IdentityProvider> {
+  const identityProvider = config.identityProvider || 'azure-ad';
+
+  logger.info(`Initializing ${identityProvider} identity provider`);
+
+  switch (identityProvider) {
+    case 'azure-ad':
+      if (!config.azureAD) {
+        throw new Error('Azure AD configuration is required when IDENTITY_PROVIDER=azure-ad');
+      }
+      return await defaultIdentityRegistry.createIdentityAdapter({
+        type: 'azure-ad',
+        name: 'Azure AD Identity Provider',
+        azureAD: config.azureAD,
+      });
+
+    case 'did':
+      return await defaultIdentityRegistry.createIdentityAdapter({
+        type: 'did',
+        name: 'DID Identity Provider',
+      });
+
+    default:
+      throw new Error(`Unsupported identity provider: ${identityProvider}`);
+  }
+}
+
+// Initialize services
+let issuerService: CapabilityIssuerService | undefined;
+
+async function initializeServices() {
+  try {
+    const signer = await createSigner();
+    const identityProvider = await createIdentityProvider();
+
+    issuerService = new CapabilityIssuerService(
+      signer,
+      identityProvider,
+      config.issuerDid!,
+      config.defaultTokenTTL,
+      logger
+    );
+
+    logger.info('Services initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize services', { error: error instanceof Error ? error.message : 'Unknown error' });
+    throw error;
+  }
+}
+
+/**
+ * Returns the initialized issuer service, or throws a CapabilityError if not yet initialized.
+ * Route handlers call this instead of accessing `issuerService` directly, so that imported
+ * modules (e.g. in tests) receive a clear error rather than an unhandled TypeError.
+ */
+function getIssuerService(): CapabilityIssuerService {
+  if (!issuerService) {
+    throw new CapabilityError(
+      ErrorCode.INTERNAL_ERROR,
+      'Service is not initialized',
+      503
+    );
+  }
+  return issuerService;
+}
 
 // Create Express app
 const app = express();
@@ -131,7 +241,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     }
 
     // Issue the capability
-    const response = await issuerService.issueCapability(issueRequest);
+    const response = await getIssuerService().issueCapability(issueRequest);
 
     res.json(response);
   } catch (error) {
@@ -175,8 +285,20 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
       );
     }
 
+    // Validate the parent token format early so malformed tokens return 401 even when
+    // the service has not yet been initialized
+    try {
+      jose.decodeProtectedHeader(parentToken);
+    } catch {
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        'Invalid parent capability token format',
+        401
+      );
+    }
+
     // Attenuate the capability
-    const response = await issuerService.attenuateCapability(
+    const response = await getIssuerService().attenuateCapability(
       parentToken,
       req.body.requestedCapabilities,
       ttl
@@ -215,7 +337,19 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
       );
     }
 
-    const response = await issuerService.renewCapability(
+    // Validate the token format early so malformed tokens return 401 even when
+    // the service has not yet been initialized
+    try {
+      jose.decodeProtectedHeader(currentToken);
+    } catch {
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        'Invalid capability token format',
+        401
+      );
+    }
+
+    const response = await getIssuerService().renewCapability(
       currentToken,
       renewTtl
     );
@@ -232,7 +366,7 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
  */
 app.get('/api/v1/public-key', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const publicKey = await issuerService.getPublicKey();
+    const publicKey = await getIssuerService().getPublicKey();
     res.json({ publicKey });
   } catch (error) {
     next(error);
@@ -245,7 +379,7 @@ app.get('/api/v1/public-key', async (_req: Request, res: Response, next: NextFun
  */
 app.get('/.well-known/did.json', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const publicKey = await issuerService.getPublicKey();
+    const publicKey = await getIssuerService().getPublicKey();
 
     // Return a simplified DID document
     const didDocument = {
@@ -304,22 +438,31 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
 });
 
 if (require.main === module) {
-  // Start server
-  const server = app.listen(config.port, () => {
-    logger.info(`Capability Issuer listening on port ${config.port}`, {
-      environment: config.environment,
-      issuerDid: config.issuerDid,
-    });
-  });
+  // Initialize services and start server
+  initializeServices()
+    .then(() => {
+      const server = app.listen(config.port, () => {
+        logger.info(`Capability Issuer listening on port ${config.port}`, {
+          environment: config.environment,
+          issuerDid: config.issuerDid,
+          signingProvider: config.signingProvider,
+          identityProvider: config.identityProvider,
+        });
+      });
 
-  // Graceful shutdown
-  process.on('SIGTERM', () => {
-    logger.info('SIGTERM received, closing server gracefully');
-    server.close(() => {
-      logger.info('Server closed');
-      process.exit(0);
+      // Graceful shutdown
+      process.on('SIGTERM', () => {
+        logger.info('SIGTERM received, closing server gracefully');
+        server.close(() => {
+          logger.info('Server closed');
+          process.exit(0);
+        });
+      });
+    })
+    .catch((error) => {
+      logger.error('Failed to start server', { error: error instanceof Error ? error.message : 'Unknown error' });
+      process.exit(1);
     });
-  });
 }
 
-export { app, issuerService };
+export { app, initializeServices, issuerService };
