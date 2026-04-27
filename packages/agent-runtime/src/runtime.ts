@@ -8,7 +8,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
-import { CapabilityToken, CapabilityError } from '@euno/common';
+import { CapabilityError, ErrorCode } from '@euno/common';
 
 export interface AgentRuntimeConfig {
   /** Agent identifier */
@@ -127,14 +127,16 @@ export class AgentRuntime {
         this.capabilityToken = response.data.token;
       } else {
         throw new CapabilityError(
-          'TOKEN_ACQUISITION_FAILED',
-          `Failed to acquire capability token: ${response.status}`
+          ErrorCode.AUTHENTICATION_FAILED,
+          `Failed to acquire capability token: ${response.status}`,
+          401
         );
       }
     } catch (error) {
       throw new CapabilityError(
-        'TOKEN_ACQUISITION_ERROR',
-        `Error acquiring capability token: ${error instanceof Error ? error.message : String(error)}`
+        ErrorCode.INTERNAL_ERROR,
+        `Error acquiring capability token: ${error instanceof Error ? error.message : String(error)}`,
+        500
       );
     }
   }
