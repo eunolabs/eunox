@@ -237,9 +237,10 @@ if (response.status === 401) {
 - AgentRuntime forces all requests through gateway URL
 - NetworkPolicy enforces at kernel level
 
-✅ **Container network namespace redirects HTTP(S) to Gateway**
+✅ **Runtime HTTP(S) clients are configured to use the Gateway**
 - Runtime configuration sets gateway as baseURL
-- All axios instances use gateway as proxy
+- All axios instances are configured to send requests via the gateway
+- Direct external egress is blocked at the kernel level by Kubernetes NetworkPolicy
 
 ✅ **No direct network egress except through gateway**
 - NetworkPolicy: only egress to gateway + issuer allowed

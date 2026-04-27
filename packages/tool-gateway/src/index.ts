@@ -222,6 +222,39 @@ app.post('/api/v1/validate', async (req: Request, res: Response, next: NextFunct
 });
 
 /**
+ * Server-side tool registry: maps known tool names to their required action.
+ * Using an explicit registry prevents misclassification from substring matching
+ * and ensures authorization decisions are based on the actual tool semantics.
+ * Unknown tools default to 'execute' (most restrictive default).
+ */
+const TOOL_ACTION_REGISTRY: Record<string, string> = {
+  // File operations
+  read_file: 'read',
+  get_file: 'read',
+  list_files: 'read',
+  list_directory: 'read',
+  write_file: 'write',
+  create_file: 'write',
+  update_file: 'write',
+  append_file: 'write',
+  delete_file: 'delete',
+  remove_file: 'delete',
+  // HTTP/API operations
+  http_get: 'read',
+  http_post: 'write',
+  http_put: 'write',
+  http_delete: 'delete',
+  // Code execution
+  run_code: 'execute',
+  execute_command: 'execute',
+  run_shell: 'execute',
+};
+
+function resolveToolAction(tool: string): string {
+  return TOOL_ACTION_REGISTRY[tool] ?? 'execute';
+}
+
+/**
  * Tool invocation endpoint (Sprint 1 & 2)
  * POST /api/v1/tools/invoke
  *
@@ -239,7 +272,7 @@ app.post('/api/v1/tools/invoke', async (req: Request, res: Response, next: NextF
       );
     }
 
-    const { tool, args, resource } = req.body;
+    const { tool, args } = req.body;
 
     if (!tool) {
       throw new CapabilityError(
@@ -249,24 +282,19 @@ app.post('/api/v1/tools/invoke', async (req: Request, res: Response, next: NextF
       );
     }
 
-    // Determine action type from tool name
-    // This is a simple mapping - in production, use a more sophisticated registry
-    let action: string;
-    if (tool.includes('read') || tool.includes('get') || tool.includes('list')) {
-      action = 'read';
-    } else if (tool.includes('write') || tool.includes('create') || tool.includes('update')) {
-      action = 'write';
-    } else if (tool.includes('delete') || tool.includes('remove')) {
-      action = 'delete';
-    } else {
-      action = 'execute'; // Default for other tools
-    }
+    // Derive action from the server-side tool registry (not client-supplied).
+    const action = resolveToolAction(tool);
+
+    // Canonicalize resource server-side from the actual tool being invoked.
+    // Never trust a client-supplied resource value, which could cause authorization
+    // to be evaluated against a different resource than the tool/args actually affect.
+    const canonicalResource = `tool://${tool}`;
 
     // Validate the action
     const validationRequest: ValidateActionRequest = {
       token,
       action: action as any,
-      resource: resource || `tool://${tool}`,
+      resource: canonicalResource,
       context: {
         tool,
         args,
@@ -289,7 +317,7 @@ app.post('/api/v1/tools/invoke', async (req: Request, res: Response, next: NextF
     logger.info('Tool invoked successfully', {
       tool,
       action,
-      resource,
+      resource: canonicalResource,
       agentId: req.headers['x-agent-id'],
     });
 

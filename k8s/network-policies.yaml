@@ -20,17 +20,16 @@ spec:
       role: agent
   policyTypes:
   - Egress
-  - Ingress
-
-  # Sprint 1: Restrict egress - allow ONLY traffic to Tool Gateway
   egress:
   # Allow DNS resolution (required for service discovery)
   - to:
     - namespaceSelector:
         matchLabels:
-          name: kube-system
+          kubernetes.io/metadata.name: kube-system
     ports:
     - protocol: UDP
+      port: 53
+    - protocol: TCP
       port: 53
 
   # Allow traffic to Tool Gateway ONLY
@@ -54,14 +53,10 @@ spec:
   # Sprint 1: All other egress traffic is BLOCKED by default
   # This implements the requirement: "Running curl to an unauthorized URL
   # from within the container should be blocked"
-
-  # Ingress: Allow from within namespace (for debugging/monitoring)
-  ingress:
-  - from:
-    - podSelector: {}
-    ports:
-    - protocol: TCP
-      port: 3003
+  #
+  # Ingress: default-deny - agents do not need inbound traffic from other pods.
+  # Kubernetes kubelet health probes bypass NetworkPolicy (node-level traffic),
+  # so removing pod ingress rules reduces lateral-movement risk.
 ---
 # Network Policy for Tool Gateway
 # Allows gateway to communicate with backend services and agents
@@ -83,9 +78,11 @@ spec:
   - to:
     - namespaceSelector:
         matchLabels:
-          name: kube-system
+          kubernetes.io/metadata.name: kube-system
     ports:
     - protocol: UDP
+      port: 53
+    - protocol: TCP
       port: 53
 
   # Allow to Capability Issuer (for public key retrieval)
@@ -97,8 +94,7 @@ spec:
     - protocol: TCP
       port: 3001
 
-  # Allow to backend services (Sprint 1: controlled external access)
-  # In production, this should be further restricted to specific services
+  # Allow to in-cluster backend services on HTTP/HTTPS
   - to:
     - podSelector: {}
     ports:
@@ -110,7 +106,15 @@ spec:
   # Allow egress to internet for backend service calls
   # (This is where the gateway proxies authorized requests)
   - to:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
 
   ingress:
   # Allow from agents
@@ -149,15 +153,18 @@ spec:
   - to:
     - namespaceSelector:
         matchLabels:
-          name: kube-system
+          kubernetes.io/metadata.name: kube-system
     ports:
     - protocol: UDP
       port: 53
+    - protocol: TCP
+      port: 53
 
-  # Allow to Azure services (Key Vault, Azure AD)
-  # In production, restrict to specific Azure service endpoints
+  # Allow to Azure services (Key Vault, Azure AD) over internet TCP/443
+  # In production, restrict to specific Azure service CIDRs or use private endpoints
   - to:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 0.0.0.0/0
     ports:
     - protocol: TCP
       port: 443

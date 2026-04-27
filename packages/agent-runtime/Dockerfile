@@ -4,11 +4,7 @@
 # - Network egress restricted to Tool Gateway only
 # - No sensitive host paths mounted
 
-FROM node:18-alpine
-
-# Run as non-root user
-RUN addgroup -g 1000 agent && \
-    adduser -D -u 1000 -G agent agent
+FROM node:18-alpine AS builder
 
 WORKDIR /app
 
@@ -17,7 +13,7 @@ COPY package*.json ./
 COPY packages/common/package*.json ./packages/common/
 COPY packages/agent-runtime/package*.json ./packages/agent-runtime/
 
-# Install dependencies
+# Install dependencies (including devDependencies for build)
 RUN npm ci --workspace=@euno/common --workspace=@euno/agent-runtime
 
 # Copy source code
@@ -29,6 +25,27 @@ COPY tsconfig.json ./
 RUN npm run build --workspace=@euno/common && \
     npm run build --workspace=@euno/agent-runtime
 
+# --- Production image ---
+FROM node:18-alpine
+
+# Run as non-root user
+RUN addgroup -g 1000 agent && \
+    adduser -D -u 1000 -G agent agent
+
+WORKDIR /app
+
+# Copy only production package files
+COPY package*.json ./
+COPY packages/common/package*.json ./packages/common/
+COPY packages/agent-runtime/package*.json ./packages/agent-runtime/
+
+# Install production dependencies only
+RUN npm ci --omit=dev --workspace=@euno/common --workspace=@euno/agent-runtime
+
+# Copy built artifacts from builder stage
+COPY --from=builder /app/packages/common/dist ./packages/common/dist
+COPY --from=builder /app/packages/agent-runtime/dist ./packages/agent-runtime/dist
+
 # Create writable directories for runtime
 RUN mkdir -p /app/tmp /app/logs && \
     chown -R agent:agent /app/tmp /app/logs
@@ -39,12 +56,12 @@ WORKDIR /app/packages/agent-runtime
 # Switch to non-root user
 USER agent
 
-# Expose port (if agent provides HTTP interface)
+# Expose port for health check endpoint
 EXPOSE 3003
 
-# Health check
+# Health check - exit 1 on error to correctly signal unhealthy container
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(0))"
+  CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"
 
-# Start service
-CMD ["node", "dist/index.js"]
+# Start the long-running agent runtime service
+CMD ["node", "dist/main.js"]

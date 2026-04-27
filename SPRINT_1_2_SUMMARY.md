@@ -236,8 +236,8 @@ This document summarizes the implementation of sandboxing requirements from Spri
 **Status:** Implemented
 
 **Evidence:**
-- `packages/agent-runtime/tests/runtime.test.ts` - Test cases
-- Tests cover: valid tokens, invalid tokens, expiration, token refresh
+- `packages/agent-runtime/tests/runtime.test.ts` - Test cases with axios mocking
+- Tests cover: token acquisition, Authorization header attachment, 401 retry with token refresh, proxy path routing, network error handling
 
 ### Team CP - Token Signing & Verification
 
@@ -288,7 +288,7 @@ This document summarizes the implementation of sandboxing requirements from Spri
 - Non-root users
 - Health checks
 - Minimal Alpine Linux base
-- Multi-stage builds
+- Multi-stage builds (builder + production stage, only compiled artifacts in final image)
 
 ### 3. Kubernetes Manifests
 **Files:**

@@ -19,7 +19,7 @@ This directory contains Kubernetes manifests for deploying the Euno capability g
    - Runs as non-root user (UID 1000)
    - All Linux capabilities dropped
    - No sensitive host paths mounted
-   - Only ephemeral volumes (tmpfs) for scratch space
+   - Only ephemeral volumes for scratch space
 
 3. **Resource Constraints**
    - CPU and memory limits enforced
@@ -28,9 +28,9 @@ This directory contains Kubernetes manifests for deploying the Euno capability g
 #### Sprint 2: Sandbox Refinement
 
 1. **Network Proxy** (`runtime.ts`)
-   - All HTTP/HTTPS traffic intercepted and routed through gateway
-   - Gateway validates capability tokens for every request
-   - Ensures no direct external access even if attempted
+   - HTTP/HTTPS requests made via `AgentRuntime` methods are routed through the gateway
+   - Gateway validates capability tokens for gateway-routed requests
+   - Direct external egress is blocked by Kubernetes network policies; `runtime.ts` does not transparently intercept arbitrary in-process HTTP clients
 
 2. **Token Management**
    - Automatic token acquisition on startup
@@ -286,7 +286,7 @@ kubectl describe networkpolicy -n euno-system
 ## Sprint 2 Exit Criteria Verification
 
 ✅ All external communications funnel through Gateway
-✅ Network namespace redirects HTTP(S) traffic to Gateway
+✅ HTTP/HTTPS requests via AgentRuntime routed through gateway; NetworkPolicy enforces no direct egress
 ✅ Token refresh implemented
 ✅ No direct network egress except through gateway
 

@@ -20,8 +20,8 @@ export interface AgentRuntimeConfig {
   /** Capability Issuer endpoint for token acquisition */
   issuerUrl: string;
 
-  /** Initial authentication token (Azure AD token, etc.) */
-  authToken?: string;
+  /** Initial authentication token (Azure AD token, etc.). Required to authenticate with the Capability Issuer. */
+  authToken: string;
 
   /** Token refresh interval in seconds (default: 600s = 10 minutes) */
   tokenRefreshInterval?: number;
@@ -97,7 +97,7 @@ export class AgentRuntime {
    */
   async shutdown(): Promise<void> {
     if (this.tokenRefreshTimer) {
-      clearInterval(this.tokenRefreshTimer);
+      clearTimeout(this.tokenRefreshTimer);
       this.tokenRefreshTimer = undefined;
     }
   }
@@ -106,56 +106,73 @@ export class AgentRuntime {
    * Acquire a capability token from the Issuer
    */
   private async acquireCapabilityToken(): Promise<void> {
+    const issuerClient = axios.create({
+      baseURL: this.config.issuerUrl,
+      timeout: 10000,
+      validateStatus: () => true, // Handle all status codes manually
+    });
+
+    let response;
     try {
-      // In production, this would use the auth token to get a capability token
-      // For now, we make a direct call to the issuer (not through gateway)
-      const issuerClient = axios.create({
-        baseURL: this.config.issuerUrl,
-        timeout: 10000,
-      });
-
-      const response = await issuerClient.post('/api/v1/issue', {
+      response = await issuerClient.post('/api/v1/issue', {
         agentId: this.config.agentId,
-        // In production: pass authToken for verification
       }, {
-        headers: this.config.authToken ? {
+        headers: {
           'Authorization': `Bearer ${this.config.authToken}`,
-        } : {},
+        },
       });
-
-      if (response.status === 200 && response.data.token) {
-        this.capabilityToken = response.data.token;
-      } else {
-        throw new CapabilityError(
-          ErrorCode.AUTHENTICATION_FAILED,
-          `Failed to acquire capability token: ${response.status}`,
-          401
-        );
-      }
     } catch (error) {
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
-        `Error acquiring capability token: ${error instanceof Error ? error.message : String(error)}`,
+        `Network error contacting Capability Issuer: ${error instanceof Error ? error.message : String(error)}`,
         500
       );
     }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        `Capability Issuer rejected authentication (HTTP ${response.status})`,
+        response.status
+      );
+    }
+
+    if (response.status !== 200 || !response.data?.token) {
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        `Failed to acquire capability token: HTTP ${response.status}`,
+        500
+      );
+    }
+
+    this.capabilityToken = response.data.token;
   }
 
   /**
-   * Start automatic token refresh
+   * Start automatic token refresh using self-scheduling setTimeout to avoid
+   * overlapping refresh calls if a refresh takes longer than the interval.
    */
   private startTokenRefresh(): void {
     if (this.tokenRefreshTimer) {
-      clearInterval(this.tokenRefreshTimer);
+      clearTimeout(this.tokenRefreshTimer);
     }
 
     const interval = (this.config.tokenRefreshInterval || 600) * 1000;
-    this.tokenRefreshTimer = setInterval(async () => {
+
+    const refreshToken = async (): Promise<void> => {
       try {
         await this.acquireCapabilityToken();
       } catch (error) {
         console.error('Failed to refresh capability token:', error);
+      } finally {
+        this.tokenRefreshTimer = setTimeout(() => {
+          void refreshToken();
+        }, interval);
       }
+    };
+
+    this.tokenRefreshTimer = setTimeout(() => {
+      void refreshToken();
     }, interval);
   }
 
@@ -233,11 +250,11 @@ export class AgentRuntime {
   }
 
   /**
-   * Make a raw HTTP request through the gateway
+   * Make a raw HTTP request through the gateway's proxy endpoint.
    *
-   * Sprint 2: All external HTTP(S) requests should be intercepted
-   * and routed through the gateway, even if the agent tries to
-   * make direct requests to external services.
+   * Sprint 2: External HTTP(S) requests are routed through the gateway via the
+   * `/proxy/<path>` endpoint.  NetworkPolicy enforcement ensures no direct egress
+   * is possible at the kernel level.
    */
   async makeRequest(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -249,14 +266,20 @@ export class AgentRuntime {
     }
 
     try {
+      // Derive the proxy path from the URL so requests are forwarded via
+      // the gateway's /proxy/* mount point rather than sent as a JSON payload.
+      let proxyPath: string;
+      if (/^https?:\/\//i.test(url)) {
+        const targetUrl = new URL(url);
+        proxyPath = targetUrl.pathname + targetUrl.search;
+      } else {
+        proxyPath = url.startsWith('/') ? url : `/${url}`;
+      }
+
       const response = await this.httpClient.request({
         method,
-        url: `/api/v1/proxy`,
-        data: {
-          targetUrl: url,
-          method,
-          data,
-        },
+        url: `/proxy${proxyPath}`,
+        data,
         headers: {
           'Authorization': `Bearer ${this.capabilityToken}`,
           'X-Agent-ID': this.config.agentId,
