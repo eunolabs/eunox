@@ -23,6 +23,6 @@ module.exports = {
     // The `@nodable/entities` package (a transitive dependency of the AWS SDK's
     // XML parser) ships as pure ESM and cannot be loaded by Jest's CommonJS
     // runtime. Tests mock all AWS KMS interactions, so we substitute a CJS stub.
-    '^@nodable/entities$': '<rootDir>/tests/__mocks__/nodable-entities-stub.js',
+    '^@nodable/entities$': '<rootDir>/tests/__mocks__/nodable-entities-stub.cjs',
   },
 };
