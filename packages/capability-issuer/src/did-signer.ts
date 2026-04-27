@@ -34,7 +34,7 @@ export interface DIDSigningAdapterConfig extends SigningAdapterConfig {
   /** Key ID within the DID Document to use for signing */
   keyId?: string;
   /** Private key material (in production, use HSM or secure key storage) */
-  privateKey?: string;
+  privateKey: string;
   /** Private key format (e.g., 'jwk', 'pem') */
   privateKeyFormat?: 'jwk' | 'pem';
 }

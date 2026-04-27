@@ -21,6 +21,7 @@ import {
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
+  type DIDDocument,
 } from './did-resolver';
 
 /**
@@ -34,6 +35,14 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
   resolverEndpoint?: string;
   /** Supported DID methods */
   supportedMethods?: string[];
+  /** Cache TTL for resolved DID Documents in seconds (default: 300 = 5 minutes) */
+  documentCacheTtlSeconds?: number;
+}
+
+/** Cached DID Document entry */
+interface CachedDIDDocument {
+  document: DIDDocument;
+  expiresAt: number;
 }
 
 /**
@@ -44,6 +53,7 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
  * - Resolves DIDs to DID Documents using universal DID resolver
  * - Supports multiple DID methods (did:ion, did:web, did:key)
  * - Extracts user context from JWT claims
+ * - Caches resolved DID Documents to reduce latency and resolver load
  *
  * Note: Full W3C Verifiable Presentation/Credential support requires additional
  * libraries like @digitalbazaar/vc and is not yet implemented.
@@ -51,10 +61,48 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
 export class DIDIdentityProvider extends IdentityAdapter {
   public readonly name = 'did';
   private didConfig: DIDIdentityAdapterConfig;
+  private documentCache = new Map<string, CachedDIDDocument>();
+  private readonly cacheTtlMs: number;
+  /** Maximum number of DID Documents held in the cache at one time. */
+  private static readonly MAX_CACHE_SIZE = 256;
 
   constructor(config: DIDIdentityAdapterConfig) {
     super(config);
     this.didConfig = config;
+    this.cacheTtlMs = (config.documentCacheTtlSeconds ?? 300) * 1000;
+  }
+
+  /**
+   * Resolve a DID Document, using the in-memory cache when available.
+   *
+   * The cache is bounded to MAX_CACHE_SIZE entries.  When the limit is reached
+   * the oldest (insertion-order) entry is evicted before adding a new one.
+   * Expired entries are also evicted eagerly on each cache miss.
+   */
+  private async resolveDIDCached(did: string): Promise<DIDDocument> {
+    const now = Date.now();
+    const cached = this.documentCache.get(did);
+    if (cached && cached.expiresAt > now) {
+      return cached.document;
+    }
+
+    // Evict the stale entry (if any) before fetching a fresh one
+    if (cached) {
+      this.documentCache.delete(did);
+    }
+
+    const document = await resolveDID(did);
+
+    // Enforce maximum cache size: evict the oldest entry (Map preserves insertion order)
+    if (this.documentCache.size >= DIDIdentityProvider.MAX_CACHE_SIZE) {
+      const oldestKey = this.documentCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.documentCache.delete(oldestKey);
+      }
+    }
+
+    this.documentCache.set(did, { document, expiresAt: now + this.cacheTtlMs });
+    return document;
   }
 
   /**
@@ -122,8 +170,8 @@ export class DIDIdentityProvider extends IdentityAdapter {
         }
       }
 
-      // Resolve the issuer DID to get the public key
-      const didDocument = await resolveDID(issuerDID);
+      // Resolve the issuer DID to get the public key (cached)
+      const didDocument = await this.resolveDIDCached(issuerDID);
 
       // Find the verification method for this key ID
       const keyIdParts = kid.split('#');
@@ -155,10 +203,29 @@ export class DIDIdentityProvider extends IdentityAdapter {
       // Verify the JWT
       const { payload } = await jose.jwtVerify(token, publicKey, {
         algorithms: [algorithm],
+        issuer: issuerDID,
       });
 
+      // Enforce that the iss claim matches the DID extracted from kid
+      if (payload.iss !== issuerDID) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Token issuer mismatch: expected ${issuerDID}, got ${payload.iss}`,
+          401
+        );
+      }
+
+      // Require a subject claim
+      if (!payload.sub) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          'Token missing required sub (subject) claim',
+          401
+        );
+      }
+
       // Extract user context from JWT claims
-      const userId = (payload.sub as string) || issuerDID;
+      const userId = payload.sub as string;
       const email = payload.email as string | undefined;
       const roles = (payload.roles as string[]) || [];
 

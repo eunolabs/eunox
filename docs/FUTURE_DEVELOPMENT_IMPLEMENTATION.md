@@ -138,7 +138,7 @@ const userContext = await provider.validateToken(jwtToken);
 ### Security Features
 
 - ✅ DID Document validation (ID matching)
-- ✅ Signature verification using public keys from DID Documents
+- ✅ DID Document resolution over HTTPS
 - ✅ Algorithm validation (prevents algorithm confusion attacks)
 - ✅ Key ID (kid) validation
 - ✅ Timeout protection (10 second limit for HTTP requests)

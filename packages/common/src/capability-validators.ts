@@ -296,6 +296,21 @@ export function validateColumnName(columnName: string): void {
       400
     );
   }
+
+  // Check for SQL reserved keywords
+  const reservedKeywords = [
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER',
+    'TABLE', 'DATABASE', 'INDEX', 'VIEW', 'PROCEDURE', 'FUNCTION',
+    'TRIGGER', 'USER', 'GRANT', 'REVOKE', 'UNION', 'WHERE', 'FROM',
+  ];
+
+  if (reservedKeywords.includes(columnName.toUpperCase())) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `Column name cannot be a SQL reserved keyword: ${columnName}`,
+      400
+    );
+  }
 }
 
 /**
@@ -342,5 +357,31 @@ export function validateResourcePattern(resourcePattern: string): void {
       'Resource pattern cannot contain parent directory references (..)',
       400
     );
+  }
+
+  // Wildcards are only supported as a trailing "/*" or "/**" suffix.
+  // This keeps validation aligned with matchesResource().
+  if (resourcePattern.includes('*')) {
+    const hasSingleSegmentWildcard = resourcePattern.endsWith('/*');
+    const hasRecursiveWildcard = resourcePattern.endsWith('/**');
+
+    if (!hasSingleSegmentWildcard && !hasRecursiveWildcard) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'Resource pattern wildcards are only allowed at the end as /* or /**',
+        400
+      );
+    }
+
+    const suffixLength = hasRecursiveWildcard ? 3 : 2;
+    const patternPrefix = resourcePattern.slice(0, -suffixLength);
+
+    if (patternPrefix.includes('*')) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'Resource pattern wildcards are only allowed at the end as /* or /**',
+        400
+      );
+    }
   }
 }

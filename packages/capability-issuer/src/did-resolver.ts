@@ -269,8 +269,13 @@ export function findVerificationMethod(
   // Construct full key ID if needed
   const fullKeyId = keyId.includes('#') ? keyId : `${didDocument.id}#${keyId}`;
 
-  // Search for the verification method
-  const vm = didDocument.verificationMethod.find(vm => vm.id === fullKeyId);
+  // Search for the verification method, normalizing fragment-only IDs
+  const vm = didDocument.verificationMethod.find(vm => {
+    const normalizedId = vm.id.startsWith('#')
+      ? `${didDocument.id}${vm.id}`
+      : vm.id;
+    return normalizedId === fullKeyId;
+  });
   if (!vm) {
     return null;
   }
@@ -345,6 +350,11 @@ export function determineSigningAlgorithm(verificationMethod: VerificationMethod
     return 'ES256K';
   }
 
-  // Default fallback
-  return 'RS256';
+  // No algorithm could be inferred — fail closed to prevent misuse
+  throw new CapabilityError(
+    ErrorCode.INVALID_REQUEST,
+    `Cannot determine signing algorithm for verification method type: ${type}. ` +
+      'Ensure the DID Document provides explicit alg in publicKeyJwk or uses a recognised key type.',
+    400
+  );
 }

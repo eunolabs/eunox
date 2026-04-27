@@ -224,21 +224,31 @@ describe('validateColumnName', () => {
     it('should reject names that are too long', () => {
       expect(() => validateColumnName('a' + '1'.repeat(64))).toThrow(CapabilityError);
     });
+
+    it('should reject SQL reserved keywords', () => {
+      expect(() => validateColumnName('SELECT')).toThrow(CapabilityError);
+      expect(() => validateColumnName('from')).toThrow(CapabilityError);
+      expect(() => validateColumnName('WHERE')).toThrow(CapabilityError);
+    });
   });
 });
 
 describe('validateResourcePattern', () => {
   describe('valid resource patterns', () => {
     it('should accept pattern with scheme and path', () => {
-      expect(() => validateResourcePattern('file://documents/*.txt')).not.toThrow();
+      expect(() => validateResourcePattern('file://documents/reports')).not.toThrow();
     });
 
-    it('should accept pattern with wildcard', () => {
+    it('should accept pattern with trailing /* wildcard', () => {
       expect(() => validateResourcePattern('api://service/*')).not.toThrow();
     });
 
-    it('should accept pattern with multiple segments', () => {
-      expect(() => validateResourcePattern('storage://bucket/folder/*')).not.toThrow();
+    it('should accept pattern with trailing /** wildcard', () => {
+      expect(() => validateResourcePattern('storage://bucket/folder/**')).not.toThrow();
+    });
+
+    it('should accept exact resource without wildcard', () => {
+      expect(() => validateResourcePattern('api://service/endpoint')).not.toThrow();
     });
   });
 
@@ -258,6 +268,16 @@ describe('validateResourcePattern', () => {
 
     it('should reject patterns with parent directory references', () => {
       expect(() => validateResourcePattern('file://../secrets/*')).toThrow(CapabilityError);
+    });
+
+    it('should reject wildcards not at the end as /* or /**', () => {
+      expect(() => validateResourcePattern('file://documents/*.txt')).toThrow(CapabilityError);
+      expect(() => validateResourcePattern('api://*/endpoint')).toThrow(CapabilityError);
+    });
+
+    it('should reject multiple wildcards', () => {
+      expect(() => validateResourcePattern('api://*/*')).toThrow(CapabilityError);
+      expect(() => validateResourcePattern('api://**/**')).toThrow(CapabilityError);
     });
   });
 });
