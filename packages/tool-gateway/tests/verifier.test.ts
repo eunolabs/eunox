@@ -98,7 +98,7 @@ describe('JWTTokenVerifier', () => {
         .sign(privateKey);
 
       // Revoke the token
-      verifier.revokeToken(tokenId);
+      await verifier.revokeToken(tokenId);
 
       await expect(verifier.verify(token)).rejects.toThrow('revoked');
     });
@@ -106,7 +106,7 @@ describe('JWTTokenVerifier', () => {
 
   describe('isRevoked', () => {
     it('should return true for revoked tokens', async () => {
-      verifier.revokeToken('revoked-id');
+      await verifier.revokeToken('revoked-id');
       expect(await verifier.isRevoked('revoked-id')).toBe(true);
     });
 
@@ -116,7 +116,7 @@ describe('JWTTokenVerifier', () => {
 
     it('should return false and prune an entry whose expiry has passed', async () => {
       const pastExpiry = Math.floor(Date.now() / 1000) - 1; // already expired
-      verifier.revokeToken('stale-id', pastExpiry);
+      await verifier.revokeToken('stale-id', pastExpiry);
       // Should report not-revoked because the entry is expired
       expect(await verifier.isRevoked('stale-id')).toBe(false);
       // Calling again confirms the entry was deleted (not just ignored)
@@ -125,7 +125,7 @@ describe('JWTTokenVerifier', () => {
 
     it('should return true for a revoked token with a future explicit expiry', async () => {
       const futureExpiry = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
-      verifier.revokeToken('future-id', futureExpiry);
+      await verifier.revokeToken('future-id', futureExpiry);
       expect(await verifier.isRevoked('future-id')).toBe(true);
     });
   });
@@ -134,14 +134,16 @@ describe('JWTTokenVerifier', () => {
     it('should use a default expiry (~24 h) when expiresAt is omitted', async () => {
       const before = Math.floor(Date.now() / 1000);
       const freshVerifier = new JWTTokenVerifier(publicKey);
-      freshVerifier.revokeToken('default-ttl-id');
+      await freshVerifier.revokeToken('default-ttl-id');
       expect(await freshVerifier.isRevoked('default-ttl-id')).toBe(true);
       // Confirm the stored expiry is roughly 24 h from now
       const after = Math.floor(Date.now() / 1000);
       const expectedMin = before + 86400;
       const expectedMax = after + 86400;
-      // Access the private map via bracket notation for white-box validation
-      const map = (freshVerifier as any).revokedTokens as Map<string, number>;
+      // Access the in-memory store's private map via bracket notation
+      // for white-box validation.
+      const store = (freshVerifier as any).revocationStore;
+      const map = store.revokedTokens as Map<string, number>;
       const stored = map.get('default-ttl-id')!;
       expect(stored).toBeGreaterThanOrEqual(expectedMin);
       expect(stored).toBeLessThanOrEqual(expectedMax);
@@ -151,14 +153,15 @@ describe('JWTTokenVerifier', () => {
       const freshVerifier = new JWTTokenVerifier(publicKey);
       const pastExpiry = Math.floor(Date.now() / 1000) - 1;
       // Add several already-expired entries
-      freshVerifier.revokeToken('old-1', pastExpiry);
-      freshVerifier.revokeToken('old-2', pastExpiry);
-      freshVerifier.revokeToken('old-3', pastExpiry);
+      await freshVerifier.revokeToken('old-1', pastExpiry);
+      await freshVerifier.revokeToken('old-2', pastExpiry);
+      await freshVerifier.revokeToken('old-3', pastExpiry);
       // Trigger pruning by revoking a new token with a future expiry
       const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
-      freshVerifier.revokeToken('new-1', futureExpiry);
+      await freshVerifier.revokeToken('new-1', futureExpiry);
       // The map should only contain the new entry — the three stale ones are gone
-      const map = (freshVerifier as any).revokedTokens as Map<string, number>;
+      const store = (freshVerifier as any).revocationStore;
+      const map = store.revokedTokens as Map<string, number>;
       expect(map.size).toBe(1);
       expect(map.has('new-1')).toBe(true);
     });

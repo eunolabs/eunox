@@ -427,13 +427,30 @@ function bigintToBase64Url(n: bigint, length: number): string {
 const ION_RESOLVER_TIMEOUT_MS = 15000;
 
 /**
- * Resolve did:ion to DID Document via the public ION resolver.
+ * Default ION resolver endpoint (Microsoft public resolver).
+ * Override via the `ION_RESOLVER_URL` environment variable so deployments
+ * that run their own ION node can point at it without code changes.
+ */
+const DEFAULT_ION_RESOLVER_URL = 'https://ion.msidentity.com/api/v1.0/identifiers';
+
+/**
+ * Resolve did:ion to DID Document via an ION resolver REST API.
  *
  * ION is a Sidetree-based DID network anchored on Bitcoin.
  * Reference: https://identity.foundation/ion/
  *
- * Uses the Microsoft ION resolver REST API:
- * https://ion.msidentity.com/api/v1.0/identifiers/{did}
+ * Defaults to the public Microsoft resolver
+ * (https://ion.msidentity.com/api/v1.0/identifiers/{did}); override with the
+ * `ION_RESOLVER_URL` environment variable.
+ *
+ * Errors are categorised so callers (and operators reading the logs) can
+ * distinguish:
+ *   - validation failures (bad DID format)               → 400 INVALID_REQUEST
+ *   - the DID does not exist                             → 404 INVALID_TOKEN
+ *   - resolver timeout / DNS / connection refused / TLS  → 504 / 502 AUTHENTICATION_FAILED
+ *   - resolver 5xx                                       → 502 AUTHENTICATION_FAILED
+ *   - resolver 4xx (other than 404)                      → 502 AUTHENTICATION_FAILED
+ *   - DID document content invalid                       → 502 / 400
  */
 export async function resolveDidIon(did: string): Promise<DIDDocument> {
   if (!did.startsWith('did:ion:')) {
@@ -444,57 +461,109 @@ export async function resolveDidIon(did: string): Promise<DIDDocument> {
     );
   }
 
-  const resolverUrl = `https://ion.msidentity.com/api/v1.0/identifiers/${encodeURIComponent(did)}`;
+  const resolverBase = (process.env.ION_RESOLVER_URL || DEFAULT_ION_RESOLVER_URL).replace(/\/+$/, '');
+  const resolverUrl = `${resolverBase}/${encodeURIComponent(did)}`;
 
+  let response: Response;
   try {
-    const response = await fetch(resolverUrl, {
+    response = await fetch(resolverUrl, {
       headers: {
         'Accept': 'application/did+json, application/json',
       },
       signal: AbortSignal.timeout(ION_RESOLVER_TIMEOUT_MS),
     });
-
-    if (!response.ok) {
-      throw new CapabilityError(
-        ErrorCode.AUTHENTICATION_FAILED,
-        `Failed to resolve did:ion: HTTP ${response.status} from ION resolver`,
-        502
-      );
-    }
-
-    // The ION resolver wraps the DID Document in a resolution result object:
-    // { "@context": ..., "didDocument": { ... }, "didDocumentMetadata": { ... } }
-    const result = await response.json() as { didDocument?: DIDDocument } & DIDDocument;
-    const didDocument: DIDDocument = result.didDocument ?? result;
-
-    if (!didDocument.id) {
-      throw new CapabilityError(
-        ErrorCode.AUTHENTICATION_FAILED,
-        'ION resolver returned an invalid response: missing DID document id',
-        502
-      );
-    }
-
-    if (didDocument.id !== did) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_TOKEN,
-        `DID document ID mismatch: expected ${did}, got ${didDocument.id}`,
-        400
-      );
-    }
-
-    return didDocument;
   } catch (error) {
-    if (error instanceof CapabilityError) {
-      throw error;
+    // Network-layer failures: timeout, DNS, ECONNREFUSED, TLS, etc.
+    // Distinguish them so operators can act on the right thing.
+    const message = error instanceof Error ? error.message : 'Unknown network error';
+    const name = error instanceof Error ? error.name : '';
+    const code = (error as { code?: string } | undefined)?.code;
+
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        `ION resolver request timed out after ${ION_RESOLVER_TIMEOUT_MS}ms (resolver=${resolverBase}): ${message}`,
+        504
+      );
+    }
+
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        `ION resolver DNS lookup failed (resolver=${resolverBase}): ${message}. ` +
+        'Check ION_RESOLVER_URL and network egress configuration.',
+        502
+      );
+    }
+
+    if (code === 'ECONNREFUSED' || code === 'ECONNRESET') {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        `ION resolver connection failed (resolver=${resolverBase}): ${message}. ` +
+        'The resolver may be down or unreachable from this environment.',
+        502
+      );
     }
 
     throw new CapabilityError(
       ErrorCode.AUTHENTICATION_FAILED,
-      `Failed to resolve did:ion ${did}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      `Failed to contact ION resolver (resolver=${resolverBase}): ${message}`,
       502
     );
   }
+
+  if (response.status === 404) {
+    // Per the DID resolution spec, 404 means the DID is not registered.
+    throw new CapabilityError(
+      ErrorCode.INVALID_TOKEN,
+      `did:ion identifier not found: ${did}`,
+      404
+    );
+  }
+
+  if (!response.ok) {
+    // Differentiate between caller-side problems (4xx, e.g. 400/410) and
+    // resolver-side problems (5xx) for clearer operational signal.
+    const category = response.status >= 500 ? 'resolver error' : 'request rejected by resolver';
+    throw new CapabilityError(
+      ErrorCode.AUTHENTICATION_FAILED,
+      `Failed to resolve did:ion (${category}): HTTP ${response.status} ${response.statusText} from ${resolverBase}`,
+      502
+    );
+  }
+
+  let result: { didDocument?: DIDDocument } & DIDDocument;
+  try {
+    // The ION resolver wraps the DID Document in a resolution result object:
+    // { "@context": ..., "didDocument": { ... }, "didDocumentMetadata": { ... } }
+    result = await response.json() as { didDocument?: DIDDocument } & DIDDocument;
+  } catch (error) {
+    throw new CapabilityError(
+      ErrorCode.AUTHENTICATION_FAILED,
+      `ION resolver returned a malformed JSON response: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      502
+    );
+  }
+
+  const didDocument: DIDDocument = result.didDocument ?? result;
+
+  if (!didDocument || !didDocument.id) {
+    throw new CapabilityError(
+      ErrorCode.AUTHENTICATION_FAILED,
+      'ION resolver returned an invalid response: missing DID document id',
+      502
+    );
+  }
+
+  if (didDocument.id !== did) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_TOKEN,
+      `DID document ID mismatch: expected ${did}, got ${didDocument.id}`,
+      400
+    );
+  }
+
+  return didDocument;
 }
 
 /**

@@ -10,6 +10,7 @@
 
 import { generateKeyPairSync } from 'crypto';
 import * as jose from 'jose';
+import { ErrorCode } from '@euno/common';
 import {
   resolveDID,
   resolveDidKey,
@@ -463,18 +464,70 @@ describe('resolveDidIon', () => {
     expect(doc.id).toBe(mockDid);
   });
 
-  it('throws AUTHENTICATION_FAILED on HTTP error', async () => {
+  it('throws INVALID_TOKEN with 404 status when the DID is not registered', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 404,
+      statusText: 'Not Found',
     } as unknown as Response);
 
     await expect(resolveDidIon(mockDid)).rejects.toMatchObject({
-      message: expect.stringContaining('HTTP 404'),
+      code: ErrorCode.INVALID_TOKEN,
+      statusCode: 404,
+      message: expect.stringContaining('not found'),
     });
   });
 
-  it('throws AUTHENTICATION_FAILED on network error', async () => {
+  it('throws AUTHENTICATION_FAILED on resolver 5xx error', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+    } as unknown as Response);
+
+    await expect(resolveDidIon(mockDid)).rejects.toMatchObject({
+      code: ErrorCode.AUTHENTICATION_FAILED,
+      message: expect.stringContaining('HTTP 503'),
+    });
+  });
+
+  it('throws 504 timeout error when fetch aborts', async () => {
+    const timeoutError = new Error('The operation was aborted');
+    timeoutError.name = 'TimeoutError';
+    global.fetch = jest.fn().mockRejectedValue(timeoutError);
+
+    await expect(resolveDidIon(mockDid)).rejects.toMatchObject({
+      code: ErrorCode.AUTHENTICATION_FAILED,
+      statusCode: 504,
+      message: expect.stringContaining('timed out'),
+    });
+  });
+
+  it('produces a clear DNS error message when the resolver host is unknown', async () => {
+    const dnsError = Object.assign(new Error('getaddrinfo ENOTFOUND ion.example'), {
+      code: 'ENOTFOUND',
+    });
+    global.fetch = jest.fn().mockRejectedValue(dnsError);
+
+    await expect(resolveDidIon(mockDid)).rejects.toMatchObject({
+      code: ErrorCode.AUTHENTICATION_FAILED,
+      message: expect.stringContaining('DNS lookup failed'),
+    });
+  });
+
+  it('produces a clear connection error message on ECONNREFUSED', async () => {
+    const connError = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), {
+      code: 'ECONNREFUSED',
+    });
+    global.fetch = jest.fn().mockRejectedValue(connError);
+
+    await expect(resolveDidIon(mockDid)).rejects.toMatchObject({
+      code: ErrorCode.AUTHENTICATION_FAILED,
+      message: expect.stringContaining('connection failed'),
+    });
+  });
+
+  it('throws AUTHENTICATION_FAILED on generic network error', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('network failure'));
 
     await expect(resolveDidIon(mockDid)).rejects.toMatchObject({

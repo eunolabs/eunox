@@ -21,6 +21,7 @@ import {
 import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
 import { createAdminRouter } from './admin-api';
+import { createRevocationStoreFromEnv, RevocationStore } from './revocation-store';
 import axios from 'axios';
 
 // Load environment variables
@@ -47,6 +48,7 @@ const killSwitchManager = new DefaultKillSwitchManager(logger);
 // Initialize verifier and enforcement engine
 let verifier: JWTTokenVerifier;
 let enforcementEngine: EnforcementEngine;
+let revocationStore: RevocationStore | undefined;
 
 // Fetch public key from Capability Issuer
 async function initializeServices() {
@@ -55,7 +57,12 @@ async function initializeServices() {
     const response = await axios.get(issuerPublicKeyUrl);
     const publicKey = response.data.publicKey;
 
-    verifier = new JWTTokenVerifier(publicKey);
+    // Build the revocation store from environment.  Defaults to in-memory; if
+    // REDIS_URL is set we connect to Redis so revocations are shared across
+    // gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
+    revocationStore = await createRevocationStoreFromEnv(process.env, logger);
+
+    verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
     enforcementEngine = new EnforcementEngine({
       verifier,
       logger,
@@ -478,13 +485,24 @@ async function startServer() {
     });
 
     // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received, closing server gracefully');
-      server.close(() => {
+    const shutdown = (signal: string) => {
+      logger.info(`${signal} received, closing server gracefully`);
+      server.close(async () => {
+        try {
+          if (revocationStore) {
+            await revocationStore.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing revocation store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
         logger.info('Server closed');
         process.exit(0);
       });
-    });
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
     logger.error('Failed to start server', {
       error: error instanceof Error ? error.message : 'Unknown error',

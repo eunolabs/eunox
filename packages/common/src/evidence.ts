@@ -8,10 +8,23 @@ import { AuditEvidence, SignedAuditEvidence, EvidenceSigner } from './types';
 import { sha256String, safeSerialize, generateId } from './utils';
 
 /**
- * Interface for cryptographic signing operations
+ * Interface for cryptographic signing operations.
+ *
+ * `verifyDigest` is OPTIONAL.  When provided, {@link AuditEvidenceSigner.verifyEvidence}
+ * uses it to perform full cryptographic verification of signed evidence.
+ * When absent, verification fails closed: signed records cannot be verified
+ * and `verifyEvidence` returns `false`.
  */
 export interface CryptoSigner {
   signDigest(digest: Buffer): Promise<Buffer>;
+  /**
+   * Verify a signature over the supplied digest.  Implementations should
+   * resolve the public key for `keyId` (or use the configured key when the
+   * signer is bound to a single key) and return `true` only when the signature
+   * is valid AND was produced under `algorithm`.  Implementations MUST NOT
+   * throw on signature mismatch; throw only on configuration / I/O errors.
+   */
+  verifyDigest?(digest: Buffer, signature: Buffer, keyId: string, algorithm: string): Promise<boolean>;
   getKeyId(): Promise<string>;
   getAlgorithm(): string;
 }
@@ -57,9 +70,18 @@ export class AuditEvidenceSigner implements EvidenceSigner {
 
   /**
    * Verify a signed evidence record.
-   * Note: Full cryptographic verification is not implemented yet.
-   * This method fails closed so callers cannot treat unsigned or unverifiable
-   * evidence as successfully verified.
+   *
+   * Performs full cryptographic verification when the underlying
+   * {@link CryptoSigner} exposes a `verifyDigest` method:
+   *   1. Re-canonicalises the evidence using the signed `keyId` and
+   *      `algorithm` (so any tampering with those fields invalidates the
+   *      signature).
+   *   2. Hashes the canonical bytes with SHA-256.
+   *   3. Asks the signer to verify the supplied signature against the digest.
+   *
+   * When the signer does NOT implement `verifyDigest` this method fails
+   * closed (returns `false`) so callers cannot mistake "verification not
+   * possible" for "signature valid".
    */
   async verifyEvidence(signedEvidence: SignedAuditEvidence): Promise<boolean> {
     // Reject malformed signed evidence records early
@@ -74,12 +96,37 @@ export class AuditEvidenceSigner implements EvidenceSigner {
       return false;
     }
 
-    // Full verification would require:
-    // 1. Resolving the public key using keyId
-    // 2. Decoding and verifying the signature against sha256(canonical bytes)
-    // Until that is implemented, fail closed rather than returning a
-    // misleading success value based only on metadata presence.
-    return false;
+    // If the signer cannot verify, fail closed.  The `verifyDigest` capability
+    // is optional so existing CryptoSigner implementations remain valid; the
+    // tradeoff is that they cannot cryptographically verify their own
+    // signatures, only produce them.
+    if (typeof this.cryptoSigner.verifyDigest !== 'function') {
+      return false;
+    }
+
+    let signatureBuffer: Buffer;
+    try {
+      signatureBuffer = Buffer.from(signature, 'base64');
+    } catch {
+      return false;
+    }
+
+    // Reject obviously-malformed signatures rather than handing them to the
+    // crypto provider (which may throw).
+    if (signatureBuffer.length === 0) {
+      return false;
+    }
+
+    const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
+
+    try {
+      return await this.cryptoSigner.verifyDigest(digest, signatureBuffer, keyId, algorithm);
+    } catch {
+      // Defensive: any thrown error from the signer is treated as a
+      // verification failure rather than propagated, so callers always get a
+      // boolean answer and audit pipelines remain robust.
+      return false;
+    }
   }
 
   /**
