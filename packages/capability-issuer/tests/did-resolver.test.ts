@@ -4,7 +4,6 @@
  * Covers:
  *  - did:key resolution (Ed25519, P-256, secp256k1)
  *  - did:ion resolution (mocked HTTP fetch)
- *  - did:web resolution (mocked HTTP fetch)
  *  - JWK → PEM conversion via extractPublicKeyPem
  *  - Helper utilities: findVerificationMethod, determineSigningAlgorithm
  */
@@ -220,6 +219,53 @@ describe('resolveDidKey – error cases', () => {
       message: expect.stringContaining('Unsupported did:key codec'),
     });
   });
+
+  it('rejects an identifier that is too long (> 256 base58 chars)', async () => {
+    // 257 '1' characters → all-zero bytes decoding, but too long
+    const longDid = 'did:key:z' + '1'.repeat(257);
+    await expect(resolveDidKey(longDid)).rejects.toMatchObject({
+      message: expect.stringContaining('too long'),
+    });
+  });
+
+  it('rejects did:key:z (empty key material after decode)', async () => {
+    // 'z' alone = multibase prefix with empty base58 string → empty decoded bytes
+    await expect(resolveDidKey('did:key:z')).rejects.toMatchObject({
+      message: expect.stringContaining('missing multicodec prefix or key material'),
+    });
+  });
+
+  it('rejects a P-256 key with an invalid prefix byte (0x04 = uncompressed)', async () => {
+    // Build a 33-byte payload with invalid prefix 0x04
+    const invalidKey = Buffer.alloc(33);
+    invalidKey[0] = 0x04;
+    invalidKey.fill(0x01, 1);
+    const badDid = makeDidKey([0x80, 0x24], invalidKey); // P-256 codec 0x1200
+    await expect(resolveDidKey(badDid)).rejects.toMatchObject({
+      message: expect.stringContaining('Invalid compressed P-256 key prefix'),
+    });
+  });
+
+  it('rejects a secp256k1 key with an invalid prefix byte', async () => {
+    const invalidKey = Buffer.alloc(33);
+    invalidKey[0] = 0x04;
+    invalidKey.fill(0x01, 1);
+    const badDid = makeDidKey([0xe7, 0x01], invalidKey); // secp256k1 codec 0xe7
+    await expect(resolveDidKey(badDid)).rejects.toMatchObject({
+      message: expect.stringContaining('Invalid compressed secp256k1 key prefix'),
+    });
+  });
+
+  it('rejects a P-256 key with an x that is not on the curve', async () => {
+    // x = 1 is not a valid x coordinate on P-256 (no corresponding y exists)
+    const offCurveKey = Buffer.alloc(33, 0);
+    offCurveKey[0] = 0x02;   // even-y prefix
+    offCurveKey[32] = 0x01;  // x = 1 (little-endian last byte = 1)
+    const badDid = makeDidKey([0x80, 0x24], offCurveKey);
+    await expect(resolveDidKey(badDid)).rejects.toMatchObject({
+      message: expect.stringContaining('does not correspond to a point on the curve'),
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -330,6 +376,34 @@ describe('extractPublicKeyPem', () => {
     };
     await expect(extractPublicKeyPem(vm)).rejects.toMatchObject({
       message: expect.stringContaining('Public key format not supported'),
+    });
+  });
+
+  it('converts a P-256 JWK that has no alg field by deriving algorithm from vm type', async () => {
+    const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const jwk = publicKey.export({ format: 'jwk' }) as Record<string, string>;
+
+    // Omit the alg field – extractPublicKeyPem should fall back to determineSigningAlgorithm
+    const vm: VerificationMethod = {
+      id: 'did:example:abc#key-1',
+      type: 'JsonWebKey2020',
+      controller: 'did:example:abc',
+      publicKeyJwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y }, // no alg
+    };
+
+    const pem = await extractPublicKeyPem(vm);
+    expect(pem).toMatch(/-----BEGIN PUBLIC KEY-----/);
+  });
+
+  it('throws INVALID_REQUEST for a malformed JWK (missing required key material)', async () => {
+    const vm: VerificationMethod = {
+      id: 'did:example:abc#key-1',
+      type: 'JsonWebKey2020',
+      controller: 'did:example:abc',
+      publicKeyJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256' }, // missing x and y
+    };
+    await expect(extractPublicKeyPem(vm)).rejects.toMatchObject({
+      message: expect.stringContaining('Invalid or unsupported publicKeyJwk'),
     });
   });
 });

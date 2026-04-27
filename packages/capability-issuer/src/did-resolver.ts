@@ -253,24 +253,54 @@ function encodeBase58Btc(bytes: Uint8Array): string {
 /**
  * Read an unsigned varint from a byte array at the given offset.
  * Returns [value, bytesConsumed].
+ *
+ * Uses BigInt arithmetic (no bitwise shifts) to avoid JS 32-bit wrap-around
+ * on large values. Rejects inputs with more than 10 continuation bytes or
+ * values that exceed Number.MAX_SAFE_INTEGER.
  */
 function readVarint(bytes: Uint8Array, offset: number = 0): [number, number] {
-  let value = 0;
-  let shift = 0;
+  let value = 0n;
+  let factor = 1n;
   let bytesRead = 0;
+  const maxVarintBytes = 10;
+  const maxSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+
   while (offset + bytesRead < bytes.length) {
+    if (bytesRead >= maxVarintBytes) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'Invalid did:key: varint exceeds maximum length',
+        400
+      );
+    }
+
     const byte = bytes[offset + bytesRead];
     if (byte === undefined) {
       break;
     }
     bytesRead++;
-    value |= (byte & 0x7f) << shift;
-    shift += 7;
-    if (!(byte & 0x80)) {
-      break;
+    value += BigInt(byte & 0x7f) * factor;
+
+    if (value > maxSafeInteger) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'Invalid did:key: varint value exceeds supported range',
+        400
+      );
     }
+
+    if ((byte & 0x80) === 0) {
+      return [Number(value), bytesRead];
+    }
+
+    factor *= 128n;
   }
-  return [value, bytesRead];
+
+  throw new CapabilityError(
+    ErrorCode.INVALID_REQUEST,
+    'Invalid did:key: unterminated varint sequence',
+    400
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -296,9 +326,19 @@ function modpow(base: bigint, exp: bigint, mod: bigint): bigint {
 
 /**
  * Decompress a P-256 (secp256r1) compressed public key to (x, y) BigInt coordinates.
+ * Validates the prefix byte and verifies the recovered point lies on the curve.
  */
 function decompressP256(compressed: Uint8Array): { x: bigint; y: bigint } {
   const prefix = compressed[0];
+
+  if (prefix !== 0x02 && prefix !== 0x03) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `Invalid compressed P-256 key prefix 0x${prefix?.toString(16) ?? '??'}: expected 0x02 or 0x03`,
+      400
+    );
+  }
+
   const x = BigInt('0x' + Buffer.from(compressed.slice(1)).toString('hex'));
 
   // P-256 curve parameters (NIST P-256 / secp256r1)
@@ -314,6 +354,15 @@ function decompressP256(compressed: Uint8Array): { x: bigint; y: bigint } {
   // Square root via Tonelli–Shanks shortcut: p ≡ 3 (mod 4) → y = y²^((p+1)/4) mod p
   const y = modpow(y2, (p + 1n) / 4n, p);
 
+  // Verify the point is on the curve (y² ≡ y2 mod p)
+  if ((y * y) % p !== y2) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      'Invalid P-256 compressed key: x coordinate does not correspond to a point on the curve',
+      400
+    );
+  }
+
   // Select the root with the correct parity (prefix 0x02 → even, 0x03 → odd)
   const yFinal = (prefix === 0x02)
     ? (y % 2n === 0n ? y : p - y)
@@ -324,9 +373,19 @@ function decompressP256(compressed: Uint8Array): { x: bigint; y: bigint } {
 
 /**
  * Decompress a secp256k1 compressed public key to (x, y) BigInt coordinates.
+ * Validates the prefix byte and verifies the recovered point lies on the curve.
  */
 function decompressSecp256k1(compressed: Uint8Array): { x: bigint; y: bigint } {
   const prefix = compressed[0];
+
+  if (prefix !== 0x02 && prefix !== 0x03) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `Invalid compressed secp256k1 key prefix 0x${prefix?.toString(16) ?? '??'}: expected 0x02 or 0x03`,
+      400
+    );
+  }
+
   const x = BigInt('0x' + Buffer.from(compressed.slice(1)).toString('hex'));
 
   // secp256k1 curve parameters
@@ -339,6 +398,15 @@ function decompressSecp256k1(compressed: Uint8Array): { x: bigint; y: bigint } {
 
   // p ≡ 3 (mod 4) → y = y²^((p+1)/4) mod p
   const y = modpow(y2, (p + 1n) / 4n, p);
+
+  // Verify the point is on the curve (y² ≡ y2 mod p)
+  if ((y * y) % p !== y2) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      'Invalid secp256k1 compressed key: x coordinate does not correspond to a point on the curve',
+      400
+    );
+  }
 
   const yFinal = (prefix === 0x02)
     ? (y % 2n === 0n ? y : p - y)
@@ -461,14 +529,34 @@ export async function resolveDidKey(did: string): Promise<DIDDocument> {
     );
   }
 
+  // Guard against excessively long identifiers to prevent CPU DoS in decodeBase58Btc()
+  // Longest valid key (P-256/secp256k1, 33 bytes) encodes to ~50 base58 chars; 256 is generous
+  const base58Str = identifier.substring(1);
+  if (base58Str.length > 256) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `did:key identifier is too long (${base58Str.length} chars; max 256)`,
+      400
+    );
+  }
+
   // Decode the base58btc-encoded key material (strip the 'z' multibase prefix)
   let decoded: Uint8Array;
   try {
-    decoded = decodeBase58Btc(identifier.substring(1));
+    decoded = decodeBase58Btc(base58Str);
   } catch (e) {
     throw new CapabilityError(
       ErrorCode.INVALID_REQUEST,
       `Failed to decode did:key identifier: ${e instanceof Error ? e.message : 'Unknown error'}`,
+      400
+    );
+  }
+
+  // Require at least 2 bytes (1+ byte varint + 1 byte key material)
+  if (decoded.length < 2) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      'Invalid did:key: missing multicodec prefix or key material',
       400
     );
   }
@@ -639,10 +727,22 @@ export async function extractPublicKeyPem(verificationMethod: VerificationMethod
 
   // Convert JWK to SPKI PEM using jose
   if (verificationMethod.publicKeyJwk) {
-    // Use the alg field from the JWK when present; otherwise let jose infer it
-    const alg = verificationMethod.publicKeyJwk.alg;
-    const keyLike = await jose.importJWK(verificationMethod.publicKeyJwk as jose.JWK, alg);
-    return await jose.exportSPKI(keyLike as jose.KeyLike);
+    try {
+      // Use the alg field from the JWK when present; otherwise derive from the verification method
+      const alg = verificationMethod.publicKeyJwk.alg || determineSigningAlgorithm(verificationMethod);
+      const keyLike = await jose.importJWK(verificationMethod.publicKeyJwk as jose.JWK, alg);
+      return await jose.exportSPKI(keyLike as jose.KeyLike);
+    } catch (error) {
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
+
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'Invalid or unsupported publicKeyJwk in verification method',
+        400
+      );
+    }
   }
 
   // Unsupported key format
