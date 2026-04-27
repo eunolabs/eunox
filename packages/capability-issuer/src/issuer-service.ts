@@ -15,6 +15,7 @@ import {
   generateId,
   getCurrentTimestamp,
   getExpirationTimestamp,
+  matchesResource,
   Logger,
   createAuditLogger,
   AuditLogEntry,
@@ -29,6 +30,9 @@ export class CapabilityIssuerService {
   private defaultTTL: number;
   private logger: Logger;
   private auditLogger: Logger;
+
+  /** Algorithms permitted for capability token signatures. */
+  private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'] as const;
 
   constructor(
     signer: TokenSigner,
@@ -202,12 +206,36 @@ export class CapabilityIssuerService {
     try {
       // Step 1: Verify and decode the parent token using jose
       this.logger.info('Attenuating capability token');
+
+      // Decode the token header first (fails fast for malformed tokens)
+      let algorithm: string;
+      try {
+        const header = jose.decodeProtectedHeader(parentToken);
+        algorithm = header.alg ?? 'RS256';
+      } catch {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          'Invalid parent capability token format',
+          401
+        );
+      }
+
+      // Validate algorithm against allow-list to prevent algorithm confusion attacks
+      if (!CapabilityIssuerService.ALLOWED_ALGORITHMS.includes(algorithm as any)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Token uses disallowed algorithm: ${algorithm}`,
+          401
+        );
+      }
+
       const publicKey = await this.signer.getPublicKey();
-      const publicKeyObj = await jose.importSPKI(publicKey, 'RS256');
+      const publicKeyObj = await jose.importSPKI(publicKey, algorithm);
 
       const { payload } = await jose.jwtVerify(parentToken, publicKeyObj, {
         issuer: this.issuerDid,
         audience: 'tool-gateway',
+        algorithms: [algorithm],
       });
 
       const parentPayload = payload as unknown as CapabilityTokenPayload;
@@ -216,7 +244,7 @@ export class CapabilityIssuerService {
       const now = getCurrentTimestamp();
       if (parentPayload.exp < now) {
         throw new CapabilityError(
-          ErrorCode.TOKEN_EXPIRED,
+          ErrorCode.EXPIRED_TOKEN,
           'Parent capability token has expired',
           401
         );
@@ -282,6 +310,27 @@ export class CapabilityIssuerService {
         throw error;
       }
 
+      // Map jose JWT errors to appropriate capability errors
+      if (error instanceof Error && (error as any).code === 'ERR_JWT_EXPIRED') {
+        throw new CapabilityError(
+          ErrorCode.EXPIRED_TOKEN,
+          'Parent capability token has expired',
+          401
+        );
+      }
+
+      if (error instanceof Error && (
+        (error as any).code === 'ERR_JWS_INVALID' ||
+        (error as any).code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' ||
+        (error as any).code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED'
+      )) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Invalid parent capability token: ${error.message}`,
+          401
+        );
+      }
+
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
         `Failed to attenuate capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -298,21 +347,15 @@ export class CapabilityIssuerService {
     parentCapabilities: CapabilityConstraint[],
     requestedCapabilities: CapabilityConstraint[]
   ): void {
-    // Build a map of parent resources to their allowed actions
-    const parentResourceMap = new Map<string, Set<string>>();
-    for (const cap of parentCapabilities) {
-      const actions = parentResourceMap.get(cap.resource) || new Set<string>();
-      for (const action of cap.actions) {
-        actions.add(action);
-      }
-      parentResourceMap.set(cap.resource, actions);
-    }
-
-    // Validate each requested capability
+    // Validate each requested capability against parent capabilities,
+    // supporting wildcard patterns (e.g. storage://datasets/**) via matchesResource()
     for (const requested of requestedCapabilities) {
-      const parentActions = parentResourceMap.get(requested.resource);
+      // Find all parent capabilities whose pattern matches the requested resource
+      const matchingParents = parentCapabilities.filter(cap =>
+        matchesResource(requested.resource, cap.resource)
+      );
 
-      if (!parentActions) {
+      if (matchingParents.length === 0) {
         throw new CapabilityError(
           ErrorCode.INSUFFICIENT_PERMISSIONS,
           `Cannot attenuate: resource '${requested.resource}' not in parent capability`,
@@ -320,8 +363,16 @@ export class CapabilityIssuerService {
         );
       }
 
+      // Union all allowed actions from matching parent capabilities
+      const allowedActions = new Set<string>();
+      for (const cap of matchingParents) {
+        for (const action of cap.actions) {
+          allowedActions.add(action);
+        }
+      }
+
       for (const action of requested.actions) {
-        if (!parentActions.has(action)) {
+        if (!allowedActions.has(action)) {
           throw new CapabilityError(
             ErrorCode.INSUFFICIENT_PERMISSIONS,
             `Cannot attenuate: action '${action}' on resource '${requested.resource}' not in parent capability`,
@@ -371,12 +422,36 @@ export class CapabilityIssuerService {
     try {
       // Step 1: Verify and decode the current token
       this.logger.info('Renewing capability token');
+
+      // Decode the token header first (fails fast for malformed tokens)
+      let algorithm: string;
+      try {
+        const header = jose.decodeProtectedHeader(currentToken);
+        algorithm = header.alg ?? 'RS256';
+      } catch {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          'Invalid capability token format',
+          401
+        );
+      }
+
+      // Validate algorithm against allow-list to prevent algorithm confusion attacks
+      if (!CapabilityIssuerService.ALLOWED_ALGORITHMS.includes(algorithm as any)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Token uses disallowed algorithm: ${algorithm}`,
+          401
+        );
+      }
+
       const publicKey = await this.signer.getPublicKey();
-      const publicKeyObj = await jose.importSPKI(publicKey, 'RS256');
+      const publicKeyObj = await jose.importSPKI(publicKey, algorithm);
 
       const { payload } = await jose.jwtVerify(currentToken, publicKeyObj, {
         issuer: this.issuerDid,
         audience: 'tool-gateway',
+        algorithms: [algorithm],
       });
 
       const currentPayload = payload as unknown as CapabilityTokenPayload;
@@ -433,6 +508,27 @@ export class CapabilityIssuerService {
 
       if (error instanceof CapabilityError) {
         throw error;
+      }
+
+      // Map jose JWT errors to appropriate capability errors
+      if (error instanceof Error && (error as any).code === 'ERR_JWT_EXPIRED') {
+        throw new CapabilityError(
+          ErrorCode.EXPIRED_TOKEN,
+          'Capability token has expired; re-authentication is required',
+          401
+        );
+      }
+
+      if (error instanceof Error && (
+        (error as any).code === 'ERR_JWS_INVALID' ||
+        (error as any).code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' ||
+        (error as any).code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED'
+      )) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Invalid capability token: ${error.message}`,
+          401
+        );
       }
 
       throw new CapabilityError(

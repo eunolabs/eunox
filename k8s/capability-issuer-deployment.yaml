@@ -22,9 +22,9 @@ spec:
         # Sprint 3: AppArmor profile annotation
         container.apparmor.security.beta.kubernetes.io/capability-issuer: localhost/euno-restricted
     spec:
-      # Sprint 3: Service account with minimal permissions
+      # Sprint 3: Service account with no API token (config injected via env)
       serviceAccountName: capability-issuer-sa
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
 
       # Sprint 3: Security context at pod level
       securityContext:
@@ -154,46 +154,13 @@ spec:
       hostIPC: false
 
 ---
-# Service Account with minimal permissions
+# Service Account without Kubernetes API access
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: capability-issuer-sa
   namespace: euno-system
-automountServiceAccountToken: true
-
----
-# Role with minimal RBAC permissions
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: capability-issuer-role
-  namespace: euno-system
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "list"]
-  resourceNames: ["issuer-config"]
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get"]
-  resourceNames: ["issuer-secrets"]
-
----
-# Role binding
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: capability-issuer-rolebinding
-  namespace: euno-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: capability-issuer-role
-subjects:
-- kind: ServiceAccount
-  name: capability-issuer-sa
-  namespace: euno-system
+automountServiceAccountToken: false
 
 ---
 # Service

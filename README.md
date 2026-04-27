@@ -265,7 +265,6 @@ Renew an existing capability token with fresh expiration.
 ```
 
 **Response:** Same as `/issue` with new token and expiration
-```
 
 #### `GET /api/v1/public-key`
 

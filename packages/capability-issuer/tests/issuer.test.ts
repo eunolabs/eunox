@@ -46,6 +46,120 @@ describe('Capability Issuer API', () => {
     });
   });
 
+  describe('POST /api/v1/attenuate', () => {
+    it('should reject request without authorization header', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .send({
+          requestedCapabilities: [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('AUTHENTICATION_FAILED');
+    });
+
+    it('should reject request without requestedCapabilities', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .set('Authorization', 'Bearer fake-token')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject request with non-array requestedCapabilities', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .set('Authorization', 'Bearer fake-token')
+        .send({ requestedCapabilities: 'not-an-array' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject request with invalid ttl (string)', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .set('Authorization', 'Bearer fake-token')
+        .send({
+          requestedCapabilities: [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          ttl: 'notanumber',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject request with invalid ttl (negative)', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .set('Authorization', 'Bearer fake-token')
+        .send({
+          requestedCapabilities: [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          ttl: -100,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject invalid/expired parent token with 401', async () => {
+      const response = await request(app)
+        .post('/api/v1/attenuate')
+        .set('Authorization', 'Bearer invalid.jwt.token')
+        .send({
+          requestedCapabilities: [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        });
+
+      // Should be 401 INVALID_TOKEN, not 500 INTERNAL_ERROR
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('INVALID_TOKEN');
+    });
+  });
+
+  describe('POST /api/v1/renew', () => {
+    it('should reject request without authorization header', async () => {
+      const response = await request(app)
+        .post('/api/v1/renew')
+        .send({});
+
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('AUTHENTICATION_FAILED');
+    });
+
+    it('should reject request with invalid ttl (zero)', async () => {
+      const response = await request(app)
+        .post('/api/v1/renew')
+        .set('Authorization', 'Bearer fake-token')
+        .send({ ttl: 0 });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject request with invalid ttl (Infinity)', async () => {
+      const response = await request(app)
+        .post('/api/v1/renew')
+        .set('Authorization', 'Bearer fake-token')
+        .send({ ttl: Infinity });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should reject invalid/expired token with 401', async () => {
+      const response = await request(app)
+        .post('/api/v1/renew')
+        .set('Authorization', 'Bearer invalid.jwt.token')
+        .send({});
+
+      // Should be 401 INVALID_TOKEN, not 500 INTERNAL_ERROR
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('INVALID_TOKEN');
+    });
+  });
+
   describe('GET /api/v1/public-key', () => {
     it('should return public key', async () => {
       // This will fail in test environment without proper Azure setup

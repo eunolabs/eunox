@@ -4,8 +4,8 @@
   "description": "Command-line interface for Euno capability management",
   "main": "dist/index.js",
   "bin": {
-    "euno": "./bin/euno.js",
-    "agentcap": "./bin/agentcap.js"
+    "euno": "./dist/index.js",
+    "agentcap": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

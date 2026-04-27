@@ -22,9 +22,9 @@ spec:
         # Sprint 3: AppArmor profile annotation
         container.apparmor.security.beta.kubernetes.io/tool-gateway: localhost/euno-restricted
     spec:
-      # Sprint 3: Service account with minimal permissions
+      # Sprint 3: Service account with no API token (config injected via env)
       serviceAccountName: tool-gateway-sa
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
 
       # Sprint 3: Security context at pod level
       securityContext:
@@ -144,46 +144,13 @@ spec:
       hostIPC: false
 
 ---
-# Service Account with minimal permissions
+# Service Account without Kubernetes API access
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: tool-gateway-sa
   namespace: euno-system
-automountServiceAccountToken: true
-
----
-# Role with minimal RBAC permissions
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: tool-gateway-role
-  namespace: euno-system
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "list"]
-  resourceNames: ["gateway-config"]
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get"]
-  resourceNames: ["gateway-secrets"]
-
----
-# Role binding
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: tool-gateway-rolebinding
-  namespace: euno-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: tool-gateway-role
-subjects:
-- kind: ServiceAccount
-  name: tool-gateway-sa
-  namespace: euno-system
+automountServiceAccountToken: false
 
 ---
 # Service for main gateway port

@@ -165,11 +165,21 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
       );
     }
 
+    // Validate optional ttl
+    const ttl = req.body.ttl;
+    if (ttl !== undefined && (typeof ttl !== 'number' || !isFinite(ttl) || ttl <= 0)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'ttl must be a positive finite number',
+        400
+      );
+    }
+
     // Attenuate the capability
     const response = await issuerService.attenuateCapability(
       parentToken,
       req.body.requestedCapabilities,
-      req.body.ttl
+      ttl
     );
 
     res.json(response);
@@ -196,9 +206,18 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
     }
 
     // Renew the capability
+    const renewTtl = req.body.ttl;
+    if (renewTtl !== undefined && (typeof renewTtl !== 'number' || !isFinite(renewTtl) || renewTtl <= 0)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'ttl must be a positive finite number',
+        400
+      );
+    }
+
     const response = await issuerService.renewCapability(
       currentToken,
-      req.body.ttl
+      renewTtl
     );
 
     res.json(response);

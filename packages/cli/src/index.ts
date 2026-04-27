@@ -5,8 +5,8 @@
  */
 
 import { Command } from 'commander';
-import * as path from 'path';
 import * as fs from 'fs';
+import * as yaml from 'js-yaml';
 
 const program = new Command();
 
@@ -46,7 +46,7 @@ program
       },
     };
 
-    fs.writeFileSync(outputFile, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(outputFile, yaml.dump(manifest));
     console.log(`✓ Created capability manifest: ${outputFile}`);
     console.log(`  Agent ID: ${manifest.agentId}`);
     console.log(`  Edit the file to customize capabilities`);
@@ -62,7 +62,7 @@ program
   .action((file) => {
     try {
       const content = fs.readFileSync(file, 'utf8');
-      const manifest = JSON.parse(content);
+      const manifest = yaml.load(content) as Record<string, unknown>;
 
       // Basic validation
       const required = ['agentId', 'name', 'version', 'requiredCapabilities'];

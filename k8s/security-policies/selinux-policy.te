@@ -10,11 +10,15 @@ policy_module(euno_restricted, 1.0.0)
 
 require {
     type container_t;
+    type container_file_t;
     type node_t;
+    type kernel_t;
     type http_port_t;
-    class process { fork signal };
+    class process { fork signal ptrace setcap setuid setgid };
     class tcp_socket { bind connect listen };
     class file { read write };
+    class capability { sys_admin sys_module sys_rawio sys_ptrace };
+    class system { module_load module_request };
 }
 
 # Allow basic container operations
@@ -26,8 +30,11 @@ allow container_t http_port_t:tcp_socket { bind connect listen };
 # Allow file read/write in application directories
 allow container_t container_file_t:file { read write };
 
-# Deny dangerous operations - Sprint 3 requirements
-# Note: SELinux denies by default, these are explicit documentations
+# Suppress audit log noise for dangerous operations that are denied by default.
+# NOTE: dontaudit does NOT grant permissions - it only silences the AVC denial log
+# entries. These operations remain DENIED by SELinux policy. We suppress them
+# because the container runtime may attempt these syscalls during startup, and
+# flooding the audit log reduces signal-to-noise for real security events.
 dontaudit container_t self:capability { sys_admin sys_module sys_rawio sys_ptrace };
 dontaudit container_t self:process { ptrace setcap setuid setgid };
 neverallow container_t kernel_t:system { module_load module_request };
