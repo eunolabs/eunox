@@ -1,0 +1,104 @@
+# Kubernetes Deployment for Tool Gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tool-gateway
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+    component: data-plane
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tool-gateway
+  template:
+    metadata:
+      labels:
+        app: tool-gateway
+        component: data-plane
+    spec:
+      serviceAccountName: tool-gateway
+      containers:
+      - name: tool-gateway
+        image: eunoacr.azurecr.io/tool-gateway:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3002
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: ISSUER_PUBLIC_KEY_URL
+          value: "http://capability-issuer:3001/api/v1/public-key"
+        - name: BACKEND_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: backend-service-url
+        - name: POLICY_VERSION
+          value: "1.0.0"
+        - name: ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secrets
+              key: admin-api-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3002
+    targetPort: 3002
+    protocol: TCP
+    name: http
+  selector:
+    app: tool-gateway
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tool-gateway
+  namespace: euno-system

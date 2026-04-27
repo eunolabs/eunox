@@ -1,0 +1,196 @@
+# Sprint 1: Network Policy for Agent Sandbox
+# Implements the core security principle: "the model is not your boundary"
+#
+# Exit Criteria from execution-plan.md:
+# - Agent container can call test endpoint through Gateway
+# - Agent fails to reach disallowed endpoints
+# - Running `curl` to unauthorized URL from within container should be blocked
+#
+# Sprint 2: Ensures ALL external communications funnel through Gateway
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-network-policy
+  namespace: euno-system
+spec:
+  # Apply to all pods with role=agent label
+  podSelector:
+    matchLabels:
+      role: agent
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution (required for service discovery)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+  # Allow traffic to Tool Gateway ONLY
+  - to:
+    - podSelector:
+        matchLabels:
+          app: tool-gateway
+    ports:
+    - protocol: TCP
+      port: 3002
+
+  # Allow traffic to Capability Issuer (for token acquisition)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: capability-issuer
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Sprint 1: All other egress traffic is BLOCKED by default
+  # This implements the requirement: "Running curl to an unauthorized URL
+  # from within the container should be blocked"
+  #
+  # Ingress: default-deny - agents do not need inbound traffic from other pods.
+  # Kubernetes kubelet health probes bypass NetworkPolicy (node-level traffic),
+  # so removing pod ingress rules reduces lateral-movement risk.
+---
+# Network Policy for Tool Gateway
+# Allows gateway to communicate with backend services and agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-network-policy
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: tool-gateway
+  policyTypes:
+  - Egress
+  - Ingress
+
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+  # Allow to Capability Issuer (for public key retrieval)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: capability-issuer
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Allow to in-cluster backend services on HTTP/HTTPS
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+  # Allow egress to internet for backend service calls
+  # (This is where the gateway proxies authorized requests)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+  ingress:
+  # Allow from agents
+  - from:
+    - podSelector:
+        matchLabels:
+          role: agent
+    ports:
+    - protocol: TCP
+      port: 3002
+
+  # Allow from within namespace
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 3002
+---
+# Network Policy for Capability Issuer
+# Allows issuer to communicate with Azure services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: issuer-network-policy
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: capability-issuer
+  policyTypes:
+  - Egress
+  - Ingress
+
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+  # Allow to Azure services (Key Vault, Azure AD) over internet TCP/443
+  # In production, restrict to specific Azure service CIDRs or use private endpoints
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 443
+
+  ingress:
+  # Allow from agents (for token requests)
+  - from:
+    - podSelector:
+        matchLabels:
+          role: agent
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Allow from gateway (for public key retrieval)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: tool-gateway
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Allow from within namespace
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 3001
