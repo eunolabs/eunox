@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: Euno Capability Issuer API
+  description: |
+    The Capability Issuer issues, attenuates, and renews capability tokens
+    (signed JWTs) that authorise AI agents to perform specific actions on
+    specific resources.
+
+    All token-bearing endpoints expect an Azure AD bearer token (for the
+    initial issue) or an existing capability token (for attenuate / renew)
+    in the `Authorization: Bearer <token>` header.
+  version: "1.0.0"
+  license:
+    name: ISC
+servers:
+  - url: http://localhost:3001
+    description: Local development
+  - url: https://issuer.example.com
+    description: Production (replace with your domain)
+
+tags:
+  - name: capabilities
+    description: Issue, attenuate, and renew capability tokens
+  - name: discovery
+    description: Public-key and DID document discovery endpoints
+  - name: ops
+    description: Health and operational endpoints
+
+paths:
+  /health:
+    get:
+      tags: [ops]
+      summary: Liveness / readiness probe
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/issue:
+    post:
+      tags: [capabilities]
+      summary: Issue a new capability token
+      description: |
+        Issues a new capability token to an agent based on the requesting
+        identity's permissions and the requested capabilities.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueCapabilityRequest'
+      responses:
+        '200':
+          description: Capability token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/attenuate:
+    post:
+      tags: [capabilities]
+      summary: Attenuate (narrow) an existing capability token
+      description: |
+        Produces a new token whose capabilities are a strict subset of the
+        parent token supplied in the `Authorization` header.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttenuateCapabilityRequest'
+      responses:
+        '200':
+          description: Attenuated token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/renew:
+    post:
+      tags: [capabilities]
+      summary: Renew an existing capability token
+      description: |
+        Issues a fresh token with the same capabilities and a new expiry.
+        The current (still valid) token must be supplied in the
+        `Authorization` header.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl:
+                  type: integer
+                  description: Lifetime of the new token in seconds.
+                  minimum: 1
+                  example: 900
+      responses:
+        '200':
+          description: Renewed token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/public-key:
+    get:
+      tags: [discovery]
+      summary: Get the issuer's public key
+      description: |
+        Returns the issuer's signing public key in PEM (SPKI) format so
+        downstream services can verify capability token signatures.
+      responses:
+        '200':
+          description: Public key retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey]
+                properties:
+                  publicKey:
+                    type: string
+                    description: PEM-encoded public key.
+
+  /.well-known/did.json:
+    get:
+      tags: [discovery]
+      summary: Get the issuer's DID document
+      description: |
+        Returns a simplified W3C DID document that publishes the issuer's
+        public key so other parties can resolve `did:web:<host>` to it.
+      responses:
+        '200':
+          description: DID document
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  '@context':
+                    type: array
+                    items: { type: string }
+                  id:
+                    type: string
+                    example: did:web:issuer.example.com
+                  verificationMethod:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        type: { type: string }
+                        controller: { type: string }
+                        publicKeyPem: { type: string }
+                  authentication:
+                    type: array
+                    items: { type: string }
+                  assertionMethod:
+                    type: array
+                    items: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status: { type: string, example: healthy }
+        service: { type: string, example: capability-issuer }
+
+    Capability:
+      type: object
+      required: [resource, actions]
+      properties:
+        resource:
+          type: string
+          description: Canonical resource URI the capability applies to.
+          example: api://service/data
+        actions:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [read, write, delete, execute]
+        conditions:
+          type: object
+          description: Optional caveats that further constrain the capability.
+          additionalProperties: true
+
+    AgentCapabilityManifest:
+      type: object
+      description: |
+        Optional declarative manifest of the capabilities an agent declares
+        it needs.  When supplied the issuer cross-checks the requested set
+        against it.
+      properties:
+        agentId: { type: string }
+        name: { type: string }
+        version: { type: string }
+        requiredCapabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+        optionalCapabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    IssueCapabilityRequest:
+      type: object
+      required: [agentId, requestedCapabilities]
+      properties:
+        agentId:
+          type: string
+          description: Identifier of the agent requesting the capability.
+        requestedCapabilities:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Capability' }
+        manifest:
+          $ref: '#/components/schemas/AgentCapabilityManifest'
+
+    AttenuateCapabilityRequest:
+      type: object
+      required: [requestedCapabilities]
+      properties:
+        requestedCapabilities:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Capability' }
+
+    CapabilityTokenResponse:
+      type: object
+      required: [token, tokenId, expiresAt, capabilities]
+      properties:
+        token:
+          type: string
+          description: Signed JWT capability token (RS256 / ES256 / EdDSA).
+        tokenId:
+          type: string
+          description: JWT ID (jti) – use this when revoking.
+        expiresAt:
+          type: integer
+          description: Token expiry as a Unix timestamp (seconds).
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: AUTHENTICATION_FAILED
+            message:
+              type: string
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Caller is authenticated but not authorised for the action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

@@ -11,29 +11,31 @@ import {
   ErrorCode,
   SigningAlgorithm,
 } from '@euno/common';
+import { InMemoryRevocationStore, RevocationStore } from './revocation-store';
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
   private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
-  // Maps revoked JTI → token expiry (Unix seconds).  isRevoked() prunes only
-  // the queried entry when it has expired (O(1)), while revokeToken() bulk-prunes
-  // all stale entries before inserting so the map stays bounded to the active-
-  // token window and does not grow without bound.
-  // NOTE: this is an in-process store. In a multi-instance deployment each
-  // replica holds its own copy, so a revocation issued to one instance will
-  // not be seen by others.  For distributed deployments replace this with a
-  // shared store (e.g. Redis) by overriding isRevoked / revokeToken.
-  private revokedTokens: Map<string, number> = new Map();
+  // Pluggable revocation backend.  Defaults to an in-process store; production
+  // multi-instance deployments should inject a shared store (e.g.
+  // RedisRevocationStore) so revocations are visible across replicas.
+  // See `docs/DISTRIBUTED_REVOCATION.md` for the operational architecture.
+  private revocationStore: RevocationStore;
   private algorithms: SigningAlgorithm[];
 
   /** Default revocation TTL used when the caller does not supply an expiry. */
   private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
 
-  constructor(publicKey: string, algorithms?: SigningAlgorithm[]) {
+  constructor(
+    publicKey: string,
+    algorithms?: SigningAlgorithm[],
+    revocationStore?: RevocationStore
+  ) {
     this.publicKey = publicKey;
     // Default to RS256 for backward compatibility, but allow multiple algorithms.
     // Normalize so that an explicitly passed empty array also falls back to RS256.
     this.algorithms = algorithms?.length ? algorithms : ['RS256'];
+    this.revocationStore = revocationStore ?? new InMemoryRevocationStore();
   }
 
   /**
@@ -104,20 +106,14 @@ export class JWTTokenVerifier implements TokenVerifier {
 
   /**
    * Check if a token is revoked.
-   * Performs an O(1) lookup; the entry is considered absent if its associated
-   * token has already expired (so an expired revocation is never reported as
-   * active, and the entry will be cleaned up the next time revokeToken runs).
+   *
+   * Delegates to the configured {@link RevocationStore}.  The default
+   * in-memory store performs an O(1) lookup; alternative backends (Redis,
+   * etc.) may add network latency but are required for correctness across
+   * multiple gateway instances.
    */
   async isRevoked(tokenId: string): Promise<boolean> {
-    const expiry = this.revokedTokens.get(tokenId);
-    if (expiry === undefined) {
-      return false;
-    }
-    if (expiry <= Math.floor(Date.now() / 1000)) {
-      this.revokedTokens.delete(tokenId);
-      return false;
-    }
-    return true;
+    return this.revocationStore.isRevoked(tokenId);
   }
 
   /**
@@ -127,19 +123,32 @@ export class JWTTokenVerifier implements TokenVerifier {
    *   Provide the token's own `exp` value so the revocation entry can be
    *   automatically pruned once the token is no longer valid anyway.
    *   Defaults to {@link JWTTokenVerifier.DEFAULT_REVOCATION_TTL_SECONDS} from now when omitted.
+   *
+   * Returns a Promise so distributed (e.g. Redis-backed) stores can perform
+   * I/O.  Callers that previously treated this as fire-and-forget should
+   * `await` it to surface backend failures.
    */
-  revokeToken(tokenId: string, expiresAt?: number): void {
-    // Prune all expired entries before adding the new one so the map does
-    // not grow indefinitely. This is amortized over revokeToken calls, which
-    // are far less frequent than isRevoked calls.
+  async revokeToken(tokenId: string, expiresAt?: number): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
-    for (const [jti, expiry] of this.revokedTokens) {
-      if (expiry <= now) {
-        this.revokedTokens.delete(jti);
+    const expiry = expiresAt ?? (now + JWTTokenVerifier.DEFAULT_REVOCATION_TTL_SECONDS);
+    await this.revocationStore.revoke(tokenId, expiry);
+  }
+
+  /**
+   * Replace the revocation backend (e.g. to swap an in-memory store for a
+   * Redis-backed one once the connection is established).  Closes the
+   * previous store on a best-effort basis.
+   */
+  async setRevocationStore(store: RevocationStore): Promise<void> {
+    const previous = this.revocationStore;
+    this.revocationStore = store;
+    if (previous && previous !== store) {
+      try {
+        await previous.close();
+      } catch {
+        // best-effort close; the new store is already in place
       }
     }
-    const expiry = expiresAt ?? (now + JWTTokenVerifier.DEFAULT_REVOCATION_TTL_SECONDS);
-    this.revokedTokens.set(tokenId, expiry);
   }
 
   /**

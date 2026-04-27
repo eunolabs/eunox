@@ -279,7 +279,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * Revoke a capability token by its JTI (JWT ID)
    * Body: { tokenId: string, expiresAt?: number }
    */
-  router.post('/revoke', (req: Request, res: Response): void => {
+  router.post('/revoke', async (req: Request, res: Response): Promise<void> => {
     try {
       if (!tokenVerifier) {
         res.status(501).json({
@@ -315,7 +315,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       const now = Math.floor(Date.now() / 1000);
       const effectiveExpiresAt = expiresAt ?? now + 86400;
 
-      tokenVerifier.revokeToken(tokenId, effectiveExpiresAt);
+      await tokenVerifier.revokeToken(tokenId, effectiveExpiresAt);
       logger.warn('Token revoked via admin API', { tokenId, expiresAt: effectiveExpiresAt });
       res.json({
         message: `Token ${tokenId} has been revoked`,
