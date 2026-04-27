@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": {
+      "value": "eunopilot"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "tags": {
+      "value": {
+        "product": "euno",
+        "component": "capability-governance",
+        "environment": "pilot",
+        "owner": "platform-team"
+      }
+    },
+    "keyVaultAdminObjectId": {
+      "value": ""
+    },
+    "keyVaultAdminPrincipalType": {
+      "value": "User"
+    },
+    "keyVaultPublicNetworkAccess": {
+      "value": "Restricted"
+    },
+    "keyVaultAllowedIpRanges": {
+      "value": []
+    },
+    "kubernetesVersion": {
+      "value": "1.30.6"
+    },
+    "aksNodeCount": {
+      "value": 3
+    },
+    "aksNodeVmSize": {
+      "value": "Standard_D2s_v5"
+    },
+    "logAnalyticsRetentionDays": {
+      "value": 90
+    }
+  }
+}

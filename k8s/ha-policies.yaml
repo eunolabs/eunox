@@ -1,0 +1,142 @@
+# Sprint 5: High-availability hardening for the production pilot.
+#
+# Adds PodDisruptionBudgets and HorizontalPodAutoscalers for both control-plane
+# (capability-issuer) and data-plane (tool-gateway) workloads.  Apply *after*
+# the base deployments under capability-issuer-deployment.yaml and
+# tool-gateway-deployment.yaml.
+#
+# Rationale (from execution-plan.md, Sprint 5):
+#   - "Capability Issuer as a highly-available service (two or more instances,
+#     behind load balancer, with auto-scale)."
+#   - "Tool Gateway close to agents (sidecar in AKS pod, DaemonSet, or dedicated
+#     internal service)."  -> we run it as a clustered Deployment with HPA and
+#     keep `agent-runtime.yaml` showing the sidecar pattern for low-latency
+#     workloads.
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: capability-issuer-pdb
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+    component: control-plane
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: capability-issuer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: capability-issuer-hpa
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+    component: control-plane
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: capability-issuer
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tool-gateway-pdb
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+    component: data-plane
+spec:
+  # The gateway is on the hot path for every tool call; keep at least 2 pods
+  # available during voluntary disruptions (node drain, cluster upgrade, etc.).
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: tool-gateway
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tool-gateway-hpa
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+    component: data-plane
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tool-gateway
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      # The gateway is latency-sensitive; react aggressively on the way up.
+      stabilizationWindowSeconds: 15
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      # Be conservative on the way down to avoid thrashing.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60

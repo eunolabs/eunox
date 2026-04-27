@@ -1,0 +1,166 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Microsoft Sentinel scheduled analytic rules for the Euno capability-native agent governance pilot. Implements the detections called out in Sprint 3-5 of the execution plan: denied-action spikes, write attempts under read-only mode, repeated invalid tokens, and kill-switch activation."
+  },
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Log Analytics workspace onboarded to Microsoft Sentinel."
+      }
+    },
+    "severityHigh": {
+      "type": "string",
+      "defaultValue": "High",
+      "allowedValues": ["Informational", "Low", "Medium", "High"],
+      "metadata": { "description": "Severity for high-confidence rules." }
+    },
+    "severityMedium": {
+      "type": "string",
+      "defaultValue": "Medium",
+      "allowedValues": ["Informational", "Low", "Medium", "High"],
+      "metadata": { "description": "Severity for medium-confidence rules." }
+    }
+  },
+  "variables": {
+    "ruleApiVersion": "2023-12-01-preview",
+    "containerLogTable": "ContainerLogV2"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "[variables('ruleApiVersion')]",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', guid('euno-deny-spike'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Euno - Capability denial spike from a single agent/session",
+        "description": "Five or more capability-token denials within five minutes from the same agent or session. Possible prompt-injection attempt or runaway agent loop.",
+        "severity": "[parameters('severityHigh')]",
+        "enabled": true,
+        "query": "ContainerLogV2\n| where TimeGenerated > ago(10m)\n| where LogMessage has 'Action denied' or LogMessage has 'AUTHORIZATION_FAILED' or LogMessage has 'INVALID_TOKEN'\n// Audit log lines are JSON; the regular logger uses winston's simple format,\n// so its lines have a JSON suffix.  Extract the trailing JSON object first.\n| extend payloadJson = extract(@'(\\{.*\\})\\s*$', 1, LogMessage)\n| extend payload = parse_json(payloadJson)\n| where isnotnull(payload)\n| extend agentId = tostring(payload.agentId), sessionId = coalesce(tostring(payload.metadata.sessionId), tostring(payload.sessionId))\n| where isnotempty(sessionId) or isnotempty(agentId)\n| summarize Denials = count() by sessionId, agentId, bin(TimeGenerated, 5m)\n| where Denials >= 5",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT15M",
+        "suppressionEnabled": true,
+        "tactics": ["DefenseEvasion", "InitialAccess"],
+        "techniques": ["T1078"],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT30M",
+            "matchingMethod": "Selected",
+            "groupByEntities": ["Account"],
+            "groupByCustomDetails": ["sessionId", "agentId"]
+          }
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "Name", "columnName": "agentId" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "[variables('ruleApiVersion')]",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', guid('euno-write-in-readonly'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Euno - Write attempt from a read-only session",
+        "description": "An agent session that was issued only read scopes attempted a write operation. Indicates either a buggy agent or an active jailbreak attempt.",
+        "severity": "[parameters('severityHigh')]",
+        "enabled": true,
+        "query": "ContainerLogV2\n| where TimeGenerated > ago(10m)\n// Target the audit logger schema (logType=='audit'), which is emitted as pure\n// JSON.  This matches the records produced by EnforcementEngine.logDenial().\n| extend payloadJson = extract(@'(\\{.*\\})\\s*$', 1, LogMessage)\n| extend payload = parse_json(payloadJson)\n| where isnotnull(payload)\n| where tostring(payload.logType) == 'audit'\n| extend decision = tostring(payload.decision), action = tostring(payload.action), reason = tostring(payload.reason), agentId = tostring(payload.agentId), sessionId = coalesce(tostring(payload.metadata.sessionId), tostring(payload.sessionId))\n| where decision == 'deny'\n| where action in ('write','delete','update','create')\n| where reason has 'Insufficient permissions' or reason has 'Invalid audience'\n| where isnotempty(sessionId)\n| project TimeGenerated, sessionId, agentId, action, reason, _ResourceId",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT30M",
+        "suppressionEnabled": true,
+        "tactics": ["PrivilegeEscalation"],
+        "techniques": ["T1068"],
+        "incidentConfiguration": {
+          "createIncident": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "[variables('ruleApiVersion')]",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', guid('euno-invalid-token-burst'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Euno - Burst of invalid capability tokens",
+        "description": "More than 20 invalid-signature or expired-token errors in a 5-minute window. Possible token-forgery attempt or a clock-skew incident in the fleet.",
+        "severity": "[parameters('severityMedium')]",
+        "enabled": true,
+        "query": "ContainerLogV2\n| where TimeGenerated > ago(10m)\n| where LogMessage has 'INVALID_TOKEN' or LogMessage has 'EXPIRED_TOKEN' or LogMessage has 'invalid signature'\n| summarize InvalidTokens = count() by bin(TimeGenerated, 5m), _ResourceId\n| where InvalidTokens > 20",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT30M",
+        "suppressionEnabled": true,
+        "tactics": ["CredentialAccess"],
+        "incidentConfiguration": {
+          "createIncident": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "[variables('ruleApiVersion')]",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', guid('euno-kill-switch-activated'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Euno - Kill switch activated",
+        "description": "Operational event: an admin activated the global, session-scoped, or agent-scoped kill switch. Forwarded as an incident so the on-call channel always sees a record.",
+        "severity": "[parameters('severityMedium')]",
+        "enabled": true,
+        "query": "ContainerLogV2\n| where TimeGenerated > ago(10m)\n| where LogMessage has 'Kill switch activated' or LogMessage has 'KILL_ALL_AGENTS' or LogMessage has 'kill switch enabled'\n| project TimeGenerated, _ResourceId, LogMessage",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT15M",
+        "suppressionEnabled": true,
+        "tactics": ["Impact"],
+        "incidentConfiguration": {
+          "createIncident": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "[variables('ruleApiVersion')]",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', guid('euno-token-revocation-spike'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Euno - Token revocation spike",
+        "description": "More than 10 token revocations through the admin API within 5 minutes. Could indicate an automated incident-response action or an attacker abusing operator credentials.",
+        "severity": "[parameters('severityMedium')]",
+        "enabled": true,
+        "query": "ContainerLogV2\n| where TimeGenerated > ago(10m)\n| where LogMessage has 'Token revoked via admin API'\n| summarize Revocations = count() by bin(TimeGenerated, 5m)\n| where Revocations > 10",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT30M",
+        "suppressionEnabled": true,
+        "tactics": ["Impact"],
+        "incidentConfiguration": {
+          "createIncident": true
+        }
+      }
+    }
+  ]
+}
