@@ -6,13 +6,13 @@ Token revocation is currently implemented using an in-memory JTI (JWT Token ID) 
 
 ## Current Implementation
 
-Location: `/packages/tool-gateway/src/verifier.ts` lines 23-26
+Location: `/packages/tool-gateway/src/verifier.ts`
 
-The current implementation stores revoked token IDs in a Set in memory:
+The current implementation stores revoked token IDs in an in-memory `Map` keyed by JTI with the token expiry time as the value. Stale entries (whose expiry has passed) are pruned on each new revocation to keep memory usage bounded:
 
 ```typescript
 export class JWTTokenVerifier {
-  private revokedTokens: Set<string> = new Set();
+  private revokedTokens: Map<string, number> = new Map(); // jti → expiry (Unix seconds)
   // ...
 }
 ```
@@ -325,15 +325,16 @@ export class DatabaseRevocationStore implements RevocationStore {
 }
 ```
 
-Database schema:
+Database schema (PostgreSQL):
 
 ```sql
 CREATE TABLE revoked_tokens (
   token_id VARCHAR(255) PRIMARY KEY,
   revoked_at TIMESTAMP DEFAULT NOW(),
-  expires_at TIMESTAMP NOT NULL,
-  INDEX idx_expires (expires_at)
+  expires_at TIMESTAMP NOT NULL
 );
+
+CREATE INDEX idx_revoked_tokens_expires ON revoked_tokens (expires_at);
 
 -- Cleanup job (run periodically)
 DELETE FROM revoked_tokens WHERE expires_at < NOW();

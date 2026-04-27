@@ -191,7 +191,7 @@ app.use(helmet());
 
 // CORS configuration with environment-based origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : config.environment === 'production'
   ? []  // No CORS in production unless explicitly configured
   : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];
@@ -202,9 +202,24 @@ app.use(cors({
 }));
 
 // Rate limiting - protect against brute force attacks
+const rateLimitWindowRaw = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '', 10);
+const rateLimitMaxRaw = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '', 10);
+const rateLimitWindowMs = Number.isFinite(rateLimitWindowRaw) && rateLimitWindowRaw > 0
+  ? rateLimitWindowRaw
+  : 60000;
+const rateLimitMax = Number.isFinite(rateLimitMaxRaw) && rateLimitMaxRaw > 0
+  ? rateLimitMaxRaw
+  : 100;
+if (!Number.isFinite(rateLimitWindowRaw) && process.env.RATE_LIMIT_WINDOW_MS) {
+  logger.warn('Invalid RATE_LIMIT_WINDOW_MS, using default 60000ms');
+}
+if (!Number.isFinite(rateLimitMaxRaw) && process.env.RATE_LIMIT_MAX_REQUESTS) {
+  logger.warn('Invalid RATE_LIMIT_MAX_REQUESTS, using default 100');
+}
+
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10), // 1 minute default
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10), // 100 requests per window
+  windowMs: rateLimitWindowMs,
+  max: rateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later',

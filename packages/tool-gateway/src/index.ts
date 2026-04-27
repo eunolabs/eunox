@@ -89,7 +89,7 @@ app.use(helmet());
 
 // CORS configuration with environment-based origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : config.environment === 'production'
   ? []  // No CORS in production unless explicitly configured
   : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];
@@ -100,9 +100,24 @@ app.use(cors({
 }));
 
 // Rate limiting
+const gwRateLimitWindowRaw = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '', 10);
+const gwRateLimitMaxRaw = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '', 10);
+const gwRateLimitWindowMs = Number.isFinite(gwRateLimitWindowRaw) && gwRateLimitWindowRaw > 0
+  ? gwRateLimitWindowRaw
+  : 60000;
+const gwRateLimitMax = Number.isFinite(gwRateLimitMaxRaw) && gwRateLimitMaxRaw > 0
+  ? gwRateLimitMaxRaw
+  : 1000; // Higher limit for gateway
+if (!Number.isFinite(gwRateLimitWindowRaw) && process.env.RATE_LIMIT_WINDOW_MS) {
+  logger.warn('Invalid RATE_LIMIT_WINDOW_MS, using default 60000ms');
+}
+if (!Number.isFinite(gwRateLimitMaxRaw) && process.env.RATE_LIMIT_MAX_REQUESTS) {
+  logger.warn('Invalid RATE_LIMIT_MAX_REQUESTS, using default 1000');
+}
+
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000', 10), // Higher limit for gateway
+  windowMs: gwRateLimitWindowMs,
+  max: gwRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later',

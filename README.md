@@ -591,7 +591,7 @@ Before deploying Euno to production, ensure all items below are completed:
   ```bash
   ADMIN_API_KEY=$(openssl rand -hex 32)
   ```
-- [ ] **Secrets Management**: All secrets stored in Kubernetes Secrets or Azure Key Vault (never in environment variables)
+- [ ] **Secrets Management**: All secrets stored in a secrets manager (Azure Key Vault) or Kubernetes Secrets — never committed to the repository; inject at runtime via environment variables or mounted files
 - [ ] **TLS/HTTPS**: Enable TLS for all external endpoints
 - [ ] **Network Policies**: Apply Kubernetes Network Policies (see `k8s/network-policies.yaml`)
 
