@@ -22,6 +22,8 @@ import { AzureADIdentityProvider } from './azure-identity-provider';
 import { DIDIdentityProvider } from './did-identity-provider';
 import { AzureKeyVaultSigner } from './azure-signer';
 import { DIDSigner } from './did-signer';
+import { AWSKMSSigner } from './aws-kms-signer';
+import { GCPCloudKMSSigner } from './gcp-cloudkms-signer';
 
 /**
  * Default identity provider registry with built-in providers pre-registered.
@@ -35,8 +37,10 @@ defaultIdentityRegistry.register('did', DIDIdentityProvider);
 /**
  * Default signing provider registry with built-in signers pre-registered.
  *
- * Built-in types: `azure-keyvault`, `did`
+ * Built-in types: `azure-keyvault`, `did`, `aws-kms`, `gcp-cloudkms`
  */
 export const defaultSigningRegistry = new SigningAdapterRegistry();
 defaultSigningRegistry.register('azure-keyvault', AzureKeyVaultSigner);
 defaultSigningRegistry.register('did', DIDSigner);
+defaultSigningRegistry.register('aws-kms', AWSKMSSigner);
+defaultSigningRegistry.register('gcp-cloudkms', GCPCloudKMSSigner);

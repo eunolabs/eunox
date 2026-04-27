@@ -13,7 +13,7 @@ Euno provides a zero-trust security framework for AI agents, combining decentral
 1. **Capability Issuer** (`packages/capability-issuer`)
    - Issues JWT-based capability tokens
    - Integrates with Azure AD for user authentication
-   - Uses Azure Key Vault for cryptographic signing
+   - Uses Azure Key Vault, AWS KMS, or GCP Cloud KMS for cryptographic signing
    - Implements policy-driven issuance based on user roles
    - **NEW Sprint 3**: Token renewal and capability attenuation
 
@@ -173,9 +173,10 @@ The system maps Azure AD roles to capability constraints:
 
 ### Cryptographic Signing
 
-- Tokens are signed using RSA-2048 keys stored in Azure Key Vault
-- Hash locally, sign remotely pattern (Azure best practice)
+- Tokens are signed using RSA-2048 or EC keys stored in Azure Key Vault, AWS KMS, or GCP Cloud KMS
+- Hash locally, sign remotely pattern (cloud KMS best practice)
 - Public key available via `/api/v1/public-key` endpoint
+- Supports multiple signing algorithms: RS256, RS384, RS512, ES256, ES384, ES512
 
 ### Token Validation
 

@@ -328,6 +328,40 @@ export interface AzureKeyVaultConfig {
 }
 
 /**
+ * Configuration for AWS KMS integration
+ */
+export interface AWSKMSConfig {
+  /** AWS region (e.g., us-east-1) */
+  region: string;
+  /** KMS key ID or ARN */
+  keyId: string;
+  /** AWS access key ID (optional, uses default credentials if not provided) */
+  accessKeyId?: string;
+  /** AWS secret access key (optional, uses default credentials if not provided) */
+  secretAccessKey?: string;
+  /** AWS session token (optional, for temporary credentials) */
+  sessionToken?: string;
+}
+
+/**
+ * Configuration for GCP Cloud KMS integration
+ */
+export interface GCPCloudKMSConfig {
+  /** GCP project ID */
+  projectId: string;
+  /** Cloud KMS location (e.g., us-central1, global) */
+  locationId: string;
+  /** Key ring name */
+  keyRingId: string;
+  /** Crypto key name */
+  cryptoKeyId: string;
+  /** Crypto key version (optional, uses primary version if not specified) */
+  cryptoKeyVersion?: string;
+  /** Path to service account key file (optional, uses default credentials if not provided) */
+  keyFilePath?: string;
+}
+
+/**
  * Configuration for Azure AD integration
  */
 export interface AzureADConfig {
