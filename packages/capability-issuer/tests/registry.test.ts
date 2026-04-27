@@ -118,10 +118,14 @@ describe('defaultSigningRegistry', () => {
   });
 
   it('should create a DIDSigner for type did', async () => {
+    // Mock initialize to avoid DID resolution in tests
+    jest.spyOn(DIDSigner.prototype, 'initialize').mockResolvedValueOnce(undefined);
+
     const signer = await defaultSigningRegistry.createSigningAdapter({
       type: 'did',
       name: 'Test DID Signer',
-      issuerDID: 'did:key:test',
+      issuerDID: 'did:web:example.com',
+      privateKey: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
     });
 
     expect(signer).toBeInstanceOf(DIDSigner);
