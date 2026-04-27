@@ -6,6 +6,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import {
@@ -85,7 +86,54 @@ const app = express();
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+
+// CORS configuration with environment-based origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : config.environment === 'production'
+  ? []  // No CORS in production unless explicitly configured
+  : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];
+
+app.use(cors({
+  origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+  credentials: true,
+}));
+
+// Rate limiting
+const gwRateLimitWindowRaw = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '', 10);
+const gwRateLimitMaxRaw = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '', 10);
+const gwRateLimitWindowMs = Number.isFinite(gwRateLimitWindowRaw) && gwRateLimitWindowRaw > 0
+  ? gwRateLimitWindowRaw
+  : 60000;
+const gwRateLimitMax = Number.isFinite(gwRateLimitMaxRaw) && gwRateLimitMaxRaw > 0
+  ? gwRateLimitMaxRaw
+  : 1000; // Higher limit for gateway
+if (!Number.isFinite(gwRateLimitWindowRaw) && process.env.RATE_LIMIT_WINDOW_MS) {
+  logger.warn('RATE_LIMIT_WINDOW_MS value is invalid, using default 60000ms');
+}
+if (!Number.isFinite(gwRateLimitMaxRaw) && process.env.RATE_LIMIT_MAX_REQUESTS) {
+  logger.warn('RATE_LIMIT_MAX_REQUESTS value is invalid, using default 1000');
+}
+
+const limiter = rateLimit({
+  windowMs: gwRateLimitWindowMs,
+  max: gwRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again later',
+  handler: (req: Request, res: Response) => {
+    logger.warn('Rate limit exceeded', {
+      ip: req.ip,
+      path: req.path,
+    });
+    res.status(429).json({
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    });
+  },
+});
+
+app.use(limiter);
 app.use(express.json());
 
 // Request logging middleware

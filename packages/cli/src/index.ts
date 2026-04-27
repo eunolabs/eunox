@@ -7,6 +7,7 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
+import axios from 'axios';
 
 const program = new Command();
 
@@ -90,26 +91,111 @@ program
 program
   .command('request')
   .description('Request a capability token from the issuer')
-  .option('-i, --issuer <url>', 'Issuer URL', 'http://localhost:3001')
-  .option('-a, --agent <id>', 'Agent ID', 'default-agent')
-  .option('-t, --token <token>', 'Azure AD bearer token (required)')
+  .option('-i, --issuer <url>', 'Issuer URL', process.env.EUNO_ISSUER_URL || 'http://localhost:3001')
+  .option('-a, --agent <id>', 'Agent ID (required)', '')
+  .option('-t, --token <token>', 'Azure AD bearer token (or set AZURE_AD_TOKEN env var)', process.env.AZURE_AD_TOKEN || '')
   .option('-m, --manifest <file>', 'Capability manifest file')
+  .option('-r, --resources <resources...>', 'Resource URIs (e.g., api://service/endpoint)')
+  .option('--actions <actions...>', 'Actions (e.g., read write)')
   .action(async (options) => {
-    if (!options.token) {
-      console.error('✗ Azure AD bearer token is required (use --token)');
+    // Also accept token from env var directly (options default already handles this,
+    // but guard here in case both paths yield an empty string)
+    const token: string = options.token;
+    if (!token) {
+      console.error('✗ Azure AD bearer token is required');
+      console.error('  Use --token <token> or set the AZURE_AD_TOKEN environment variable');
+      console.error('  Example: euno request --agent my-agent --token $AZURE_AD_TOKEN');
+      process.exit(1);
+    }
+
+    if (!options.agent) {
+      console.error('✗ Agent ID is required (use --agent)');
       process.exit(1);
     }
 
     console.log(`Requesting capability from ${options.issuer}...`);
     console.log(`  Agent ID: ${options.agent}`);
 
-    // This is a stub - full implementation would use axios to call the API
-    console.log('✗ Not yet implemented - use curl or HTTP client for now');
-    console.log('Example:');
-    console.log(`  curl -X POST ${options.issuer}/api/v1/issue \\`);
-    console.log(`    -H "Authorization: Bearer YOUR_AZURE_AD_TOKEN" \\`);
-    console.log(`    -H "Content-Type: application/json" \\`);
-    console.log(`    -d '{"agentId": "${options.agent}"}'`);
+    try {
+      let requestedCapabilities: Array<{resource: string; actions: string[]}> = [];
+
+      // If manifest file provided, load capabilities from it
+      if (options.manifest) {
+        const content = fs.readFileSync(options.manifest, 'utf8');
+        const manifest = yaml.load(content) as Record<string, unknown>;
+
+        if (!Array.isArray(manifest.requiredCapabilities) || manifest.requiredCapabilities.length === 0) {
+          console.error('✗ Manifest must contain a non-empty "requiredCapabilities" array');
+          process.exit(1);
+        }
+
+        const invalid = (manifest.requiredCapabilities as unknown[]).findIndex(
+          (cap) =>
+            typeof (cap as Record<string, unknown>).resource !== 'string' ||
+            !Array.isArray((cap as Record<string, unknown>).actions)
+        );
+        if (invalid !== -1) {
+          console.error(`✗ requiredCapabilities[${invalid}] must have a "resource" string and an "actions" array`);
+          process.exit(1);
+        }
+
+        requestedCapabilities = manifest.requiredCapabilities as Array<{resource: string; actions: string[]}>;
+        console.log(`  Loaded ${requestedCapabilities.length} capabilities from manifest`);
+      }
+      // Otherwise use command-line resources and actions (both flags required together)
+      else if (options.resources && options.actions) {
+        requestedCapabilities = options.resources.map((resource: string) => ({
+          resource,
+          actions: options.actions,
+        }));
+      } else if (options.resources || options.actions) {
+        console.error('✗ --resources and --actions must be provided together');
+        console.error('  Example: euno request --agent my-agent --resources api://svc/data --actions read write');
+        process.exit(1);
+      }
+      // Default fallback
+      else {
+        requestedCapabilities = [{
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+        }];
+        console.log('  Using default capabilities (no manifest or resources specified)');
+      }
+
+      const response = await axios.post(
+        `${options.issuer}/api/v1/issue`,
+        {
+          agentId: options.agent,
+          requestedCapabilities,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        }
+      );
+
+      console.log('\n✓ Successfully issued capability token:');
+      console.log(`  Token ID: ${response.data.tokenId}`);
+      console.log(`  Expires: ${new Date(response.data.expiresAt * 1000).toISOString()}`);
+      console.log(`  Capabilities: ${response.data.capabilities.length}`);
+      console.log('\nToken (save this):');
+      console.log(response.data.token);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        console.error('\n✗ Request failed:');
+        console.error(`  Status: ${error.response?.status || 'N/A'}`);
+        console.error(`  Message: ${error.response?.data?.message || error.message}`);
+        if (error.response?.data?.code) {
+          console.error(`  Code: ${error.response.data.code}`);
+        }
+      } else {
+        console.error(`✗ Unexpected error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      process.exit(1);
+    }
   });
 
 /**

@@ -571,6 +571,117 @@ Required environment variables for production:
 - **Standards Compliance**: W3C DIDs, JWT/VC compatibility
 - **Zero Trust**: No implicit trust, always verify
 
+## Production Deployment Checklist
+
+Before deploying Euno to production, ensure all items below are completed:
+
+### Security Configuration
+
+- [ ] **Environment Variables**: Set `NODE_ENV=production` for all services
+- [ ] **CORS Configuration**: Set `ALLOWED_ORIGINS` to whitelist only trusted domains
+  ```bash
+  ALLOWED_ORIGINS=https://your-app.com,https://admin.your-app.com
+  ```
+- [ ] **Rate Limiting**: Configure appropriate rate limits
+  ```bash
+  RATE_LIMIT_WINDOW_MS=60000
+  RATE_LIMIT_MAX_REQUESTS=100  # Adjust based on expected load
+  ```
+- [ ] **Admin API Key**: Set strong admin API key for tool-gateway
+  ```bash
+  ADMIN_API_KEY=$(openssl rand -hex 32)
+  ```
+- [ ] **Secrets Management**: All secrets stored in a secrets manager (Azure Key Vault) or Kubernetes Secrets — never committed to the repository; inject at runtime via environment variables or mounted files
+- [ ] **TLS/HTTPS**: Enable TLS for all external endpoints
+- [ ] **Network Policies**: Apply Kubernetes Network Policies (see `k8s/network-policies.yaml`)
+
+### Identity & Signing
+
+- [ ] **Azure Key Vault**: Signing key created and accessible via Managed Identity
+  ```bash
+  az keyvault key create --vault-name <vault> --name capability-signing-key --kty RSA --size 2048
+  ```
+- [ ] **Azure AD App Registration**: Application registered with correct permissions
+- [ ] **Managed Identity**: Enabled for capability-issuer and tool-gateway pods
+- [ ] **DID Configuration**: Set production `ISSUER_DID` (e.g., `did:web:your-domain.com`)
+- [ ] **Public Key Endpoint**: Ensure `/.well-known/did.json` is publicly accessible
+
+### Kubernetes Security
+
+- [ ] **Pod Security Standards**: Applied restricted mode (see `k8s/pod-security-standards.yaml`)
+- [ ] **AppArmor Profiles**: Installed on all nodes
+  ```bash
+  sudo cp k8s/security-policies/apparmor-profile.conf /etc/apparmor.d/euno-restricted
+  sudo apparmor_parser -r /etc/apparmor.d/euno-restricted
+  ```
+- [ ] **Non-Root Users**: All containers run as UID 1001/1002
+- [ ] **Read-Only Filesystem**: Root filesystem read-only with tmpfs mounts
+- [ ] **Resource Limits**: CPU and memory limits configured
+- [ ] **Security Context**: `allowPrivilegeEscalation: false`, `runAsNonRoot: true`
+
+### High Availability
+
+- [ ] **Multiple Replicas**: At least 2 replicas for each service
+- [ ] **Distributed Revocation**: Redis deployed for token revocation (see `docs/DISTRIBUTED_REVOCATION.md`)
+  ```bash
+  REDIS_URL=redis://euno-redis:6379
+  ```
+- [ ] **Health Checks**: Liveness and readiness probes configured
+- [ ] **Horizontal Pod Autoscaler**: Configured for automatic scaling
+
+### Monitoring & Observability
+
+- [ ] **Azure Monitor**: Log Analytics workspace configured
+- [ ] **Application Insights**: Enabled for performance monitoring
+- [ ] **Audit Logging**: All capability operations logged to Azure Monitor
+- [ ] **Alerts**: Configured for:
+  - High denied action rate (potential attack)
+  - Kill switch activations
+  - Service health failures
+  - Redis connection errors
+  - Rate limit exceeded events
+- [ ] **Dashboards**: Operational dashboards created
+
+### Testing
+
+- [ ] **Load Testing**: Tested with expected production load
+- [ ] **Security Testing**: Penetration testing completed
+- [ ] **Disaster Recovery**: Backup and restore procedures tested
+- [ ] **Incident Response**: Team trained on runbook (see `docs/INCIDENT_RESPONSE_RUNBOOK.md`)
+
+### Documentation
+
+- [ ] **Deployment Guide**: `docs/DEPLOYMENT.md` reviewed
+- [ ] **Pilot Playbook**: `docs/PILOT_PLAYBOOK.md` reviewed
+- [ ] **API Documentation**: OpenAPI/Swagger docs published
+- [ ] **Architecture Diagrams**: Up to date
+- [ ] **Runbooks**: Incident response procedures documented
+
+### Validation
+
+- [ ] **All Tests Passing**: `npm test` passes with 100% success rate
+- [ ] **Build Successful**: `npm run build` completes without errors
+- [ ] **Lint Clean**: `npm run lint` reports no issues
+- [ ] **Security Scan**: No critical vulnerabilities in `npm audit`
+- [ ] **Token Issuance**: End-to-end token issuance tested
+- [ ] **Token Validation**: Gateway correctly validates and enforces tokens
+- [ ] **Token Revocation**: Revocation works across all gateway instances
+- [ ] **Kill Switch**: Global, session, and agent kill switches tested
+
+### Performance Targets
+
+- [ ] Gateway latency < 5ms (p95)
+- [ ] Token issuance < 500ms (p95)
+- [ ] Supports 50+ concurrent agents
+- [ ] Handles 1000+ requests/minute per gateway instance
+
+### Post-Deployment
+
+- [ ] **Monitoring Active**: All alerts and dashboards operational
+- [ ] **Team On-Call**: Incident response team assigned
+- [ ] **Rollback Plan**: Procedure documented and tested
+- [ ] **Communication Plan**: Stakeholders notified of deployment
+
 ## Contributing
 
 This project follows the Azure-Integrated Hybrid Execution Plan for Capability-Native Agent Governance. See `execution-plan.md` for the full roadmap.
