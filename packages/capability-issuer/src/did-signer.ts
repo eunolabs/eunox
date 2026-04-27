@@ -105,7 +105,7 @@ export class DIDSigner extends SigningAdapter {
       );
     }
 
-    return extractPublicKeyPem(this.verificationMethod);
+    return await extractPublicKeyPem(this.verificationMethod);
   }
 
   /**

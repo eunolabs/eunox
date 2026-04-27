@@ -1,11 +1,12 @@
 /**
  * DID Resolution Utilities
  *
- * Implements W3C DID resolution for did:web and did:ion methods
+ * Implements W3C DID resolution for did:web, did:ion, and did:key methods
  * Reference: https://www.w3.org/TR/did-core/
  */
 
 import { CapabilityError, ErrorCode } from '@euno/common';
+import * as jose from 'jose';
 
 /**
  * W3C DID Document structure
@@ -185,15 +186,187 @@ export async function resolveDidWeb(did: string): Promise<DIDDocument> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Base58btc helpers (used by did:key resolution)
+// ---------------------------------------------------------------------------
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
 /**
- * Resolve did:ion to DID Document
+ * Decode a base58btc string (without multibase prefix) to a byte array.
+ */
+function decodeBase58Btc(encoded: string): Uint8Array {
+  let value = 0n;
+  for (const char of encoded) {
+    const idx = BASE58_ALPHABET.indexOf(char);
+    if (idx < 0) {
+      throw new Error(`Invalid base58btc character: '${char}'`);
+    }
+    value = value * 58n + BigInt(idx);
+  }
+
+  const bytes: number[] = [];
+  while (value > 0n) {
+    bytes.unshift(Number(value & 0xffn));
+    value >>= 8n;
+  }
+
+  // Leading '1' characters each represent a zero byte
+  for (const char of encoded) {
+    if (char === '1') {
+      bytes.unshift(0);
+    } else {
+      break;
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
+/**
+ * Encode a byte array to a base58btc string (without multibase prefix).
+ */
+function encodeBase58Btc(bytes: Uint8Array): string {
+  let value = 0n;
+  for (const byte of bytes) {
+    value = value * 256n + BigInt(byte);
+  }
+
+  let encoded = '';
+  while (value > 0n) {
+    encoded = BASE58_ALPHABET[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+
+  // Prepend '1' for each leading zero byte
+  for (const byte of bytes) {
+    if (byte === 0) {
+      encoded = '1' + encoded;
+    } else {
+      break;
+    }
+  }
+
+  return encoded;
+}
+
+/**
+ * Read an unsigned varint from a byte array at the given offset.
+ * Returns [value, bytesConsumed].
+ */
+function readVarint(bytes: Uint8Array, offset: number = 0): [number, number] {
+  let value = 0;
+  let shift = 0;
+  let bytesRead = 0;
+  while (offset + bytesRead < bytes.length) {
+    const byte = bytes[offset + bytesRead];
+    if (byte === undefined) {
+      break;
+    }
+    bytesRead++;
+    value |= (byte & 0x7f) << shift;
+    shift += 7;
+    if (!(byte & 0x80)) {
+      break;
+    }
+  }
+  return [value, bytesRead];
+}
+
+// ---------------------------------------------------------------------------
+// Elliptic-curve helpers (used by did:key P-256 and secp256k1 resolution)
+// ---------------------------------------------------------------------------
+
+/**
+ * Modular exponentiation using BigInt arithmetic.
+ */
+function modpow(base: bigint, exp: bigint, mod: bigint): bigint {
+  let result = 1n;
+  let b = base % mod;
+  let e = exp;
+  while (e > 0n) {
+    if (e % 2n === 1n) {
+      result = (result * b) % mod;
+    }
+    e /= 2n;
+    b = (b * b) % mod;
+  }
+  return result;
+}
+
+/**
+ * Decompress a P-256 (secp256r1) compressed public key to (x, y) BigInt coordinates.
+ */
+function decompressP256(compressed: Uint8Array): { x: bigint; y: bigint } {
+  const prefix = compressed[0];
+  const x = BigInt('0x' + Buffer.from(compressed.slice(1)).toString('hex'));
+
+  // P-256 curve parameters (NIST P-256 / secp256r1)
+  const p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+  const a = p - 3n; // -3 mod p
+  const b = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn;
+
+  // y² = x³ + ax + b mod p
+  const x3 = (x * x % p) * x % p;
+  const ax = (a * x) % p;
+  const y2 = (x3 + ax + b) % p;
+
+  // Square root via Tonelli–Shanks shortcut: p ≡ 3 (mod 4) → y = y²^((p+1)/4) mod p
+  const y = modpow(y2, (p + 1n) / 4n, p);
+
+  // Select the root with the correct parity (prefix 0x02 → even, 0x03 → odd)
+  const yFinal = (prefix === 0x02)
+    ? (y % 2n === 0n ? y : p - y)
+    : (y % 2n === 1n ? y : p - y);
+
+  return { x, y: yFinal };
+}
+
+/**
+ * Decompress a secp256k1 compressed public key to (x, y) BigInt coordinates.
+ */
+function decompressSecp256k1(compressed: Uint8Array): { x: bigint; y: bigint } {
+  const prefix = compressed[0];
+  const x = BigInt('0x' + Buffer.from(compressed.slice(1)).toString('hex'));
+
+  // secp256k1 curve parameters
+  const p = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
+  const b = 7n; // a = 0
+
+  // y² = x³ + 7 mod p
+  const x3 = (x * x % p) * x % p;
+  const y2 = (x3 + b) % p;
+
+  // p ≡ 3 (mod 4) → y = y²^((p+1)/4) mod p
+  const y = modpow(y2, (p + 1n) / 4n, p);
+
+  const yFinal = (prefix === 0x02)
+    ? (y % 2n === 0n ? y : p - y)
+    : (y % 2n === 1n ? y : p - y);
+
+  return { x, y: yFinal };
+}
+
+/**
+ * Encode a BigInt as a zero-padded, base64url-encoded byte string of `length` bytes.
+ */
+function bigintToBase64Url(n: bigint, length: number): string {
+  const hex = n.toString(16).padStart(length * 2, '0');
+  return Buffer.from(hex, 'hex').toString('base64url');
+}
+
+// ---------------------------------------------------------------------------
+// did:ion resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve did:ion to DID Document via the public ION resolver.
  *
- * ION is a Layer 2 DID network built on Bitcoin
+ * ION is a Sidetree-based DID network anchored on Bitcoin.
  * Reference: https://identity.foundation/ion/
  *
- * TODO: This is a placeholder. Full implementation requires:
- * - ION node endpoint or REST API access
- * - Sidetree resolution protocol
+ * Uses the Microsoft ION resolver REST API:
+ * https://ion.msidentity.com/api/v1.0/identifiers/{did}
  */
 export async function resolveDidIon(did: string): Promise<DIDDocument> {
   if (!did.startsWith('did:ion:')) {
@@ -204,26 +377,70 @@ export async function resolveDidIon(did: string): Promise<DIDDocument> {
     );
   }
 
-  // For now, throw not implemented
-  // Future implementation would query ION resolver:
-  // - https://ion.msidentity.com/api/v1.0/identifiers/{did}
-  // - Or local ION node
-  throw new CapabilityError(
-    ErrorCode.NOT_IMPLEMENTED,
-    'did:ion resolution not yet implemented. Please use did:web for now.',
-    501
-  );
+  const resolverUrl = `https://ion.msidentity.com/api/v1.0/identifiers/${encodeURIComponent(did)}`;
+
+  try {
+    const response = await fetch(resolverUrl, {
+      headers: {
+        'Accept': 'application/did+json, application/json',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        `Failed to resolve did:ion: HTTP ${response.status} from ION resolver`,
+        502
+      );
+    }
+
+    // The ION resolver wraps the DID Document in a resolution result object:
+    // { "@context": ..., "didDocument": { ... }, "didDocumentMetadata": { ... } }
+    const result = await response.json() as { didDocument?: DIDDocument } & DIDDocument;
+    const didDocument: DIDDocument = result.didDocument ?? result;
+
+    if (!didDocument.id) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'ION resolver returned an invalid response: missing DID document id',
+        502
+      );
+    }
+
+    if (didDocument.id !== did) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `DID document ID mismatch: expected ${did}, got ${didDocument.id}`,
+        400
+      );
+    }
+
+    return didDocument;
+  } catch (error) {
+    if (error instanceof CapabilityError) {
+      throw error;
+    }
+
+    throw new CapabilityError(
+      ErrorCode.AUTHENTICATION_FAILED,
+      `Failed to resolve did:ion ${did}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      502
+    );
+  }
 }
 
 /**
  * Resolve did:key to DID Document
  *
  * did:key is a self-contained DID method that encodes the public key in the DID itself
+ * using multibase (base58btc) and multicodec encoding.
  * Reference: https://w3c-ccg.github.io/did-method-key/
  *
- * TODO: This is a placeholder. Full implementation requires:
- * - Multibase/Multicodec decoding
- * - Key type detection and JWK conversion
+ * Supported key types:
+ * - Ed25519  (multicodec 0xed)
+ * - P-256    (multicodec 0x1200)
+ * - secp256k1 (multicodec 0xe7)
  */
 export async function resolveDidKey(did: string): Promise<DIDDocument> {
   if (!did.startsWith('did:key:')) {
@@ -234,16 +451,139 @@ export async function resolveDidKey(did: string): Promise<DIDDocument> {
     );
   }
 
-  // For now, throw not implemented
-  // Future implementation would:
-  // 1. Decode the multibase-encoded public key from DID
-  // 2. Construct a minimal DID Document with the key
-  throw new CapabilityError(
-    ErrorCode.NOT_IMPLEMENTED,
-    'did:key resolution not yet implemented. Please use did:web for now.',
-    501
-  );
+  const identifier = did.substring('did:key:'.length);
+
+  // The identifier is multibase-encoded; 'z' prefix = base58btc
+  if (!identifier.startsWith('z')) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `Unsupported multibase encoding in did:key '${identifier}'. Only base58btc (prefix 'z') is supported.`,
+      400
+    );
+  }
+
+  // Decode the base58btc-encoded key material (strip the 'z' multibase prefix)
+  let decoded: Uint8Array;
+  try {
+    decoded = decodeBase58Btc(identifier.substring(1));
+  } catch (e) {
+    throw new CapabilityError(
+      ErrorCode.INVALID_REQUEST,
+      `Failed to decode did:key identifier: ${e instanceof Error ? e.message : 'Unknown error'}`,
+      400
+    );
+  }
+
+  // Parse the multicodec varint prefix to determine the key type
+  const [codec, headerLen] = readVarint(decoded, 0);
+  const keyBytes = decoded.slice(headerLen);
+
+  // Verification method ID follows the did:key spec: did#identifier
+  const vmId = `${did}#${identifier}`;
+
+  let verificationMethod: VerificationMethod;
+
+  switch (codec) {
+    case 0xed: {
+      // Ed25519 public key (32 bytes)
+      if (keyBytes.length !== 32) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `Invalid Ed25519 key length in did:key: expected 32 bytes, got ${keyBytes.length}`,
+          400
+        );
+      }
+      verificationMethod = {
+        id: vmId,
+        type: 'JsonWebKey2020',
+        controller: did,
+        publicKeyJwk: {
+          kty: 'OKP',
+          crv: 'Ed25519',
+          x: Buffer.from(keyBytes).toString('base64url'),
+          alg: 'EdDSA',
+        },
+      };
+      break;
+    }
+
+    case 0x1200: {
+      // P-256 / secp256r1 compressed public key (33 bytes: 0x02/0x03 prefix + 32-byte x)
+      if (keyBytes.length !== 33) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `Invalid P-256 compressed key length in did:key: expected 33 bytes, got ${keyBytes.length}`,
+          400
+        );
+      }
+      const { x, y } = decompressP256(keyBytes);
+      verificationMethod = {
+        id: vmId,
+        type: 'JsonWebKey2020',
+        controller: did,
+        publicKeyJwk: {
+          kty: 'EC',
+          crv: 'P-256',
+          x: bigintToBase64Url(x, 32),
+          y: bigintToBase64Url(y, 32),
+          alg: 'ES256',
+        },
+      };
+      break;
+    }
+
+    case 0xe7: {
+      // secp256k1 compressed public key (33 bytes)
+      if (keyBytes.length !== 33) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `Invalid secp256k1 compressed key length in did:key: expected 33 bytes, got ${keyBytes.length}`,
+          400
+        );
+      }
+      const { x, y } = decompressSecp256k1(keyBytes);
+      verificationMethod = {
+        id: vmId,
+        type: 'JsonWebKey2020',
+        controller: did,
+        publicKeyJwk: {
+          kty: 'EC',
+          crv: 'secp256k1',
+          x: bigintToBase64Url(x, 32),
+          y: bigintToBase64Url(y, 32),
+          alg: 'ES256K',
+        },
+      };
+      break;
+    }
+
+    default:
+      throw new CapabilityError(
+        ErrorCode.NOT_IMPLEMENTED,
+        `Unsupported did:key codec 0x${codec.toString(16)}. ` +
+          'Supported key types: Ed25519 (0xed), P-256 (0x1200), secp256k1 (0xe7).',
+        501
+      );
+  }
+
+  const didDocument: DIDDocument = {
+    '@context': [
+      'https://www.w3.org/ns/did/v1',
+      'https://w3id.org/security/suites/jws-2020/v1',
+    ],
+    id: did,
+    verificationMethod: [verificationMethod],
+    authentication: [vmId],
+    assertionMethod: [vmId],
+    capabilityInvocation: [vmId],
+    capabilityDelegation: [vmId],
+  };
+
+  return didDocument;
 }
+
+// Export the base58btc encoder so callers can construct did:key DIDs from raw key bytes.
+export { encodeBase58Btc };
 
 /**
  * Find a verification method in a DID Document by key ID
@@ -283,32 +623,33 @@ export function findVerificationMethod(
 }
 
 /**
- * Extract public key from verification method in PEM format
+ * Extract public key from verification method in PEM format.
+ *
+ * Supports:
+ * - `publicKeyPem`: returned as-is
+ * - `publicKeyJwk`: converted to SubjectPublicKeyInfo PEM via `jose`
  *
  * @param verificationMethod The verification method containing the public key
- * @returns Public key in PEM format
+ * @returns Public key in PEM (SubjectPublicKeyInfo) format
  */
-export function extractPublicKeyPem(verificationMethod: VerificationMethod): string {
-  // If already in PEM format, return it
+export async function extractPublicKeyPem(verificationMethod: VerificationMethod): Promise<string> {
+  // Already in PEM format – return directly
   if (verificationMethod.publicKeyPem) {
     return verificationMethod.publicKeyPem;
   }
 
-  // If in JWK format, we need to convert to PEM
+  // Convert JWK to SPKI PEM using jose
   if (verificationMethod.publicKeyJwk) {
-    // For now, throw an error. Full implementation would convert JWK to PEM
-    // This would require crypto libraries to perform the conversion
-    throw new CapabilityError(
-      ErrorCode.NOT_IMPLEMENTED,
-      'JWK to PEM conversion not yet implemented. Please use publicKeyPem in DID Document.',
-      501
-    );
+    // Use the alg field from the JWK when present; otherwise let jose infer it
+    const alg = verificationMethod.publicKeyJwk.alg;
+    const keyLike = await jose.importJWK(verificationMethod.publicKeyJwk as jose.JWK, alg);
+    return await jose.exportSPKI(keyLike as jose.KeyLike);
   }
 
-  // If in other formats, not supported yet
+  // Unsupported key format
   throw new CapabilityError(
     ErrorCode.NOT_IMPLEMENTED,
-    `Public key format not supported: ${verificationMethod.type}`,
+    `Public key format not supported for verification method type: ${verificationMethod.type}`,
     501
   );
 }
