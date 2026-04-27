@@ -11,7 +11,8 @@
 import * as http from 'http';
 import { AgentRuntime } from './runtime';
 
-const PORT = parseInt(process.env.PORT || '3003', 10);
+const DEFAULT_HEALTH_PORT = 3003;
+const PORT = parseInt(process.env.PORT || String(DEFAULT_HEALTH_PORT), 10);
 const AGENT_ID = process.env.AGENT_ID;
 const GATEWAY_URL = process.env.GATEWAY_URL;
 const ISSUER_URL = process.env.ISSUER_URL;

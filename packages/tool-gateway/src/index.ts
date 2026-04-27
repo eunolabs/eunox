@@ -250,6 +250,15 @@ const TOOL_ACTION_REGISTRY: Record<string, string> = {
   run_shell: 'execute',
 };
 
+/**
+ * Resolves the required action type for a given tool name using an explicit
+ * server-side registry.  Using a registry instead of substring matching prevents
+ * misclassification and ensures authorization decisions reflect the tool's actual
+ * semantics.  Unknown tools default to 'execute', the most restrictive action.
+ *
+ * @param tool - The tool name to look up (e.g. 'read_file').
+ * @returns The action string ('read' | 'write' | 'delete' | 'execute').
+ */
 function resolveToolAction(tool: string): string {
   return TOOL_ACTION_REGISTRY[tool] ?? 'execute';
 }

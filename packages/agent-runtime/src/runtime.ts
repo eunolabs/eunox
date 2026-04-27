@@ -159,20 +159,20 @@ export class AgentRuntime {
 
     const interval = (this.config.tokenRefreshInterval || 600) * 1000;
 
-    const refreshToken = async (): Promise<void> => {
+    const refreshCycle = async (): Promise<void> => {
       try {
         await this.acquireCapabilityToken();
       } catch (error) {
         console.error('Failed to refresh capability token:', error);
       } finally {
         this.tokenRefreshTimer = setTimeout(() => {
-          void refreshToken();
+          void refreshCycle();
         }, interval);
       }
     };
 
     this.tokenRefreshTimer = setTimeout(() => {
-      void refreshToken();
+      void refreshCycle();
     }, interval);
   }
 
