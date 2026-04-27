@@ -19,6 +19,15 @@
     "keyVaultAdminObjectId": {
       "value": ""
     },
+    "keyVaultAdminPrincipalType": {
+      "value": "User"
+    },
+    "keyVaultPublicNetworkAccess": {
+      "value": "Restricted"
+    },
+    "keyVaultAllowedIpRanges": {
+      "value": []
+    },
     "kubernetesVersion": {
       "value": "1.30.6"
     },

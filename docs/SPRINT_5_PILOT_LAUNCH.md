@@ -79,7 +79,14 @@ az aks get-credentials --resource-group euno-pilot-rg --name <aksName>
 kubectl apply -f k8s/namespace-and-config.yaml
 kubectl apply -f k8s/network-policies.yaml
 kubectl apply -f k8s/pod-security-standards.yaml
-kubectl apply -f k8s/security-policies/   # AppArmor + SELinux profiles (DaemonSet/MachineConfig)
+# NOTE: The files under k8s/security-policies/ are an AppArmor profile (.conf)
+# and an SELinux policy (.te) — they are *node*-level artifacts, not
+# Kubernetes manifests, so do NOT `kubectl apply` them.  Install them on
+# every AKS node (or bake them into the node image) following the steps in
+# `k8s/SECURITY.md` (copy AppArmor profile to /etc/apparmor.d, run
+# apparmor_parser -r; build + install the SELinux module).  The pod
+# annotations in the deployment manifests below reference the loaded profile
+# by name (`localhost/euno-restricted`).
 kubectl apply -f k8s/capability-issuer-deployment.yaml
 kubectl apply -f k8s/tool-gateway-deployment.yaml
 kubectl apply -f k8s/agent-runtime.yaml

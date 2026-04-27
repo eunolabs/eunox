@@ -42,8 +42,26 @@ param tags object = {
   environment: 'pilot'
 }
 
-@description('Object ID of the Azure AD user / group that should receive Key Vault Crypto Officer rights for key rotation. Leave empty to skip.')
+@description('Object ID of the Azure AD user / group / service principal that should receive Key Vault Crypto Officer rights for key rotation. Leave empty to skip.')
 param keyVaultAdminObjectId string = ''
+
+@description('Principal type for keyVaultAdminObjectId. Set to "Group" or "ServicePrincipal" if the object ID is not a user.')
+@allowed([
+  'User'
+  'Group'
+  'ServicePrincipal'
+])
+param keyVaultAdminPrincipalType string = 'User'
+
+@description('Network exposure for the Key Vault data plane. "Public" allows any network (authz still applies); "Restricted" sets defaultAction=Deny and requires explicit ipRules / vnet rules / Private Endpoint to access. Recommended for production: "Restricted".')
+@allowed([
+  'Public'
+  'Restricted'
+])
+param keyVaultPublicNetworkAccess string = 'Restricted'
+
+@description('Optional list of public IPv4 CIDR ranges allowed to reach the Key Vault when keyVaultPublicNetworkAccess is "Restricted" (e.g. operator workstations). Ignored when "Public".')
+param keyVaultAllowedIpRanges array = []
 
 @description('Kubernetes version for the AKS cluster.')
 param kubernetesVersion string = '1.30.6'
@@ -65,12 +83,27 @@ param logAnalyticsRetentionDays int = 90
 // Naming
 // ---------------------------------------------------------------------------
 var suffix = uniqueString(resourceGroup().id, namePrefix)
+// Key Vault names are capped at 24 characters. namePrefix may be up to 12 chars,
+// the literal "kv" is 2 chars -> we have at most 10 chars left for the suffix.
+var keyVaultSuffix = substring(suffix, 0, 10)
 var lawName = toLower('${namePrefix}-law-${suffix}')
 var appInsightsName = toLower('${namePrefix}-ai-${suffix}')
-var keyVaultName = toLower('${namePrefix}kv${suffix}')
+var keyVaultName = toLower('${namePrefix}kv${keyVaultSuffix}')
 var acrName = toLower('${namePrefix}acr${suffix}')
 var aksName = toLower('${namePrefix}-aks-${suffix}')
 var issuerIdentityName = toLower('${namePrefix}-issuer-mi-${suffix}')
+
+var kvIpRules = [for cidr in keyVaultAllowedIpRanges: {
+  value: cidr
+}]
+var kvNetworkAcls = keyVaultPublicNetworkAccess == 'Restricted' ? {
+  defaultAction: 'Deny'
+  bypass: 'AzureServices'
+  ipRules: kvIpRules
+} : {
+  defaultAction: 'Allow'
+  bypass: 'AzureServices'
+}
 
 // Built-in role definition IDs
 var roleKeyVaultCryptoUser = '12338af0-0e69-4776-bea7-57ae8d297424'
@@ -141,11 +174,8 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enablePurgeProtection: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
-    publicNetworkAccess: 'Enabled'
-    networkAcls: {
-      defaultAction: 'Allow'
-      bypass: 'AzureServices'
-    }
+    publicNetworkAccess: keyVaultPublicNetworkAccess == 'Restricted' ? 'Disabled' : 'Enabled'
+    networkAcls: kvNetworkAcls
   }
 }
 
@@ -210,7 +240,7 @@ resource adminKvCryptoOfficer 'Microsoft.Authorization/roleAssignments@2022-04-0
   name: guid(keyVault.id, keyVaultAdminObjectId, roleKeyVaultCryptoOfficer)
   properties: {
     principalId: keyVaultAdminObjectId
-    principalType: 'User'
+    principalType: keyVaultAdminPrincipalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleKeyVaultCryptoOfficer)
   }
 }
