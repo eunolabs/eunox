@@ -1,5 +1,6 @@
-%% DIAGRAM 1: High-Level Architecture — Sandbox and AGT Integration
-%% Shows layered defense: AGT as inner guard, Sandbox + Gateway as outer guard
+## DIAGRAM 1: High-Level Architecture — Sandbox and AGT Integration
+Shows layered defense: AGT as inner guard, Sandbox + Gateway as outer guard
+```mermaid
 flowchart LR
     subgraph SandboxBoundary["Agent Sandbox (Container or VM -- No Ambient Authority)"]
         direction TB
@@ -22,9 +23,12 @@ flowchart LR
     SandboxBoundary -.->|"Telemetry and logs"| SIEM
     Gateway -.->|"Allow and deny events"| SIEM
     KillSwitch -.->|"Terminate session"| Gateway
-%% DIAGRAM 2: Runtime Action Enforcement Flow
-%% AGT evaluates intent (soft guard); Gateway enforces capability (hard guard)
-%% Environment: Kubernetes (sidecar proxy) or non-K8s (host proxy)
+```
+## DIAGRAM 2: Runtime Action Enforcement Flow
+AGT evaluates intent (soft guard); Gateway enforces capability (hard guard)
+
+Environment: Kubernetes (sidecar proxy) or non-K8s (host proxy)
+```mermaid
 sequenceDiagram
     autonumber
     participant User
@@ -58,8 +62,10 @@ sequenceDiagram
             Note right of Gateway: Log: DeniedAction<br/>(reason, agentDID, action, ts)<br/>Alert to SIEM if repeated
         end
     end
-%% DIAGRAM 3: Control-Plane Lifecycle — Agent Creation and Sandbox Provisioning
-%% Shows identity issuance, sandbox setup, and capability injection
+```
+## DIAGRAM 3: Control-Plane Lifecycle — Agent Creation and Sandbox Provisioning
+Shows identity issuance, sandbox setup, and capability injection
+```mermaid
 sequenceDiagram
     autonumber
     participant User
@@ -89,8 +95,10 @@ sequenceDiagram
     Agent->>Agent: Initialize LLM runtime and AGT policy engine
 
     Note over Agent,Sandbox: Agent runs with ZERO default access.<br/>All external actions require valid capability token<br/>presented to the Reference Monitor.
-%% DIAGRAM 4: Incident and Enforcement Flow — Violation, Revocation, Kill-Switch
-%% Shows dual-layer detection and escalation path
+```
+## DIAGRAM 4: Incident and Enforcement Flow — Violation, Revocation, Kill-Switch
+Shows dual-layer detection and escalation path
+```mermaid
 sequenceDiagram
     autonumber
     participant Agent as Agent (in Sandbox)
@@ -129,3 +137,4 @@ sequenceDiagram
             Gateway-->>Agent: Action executed successfully
         end
     end
+```
