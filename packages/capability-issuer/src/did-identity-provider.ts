@@ -194,7 +194,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
       }
 
       // Get the public key and algorithm
-      const publicKeyPem = extractPublicKeyPem(verificationMethod);
+      const publicKeyPem = await extractPublicKeyPem(verificationMethod);
       const algorithm = determineSigningAlgorithm(verificationMethod);
 
       // Import the public key
