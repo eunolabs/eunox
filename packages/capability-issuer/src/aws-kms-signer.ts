@@ -8,6 +8,60 @@ import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityToken
 import * as crypto from 'crypto';
 
 /**
+ * Convert a DER-encoded ECDSA signature to the JOSE (r||s) format required by JWS/JWT.
+ * AWS KMS returns DER-encoded ECDSA signatures; JWT expects the raw concatenated (r||s) bytes.
+ */
+export function derEcdsaToJose(derBuffer: Buffer, algorithm: SigningAlgorithm): Buffer {
+  const coordinateSize = algorithm === 'ES512' ? 66 : algorithm === 'ES384' ? 48 : 32;
+
+  let offset = 0;
+
+  // SEQUENCE tag
+  if ((derBuffer[offset++] ?? 0) !== 0x30) {
+    throw new Error('Invalid DER signature: missing SEQUENCE tag');
+  }
+
+  // SEQUENCE length (short or long form)
+  if ((derBuffer[offset] ?? 0) & 0x80) {
+    offset += ((derBuffer[offset] ?? 0) & 0x7f) + 1;
+  } else {
+    offset++;
+  }
+
+  // INTEGER tag for r
+  if ((derBuffer[offset++] ?? 0) !== 0x02) {
+    throw new Error('Invalid DER signature: missing INTEGER tag for r');
+  }
+  const rLen = derBuffer[offset++] ?? 0;
+  let r = derBuffer.slice(offset, offset + rLen);
+  offset += rLen;
+
+  // INTEGER tag for s
+  if ((derBuffer[offset++] ?? 0) !== 0x02) {
+    throw new Error('Invalid DER signature: missing INTEGER tag for s');
+  }
+  const sLen = derBuffer[offset++] ?? 0;
+  let s = derBuffer.slice(offset, offset + sLen);
+
+  // Strip leading zero bytes added by DER to indicate positive integers
+  while (r.length > coordinateSize && r[0] === 0x00) r = r.slice(1);
+  while (s.length > coordinateSize && s[0] === 0x00) s = s.slice(1);
+
+  if (r.length > coordinateSize || s.length > coordinateSize) {
+    throw new Error('Invalid DER signature: r or s value exceeds expected coordinate size');
+  }
+
+  // Pad each component to the required coordinate size
+  const rPadded = Buffer.alloc(coordinateSize);
+  r.copy(rPadded, coordinateSize - r.length);
+
+  const sPadded = Buffer.alloc(coordinateSize);
+  s.copy(sPadded, coordinateSize - s.length);
+
+  return Buffer.concat([rPadded, sPadded]);
+}
+
+/**
  * AWS KMS specific configuration extending the base adapter config
  */
 export interface AWSKMSAdapterConfig extends SigningAdapterConfig {
@@ -83,7 +137,8 @@ export class AWSKMSSigner extends SigningAdapter {
   }
 
   /**
-   * Initialize the KMS client and cache public key
+   * Initialize the KMS client and cache public key.
+   * Also auto-detects the signing algorithm from the key spec when config.algorithm is not set.
    * Override from base SigningAdapter
    */
   async initialize(): Promise<void> {
@@ -106,6 +161,31 @@ export class AWSKMSSigner extends SigningAdapter {
     const publicKeyDer = Buffer.from(response.PublicKey);
     const publicKeyBase64 = publicKeyDer.toString('base64');
     this.publicKeyCache = `-----BEGIN PUBLIC KEY-----\n${publicKeyBase64.match(/.{1,64}/g)?.join('\n')}\n-----END PUBLIC KEY-----`;
+
+    // Auto-detect signing algorithm from key spec when not explicitly configured
+    if (!this.config.algorithm) {
+      const keySpec = response.KeySpec;
+      if (keySpec?.includes('ECC_NIST_P256')) {
+        this.algorithm = 'ES256';
+      } else if (keySpec?.includes('ECC_NIST_P384')) {
+        this.algorithm = 'ES384';
+      } else if (keySpec?.includes('ECC_NIST_P521')) {
+        this.algorithm = 'ES512';
+      } else if (keySpec?.startsWith('RSA_')) {
+        // Pick the best available RSA signing algorithm
+        const algos = response.SigningAlgorithms || [];
+        if (algos.includes('RSASSA_PKCS1_V1_5_SHA_512')) {
+          this.algorithm = 'RS512';
+        } else if (algos.includes('RSASSA_PKCS1_V1_5_SHA_384')) {
+          this.algorithm = 'RS384';
+        } else {
+          this.algorithm = 'RS256';
+        }
+      } else if (keySpec) {
+        throw new Error(`Unsupported AWS KMS key spec: ${keySpec}`);
+      }
+      // If keySpec is undefined, keep the default algorithm (RS256)
+    }
   }
 
   /**
@@ -148,9 +228,15 @@ export class AWSKMSSigner extends SigningAdapter {
       throw new Error('Failed to sign with AWS KMS');
     }
 
+    // For ECDSA algorithms, convert the DER-encoded signature to the JOSE (r||s) format
+    // required by JWT/JWS. RSA signatures are used as-is.
+    let signatureBuffer: Buffer = Buffer.from(signResult.Signature as Uint8Array);
+    if (this.algorithm === 'ES256' || this.algorithm === 'ES384' || this.algorithm === 'ES512') {
+      signatureBuffer = derEcdsaToJose(signatureBuffer, this.algorithm);
+    }
+
     // Encode the signature
-    const signature = Buffer.from(signResult.Signature);
-    const encodedSignature = this.base64UrlEncode(signature);
+    const encodedSignature = this.base64UrlEncode(signatureBuffer);
 
     // Return the complete JWT
     return `${signingInput}.${encodedSignature}`;
@@ -192,7 +278,7 @@ export class AWSKMSSigner extends SigningAdapter {
    * Cleanup resources
    */
   async dispose(): Promise<void> {
-    // AWS SDK v3 clients don't need explicit cleanup
+    this.kmsClient.destroy();
     this.publicKeyCache = undefined;
   }
 }

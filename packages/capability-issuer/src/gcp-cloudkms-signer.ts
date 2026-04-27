@@ -8,6 +8,60 @@ import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityToken
 import * as crypto from 'crypto';
 
 /**
+ * Convert a DER-encoded ECDSA signature to the JOSE (r||s) format required by JWS/JWT.
+ * GCP Cloud KMS returns DER-encoded ECDSA signatures; JWT expects the raw concatenated (r||s) bytes.
+ */
+function derEcdsaToJose(derBuffer: Buffer, algorithm: SigningAlgorithm): Buffer {
+  const coordinateSize = algorithm === 'ES512' ? 66 : algorithm === 'ES384' ? 48 : 32;
+
+  let offset = 0;
+
+  // SEQUENCE tag
+  if ((derBuffer[offset++] ?? 0) !== 0x30) {
+    throw new Error('Invalid DER signature: missing SEQUENCE tag');
+  }
+
+  // SEQUENCE length (short or long form)
+  if ((derBuffer[offset] ?? 0) & 0x80) {
+    offset += ((derBuffer[offset] ?? 0) & 0x7f) + 1;
+  } else {
+    offset++;
+  }
+
+  // INTEGER tag for r
+  if ((derBuffer[offset++] ?? 0) !== 0x02) {
+    throw new Error('Invalid DER signature: missing INTEGER tag for r');
+  }
+  const rLen = derBuffer[offset++] ?? 0;
+  let r = derBuffer.slice(offset, offset + rLen);
+  offset += rLen;
+
+  // INTEGER tag for s
+  if ((derBuffer[offset++] ?? 0) !== 0x02) {
+    throw new Error('Invalid DER signature: missing INTEGER tag for s');
+  }
+  const sLen = derBuffer[offset++] ?? 0;
+  let s = derBuffer.slice(offset, offset + sLen);
+
+  // Strip leading zero bytes added by DER to indicate positive integers
+  while (r.length > coordinateSize && r[0] === 0x00) r = r.slice(1);
+  while (s.length > coordinateSize && s[0] === 0x00) s = s.slice(1);
+
+  if (r.length > coordinateSize || s.length > coordinateSize) {
+    throw new Error('Invalid DER signature: r or s value exceeds expected coordinate size');
+  }
+
+  // Pad each component to the required coordinate size
+  const rPadded = Buffer.alloc(coordinateSize);
+  r.copy(rPadded, coordinateSize - r.length);
+
+  const sPadded = Buffer.alloc(coordinateSize);
+  s.copy(sPadded, coordinateSize - s.length);
+
+  return Buffer.concat([rPadded, sPadded]);
+}
+
+/**
  * GCP Cloud KMS specific configuration extending the base adapter config
  */
 export interface GCPCloudKMSAdapterConfig extends SigningAdapterConfig {
@@ -16,7 +70,8 @@ export interface GCPCloudKMSAdapterConfig extends SigningAdapterConfig {
 }
 
 /**
- * Detect signing algorithm from GCP KMS key algorithm name
+ * Detect signing algorithm from GCP KMS key algorithm name.
+ * Throws for unknown or unsupported key algorithms to prevent silent misconfigurations.
  */
 function detectAlgorithmFromGCPKey(algorithm: string): SigningAlgorithm {
   if (algorithm.includes('RSA_SIGN_PKCS1_2048_SHA256') || algorithm.includes('RSA_SIGN_PKCS1_3072_SHA256') || algorithm.includes('RSA_SIGN_PKCS1_4096_SHA256')) {
@@ -27,9 +82,11 @@ function detectAlgorithmFromGCPKey(algorithm: string): SigningAlgorithm {
     return 'ES256';
   } else if (algorithm.includes('EC_SIGN_P384_SHA384')) {
     return 'ES384';
+  } else if (algorithm.includes('EC_SIGN_P521_SHA512')) {
+    return 'ES512';
   }
-  // Default to RS256
-  return 'RS256';
+
+  throw new Error(`Unsupported GCP KMS signing algorithm: ${algorithm}`);
 }
 
 /**
@@ -167,9 +224,15 @@ export class GCPCloudKMSSigner extends SigningAdapter {
       throw new Error('Failed to sign with GCP Cloud KMS');
     }
 
+    // For ECDSA algorithms, convert the DER-encoded signature to the JOSE (r||s) format
+    // required by JWT/JWS. RSA signatures are used as-is.
+    let signatureBuffer: Buffer = Buffer.from(signResponse.signature as Uint8Array);
+    if (this.algorithm === 'ES256' || this.algorithm === 'ES384' || this.algorithm === 'ES512') {
+      signatureBuffer = derEcdsaToJose(signatureBuffer, this.algorithm);
+    }
+
     // Encode the signature
-    const signature = Buffer.from(signResponse.signature as Uint8Array);
-    const encodedSignature = this.base64UrlEncode(signature);
+    const encodedSignature = this.base64UrlEncode(signatureBuffer);
 
     // Return the complete JWT
     return `${signingInput}.${encodedSignature}`;

@@ -166,8 +166,8 @@ describe('Capability Issuer API', () => {
       // but validates the endpoint exists
       const response = await request(app).get('/api/v1/public-key');
 
-      // Expect either success or initialization error
-      expect([200, 500]).toContain(response.status);
+      // Expect either success, initialization error, or service-not-initialized
+      expect([200, 500, 503]).toContain(response.status);
     });
   });
 
@@ -176,7 +176,7 @@ describe('Capability Issuer API', () => {
       const response = await request(app).get('/.well-known/did.json');
 
       // May fail without Azure setup but validates endpoint
-      expect([200, 500]).toContain(response.status);
+      expect([200, 500, 503]).toContain(response.status);
 
       if (response.status === 200) {
         expect(response.body).toHaveProperty('@context');

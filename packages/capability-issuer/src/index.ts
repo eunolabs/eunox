@@ -7,6 +7,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import * as jose from 'jose';
 import {
   IssueCapabilityRequest,
   CapabilityError,
@@ -49,11 +50,11 @@ const config: ServiceConfig = {
     sessionToken: process.env.AWS_SESSION_TOKEN,
   } : undefined,
   // GCP Cloud KMS configuration
-  gcpCloudKMS: process.env.GCP_PROJECT_ID ? {
+  gcpCloudKMS: (process.env.GCP_PROJECT_ID && process.env.GCP_KEYRING_ID && process.env.GCP_CRYPTOKEY_ID) ? {
     projectId: process.env.GCP_PROJECT_ID,
     locationId: process.env.GCP_LOCATION_ID || 'us-central1',
-    keyRingId: process.env.GCP_KEYRING_ID || '',
-    cryptoKeyId: process.env.GCP_CRYPTOKEY_ID || '',
+    keyRingId: process.env.GCP_KEYRING_ID,
+    cryptoKeyId: process.env.GCP_CRYPTOKEY_ID,
     cryptoKeyVersion: process.env.GCP_CRYPTOKEY_VERSION,
     keyFilePath: process.env.GCP_KEY_FILE_PATH,
   } : undefined,
@@ -143,7 +144,7 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
 }
 
 // Initialize services
-let issuerService: CapabilityIssuerService;
+let issuerService: CapabilityIssuerService | undefined;
 
 async function initializeServices() {
   try {
@@ -163,6 +164,22 @@ async function initializeServices() {
     logger.error('Failed to initialize services', { error: error instanceof Error ? error.message : 'Unknown error' });
     throw error;
   }
+}
+
+/**
+ * Returns the initialized issuer service, or throws a CapabilityError if not yet initialized.
+ * Route handlers call this instead of accessing `issuerService` directly, so that imported
+ * modules (e.g. in tests) receive a clear error rather than an unhandled TypeError.
+ */
+function getIssuerService(): CapabilityIssuerService {
+  if (!issuerService) {
+    throw new CapabilityError(
+      ErrorCode.INTERNAL_ERROR,
+      'Service is not initialized',
+      503
+    );
+  }
+  return issuerService;
 }
 
 // Create Express app
@@ -224,7 +241,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     }
 
     // Issue the capability
-    const response = await issuerService.issueCapability(issueRequest);
+    const response = await getIssuerService().issueCapability(issueRequest);
 
     res.json(response);
   } catch (error) {
@@ -268,8 +285,20 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
       );
     }
 
+    // Validate the parent token format early so malformed tokens return 401 even when
+    // the service has not yet been initialized
+    try {
+      jose.decodeProtectedHeader(parentToken);
+    } catch {
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        'Invalid parent capability token format',
+        401
+      );
+    }
+
     // Attenuate the capability
-    const response = await issuerService.attenuateCapability(
+    const response = await getIssuerService().attenuateCapability(
       parentToken,
       req.body.requestedCapabilities,
       ttl
@@ -308,7 +337,19 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
       );
     }
 
-    const response = await issuerService.renewCapability(
+    // Validate the token format early so malformed tokens return 401 even when
+    // the service has not yet been initialized
+    try {
+      jose.decodeProtectedHeader(currentToken);
+    } catch {
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        'Invalid capability token format',
+        401
+      );
+    }
+
+    const response = await getIssuerService().renewCapability(
       currentToken,
       renewTtl
     );
@@ -325,7 +366,7 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
  */
 app.get('/api/v1/public-key', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const publicKey = await issuerService.getPublicKey();
+    const publicKey = await getIssuerService().getPublicKey();
     res.json({ publicKey });
   } catch (error) {
     next(error);
@@ -338,7 +379,7 @@ app.get('/api/v1/public-key', async (_req: Request, res: Response, next: NextFun
  */
 app.get('/.well-known/did.json', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const publicKey = await issuerService.getPublicKey();
+    const publicKey = await getIssuerService().getPublicKey();
 
     // Return a simplified DID document
     const didDocument = {
@@ -424,4 +465,4 @@ if (require.main === module) {
     });
 }
 
-export { app, issuerService };
+export { app, initializeServices, issuerService };
