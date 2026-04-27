@@ -43,9 +43,10 @@ function derEcdsaToJose(derBuffer: Buffer, algorithm: SigningAlgorithm): Buffer 
   const sLen = derBuffer[offset++] ?? 0;
   let s = derBuffer.slice(offset, offset + sLen);
 
-  // Strip leading zero bytes added by DER to indicate positive integers
-  while (r.length > coordinateSize && r[0] === 0x00) r = r.slice(1);
-  while (s.length > coordinateSize && s[0] === 0x00) s = s.slice(1);
+  // Strip all leading zero bytes. DER uses leading zeros to indicate positive integers
+  // when the MSB is set; we strip them all here and re-pad to the exact coordinate size below.
+  while (r.length > 0 && r[0] === 0x00) r = r.slice(1);
+  while (s.length > 0 && s[0] === 0x00) s = s.slice(1);
 
   if (r.length > coordinateSize || s.length > coordinateSize) {
     throw new Error('Invalid DER signature: r or s value exceeds expected coordinate size');

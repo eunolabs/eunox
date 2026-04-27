@@ -110,8 +110,7 @@ describe('GCPCloudKMSSigner – initialize()', () => {
   ];
 
   test.each(algCases)('should detect $expected for GCP algorithm $gcpAlgo', async ({ gcpAlgo, expected }) => {
-    const joseAlg = expected.startsWith('RS') ? expected : expected;
-    const { pem } = await exportPublicKeyPEM(joseAlg);
+    const { pem } = await exportPublicKeyPEM(expected);
 
     mockGetCryptoKey.mockResolvedValueOnce([{ primary: { name: EXPLICIT_VERSION_NAME } }]);
     mockGetPublicKey.mockResolvedValueOnce([{ pem, algorithm: gcpAlgo }]);
