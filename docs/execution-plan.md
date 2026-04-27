@@ -81,7 +81,7 @@
 **Team DX (Developer Experience & Testing) – Tasks:**
 
 *   **Agent Manifest Workflow:** Define how engineers specify an agent's capabilities via declarative YAML manifests. Develop example manifests for pilot agents.
-*   **Agentic Orchestration Framework Targets:** Define first-class integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI**. For each framework, deliver an integration guide with required interfaces, sequence diagrams, and minimal examples covering capability issuance, token attachment, tool-call interception, denial handling, and audit correlation without requiring application developers to rewrite agent business logic.
+*   **Agentic Orchestration Framework Targets:** Define the architectural integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI**. Sprint 1 scope is to identify required interfaces, sequence diagrams, and minimal examples for capability issuance, token attachment, tool-call interception, denial handling, and audit correlation. Sprint 2 turns these definitions into framework-native hooks without requiring application developers to rewrite agent business logic.
 *   **Test Plan:** Write unit, integration, and security test scenarios. Key test cases: forging a token should fail signature check; agent without required token should be denied; expired token should be rejected.
 
 ***
@@ -127,7 +127,7 @@
 
 **Team DX – Tasks:**
 
-*   **Agent SDK Integration:** Modify the pilot agent's code to retrieve and attach capability tokens. At startup, the agent calls the Issuer's `/issue` endpoint. Every tool invocation includes the token via middleware or proxy configuration.
+*   **Agent SDK Integration:** Modify the pilot agent's code to retrieve and attach capability tokens. At startup, the agent calls the Issuer's `/issue` endpoint. Every tool invocation includes the token via middleware or proxy configuration. Coordinate with Team CP for token issuance and renewal contracts, and with Team DP for gateway forwarding and denial semantics.
     *   *Framework Middleware:* Provide framework-native hooks as library adapters plus documentation: LangChain callback handlers and tool wrappers; MAF agent-run middleware and function/tool-calling middleware; and CrewAI tool wrappers plus task lifecycle hooks. Each integration must acquire or refresh capability tokens, attach them to gateway-bound tool calls, surface denials as structured framework errors, and emit correlation IDs for audit logs.
 *   **Unit Tests:** Valid tokens accepted; invalid tokens rejected; expired token rejected; agent obtains new token and proceeds.
 
@@ -276,7 +276,7 @@
 
 *   **Production Deployment:** Deploy all components to the production environment:
     *   Capability Issuer as a highly-available service (two or more instances, behind load balancer, with auto-scale).
-    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, dedicated internal service, or centralized gateway reached from Cloud Run through VPC egress controls).
+    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, dedicated internal service, or centralized gateway accessed by Cloud Run workloads through VPC egress controls).
     *   Confirm all credentials correctly set up (Key Vault, AWS KMS, or Google Cloud KMS access for signing keys; Microsoft Graph, AWS IAM/Cognito, or Google Cloud IAM permissions; Gateway's public key reference).
     *   Use **Azure Resource Manager templates or Bicep**, **AWS CloudFormation/CDK**, **Google Cloud Deployment Manager**, or **Terraform** for reproducible provisioning.
 
