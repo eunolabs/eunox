@@ -279,7 +279,7 @@
 
 *   **Production Deployment:** Deploy all components to the production environment:
     *   Capability Issuer as a highly-available service (two or more instances, behind load balancer, with auto-scale).
-    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, or dedicated internal service). For Cloud Run, use a centralized gateway accessed through VPC egress controls because request-routing and sidecar patterns differ from Kubernetes pod deployments.
+    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, or dedicated internal service). For Cloud Run services that cannot use Kubernetes-style pod sidecars, route traffic to a centralized gateway through Serverless VPC Access or Direct VPC egress controls because Cloud Run networking is service-level rather than pod-network based.
     *   Confirm all credentials correctly set up (Key Vault, AWS KMS, or Google Cloud KMS access for signing keys; Microsoft Graph, AWS IAM/Cognito, or Google Cloud IAM permissions; Gateway's public key reference).
     *   Use **Azure Resource Manager templates or Bicep**, **AWS CloudFormation/CDK**, **Google Cloud Deployment Manager**, or **Terraform** for reproducible provisioning.
 
@@ -340,7 +340,7 @@
 
 *   Stable pilot operations with no major issues over ≥2 weeks of real use.
 *   All pilot objectives met: no security incidents, successful prevention of policy violations, acceptable performance and user satisfaction.
-*   Cross-cloud demonstration proves equivalent capability issuance, signing, enforcement, and audit behavior across Azure plus at least one AWS or Google Cloud deployment profile.
+*   Cross-cloud demonstration proves equivalent capability issuance, signing, enforcement, and audit behavior across Azure plus at least one AWS or Google Cloud deployment profile. Success requires identical allow/deny outcomes for the same capability manifests, audit log field parity for required evidence fields, and gateway latency within the documented p99 target.
 *   LangChain, Microsoft Agent Framework (MAF), and CrewAI integration guidance is ready for handoff to agent application teams.
 *   Team handoff completed with formalized on-call rotations and ownership.
 *   Go/No-Go review held with final pilot report prepared for leadership.
