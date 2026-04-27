@@ -55,23 +55,88 @@ spec:
           value: "production"
         - name: PORT
           value: "3001"
+
+        # Signing Provider Selection
+        # Options: azure-keyvault, aws-kms, gcp-cloudkms
+        - name: SIGNING_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: signing-provider
+
+        # Identity Provider Selection
+        # Options: azure-ad, did
+        - name: IDENTITY_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: identity-provider
+
+        # Azure Key Vault Configuration (if SIGNING_PROVIDER=azure-keyvault)
         - name: AZURE_KEYVAULT_URL
           valueFrom:
             configMapKeyRef:
               name: issuer-config
               key: keyvault-url
+              optional: true
         - name: AZURE_KEYVAULT_KEY_NAME
           value: "capability-signing-key"
+
+        # Azure AD Configuration (if IDENTITY_PROVIDER=azure-ad)
         - name: AZURE_AD_TENANT_ID
           valueFrom:
             configMapKeyRef:
               name: issuer-config
               key: tenant-id
+              optional: true
         - name: AZURE_AD_CLIENT_ID
           valueFrom:
             configMapKeyRef:
               name: issuer-config
               key: client-id
+              optional: true
+
+        # AWS KMS Configuration (if SIGNING_PROVIDER=aws-kms)
+        - name: AWS_KMS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: aws-kms-region
+              optional: true
+        - name: AWS_KMS_KEY_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: aws-kms-key-id
+              optional: true
+
+        # GCP Cloud KMS Configuration (if SIGNING_PROVIDER=gcp-cloudkms)
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: gcp-project-id
+              optional: true
+        - name: GCP_LOCATION_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: gcp-location-id
+              optional: true
+        - name: GCP_KEYRING_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: gcp-keyring-id
+              optional: true
+        - name: GCP_CRYPTOKEY_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: gcp-cryptokey-id
+              optional: true
+
+        # Issuer Configuration
         - name: ISSUER_DID
           valueFrom:
             configMapKeyRef:
@@ -81,12 +146,28 @@ spec:
           value: "900"
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
+
         # Sprint 3: Secrets via Kubernetes secrets, not environment variables
+        # Azure credentials (if using Azure)
         - name: AZURE_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
               name: issuer-secrets
               key: azure-client-secret
+              optional: true
+        # AWS credentials (if using AWS)
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: issuer-secrets
+              key: aws-access-key-id
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: issuer-secrets
+              key: aws-secret-access-key
+              optional: true
 
         # Sprint 3: Resource limits (CPU and memory via cgroups)
         resources:
@@ -189,7 +270,28 @@ metadata:
   name: issuer-config
   namespace: euno-system
 data:
+  # Signing Provider Selection
+  # Options: azure-keyvault, aws-kms, gcp-cloudkms
+  signing-provider: "azure-keyvault"
+
+  # Identity Provider Selection
+  # Options: azure-ad, did
+  identity-provider: "azure-ad"
+
+  # Azure Configuration (if using Azure)
   keyvault-url: "https://your-keyvault.vault.azure.net"
   tenant-id: "your-tenant-id"
   client-id: "your-client-id"
+
+  # AWS KMS Configuration (if using AWS)
+  # aws-kms-region: "us-east-1"
+  # aws-kms-key-id: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+
+  # GCP Cloud KMS Configuration (if using GCP)
+  # gcp-project-id: "your-project-id"
+  # gcp-location-id: "us-central1"
+  # gcp-keyring-id: "your-keyring"
+  # gcp-cryptokey-id: "your-cryptokey"
+
+  # Issuer DID
   issuer-did: "did:web:your-domain.com"

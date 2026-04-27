@@ -387,8 +387,16 @@ export interface ServiceConfig {
   port: number;
   /** Environment (development, staging, production) */
   environment: 'development' | 'staging' | 'production';
+  /** Signing provider type */
+  signingProvider?: 'azure-keyvault' | 'aws-kms' | 'gcp-cloudkms';
   /** Azure Key Vault configuration */
   keyVault?: AzureKeyVaultConfig;
+  /** AWS KMS configuration */
+  awsKMS?: AWSKMSConfig;
+  /** GCP Cloud KMS configuration */
+  gcpCloudKMS?: GCPCloudKMSConfig;
+  /** Identity provider type */
+  identityProvider?: 'azure-ad' | 'did';
   /** Azure AD configuration */
   azureAD?: AzureADConfig;
   /** Issuer identifier (DID or domain URL) */
