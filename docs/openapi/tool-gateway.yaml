@@ -1,0 +1,392 @@
+openapi: 3.0.3
+info:
+  title: Euno Tool Gateway API
+  description: |
+    The Tool Gateway is the policy enforcement point for AI-agent traffic.
+    Every tool invocation and every proxied request must carry a capability
+    token in the `Authorization: Bearer <token>` header; the gateway verifies
+    the signature, checks revocation, evaluates the policy, and either
+    forwards the request or returns 401/403.
+
+    Admin endpoints under `/admin/*` are protected by an optional API key
+    (`x-admin-api-key` header).  Set `ADMIN_API_KEY` in the gateway's
+    environment to enable enforcement.
+  version: "1.0.0"
+  license:
+    name: ISC
+servers:
+  - url: http://localhost:3002
+    description: Local development
+  - url: https://gateway.example.com
+    description: Production (replace with your domain)
+
+tags:
+  - name: enforcement
+    description: Capability validation and tool invocation
+  - name: proxy
+    description: Authenticated reverse-proxy passthrough
+  - name: admin
+    description: Operational endpoints (protected by API key)
+  - name: ops
+    description: Health and operational endpoints
+
+paths:
+  /health:
+    get:
+      tags: [ops]
+      summary: Liveness / readiness probe
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/validate:
+    post:
+      tags: [enforcement]
+      summary: Validate a capability token against an action / resource
+      description: |
+        Useful for testing a token without actually invoking a tool.  The
+        gateway runs the same policy evaluation it would for `/api/v1/tools/invoke`
+        and returns the decision.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateActionRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/tools/invoke:
+    post:
+      tags: [enforcement]
+      summary: Invoke a tool through the gateway
+      description: |
+        The agent runtime calls this endpoint instead of the underlying tool
+        directly.  The gateway derives the required action from a server-side
+        registry of known tools and validates the capability token before
+        executing.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: x-agent-id
+          schema: { type: string }
+          required: false
+          description: Optional agent identifier for audit logging.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool]
+              properties:
+                tool:
+                  type: string
+                  description: Name of the tool to invoke (e.g. `read_file`).
+                  example: read_file
+                args:
+                  description: Tool-specific arguments.
+                  oneOf:
+                    - type: object
+                    - type: array
+                    - type: string
+                    - type: number
+                    - type: boolean
+                    - type: 'null'
+      responses:
+        '200':
+          description: Tool invoked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  tool: { type: string }
+                  result:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /proxy/{path}:
+    parameters:
+      - in: path
+        name: path
+        required: true
+        schema: { type: string }
+        description: Subpath to proxy to the configured backend service.
+    get:
+      tags: [proxy]
+      summary: Authenticated GET passthrough
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Backend response (proxied)
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502':
+          description: Upstream backend error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      tags: [proxy]
+      summary: Authenticated POST passthrough
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json: { schema: { type: object, additionalProperties: true } }
+      responses:
+        '200': { description: Backend response (proxied) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [proxy]
+      summary: Authenticated PUT passthrough
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Backend response (proxied) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [proxy]
+      summary: Authenticated DELETE passthrough
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Backend response (proxied) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/kill-switch/status:
+    get:
+      tags: [admin]
+      summary: Get kill-switch status
+      security: [{ adminApiKey: [] }]
+      responses:
+        '200':
+          description: Status of the global / per-session / per-agent switches
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/global/activate:
+    post:
+      tags: [admin]
+      summary: Activate the global kill-switch (deny all traffic)
+      security: [{ adminApiKey: [] }]
+      responses:
+        '200': { description: Activated }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/global/deactivate:
+    post:
+      tags: [admin]
+      summary: Deactivate the global kill-switch
+      security: [{ adminApiKey: [] }]
+      responses:
+        '200': { description: Deactivated }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/session/{sessionId}/kill:
+    post:
+      tags: [admin]
+      summary: Kill all traffic for a specific session
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Session killed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/session/{sessionId}/revive:
+    post:
+      tags: [admin]
+      summary: Revive a previously killed session
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Session revived }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/agent/{agentId}/kill:
+    post:
+      tags: [admin]
+      summary: Kill all traffic for a specific agent
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Agent killed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/agent/{agentId}/revive:
+    post:
+      tags: [admin]
+      summary: Revive a previously killed agent
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Agent revived }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/kill-switch/reset:
+    post:
+      tags: [admin]
+      summary: Reset all kill-switches
+      security: [{ adminApiKey: [] }]
+      responses:
+        '200': { description: Reset }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/revoke:
+    post:
+      tags: [admin]
+      summary: Revoke a capability token by JTI
+      description: |
+        Adds the supplied token id to the gateway's revocation list.  When a
+        Redis-backed `RevocationStore` is configured (recommended for
+        production), the revocation is propagated to all gateway instances.
+      security: [{ adminApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tokenId]
+              properties:
+                tokenId:
+                  type: string
+                  description: JWT ID (`jti`) of the token to revoke.
+                expiresAt:
+                  type: integer
+                  description: |
+                    Unix timestamp (seconds) when the underlying token
+                    naturally expires.  Used to bound the lifetime of the
+                    revocation entry.  Defaults to 24h from now.
+      responses:
+        '200':
+          description: Revocation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  tokenId: { type: string }
+                  expiresAt: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '501':
+          description: Revocation not available (verifier not configured)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    adminApiKey:
+      type: apiKey
+      in: header
+      name: x-admin-api-key
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status: { type: string, example: healthy }
+        service: { type: string, example: tool-gateway }
+
+    ValidateActionRequest:
+      type: object
+      required: [action, resource]
+      properties:
+        action:
+          type: string
+          enum: [read, write, delete, execute]
+        resource:
+          type: string
+          example: api://service/data
+        context:
+          type: object
+          additionalProperties: true
+
+    ValidationResult:
+      type: object
+      required: [allowed]
+      properties:
+        allowed: { type: boolean }
+        reason: { type: string }
+        capabilityId: { type: string }
+        evaluatedAt: { type: string, format: date-time }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: AUTHORIZATION_FAILED
+            message:
+              type: string
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Caller is authenticated but not authorised for the action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

@@ -652,8 +652,9 @@ Before deploying Euno to production, ensure all items below are completed:
 ### Documentation
 
 - [ ] **Deployment Guide**: `docs/DEPLOYMENT.md` reviewed
+- [ ] **Production Checklist**: `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md` completed top-to-bottom
 - [ ] **Pilot Playbook**: `docs/PILOT_PLAYBOOK.md` reviewed
-- [ ] **API Documentation**: OpenAPI/Swagger docs published
+- [ ] **API Documentation**: OpenAPI specs in `docs/openapi/` published
 - [ ] **Architecture Diagrams**: Up to date
 - [ ] **Runbooks**: Incident response procedures documented
 
