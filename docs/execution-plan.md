@@ -1,11 +1,11 @@
-# Azure-Integrated Hybrid Execution Plan for Capability‑Native Agent Governance
+# Multi-Cloud Hybrid Execution Plan for Capability‑Native Agent Governance
 
-## Milestone 1 – Foundation (Azure Integration & Core Architecture)
+## Milestone 1 – Foundation (Multi-Cloud Integration & Core Architecture)
 
 **Duration:** 2 Sprints (Weeks 1–4)
-**Objective:** Establish the core capability governance framework in an **Azure-centric environment**, ensuring it is built on **Azure-native identity, key management, and orchestration services** while architecting for future multi-cloud and decentralized identity support.
+**Objective:** Establish the core capability governance framework in an **Azure-first, multi-cloud-ready environment**, ensuring it integrates with **Azure-native, AWS-native, and Google Cloud-native identity, key management, runtime, gateway, and orchestration services** while architecting for decentralized identity support.
 
-### Sprint 1 (Weeks 1–2) – Azure Identity & Environment Setup
+### Sprint 1 (Weeks 1–2) – Azure Baseline & Multi-Cloud Environment Setup
 
 **Objectives:**
 
@@ -21,7 +21,8 @@
 *   **Azure AD (Entra ID) Integration:** Implement initial user authentication and authorization flows using **Microsoft Entra ID**. Developers will use **OAuth 2.0 / OIDC** to authenticate a human user (or service principal) who initiates agent creation. The Zero-Trust Agents reference architecture from the Microsoft Foundry Blog demonstrates this pattern: each AI agent receives an **identity and issued access token for every action**, ensuring *"no implicit trust"* between entities and requiring that *"every interaction is authenticated and authorized, following the principle of 'never trust, always verify'"*. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/zero-trust-agents-adding-identity-and-access-to-multi-agent-workflows/4427790)
     *   *Deliverable:* A CLI or web interface for launching an agent after a successful Azure AD login/consent. This interface will retrieve an **OIDC token** for the user's identity (e.g., using MSAL library). The token's claims (user ID, roles/scopes) will be passed to the **Capability Issuer** service.
     *   *Azure Integration:* Register an **Azure AD application** for the agent system and configure user consent for necessary permissions. Use **Azure Managed Identity** for service-to-service auth (e.g., the Capability Issuer authenticating to Key Vault or Graph API).
-    *   *Hybrid/Portable Design:* Architect the identity interface to be **pluggable** by following OpenID Connect standards and abstracting the identity provider. The Zero-Trust reference implementation achieves vendor neutrality by using WSO2 Asgardeo (an open-source IAM system) as its OAuth2 authorization server alongside Azure OpenAI, demonstrating that the same pattern works with non-Microsoft identity providers. Implement an **Identity Provider interface** that encapsulates token validation and user attribute retrieval, with one concrete implementation for Azure AD in the pilot. Document how additional providers (e.g., Okta, AWS Cognito, Google Cloud IAM) could implement this interface. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/zero-trust-agents-adding-identity-and-access-to-multi-agent-workflows/4427790)
+    *   *Hybrid/Portable Design:* Architect the identity interface to be **pluggable** by following OpenID Connect standards and abstracting the identity provider. The Zero-Trust reference implementation achieves vendor neutrality by using WSO2 Asgardeo (an open-source IAM system) as its OAuth2 authorization server alongside Azure OpenAI, demonstrating that the same pattern works with non-Microsoft identity providers. Implement an **Identity Provider interface** that encapsulates token validation and user attribute retrieval, with one concrete implementation for Azure AD in the pilot. Document how additional providers (e.g., Okta, AWS Cognito, AWS IAM Identity Center, Google Cloud Identity, Google Cloud IAM, or Identity Platform) could implement this interface. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/zero-trust-agents-adding-identity-and-access-to-multi-agent-workflows/4427790)
+    *   *AWS and Google Cloud Ecosystem Support:* Define adapter contracts and configuration keys for AWS and Google Cloud from the start. AWS support should map human and workload identities from Amazon Cognito, IAM Identity Center, STS, and IAM roles into the common `UserContext` and capability manifest model. Google Cloud support should map Cloud Identity, IAM, Workforce Identity Federation, Workload Identity Federation, and Identity Platform claims into the same model. Both ecosystems must preserve the same OIDC/OAuth2 validation path and avoid cloud-specific claims leaking into policy logic.
 
 *   **Capability Issuer & Token Format:** Build the initial **Capability Issuer** microservice.
     *   *Token Format & Signing:* Use a **JWT-based format** compliant with the W3C Verifiable Credentials Data Model, or a simplified JWT with custom claims for capabilities (to be upgraded to full VC later). The token should include standard claims (`iss`, `sub`, `aud`, `exp`) to ensure global verifiability. The **issuer (`iss`) claim** should be set to the enterprise's domain URL or DID (using `did:web` anchored in DNS). In decentralized identity systems, *"both the issuer and verifier have a DID, and a DID document"* containing public key information and linked domain references, allowing cross-domain cryptographic verification of credentials. [\[learn.microsoft.com\]](https://learn.microsoft.com/en-us/entra/verified-id/introduction-to-verifiable-credentials-architecture)
@@ -31,13 +32,14 @@
           crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
         ```
         Hashing is performed locally before calling Key Vault for the actual signature operation【5†L291-L294】.
-    *   *Issuance Logic:* Implement the `/issue` endpoint. On receiving an authenticated user context, the Issuer will: (a) look up the user's Azure AD roles/claims, and (b) load a corresponding **Agent Capability Manifest template**. For the pilot, define a simple static mapping — e.g., if the user has AD role "SalesManager", the agent gets read/write capability for customer data; if "Viewer", read-only. Sign this token via Key Vault.
+    *   *Cloud KMS Parity:* Implement the signer abstraction so Azure Key Vault, **AWS KMS**, and **Google Cloud KMS / Cloud HSM** are interchangeable. The signing payload, `kid`, public key discovery, rotation semantics, algorithm choices, and audit fields should remain consistent regardless of cloud. AWS deployments should use KMS asymmetric keys, IAM roles for service authentication, and CloudTrail evidence for key usage. Google Cloud deployments should use Cloud KMS or Cloud HSM keys, service accounts or Workload Identity Federation for service authentication, and Cloud Audit Logs for key usage.
+    *   *Issuance Logic:* Implement the `/issue` endpoint. On receiving an authenticated user context, the Issuer will: (a) look up the user's Azure AD roles/claims, and (b) load a corresponding **Agent Capability Manifest template**. For the pilot, define a simple static mapping — e.g., if the user has AD role "SalesManager", the agent gets read/write capability for customer data; if "Viewer", read-only. Sign this token via Key Vault or the configured cloud KMS signer.
     *   *Distributed Identity Prep:* Document how the JWT could be accompanied by a **DID for the user and agent** as subject identifiers, and the signing key associated with the enterprise's DID Document. Research demonstrates that combining AI agents with W3C DIDs and W3C VCs enables cross-domain trust establishment — agents can *"prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs"*【1†L40】. This paper, accepted at the 18th International Conference on Agents and Artificial Intelligence 2026, confirms technical feasibility but also identifies limitations when an agent's LLM is in sole charge of controlling security procedures — reinforcing the need for external mechanical enforcement【1†L40-L44】.
 
 *   **Exit Criteria (Sprint 1):**
     *   A basic end-to-end issue flow is functional: after user login, the Issuer returns a signed JWT.
     *   Token contains correct claims (subject = agent identity, issuer = enterprise authority, permitted actions, \~15-minute expiration).
-    *   Token is signed by the configured Azure Key Vault key (verifiable using the corresponding public key).
+    *   Token is signed by the configured Azure Key Vault key or equivalent AWS KMS / Google Cloud KMS key (verifiable using the corresponding public key).
     *   Token is audience-restricted (contains an `aud` claim for the Tool Gateway).
     *   Cross-team dependency satisfied: **Team OBS** has logging enabled so every issuance is recorded.
 
@@ -45,13 +47,13 @@
 
 **Team DP (Data Plane) – Tasks:**
 
-*   **Agent Environment & Sandbox:** Establish the runtime using **Azure Kubernetes Service (AKS)** or **Azure Container Instances**.
-    *   Apply Kubernetes NetworkPolicies to restrict egress (allow only traffic to the Tool Gateway service and required Microsoft endpoints). The core design principle: *"the model is not your boundary"* — treat the model like an untrusted proposer and the runtime like the verifier, where each gate is external to the model and survives manipulation【5†L40-L42】.
+*   **Agent Environment & Sandbox:** Establish the runtime using **Azure Kubernetes Service (AKS)** or **Azure Container Instances**, with equivalent deployment patterns for **Amazon EKS / ECS / Fargate** and **Google Kubernetes Engine (GKE) / Cloud Run**.
+    *   Apply Kubernetes NetworkPolicies to restrict egress (allow only traffic to the Tool Gateway service and required Microsoft, AWS, or Google Cloud control-plane endpoints). The core design principle: *"the model is not your boundary"* — treat the model like an untrusted proposer and the runtime like the verifier, where each gate is external to the model and survives manipulation【5†L40-L42】.
     *   Run agent containers with a read-only root filesystem and least-privilege Linux capabilities.
     *   Mount only necessary volumes (ephemeral scratch) and ensure no sensitive host paths are accessible.
     *   *Exit Criteria:* A sample agent container can call a test endpoint through the Gateway but fails to reach disallowed endpoints. Running `curl` to an unauthorized URL from within the container should be blocked.
 
-*   **Tool/Action Gateway (v1) – Azure APIM Integration:** Implement the Tool Gateway using **Azure API Management (APIM)** as the enforcement point. APIM is the canonical tool gateway for agent systems — *"the design goal is simple: the model can request a tool call. The gateway decides if it is permitted"*【5†L271-L273】.
+*   **Tool/Action Gateway (v1) – Cloud Gateway Integration:** Implement the Tool Gateway using **Azure API Management (APIM)** as the first enforcement point, while defining equivalent deployment profiles for **AWS API Gateway + Lambda Authorizers / ALB** and **Google Cloud API Gateway / Apigee / Cloud Endpoints**. APIM is the canonical Azure tool gateway for agent systems — *"the design goal is simple: the model can request a tool call. The gateway decides if it is permitted"*【5†L271-L273】.
     *   Configure APIM with a **`validate-jwt` policy** — described as *"the canonical enforcement mechanism for validating JWTs at the gateway"*【5†L269】. This policy accepts tokens signed by the Key Vault key and rejects requests with missing or invalid tokens (returning 401/403).
     *   Set up two example operations: one requiring a "read" scope and another requiring a "write" scope. Verify scope-based enforcement: *"you can enforce 'read-only mode' by issuing tokens that simply do not carry write scopes. The model can try to call a write tool. It still gets denied by policy"*【5†L281】.
     *   *Exit Criteria:* Agent with valid token and correct scope → action allowed. Agent with missing, invalid, or insufficient token → action denied with proper error code. APIM logs confirm authorization decisions.
@@ -62,6 +64,7 @@
 
 *   **Audit Log Schema:** Define the initial **Capability Audit Log schema** with fields for timestamp, agent/session ID, action, resource, capability ID (or token hash), decision (allow/deny), and metadata.
 *   **Logging Pipeline Setup:** Configure **Azure Monitor / Log Analytics** to collect logs from the Capability Issuer, APIM, and agent runtime. Enable APIM diagnostic logging.
+    *   *AWS and Google Cloud Logging Parity:* Define equivalent telemetry mappings for **Amazon CloudWatch Logs, CloudTrail, Security Hub, GuardDuty**, and **Google Cloud Logging, Cloud Monitoring, Cloud Audit Logs, Security Command Center, and Chronicle**. Normalize fields so cross-cloud dashboards and incident workflows can query the same capability IDs, agent/session IDs, issuer IDs, and policy decisions.
 *   **Monitoring Plan:** Identify critical conditions: repeated `DeniedAction` events (possible prompt injection), high-frequency tool calls (possible runaway loop). The detection layer should match the gates built: *"repeated Prompt Shields detections from the same identity or session," "tool-call spikes after a suspicious document signal," and "APIM denials for write endpoints from sessions in read-only mode"*【5†L357-L359】.
 
 ***
@@ -69,6 +72,7 @@
 **Team DX (Developer Experience & Testing) – Tasks:**
 
 *   **Agent Manifest Workflow:** Define how engineers specify an agent's capabilities via declarative YAML manifests. Develop example manifests for pilot agents.
+*   **Agentic Orchestration Framework Targets:** Define first-class integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI**. For each framework, document where capability issuance, token attachment, tool-call interception, denial handling, and audit correlation should plug in without requiring application developers to rewrite agent business logic.
 *   **Test Plan:** Write unit, integration, and security test scenarios. Key test cases: forging a token should fail signature check; agent without required token should be denied; expired token should be rejected.
 
 ***
@@ -115,16 +119,18 @@
 **Team DX – Tasks:**
 
 *   **Agent SDK Integration:** Modify the pilot agent's code to retrieve and attach capability tokens. At startup, the agent calls the Issuer's `/issue` endpoint. Every tool invocation includes the token via middleware or proxy configuration.
+    *   *Framework Middleware:* Provide framework-native hooks: LangChain callback/tool wrappers, MAF middleware or skill/action interceptors, and CrewAI tool wrappers or task lifecycle hooks. Each integration must acquire or refresh capability tokens, attach them to gateway-bound tool calls, surface denials as structured framework errors, and emit correlation IDs for audit logs.
 *   **Unit Tests:** Valid tokens accepted; invalid tokens rejected; expired token rejected; agent obtains new token and proceeds.
 
 ***
 
 **Exit Criteria (Milestone 1):**
 
-*   A working **Azure-integrated agent issuance and enforcement pipeline**: user logs in via Azure AD, launches an agent, and the agent calls a test service through APIM by presenting a valid token. Unauthorized actions are blocked.
+*   A working **Azure-integrated agent issuance and enforcement pipeline** with documented AWS and Google Cloud equivalents: user logs in via Azure AD, launches an agent, and the agent calls a test service through APIM by presenting a valid token. Unauthorized actions are blocked.
 *   No direct network egress from the agent except through the gateway.
-*   All components running in Azure using Azure services (AD, Key Vault, APIM, AKS, Log Analytics).
-*   Design notes explicitly account for future **hybrid extensions** (trusting non-Azure identity sources, different cloud infra for agents).
+*   Azure pilot components run on Azure services (AD, Key Vault, APIM, AKS, Log Analytics), with AWS and Google Cloud deployment profiles documented for equivalent services.
+*   Design notes explicitly account for **hybrid extensions** across Azure, AWS, Google Cloud, and decentralized identity sources.
+*   Initial LangChain, Microsoft Agent Framework (MAF), and CrewAI integration points are documented for token retrieval, tool-call interception, and audit correlation.
 *   Gateway adds ≤1ms average latency per tool call.
 
 ***
@@ -152,9 +158,9 @@
 **Team DP – Tasks:**
 
 *   **Full Spectrum Tool Enforcement:** Extend the Tool Gateway to cover:
-    *   **File system operations:** Use Azure **SAS tokens** for Azure Storage as part of capability issuance. The agent presents the SAS to Azure Storage API; access beyond the token's scope is denied.
-    *   **Database queries:** Use token-based auth for Azure SQL DB. Generate short-lived DB access tokens as part of the agent's capability. The agent must use that token to connect — with only the permissions granted.
-    *   **External HTTP requests:** Force all egress traffic through the gateway or an Azure Firewall. At minimum, monitor and log any external calls and whitelist domains.
+    *   **File system operations:** Use Azure **SAS tokens** for Azure Storage as part of capability issuance. Provide equivalent patterns for Amazon S3 presigned URLs / scoped IAM session policies and Google Cloud Storage signed URLs / downscoped credentials. The agent presents the short-lived storage grant; access beyond the token's scope is denied by the cloud storage control plane.
+    *   **Database queries:** Use token-based auth for Azure SQL DB. Generate short-lived DB access tokens as part of the agent's capability. Provide equivalent patterns for Amazon RDS / Aurora IAM database authentication and Cloud SQL IAM database authentication. The agent must use that token to connect — with only the permissions granted.
+    *   **External HTTP requests:** Force all egress traffic through the gateway, Azure Firewall, AWS Network Firewall / VPC endpoints, or Google Cloud Firewall / Private Service Connect. At minimum, monitor and log any external calls and whitelist domains.
 *   **Sandbox Hardening:**
     *   Process runs as non-privileged OS user with AppArmor/SELinux profiles preventing ptrace, mount, and other dangerous syscalls.
     *   CPU and memory limits on agent containers via cgroups.
@@ -199,7 +205,7 @@
 
 **Team CP – Tasks:**
 
-*   **Azure AD Full Integration:** Hook the Capability Issuer to live enterprise IAM. Use **Microsoft Graph API** to fetch user roles or group memberships. Honor Conditional Access policies and Privileged Identity Management (PIM) activations for time-bound elevated permissions.
+*   **Enterprise IAM Full Integration:** Hook the Capability Issuer to live enterprise IAM. Use **Microsoft Graph API** to fetch Azure AD user roles or group memberships and honor Conditional Access policies and Privileged Identity Management (PIM) activations for time-bound elevated permissions. For AWS, support Cognito, IAM Identity Center, STS session tags, and IAM role assumption metadata. For Google Cloud, support Cloud Identity groups, IAM principal attributes, Workforce Identity Federation, and Workload Identity Federation.
 *   **Finalize Renewal & Revocation:** Complete the `/renew` endpoint for seamless token refresh. Implement **explicit revocation**: when an operator revokes a capability, move the corresponding token ID to a revocation list. Ensure the Gateway syncs with this list within seconds.
 *   **Verifiable Credential Issuance:** Upgrade capability tokens to **W3C Verifiable Credential format** using Microsoft Entra Verified ID or an equivalent library. In the VC model, a credential is *"a tamper-evident credential that has authorship that can be cryptographically verified"* and can be used to build verifiable presentations that are also cryptographically verified【2†L59】. The VC binds the agent's DID (subject) to specific capabilities (claims) with the enterprise's DID as issuer.
 
@@ -208,7 +214,7 @@
 **Team DP – Tasks:**
 
 *   **Cross-Organization Simulation:** Set up a controlled environment to test multi-organization trust:
-    *   **Simulate a Partner Organization:** Instantiate a minimal "partner" service in a separate AKS namespace or Azure App Service. Configure it with your enterprise's DID public key as a trusted issuer. Test that an agent's VC is accepted.
+    *   **Simulate a Partner Organization:** Instantiate a minimal "partner" service in a separate AKS namespace or Azure App Service, plus optional AWS EKS / Lambda and Google GKE / Cloud Run variants. Configure it with your enterprise's DID public key as a trusted issuer. Test that an agent's VC is accepted.
     *   **Incoming Partner Agent:** Create a dummy VC signed by a "partner issuer" DID. Test that your Tool Gateway validates it by resolving the partner's DID Document. The Microsoft Entra Verified ID architecture demonstrates this pattern: *"Woodgrove is a trusted VC issuer in Proseware's validation solution. This trust in Woodgrove's issuance process allows Proseware to electronically accept the VC as proof"*【2†L57】.
 *   **Performance & Scalability Testing:** Simulate 50 concurrent agents making rapid tool requests. Measure overhead of capability checks and cryptographic operations. Confirm 95th percentile latency within acceptable limits.
 *   **Production Security Hardening:** Remove development backdoors. Use minimal OS base container images (alpine or distroless). Confirm no root access. Test container escape resilience.
@@ -235,6 +241,8 @@
 
 *   All high-risk agent actions mediated by the capability layer — nothing bypasses without detection.
 *   Credentials conform to open standards and can be verified using only the DID Document and standard JWT/VC libraries, without proprietary code.
+*   AWS and Google Cloud identity, signer, runtime, gateway, and telemetry profiles are specified with parity to the Azure baseline.
+*   LangChain, Microsoft Agent Framework (MAF), and CrewAI adapters have documented enforcement flows and test scenarios.
 *   The solution combines centralized and decentralized identity: Azure AD handles user authentication and initial approvals, agents operate using decentralized credentials externally. *"By combining centralized and decentralized identity architectures, the responsibility and effort associated with identity and proof of identity is distributed and risk is lowered"*【8†L1】.
 *   Audit logs are cryptographically strengthened and capture complete trails. Evidence signatures are verifiable using the enterprise's public key【5†L283-L291】.
 *   Sentinel alerts are tuned and the team has practiced incident response.
@@ -245,7 +253,7 @@
 
 **Goal:** Deploy the system in a controlled production pilot with real (or realistic) data, including a demonstration of cross-cloud or cross-organization functionality. Emphasis on end-to-end security verification, performance, and preparation for scaling.
 
-### Sprint 5 (Weeks 9–10) – Production Pilot Launch on Azure
+### Sprint 5 (Weeks 9–10) – Production Pilot Launch and Cross-Cloud Demonstration
 
 ***
 
@@ -253,15 +261,16 @@
 
 *   **Production Deployment:** Deploy all components to the production environment:
     *   Capability Issuer as a highly-available service (two or more instances, behind load balancer, with auto-scale).
-    *   Tool Gateway close to agents (sidecar in AKS pod, DaemonSet, or dedicated internal service).
-    *   Confirm all credentials correctly set up (Key Vault access for signing key, Graph API permissions, Gateway's public key reference).
-    *   Use **Azure Resource Manager templates or Bicep** for reproducible provisioning.
+    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, Cloud Run sidecar/proxy pattern, or dedicated internal service).
+    *   Confirm all credentials correctly set up (Key Vault, AWS KMS, or Google Cloud KMS access for signing keys; Microsoft Graph, AWS IAM/Cognito, or Google Cloud IAM permissions; Gateway's public key reference).
+    *   Use **Azure Resource Manager templates or Bicep**, **AWS CloudFormation/CDK**, **Google Cloud Deployment Manager**, or **Terraform** for reproducible provisioning.
 
 *   **Cloud-Portability Documentation:** Document cloud-specific pieces and equivalents elsewhere:
-    *   APIM → AWS API Gateway + Lambda Authorizers
+    *   APIM → AWS API Gateway + Lambda Authorizers or Google Cloud API Gateway / Apigee
     *   AKS → EKS or GKE
-    *   Azure Key Vault → AWS KMS or HashiCorp Vault
-    *   Azure Monitor/Sentinel → CloudWatch/GuardDuty or Chronicle
+    *   Azure Key Vault → AWS KMS, Google Cloud KMS / Cloud HSM, or HashiCorp Vault
+    *   Azure Monitor/Sentinel → CloudWatch/GuardDuty/Security Hub or Cloud Logging/Security Command Center/Chronicle
+    *   Azure AD / Entra ID → Amazon Cognito / IAM Identity Center or Google Cloud Identity / Identity Platform
     *   The core logic remains the same across clouds because the system relies on standard protocols (OIDC, OAuth, VC/JWT, DID).
 
 *   **Go/No-Go Meeting:** Final review with all stakeholders. Present Milestone 2 results and compliance review. Proceed only with unanimous agreement.
@@ -274,10 +283,12 @@
 
 ***
 
-**Azure Monitoring & Management:**
+**Cloud Monitoring & Management:**
 
 *   **Azure Monitor & Application Insights** for real-time performance monitoring.
 *   **Microsoft Sentinel fine-tuning** with real pilot data. Adjust alert thresholds based on baseline behavior.
+*   **Amazon CloudWatch, CloudTrail, GuardDuty, and Security Hub** for AWS pilot telemetry and security posture.
+*   **Google Cloud Logging, Cloud Monitoring, Cloud Audit Logs, Security Command Center, and Chronicle** for Google Cloud pilot telemetry and security operations.
 *   **Microsoft Purview integration** (if dealing with sensitive data): Purview sensitivity labels enable governing what the agent can see — *"Label the corpus. Filter retrieval by label and identity policy. Log label distribution per completion. Alert when a low-privilege identity retrieves high-sensitivity labels"*【5†L340-L343】.
 
 ***
@@ -301,7 +312,7 @@
 
 *   **Bug Fixes and Tuning:** Address issues from Sprint 5 monitoring. Prioritize fixes reducing risk. All changes tested in staging before production.
 *   **Finalize Alert Thresholds:** Adjust with real data. If 1–2 legitimate denials per day are normal, raise the "deny spike" threshold accordingly.
-*   **Cross-Cloud Extension (Optional):** If resources and time permit, demonstrate portability by deploying a minimal version in another environment (e.g., AWS with Cognito, KMS, API Gateway). Issue a similar capability for an agent and verify cross-cloud acceptance by trusting the other environment's public key/DID.
+*   **Cross-Cloud Extension (Optional):** If resources and time permit, demonstrate portability by deploying a minimal version in another environment (e.g., AWS with Cognito, KMS, API Gateway, and EKS/Fargate; or Google Cloud with Cloud Identity / Identity Platform, Cloud KMS, API Gateway / Apigee, and GKE/Cloud Run). Issue a similar capability for an agent and verify cross-cloud acceptance by trusting the other environment's public key/DID.
 *   **Documentation and Handoff:** Update Capability Manifest Guide with pilot-discovered patterns. Formalize ownership. Prepare next-steps backlog for full rollout.
 *   **Next Steps Planning:** Develop backlog items for broad adoption: self-service UI for capability requests, dynamic policy engines, cross-cloud support, industry standards contributions.
 
@@ -311,6 +322,8 @@
 
 *   Stable pilot operations with no major issues over ≥2 weeks of real use.
 *   All pilot objectives met: no security incidents, successful prevention of policy violations, acceptable performance and user satisfaction.
+*   Cross-cloud demonstration proves equivalent capability issuance, signing, enforcement, and audit behavior across Azure plus at least one AWS or Google Cloud deployment profile.
+*   LangChain, Microsoft Agent Framework (MAF), and CrewAI integration guidance is ready for handoff to agent application teams.
 *   Team handoff completed with formalized on-call rotations and ownership.
 *   Go/No-Go review held with final pilot report prepared for leadership.
 
