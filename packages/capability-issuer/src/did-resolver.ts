@@ -285,10 +285,10 @@ function modpow(base: bigint, exp: bigint, mod: bigint): bigint {
   let b = base % mod;
   let e = exp;
   while (e > 0n) {
-    if (e % 2n === 1n) {
+    if (e & 1n) {
       result = (result * b) % mod;
     }
-    e /= 2n;
+    e >>= 1n;
     b = (b * b) % mod;
   }
   return result;
@@ -355,9 +355,8 @@ function bigintToBase64Url(n: bigint, length: number): string {
   return Buffer.from(hex, 'hex').toString('base64url');
 }
 
-// ---------------------------------------------------------------------------
-// did:ion resolver
-// ---------------------------------------------------------------------------
+/** Timeout in milliseconds for the ION resolver HTTP request. */
+const ION_RESOLVER_TIMEOUT_MS = 15000;
 
 /**
  * Resolve did:ion to DID Document via the public ION resolver.
@@ -384,7 +383,7 @@ export async function resolveDidIon(did: string): Promise<DIDDocument> {
       headers: {
         'Accept': 'application/did+json, application/json',
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(ION_RESOLVER_TIMEOUT_MS),
     });
 
     if (!response.ok) {

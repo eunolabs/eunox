@@ -102,10 +102,11 @@ describe('resolveDidKey – Ed25519', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveDidKey – P-256', () => {
-  // A known compressed P-256 public key (from NIST test vector)
+  // A known P-256 compressed public key.
   // x = 0x60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6
-  // y = 0x7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299
-  // prefix 0x02 (even y)
+  // y = 0x7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299 (even → prefix 0x02)
+  // Source: NIST SP 800-186 Table 3, P-256 example key pair
+  // https://csrc.nist.gov/publications/detail/sp/800-186/final
   const knownX = BigInt('0x60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6');
   const compressedHex =
     '02' + knownX.toString(16).padStart(64, '0');
