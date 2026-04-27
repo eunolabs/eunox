@@ -115,17 +115,55 @@ kubectl get namespace euno-system
 ### Step 2: Install AppArmor Profiles (On Each Node)
 
 ```bash
-# Copy profile to nodes
-for node in $(kubectl get nodes -o name); do
-  kubectl cp k8s/security-policies/apparmor-profile.conf $node:/tmp/euno-restricted
-done
+# Install the AppArmor profile on every node using a privileged DaemonSet.
+# Note: `kubectl cp` and `kubectl exec` only work with pods, not nodes.
+kubectl -n kube-system create configmap euno-apparmor-profile \
+  --from-file=euno-restricted=k8s/security-policies/apparmor-profile.conf
 
-# Load profiles on each node
-for node in $(kubectl get nodes -o name); do
-  kubectl exec -it $node -- bash -c \
-    "sudo cp /tmp/euno-restricted /etc/apparmor.d/ && \
-     sudo apparmor_parser -r /etc/apparmor.d/euno-restricted"
-done
+cat <<'EOF' | kubectl apply -f -
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: euno-apparmor-installer
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: euno-apparmor-installer
+  template:
+    metadata:
+      labels:
+        app: euno-apparmor-installer
+    spec:
+      hostPID: true
+      containers:
+        - name: installer
+          image: busybox:1.36
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - -c
+            - |
+              cp /profiles/euno-restricted /host/etc/apparmor.d/euno-restricted
+              chroot /host apparmor_parser -r /etc/apparmor.d/euno-restricted
+              sleep 3600
+          volumeMounts:
+            - name: host-apparmor
+              mountPath: /host/etc/apparmor.d
+            - name: profile
+              mountPath: /profiles
+      volumes:
+        - name: host-apparmor
+          hostPath:
+            path: /etc/apparmor.d
+        - name: profile
+          configMap:
+            name: euno-apparmor-profile
+EOF
+
+kubectl -n kube-system rollout status daemonset/euno-apparmor-installer
+kubectl -n kube-system get pods -l app=euno-apparmor-installer -o wide
 ```
 
 ### Step 3: Create Secrets

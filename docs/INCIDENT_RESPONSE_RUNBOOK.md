@@ -428,12 +428,15 @@ Escalate to **VP Engineering** if:
 
 ```bash
 # Export audit logs
+# Note: `kubectl logs` supports --since-time but not --until; filter the upper bound with awk.
 kubectl logs -n euno-system deploy/tool-gateway \
-  --since=${INCIDENT_START} --until=${INCIDENT_END} \
+  --since-time="${INCIDENT_START}" --timestamps=true \
+  | awk -v end="${INCIDENT_END}" '$1 <= end { print }' \
   > incident-${DATE}-gateway-logs.json
 
 kubectl logs -n euno-system deploy/capability-issuer \
-  --since=${INCIDENT_START} --until=${INCIDENT_END} \
+  --since-time="${INCIDENT_START}" --timestamps=true \
+  | awk -v end="${INCIDENT_END}" '$1 <= end { print }' \
   > incident-${DATE}-issuer-logs.json
 ```
 

@@ -312,12 +312,15 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         return;
       }
 
-      tokenVerifier.revokeToken(tokenId, expiresAt);
-      logger.warn('Token revoked via admin API', { tokenId, expiresAt });
+      const now = Math.floor(Date.now() / 1000);
+      const effectiveExpiresAt = expiresAt ?? now + 86400;
+
+      tokenVerifier.revokeToken(tokenId, effectiveExpiresAt);
+      logger.warn('Token revoked via admin API', { tokenId, expiresAt: effectiveExpiresAt });
       res.json({
         message: `Token ${tokenId} has been revoked`,
         tokenId,
-        expiresAt: expiresAt || Math.floor(Date.now() / 1000) + 86400
+        expiresAt: effectiveExpiresAt,
       });
     } catch (error) {
       logger.error('Failed to revoke token', {

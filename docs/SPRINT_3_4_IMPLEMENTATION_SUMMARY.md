@@ -158,7 +158,7 @@ Successfully implemented critical Sprint 3 and Sprint 4 features for the Euno ca
 }
 ```
 
-**Authentication:** Requires `X-Admin-API-Key` header
+**Authentication:** `X-Admin-API-Key` is enforced only when `ADMIN_API_KEY` is configured. If `ADMIN_API_KEY` is unset, this endpoint is not protected by that header check; production deployments should set `ADMIN_API_KEY`.
 
 ---
 
