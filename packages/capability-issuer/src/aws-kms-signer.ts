@@ -3,10 +3,9 @@
  * Implements cryptographic signing using AWS Key Management Service
  */
 
-import { KMSClient, SignCommand, GetPublicKeyCommand, SignCommandInput } from '@aws-sdk/client-kms';
+import { KMSClient, SignCommand, GetPublicKeyCommand, SigningAlgorithmSpec } from '@aws-sdk/client-kms';
 import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AWSKMSConfig } from '@euno/common';
 import * as crypto from 'crypto';
-import * as jose from 'jose';
 
 /**
  * AWS KMS specific configuration extending the base adapter config
@@ -19,7 +18,7 @@ export interface AWSKMSAdapterConfig extends SigningAdapterConfig {
 /**
  * Map JWT signing algorithms to AWS KMS signing algorithms
  */
-function getAWSSigningAlgorithm(algorithm: SigningAlgorithm): string {
+function getAWSSigningAlgorithm(algorithm: SigningAlgorithm): SigningAlgorithmSpec {
   switch (algorithm) {
     case 'RS256':
       return 'RSASSA_PKCS1_V1_5_SHA_256';

@@ -6,7 +6,6 @@
 import { KeyManagementServiceClient } from '@google-cloud/kms';
 import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, GCPCloudKMSConfig } from '@euno/common';
 import * as crypto from 'crypto';
-import * as jose from 'jose';
 
 /**
  * GCP Cloud KMS specific configuration extending the base adapter config
@@ -124,7 +123,7 @@ export class GCPCloudKMSSigner extends SigningAdapter {
 
     // Auto-detect algorithm from key if not explicitly configured
     if (!this.config.algorithm && publicKey.algorithm) {
-      this.algorithm = detectAlgorithmFromGCPKey(publicKey.algorithm);
+      this.algorithm = detectAlgorithmFromGCPKey(String(publicKey.algorithm));
     }
   }
 
