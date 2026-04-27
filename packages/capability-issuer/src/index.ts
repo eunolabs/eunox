@@ -211,10 +211,10 @@ const rateLimitMax = Number.isFinite(rateLimitMaxRaw) && rateLimitMaxRaw > 0
   ? rateLimitMaxRaw
   : 100;
 if (!Number.isFinite(rateLimitWindowRaw) && process.env.RATE_LIMIT_WINDOW_MS) {
-  logger.warn('Invalid RATE_LIMIT_WINDOW_MS, using default 60000ms');
+  logger.warn('RATE_LIMIT_WINDOW_MS value is invalid, using default 60000ms');
 }
 if (!Number.isFinite(rateLimitMaxRaw) && process.env.RATE_LIMIT_MAX_REQUESTS) {
-  logger.warn('Invalid RATE_LIMIT_MAX_REQUESTS, using default 100');
+  logger.warn('RATE_LIMIT_MAX_REQUESTS value is invalid, using default 100');
 }
 
 const limiter = rateLimit({

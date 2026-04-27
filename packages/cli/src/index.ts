@@ -100,7 +100,7 @@ program
   .action(async (options) => {
     // Also accept token from env var directly (options default already handles this,
     // but guard here in case both paths yield an empty string)
-    const token: string = options.token || process.env.AZURE_AD_TOKEN || '';
+    const token: string = options.token;
     if (!token) {
       console.error('✗ Azure AD bearer token is required');
       console.error('  Use --token <token> or set the AZURE_AD_TOKEN environment variable');
