@@ -1,0 +1,120 @@
+# Sprint 1: Agent Runtime with Sandbox Security Constraints
+# - Read-only root filesystem
+# - Least-privilege Linux capabilities (all dropped)
+# - Network egress restricted via NetworkPolicy
+# - No sensitive host paths accessible
+# - Runs as non-root user
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+  namespace: euno-system
+  labels:
+    app: agent-runtime
+    component: agent
+    role: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-runtime
+      role: agent
+  template:
+    metadata:
+      labels:
+        app: agent-runtime
+        component: agent
+        role: agent
+    spec:
+      serviceAccountName: agent-runtime
+      # Sprint 1: Security context for pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: agent
+        image: eunoacr.azurecr.io/agent-runtime:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3003
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3003"
+        - name: AGENT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: GATEWAY_URL
+          value: "http://tool-gateway:3002"
+        - name: ISSUER_URL
+          value: "http://capability-issuer:3001"
+        # Sprint 2: Token refresh interval
+        - name: TOKEN_REFRESH_INTERVAL
+          value: "600"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        # Sprint 1: Container security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          # Sprint 1: Drop all Linux capabilities
+          capabilities:
+            drop:
+            - ALL
+          # Sprint 1: Read-only root filesystem
+          readOnlyRootFilesystem: true
+        # Sprint 1: Mount only necessary volumes (ephemeral scratch)
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-tmp
+          mountPath: /app/tmp
+        - name: logs
+          mountPath: /app/logs
+      # Sprint 1: Ephemeral volumes only
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: app-tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+  namespace: euno-system
+  labels:
+    app: agent-runtime
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3003
+    targetPort: 3003
+    protocol: TCP
+    name: http
+  selector:
+    app: agent-runtime
+    role: agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runtime
+  namespace: euno-system

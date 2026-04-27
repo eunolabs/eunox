@@ -222,6 +222,128 @@ app.post('/api/v1/validate', async (req: Request, res: Response, next: NextFunct
 });
 
 /**
+ * Server-side tool registry: maps known tool names to their required action.
+ * Using an explicit registry prevents misclassification from substring matching
+ * and ensures authorization decisions are based on the actual tool semantics.
+ * Unknown tools default to 'execute' (most restrictive default).
+ */
+const TOOL_ACTION_REGISTRY: Record<string, string> = {
+  // File operations
+  read_file: 'read',
+  get_file: 'read',
+  list_files: 'read',
+  list_directory: 'read',
+  write_file: 'write',
+  create_file: 'write',
+  update_file: 'write',
+  append_file: 'write',
+  delete_file: 'delete',
+  remove_file: 'delete',
+  // HTTP/API operations
+  http_get: 'read',
+  http_post: 'write',
+  http_put: 'write',
+  http_delete: 'delete',
+  // Code execution
+  run_code: 'execute',
+  execute_command: 'execute',
+  run_shell: 'execute',
+};
+
+/**
+ * Resolves the required action type for a given tool name using an explicit
+ * server-side registry.  Using a registry instead of substring matching prevents
+ * misclassification and ensures authorization decisions reflect the tool's actual
+ * semantics.  Unknown tools default to 'execute', the most restrictive action.
+ *
+ * @param tool - The tool name to look up (e.g. 'read_file').
+ * @returns The action string ('read' | 'write' | 'delete' | 'execute').
+ */
+function resolveToolAction(tool: string): string {
+  return TOOL_ACTION_REGISTRY[tool] ?? 'execute';
+}
+
+/**
+ * Tool invocation endpoint (Sprint 1 & 2)
+ * POST /api/v1/tools/invoke
+ *
+ * This endpoint is used by agent runtime to invoke tools with capability tokens.
+ * Implements the sandboxing requirement: all agent actions go through this gateway.
+ */
+app.post('/api/v1/tools/invoke', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = parseBearerToken(req.headers.authorization);
+    if (!token) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token is required',
+        401
+      );
+    }
+
+    const { tool, args } = req.body;
+
+    if (!tool) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'tool parameter is required',
+        400
+      );
+    }
+
+    // Derive action from the server-side tool registry (not client-supplied).
+    const action = resolveToolAction(tool);
+
+    // Canonicalize resource server-side from the actual tool being invoked.
+    // Never trust a client-supplied resource value, which could cause authorization
+    // to be evaluated against a different resource than the tool/args actually affect.
+    const canonicalResource = `tool://${tool}`;
+
+    // Validate the action
+    const validationRequest: ValidateActionRequest = {
+      token,
+      action: action as any,
+      resource: canonicalResource,
+      context: {
+        tool,
+        args,
+        agentId: req.headers['x-agent-id'],
+      },
+    };
+
+    const result = await enforcementEngine.validateAction(validationRequest);
+
+    if (!result.allowed) {
+      throw new CapabilityError(
+        ErrorCode.AUTHORIZATION_FAILED,
+        result.reason || 'Tool invocation not allowed',
+        403
+      );
+    }
+
+    // In a real implementation, this would invoke the actual tool
+    // For now, return success with mock data
+    logger.info('Tool invoked successfully', {
+      tool,
+      action,
+      resource: canonicalResource,
+      agentId: req.headers['x-agent-id'],
+    });
+
+    res.json({
+      success: true,
+      tool,
+      result: {
+        message: 'Tool executed successfully (mock implementation)',
+        data: args,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Protected proxy endpoints
  * All requests under /proxy/* are validated and then proxied to backend services
  */
