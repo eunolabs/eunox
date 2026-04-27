@@ -140,6 +140,93 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
 });
 
 /**
+ * Attenuate capability token endpoint
+ * POST /api/v1/attenuate
+ * Reduces the scope of an existing capability token
+ */
+app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Extract parent token from authorization header
+    const parentToken = parseBearerToken(req.headers.authorization);
+    if (!parentToken) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token (parent capability) is required',
+        401
+      );
+    }
+
+    // Validate required fields
+    if (!req.body.requestedCapabilities || !Array.isArray(req.body.requestedCapabilities)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'requestedCapabilities array is required',
+        400
+      );
+    }
+
+    // Validate optional ttl
+    const ttl = req.body.ttl;
+    if (ttl !== undefined && (typeof ttl !== 'number' || !isFinite(ttl) || ttl <= 0)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'ttl must be a positive finite number',
+        400
+      );
+    }
+
+    // Attenuate the capability
+    const response = await issuerService.attenuateCapability(
+      parentToken,
+      req.body.requestedCapabilities,
+      ttl
+    );
+
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Renew capability token endpoint
+ * POST /api/v1/renew
+ * Refreshes an existing capability token with new expiration
+ */
+app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Extract current token from authorization header
+    const currentToken = parseBearerToken(req.headers.authorization);
+    if (!currentToken) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token (current capability) is required',
+        401
+      );
+    }
+
+    // Renew the capability
+    const renewTtl = req.body.ttl;
+    if (renewTtl !== undefined && (typeof renewTtl !== 'number' || !isFinite(renewTtl) || renewTtl <= 0)) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'ttl must be a positive finite number',
+        400
+      );
+    }
+
+    const response = await issuerService.renewCapability(
+      currentToken,
+      renewTtl
+    );
+
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Get public key endpoint
  * GET /api/v1/public-key
  */

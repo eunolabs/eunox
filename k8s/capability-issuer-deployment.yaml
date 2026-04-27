@@ -1,0 +1,195 @@
+# Capability Issuer Deployment with Sprint 3 Sandbox Hardening
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capability-issuer
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+    version: v1.0.0
+    component: control-plane
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: capability-issuer
+  template:
+    metadata:
+      labels:
+        app: capability-issuer
+        version: v1.0.0
+      annotations:
+        # Sprint 3: AppArmor profile annotation
+        container.apparmor.security.beta.kubernetes.io/capability-issuer: localhost/euno-restricted
+    spec:
+      # Sprint 3: Service account with no API token (config injected via env)
+      serviceAccountName: capability-issuer-sa
+      automountServiceAccountToken: false
+
+      # Sprint 3: Security context at pod level
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        # SELinux options
+        seLinuxOptions:
+          level: "s0:c123,c456"
+          type: "euno_restricted.process"
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: capability-issuer
+        image: eunoacr.azurecr.io/capability-issuer:v1.0.0
+        imagePullPolicy: Always
+
+        ports:
+        - name: http
+          containerPort: 3001
+          protocol: TCP
+
+        # Sprint 3: Environment variable scrubbing - no sensitive data
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        - name: AZURE_KEYVAULT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: keyvault-url
+        - name: AZURE_KEYVAULT_KEY_NAME
+          value: "capability-signing-key"
+        - name: AZURE_AD_TENANT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: tenant-id
+        - name: AZURE_AD_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: client-id
+        - name: ISSUER_DID
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: issuer-did
+        - name: DEFAULT_TOKEN_TTL
+          value: "900"
+        - name: ENABLE_DETAILED_LOGGING
+          value: "false"
+        # Sprint 3: Secrets via Kubernetes secrets, not environment variables
+        - name: AZURE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: issuer-secrets
+              key: azure-client-secret
+
+        # Sprint 3: Resource limits (CPU and memory via cgroups)
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+
+        # Sprint 3: Security context at container level
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          privileged: false
+          procMount: Default
+
+        # Sprint 3: Volume mounts - only necessary paths
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/.npm
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+      # Sprint 3: Volumes - writable tmpfs for temporary files only
+      volumes:
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 100Mi
+      - name: cache
+        emptyDir:
+          medium: Memory
+          sizeLimit: 50Mi
+
+      # Sprint 3: Additional pod-level restrictions
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+
+---
+# Service Account without Kubernetes API access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capability-issuer-sa
+  namespace: euno-system
+automountServiceAccountToken: false
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: capability-issuer
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3001
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: capability-issuer
+
+---
+# ConfigMap for non-sensitive configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: issuer-config
+  namespace: euno-system
+data:
+  keyvault-url: "https://your-keyvault.vault.azure.net"
+  tenant-id: "your-tenant-id"
+  client-id: "your-client-id"
+  issuer-did: "did:web:your-domain.com"

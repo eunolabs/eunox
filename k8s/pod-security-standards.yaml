@@ -1,0 +1,90 @@
+# Pod Security Standards for Euno - Sprint 3 Sandbox Hardening
+# Uses Pod Security Admission (PSA) which replaces deprecated PodSecurityPolicy
+#
+# Apply this namespace configuration to enforce pod security standards
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: euno-system
+  labels:
+    # Enforce restricted pod security standard
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    # Audit violations of baseline standard
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest
+    # Warn on violations
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+
+---
+# Resource Quota for namespace - Sprint 3 resource limits
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: euno-resource-quota
+  namespace: euno-system
+spec:
+  hard:
+    # Limit total resources
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    # Limit number of pods
+    pods: "20"
+    # Limit services
+    services: "10"
+    services.loadbalancers: "2"
+    # Limit persistent storage
+    persistentvolumeclaims: "0"  # No persistent storage allowed
+    # Limit secrets and configmaps
+    configmaps: "10"
+    secrets: "10"
+
+---
+# Limit Range for pods - Sprint 3 default limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: euno-limit-range
+  namespace: euno-system
+spec:
+  limits:
+  # Container defaults
+  - max:
+      cpu: "2"
+      memory: "4Gi"
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+    default:
+      cpu: "500m"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "512Mi"
+    type: Container
+
+  # Pod limits
+  - max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Pod
+
+---
+# Network Policy - Default deny all
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: euno-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress

@@ -1,0 +1,201 @@
+# Tool Gateway Deployment with Sprint 3 Sandbox Hardening
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tool-gateway
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+    version: v1.0.0
+    component: data-plane
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tool-gateway
+  template:
+    metadata:
+      labels:
+        app: tool-gateway
+        version: v1.0.0
+      annotations:
+        # Sprint 3: AppArmor profile annotation
+        container.apparmor.security.beta.kubernetes.io/tool-gateway: localhost/euno-restricted
+    spec:
+      # Sprint 3: Service account with no API token (config injected via env)
+      serviceAccountName: tool-gateway-sa
+      automountServiceAccountToken: false
+
+      # Sprint 3: Security context at pod level
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1002
+        runAsGroup: 1002
+        fsGroup: 1002
+        # SELinux options
+        seLinuxOptions:
+          level: "s0:c123,c456"
+          type: "euno_restricted.process"
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: tool-gateway
+        image: eunoacr.azurecr.io/tool-gateway:v1.0.0
+        imagePullPolicy: Always
+
+        ports:
+        - name: http
+          containerPort: 3002
+          protocol: TCP
+        - name: admin
+          containerPort: 3003
+          protocol: TCP
+
+        # Sprint 3: Environment variable scrubbing - no sensitive data
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: ADMIN_PORT
+          value: "3003"
+        - name: ISSUER_PUBLIC_KEY_URL
+          value: "http://capability-issuer:3001/api/v1/public-key"
+        - name: BACKEND_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: gateway-config
+              key: backend-service-url
+        - name: POLICY_VERSION
+          value: "1.0.0"
+        - name: ENABLE_DETAILED_LOGGING
+          value: "false"
+        # Sprint 3: Secrets via Kubernetes secrets, not environment variables
+        - name: ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secrets
+              key: admin-api-key
+
+        # Sprint 3: Resource limits (CPU and memory via cgroups)
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+
+        # Sprint 3: Security context at container level
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1002
+          runAsGroup: 1002
+          privileged: false
+          procMount: Default
+
+        # Sprint 3: Volume mounts - only necessary paths
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/.npm
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+      # Sprint 3: Volumes - writable tmpfs for temporary files only
+      volumes:
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 100Mi
+      - name: cache
+        emptyDir:
+          medium: Memory
+          sizeLimit: 50Mi
+
+      # Sprint 3: Additional pod-level restrictions
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+
+---
+# Service Account without Kubernetes API access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tool-gateway-sa
+  namespace: euno-system
+automountServiceAccountToken: false
+
+---
+# Service for main gateway port
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 3002
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: tool-gateway
+
+---
+# Service for admin API (ClusterIP only - internal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway-admin
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3003
+    targetPort: admin
+    protocol: TCP
+    name: admin
+  selector:
+    app: tool-gateway
+
+---
+# ConfigMap for non-sensitive configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: euno-system
+data:
+  backend-service-url: "https://your-backend-service.com"
