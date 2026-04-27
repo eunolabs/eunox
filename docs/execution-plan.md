@@ -1,4 +1,4 @@
-# Multi-Cloud Hybrid Execution Plan for Capability‑Native Agent Governance
+# Multi-Cloud Hybrid Execution Plan for Capability-Native Agent Governance
 
 ## Milestone 1 – Foundation (Multi-Cloud Integration & Core Architecture)
 
@@ -35,7 +35,10 @@
           crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
         ```
         Hashing is performed locally before calling Key Vault for the actual signature operation【5†L291-L294】.
-    *   *Cloud KMS Parity:* Implement the signer abstraction so Azure Key Vault, **AWS KMS**, and **Google Cloud KMS / Cloud HSM** are interchangeable. The signing payload, `kid`, public key discovery, rotation semantics, algorithm choices, and audit fields should remain consistent regardless of cloud. AWS deployments should use KMS asymmetric keys, IAM roles for service authentication, and CloudTrail evidence for key usage. Google Cloud deployments should use Cloud KMS or Cloud HSM keys, service accounts or Workload Identity Federation for service authentication, and Cloud Audit Logs for key usage.
+    *   *Cloud KMS Parity:* Implement the signer abstraction so cloud signing services are interchangeable. The signing payload, `kid`, public key discovery, rotation semantics, algorithm choices, and audit fields should remain consistent regardless of cloud.
+        *   Azure deployments should use Azure Key Vault keys, Managed Identity for service authentication, and Azure activity/audit logs for key usage.
+        *   AWS deployments should use KMS asymmetric keys, IAM roles for service authentication, and CloudTrail evidence for key usage.
+        *   Google Cloud deployments should use Cloud KMS or Cloud HSM keys, service accounts or Workload Identity Federation for service authentication, and Cloud Audit Logs for key usage.
     *   *Issuance Logic:* Implement the `/issue` endpoint. On receiving an authenticated user context, the Issuer will: (a) look up the user's Azure AD roles/claims, and (b) load a corresponding **Agent Capability Manifest template**. For the pilot, define a simple static mapping — e.g., if the user has AD role "SalesManager", the agent gets read/write capability for customer data; if "Viewer", read-only. Sign this token via Key Vault or the configured cloud KMS signer.
     *   *Distributed Identity Prep:* Document how the JWT could be accompanied by a **DID for the user and agent** as subject identifiers, and the signing key associated with the enterprise's DID Document. Research demonstrates that combining AI agents with W3C DIDs and W3C VCs enables cross-domain trust establishment — agents can *"prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs"*【1†L40】. This paper, accepted at the 18th International Conference on Agents and Artificial Intelligence 2026, confirms technical feasibility but also identifies limitations when an agent's LLM is in sole charge of controlling security procedures — reinforcing the need for external mechanical enforcement【1†L40-L44】.
 
@@ -78,7 +81,7 @@
 **Team DX (Developer Experience & Testing) – Tasks:**
 
 *   **Agent Manifest Workflow:** Define how engineers specify an agent's capabilities via declarative YAML manifests. Develop example manifests for pilot agents.
-*   **Agentic Orchestration Framework Targets:** Define first-class integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI**. For each framework, document where capability issuance, token attachment, tool-call interception, denial handling, and audit correlation should plug in without requiring application developers to rewrite agent business logic.
+*   **Agentic Orchestration Framework Targets:** Define first-class integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI**. For each framework, deliver an integration guide with required interfaces, sequence diagrams, and minimal examples covering capability issuance, token attachment, tool-call interception, denial handling, and audit correlation without requiring application developers to rewrite agent business logic.
 *   **Test Plan:** Write unit, integration, and security test scenarios. Key test cases: forging a token should fail signature check; agent without required token should be denied; expired token should be rejected.
 
 ***
@@ -125,7 +128,7 @@
 **Team DX – Tasks:**
 
 *   **Agent SDK Integration:** Modify the pilot agent's code to retrieve and attach capability tokens. At startup, the agent calls the Issuer's `/issue` endpoint. Every tool invocation includes the token via middleware or proxy configuration.
-    *   *Framework Middleware:* Provide framework-native hooks: LangChain callback/tool wrappers, MAF middleware or skill/action interceptors, and CrewAI tool wrappers or task lifecycle hooks. Each integration must acquire or refresh capability tokens, attach them to gateway-bound tool calls, surface denials as structured framework errors, and emit correlation IDs for audit logs.
+    *   *Framework Middleware:* Provide framework-native hooks as library adapters plus documentation: LangChain callback handlers and tool wrappers; MAF agent-run middleware and function/tool-calling middleware; and CrewAI tool wrappers plus task lifecycle hooks. Each integration must acquire or refresh capability tokens, attach them to gateway-bound tool calls, surface denials as structured framework errors, and emit correlation IDs for audit logs.
 *   **Unit Tests:** Valid tokens accepted; invalid tokens rejected; expired token rejected; agent obtains new token and proceeds.
 
 ***
@@ -164,7 +167,10 @@
 **Team DP – Tasks:**
 
 *   **Full Spectrum Tool Enforcement:** Extend the Tool Gateway to cover:
-    *   **File system operations:** Use Azure **SAS tokens** for Azure Storage as part of capability issuance. Provide equivalent patterns for Amazon S3 presigned URLs / scoped IAM session policies and Google Cloud Storage signed URLs / downscoped credentials. The agent presents the short-lived storage grant; access beyond the token's scope is denied by the cloud storage control plane.
+    *   **File system operations:** Issue short-lived storage grants as part of capability issuance. The agent presents the grant, and access beyond the token's scope is denied by the cloud storage control plane.
+        *   Azure: use Azure Storage SAS tokens.
+        *   AWS: use Amazon S3 presigned URLs or scoped IAM session policies.
+        *   Google Cloud: use Cloud Storage signed URLs or downscoped credentials.
     *   **Database queries:** Use token-based auth for Azure SQL DB. Generate short-lived DB access tokens as part of the agent's capability. Provide equivalent patterns for Amazon RDS / Aurora IAM database authentication and Cloud SQL IAM database authentication. The agent must use that token to connect — with only the permissions granted.
     *   **External HTTP requests:** Force all egress traffic through the gateway, Azure Firewall, AWS Network Firewall / VPC endpoints, or Google Cloud Firewall / Private Service Connect. At minimum, monitor and log any external calls and whitelist domains.
 *   **Sandbox Hardening:**
@@ -211,7 +217,10 @@
 
 **Team CP – Tasks:**
 
-*   **Enterprise IAM Full Integration:** Hook the Capability Issuer to live enterprise IAM. Use **Microsoft Graph API** to fetch Azure AD user roles or group memberships and honor Conditional Access policies and Privileged Identity Management (PIM) activations for time-bound elevated permissions. For AWS, support Cognito, IAM Identity Center, STS session tags, and IAM role assumption metadata. For Google Cloud, support Cloud Identity groups, IAM principal attributes, Workforce Identity Federation, and Workload Identity Federation.
+*   **Enterprise IAM Full Integration:** Hook the Capability Issuer to live enterprise IAM.
+    *   Azure: use **Microsoft Graph API** to fetch Azure AD user roles or group memberships, and honor Conditional Access policies plus Privileged Identity Management (PIM) activations for time-bound elevated permissions.
+    *   AWS: support Cognito for app identities, IAM Identity Center for workforce identities, STS session tags for contextual attributes, and IAM role assumption metadata for workload identity.
+    *   Google Cloud: support Cloud Identity groups for workforce membership, IAM principal attributes for authorization context, Workforce Identity Federation for external users, and Workload Identity Federation for service-to-service trust.
 *   **Finalize Renewal & Revocation:** Complete the `/renew` endpoint for seamless token refresh. Implement **explicit revocation**: when an operator revokes a capability, move the corresponding token ID to a revocation list. Ensure the Gateway syncs with this list within seconds.
 *   **Verifiable Credential Issuance:** Upgrade capability tokens to **W3C Verifiable Credential format** using Microsoft Entra Verified ID or an equivalent library. In the VC model, a credential is *"a tamper-evident credential that has authorship that can be cryptographically verified"* and can be used to build verifiable presentations that are also cryptographically verified【2†L59】. The VC binds the agent's DID (subject) to specific capabilities (claims) with the enterprise's DID as issuer.
 
@@ -267,7 +276,7 @@
 
 *   **Production Deployment:** Deploy all components to the production environment:
     *   Capability Issuer as a highly-available service (two or more instances, behind load balancer, with auto-scale).
-    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, Cloud Run sidecar/proxy pattern, or dedicated internal service).
+    *   Tool Gateway close to agents (sidecar in AKS/EKS/GKE pod, DaemonSet, dedicated internal service, or centralized gateway reached from Cloud Run through VPC egress controls).
     *   Confirm all credentials correctly set up (Key Vault, AWS KMS, or Google Cloud KMS access for signing keys; Microsoft Graph, AWS IAM/Cognito, or Google Cloud IAM permissions; Gateway's public key reference).
     *   Use **Azure Resource Manager templates or Bicep**, **AWS CloudFormation/CDK**, **Google Cloud Deployment Manager**, or **Terraform** for reproducible provisioning.
 
