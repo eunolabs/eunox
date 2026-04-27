@@ -100,13 +100,13 @@ paths:
                   example: read_file
                 args:
                   description: Tool-specific arguments.
+                  nullable: true
                   oneOf:
                     - type: object
                     - type: array
                     - type: string
                     - type: number
                     - type: boolean
-                    - type: 'null'
       responses:
         '200':
           description: Tool invoked successfully
@@ -128,12 +128,25 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
   /proxy/{path}:
+    description: |
+      Authenticated reverse-proxy passthrough to the configured backend
+      service.  The runtime route matches `/proxy/*` (any depth), but
+      OpenAPI 3.0 path parameters cannot match more than one segment, so
+      this operation models the backend subpath as a single `{path}`
+      parameter.  When the proxied backend path contains nested segments,
+      percent-encode `/` as `%2F` inside the parameter; for example
+      `/proxy/foo%2Fbar` proxies to the backend subpath `/foo/bar`.
+    x-euno-greedy-path-parameter: path
     parameters:
       - in: path
         name: path
         required: true
         schema: { type: string }
-        description: Subpath to proxy to the configured backend service.
+        description: |
+          Backend subpath to proxy as a single path parameter.  For nested
+          backend paths, percent-encode `/` as `%2F` (for example,
+          `foo%2Fbar` for the backend path `/foo/bar`).
+        example: foo%2Fbar
     get:
       tags: [proxy]
       summary: Authenticated GET passthrough

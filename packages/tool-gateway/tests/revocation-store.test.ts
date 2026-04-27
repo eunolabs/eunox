@@ -152,15 +152,32 @@ describe('createRevocationStoreFromEnv', () => {
     await store.close();
   });
 
-  it('falls back to in-memory when ioredis is not installed', async () => {
-    // ioredis is not declared as a dependency of this package; setting
-    // REDIS_URL should therefore fall back to the in-memory store rather
-    // than throw at startup.
-    const store = await createRevocationStoreFromEnv(
-      { REDIS_URL: 'redis://localhost:6379' } as unknown as NodeJS.ProcessEnv,
-      logger
-    );
-    expect(store).toBeInstanceOf(InMemoryRevocationStore);
-    await store.close();
+  it('falls back to in-memory when ioredis cannot be loaded', async () => {
+    // Force the `require('ioredis')` lookup inside the factory to fail so
+    // the test exercises the missing-dependency fallback deterministically,
+    // regardless of whether ioredis happens to be hoisted into the workspace.
+    jest.resetModules();
+    try {
+      jest.doMock(
+        'ioredis',
+        () => {
+          throw new Error("Cannot find module 'ioredis'");
+        },
+        { virtual: true }
+      );
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/revocation-store');
+        const store = await mod.createRevocationStoreFromEnv(
+          { REDIS_URL: 'redis://localhost:6379' } as unknown as NodeJS.ProcessEnv,
+          logger
+        );
+        expect(store).toBeInstanceOf(mod.InMemoryRevocationStore);
+        await store.close();
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
   });
 });

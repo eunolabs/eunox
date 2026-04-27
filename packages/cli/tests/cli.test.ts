@@ -14,7 +14,28 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 
 const CLI_ENTRY = path.resolve(__dirname, '..', 'src', 'index.ts');
-const TS_NODE = path.resolve(__dirname, '..', '..', '..', 'node_modules', '.bin', 'ts-node');
+
+/**
+ * Resolve the `ts-node` CLI in a layout-independent way.  Using
+ * `require.resolve` finds the package wherever the workspace happens to have
+ * hoisted it (root `node_modules`, package-local `node_modules`, pnpm store,
+ * etc.), and we then point `node` at the package's own `bin` script so this
+ * works on Linux, macOS, and Windows without depending on shell shims like
+ * `ts-node.cmd`.
+ */
+function resolveTsNodeCli(): string {
+  // ts-node ships its CLI entry as `dist/bin.js`; locate it via its package.json
+  // so we don't hard-code that path either.
+  const pkgJsonPath = require.resolve('ts-node/package.json');
+  const pkg = require(pkgJsonPath) as { bin?: string | Record<string, string> };
+  const binEntry =
+    typeof pkg.bin === 'string'
+      ? pkg.bin
+      : (pkg.bin?.['ts-node'] ?? 'dist/bin.js');
+  return path.resolve(path.dirname(pkgJsonPath), binEntry);
+}
+
+const TS_NODE_CLI = resolveTsNodeCli();
 
 interface CliResult {
   status: number;
@@ -24,7 +45,9 @@ interface CliResult {
 
 function runCli(args: string[], opts: ExecFileSyncOptions = {}): CliResult {
   try {
-    const stdout = execFileSync(TS_NODE, [CLI_ENTRY, ...args], {
+    // Spawn `node <ts-node-bin> <cli-entry> <args>` so we don't depend on the
+    // platform-specific shell shim (`.bin/ts-node` vs `ts-node.cmd`).
+    const stdout = execFileSync(process.execPath, [TS_NODE_CLI, CLI_ENTRY, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       ...opts,
