@@ -51,6 +51,15 @@ Euno provides a zero-trust security framework for AI agents, combining decentral
 - **DID Integration**: W3C DID Document support (did:web format)
 - **Developer CLI**: Tools for manifest creation and token management
 - **Enhanced Audit**: Parent-child capability tracking in audit logs
+- **Sandbox Hardening**: Production-grade container security (NEW)
+  - Non-privileged user execution (UID 1001/1002)
+  - AppArmor/SELinux profiles blocking dangerous syscalls
+  - CPU/memory limits via cgroups
+  - Read-only root filesystem with tmpfs for temporary files
+  - Environment variable scrubbing (secrets via Kubernetes Secrets)
+  - Network policies with default-deny egress
+  - Pod Security Standards (restricted mode)
+  - Resource quotas and limit ranges
 
 ## Getting Started
 
@@ -391,6 +400,66 @@ See the test files in each package's `tests/` directory for examples of:
 
 ## Deployment
 
+### Docker Deployment (Sprint 3 Hardened)
+
+The system includes hardened Dockerfiles with Sprint 3 security controls:
+
+```bash
+# Build hardened images
+docker build -f packages/capability-issuer/Dockerfile -t euno/capability-issuer:latest .
+docker build -f packages/tool-gateway/Dockerfile -t euno/tool-gateway:latest .
+
+# Images include:
+# - Non-privileged user (UID 1001/1002)
+# - Read-only root filesystem
+# - Memory limits (--max-old-space-size)
+# - Health checks
+```
+
+### Kubernetes Deployment (Sprint 3 Sandbox Hardening)
+
+Full production deployment with Sprint 3 security hardening:
+
+```bash
+# 1. Create namespace with Pod Security Standards
+kubectl apply -f k8s/pod-security-standards.yaml
+
+# 2. Install AppArmor profiles (on each node)
+sudo cp k8s/security-policies/apparmor-profile.conf /etc/apparmor.d/euno-restricted
+sudo apparmor_parser -r /etc/apparmor.d/euno-restricted
+
+# 3. Create secrets
+kubectl create secret generic issuer-secrets \
+  --from-literal=azure-client-secret="YOUR_SECRET" \
+  --namespace=euno-system
+
+kubectl create secret generic gateway-secrets \
+  --from-literal=admin-api-key="YOUR_API_KEY" \
+  --namespace=euno-system
+
+# 4. Apply network policies
+kubectl apply -f k8s/network-policies.yaml
+
+# 5. Deploy services
+kubectl apply -f k8s/capability-issuer-deployment.yaml
+kubectl apply -f k8s/tool-gateway-deployment.yaml
+
+# 6. Verify security hardening
+kubectl get pods -n euno-system -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext.runAsUser}{"\n"}{end}'
+```
+
+**Security Features Enforced:**
+- ✅ Non-privileged user (runAsNonRoot)
+- ✅ AppArmor/SELinux profiles
+- ✅ Resource limits (CPU/memory)
+- ✅ Read-only root filesystem
+- ✅ Network policies (default deny)
+- ✅ Pod Security Standards (restricted)
+- ✅ Capability drop (ALL)
+- ✅ Seccomp profile (RuntimeDefault)
+
+See `k8s/SECURITY.md` for complete deployment and security validation guide.
+
 ### Azure Kubernetes Service (AKS)
 
 1. Build Docker images:
@@ -453,6 +522,36 @@ Required environment variables for production:
    - DID Document endpoint at `/.well-known/did.json`
    - W3C standards-compliant structure
    - Ready for `did:ion` extension
+
+6. **Sandbox Hardening (Sprint 3 Security Requirements)**
+   - **Non-privileged User Execution**
+     - Capability Issuer runs as UID 1001
+     - Tool Gateway runs as UID 1002
+     - Both enforce `runAsNonRoot: true`
+   - **AppArmor/SELinux Profiles**
+     - Blocks ptrace, mount, sys_admin, sys_module
+     - Prevents privilege escalation
+     - Profile: `k8s/security-policies/apparmor-profile.conf`
+   - **Resource Limits (cgroups)**
+     - CPU: 250m-1000m per container
+     - Memory: 512Mi-2Gi per container
+     - Node.js: `--max-old-space-size=512`
+   - **Environment Scrubbing**
+     - No secrets in environment variables
+     - Kubernetes Secrets for sensitive data
+     - ConfigMaps for non-sensitive config
+   - **Read-Only Root Filesystem**
+     - Only tmpfs mounts writable (/tmp, /app/.npm)
+     - Persistent volumes quota: 0
+   - **Network Policies**
+     - Default deny all ingress/egress
+     - Allowlist-only egress to necessary services
+     - DNS, Azure services, backend only
+   - **Pod Security Standards**
+     - Restricted mode enforced
+     - Capability drop: ALL
+     - Seccomp: RuntimeDefault
+     - No host namespaces
 
 ### Production Readiness
 

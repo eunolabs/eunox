@@ -1,0 +1,115 @@
+# Network Policy for Capability Issuer - Sprint 3 Sandbox Hardening
+# Restricts network egress to only necessary services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: capability-issuer-netpol
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: capability-issuer
+  policyTypes:
+  - Ingress
+  - Egress
+
+  # Allow incoming traffic on service port
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: euno-system
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Restrict egress to only necessary endpoints
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # Allow Azure Key Vault access (via Azure service endpoints)
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+
+  # Allow Azure AD authentication endpoints
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+
+  # Deny all other egress by default
+---
+# Network Policy for Tool Gateway - Sprint 3 Sandbox Hardening
+# Restricts network egress and ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tool-gateway-netpol
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: tool-gateway
+  policyTypes:
+  - Ingress
+  - Egress
+
+  # Allow incoming traffic on service port
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: euno-system
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 3002
+
+  # Restrict egress
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # Allow communication with Capability Issuer
+  - to:
+    - podSelector:
+        matchLabels:
+          app: capability-issuer
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # Allow proxied backend service calls
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+  # Deny all other egress by default
