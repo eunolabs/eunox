@@ -6,11 +6,13 @@
 import * as crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { KillSwitchManager, Logger } from '@euno/common';
+import { JWTTokenVerifier } from './verifier';
 
 export interface AdminApiOptions {
   killSwitchManager: KillSwitchManager;
   logger: Logger;
   adminApiKey?: string;
+  tokenVerifier?: JWTTokenVerifier;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface AdminApiOptions {
  */
 export function createAdminRouter(options: AdminApiOptions): Router {
   const router = Router();
-  const { killSwitchManager, logger, adminApiKey } = options;
+  const { killSwitchManager, logger, adminApiKey, tokenVerifier } = options;
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -267,6 +269,67 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to reset kill switches',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/revoke
+   * Revoke a capability token by its JTI (JWT ID)
+   * Body: { tokenId: string, expiresAt?: number }
+   */
+  router.post('/revoke', (req: Request, res: Response): void => {
+    try {
+      if (!tokenVerifier) {
+        res.status(501).json({
+          error: {
+            code: 'NOT_IMPLEMENTED',
+            message: 'Token revocation not available - verifier not configured',
+          },
+        });
+        return;
+      }
+
+      const { tokenId, expiresAt } = req.body;
+      if (!tokenId || typeof tokenId !== 'string') {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'tokenId (string) is required',
+          },
+        });
+        return;
+      }
+
+      if (expiresAt !== undefined && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt))) {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'expiresAt must be a finite number (Unix timestamp in seconds)',
+          },
+        });
+        return;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const effectiveExpiresAt = expiresAt ?? now + 86400;
+
+      tokenVerifier.revokeToken(tokenId, effectiveExpiresAt);
+      logger.warn('Token revoked via admin API', { tokenId, expiresAt: effectiveExpiresAt });
+      res.json({
+        message: `Token ${tokenId} has been revoked`,
+        tokenId,
+        expiresAt: effectiveExpiresAt,
+      });
+    } catch (error) {
+      logger.error('Failed to revoke token', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      res.status(500).json({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to revoke token',
         },
       });
     }

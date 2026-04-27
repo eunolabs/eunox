@@ -76,7 +76,8 @@ program
       console.log(`✓ Manifest is valid`);
       console.log(`  Agent: ${manifest.name} (${manifest.agentId})`);
       console.log(`  Version: ${manifest.version}`);
-      console.log(`  Required capabilities: ${manifest.requiredCapabilities.length}`);
+      const reqCapabilities = manifest.requiredCapabilities;
+      console.log(`  Required capabilities: ${Array.isArray(reqCapabilities) ? reqCapabilities.length : 0}`);
     } catch (error) {
       console.error(`✗ Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       process.exit(1);

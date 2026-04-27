@@ -116,6 +116,7 @@ function mountAdminApi() {
       killSwitchManager,
       logger,
       adminApiKey,
+      tokenVerifier: verifier,
     });
     app.use('/admin', adminRouter);
     logger.info('Admin API mounted');
