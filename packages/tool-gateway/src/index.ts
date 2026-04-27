@@ -222,6 +222,91 @@ app.post('/api/v1/validate', async (req: Request, res: Response, next: NextFunct
 });
 
 /**
+ * Tool invocation endpoint (Sprint 1 & 2)
+ * POST /api/v1/tools/invoke
+ *
+ * This endpoint is used by agent runtime to invoke tools with capability tokens.
+ * Implements the sandboxing requirement: all agent actions go through this gateway.
+ */
+app.post('/api/v1/tools/invoke', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = parseBearerToken(req.headers.authorization);
+    if (!token) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization header with Bearer token is required',
+        401
+      );
+    }
+
+    const { tool, args, resource } = req.body;
+
+    if (!tool) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'tool parameter is required',
+        400
+      );
+    }
+
+    // Determine action type from tool name
+    // This is a simple mapping - in production, use a more sophisticated registry
+    let action: string;
+    if (tool.includes('read') || tool.includes('get') || tool.includes('list')) {
+      action = 'read';
+    } else if (tool.includes('write') || tool.includes('create') || tool.includes('update')) {
+      action = 'write';
+    } else if (tool.includes('delete') || tool.includes('remove')) {
+      action = 'delete';
+    } else {
+      action = 'execute'; // Default for other tools
+    }
+
+    // Validate the action
+    const validationRequest: ValidateActionRequest = {
+      token,
+      action: action as any,
+      resource: resource || `tool://${tool}`,
+      context: {
+        tool,
+        args,
+        agentId: req.headers['x-agent-id'],
+      },
+    };
+
+    const result = await enforcementEngine.validateAction(validationRequest);
+
+    if (!result.allowed) {
+      throw new CapabilityError(
+        ErrorCode.AUTHORIZATION_FAILED,
+        result.reason || 'Tool invocation not allowed',
+        403
+      );
+    }
+
+    // In a real implementation, this would invoke the actual tool
+    // For now, return success with mock data
+    logger.info('Tool invoked successfully', {
+      tool,
+      action,
+      resource,
+      agentId: req.headers['x-agent-id'],
+    });
+
+    res.json({
+      success: true,
+      tool,
+      result: {
+        message: 'Tool executed successfully (mock implementation)',
+        data: args,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Protected proxy endpoints
  * All requests under /proxy/* are validated and then proxied to backend services
  */

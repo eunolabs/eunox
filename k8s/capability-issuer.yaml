@@ -1,0 +1,121 @@
+# Kubernetes Deployment for Capability Issuer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capability-issuer
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+    component: control-plane
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: capability-issuer
+  template:
+    metadata:
+      labels:
+        app: capability-issuer
+        component: control-plane
+    spec:
+      serviceAccountName: capability-issuer
+      containers:
+      - name: capability-issuer
+        image: eunoacr.azurecr.io/capability-issuer:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3001
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        - name: AZURE_KEYVAULT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: keyvault-url
+        - name: AZURE_KEYVAULT_KEY_NAME
+          value: "capability-signing-key"
+        - name: AZURE_AD_TENANT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: azure-tenant-id
+        - name: AZURE_AD_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: azure-client-id
+        - name: ISSUER_DID
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: issuer-did
+        - name: DEFAULT_TOKEN_TTL
+          value: "900"
+        - name: AZURE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: issuer-secrets
+              key: azure-client-secret
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: capability-issuer
+  namespace: euno-system
+  labels:
+    app: capability-issuer
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3001
+    targetPort: 3001
+    protocol: TCP
+    name: http
+  selector:
+    app: capability-issuer
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capability-issuer
+  namespace: euno-system
+  annotations:
+    azure.workload.identity/client-id: "<AZURE_CLIENT_ID>"

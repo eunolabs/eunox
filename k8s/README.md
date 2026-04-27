@@ -1,0 +1,299 @@
+# Kubernetes Deployment
+
+This directory contains Kubernetes manifests for deploying the Euno capability governance system with sandboxed agent runtime.
+
+## Sprint 1 & Sprint 2 Sandboxing Implementation
+
+### Security Features Implemented
+
+#### Sprint 1: Agent Environment & Sandbox
+
+1. **Network Isolation** (`network-policies.yaml`)
+   - Agents can ONLY communicate with Tool Gateway and Capability Issuer
+   - All other egress traffic is blocked
+   - Implements the principle: "the model is not your boundary"
+   - Exit criteria: `curl` to unauthorized URL from agent container is blocked
+
+2. **Container Security** (`agent-runtime.yaml`)
+   - Read-only root filesystem
+   - Runs as non-root user (UID 1000)
+   - All Linux capabilities dropped
+   - No sensitive host paths mounted
+   - Only ephemeral volumes (tmpfs) for scratch space
+
+3. **Resource Constraints**
+   - CPU and memory limits enforced
+   - Prevents resource exhaustion attacks
+
+#### Sprint 2: Sandbox Refinement
+
+1. **Network Proxy** (`runtime.ts`)
+   - All HTTP/HTTPS traffic intercepted and routed through gateway
+   - Gateway validates capability tokens for every request
+   - Ensures no direct external access even if attempted
+
+2. **Token Management**
+   - Automatic token acquisition on startup
+   - Token refresh every 10 minutes (configurable)
+   - Automatic retry on 401 (expired token)
+
+## Prerequisites
+
+- Kubernetes cluster (v1.24+)
+- Azure Container Registry (ACR) access
+- Azure Key Vault configured
+- Azure AD application registered
+
+## Quick Start
+
+### 1. Create Namespace and Secrets
+
+```bash
+# Create namespace
+kubectl apply -f namespace-and-config.yaml
+
+# Create secrets
+kubectl create secret generic issuer-secrets \
+  --from-literal=azure-client-secret=<YOUR_SECRET> \
+  -n euno-system
+
+kubectl create secret generic gateway-secrets \
+  --from-literal=admin-api-key=<YOUR_ADMIN_KEY> \
+  -n euno-system
+```
+
+### 2. Update ConfigMap
+
+Edit `namespace-and-config.yaml` with your values:
+- `keyvault-url`: Your Azure Key Vault URL
+- `azure-tenant-id`: Your Azure AD tenant ID
+- `azure-client-id`: Your Azure AD application ID
+- `issuer-did`: Your DID (e.g., `did:web:yourdomain.com`)
+- `backend-service-url`: URL of backend services
+
+```bash
+kubectl apply -f namespace-and-config.yaml
+```
+
+### 3. Deploy Services
+
+```bash
+# Deploy Capability Issuer
+kubectl apply -f capability-issuer.yaml
+
+# Deploy Tool Gateway
+kubectl apply -f tool-gateway.yaml
+
+# Deploy Agent Runtime
+kubectl apply -f agent-runtime.yaml
+
+# Apply Network Policies (Sprint 1 requirement)
+kubectl apply -f network-policies.yaml
+```
+
+### 4. Verify Deployment
+
+```bash
+# Check all pods are running
+kubectl get pods -n euno-system
+
+# Check services
+kubectl get svc -n euno-system
+
+# Check network policies
+kubectl get networkpolicies -n euno-system
+```
+
+## Testing Sandbox Enforcement
+
+### Test 1: Verify Agent Can Reach Gateway
+
+```bash
+# Exec into agent pod
+kubectl exec -it -n euno-system <agent-pod-name> -- sh
+
+# Try to reach gateway (should work)
+wget -O- http://tool-gateway:3002/health
+```
+
+### Test 2: Verify External Access is Blocked (Sprint 1 Exit Criteria)
+
+```bash
+# Exec into agent pod
+kubectl exec -it -n euno-system <agent-pod-name> -- sh
+
+# Try to reach external URL (should FAIL - this is expected!)
+curl http://example.com
+# Expected: Connection timeout or "could not resolve host"
+
+# Try to reach arbitrary internal service (should FAIL)
+curl http://kubernetes.default.svc.cluster.local
+# Expected: Connection timeout
+```
+
+### Test 3: Verify Read-Only Filesystem
+
+```bash
+# Exec into agent pod
+kubectl exec -it -n euno-system <agent-pod-name> -- sh
+
+# Try to write to root filesystem (should FAIL)
+touch /test.txt
+# Expected: "Read-only file system"
+
+# Writing to /tmp should work (mounted volume)
+touch /tmp/test.txt
+# Expected: Success
+```
+
+### Test 4: Verify Capability Token Flow
+
+```bash
+# Check issuer logs
+kubectl logs -n euno-system -l app=capability-issuer --tail=50
+
+# Check gateway logs
+kubectl logs -n euno-system -l app=tool-gateway --tail=50
+
+# Check agent logs
+kubectl logs -n euno-system -l app=agent-runtime --tail=50
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│             Kubernetes Cluster                   │
+│  ┌──────────────────────────────────────────┐   │
+│  │         euno-system namespace            │   │
+│  │                                          │   │
+│  │  ┌──────────────┐                       │   │
+│  │  │    Agent     │ (NetworkPolicy)       │   │
+│  │  │   Runtime    │ - Only egress to      │   │
+│  │  │              │   Gateway & Issuer    │   │
+│  │  │  - Read-only │ - No other network    │   │
+│  │  │    rootfs    │   access allowed      │   │
+│  │  │  - No caps   │                       │   │
+│  │  └──────┬───────┘                       │   │
+│  │         │ Capability Token               │   │
+│  │         ▼                                 │   │
+│  │  ┌──────────────┐    ┌────────────────┐ │   │
+│  │  │     Tool     │    │   Capability   │ │   │
+│  │  │   Gateway    │◄───│    Issuer      │ │   │
+│  │  │              │    │                │ │   │
+│  │  │ - Validates  │    │ - Azure AD     │ │   │
+│  │  │   tokens     │    │ - Key Vault    │ │   │
+│  │  │ - Enforces   │    │ - Signs tokens │ │   │
+│  │  │   policy     │    │                │ │   │
+│  │  └──────┬───────┘    └────────────────┘ │   │
+│  │         │                                 │   │
+│  └─────────┼─────────────────────────────────┘   │
+│            │ (Allowed egress)                    │
+│            ▼                                     │
+│      Backend Services                            │
+└─────────────────────────────────────────────────┘
+```
+
+## Monitoring
+
+### View Logs
+
+```bash
+# Capability Issuer logs
+kubectl logs -n euno-system -l app=capability-issuer -f
+
+# Tool Gateway logs
+kubectl logs -n euno-system -l app=tool-gateway -f
+
+# Agent Runtime logs
+kubectl logs -n euno-system -l app=agent-runtime -f
+```
+
+### Metrics
+
+```bash
+# Pod resource usage
+kubectl top pods -n euno-system
+
+# Network policy status
+kubectl describe networkpolicy -n euno-system
+```
+
+## Troubleshooting
+
+### Agent Can't Reach Gateway
+
+1. Check NetworkPolicy is applied:
+   ```bash
+   kubectl get networkpolicy -n euno-system
+   ```
+
+2. Verify gateway service is running:
+   ```bash
+   kubectl get svc tool-gateway -n euno-system
+   ```
+
+3. Check DNS resolution:
+   ```bash
+   kubectl exec -it -n euno-system <agent-pod> -- nslookup tool-gateway
+   ```
+
+### Token Acquisition Fails
+
+1. Check issuer is running:
+   ```bash
+   kubectl get pods -n euno-system -l app=capability-issuer
+   ```
+
+2. Verify Azure credentials:
+   ```bash
+   kubectl get secret issuer-secrets -n euno-system
+   ```
+
+3. Check issuer logs:
+   ```bash
+   kubectl logs -n euno-system -l app=capability-issuer --tail=100
+   ```
+
+### Network Policy Not Working
+
+1. Verify CNI supports NetworkPolicy (Calico, Cilium, etc.)
+2. Check if NetworkPolicy controller is running
+3. Test with a debug pod:
+   ```bash
+   kubectl run -it --rm debug --image=alpine -n euno-system -- sh
+   ```
+
+## Security Considerations
+
+1. **Secrets Management**: Use Azure Key Vault integration or sealed-secrets for production
+2. **RBAC**: Apply least-privilege RBAC policies for service accounts
+3. **Pod Security Standards**: Enforce restricted pod security standards
+4. **Image Scanning**: Scan container images for vulnerabilities before deployment
+5. **Network Policies**: Review and test network policies regularly
+6. **Audit Logging**: Enable Kubernetes audit logging for compliance
+
+## Sprint 1 Exit Criteria Verification
+
+✅ Agent container can call test endpoint through Gateway
+✅ Agent fails to reach disallowed endpoints
+✅ Running `curl` to unauthorized URL from container is blocked
+✅ Read-only root filesystem enforced
+✅ Least-privilege Linux capabilities (all dropped)
+✅ No sensitive host paths accessible
+✅ Only ephemeral volumes mounted
+
+## Sprint 2 Exit Criteria Verification
+
+✅ All external communications funnel through Gateway
+✅ Network namespace redirects HTTP(S) traffic to Gateway
+✅ Token refresh implemented
+✅ No direct network egress except through gateway
+
+## Next Steps
+
+- Implement Azure Workload Identity for pod authentication
+- Add horizontal pod autoscaling
+- Configure Azure Monitor integration
+- Set up alerting for denied actions
+- Implement kill-switch functionality (Sprint 2)
