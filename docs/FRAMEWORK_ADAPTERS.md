@@ -118,8 +118,8 @@ Every adapter:
    callback surface.
 2. Translates a gateway `403` denial into a framework-native
    `CapabilityDenialError` (exported from `@euno/framework-adapters`)
-    whose payload includes `statusCode`, `errorCode`, `message`,
-    `correlationId`, and `tool` (and optionally `resource`). Concretely:
+   whose payload includes `statusCode`, `errorCode`, `message`,
+   `correlationId`, and `tool` (and optionally `resource`). Concretely:
 
     ```typescript
     interface CapabilityDenialError extends Error {
