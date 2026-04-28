@@ -208,6 +208,126 @@ describe('euno init', () => {
       }
     });
   });
+
+  describe('--cloud', () => {
+    // Pin the per-cloud signer/identity/edge wiring so a refactor that
+    // silently drops e.g. the Azure Key Vault block, the AWS KMS block,
+    // or the GCP Cloud KMS block fails CI rather than shipping a scaffold
+    // that doesn't match the production env-var contract.  These match
+    // the cloud-portability matrix in docs/SPRINT_5_PILOT_LAUNCH.md § 6.
+    it.each([
+      [
+        'azure',
+        'euno-deployment.azure.yaml',
+        // Identifiers MUST match the registered provider ids in
+        // packages/capability-issuer/src/default-registries.ts so that
+        // the scaffold is directly consumable by the issuer/gateway
+        // configuration loader.
+        ['azure-ad', 'azure-keyvault', 'azure-api-management', 'microsoft-sentinel'],
+      ],
+      [
+        'aws',
+        'euno-deployment.aws.yaml',
+        ['aws-cognito', 'aws-kms', 'aws-api-gateway', 'security-hub'],
+      ],
+      [
+        'gcp',
+        'euno-deployment.gcp.yaml',
+        ['gcp-identity', 'gcp-cloudkms', 'gcp-api-gateway', 'security-command-center'],
+      ],
+    ] as const)(
+      'emits a %s deployment scaffold alongside the manifest',
+      (cloud, expectedFilename, expectedTokens) => {
+        const out = path.join(tmpDir, 'manifest.yaml');
+        const r = runCli([
+          'init',
+          '--agent',
+          'Demo Agent',
+          '--output',
+          out,
+          '--cloud',
+          cloud,
+        ]);
+        expect(r.status).toBe(0);
+        expect(fs.existsSync(out)).toBe(true);
+
+        const deployPath = path.join(tmpDir, expectedFilename);
+        expect(fs.existsSync(deployPath)).toBe(true);
+
+        const contents = fs.readFileSync(deployPath, 'utf8');
+        // The cloud-specific signer / identity / edge tokens MUST be in
+        // the scaffold so the engineer reading the file sees the right
+        // primitives for their target cloud.
+        for (const token of expectedTokens) {
+          expect(contents).toContain(token);
+        }
+        // The agent id must be threaded through so the scaffold is
+        // actually agent-specific (mirrors the framework-scaffold check).
+        expect(contents).toContain('demo-agent');
+
+        // Parse it as YAML to ensure it is well-formed (and not, say,
+        // accidentally a string that *happens* to contain the right
+        // tokens).  This catches indentation and quoting regressions.
+        const parsed = yaml.load(contents) as Record<string, unknown>;
+        expect(parsed.cloud).toBe(cloud);
+        expect(parsed.identity).toBeDefined();
+        expect(parsed.signer).toBeDefined();
+        expect(parsed.gateway).toBeDefined();
+
+        expect(r.stdout).toContain(`Created ${cloud} deployment scaffold`);
+      },
+    );
+
+    it('rejects an unsupported cloud with a non-zero exit code', () => {
+      const out = path.join(tmpDir, 'manifest.yaml');
+      const r = runCli([
+        'init',
+        '--output',
+        out,
+        '--cloud',
+        'oracle', // not in SUPPORTED_CLOUDS
+      ]);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('Unsupported cloud');
+      // We must not have written a partial manifest on a validation failure.
+      expect(fs.existsSync(out)).toBe(false);
+    });
+
+    it('does not emit a deployment scaffold when --cloud is omitted', () => {
+      const out = path.join(tmpDir, 'manifest.yaml');
+      const r = runCli(['init', '--output', out]);
+      expect(r.status).toBe(0);
+      for (const f of [
+        'euno-deployment.azure.yaml',
+        'euno-deployment.aws.yaml',
+        'euno-deployment.gcp.yaml',
+      ]) {
+        expect(fs.existsSync(path.join(tmpDir, f))).toBe(false);
+      }
+    });
+
+    it('emits both a framework and a cloud scaffold when both flags are set', () => {
+      // Per the execution plan, the manifest stays cloud-neutral and
+      // framework-neutral; the two scaffolds are independent and can be
+      // combined.  Verify they both land alongside one manifest.
+      const out = path.join(tmpDir, 'manifest.yaml');
+      const r = runCli([
+        'init',
+        '--agent',
+        'Combo Agent',
+        '--output',
+        out,
+        '--framework',
+        'langchain',
+        '--cloud',
+        'aws',
+      ]);
+      expect(r.status).toBe(0);
+      expect(fs.existsSync(out)).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, 'euno-langchain.ts'))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, 'euno-deployment.aws.yaml'))).toBe(true);
+    });
+  });
 });
 
 describe('euno validate', () => {
