@@ -260,7 +260,19 @@ export interface SoftwareEvidenceSignerConfig {
  * surfaces at startup.
  */
 export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfig): AuditEvidenceSigner {
-  const algorithm = (config.algorithm ?? 'RS256').toUpperCase();
+  // Preserve the canonical JWS casing for the algorithm in the signed
+  // record (`EdDSA`, `RS256`, `ES256`, …) so downstream verifiers that
+  // compare against the JWS spec see the expected value. Internally we
+  // normalise to upper-case for control-flow comparisons only.
+  const rawAlgorithm = config.algorithm ?? 'RS256';
+  const algorithmUpper = rawAlgorithm.toUpperCase();
+  const CANONICAL_ALGORITHMS: Record<string, string> = {
+    RS256: 'RS256', RS384: 'RS384', RS512: 'RS512',
+    PS256: 'PS256', PS384: 'PS384', PS512: 'PS512',
+    ES256: 'ES256', ES384: 'ES384', ES512: 'ES512',
+    EDDSA: 'EdDSA',
+  };
+  const canonicalAlgorithm = CANONICAL_ALGORITHMS[algorithmUpper];
   const keyId = config.keyId ?? 'software-key';
 
   const privatePem = config.privateKeyPem
@@ -297,13 +309,13 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
     publicKey = crypto.createPublicKey(privateKey);
   }
 
-  const isEdDsa = algorithm === 'EDDSA';
-  const isPss = algorithm.startsWith('PS');
-  const isEcdsa = algorithm.startsWith('ES');
-  const hashAlgorithm = HASH_ALGORITHMS[algorithm];
-  if (!isEdDsa && !hashAlgorithm) {
+  const isEdDsa = algorithmUpper === 'EDDSA';
+  const isPss = algorithmUpper.startsWith('PS');
+  const isEcdsa = algorithmUpper.startsWith('ES');
+  const hashAlgorithm = HASH_ALGORITHMS[algorithmUpper];
+  if (!canonicalAlgorithm || (!isEdDsa && !hashAlgorithm)) {
     throw new Error(
-      `createSoftwareEvidenceSigner: unsupported algorithm '${algorithm}'. ` +
+      `createSoftwareEvidenceSigner: unsupported algorithm '${rawAlgorithm}'. ` +
         'Supported: RS256/RS384/RS512, PS256/PS384/PS512, ES256/ES384/ES512, EdDSA.',
     );
   }
@@ -311,16 +323,16 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
   // Validate the key type is compatible with the requested algorithm so
   // misconfigurations surface at startup rather than at first signing.
   const keyType = privateKey.asymmetricKeyType;
-  if (algorithm.startsWith('RS') || isPss) {
+  if (algorithmUpper.startsWith('RS') || isPss) {
     if (keyType !== 'rsa') {
       throw new Error(
-        `createSoftwareEvidenceSigner: algorithm '${algorithm}' requires an RSA key, got '${keyType}'`,
+        `createSoftwareEvidenceSigner: algorithm '${canonicalAlgorithm}' requires an RSA key, got '${keyType}'`,
       );
     }
   } else if (isEcdsa) {
     if (keyType !== 'ec') {
       throw new Error(
-        `createSoftwareEvidenceSigner: algorithm '${algorithm}' requires an EC key, got '${keyType}'`,
+        `createSoftwareEvidenceSigner: algorithm '${canonicalAlgorithm}' requires an EC key, got '${keyType}'`,
       );
     }
   } else if (isEdDsa) {
@@ -353,7 +365,7 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
     async verifyDigest(digest: Buffer, signature: Buffer, _keyId: string, alg: string): Promise<boolean> {
       // Reject algorithm mismatches: a record signed under one algorithm
       // must not be verifiable under another, even with the same key.
-      if (alg.toUpperCase() !== algorithm) {
+      if (alg.toUpperCase() !== algorithmUpper) {
         return false;
       }
       if (isEdDsa) {
@@ -373,7 +385,7 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
       return keyId;
     },
     getAlgorithm(): string {
-      return algorithm;
+      return canonicalAlgorithm;
     },
   };
 

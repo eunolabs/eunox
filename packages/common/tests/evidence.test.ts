@@ -182,7 +182,7 @@ describe('createSoftwareEvidenceSigner', () => {
     const pem = generatePem('ed25519');
     const signer = createSoftwareEvidenceSigner({ privateKeyPem: pem, algorithm: 'EdDSA' });
     const signed = await signer.signEvidence(makeEvidence());
-    expect(signed.algorithm).toBe('EDDSA');
+    expect(signed.algorithm).toBe('EdDSA');
     expect(await signer.verifyEvidence(signed)).toBe(true);
   });
 
