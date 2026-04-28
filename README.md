@@ -183,7 +183,7 @@ The system maps Azure AD roles to capability constraints:
 - Signature verification using public key
 - Expiration check (default: 15 minutes)
 - Audience validation
-- Revocation support
+- Revocation support (in-process by default; configure `REDIS_URL` to share revocations across gateway replicas — see `docs/DISTRIBUTED_REVOCATION.md`)
 
 ### Audit Logging
 
@@ -626,6 +626,7 @@ Before deploying Euno to production, ensure all items below are completed:
   ```bash
   REDIS_URL=redis://euno-redis:6379
   ```
+- [ ] **Distributed Kill Switch**: Redis deployed so kills (global / session / agent) propagate across every gateway replica (see `docs/DISTRIBUTED_KILL_SWITCH.md`). The same `REDIS_URL` configured for distributed revocation is reused; without it a kill issued on one pod is **not** honoured on the others.
 - [ ] **Health Checks**: Liveness and readiness probes configured
 - [ ] **Horizontal Pod Autoscaler**: Configured for automatic scaling
 
@@ -666,8 +667,8 @@ Before deploying Euno to production, ensure all items below are completed:
 - [ ] **Security Scan**: No critical vulnerabilities in `npm audit`
 - [ ] **Token Issuance**: End-to-end token issuance tested
 - [ ] **Token Validation**: Gateway correctly validates and enforces tokens
-- [ ] **Token Revocation**: Revocation works across all gateway instances
-- [ ] **Kill Switch**: Global, session, and agent kill switches tested
+- [ ] **Token Revocation**: Revocation works across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_REVOCATION.md`)
+- [ ] **Kill Switch**: Global, session, and agent kill switches tested across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_KILL_SWITCH.md`)
 
 ### Performance Targets
 

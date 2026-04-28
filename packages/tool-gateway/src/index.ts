@@ -17,6 +17,8 @@ import {
   createLogger,
   ServiceConfig,
   DefaultKillSwitchManager,
+  KillSwitchManager,
+  createKillSwitchManagerFromEnv,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
@@ -42,8 +44,11 @@ const adminApiKey = process.env.ADMIN_API_KEY; // Optional: set to enable API ke
 // Create logger
 const logger = createLogger(config.name, config.environment);
 
-// Initialize kill-switch manager
-const killSwitchManager = new DefaultKillSwitchManager(logger);
+// Initialize kill-switch manager.  Defaults to the in-process
+// DefaultKillSwitchManager; replaced inside initializeServices() with a
+// RedisKillSwitchManager when REDIS_URL is configured so kills propagate
+// across replicas.  See docs/DISTRIBUTED_KILL_SWITCH.md.
+let killSwitchManager: KillSwitchManager = new DefaultKillSwitchManager(logger);
 
 // Initialize verifier and enforcement engine
 let verifier: JWTTokenVerifier;
@@ -61,6 +66,12 @@ async function initializeServices() {
     // REDIS_URL is set we connect to Redis so revocations are shared across
     // gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
     revocationStore = await createRevocationStoreFromEnv(process.env, logger);
+
+    // Build the kill-switch manager from environment.  Defaults to the
+    // in-process implementation; if REDIS_URL is set we use the Redis-backed
+    // manager so kills (global / session / agent) propagate across every
+    // gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
+    killSwitchManager = await createKillSwitchManagerFromEnv(process.env, logger);
 
     verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
     enforcementEngine = new EnforcementEngine({
@@ -248,7 +259,11 @@ async function validateCapabilityMiddleware(
       resource = `api://${rawPath}`;
     }
 
-    // Validate the action
+    // Validate the action. The request body is included in the context
+    // so that the enforcement engine can apply the matched capability's
+    // `argumentSchema` (if any) — argument-level enforcement is a
+    // first-class part of the gateway, not something callers have to
+    // remember to invoke.
     const validationRequest: ValidateActionRequest = {
       token,
       action: action as any,
@@ -256,6 +271,8 @@ async function validateCapabilityMiddleware(
       context: {
         method: req.method,
         path: req.path,
+        body: req.body,
+        query: req.query,
       },
     };
 
@@ -524,6 +541,20 @@ async function startServer() {
           }
         } catch (err) {
           logger.warn('Error while closing revocation store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        try {
+          // Use a structural check rather than `instanceof` so any
+          // KillSwitchManager implementation that holds external
+          // resources (timers, network connections, …) gets cleaned up
+          // – not just the bundled RedisKillSwitchManager.  The
+          // in-process default omits `close()` entirely.
+          if (typeof killSwitchManager.close === 'function') {
+            await killSwitchManager.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing kill-switch manager', {
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         }

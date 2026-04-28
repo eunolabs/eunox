@@ -2,14 +2,29 @@
  * Kill-Switch Manager
  * Implements emergency shutdown capabilities for agent systems
  * "Place kill switches in a control plane outside the agent's runtime"
+ *
+ * The {@link DefaultKillSwitchManager} below is an **in-process** manager
+ * suitable for single-instance deployments and local development.  In
+ * multi-instance / production deployments use
+ * {@link RedisKillSwitchManager} (or wire your own implementation of
+ * {@link KillSwitchManager}) so a kill issued on one gateway pod is
+ * visible to every other pod – otherwise an emergency stop on pod A
+ * keeps allowing requests on pod B.  See `docs/DISTRIBUTED_KILL_SWITCH.md`
+ * for the full architecture and operational guidance.
  */
 
 import { KillSwitchManager, KillSwitchConfig } from './types';
 import { Logger } from './logger';
 
 /**
- * Implementation of kill-switch functionality
- * Supports global, session-level, and agent-level kill switches
+ * In-process implementation of kill-switch functionality.
+ *
+ * Supports global, session-level, and agent-level kill switches.  All
+ * state lives in this Node process only – it is **not** shared across
+ * gateway replicas.  Use this only for single-instance deployments,
+ * local development, or as a fallback when Redis is not configured.  For
+ * any HA deployment use {@link RedisKillSwitchManager} (constructed via
+ * `createKillSwitchManagerFromEnv()`) so kills propagate to every pod.
  */
 export class DefaultKillSwitchManager implements KillSwitchManager {
   private config: KillSwitchConfig;

@@ -197,7 +197,12 @@ async function initializeServices() {
       identityProvider,
       config.issuerDid!,
       config.defaultTokenTTL,
-      logger
+      logger,
+      {
+        // Strict mode: require an explicit user-consent record for every
+        // issuance.  Recommended for multi-tenant production deployments.
+        requireConsent: process.env.REQUIRE_USER_CONSENT === 'true',
+      }
     );
 
     logger.info('Services initialized successfully');
@@ -317,6 +322,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
       agentId: req.body.agentId,
       requestedCapabilities: req.body.requestedCapabilities,
       manifest: req.body.manifest,
+      consent: req.body.consent,
     };
 
     // Validate required fields

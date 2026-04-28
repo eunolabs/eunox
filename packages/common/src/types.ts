@@ -19,6 +19,64 @@ export type ResourceId = string;
 export type Action = 'read' | 'write' | 'execute' | 'delete' | 'admin';
 
 /**
+ * Allowlist-based schema describing the shape of arguments a tool/proxy call
+ * may carry under a given capability.
+ *
+ * Intentionally a small, well-defined subset of JSON Schema:
+ *  - `additionalProperties` defaults to **false** for objects (strict allowlist)
+ *  - all string/number/array constraints are bounds-only — no regex denylists
+ *  - schemas are evaluated by {@link validateArguments} inside the tool
+ *    gateway's enforcement engine, so capabilities can constrain *what* a tool
+ *    is invoked with, not just whether it can be invoked.
+ *
+ * NOTE: This is NOT a substitute for parameterized queries / safe APIs in the
+ * downstream backend. It enforces *agent-visible* contracts (what an agent
+ * may send), so an attacker-controlled prompt cannot smuggle arbitrary fields
+ * through a capability that only authorizes a narrow operation.
+ */
+export interface ArgumentSchema {
+  /** JSON-Schema-style type. Multiple types allowed via array. */
+  type?:
+    | 'object'
+    | 'string'
+    | 'number'
+    | 'integer'
+    | 'boolean'
+    | 'array'
+    | 'null'
+    | Array<'object' | 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'null'>;
+  /** For object types: per-property schemas. */
+  properties?: Record<string, ArgumentSchema>;
+  /** For object types: required property names. */
+  required?: string[];
+  /**
+   * For object types: whether properties not listed in `properties` are
+   * permitted. Defaults to `false` so capabilities are an explicit allowlist.
+   */
+  additionalProperties?: boolean;
+  /** Restrict to a specific set of literal values. */
+  enum?: ReadonlyArray<unknown>;
+  /** For string types: ECMAScript regex source the value must fully match. */
+  pattern?: string;
+  /** For string types: minimum length. */
+  minLength?: number;
+  /** For string types: maximum length. */
+  maxLength?: number;
+  /** For numeric types: minimum value (inclusive). */
+  minimum?: number;
+  /** For numeric types: maximum value (inclusive). */
+  maximum?: number;
+  /** For array types: schema for each element. */
+  items?: ArgumentSchema;
+  /** For array types: maximum number of items. */
+  maxItems?: number;
+  /** For array types: minimum number of items. */
+  minItems?: number;
+  /** Optional human-readable description of the constraint (for audit). */
+  description?: string;
+}
+
+/**
  * Capability constraint defining what actions are allowed on which resources
  */
 export interface CapabilityConstraint {
@@ -26,6 +84,14 @@ export interface CapabilityConstraint {
   resource: ResourceId;
   /** List of allowed actions */
   actions: Action[];
+  /**
+   * Optional allowlist schema describing the arguments / request body that
+   * may accompany a call under this capability. When present, the tool
+   * gateway's enforcement engine will validate the actual arguments against
+   * this schema in addition to the (action, resource) check, and reject any
+   * call whose arguments do not conform.
+   */
+  argumentSchema?: ArgumentSchema;
   /** Optional additional constraints (e.g., rate limits, data filters) */
   conditions?: Record<string, unknown>;
 }
@@ -265,6 +331,44 @@ export interface IssueCapabilityRequest {
   requestedCapabilities?: CapabilityConstraint[];
   /** Optional: capability manifest for the agent */
   manifest?: AgentCapabilityManifest;
+  /**
+   * Optional: explicit user consent record authorizing the issuance. When
+   * present the issuer validates that the consent was granted by the same
+   * user that owns the {@link authToken}, was granted to the same {@link agentId}
+   * being requested, has not expired, and covers every requested capability.
+   *
+   * Issuer deployments can require this for every issuance via the
+   * `requireConsent` constructor option (env: `REQUIRE_USER_CONSENT=true`),
+   * and it is always required when the requested capabilities include
+   * sensitive actions (`write`, `delete`, `admin`).
+   */
+  consent?: UserConsent;
+}
+
+/**
+ * Explicit, auditable user-consent record produced by the consent UI.
+ *
+ * Adding consent at issuance time prevents an agent from silently obtaining
+ * capabilities that fall within the user's roles but were never explicitly
+ * approved for that agent.
+ */
+export interface UserConsent {
+  /** Subject of the user authentication token (must match `authToken`'s userId). */
+  userId: string;
+  /** Agent the user consented to grant capabilities to (must match `agentId`). */
+  agentId: string;
+  /**
+   * The capabilities the user explicitly approved. Resource patterns may be
+   * wildcards (e.g. `storage://sales-data/**`); the issuer uses
+   * `matchesResource()` to check that each requested capability is covered.
+   */
+  grantedCapabilities: CapabilityConstraint[];
+  /** Unix-seconds timestamp when the user granted consent. */
+  grantedAt: number;
+  /** Optional unix-seconds expiry for the consent record itself. */
+  expiresAt?: number;
+  /** Optional consent identifier for audit cross-reference (e.g. consent UI receipt id). */
+  consentId?: string;
 }
 
 /**
@@ -571,4 +675,11 @@ export interface KillSwitchManager {
 
   /** Reset all kill switches */
   resetAll(): void;
+
+  /**
+   * Optional teardown for implementations that hold external resources
+   * (network connections, timers, etc.).  In-process implementations
+   * may omit this entirely.  Idempotent.
+   */
+  close?(): Promise<void>;
 }
