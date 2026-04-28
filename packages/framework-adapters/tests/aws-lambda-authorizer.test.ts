@@ -30,19 +30,23 @@ const authorizer = require(authorizerPath);
 const { extractToken, buildPolicy } = authorizer._internals;
 
 describe('AWS Lambda authorizer — extractToken', () => {
+  // A syntactically-valid JWT shape (3 base64url segments). Signature
+  // validity is not exercised here — that's the handler's job.
+  const SAMPLE_JWT = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.sig';
+
   it('extracts a Bearer token from a TOKEN-authorizer event', () => {
-    expect(extractToken({ authorizationToken: 'Bearer abc.def.ghi' })).toBe('abc.def.ghi');
+    expect(extractToken({ authorizationToken: `Bearer ${SAMPLE_JWT}` })).toBe(SAMPLE_JWT);
   });
 
   it('extracts a Bearer token from a REQUEST-authorizer event headers', () => {
-    expect(extractToken({ headers: { Authorization: 'Bearer xyz' } })).toBe('xyz');
-    expect(extractToken({ headers: { authorization: 'bearer XYZ' } })).toBe('XYZ');
+    expect(extractToken({ headers: { Authorization: `Bearer ${SAMPLE_JWT}` } })).toBe(SAMPLE_JWT);
+    expect(extractToken({ headers: { authorization: `bearer ${SAMPLE_JWT}` } })).toBe(SAMPLE_JWT);
   });
 
   it('extracts a Bearer token from multiValueHeaders', () => {
     expect(
-      extractToken({ multiValueHeaders: { Authorization: ['Bearer multi'] } })
-    ).toBe('multi');
+      extractToken({ multiValueHeaders: { Authorization: [`Bearer ${SAMPLE_JWT}`] } })
+    ).toBe(SAMPLE_JWT);
   });
 
   it('rejects missing tokens with Unauthorized', () => {
@@ -52,7 +56,20 @@ describe('AWS Lambda authorizer — extractToken', () => {
 
   it('rejects non-Bearer schemes with Unauthorized', () => {
     expect(() => extractToken({ authorizationToken: 'Basic abc' })).toThrow('Unauthorized');
-    expect(() => extractToken({ authorizationToken: 'just-a-token' })).toThrow('Unauthorized');
+    expect(() => extractToken({ authorizationToken: SAMPLE_JWT })).toThrow('Unauthorized');
+  });
+
+  it('rejects malformed JWT shapes with Unauthorized (defence in depth)', () => {
+    // Wrong segment count
+    expect(() => extractToken({ authorizationToken: 'Bearer onlyone' })).toThrow('Unauthorized');
+    expect(() => extractToken({ authorizationToken: 'Bearer one.two' })).toThrow('Unauthorized');
+    // Disallowed characters (spaces / control chars in the token body)
+    expect(() => extractToken({ authorizationToken: 'Bearer abc.def.gh i' })).toThrow(
+      'Unauthorized'
+    );
+    expect(() =>
+      extractToken({ authorizationToken: `Bearer abc.def.${String.fromCharCode(0x07)}` })
+    ).toThrow('Unauthorized');
   });
 });
 

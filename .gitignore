@@ -10,6 +10,10 @@ build/
 *.js.map
 *.d.ts
 !jest.config.js
+# AWS Lambda authorizer source (Sprint-1 multi-cloud parity for APIM
+# `validate-jwt`). The blanket `*.js` rule above would otherwise hide
+# this hand-written infra file alongside compiled TypeScript output.
+!infra/**/*.js
 
 # Environment variables
 .env

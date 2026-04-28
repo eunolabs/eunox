@@ -135,23 +135,20 @@ export class CapabilityDenialError extends Error {
  * surfaced via the `X-Correlation-ID` header (when supported) and
  * recorded by each adapter's lifecycle hooks.
  *
- * Implementation note: we deliberately avoid pulling in `uuid` to keep
- * this package dependency-light. `crypto.randomUUID` has been available
- * in Node ≥ 14.17, which is well below the monorepo's `>=18.0.0`
- * `engines.node` floor.
+ * Uses `globalThis.crypto.randomUUID`, which is guaranteed available on
+ * the monorepo's `engines.node >=18.0.0` floor.
  */
 export function newCorrelationId(): string {
-  // `globalThis.crypto` is the standards-track location and is present
-  // on all supported Node versions. Falling back via `require('crypto')`
-  // would defeat structural-typing tests in environments that stub it.
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c && typeof c.randomUUID === 'function') {
-    return c.randomUUID();
+  if (!c || typeof c.randomUUID !== 'function') {
+    // Should never happen on Node ≥ 18; fail loud rather than silently
+    // produce non-RFC-4122 IDs that downstream systems may treat as a
+    // different kind of identifier.
+    throw new Error(
+      'newCorrelationId: globalThis.crypto.randomUUID is unavailable; Node >= 18 required.'
+    );
   }
-  // Last-ditch fallback: timestamp + random. Not RFC 4122 compliant but
-  // sufficiently unique for audit correlation in dev environments where
-  // `crypto.randomUUID` is unavailable.
-  return `corr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return c.randomUUID();
 }
 
 /**
