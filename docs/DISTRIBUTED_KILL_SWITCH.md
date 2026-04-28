@@ -65,6 +65,13 @@ decision. To keep that contract while sharing state across pods,
 | `KILL_SWITCH_REFRESH_INTERVAL_MS` | `5000` | How often each pod refreshes its local snapshot from Redis. Lower = faster cross-pod propagation, higher Redis traffic. Set to `0` to disable periodic refresh (write-through only — **not** recommended). |
 | `KILL_SWITCH_FAIL_OPEN_ON_WRITE` | `false` | When `true`, kill-switch writes that fail against Redis still update the local cache so this pod honours the operator's intent. Other pods only see the kill once Redis recovers. When `false`, write errors propagate so the admin API surfaces a 500. |
 
+Write failures are intentionally explicit. With the default
+`KILL_SWITCH_FAIL_OPEN_ON_WRITE=false`, an admin API request that cannot write
+to Redis fails and the operator should retry after fixing Redis connectivity.
+With `true`, the request succeeds locally and only the current pod enforces the
+kill until Redis recovers; operators should treat that mode as emergency
+single-pod containment, not cluster-wide confirmation.
+
 When `REDIS_URL` is unset the gateway logs:
 
 ```

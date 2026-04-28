@@ -15,10 +15,18 @@ The Euno capability governance system implements a clean adapter pattern for ide
    - `SigningAdapterRegistry`: Factory for creating signing adapters
 
 2. **Azure Implementations**
-   - `AzureADIdentityProvider`: Azure AD identity provider adapter
-   - `AzureKeyVaultSigner`: Azure Key Vault signing adapter
+    - `AzureADIdentityProvider`: Azure AD identity provider adapter
+    - `AzureKeyVaultSigner`: Azure Key Vault signing adapter
 
-3. **DID Implementations**
+3. **AWS and GCP Implementations**
+   - `AWSCognitoIdentityProvider`: Amazon Cognito user pool or compatible OIDC adapter
+   - `AWSKMSSigner`: AWS KMS asymmetric key signer
+   - `GCPIdentityProvider`: Google identity token / compatible OIDC adapter
+   - `GCPCloudKMSSigner`: Google Cloud KMS asymmetric key signer
+   - These are implemented in `packages/capability-issuer/src/` and wired
+     through `default-registries.ts`.
+
+4. **DID Implementations**
    - `DIDIdentityProvider`: Validates capability presentations against
      resolved DID Documents (`did:web`, `did:ion`, `did:key`)
    - `DIDSigner`: Signs capability tokens with the issuer's DID-bound
@@ -37,7 +45,7 @@ The Euno capability governance system implements a clean adapter pattern for ide
 ### 2. Extensibility
 - Easy to add new identity providers (OAuth, SAML, Custom SSO)
 - Easy to add new signing methods (HSM, local keys, other cloud providers)
-- Future-proof for Distributed ID integration
+- Built-in Distributed ID integration for `did:web`, `did:ion`, and `did:key`
 
 ### 3. Lifecycle Management
 - `initialize()`: Setup resources (connections, caches, etc.)

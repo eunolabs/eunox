@@ -297,8 +297,12 @@ describe('AgentRuntime – cleanup', () => {
     // Trigger a refresh by advancing fake timers past the refresh interval.
     jest.advanceTimersByTime(1500);
 
-    // Give the microtask queue a chance to start the refresh.
+    // Give the refresh callback and its awaited auth/hint resolution steps a
+    // chance to reach the issuer call and register the abort listener.
     await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(issuerInstance.post).toHaveBeenCalledTimes(2);
 
     // Shutdown — this should abort the hanging refresh and resolve.
     await rt.shutdown();

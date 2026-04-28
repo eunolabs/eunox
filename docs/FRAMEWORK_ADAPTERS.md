@@ -6,6 +6,15 @@
 > adapters as a Sprint-2 deliverable but no design doc had been written
 > for them.
 
+## Implementation reference
+
+- **Shared runtime:** `packages/agent-runtime/src/runtime.ts`
+- **Shared adapter types and errors:** `packages/framework-adapters/src/types.ts`
+- **LangChain adapter:** `packages/framework-adapters/src/langchain.ts`
+- **Microsoft Agent Framework adapter:** `packages/framework-adapters/src/maf.ts`
+- **CrewAI adapter:** `packages/framework-adapters/src/crewai.ts`
+- **Test evidence:** `packages/framework-adapters/tests/{langchain,maf,crewai}.test.ts`
+
 ## Problem
 
 Application teams adopt Euno from inside agent frameworks they have
@@ -112,7 +121,19 @@ Every adapter:
    whose payload includes `statusCode`, `errorCode`, `message`,
    `correlationId`, and `tool` (and optionally `resource`). Concretely:
 
-   - **LangChain:** the wrapped tool throws / returns a structured
+    ```typescript
+    interface CapabilityDenialError extends Error {
+      name: 'CapabilityDenialError';
+      statusCode: number;
+      errorCode: string;
+      tool: string;
+      resource?: string;
+      correlationId: string;
+      details?: unknown;
+    }
+    ```
+
+    - **LangChain:** the wrapped tool throws / returns a structured
      `CapabilityDenialError` that the agent sees in its scratchpad;
      the callback handler also fires an `EunoCallbackEvent`.
    - **MAF:** the function-tool middleware short-circuits before the

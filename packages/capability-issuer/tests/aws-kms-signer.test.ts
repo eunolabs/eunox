@@ -5,6 +5,7 @@
 
 import { AWSKMSSigner, derEcdsaToJose } from '../src/aws-kms-signer';
 import * as jose from 'jose';
+import { CAPABILITY_TOKEN_SCHEMA_VERSION } from '@euno/common';
 
 // Mock @aws-sdk/client-kms at module level
 const mockSend = jest.fn();
@@ -309,6 +310,7 @@ describe('AWSKMSSigner', () => {
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
         jti: 'test-jti',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [],
       };
 
@@ -364,6 +366,7 @@ describe('AWSKMSSigner', () => {
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
         jti: 'test-jti-2',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [],
       };
 

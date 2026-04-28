@@ -31,6 +31,7 @@ import * as jose from 'jose';
 import {
   CapabilityError,
   CapabilityTokenPayload,
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
   ErrorCode,
   IdentityAdapter,
   IdentityAdapterConfig,
@@ -468,10 +469,27 @@ describe('e2e: capability issuer + tool gateway + agent runtime', () => {
     const firstToken = runtime.getCapabilityToken();
     expect(firstToken).toBeTruthy();
 
-    // Force the runtime into the 401 path by manually corrupting the cached
-    // token so the next gateway call fails verification.
+    // Force the runtime into the 401 EXPIRED_TOKEN path using a real,
+    // correctly-signed token whose exp is in the past. INVALID_TOKEN failures
+    // are intentionally not refreshed by AgentRuntime.
+    const now = Math.floor(Date.now() / 1000);
+    const expiredToken = await harness.signer.sign({
+      iss: ISSUER_DID,
+      sub: 'agent-it',
+      aud: AUDIENCE,
+      iat: now - 120,
+      exp: now - 60,
+      jti: 'expired-integration-token',
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities: [
+        {
+          resource: 'api://crm/customers',
+          actions: ['write'],
+        },
+      ],
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (runtime as any).capabilityToken = 'not-a-real-jwt';
+    (runtime as any).capabilityToken = expiredToken;
 
     const response = await runtime.invokeTool({
       tool: 'read_file',
@@ -482,7 +500,7 @@ describe('e2e: capability issuer + tool gateway + agent runtime', () => {
     expect(response.statusCode).toBe(200);
     expect(response.success).toBe(true);
     // The retry path should have re-acquired a fresh token from the issuer.
-    expect(runtime.getCapabilityToken()).not.toBe('not-a-real-jwt');
+    expect(runtime.getCapabilityToken()).not.toBe(expiredToken);
     // And it should be a valid JWT (3 dot-separated segments).
     expect(runtime.getCapabilityToken()!.split('.').length).toBe(3);
   });
