@@ -18,6 +18,7 @@ import {
   EvidenceSigner,
   SignedAuditEvidence,
   createAuditEvidence,
+  validateArguments,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -120,6 +121,66 @@ export class EnforcementEngine {
       const matchedCapability = payload.capabilities.find(cap => {
         return isActionAllowed(request.action, request.resource, [cap]);
       });
+
+      // Step 5b: Argument-level enforcement.
+      // After the (action, resource) check passes, validate the actual
+      // arguments / request body against the matched capability's
+      // declared `argumentSchema`. This is the first-class enforcement
+      // point that prevents an agent with `read on api://crm/customers`
+      // from passing an arbitrary body to that endpoint.
+      //
+      // Capabilities without an `argumentSchema` impose no argument
+      // constraints (preserving existing behaviour for callers that have
+      // not yet adopted argument schemas).
+      if (matchedCapability?.argumentSchema) {
+        // Conventional context keys: `args` (used by tool-invoke) or
+        // `body` (used by the HTTP proxy middleware). If neither is set,
+        // validate against the entire context object so the schema's
+        // `additionalProperties: false` default still rejects unknown
+        // fields rather than silently passing.
+        const argsToValidate =
+          request.context && Object.prototype.hasOwnProperty.call(request.context, 'args')
+            ? request.context.args
+            : request.context && Object.prototype.hasOwnProperty.call(request.context, 'body')
+              ? request.context.body
+              : undefined;
+
+        try {
+          validateArguments(argsToValidate, matchedCapability.argumentSchema);
+        } catch (err) {
+          const reason =
+            err instanceof CapabilityError
+              ? err.message
+              : 'Argument validation failed';
+
+          await this.logDenial(
+            payload.sub,
+            request.action,
+            request.resource,
+            reason,
+            sessionId
+          );
+
+          if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+            await this.generateEvidence({
+              sessionId: sessionId || 'unknown',
+              userId: payload.authorizedBy.userId,
+              tool: request.resource,
+              args: request.context || {},
+              agentId: payload.sub,
+              resource: request.resource,
+              action: request.action,
+              capabilityId: payload.jti,
+              decision: 'deny',
+            });
+          }
+
+          return {
+            allowed: false,
+            reason,
+          };
+        }
+      }
 
       // Step 6: Log the successful validation
       await this.logValidation(

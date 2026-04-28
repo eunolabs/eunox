@@ -169,6 +169,113 @@ describe('EnforcementEngine', () => {
     });
   });
 
+  // Argument-level enforcement: capabilities can declare an
+  // `argumentSchema` that the gateway validates on every call. Without
+  // this, an agent with `read on api://crm/customers` could pass any
+  // body to that endpoint — exactly the gap this PR closes.
+  describe('argument-level enforcement', () => {
+    it('rejects calls whose args do not conform to the capability schema', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://crm/customers',
+          actions: ['read'],
+          argumentSchema: {
+            type: 'object',
+            properties: {
+              customerId: { type: 'string', pattern: '[a-zA-Z0-9-]+', maxLength: 64 },
+            },
+            required: ['customerId'],
+          },
+        },
+      ]);
+
+      // Agent attempts to smuggle an extra `body` field that is not part
+      // of the capability's declared shape.
+      const result = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: {
+          args: { customerId: 'abc-123', body: { hidden: true } },
+        },
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/disallowed property "body"/);
+    });
+
+    it('allows calls whose args conform to the capability schema', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://crm/customers',
+          actions: ['read'],
+          argumentSchema: {
+            type: 'object',
+            properties: {
+              customerId: { type: 'string', pattern: '[a-zA-Z0-9-]+' },
+            },
+            required: ['customerId'],
+          },
+        },
+      ]);
+
+      const result = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: { args: { customerId: 'abc-123' } },
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+
+    it('also validates args supplied via context.body (proxy path)', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://crm/customers',
+          actions: ['write'],
+          argumentSchema: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', pattern: '[^@]+@[^@]+' },
+            },
+            required: ['email'],
+            additionalProperties: false,
+          },
+        },
+      ]);
+
+      const result = await engine.validateAction({
+        token,
+        action: 'write',
+        resource: 'api://crm/customers',
+        context: {
+          method: 'POST',
+          path: '/crm/customers',
+          body: { email: 'attacker', role: 'admin' },
+        },
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/args/);
+    });
+
+    it('imposes no constraint when the matched capability has no argumentSchema', async () => {
+      const token = await createTestToken([
+        { resource: 'api://crm/customers', actions: ['read'] },
+      ]);
+
+      const result = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: { args: { anything: 'goes' } },
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+  });
+
   describe('kill-switch enforcement', () => {
     let killEngine: EnforcementEngine;
     let killSwitchManager: DefaultKillSwitchManager;

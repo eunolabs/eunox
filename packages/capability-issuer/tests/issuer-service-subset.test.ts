@@ -125,4 +125,125 @@ describe('CapabilityIssuerService subset validation', () => {
       }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
+
+  // Argument-level constraints declared on a parent capability must not
+  // be silently dropped by attenuation. If the parent restricts the
+  // *shape* of arguments via `argumentSchema`, a child capability cannot
+  // be issued without carrying the same schema.
+  describe('argumentSchema attenuation guard', () => {
+    const parentSchema = {
+      type: 'object' as const,
+      properties: {
+        customerId: { type: 'string' as const, pattern: '[a-zA-Z0-9-]+' },
+      },
+      required: ['customerId'],
+    };
+
+    it('rejects attenuation that drops the parent argumentSchema', () => {
+      const service = makeService(['Viewer']);
+      // Reach into the private subset validator — the public attenuate
+      // path requires a real signed token, which is overkill here.
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [{ resource: 'api://crm/customers', actions: ['read'] }]
+        )
+      ).toThrow(/argumentSchema/);
+    });
+
+    it('rejects attenuation that mutates the parent argumentSchema', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: {
+                type: 'object',
+                properties: { customerId: { type: 'string' } },
+                additionalProperties: true, // loosened
+              },
+            },
+          ]
+        )
+      ).toThrow(/argumentSchema/);
+    });
+
+    it('accepts attenuation that preserves the parent argumentSchema (key order independent)', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      // Same content, different key insertion order.
+      const equivalentChildSchema = {
+        required: ['customerId'],
+        properties: {
+          customerId: { pattern: '[a-zA-Z0-9-]+', type: 'string' },
+        },
+        type: 'object',
+      };
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: equivalentChildSchema,
+            },
+          ]
+        )
+      ).not.toThrow();
+    });
+
+    it('allows a child to introduce a new argumentSchema when the parent has none', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [{ resource: 'api://crm/customers', actions: ['read'] }],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: parentSchema,
+            },
+          ]
+        )
+      ).not.toThrow();
+    });
+  });
 });
