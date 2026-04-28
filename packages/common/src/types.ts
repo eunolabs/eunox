@@ -342,6 +342,12 @@ export interface CapabilityTokenPayload {
   /** Optional: W3C VC specific fields */
   vc?: {
     '@context': string[];
+    /**
+     * Credential identifier (W3C VC Data Model § 4.2 — single URI).
+     * Set by the issuer to `urn:uuid:<jti>` so a VC-only verifier sees
+     * the same authoritative credential id as a JWT-only verifier.
+     */
+    id?: string;
     type: string[];
     credentialSubject: Record<string, unknown>;
   };

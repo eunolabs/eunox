@@ -120,6 +120,13 @@ export class CapabilityIssuerService {
     }
     return {
       '@context': [...CapabilityIssuerService.VC_CONTEXT],
+      // W3C VC Data Model § 4.2: `id` MUST be a single URI.  Use the
+      // RFC-4122 `urn:uuid:` namespace so a VC-only verifier sees the
+      // same authoritative credential id as a JWT-only verifier reading
+      // `jti`.  Keeping `jti` itself as a bare UUID preserves
+      // compatibility with verifiers that index revocations by the raw
+      // JWT id.
+      id: `urn:uuid:${payload.jti}`,
       type: [...CapabilityIssuerService.VC_TYPE],
       credentialSubject,
     };

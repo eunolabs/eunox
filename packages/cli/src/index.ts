@@ -71,8 +71,9 @@ identity:
 signer:
   # TokenSigner implementation: AzureSigner (HSM-backed Key Vault key,
   # Managed Identity for service auth, activity logs for key-use
-  # evidence).
-  type: azure-key-vault
+  # evidence).  Matches the registered provider id in
+  # packages/capability-issuer/src/default-registries.ts.
+  type: azure-keyvault
   keyVaultUrl: https://<KEY_VAULT_NAME>.vault.azure.net/
   keyName: <SIGNING_KEY_NAME>
   # Either pin a specific key version, or omit to always sign with the
@@ -148,15 +149,18 @@ cloud: gcp
 identity:
   # IdentityAdapter implementation: GCPIdentityProvider (Cloud Identity
   # / Workforce Identity Federation for human users; Workload Identity
-  # Federation for service-to-service).
-  provider: gcp-cloud-identity
+  # Federation for service-to-service).  Matches the registered
+  # provider id in packages/capability-issuer/src/default-registries.ts.
+  provider: gcp-identity
   projectId: <GCP_PROJECT_ID>
   workforcePoolId: <WORKFORCE_POOL_ID>
 signer:
   # TokenSigner implementation: GCPCloudKMSSigner (Cloud KMS / Cloud
   # HSM key, service account or Workload Identity Federation for service
-  # auth, Cloud Audit Logs for key-use evidence).
-  type: gcp-cloud-kms
+  # auth, Cloud Audit Logs for key-use evidence).  Matches the
+  # registered provider id in
+  # packages/capability-issuer/src/default-registries.ts.
+  type: gcp-cloudkms
   projectId: <GCP_PROJECT_ID>
   locationId: <KMS_LOCATION>
   keyRingId: <KEY_RING_ID>

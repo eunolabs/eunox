@@ -219,7 +219,11 @@ describe('euno init', () => {
       [
         'azure',
         'euno-deployment.azure.yaml',
-        ['azure-ad', 'azure-key-vault', 'azure-api-management', 'microsoft-sentinel'],
+        // Identifiers MUST match the registered provider ids in
+        // packages/capability-issuer/src/default-registries.ts so that
+        // the scaffold is directly consumable by the issuer/gateway
+        // configuration loader.
+        ['azure-ad', 'azure-keyvault', 'azure-api-management', 'microsoft-sentinel'],
       ],
       [
         'aws',
@@ -229,7 +233,7 @@ describe('euno init', () => {
       [
         'gcp',
         'euno-deployment.gcp.yaml',
-        ['gcp-cloud-identity', 'gcp-cloud-kms', 'gcp-api-gateway', 'security-command-center'],
+        ['gcp-identity', 'gcp-cloudkms', 'gcp-api-gateway', 'security-command-center'],
       ],
     ] as const)(
       'emits a %s deployment scaffold alongside the manifest',

@@ -76,11 +76,12 @@ class CapturingRSASigner extends SigningAdapter {
     if (!this.privateKeyObj) {
       this.privateKeyObj = await jose.importPKCS8(this.privateKeyPem, 'RS256');
     }
-    // jose's SignJWT manages the standard claims itself; we pass our
-    // payload as additional claims and let SignJWT set iss/aud/exp from
-    // the explicit setter calls below.  The claim values match the
-    // payload object so a downstream verifier sees the same claim set
-    // we built in the issuer.
+    // Pass the full payload object as additional claims; we deliberately
+    // do NOT call `.setIssuer()` / `.setAudience()` / `.setIssuedAt()`
+    // / `.setExpirationTime()` because the issuer service has already
+    // populated `iss` / `aud` / `iat` / `exp` on the payload itself.
+    // Letting jose.SignJWT also set them would either overwrite our
+    // values with `now` or duplicate them.
     const jwt = await new jose.SignJWT(payload as unknown as jose.JWTPayload)
       .setProtectedHeader({ alg: 'RS256', kid: 'stub-key-id' })
       .sign(this.privateKeyObj);
@@ -162,6 +163,14 @@ describe('CapabilityIssuerService W3C Verifiable Credential envelope', () => {
       // round-trip into the VC view for audit reasons.
       expect(vc.credentialSubject.authorizedBy).toEqual(payload.authorizedBy);
 
+      // W3C VC Data Model § 4.2: a VC's `id` MUST be a single URI.  We
+      // mint it as `urn:uuid:<jti>` so a VC-only verifier sees the
+      // same authoritative credential id as a JWT-only verifier
+      // reading `jti`.  Pinning this here means accidentally dropping
+      // the prefix or the field in `buildVerifiableCredential` fails
+      // CI rather than silently breaking interop with VC libraries.
+      expect(vc.id).toBe(`urn:uuid:${payload.jti}`);
+
       // A freshly *issued* token has no parent, so the VC view MUST
       // NOT carry a `parentCapabilityId` (otherwise a verifier might
       // misinterpret the token as an attenuation).
@@ -214,6 +223,11 @@ describe('CapabilityIssuerService W3C Verifiable Credential envelope', () => {
       // as the JWT view, so cross-org verifiers can audit it.
       expect(vc.credentialSubject.parentCapabilityId).toBe(parent.tokenId);
       expect(vc.credentialSubject.id).toBe('agent-vc-2');
+
+      // The child VC's own `id` must reference the *child* jti, not
+      // the parent's, so revocation / referencing of the child
+      // credential is unambiguous.
+      expect(vc.id).toBe(`urn:uuid:${childPayload.jti}`);
     });
   });
 
@@ -245,6 +259,14 @@ describe('CapabilityIssuerService W3C Verifiable Credential envelope', () => {
       expect(renewedPayload.jti).toBe(renewed.tokenId);
       expect(vc.credentialSubject.id).toBe('agent-vc-3');
       expect(vc.credentialSubject.capabilities).toEqual(original.capabilities);
+
+      // The renewed VC carries a *fresh* identifier — `urn:uuid:<new
+      // jti>` — distinct from the previous token's id.  This is the
+      // invariant called out in the test-file header comment; pinning
+      // it here means a regression that reuses the previous jti or
+      // drops the urn prefix fails CI.
+      expect(vc.id).toBe(`urn:uuid:${renewedPayload.jti}`);
+      expect(vc.id).not.toBe(`urn:uuid:${original.tokenId}`);
     });
   });
 });
