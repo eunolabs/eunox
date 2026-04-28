@@ -192,6 +192,15 @@ cloud-specific claims leaking into policy logic.
 > are listed in the right-hand columns and live under `infra/terraform/`,
 > `infra/aws/`, `infra/gcp/`, and `packages/common/src/log-transports.ts`.
 > See `infra/README.md` for the full multi-cloud parity matrix.
+>
+> **Follow-up (this PR):** the AWS Tool-Gateway profile referenced
+> `lambda-authorizer.js` in `infra/aws/api-gateway/openapi.json` and the
+> README, but the file itself was not committed. It is now provided at
+> `infra/aws/api-gateway/lambda-authorizer.js` — a JWKS-backed Node.js
+> 20.x Lambda that mirrors the signature / algorithm-allowlist /
+> issuer / audience / expiration / `schemaVersion` checks performed by
+> `packages/tool-gateway/src/verifier.ts`. Pure-helper unit tests live
+> in `packages/framework-adapters/tests/aws-lambda-authorizer.test.ts`.
 
 | Area                                            | Azure status                                              | AWS deliverable (NEW)                                                                  | GCP deliverable (NEW)                                                                |
 |-------------------------------------------------|-----------------------------------------------------------|----------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
@@ -301,12 +310,48 @@ opt-in factories that lazy-load the underlying SDK).
 - Calls `/issue` endpoint on startup
 - Includes token in all tool invocations
 
+#### ✅ Requirement: Framework middleware (LangChain, MAF, CrewAI)
+**Status:** Implemented
+
+The Sprint-2 DX plan calls for *"framework-native hooks as library
+adapters: LangChain callback handlers and tool wrappers; MAF agent-run
+middleware and function/tool-calling middleware; and CrewAI tool
+wrappers plus task lifecycle hooks."* These are now provided as a
+dedicated workspace package that sits on top of the cloud-agnostic
+`AgentRuntime`, so a single Azure / AWS / GCP configuration drives all
+three frameworks identically.
+
+**Deliverables:**
+- `packages/framework-adapters/` — new workspace package.
+- `src/langchain.ts` — `wrapAsLangChainTool`, `wrapAsLangChainTools`,
+  `EunoLangChainCallbackHandler` (issues a per-run correlation ID,
+  surfaces `CapabilityDenialError` with `errorCode` / `statusCode`
+  intact for downstream tracing).
+- `src/maf.ts` — `createEunoFunctionToolMiddleware` (governs every
+  tool the model calls; supports `unknownToolPolicy: 'pass-through' | 'deny'`)
+  and `createEunoAgentRunMiddleware` (refuses to start a run when the
+  control-plane kill switch has fired; tags `context.metadata.eunoCorrelationId`).
+- `src/crewai.ts` — `wrapAsCrewAITool`, `wrapAsCrewAITools`,
+  `EunoCrewAITaskLifecycle` (`beforeKickoff` / `afterKickoff` hooks
+  that emit task-start / task-end / task-error audit events and honour
+  the kill switch).
+- `src/types.ts` — shared `ToolBinding`, `CapabilityDenialError`,
+  `CapabilityRuntime` structural interface, `newCorrelationId()` helper.
+- All adapters are dependency-free w.r.t. the upstream frameworks
+  (LangChain, MAF, CrewAI are duck-typed structurally) so they compile
+  in this monorepo and integrators bring their own framework version.
+- Tests: `tests/langchain.test.ts`, `tests/maf.test.ts`,
+  `tests/crewai.test.ts` (35 unit tests covering happy path, denial
+  propagation, kill-switch refusal, correlation-ID lifecycle, and
+  misconfiguration rejection).
+
 #### ✅ Requirement: Unit Tests
 **Status:** Implemented
 
 **Evidence:**
 - `packages/agent-runtime/tests/runtime.test.ts` - Test cases with axios mocking
 - Tests cover: token acquisition, Authorization header attachment, 401 retry with token refresh, proxy path routing, network error handling
+- `packages/framework-adapters/tests/` - 35 tests covering the LangChain / MAF / CrewAI adapters end-to-end against a structural runtime stand-in.
 
 ### Team CP - Token Signing & Verification
 
@@ -485,16 +530,19 @@ All sandboxing requirements from Sprint 1 and Sprint 2 have been successfully im
 1. ✅ Agent runtime with network isolation
 2. ✅ Container security (read-only, non-root, no capabilities)
 3. ✅ Kubernetes NetworkPolicies
-4. ✅ Tool Gateway enforcement
+4. ✅ Tool Gateway enforcement (Azure APIM `validate-jwt` + AWS API Gateway Lambda authorizer + GCP API Gateway / Apigee `VerifyJWT`)
 5. ✅ Capability token management
-6. ✅ Azure integrations (AD, Key Vault)
-7. ✅ Kill-switch functionality
-8. ✅ Cryptographic audit evidence
-9. ✅ Comprehensive documentation
+6. ✅ Multi-cloud identity providers (Azure AD + AWS Cognito / IAM Identity Center + GCP Cloud Identity / Workforce IF)
+7. ✅ Multi-cloud KMS signers (Azure Key Vault + AWS KMS + GCP Cloud KMS)
+8. ✅ Kill-switch functionality
+9. ✅ Cryptographic audit evidence
+10. ✅ Framework adapters (LangChain, Microsoft Agent Framework, CrewAI)
+11. ✅ Comprehensive documentation
 
 **No missing features identified.**
 
-The system is ready for deployment and testing in an Azure environment.
+The system is ready for deployment and testing in an Azure, AWS, or GCP
+environment.
 
 ## Next Steps (Future Sprints)
 
