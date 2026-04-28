@@ -83,6 +83,9 @@ export class CapabilityIssuerService {
         // concrete resources beneath them.
         for (const requested of request.requestedCapabilities) {
           const matchingCaps = capabilities.filter((cap) =>
+            // matchesResource(concreteResource, wildcardPattern) — the first
+            // arg is the concrete resource being requested, the second is the
+            // (potentially wildcarded) pattern from the role mapping.
             matchesResource(requested.resource, cap.resource),
           );
           if (matchingCaps.length === 0) {
