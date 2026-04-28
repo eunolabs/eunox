@@ -10,6 +10,7 @@ import {
   CapabilityError,
   ErrorCode,
   SigningAlgorithm,
+  SUPPORTED_SCHEMA_VERSIONS,
 } from '@euno/common';
 import { InMemoryRevocationStore, RevocationStore } from './revocation-store';
 
@@ -81,7 +82,26 @@ export class JWTTokenVerifier implements TokenVerifier {
       }
 
       // Cast payload to CapabilityTokenPayload
-      return payload as unknown as CapabilityTokenPayload;
+      const capabilityPayload = payload as unknown as CapabilityTokenPayload;
+
+      // Validate schema version (fail-closed on unknown versions)
+      const schemaVersion = capabilityPayload.schemaVersion;
+      if (!schemaVersion) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          'Token missing required schemaVersion field',
+          401
+        );
+      }
+      if (!SUPPORTED_SCHEMA_VERSIONS.has(schemaVersion)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Unsupported token schema version: ${schemaVersion}. Supported versions: ${Array.from(SUPPORTED_SCHEMA_VERSIONS).join(', ')}`,
+          401
+        );
+      }
+
+      return capabilityPayload;
     } catch (error) {
       if (error instanceof CapabilityError) {
         throw error;

@@ -44,6 +44,24 @@ export function isLegacyAction(action: string): action is LegacyAction {
 }
 
 /**
+ * Current capability token schema version. Issuers populate the
+ * `schemaVersion` field with this value; gateways validate it at enforcement
+ * time and reject unknown versions (fail-closed on schema evolution).
+ *
+ * Version history:
+ *  - "1.0": Initial typed-condition schema (April 2026).
+ */
+export const CAPABILITY_TOKEN_SCHEMA_VERSION = '1.0' as const;
+
+/**
+ * Set of schema versions this implementation can process. Tokens carrying
+ * other versions are rejected at verification time (fail-closed).
+ */
+export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
+]);
+
+/**
  * Discriminated union of capability conditions enforceable by the
  * tool-gateway and validated at mint time by the capability issuer.
  *
@@ -277,6 +295,18 @@ export interface CapabilityTokenPayload {
   exp: number;
   /** JWT ID - unique token identifier (JWT 'jti' claim) */
   jti: string;
+  /**
+   * Schema version of this capability token. Enables forward/backward
+   * compatibility during schema evolution. Current version is "1.0".
+   *
+   * - Missing or "1.0": Current schema with typed conditions
+   * - Future versions: May introduce new fields or change semantics
+   *
+   * Gateways MUST reject tokens with schema versions they don't recognize
+   * (fail-closed on unknown versions). The `kid` (key ID) in the JWT header
+   * provides an orthogonal "rotate all tokens signed with key X" mechanism.
+   */
+  schemaVersion: string;
   /** Capability constraints defining allowed actions */
   capabilities: CapabilityConstraint[];
   /** Optional: parent capability token ID for delegation chains */
