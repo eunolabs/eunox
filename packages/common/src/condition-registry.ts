@@ -435,6 +435,17 @@ const allowedTablesHandler: ConditionHandler<AllowedTablesCondition> = {
       return { allow: false, reason: 'allowedTables requires tables in request context' };
     }
     const allowedTables = new Set(c.tables.map((t) => t.toLowerCase()));
+    // Build a case-insensitive view of the columns map so that an
+    // issuer-side casing of e.g. `{"Customers": [...]}` still applies
+    // to a request that names the table as `customers`. Without this
+    // normalization the column allowlist would be silently skipped on
+    // any case mismatch — a fail-open path on a security-critical
+    // narrowing condition.
+    const columnsLower: Record<string, string[]> | undefined = c.columns
+      ? Object.fromEntries(
+          Object.entries(c.columns).map(([k, v]) => [k.toLowerCase(), v]),
+        )
+      : undefined;
     for (const entry of ctx.tables) {
       const tableLower = entry.table.toLowerCase();
       if (!allowedTables.has(tableLower)) {
@@ -443,7 +454,7 @@ const allowedTablesHandler: ConditionHandler<AllowedTablesCondition> = {
           reason: `table '${entry.table}' is not in the allowed list`,
         };
       }
-      const colSpec = c.columns?.[entry.table] ?? c.columns?.[tableLower];
+      const colSpec = columnsLower?.[tableLower];
       if (colSpec && entry.columns) {
         if (colSpec.includes('*')) continue;
         const allowedCols = new Set(colSpec.map((col) => col.toLowerCase()));
@@ -511,8 +522,11 @@ const recipientDomainHandler: ConditionHandler<RecipientDomainCondition> = {
     const allowed = new Set(c.domains.map((d) => d.toLowerCase()));
     for (const recipient of ctx.recipients) {
       const at = recipient.lastIndexOf('@');
-      if (at < 0) {
-        return { allow: false, reason: `recipient '${recipient}' is not an address` };
+      // Require a non-empty local part *and* a non-empty domain part.
+      // `at < 1` catches both no-`@` (`-1`) and empty-local (`0`); a
+      // trailing `@` (domain empty) is caught by the slice length.
+      if (at < 1 || at === recipient.length - 1) {
+        return { allow: false, reason: `recipient '${recipient}' is not a valid address` };
       }
       const domain = recipient.slice(at + 1).toLowerCase();
       if (!allowed.has(domain)) {
@@ -627,7 +641,12 @@ function parseIPv4(s: string): number | null {
   if (parts.length !== 4) return null;
   let out = 0;
   for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
+    // Reject leading zeros (e.g. `010`) which some host-resolver
+    // implementations interpret as octal — accepting them would let
+    // two textually-distinct CIDRs evaluate to different ranges
+    // depending on the runtime that parses them. The single literal
+    // `0` is allowed.
+    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
     const n = Number(part);
     if (n < 0 || n > 255) return null;
     out = (out * 256 + n) >>> 0;

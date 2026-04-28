@@ -323,6 +323,34 @@ describe('enforceCondition', () => {
         ).allow,
       ).toBe(true);
     });
+    // Regression: an issuer that authored the columns map with a
+    // different casing than the request (e.g. `{"Customers": [...]}`
+    // matched against a request that uses `customers`) must still
+    // have the column allowlist applied. Earlier behavior silently
+    // skipped the check when keys did not match exactly — a fail-open
+    // path that has now been closed by case-insensitive lookup on the
+    // columns map.
+    it('applies column allowlist case-insensitively to the columns map keys', async () => {
+      const mixedCaseCond = {
+        type: 'allowedTables' as const,
+        tables: ['customers'],
+        columns: { Customers: ['id', 'name'] },
+      };
+      expect(
+        (
+          await enforceCondition(mixedCaseCond, {
+            tables: [{ table: 'customers', columns: ['ssn'] }],
+          })
+        ).allow,
+      ).toBe(false);
+      expect(
+        (
+          await enforceCondition(mixedCaseCond, {
+            tables: [{ table: 'customers', columns: ['id'] }],
+          })
+        ).allow,
+      ).toBe(true);
+    });
   });
 
   describe('maxCalls', () => {
@@ -363,6 +391,17 @@ describe('enforceCondition', () => {
     it('denies a recipient with no @', async () => {
       expect(
         (await enforceCondition(cond, { recipients: ['no-at-symbol'] })).allow,
+      ).toBe(false);
+    });
+    // An empty local-part (`@example.com`) or empty domain
+    // (`alice@`) is not a usable address; both must deny rather than
+    // accidentally pass the domain check on a degenerate string.
+    it('denies recipients with empty local-part or empty domain', async () => {
+      expect(
+        (await enforceCondition(cond, { recipients: ['@example.com'] })).allow,
+      ).toBe(false);
+      expect(
+        (await enforceCondition(cond, { recipients: ['alice@'] })).allow,
       ).toBe(false);
     });
     it('denies when no recipients in context', async () => {
@@ -457,6 +496,13 @@ describe('CIDR helpers', () => {
     expect(isValidCidr('10.0.0.0/33')).toBe(false);
     expect(isValidCidr('256.0.0.0/8')).toBe(false);
     expect(isValidCidr('no-slash')).toBe(false);
+    // Reject leading-zero octets (`010` is octal `8` in some host
+    // resolvers): the textual CIDR must have one canonical
+    // interpretation regardless of which runtime parses it.
+    expect(isValidCidr('010.0.0.0/8')).toBe(false);
+    expect(isValidCidr('192.168.001.1/32')).toBe(false);
+    // The literal `0` (no leading zero) is still valid.
+    expect(isValidCidr('0.0.0.0/0')).toBe(true);
     expect(isValidCidr('2001:db8::/32')).toBe(true);
     expect(isValidCidr('2001:db8::/129')).toBe(false);
     expect(isValidCidr('::/0')).toBe(true);
