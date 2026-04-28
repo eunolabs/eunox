@@ -163,6 +163,11 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
       }).getClient();
       const source = await client;
       const tokenResp = await source.getAccessToken();
+      // Single source of truth for the CEL expression so the policy and
+      // the response stay in lockstep.
+      const availabilityCondition = prefix
+        ? `resource.name.startsWith('projects/_/buckets/${bucket}/objects/${prefix}/')`
+        : undefined;
       // Build a Credential Access Boundary policy and mint a downscoped token.
       const cab = {
         accessBoundary: {
@@ -173,11 +178,8 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
                 'inRole:roles/storage.objectCreator',
               ],
               availableResource: `//storage.googleapis.com/projects/_/buckets/${bucket}`,
-              availabilityCondition: prefix
-                ? {
-                    title: 'PrefixScope',
-                    expression: `resource.name.startsWith('projects/_/buckets/${bucket}/objects/${prefix}/')`,
-                  }
+              availabilityCondition: availabilityCondition
+                ? { title: 'PrefixScope', expression: availabilityCondition }
                 : undefined,
             },
           ],
@@ -189,9 +191,7 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
       return {
         token: downTok.token ?? tokenResp.token ?? '',
         expiresAt,
-        availabilityCondition: prefix
-          ? `resource.name.startsWith('projects/_/buckets/${bucket}/objects/${prefix}/')`
-          : undefined,
+        availabilityCondition,
       };
     },
   };

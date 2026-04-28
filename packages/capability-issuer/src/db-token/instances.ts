@@ -117,15 +117,15 @@ function parseSimpleYaml(raw: string): unknown {
   const instances: Record<string, unknown>[] = [];
   let current: Record<string, unknown> | null = null;
   let inInstances = false;
-  for (let rawLine of lines) {
-    rawLine = rawLine.replace(/#.*$/, '');
-    if (!rawLine.trim()) continue;
-    if (/^instances\s*:\s*$/.test(rawLine)) {
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/#.*$/, '');
+    if (!line.trim()) continue;
+    if (/^instances\s*:\s*$/.test(line)) {
       inInstances = true;
       continue;
     }
     if (!inInstances) continue;
-    const itemMatch = rawLine.match(/^\s*-\s*(\w+)\s*:\s*(.+?)\s*$/);
+    const itemMatch = line.match(/^\s*-\s*(\w+)\s*:\s*(.+?)\s*$/);
     if (itemMatch) {
       current = {};
       instances.push(current);
@@ -133,7 +133,7 @@ function parseSimpleYaml(raw: string): unknown {
       if (key) current[key] = parseScalar(value ?? '');
       continue;
     }
-    const fieldMatch = rawLine.match(/^\s+(\w+)\s*:\s*(.+?)\s*$/);
+    const fieldMatch = line.match(/^\s+(\w+)\s*:\s*(.+?)\s*$/);
     if (fieldMatch && current) {
       const [, key, value] = fieldMatch;
       if (key) current[key] = parseScalar(value ?? '');
