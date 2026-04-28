@@ -39,6 +39,13 @@ const PRIMITIVE_TYPES = new Set([
 ]);
 
 /**
+ * Maximum permitted source length for a caller-supplied `pattern`. This is
+ * a coarse but effective ReDoS guard for `argumentSchema` values that
+ * may originate from untrusted clients via /attenuate.
+ */
+const MAX_PATTERN_LENGTH = 512;
+
+/**
  * Validate `value` against the supplied {@link ArgumentSchema}.
  * Throws a {@link CapabilityError} (HTTP 400, INVALID_REQUEST) on failure.
  *
@@ -110,6 +117,23 @@ function checkAgainstSchema(
     if (schema.pattern !== undefined) {
       // Anchor the pattern so callers' regex expresses a *whole-value*
       // allowlist and cannot accidentally match a substring.
+      //
+      // `argumentSchema` can be supplied by clients via /attenuate (and
+      // via requested capabilities), so the pattern source is an
+      // attacker-controllable surface. We mitigate ReDoS in two ways:
+      //   1) reject overly long patterns outright;
+      //   2) reject patterns whose structure indicates known catastrophic
+      //      backtracking (nested quantifiers, e.g. `(a+)+`, `(a*)*`,
+      //      `(a|a)*`). This is a heuristic, not a proof of safety, but
+      //      it stops the textbook ReDoS shapes from being smuggled in.
+      // For belt-and-braces, callers can additionally bound `maxLength`
+      // on the same string field to cap the input the regex sees.
+      if (schema.pattern.length > MAX_PATTERN_LENGTH) {
+        return `${path} schema pattern exceeds maximum length of ${MAX_PATTERN_LENGTH}`;
+      }
+      if (hasCatastrophicBacktrackingShape(schema.pattern)) {
+        return `${path} schema pattern is rejected as potentially unsafe (nested quantifiers)`;
+      }
       let re: RegExp;
       try {
         re = new RegExp(`^(?:${schema.pattern})$`);
@@ -251,7 +275,36 @@ function deepEqual(a: unknown, b: unknown): boolean {
     const aKeys = Object.keys(a);
     const bKeys = Object.keys(b);
     if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every((k) => deepEqual(a[k], (b as Record<string, unknown>)[k]));
+    // Verify each key from `a` exists on `b` as an own property before
+    // recursing — otherwise a missing key on one side would be treated
+    // as equal to `undefined` on the other, which is unsafe for an
+    // enforcement primitive.
+    return aKeys.every(
+      (k) =>
+        Object.prototype.hasOwnProperty.call(b, k) &&
+        deepEqual(a[k], (b as Record<string, unknown>)[k])
+    );
+  }
+  return false;
+}
+
+/**
+ * Heuristically reject regex shapes that are known to trigger catastrophic
+ * backtracking. This is intentionally conservative — it covers the
+ * textbook ReDoS shapes (`(a+)+`, `(a*)*`, `(a+)*`, `(a*)+`, and
+ * alternation of identical branches under a quantifier such as
+ * `(a|a)*`) and *does not* claim to be a complete safe-regex check.
+ * Production deployments that need stronger guarantees should evaluate
+ * untrusted patterns with a linear-time engine such as RE2.
+ */
+function hasCatastrophicBacktrackingShape(pattern: string): boolean {
+  // Nested quantifier on a parenthesised group, e.g. (a+)+, (a*)*, (a+)*.
+  if (/\([^)]*[+*][^)]*\)\s*[+*?]/.test(pattern)) {
+    return true;
+  }
+  // Quantified alternation of identical single-token branches, e.g. (a|a)*.
+  if (/\(\s*([^|()]{1,8})\s*\|\s*\1\s*\)\s*[+*]/.test(pattern)) {
+    return true;
   }
   return false;
 }

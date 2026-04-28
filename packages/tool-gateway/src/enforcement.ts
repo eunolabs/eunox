@@ -152,11 +152,15 @@ export class EnforcementEngine {
           );
 
           if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+            // Hash the *exact* value that was validated, not the
+            // surrounding context metadata. This keeps the evidence
+            // hash tightly coupled to the input that caused the denial
+            // and avoids drift from method/path/session noise.
             await this.generateEvidence({
               sessionId: sessionId || 'unknown',
               userId: payload.authorizedBy.userId,
               tool: request.resource,
-              args: request.context || {},
+              args: argsToValidate,
               agentId: payload.sub,
               resource: request.resource,
               action: request.action,

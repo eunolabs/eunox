@@ -155,4 +155,68 @@ describe('validateArguments', () => {
       validateArguments('x', { type: 'bogus' as unknown as 'string' })
     ).toThrow(/unsupported type/);
   });
+
+  describe('ReDoS guard on caller-supplied patterns', () => {
+    // `argumentSchema` may originate from untrusted clients via
+    // /attenuate, so pathological regexes must not be able to lock up
+    // the gateway. The validator rejects known catastrophic-backtracking
+    // shapes and overly long patterns before compiling.
+    it('rejects nested-quantifier patterns', () => {
+      expect(() =>
+        validateArguments('aaaaaaaaaaaaaaaaaaaa!', {
+          type: 'string',
+          pattern: '(a+)+',
+        })
+      ).toThrow(/unsafe/);
+    });
+
+    it('rejects (a*)* style patterns', () => {
+      expect(() =>
+        validateArguments('aaaaa', {
+          type: 'string',
+          pattern: '(a*)*',
+        })
+      ).toThrow(/unsafe/);
+    });
+
+    it('rejects quantified alternation of identical branches', () => {
+      expect(() =>
+        validateArguments('aaaa', {
+          type: 'string',
+          pattern: '(a|a)*',
+        })
+      ).toThrow(/unsafe/);
+    });
+
+    it('rejects overly long patterns', () => {
+      const longPattern = 'a'.repeat(1024);
+      expect(() =>
+        validateArguments('a', { type: 'string', pattern: longPattern })
+      ).toThrow(/maximum length/);
+    });
+
+    it('still accepts ordinary patterns', () => {
+      expect(() =>
+        validateArguments('abc-123', {
+          type: 'string',
+          pattern: '[a-zA-Z0-9-]+',
+        })
+      ).not.toThrow();
+    });
+  });
+
+  describe('deepEqual key-presence in enum matching', () => {
+    // A property present with value `undefined` must not be treated as
+    // equal to a missing property — important for object-valued enums
+    // used as enforcement primitives.
+    it('distinguishes missing key from key with undefined value', () => {
+      const schema: ArgumentSchema = { enum: [{ scope: 'self' }] };
+      // Missing `scope` is not equal to `{ scope: 'self' }`.
+      expect(() => validateArguments({}, schema)).toThrow(CapabilityError);
+      // Extra key is also not equal.
+      expect(() =>
+        validateArguments({ scope: 'self', extra: 1 }, schema)
+      ).toThrow(CapabilityError);
+    });
+  });
 });

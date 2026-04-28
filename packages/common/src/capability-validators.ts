@@ -155,9 +155,9 @@ export function validateFilePath(
  * tool gateway's enforcement engine will validate it on every call.
  *
  * @param value           The value to sanity-check.
- * @param allowedPattern  Optional regex source the value must fully match.
- *                        When provided, callers express what they DO allow
- *                        (allowlist) rather than what they reject.
+ * @param allowedPattern  Optional regular expression the value must fully
+ *                        match. When provided, callers express what they DO
+ *                        allow (allowlist) rather than what they reject.
  * @param maxLength       Maximum permitted length. Defaults to 4096.
  * @throws CapabilityError if the value fails the structural checks.
  */

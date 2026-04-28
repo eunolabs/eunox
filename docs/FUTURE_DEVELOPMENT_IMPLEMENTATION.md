@@ -299,7 +299,7 @@ field — `body`, `role`, an SQL fragment hidden in `where`, etc. — is
 rejected and audited as a denial. Capability attenuation cannot drop
 or loosen a parent's `argumentSchema`.
 
-#### 2.4 Resource Pattern Validation
+#### 2.5 Resource Pattern Validation
 
 **Function:** `validateResourcePattern(resourcePattern: string)`
 
