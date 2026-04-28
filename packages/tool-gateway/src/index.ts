@@ -17,6 +17,9 @@ import {
   createLogger,
   ServiceConfig,
   DefaultKillSwitchManager,
+  KillSwitchManager,
+  RedisKillSwitchManager,
+  createKillSwitchManagerFromEnv,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
@@ -42,8 +45,11 @@ const adminApiKey = process.env.ADMIN_API_KEY; // Optional: set to enable API ke
 // Create logger
 const logger = createLogger(config.name, config.environment);
 
-// Initialize kill-switch manager
-const killSwitchManager = new DefaultKillSwitchManager(logger);
+// Initialize kill-switch manager.  Defaults to the in-process
+// DefaultKillSwitchManager; replaced inside initializeServices() with a
+// RedisKillSwitchManager when REDIS_URL is configured so kills propagate
+// across replicas.  See docs/DISTRIBUTED_KILL_SWITCH.md.
+let killSwitchManager: KillSwitchManager = new DefaultKillSwitchManager(logger);
 
 // Initialize verifier and enforcement engine
 let verifier: JWTTokenVerifier;
@@ -61,6 +67,12 @@ async function initializeServices() {
     // REDIS_URL is set we connect to Redis so revocations are shared across
     // gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
     revocationStore = await createRevocationStoreFromEnv(process.env, logger);
+
+    // Build the kill-switch manager from environment.  Defaults to the
+    // in-process implementation; if REDIS_URL is set we use the Redis-backed
+    // manager so kills (global / session / agent) propagate across every
+    // gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
+    killSwitchManager = await createKillSwitchManagerFromEnv(process.env, logger);
 
     verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
     enforcementEngine = new EnforcementEngine({
@@ -494,6 +506,17 @@ async function startServer() {
           }
         } catch (err) {
           logger.warn('Error while closing revocation store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        try {
+          // Only the Redis-backed implementation needs explicit teardown
+          // (timer + connection); the in-process default is a no-op.
+          if (killSwitchManager instanceof RedisKillSwitchManager) {
+            await killSwitchManager.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing kill-switch manager', {
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         }
