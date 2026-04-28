@@ -188,21 +188,23 @@ cloud-specific claims leaking into policy logic.
 
 ## Sprint 1 multi-cloud parity gaps NOT addressed in this iteration
 
-The following Sprint-1 line items remain Azure-only and require larger,
-ops-heavy deliverables (each is a separate PR-sized effort that requires
-live cloud accounts to validate end-to-end). They are tracked here for
-visibility:
+> **Update:** All four gaps below have since been closed.  The artifacts
+> are listed in the right-hand columns and live under `infra/terraform/`,
+> `infra/aws/`, `infra/gcp/`, and `packages/common/src/log-transports.ts`.
+> See `infra/README.md` for the full multi-cloud parity matrix.
 
-| Area                                            | Azure status                                              | AWS gap                                                                            | GCP gap                                                                          |
-|-------------------------------------------------|-----------------------------------------------------------|------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|
-| Infrastructure-as-Code                          | `infra/bicep/main.bicep` provisions AKS, Key Vault, ACR, LAW, App Insights | No Terraform / CloudFormation for EKS, KMS, IAM roles, CloudWatch                  | No Terraform / Deployment Manager for GKE, Cloud KMS, IAM, Cloud Logging         |
-| Tool-Gateway profile (Sprint-1 DP, "v1 cloud gateway") | Generic Express gateway + Azure APIM `validate-jwt` policy mentioned in plan | No AWS API Gateway + Lambda Authorizer / ALB profile or sample policy              | No GCP Apigee / Cloud Endpoints / API Gateway profile or sample policy           |
-| Sprint-1 OBS — security analytics rules         | `infra/sentinel/analytic-rules.json` (KQL)                | No CloudWatch Logs Insights / Security Hub / GuardDuty rule set                    | No Cloud Logging queries / Security Command Center findings / Chronicle rules    |
-| Sprint-1 OBS — log shipping transports          | Logger documents Azure Monitor / Log Analytics as the production transport | No CloudWatch Logs / CloudTrail transport implementation                           | No Cloud Logging transport implementation                                        |
+| Area                                            | Azure status                                              | AWS deliverable (NEW)                                                                  | GCP deliverable (NEW)                                                                |
+|-------------------------------------------------|-----------------------------------------------------------|----------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
+| Infrastructure-as-Code                          | `infra/bicep/main.bicep` provisions AKS, Key Vault, ACR, LAW, App Insights | `infra/terraform/aws/main.tf` (EKS, KMS, IAM/IRSA, CloudWatch, ECR, Cognito, Security Hub) | `infra/terraform/gcp/main.tf` (GKE + Workload Identity, Cloud KMS, IAM, Cloud Logging buckets, Artifact Registry, Pub/Sub for SCC) |
+| Tool-Gateway profile (Sprint-1 DP, "v1 cloud gateway") | Generic Express gateway + Azure APIM `validate-jwt` policy mentioned in plan | `infra/aws/api-gateway/openapi.json` + `lambda-authorizer.js` (Lambda authorizer w/ JWKS) | `infra/gcp/api-gateway/openapi.yaml` (GCP API Gateway native JWT) + `apigee-validate-jwt.xml` |
+| Sprint-1 OBS — security analytics rules         | `infra/sentinel/analytic-rules.json` (KQL)                | `infra/aws/security/cloudwatch-logs-insights.json` + `cloudwatch-alarms.yaml` (Metric Filter + Alarm + SNS) + `security-hub-insights.json` | `infra/gcp/security/cloud-logging-queries.json` + `cloud-monitoring-alerts.tf` (log-based metrics + alert policies) + `scc-custom-modules.yaml` |
+| Sprint-1 OBS — log shipping transports          | Logger documents Azure Monitor / Log Analytics as the production transport | `packages/common/src/log-transports.ts` `createCloudWatchLogsTransport` (env-activated via `AWS_CLOUDWATCH_LOG_GROUP`) | `packages/common/src/log-transports.ts` `createCloudLoggingTransport` (env-activated via `GCP_LOG_NAME`) |
 
 The code-level abstractions (signer, identity provider, audit log schema,
-gateway enforcement) are now provider-agnostic, so each of these gaps can
-be filled independently without touching the application code.
+gateway enforcement) were already provider-agnostic, so each of these gaps
+was filled independently without touching the application code (except for
+the optional log-shipping transports, which are added to `@euno/common` as
+opt-in factories that lazy-load the underlying SDK).
 
 ## Sprint 2 Requirements - Status: ✅ COMPLETE
 
