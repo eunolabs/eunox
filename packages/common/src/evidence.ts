@@ -197,3 +197,253 @@ export function createAuditEvidence(params: {
     decision: params.decision,
   };
 }
+
+/**
+ * Algorithms supported by the software evidence signer.
+ *
+ * {@link AuditEvidenceSigner} always pre-computes a SHA-256 digest of the
+ * canonical evidence and passes it to {@link CryptoSigner.signDigest}. The
+ * software signer therefore restricts itself to JWS algorithms whose
+ * underlying hash is SHA-256, plus EdDSA which signs the message bytes
+ * directly. RS/PS/ES384/512 would require a different digest size and are
+ * rejected at construction so misconfigured deployments fail fast rather
+ * than silently producing signatures that no JWS verifier accepts.
+ */
+const SUPPORTED_ALGORITHMS: ReadonlySet<string> = new Set([
+  'RS256',
+  'PS256',
+  'ES256',
+  'EDDSA',
+]);
+
+/**
+ * Configuration for {@link createSoftwareEvidenceSigner}.
+ *
+ * Exactly one of `privateKeyPem` / `privateKeyPath` must be supplied;
+ * supplying both throws at construction. The matching public key is
+ * derived from the private key automatically (used by `verifyEvidence`)
+ * but a `publicKeyPem` (or `publicKeyPath`, again mutually exclusive)
+ * may be supplied explicitly when, for example, the private key lives in
+ * an HSM-backed PEM container with a separate public certificate.
+ *
+ * The resulting signer keeps signing material strictly in-process — it is
+ * suitable for development, CI, and lightweight production deployments
+ * where a KMS-backed signer is not available. KMS-backed signers should
+ * be supplied directly to `EnforcementEngine` instead.
+ */
+export interface SoftwareEvidenceSignerConfig {
+  privateKeyPem?: string;
+  privateKeyPath?: string;
+  publicKeyPem?: string;
+  publicKeyPath?: string;
+  /**
+   * Logical key identifier recorded in every signed evidence record.
+   * Defaults to `software-key`.
+   */
+  keyId?: string;
+  /**
+   * JWS-style algorithm name. Defaults to `RS256`. Must be one of:
+   * `RS256`, `PS256`, `ES256`, `EdDSA`. The `*384` / `*512` variants
+   * are intentionally unsupported because the audit signer's digest is
+   * always SHA-256.
+   */
+  algorithm?: string;
+}
+
+/**
+ * Build an {@link EvidenceSigner} backed by an in-process Node.js
+ * `crypto.KeyObject`. This is the default fallback used by the tool
+ * gateway when `ENABLE_CRYPTOGRAPHIC_AUDIT=true` is set without a
+ * KMS-backed signer being supplied programmatically. It guarantees that
+ * enabling cryptographic audit always produces real signatures rather
+ * than silently no-op'ing.
+ *
+ * The implementation reads the private (and optional public) key once at
+ * construction time so each `signEvidence` call performs only the
+ * digest-and-sign operation. Throws synchronously if the key material
+ * cannot be loaded or the algorithm is unsupported, so misconfiguration
+ * surfaces at startup.
+ */
+export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfig): AuditEvidenceSigner {
+  // Preserve the canonical JWS casing for the algorithm in the signed
+  // record (`EdDSA`, `RS256`, `ES256`, `PS256`) so downstream verifiers
+  // that compare against the JWS spec see the expected value. Internally
+  // we normalise to upper-case for control-flow comparisons only.
+  const rawAlgorithm = config.algorithm ?? 'RS256';
+  const algorithmUpper = rawAlgorithm.toUpperCase();
+  const CANONICAL_ALGORITHMS: Record<string, string> = {
+    RS256: 'RS256',
+    PS256: 'PS256',
+    ES256: 'ES256',
+    EDDSA: 'EdDSA',
+  };
+  const canonicalAlgorithm = CANONICAL_ALGORITHMS[algorithmUpper];
+  const keyId = config.keyId ?? 'software-key';
+
+  // Enforce mutual exclusivity of inline PEM and PEM file path so
+  // operators do not get silent "which one wins?" precedence behaviour
+  // when both are accidentally configured.
+  if (config.privateKeyPem !== undefined && config.privateKeyPath !== undefined) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: privateKeyPem and privateKeyPath are mutually exclusive — supply exactly one',
+    );
+  }
+  if (config.publicKeyPem !== undefined && config.publicKeyPath !== undefined) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: publicKeyPem and publicKeyPath are mutually exclusive — supply exactly one',
+    );
+  }
+
+  const privatePem = config.privateKeyPem
+    ?? (config.privateKeyPath ? require('fs').readFileSync(config.privateKeyPath, 'utf8') : undefined);
+  if (!privatePem || privatePem.trim().length === 0) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: privateKeyPem or privateKeyPath must be supplied with PEM-encoded key material',
+    );
+  }
+
+  let privateKey: crypto.KeyObject;
+  try {
+    privateKey = crypto.createPrivateKey(privatePem);
+  } catch (err) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: failed to parse private key PEM: ' +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+
+  let publicKey: crypto.KeyObject;
+  const publicPem = config.publicKeyPem
+    ?? (config.publicKeyPath ? require('fs').readFileSync(config.publicKeyPath, 'utf8') : undefined);
+  if (publicPem) {
+    try {
+      publicKey = crypto.createPublicKey(publicPem);
+    } catch (err) {
+      throw new Error(
+        'createSoftwareEvidenceSigner: failed to parse public key PEM: ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  } else {
+    publicKey = crypto.createPublicKey(privateKey);
+  }
+
+  const isEdDsa = algorithmUpper === 'EDDSA';
+  const isPss = algorithmUpper === 'PS256';
+  const isEcdsa = algorithmUpper === 'ES256';
+  const isRsaPkcs1 = algorithmUpper === 'RS256';
+  if (!canonicalAlgorithm || !SUPPORTED_ALGORITHMS.has(algorithmUpper)) {
+    throw new Error(
+      `createSoftwareEvidenceSigner: unsupported algorithm '${rawAlgorithm}'. ` +
+        'Supported: RS256, PS256, ES256, EdDSA. ' +
+        'RS/PS/ES384/512 are intentionally rejected because AuditEvidenceSigner ' +
+        'always pre-computes a SHA-256 digest before calling signDigest.',
+    );
+  }
+
+  // Validate the key type is compatible with the requested algorithm so
+  // misconfigurations surface at startup rather than at first signing.
+  const keyType = privateKey.asymmetricKeyType;
+  if (isRsaPkcs1 || isPss) {
+    if (keyType !== 'rsa') {
+      throw new Error(
+        `createSoftwareEvidenceSigner: algorithm '${canonicalAlgorithm}' requires an RSA key, got '${keyType}'`,
+      );
+    }
+  } else if (isEcdsa) {
+    if (keyType !== 'ec') {
+      throw new Error(
+        `createSoftwareEvidenceSigner: algorithm '${canonicalAlgorithm}' requires an EC key, got '${keyType}'`,
+      );
+    }
+  } else if (isEdDsa) {
+    if (keyType !== 'ed25519' && keyType !== 'ed448') {
+      throw new Error(
+        `createSoftwareEvidenceSigner: algorithm 'EdDSA' requires an Ed25519/Ed448 key, got '${keyType}'`,
+      );
+    }
+  }
+
+  const cryptoSigner: CryptoSigner = {
+    async signDigest(digest: Buffer): Promise<Buffer> {
+      // The CryptoSigner contract receives a precomputed SHA-256 digest
+      // from AuditEvidenceSigner; pass `null` as the algorithm so Node
+      // signs the digest bytes directly rather than re-hashing them. For
+      // EdDSA, Node's signer expects the message and signs it without an
+      // intermediate hash step, which is the correct interpretation of
+      // the digest bytes as a fixed-length message.
+      if (isEdDsa) {
+        return crypto.sign(null, digest, privateKey);
+      }
+      const signOptions: crypto.SignKeyObjectInput = { key: privateKey };
+      if (isPss) {
+        signOptions.padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+        signOptions.saltLength = crypto.constants.RSA_PSS_SALTLEN_DIGEST;
+      }
+      if (isEcdsa) {
+        // JWS-compatible (P1363 / r||s) ECDSA signatures.
+        (signOptions as crypto.SignKeyObjectInput & { dsaEncoding?: 'ieee-p1363' | 'der' }).dsaEncoding = 'ieee-p1363';
+      }
+      return crypto.sign(null, digest, signOptions);
+    },
+    async verifyDigest(digest: Buffer, signature: Buffer, _keyId: string, alg: string): Promise<boolean> {
+      // Reject algorithm mismatches: a record signed under one algorithm
+      // must not be verifiable under another, even with the same key.
+      if (alg.toUpperCase() !== algorithmUpper) {
+        return false;
+      }
+      if (isEdDsa) {
+        return crypto.verify(null, digest, publicKey, signature);
+      }
+      const verifyOptions: crypto.VerifyKeyObjectInput = { key: publicKey };
+      if (isPss) {
+        verifyOptions.padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+        verifyOptions.saltLength = crypto.constants.RSA_PSS_SALTLEN_DIGEST;
+      }
+      if (isEcdsa) {
+        (verifyOptions as crypto.VerifyKeyObjectInput & { dsaEncoding?: 'ieee-p1363' | 'der' }).dsaEncoding = 'ieee-p1363';
+      }
+      return crypto.verify(null, digest, verifyOptions, signature);
+    },
+    async getKeyId(): Promise<string> {
+      return keyId;
+    },
+    getAlgorithm(): string {
+      return canonicalAlgorithm;
+    },
+  };
+
+  return new AuditEvidenceSigner(cryptoSigner);
+}
+
+/**
+ * Build a software evidence signer from environment variables. Returns
+ * `undefined` when no relevant env vars are present so callers can decide
+ * whether to fail fast or continue.
+ *
+ * Recognised variables:
+ *   * `EVIDENCE_SIGNING_KEY_PEM`  — inline PEM string (preferred for
+ *      Kubernetes secret mounts that project keys via env var).
+ *   * `EVIDENCE_SIGNING_KEY_FILE` — path to a PEM file on disk.
+ *   * `EVIDENCE_SIGNING_PUBLIC_KEY_PEM` / `EVIDENCE_SIGNING_PUBLIC_KEY_FILE`
+ *      — optional explicit public key (otherwise derived from the private key).
+ *   * `EVIDENCE_SIGNING_ALGORITHM` — defaults to `RS256`.
+ *   * `EVIDENCE_SIGNING_KEY_ID`   — defaults to `software-key`.
+ */
+export function createSoftwareEvidenceSignerFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): AuditEvidenceSigner | undefined {
+  const privateKeyPem = env.EVIDENCE_SIGNING_KEY_PEM;
+  const privateKeyPath = env.EVIDENCE_SIGNING_KEY_FILE;
+  if (!privateKeyPem && !privateKeyPath) {
+    return undefined;
+  }
+  return createSoftwareEvidenceSigner({
+    privateKeyPem,
+    privateKeyPath,
+    publicKeyPem: env.EVIDENCE_SIGNING_PUBLIC_KEY_PEM,
+    publicKeyPath: env.EVIDENCE_SIGNING_PUBLIC_KEY_FILE,
+    keyId: env.EVIDENCE_SIGNING_KEY_ID,
+    algorithm: env.EVIDENCE_SIGNING_ALGORITHM,
+  });
+}

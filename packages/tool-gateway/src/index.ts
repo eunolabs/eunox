@@ -17,6 +17,8 @@ import {
   createLogger,
   ServiceConfig,
   DefaultKillSwitchManager,
+  EvidenceSigner,
+  createSoftwareEvidenceSignerFromEnv,
   KillSwitchManager,
   createKillSwitchManagerFromEnv,
 } from '@euno/common';
@@ -74,21 +76,46 @@ async function initializeServices() {
     killSwitchManager = await createKillSwitchManagerFromEnv(process.env, logger);
 
     verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
+
+    // Build the cryptographic evidence signer when audit signing is enabled.
+    // Historically the gateway emitted a warning and silently continued
+    // unsigned, which let operators believe audit signing was active when it
+    // was not. We now treat the missing-signer case as a startup error so
+    // misconfiguration cannot survive into a running process. KMS-backed
+    // signers can still be supplied programmatically by importing this
+    // module, constructing an EnforcementEngine with `evidenceSigner`, and
+    // bypassing this default path.
+    let evidenceSigner: EvidenceSigner | undefined;
+    if (config.enableCryptographicAudit) {
+      try {
+        evidenceSigner = createSoftwareEvidenceSignerFromEnv(process.env);
+      } catch (err) {
+        throw new Error(
+          'ENABLE_CRYPTOGRAPHIC_AUDIT=true but the configured evidence signer ' +
+            'could not be initialised: ' +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+      if (!evidenceSigner) {
+        throw new Error(
+          'ENABLE_CRYPTOGRAPHIC_AUDIT=true but no evidence signer is configured. ' +
+            'Provide EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+            'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / EVIDENCE_SIGNING_KEY_ID, ' +
+            'or wire a KMS-backed EvidenceSigner programmatically. Refusing to start ' +
+            'with cryptographic audit enabled but no signer attached.',
+        );
+      }
+      logger.info('Cryptographic audit enabled with software evidence signer');
+    }
+
     enforcementEngine = new EnforcementEngine({
       verifier,
       logger,
       killSwitchManager,
-      // evidenceSigner must be supplied externally (e.g. Azure Key Vault backed)
+      evidenceSigner,
       enableCryptographicAudit: config.enableCryptographicAudit,
       policyVersion: config.policyVersion,
     });
-
-    if (config.enableCryptographicAudit) {
-      logger.warn(
-        'Cryptographic audit is enabled but no evidenceSigner has been configured. ' +
-        'Signed evidence will not be generated until an evidenceSigner implementation is provided.'
-      );
-    }
 
     logger.info('Tool Gateway services initialized successfully');
   } catch (error) {

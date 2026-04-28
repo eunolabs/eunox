@@ -256,3 +256,98 @@ describe('CapabilityIssuerService subset validation', () => {
     });
   });
 });
+
+describe('CapabilityIssuerService externalised role policy', () => {
+  function makeServiceWithPolicy(
+    roles: string[],
+    tenantId: string | undefined,
+    policy: NonNullable<ConstructorParameters<typeof CapabilityIssuerService>[5]>['policy'],
+  ) {
+    const identity = new StubIdentityProvider({
+      userId: 'user-1',
+      email: 'user@example.com',
+      roles,
+      tenantId,
+      claims: {},
+    });
+    const signer = new StubSigner();
+    return new CapabilityIssuerService(signer, identity, 'did:web:example.com', 900, logger, { policy });
+  }
+
+  it('uses the supplied policy instead of the in-code default', async () => {
+    const policy = {
+      default: {
+        AppRole: [{ resource: 'api://app/widgets', actions: ['read' as const] }],
+      },
+    };
+    const service = makeServiceWithPolicy(['AppRole'], 'tenant-1', policy);
+    const response = await service.issueCapability({
+      authToken: 'irrelevant',
+      agentId: 'agent-1',
+    });
+    expect(response.capabilities).toEqual([
+      { resource: 'api://app/widgets', actions: ['read'] },
+    ]);
+    // The Sprint-1 default Administrator role must NOT leak when a custom
+    // policy is supplied.
+    expect(response.capabilities).not.toContainEqual(
+      expect.objectContaining({ resource: 'api://**' }),
+    );
+  });
+
+  it('honours per-tenant overrides when the user belongs to that tenant', async () => {
+    const policy = {
+      default: {
+        Viewer: [{ resource: 'api://crm/customers', actions: ['read' as const] }],
+      },
+      tenants: {
+        'tenant-vip': {
+          Viewer: [
+            { resource: 'api://crm/customers', actions: ['read' as const] },
+            { resource: 'api://crm/reports', actions: ['read' as const] },
+          ],
+        },
+      },
+    };
+    const standard = makeServiceWithPolicy(['Viewer'], 'tenant-standard', policy);
+    const vip = makeServiceWithPolicy(['Viewer'], 'tenant-vip', policy);
+
+    const standardResp = await standard.issueCapability({
+      authToken: 'irrelevant',
+      agentId: 'agent-1',
+    });
+    const vipResp = await vip.issueCapability({
+      authToken: 'irrelevant',
+      agentId: 'agent-1',
+    });
+
+    expect(standardResp.capabilities).toHaveLength(1);
+    expect(vipResp.capabilities).toHaveLength(2);
+    expect(vipResp.capabilities).toContainEqual({
+      resource: 'api://crm/reports',
+      actions: ['read'],
+    });
+  });
+
+  it('removes a default role for a tenant when the override is empty', async () => {
+    const policy = {
+      default: {
+        Viewer: [{ resource: 'api://crm/customers', actions: ['read' as const] }],
+      },
+      tenants: {
+        'tenant-suspended': { Viewer: [] },
+      },
+    };
+    const service = makeServiceWithPolicy(['Viewer'], 'tenant-suspended', policy);
+    // No capabilities → requesting any resource must be denied.
+    await expect(
+      service.issueCapability({
+        authToken: 'irrelevant',
+        agentId: 'agent-1',
+        requestedCapabilities: [
+          { resource: 'api://crm/customers', actions: ['read'] },
+        ],
+      }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+});
