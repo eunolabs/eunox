@@ -37,7 +37,11 @@ import type TransportStream from 'winston-transport';
 export interface CloudWatchLogsTransportConfig {
   /** CloudWatch Logs log group name. */
   logGroupName: string;
-  /** CloudWatch Logs log stream name. Defaults to `${serviceName}-${hostname}`. */
+  /**
+   * CloudWatch Logs log stream name.  When omitted, the transport uses
+   * `${process.env.SERVICE_NAME ?? 'euno'}-${process.env.HOSTNAME ?? 'instance'}`
+   * so multiple replicas of the same service write to distinct streams.
+   */
   logStreamName?: string;
   /** AWS region. Falls back to `AWS_REGION` env var. */
   awsRegion?: string;
@@ -45,7 +49,11 @@ export interface CloudWatchLogsTransportConfig {
   awsAccessKeyId?: string;
   /** @see awsAccessKeyId */
   awsSecretKey?: string;
-  /** Auto-create the log group/stream if it does not exist. Default: false. */
+  /**
+   * Format log entries as JSON instead of the default plain string.
+   * Defaults to `true` so structured fields (sessionId, agentId, etc.) are
+   * preserved end-to-end through CloudWatch Logs Insights.
+   */
   jsonMessage?: boolean;
   /** Minimum log level forwarded to CloudWatch. Defaults to 'info'. */
   level?: string;
@@ -74,13 +82,33 @@ export interface CloudLoggingTransportConfig {
  *
  * Marked as a function so that bundlers / tree-shakers do not eagerly
  * resolve the import at build time.
+ *
+ * Only `MODULE_NOT_FOUND` for the requested module is treated as "SDK
+ * absent → return null".  Any other error (e.g. the SDK is installed but
+ * fails during initialisation, or one of *its* transitive deps is missing)
+ * is rethrown so misconfiguration is surfaced loudly instead of silently
+ * disabling cloud log shipping.
  */
 function tryRequire<T = unknown>(moduleName: string): T | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
     return require(moduleName) as T;
-  } catch {
-    return null;
+  } catch (error: unknown) {
+    const isMissingRequestedModule =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'MODULE_NOT_FOUND' &&
+      'message' in error &&
+      typeof (error as { message?: unknown }).message === 'string' &&
+      // Node phrases this as `Cannot find module 'foo'` / `"foo"` / bare —
+      // match the module name itself rather than a specific quoting style.
+      (error as { message: string }).message.includes(moduleName);
+
+    if (isMissingRequestedModule) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -184,9 +212,16 @@ export function createCloudLoggingTransport(
  * vars.  Used by `createLogger` / `createAuditLogger` to enable
  * production log-shipping without code changes per service.
  *
+ * `serviceName` is used to derive sensible per-service defaults so multiple
+ * services don't converge on the same CloudWatch log stream when only the
+ * `AWS_CLOUDWATCH_LOG_GROUP` env var is set:
+ *
+ *   - CloudWatch `logStreamName` defaults to
+ *     `${serviceName}-${process.env.HOSTNAME ?? 'instance'}`.
+ *
  * Recognised env vars:
  *   - `AWS_CLOUDWATCH_LOG_GROUP`  → enables CloudWatch transport
- *   - `AWS_CLOUDWATCH_LOG_STREAM` (optional)
+ *   - `AWS_CLOUDWATCH_LOG_STREAM` (optional override of the per-service default)
  *   - `AWS_REGION` (standard AWS env var)
  *   - `GCP_LOG_NAME`              → enables Cloud Logging transport
  *   - `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT` (standard GCP env vars)
@@ -195,17 +230,14 @@ export function buildCloudTransportsFromEnv(
   serviceName: string,
   level: string = 'info'
 ): TransportStream[] {
-  // serviceName is reserved for future per-service routing (e.g. an
-  // Azure-explicit transport keyed off the service name).  Today the
-  // Console transport is scraped by Container Insights so no extra
-  // wiring is needed.
-  void serviceName;
   const transports: TransportStream[] = [];
 
   if (process.env.AWS_CLOUDWATCH_LOG_GROUP) {
     const cw = createCloudWatchLogsTransport({
       logGroupName: process.env.AWS_CLOUDWATCH_LOG_GROUP,
-      logStreamName: process.env.AWS_CLOUDWATCH_LOG_STREAM,
+      logStreamName:
+        process.env.AWS_CLOUDWATCH_LOG_STREAM ??
+        `${serviceName}-${process.env.HOSTNAME ?? 'instance'}`,
       awsRegion: process.env.AWS_REGION,
       level,
     });
@@ -214,16 +246,16 @@ export function buildCloudTransportsFromEnv(
 
   if (process.env.GCP_LOG_NAME) {
     const gcp = createCloudLoggingTransport({
-      logName: process.env.GCP_LOG_NAME,
+      // GCP_LOG_NAME is the gate; if set, honour it. The `serviceName`
+      // fallback only kicks in if the operator deliberately set the env
+      // var to an empty string (treat as "auto-name from service").
+      logName: process.env.GCP_LOG_NAME || serviceName,
       projectId:
         process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT,
       level,
     });
     if (gcp) transports.push(gcp);
   }
-
-  // Reserved hook for future Azure-explicit transport (today the Console
-  // transport is scraped by Container Insights, so no extra wiring needed).
 
   return transports;
 }

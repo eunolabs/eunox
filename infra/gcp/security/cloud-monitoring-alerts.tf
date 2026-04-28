@@ -107,7 +107,7 @@ resource "google_monitoring_alert_policy" "rule" {
     condition_threshold {
       filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.rule[each.key].name}\" resource.type=\"k8s_container\""
       duration        = "300s"
-      comparison      = "COMPARISON_GT"
+      comparison      = "COMPARISON_GE"
       threshold_value = each.value.threshold
       aggregations {
         alignment_period   = "300s"

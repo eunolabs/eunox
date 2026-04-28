@@ -153,7 +153,30 @@ locals {
   issuer_role_name      = "${var.name_prefix}-issuer-irsa-${var.environment}"
   gateway_role_name     = "${var.name_prefix}-gateway-irsa-${var.environment}"
   cognito_pool_name     = "${var.name_prefix}-users-${var.environment}"
-  azs                   = slice(data.aws_availability_zones.available.names, 0, length(var.public_subnet_cidrs))
+
+  # Public and private subnet lists must always be the same length so they
+  # can share an `azs` index and so each private subnet maps to a NAT
+  # gateway in the matching public subnet.  Validated by the `check`
+  # blocks below.
+  public_subnet_count  = length(var.public_subnet_cidrs)
+  private_subnet_count = length(var.private_subnet_cidrs)
+  subnet_count         = local.public_subnet_count
+  available_az_count   = length(data.aws_availability_zones.available.names)
+  azs                  = slice(data.aws_availability_zones.available.names, 0, local.subnet_count)
+}
+
+check "matching_subnet_cidr_counts" {
+  assert {
+    condition     = local.public_subnet_count == local.private_subnet_count
+    error_message = "public_subnet_cidrs and private_subnet_cidrs must contain the same number of CIDR blocks (each private subnet egresses through the NAT gateway in the public subnet at the same index)."
+  }
+}
+
+check "sufficient_availability_zones" {
+  assert {
+    condition     = local.subnet_count <= local.available_az_count
+    error_message = "The number of subnet CIDR blocks (${local.subnet_count}) must not exceed the number of availability zones available in the selected AWS region (${local.available_az_count})."
+  }
 }
 
 # ---------------------------------------------------------------------------

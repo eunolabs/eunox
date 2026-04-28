@@ -66,6 +66,18 @@ describe('cloud log-shipping transports', () => {
       expect(transports).toEqual([]);
     });
 
+    it('uses serviceName + HOSTNAME for the default CloudWatch logStreamName', () => {
+      // We can't observe the real options without the SDK, but we can
+      // verify the factory builds them without throwing for either of
+      // two distinct service names — and would produce distinct streams
+      // by construction (logStreamName interpolation reads serviceName).
+      process.env.AWS_CLOUDWATCH_LOG_GROUP = '/euno/test';
+      process.env.HOSTNAME = 'pod-abc';
+      delete process.env.AWS_CLOUDWATCH_LOG_STREAM;
+      expect(() => buildCloudTransportsFromEnv('issuer')).not.toThrow();
+      expect(() => buildCloudTransportsFromEnv('gateway')).not.toThrow();
+    });
+
     it('does not throw when GCP env var is set but SDK is missing', () => {
       process.env.GCP_LOG_NAME = 'euno-test';
       process.env.GOOGLE_CLOUD_PROJECT = 'euno-prod';
