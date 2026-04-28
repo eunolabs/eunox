@@ -113,6 +113,72 @@ describe('euno init', () => {
     const parsed = yaml.load(fs.readFileSync(out, 'utf8')) as Record<string, unknown>;
     expect(parsed.agentId).toBe('myagent');
   });
+
+  describe('--framework', () => {
+    it.each([
+      ['langchain', 'euno-langchain.ts', 'wrapAsLangChainTools'],
+      ['maf', 'euno-maf.ts', 'createEunoFunctionToolMiddleware'],
+      ['crewai', 'euno-crewai.ts', 'wrapAsCrewAITools'],
+    ])(
+      'emits a %s scaffold alongside the manifest',
+      (framework, expectedFilename, expectedSymbol) => {
+        const out = path.join(tmpDir, 'manifest.yaml');
+        const r = runCli([
+          'init',
+          '--agent',
+          'Demo Agent',
+          '--output',
+          out,
+          '--framework',
+          framework,
+        ]);
+        expect(r.status).toBe(0);
+
+        // The manifest must always be written.
+        expect(fs.existsSync(out)).toBe(true);
+
+        // The scaffold lands next to the manifest.
+        const scaffoldPath = path.join(tmpDir, expectedFilename);
+        expect(fs.existsSync(scaffoldPath)).toBe(true);
+
+        const scaffoldContents = fs.readFileSync(scaffoldPath, 'utf8');
+        // Each scaffold must reference its framework adapter symbol so we
+        // catch silent template regressions.
+        expect(scaffoldContents).toContain(expectedSymbol);
+        // And must thread the agent id through the scaffold so the
+        // generated file is actually agent-specific.
+        expect(scaffoldContents).toContain('demo-agent');
+
+        expect(r.stdout).toContain(`Created ${framework} scaffold`);
+      },
+    );
+
+    it('rejects an unsupported framework with a non-zero exit code', () => {
+      const out = path.join(tmpDir, 'manifest.yaml');
+      const r = runCli([
+        'init',
+        '--output',
+        out,
+        '--framework',
+        'autogen', // not in SUPPORTED_FRAMEWORKS
+      ]);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('Unsupported framework');
+      // We must not have written a partial manifest on a validation failure.
+      expect(fs.existsSync(out)).toBe(false);
+    });
+
+    it('does not emit a scaffold when --framework is omitted', () => {
+      const out = path.join(tmpDir, 'manifest.yaml');
+      const r = runCli(['init', '--output', out]);
+      expect(r.status).toBe(0);
+      expect(fs.existsSync(out)).toBe(true);
+      // None of the framework scaffolds should have been written.
+      for (const f of ['euno-langchain.ts', 'euno-maf.ts', 'euno-crewai.ts']) {
+        expect(fs.existsSync(path.join(tmpDir, f))).toBe(false);
+      }
+    });
+  });
 });
 
 describe('euno validate', () => {

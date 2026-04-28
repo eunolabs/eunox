@@ -14,38 +14,70 @@ This implementation follows the **Zero-Trust Agents** pattern documented by Micr
 
 ## Architecture
 
-The system consists of three main components:
+The system is split into focused packages under `packages/`:
 
 ### 1. **Capability Issuer** (`packages/capability-issuer`)
 Issues cryptographically signed capability tokens to authorized agents.
 
 **Key Features:**
-- Azure AD integration for user authentication
-- Azure Key Vault for cryptographic signing
+- Pluggable identity providers: Azure AD, AWS Cognito, GCP Cloud Identity, W3C DID
+- Pluggable signers: Azure Key Vault, AWS KMS, GCP Cloud KMS, DID-bound keys
 - Policy-driven capability issuance based on user roles
-- W3C Verifiable Credentials compatible token format
-- DID (Decentralized Identifier) support
+- Token attenuation (`/api/v1/attenuate`) and renewal (`/api/v1/renew`)
+- W3C-compatible token format with versioned schema (`schemaVersion`)
+- DID resolution for `did:web`, `did:ion`, and `did:key`
+- Discovery endpoints: `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`
 
 ### 2. **Tool Gateway** (`packages/tool-gateway`)
 Enforces capability constraints on all agent actions.
 
 **Key Features:**
 - JWT token verification with signature validation
-- Fine-grained action and resource matching
-- Kill-switch functionality (global, session, and agent-level)
+- Fine-grained, segment-aware action and resource matching
+- Typed `CapabilityCondition` enforcement (time windows, IP allowlists, max-call counters, argument schemas, etc.)
+- Distributed Redis-backed kill-switch (global, session, agent-level) and revocation list, with in-memory fallback for dev
 - Cryptographic audit evidence generation
-- Admin API for operational control
-- Request proxying to backend services
+- Admin API for operational control (kill-switch, revocation)
+- Request proxying to backend services (`/proxy/*`)
 
 ### 3. **Common Library** (`packages/common`)
 Shared types, utilities, and interfaces.
 
 **Key Features:**
-- Type-safe capability data models
-- Pluggable identity provider interface
-- Audit logging utilities
-- Kill-switch manager
+- Type-safe capability data models and the `CapabilityCondition` discriminated union
+- Pluggable identity / signing adapter base classes and registries
+- Audit logging utilities and pluggable log transports
+- Distributed kill-switch manager (in-memory + Redis)
+- Distributed call counter store for `maxCalls` conditions
 - Evidence signing framework
+- Specialized validators for file paths, SQL parameters, table / column names, resource patterns
+- Role-to-capability mapping helpers
+
+### 4. **Agent Runtime** (`packages/agent-runtime`)
+Cloud-agnostic runtime that wraps an agent's tool-call surface and routes
+every invocation through the Tool Gateway, attaching the capability
+token transparently and surfacing structured denial errors. This is the
+substrate the framework adapters sit on top of.
+
+### 5. **Framework Adapters** (`packages/framework-adapters`)
+Framework-native middleware so application authors do not need to
+rewrite agent business logic to adopt Euno:
+
+- **LangChain** — `wrapAsLangChainTool`, `wrapAsLangChainTools`, `EunoLangChainCallbackHandler`
+- **Microsoft Agent Framework (MAF)** — `createEunoFunctionToolMiddleware`, `createEunoAgentRunMiddleware`
+- **CrewAI** — `wrapAsCrewAITool`, `wrapAsCrewAITools`, `EunoCrewAITaskLifecycle`
+
+All three share a single correlation-ID and error-shape contract so
+observability is identical regardless of framework. See
+[`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md) for the design.
+
+### 6. **CLI** (`packages/cli`)
+Developer command-line tool: `euno init` (with `--framework` flag for
+LangChain / MAF / CrewAI scaffolding), `validate`, `request`, `config`,
+`schema-version`, `check`, `plan`, `validate-token`.
+
+### 7. **Integration Tests** (`packages/integration-tests`)
+End-to-end issuer ↔ gateway ↔ agent-runtime test harness.
 
 ## Getting Started
 

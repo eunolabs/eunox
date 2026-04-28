@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Euno capability governance system now implements a clean adapter pattern for identity providers and signing services. This establishes extensible contracts that enable support for multiple implementations, including future Distributed ID (DID) integration.
+The Euno capability governance system implements a clean adapter pattern for identity providers and signing services. This establishes extensible contracts that enable support for multiple implementations: Azure AD + Azure Key Vault, AWS Cognito + AWS KMS, GCP Cloud Identity + GCP Cloud KMS, and W3C Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` / `SigningAdapter` contracts. See [`THIRD_PARTY_PROVIDERS.md`](./THIRD_PARTY_PROVIDERS.md) for the full provider matrix and how to register your own.
 
 ## Architecture
 
@@ -18,9 +18,14 @@ The Euno capability governance system now implements a clean adapter pattern for
    - `AzureADIdentityProvider`: Azure AD identity provider adapter
    - `AzureKeyVaultSigner`: Azure Key Vault signing adapter
 
-3. **DID Stubs** (For Future Implementation)
-   - `DIDIdentityProvider`: Placeholder for W3C DID/VC support
-   - `DIDSigner`: Placeholder for DID-based signing
+3. **DID Implementations**
+   - `DIDIdentityProvider`: Validates capability presentations against
+     resolved DID Documents (`did:web`, `did:ion`, `did:key`)
+   - `DIDSigner`: Signs capability tokens with the issuer's DID-bound
+     private key, publishing the public key via `/.well-known/did.json`
+   - Implementation lives in `packages/capability-issuer/src/{did-identity-provider,did-signer,did-resolver}.ts`;
+     see [`FUTURE_DEVELOPMENT_IMPLEMENTATION.md`](./FUTURE_DEVELOPMENT_IMPLEMENTATION.md)
+     for the resolver design.
 
 ## Key Benefits
 
