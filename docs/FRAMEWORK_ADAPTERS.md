@@ -107,13 +107,14 @@ Every adapter:
 1. Generates (or accepts) a `correlationId` per tool call and threads it
    through both the gateway request and the framework's own trace /
    callback surface.
-2. Translates a gateway `403` denial into a framework-native error
-   whose payload always includes `code`, `reason`, `correlationId`, and
-   `gatewayTool`. Concretely:
+2. Translates a gateway `403` denial into a framework-native
+   `CapabilityDenialError` (exported from `@euno/framework-adapters`)
+   whose payload includes `statusCode`, `errorCode`, `message`,
+   `correlationId`, and `tool` (and optionally `resource`). Concretely:
 
    - **LangChain:** the wrapped tool throws / returns a structured
-     `CapabilityDeniedError`-shaped object that the agent sees in its
-     scratchpad; the callback handler also fires an `EunoCallbackEvent`.
+     `CapabilityDenialError` that the agent sees in its scratchpad;
+     the callback handler also fires an `EunoCallbackEvent`.
    - **MAF:** the function-tool middleware short-circuits before the
      model sees the result on a denial (per the Sprint-2 acceptance
      criterion), and the agent-run middleware emits a structured

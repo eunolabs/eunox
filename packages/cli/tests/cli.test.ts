@@ -116,12 +116,34 @@ describe('euno init', () => {
 
   describe('--framework', () => {
     it.each([
-      ['langchain', 'euno-langchain.ts', 'wrapAsLangChainTools'],
-      ['maf', 'euno-maf.ts', 'createEunoFunctionToolMiddleware'],
-      ['crewai', 'euno-crewai.ts', 'wrapAsCrewAITools'],
-    ])(
+      [
+        'langchain',
+        'euno-langchain.ts',
+        'wrapAsLangChainTools',
+        // LangChain callback handler requires a sink function — assert
+        // the scaffold actually constructs it with one so future template
+        // drift away from the real adapter signature fails CI.
+        ['new EunoLangChainCallbackHandler('],
+      ],
+      [
+        'maf',
+        'euno-maf.ts',
+        'createEunoFunctionToolMiddleware',
+        // MAF middleware signature is (runtime, bindings, options) —
+        // pin the call shape so refactors that move bindings into an
+        // options bag (which would silently break at runtime) fail here.
+        ['createEunoFunctionToolMiddleware(\n    runtime,\n    [', "unknownToolPolicy: 'deny'"],
+      ],
+      [
+        'crewai',
+        'euno-crewai.ts',
+        'wrapAsCrewAITools',
+        // EunoCrewAITaskLifecycle requires a runtime in its constructor.
+        ['new EunoCrewAITaskLifecycle(runtime'],
+      ],
+    ] as const)(
       'emits a %s scaffold alongside the manifest',
-      (framework, expectedFilename, expectedSymbol) => {
+      (framework, expectedFilename, expectedSymbol, expectedCallSites) => {
         const out = path.join(tmpDir, 'manifest.yaml');
         const r = runCli([
           'init',
@@ -148,6 +170,13 @@ describe('euno init', () => {
         // And must thread the agent id through the scaffold so the
         // generated file is actually agent-specific.
         expect(scaffoldContents).toContain('demo-agent');
+        // Pin the actual call-site shape for each adapter so a change
+        // to the adapter API that the scaffold no longer matches fails
+        // CI rather than shipping a non-compilable starter file to
+        // users.
+        for (const callSite of expectedCallSites) {
+          expect(scaffoldContents).toContain(callSite);
+        }
 
         expect(r.stdout).toContain(`Created ${framework} scaffold`);
       },

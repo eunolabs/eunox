@@ -69,9 +69,14 @@ export async function buildEunoLangChainTools() {
   ]);
 
   // 3. Hand the wrapped tools and the Euno callback handler to
-  //    LangChain.  The callback handler emits correlation-IDs so audit
-  //    logs and traces line up.
-  const callbacks = [new EunoLangChainCallbackHandler()];
+  //    LangChain.  The callback handler requires a sink that receives
+  //    every correlation-ID-bearing event so audit logs and traces line
+  //    up.  Replace this console sink with your telemetry pipeline.
+  const callbacks = [
+    new EunoLangChainCallbackHandler((event) => {
+      console.debug('[euno-langchain]', event);
+    }),
+  ];
   return { tools, callbacks, runtime };
 }
 `,
@@ -99,17 +104,21 @@ export async function buildEunoMafMiddleware() {
 
   // 2. The function-tool middleware short-circuits before the model
   //    sees a denied result.  The agent-run middleware emits a
-  //    structured audit event per agent run.
-  const functionToolMiddleware = createEunoFunctionToolMiddleware(runtime, {
-    bindings: [
+  //    structured audit event per agent run.  Note the API:
+  //    \`createEunoFunctionToolMiddleware(runtime, bindings, options)\`.
+  const functionToolMiddleware = createEunoFunctionToolMiddleware(
+    runtime,
+    [
       {
         frameworkToolName: 'example_tool',
         gatewayTool: 'example_tool',
         gatewayResource: 'api://service/example',
       },
     ],
-    unknownToolPolicy: 'deny',
-  });
+    {
+      unknownToolPolicy: 'deny',
+    },
+  );
 
   const agentRunMiddleware = createEunoAgentRunMiddleware(runtime);
 
@@ -151,8 +160,10 @@ export async function buildEunoCrewAITools() {
     },
   ]);
 
-  // 3. The task-lifecycle hook emits a structured audit event per task.
-  const lifecycle = new EunoCrewAITaskLifecycle();
+  // 3. The task-lifecycle hook emits a structured audit event per
+  //    task and refuses to start tasks once the runtime has been
+  //    terminated by the kill switch — so it requires the runtime.
+  const lifecycle = new EunoCrewAITaskLifecycle(runtime);
   return { tools, lifecycle, runtime };
 }
 `,
