@@ -62,8 +62,12 @@ export class EnforcementEngine {
       const sessionId = typeof rawSessionId === 'string' ? rawSessionId : undefined;
       if (this.killSwitchManager && this.killSwitchManager.shouldBlock(sessionId, payload.sub)) {
         await this.logDenial(payload.sub, request.action, request.resource, 'Kill switch activated', sessionId);
+        // Use a distinct error code so callers (e.g. agent-runtime) can tell a
+        // kill-switch denial apart from an ordinary authorization failure and
+        // refuse to refresh-and-retry — refreshing after a kill-switch event
+        // would just produce another doomed token.
         throw new CapabilityError(
-          ErrorCode.AUTHORIZATION_FAILED,
+          ErrorCode.AGENT_TERMINATED,
           'Agent or session has been terminated',
           403
         );

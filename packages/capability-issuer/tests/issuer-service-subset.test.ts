@@ -67,13 +67,22 @@ function makeService(roles: string[]) {
 describe('CapabilityIssuerService subset validation', () => {
   it('grants a concrete resource when the role mapping covers it via /** wildcard (Administrator)', async () => {
     const service = makeService(['Administrator']);
-    // Administrator role includes `api://**` (read/write/admin)
+    // Administrator role includes `api://**` (read/write/admin).  Write is a
+    // sensitive action so the issuer requires an explicit consent record.
     const response = await service.issueCapability({
       authToken: 'irrelevant',
       agentId: 'agent-1',
       requestedCapabilities: [
         { resource: 'api://crm/customers', actions: ['read', 'write'] },
       ],
+      consent: {
+        userId: 'user-1',
+        agentId: 'agent-1',
+        grantedCapabilities: [
+          { resource: 'api://**', actions: ['read', 'write'] },
+        ],
+        grantedAt: Math.floor(Date.now() / 1000),
+      },
     });
 
     expect(response.capabilities).toEqual([

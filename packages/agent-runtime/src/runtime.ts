@@ -8,7 +8,53 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
-import { CapabilityError, ErrorCode } from '@euno/common';
+import {
+  CapabilityError,
+  ErrorCode,
+  CapabilityConstraint,
+  AgentCapabilityManifest,
+  UserConsent,
+} from '@euno/common';
+
+/**
+ * Async provider for short-lived user authentication tokens.
+ *
+ * Production multi-tenant deployments should plug in an OBO
+ * (on-behalf-of) / federated-token exchange here so the agent runtime
+ * never persists a long-lived OIDC token in memory: each call returns a
+ * freshly-minted, narrowly-scoped assertion that the issuer can validate.
+ *
+ * If both `authToken` and `authTokenProvider` are supplied, the provider
+ * takes precedence and the static `authToken` is ignored.
+ */
+export type AuthTokenProvider = () => Promise<string>;
+
+/**
+ * Per-issuance hints supplied to the Capability Issuer alongside `agentId`.
+ *
+ * The runtime forwards every populated field to `POST /api/v1/issue`, so
+ * deployments can opt into the issuer's manifest- and consent-based
+ * issuance hardening (including strict `REQUIRE_USER_CONSENT=true` mode)
+ * without bypassing the runtime's refresh / retry logic.
+ *
+ * Returned synchronously or asynchronously by {@link IssuanceHintsProvider}
+ * so callers can mint fresh consent receipts per refresh if they wish.
+ */
+export interface IssuanceHints {
+  /** Specific capabilities the runtime is requesting (subset of role/manifest). */
+  requestedCapabilities?: CapabilityConstraint[];
+  /** Agent capability manifest — declarative upper bound enforced by the issuer. */
+  manifest?: AgentCapabilityManifest;
+  /** Explicit user consent record bound to (userId, agentId). */
+  consent?: UserConsent;
+}
+
+/**
+ * Async provider for {@link IssuanceHints}.  Invoked on every issuance and
+ * refresh so deployments can supply freshly-signed consent receipts that
+ * expire on a tighter schedule than the capability token itself.
+ */
+export type IssuanceHintsProvider = () => Promise<IssuanceHints> | IssuanceHints;
 
 export interface AgentRuntimeConfig {
   /** Agent identifier */
@@ -20,8 +66,45 @@ export interface AgentRuntimeConfig {
   /** Capability Issuer endpoint for token acquisition */
   issuerUrl: string;
 
-  /** Initial authentication token (Azure AD token, etc.). Required to authenticate with the Capability Issuer. */
-  authToken: string;
+  /**
+   * Initial authentication token (Azure AD token, etc.). Required to
+   * authenticate with the Capability Issuer when no
+   * {@link authTokenProvider} is configured.
+   *
+   * NOTE: storing a long-lived user OIDC token in the runtime turns the
+   * agent process into a high-value secret holder. Prefer
+   * {@link authTokenProvider} which fetches a short-lived token on demand
+   * (e.g. via OBO / STS exchange) and avoids in-memory persistence
+   * between refresh cycles.
+   */
+  authToken?: string;
+
+  /**
+   * Async provider for fresh, short-lived user assertions. Called on
+   * every capability acquisition / refresh; the returned token is used
+   * once and not retained.  When supplied, takes precedence over
+   * {@link authToken}.
+   */
+  authTokenProvider?: AuthTokenProvider;
+
+  /**
+   * Static issuance hints (`requestedCapabilities`, `manifest`, `consent`)
+   * forwarded on every `/api/v1/issue` call.  Use this for deployments
+   * that have a fixed manifest and a long-lived consent receipt.
+   *
+   * If both {@link issuanceHints} and {@link issuanceHintsProvider} are
+   * supplied, the provider takes precedence so callers can rotate consent
+   * per refresh.
+   */
+  issuanceHints?: IssuanceHints;
+
+  /**
+   * Async provider invoked on every issuance / refresh to produce fresh
+   * issuance hints (e.g. a newly-signed consent receipt). Required when
+   * the issuer is configured with `REQUIRE_USER_CONSENT=true` *and* the
+   * caller wants per-refresh consent rotation.
+   */
+  issuanceHintsProvider?: IssuanceHintsProvider;
 
   /** Token refresh interval in seconds (default: 600s = 10 minutes) */
   tokenRefreshInterval?: number;
@@ -50,6 +133,15 @@ export interface ToolCallResponse {
 
   /** HTTP status code */
   statusCode: number;
+
+  /**
+   * Structured error code from the gateway/issuer (e.g. `EXPIRED_TOKEN`,
+   * `TOKEN_REVOKED`, `AGENT_TERMINATED`), when one was returned. Lets
+   * callers distinguish recoverable failures (refresh & retry) from
+   * terminal ones (kill switch, explicit revocation) without parsing
+   * error messages.
+   */
+  errorCode?: string;
 }
 
 /**
@@ -69,8 +161,24 @@ export class AgentRuntime {
   private capabilityToken?: string;
   private httpClient: AxiosInstance;
   private tokenRefreshTimer?: NodeJS.Timeout;
+  /**
+   * Set to `true` once the gateway has reported that this agent/session has
+   * been killed via the control-plane kill switch.  When set, the periodic
+   * refresh loop is halted and subsequent tool invocations fail fast — any
+   * new capability token would be blocked by the same kill switch, so
+   * refreshing is pointless and simply leaks a "doomed" token.
+   */
+  private terminated: boolean = false;
 
   constructor(config: AgentRuntimeConfig) {
+    if (!config.authToken && !config.authTokenProvider) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'AgentRuntime requires either authToken or authTokenProvider',
+        400
+      );
+    }
+
     this.config = {
       tokenRefreshInterval: 600, // 10 minutes default
       ...config,
@@ -103,22 +211,96 @@ export class AgentRuntime {
   }
 
   /**
+   * Returns whether the agent has been terminated by the control plane.
+   */
+  isTerminated(): boolean {
+    return this.terminated;
+  }
+
+  /**
+   * Resolve the user authentication token used to authenticate to the
+   * Capability Issuer.  Prefers the async provider (recommended for OBO /
+   * federated short-lived tokens) over the static config value.
+   *
+   * The returned token is intentionally not cached on the instance so the
+   * runtime never holds a user assertion longer than a single issuance call.
+   */
+  private async resolveAuthToken(): Promise<string> {
+    if (this.config.authTokenProvider) {
+      const token = await this.config.authTokenProvider();
+      if (!token) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'authTokenProvider returned an empty token',
+          401
+        );
+      }
+      return token;
+    }
+    if (!this.config.authToken) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'No authToken or authTokenProvider configured',
+        401
+      );
+    }
+    return this.config.authToken;
+  }
+
+  /**
+   * Resolve issuance hints (`requestedCapabilities` / `manifest` / `consent`)
+   * to send with the issuance request.  The async provider takes precedence
+   * over the static config so deployments can rotate consent receipts on
+   * every refresh.
+   */
+  private async resolveIssuanceHints(): Promise<IssuanceHints> {
+    if (this.config.issuanceHintsProvider) {
+      const hints = await this.config.issuanceHintsProvider();
+      return hints ?? {};
+    }
+    return this.config.issuanceHints ?? {};
+  }
+
+  /**
    * Acquire a capability token from the Issuer
    */
   private async acquireCapabilityToken(): Promise<void> {
+    if (this.terminated) {
+      throw new CapabilityError(
+        ErrorCode.AGENT_TERMINATED,
+        'Agent has been terminated by the control plane; refusing to acquire a new capability token',
+        403
+      );
+    }
+
     const issuerClient = axios.create({
       baseURL: this.config.issuerUrl,
       timeout: 10000,
       validateStatus: () => true, // Handle all status codes manually
     });
 
+    const userAuthToken = await this.resolveAuthToken();
+    const hints = await this.resolveIssuanceHints();
+
+    // Build the request body.  Only include hint fields that were actually
+    // supplied so we don't accidentally send `undefined`/`null` values that
+    // the issuer's input validators might choke on.
+    const body: Record<string, unknown> = { agentId: this.config.agentId };
+    if (hints.requestedCapabilities !== undefined) {
+      body.requestedCapabilities = hints.requestedCapabilities;
+    }
+    if (hints.manifest !== undefined) {
+      body.manifest = hints.manifest;
+    }
+    if (hints.consent !== undefined) {
+      body.consent = hints.consent;
+    }
+
     let response;
     try {
-      response = await issuerClient.post('/api/v1/issue', {
-        agentId: this.config.agentId,
-      }, {
+      response = await issuerClient.post('/api/v1/issue', body, {
         headers: {
-          'Authorization': `Bearer ${this.config.authToken}`,
+          'Authorization': `Bearer ${userAuthToken}`,
         },
       });
     } catch (error) {
@@ -160,20 +342,78 @@ export class AgentRuntime {
     const interval = (this.config.tokenRefreshInterval || 600) * 1000;
 
     const refreshCycle = async (): Promise<void> => {
+      if (this.terminated) {
+        // Control-plane kill switch fired — stop the loop entirely.
+        this.tokenRefreshTimer = undefined;
+        return;
+      }
       try {
         await this.acquireCapabilityToken();
       } catch (error) {
         console.error('Failed to refresh capability token:', error);
       } finally {
-        this.tokenRefreshTimer = setTimeout(() => {
-          void refreshCycle();
-        }, interval);
+        if (!this.terminated) {
+          this.tokenRefreshTimer = setTimeout(() => {
+            void refreshCycle();
+          }, interval);
+        } else {
+          this.tokenRefreshTimer = undefined;
+        }
       }
     };
 
     this.tokenRefreshTimer = setTimeout(() => {
       void refreshCycle();
     }, interval);
+  }
+
+  /**
+   * Extract the structured error code returned by the gateway error
+   * middleware, which serializes a `CapabilityError` as
+   * `{ error: { code, message } }`.  Returns `undefined` when the body is
+   * missing or doesn't carry a code (e.g. proxied upstream error).
+   */
+  private extractErrorCode(data: unknown): string | undefined {
+    if (!data || typeof data !== 'object') return undefined;
+    const err = (data as { error?: unknown }).error;
+    if (err && typeof err === 'object' && typeof (err as { code?: unknown }).code === 'string') {
+      return (err as { code: string }).code;
+    }
+    if (typeof (data as { code?: unknown }).code === 'string') {
+      return (data as { code: string }).code;
+    }
+    return undefined;
+  }
+
+  /**
+   * Decide whether a 401 response from the gateway warrants a refresh+retry.
+   *
+   * - `EXPIRED_TOKEN` → yes, the token simply aged out; refresh and try again.
+   * - `TOKEN_REVOKED` → no, an admin has explicitly revoked this token; the
+   *   caller must surface the failure rather than silently rotate.
+   * - any other code (e.g. `INVALID_TOKEN`) → no, refreshing won't help.
+   * - missing/unknown code → fall back to refresh+retry once for back-compat.
+   */
+  private shouldRefreshOn401(code?: string): boolean {
+    if (!code) return true;
+    return code === ErrorCode.EXPIRED_TOKEN;
+  }
+
+  /**
+   * Build a {@link ToolCallResponse} from a raw axios response, capturing the
+   * structured error code when the gateway returned one.
+   */
+  private buildResponse(response: { status: number; data: any }): ToolCallResponse {
+    const code = this.extractErrorCode(response.data);
+    return {
+      success: response.status >= 200 && response.status < 300,
+      data: response.data,
+      error: response.status >= 400
+        ? (response.data?.error?.message ?? response.data?.error ?? response.data?.message)
+        : undefined,
+      statusCode: response.status,
+      errorCode: code,
+    };
   }
 
   /**
@@ -186,6 +426,15 @@ export class AgentRuntime {
    * 3. Logged and audited by the gateway
    */
   async invokeTool(request: ToolCallRequest): Promise<ToolCallResponse> {
+    if (this.terminated) {
+      return {
+        success: false,
+        error: 'Agent has been terminated by the control plane',
+        statusCode: 403,
+        errorCode: ErrorCode.AGENT_TERMINATED,
+      };
+    }
+
     if (!this.capabilityToken) {
       // Try to acquire token if we don't have one
       await this.acquireCapabilityToken();
@@ -211,9 +460,31 @@ export class AgentRuntime {
         },
       });
 
-      // Handle 401 (expired token) by refreshing and retrying once
-      if (response.status === 401) {
-        await this.acquireCapabilityToken();
+      // Distinguish failure modes via the structured error code returned by
+      // the gateway, rather than treating all 401s as "expired".
+      const code = this.extractErrorCode(response.data);
+
+      // 403 + AGENT_TERMINATED → kill switch fired.  Stop refreshing and
+      // mark the runtime terminated so we don't keep minting doomed tokens.
+      if (response.status === 403 && code === ErrorCode.AGENT_TERMINATED) {
+        this.terminated = true;
+        if (this.tokenRefreshTimer) {
+          clearTimeout(this.tokenRefreshTimer);
+          this.tokenRefreshTimer = undefined;
+        }
+        return this.buildResponse(response);
+      }
+
+      // 401 → only refresh+retry when the token actually expired.  Revoked,
+      // invalid, or otherwise rejected tokens won't be helped by a refresh.
+      if (response.status === 401 && this.shouldRefreshOn401(code)) {
+        try {
+          await this.acquireCapabilityToken();
+        } catch (refreshError) {
+          // If refresh itself fails (e.g. terminated mid-flight), surface the
+          // original 401 with its structured code intact.
+          return this.buildResponse(response);
+        }
 
         const retryResponse = await this.httpClient.post('/api/v1/tools/invoke', {
           tool: request.tool,
@@ -226,20 +497,19 @@ export class AgentRuntime {
           },
         });
 
-        return {
-          success: retryResponse.status >= 200 && retryResponse.status < 300,
-          data: retryResponse.data,
-          error: retryResponse.status >= 400 ? retryResponse.data?.error : undefined,
-          statusCode: retryResponse.status,
-        };
+        const retryCode = this.extractErrorCode(retryResponse.data);
+        if (retryResponse.status === 403 && retryCode === ErrorCode.AGENT_TERMINATED) {
+          this.terminated = true;
+          if (this.tokenRefreshTimer) {
+            clearTimeout(this.tokenRefreshTimer);
+            this.tokenRefreshTimer = undefined;
+          }
+        }
+
+        return this.buildResponse(retryResponse);
       }
 
-      return {
-        success: response.status >= 200 && response.status < 300,
-        data: response.data,
-        error: response.status >= 400 ? response.data?.error : undefined,
-        statusCode: response.status,
-      };
+      return this.buildResponse(response);
     } catch (error) {
       return {
         success: false,
@@ -261,6 +531,15 @@ export class AgentRuntime {
     url: string,
     data?: unknown
   ): Promise<ToolCallResponse> {
+    if (this.terminated) {
+      return {
+        success: false,
+        error: 'Agent has been terminated by the control plane',
+        statusCode: 403,
+        errorCode: ErrorCode.AGENT_TERMINATED,
+      };
+    }
+
     if (!this.capabilityToken) {
       await this.acquireCapabilityToken();
     }
@@ -286,12 +565,16 @@ export class AgentRuntime {
         },
       });
 
-      return {
-        success: response.status >= 200 && response.status < 300,
-        data: response.data,
-        error: response.status >= 400 ? response.data?.error : undefined,
-        statusCode: response.status,
-      };
+      const code = this.extractErrorCode(response.data);
+      if (response.status === 403 && code === ErrorCode.AGENT_TERMINATED) {
+        this.terminated = true;
+        if (this.tokenRefreshTimer) {
+          clearTimeout(this.tokenRefreshTimer);
+          this.tokenRefreshTimer = undefined;
+        }
+      }
+
+      return this.buildResponse(response);
     } catch (error) {
       return {
         success: false,
