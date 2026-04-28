@@ -100,6 +100,19 @@ export interface RoleCapabilityPolicy {
    * tenant claim, GCP project ID).
    */
   tenants?: Record<string, RoleCapabilityMap>;
+  /**
+   * Optional mapping from role name → IAM-mapped database principal name.
+   * Consumed by the DB-token issuance pipeline (see
+   * `docs/sprint-3-4-gaps/08-db-token-issuance.md` § 5) to look up which
+   * `dbUsername` to bind a minted credential to. The agent never supplies
+   * this — it is resolved from the requesting user's roles, eliminating
+   * the privilege-escalation vector of agent-chosen DB principals.
+   *
+   * When a user has multiple roles with `dbUsername` entries, the first
+   * one in `userContext.roles` order wins (matching the deterministic
+   * iteration order of {@link mapRolesToCapabilities}).
+   */
+  dbUsernamesByRole?: Record<string, string>;
 }
 
 /**
@@ -256,6 +269,25 @@ export function validateRoleCapabilityPolicy(value: unknown): RoleCapabilityPoli
       tenants[tenantId] = validateRoleCapabilityMap(tenantMap, `tenants.${tenantId}`);
     }
     policy.tenants = tenants;
+  }
+  if (obj.dbUsernamesByRole !== undefined) {
+    if (
+      typeof obj.dbUsernamesByRole !== 'object' ||
+      obj.dbUsernamesByRole === null ||
+      Array.isArray(obj.dbUsernamesByRole)
+    ) {
+      throw new Error("role capability policy: 'dbUsernamesByRole' must be an object keyed by role name");
+    }
+    const dbUsernames: Record<string, string> = {};
+    for (const [role, name] of Object.entries(obj.dbUsernamesByRole as Record<string, unknown>)) {
+      if (typeof name !== 'string' || name.length === 0) {
+        throw new Error(
+          `role capability policy: dbUsernamesByRole.${role} must be a non-empty string`,
+        );
+      }
+      dbUsernames[role] = name;
+    }
+    policy.dbUsernamesByRole = dbUsernames;
   }
   return policy;
 }
