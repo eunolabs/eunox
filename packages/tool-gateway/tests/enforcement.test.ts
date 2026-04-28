@@ -15,6 +15,7 @@ import {
   SignedAuditEvidence,
   EvidenceSigner,
   InMemoryCallCounterStore,
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -48,6 +49,7 @@ describe('EnforcementEngine', () => {
       iat: getCurrentTimestamp(),
       exp: getExpirationTimestamp(900),
       jti: `test-${Date.now()}`,
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
       capabilities,
       ...extra,
     };
@@ -125,6 +127,7 @@ describe('EnforcementEngine', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: 'test-token',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [{ resource: 'api://test', actions: ['read'] }],
       };
 

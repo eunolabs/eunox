@@ -27,6 +27,7 @@ import {
   AgentCapabilityManifest,
   validateConditions,
   ConditionValidationError,
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -226,6 +227,7 @@ export class CapabilityIssuerService {
         iat: now,
         exp: expiresAt,
         jti: tokenId,
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities,
         authorizedBy: {
           userId: userContext.userId,
@@ -579,6 +581,7 @@ export class CapabilityIssuerService {
         iat: now,
         exp: expiresAt,
         jti: tokenId,
+        schemaVersion: parentPayload.schemaVersion,
         capabilities: requestedCapabilities,
         parentCapabilityId: parentPayload.jti, // Link to parent
         authorizedBy: parentPayload.authorizedBy,
@@ -826,6 +829,7 @@ export class CapabilityIssuerService {
         iat: now,
         exp: expiresAt,
         jti: tokenId,
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: currentPayload.capabilities, // Same capabilities
         parentCapabilityId: currentPayload.jti, // Link to previous token for audit trail
         authorizedBy: currentPayload.authorizedBy,

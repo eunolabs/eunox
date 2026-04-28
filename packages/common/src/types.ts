@@ -44,6 +44,24 @@ export function isLegacyAction(action: string): action is LegacyAction {
 }
 
 /**
+ * Current capability token schema version. Issuers populate the
+ * `schemaVersion` field with this value; gateways validate it at enforcement
+ * time and reject unknown versions (fail-closed on schema evolution).
+ *
+ * Version history:
+ *  - "1.0": Initial typed-condition schema (April 2026).
+ */
+export const CAPABILITY_TOKEN_SCHEMA_VERSION = '1.0' as const;
+
+/**
+ * Set of schema versions this implementation can process. Tokens carrying
+ * other versions are rejected at verification time (fail-closed).
+ */
+export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
+]);
+
+/**
  * Discriminated union of capability conditions enforceable by the
  * tool-gateway and validated at mint time by the capability issuer.
  *
@@ -186,6 +204,12 @@ export interface CustomCondition {
  *    gateway's enforcement engine, so capabilities can constrain *what* a tool
  *    is invoked with, not just whether it can be invoked.
  *
+ * Set `strict: true` to enable maximum-strictness mode:
+ *  - ALL object values must explicitly list every allowed property in `properties`
+ *    (object-shape constraints are no longer required to "declare" the shape first)
+ *  - `strict` is propagated automatically to all nested property schemas and
+ *    `items` schemas so the whole schema tree is evaluated with the same stance
+ *
  * NOTE: This is NOT a substitute for parameterized queries / safe APIs in the
  * downstream backend. It enforces *agent-visible* contracts (what an agent
  * may send), so an attacker-controlled prompt cannot smuggle arbitrary fields
@@ -231,6 +255,21 @@ export interface ArgumentSchema {
   minItems?: number;
   /** Optional human-readable description of the constraint (for audit). */
   description?: string;
+  /**
+   * Enable strict validation mode. When `true`:
+   *  - Every object value is treated as if it declares its shape, so
+   *    `additionalProperties: false` is enforced on ALL plain-object values
+   *    regardless of whether `properties`, `required`, or `additionalProperties`
+   *    are explicitly present in the schema.
+   *  - Strict mode is propagated automatically to all nested `properties` schemas
+   *    and to the `items` schema for array types, so the entire schema tree is
+   *    validated with the same strictness.
+   *
+   * Defaults to `false` to preserve backward-compatibility. New capabilities
+   * that want the strongest argument-allowlisting guarantees should set this
+   * to `true`.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -277,6 +316,19 @@ export interface CapabilityTokenPayload {
   exp: number;
   /** JWT ID - unique token identifier (JWT 'jti' claim) */
   jti: string;
+  /**
+   * Schema version of this capability token. Enables forward/backward
+   * compatibility during schema evolution. Current version is "1.0".
+   *
+   * - "1.0": Current schema with typed conditions
+   * - Future versions: May introduce new fields or change semantics
+   *
+   * This field is required. Gateways MUST reject tokens with missing,
+   * malformed, or unrecognized schema versions (fail-closed). The `kid`
+   * (key ID) in the JWT header provides an orthogonal "rotate all tokens
+   * signed with key X" mechanism.
+   */
+  schemaVersion: string;
   /** Capability constraints defining allowed actions */
   capabilities: CapabilityConstraint[];
   /** Optional: parent capability token ID for delegation chains */

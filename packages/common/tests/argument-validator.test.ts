@@ -219,4 +219,101 @@ describe('validateArguments', () => {
       ).toThrow(CapabilityError);
     });
   });
+
+  describe('strict mode flag', () => {
+    it('allows unknown properties on objects that do not declare shape in non-strict mode', () => {
+      // A schema with type: 'object' already enforces additionalProperties: false by default.
+      // The distinction with strict mode: schemas that don't declare any object-shape
+      // keywords (no properties, required, additionalProperties, or type:object) do NOT
+      // enforce additionalProperties in normal mode, but DO in strict mode.
+      // Example: a schema with only a `description` field is not a shape constraint.
+      const noShapeSchema: ArgumentSchema = { description: 'meta-only, no shape declared' };
+      // In non-strict mode, passing an object value through a non-shape schema is allowed
+      expect(() => validateArguments({ anything: true }, noShapeSchema)).not.toThrow();
+    });
+
+    it('rejects objects with extra properties when strict is true', () => {
+      const schema: ArgumentSchema = {
+        strict: true,
+        type: 'object',
+        properties: { name: { type: 'string' } },
+      };
+      expect(() =>
+        validateArguments({ name: 'Alice', extra: 'disallowed' }, schema)
+      ).toThrow(/disallowed property "extra"/);
+    });
+
+    it('accepts objects that conform to schema in strict mode', () => {
+      const schema: ArgumentSchema = {
+        strict: true,
+        type: 'object',
+        properties: { name: { type: 'string' } },
+      };
+      expect(() => validateArguments({ name: 'Alice' }, schema)).not.toThrow();
+    });
+
+    it('enforces additionalProperties on objects without explicit shape declaration when strict is true', () => {
+      // In strict mode, even a schema without properties/required/additionalProperties
+      // should treat ANY object as declaring its shape (empty allowlist)
+      const schema: ArgumentSchema = { strict: true, type: 'object' };
+      expect(() => validateArguments({ unexpected: 'field' }, schema)).toThrow(
+        /disallowed property "unexpected"/
+      );
+      // An empty object passes
+      expect(() => validateArguments({}, schema)).not.toThrow();
+    });
+
+    it('propagates strict mode to nested property schemas', () => {
+      const schema: ArgumentSchema = {
+        strict: true,
+        type: 'object',
+        properties: {
+          // Nested schema does NOT re-declare strict, but inherits it
+          address: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+          },
+        },
+      };
+      // Nested object with extra property should be rejected even though address schema
+      // doesn't explicitly set strict: true
+      expect(() =>
+        validateArguments({ address: { city: 'NYC', zip: '10001' } }, schema)
+      ).toThrow(/disallowed property "zip"/);
+    });
+
+    it('nested schema can opt out of strict mode with strict: false', () => {
+      const schema: ArgumentSchema = {
+        strict: true,
+        type: 'object',
+        properties: {
+          // Nested schema explicitly opts out of strict mode
+          metadata: {
+            strict: false,
+            additionalProperties: true,
+            type: 'object',
+          },
+        },
+      };
+      // metadata has strict: false + additionalProperties: true so extra fields are fine
+      expect(() =>
+        validateArguments({ metadata: { arbitrary: 'value', extra: 1 } }, schema)
+      ).not.toThrow();
+    });
+
+    it('propagates strict mode into array item schemas', () => {
+      const schema: ArgumentSchema = {
+        strict: true,
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+        },
+      };
+      expect(() =>
+        validateArguments([{ id: 'abc', extra: 'field' }], schema)
+      ).toThrow(/disallowed property "extra"/);
+      expect(() => validateArguments([{ id: 'abc' }], schema)).not.toThrow();
+    });
+  });
 });
