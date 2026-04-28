@@ -67,13 +67,22 @@ function makeService(roles: string[]) {
 describe('CapabilityIssuerService subset validation', () => {
   it('grants a concrete resource when the role mapping covers it via /** wildcard (Administrator)', async () => {
     const service = makeService(['Administrator']);
-    // Administrator role includes `api://**` (read/write/admin)
+    // Administrator role includes `api://**` (read/write/admin).  Write is a
+    // sensitive action so the issuer requires an explicit consent record.
     const response = await service.issueCapability({
       authToken: 'irrelevant',
       agentId: 'agent-1',
       requestedCapabilities: [
         { resource: 'api://crm/customers', actions: ['read', 'write'] },
       ],
+      consent: {
+        userId: 'user-1',
+        agentId: 'agent-1',
+        grantedCapabilities: [
+          { resource: 'api://**', actions: ['read', 'write'] },
+        ],
+        grantedAt: Math.floor(Date.now() / 1000),
+      },
     });
 
     expect(response.capabilities).toEqual([
@@ -125,13 +134,134 @@ describe('CapabilityIssuerService subset validation', () => {
       }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
+
+  // Argument-level constraints declared on a parent capability must not
+  // be silently dropped by attenuation. If the parent restricts the
+  // *shape* of arguments via `argumentSchema`, a child capability cannot
+  // be issued without carrying the same schema.
+  describe('argumentSchema attenuation guard', () => {
+    const parentSchema = {
+      type: 'object' as const,
+      properties: {
+        customerId: { type: 'string' as const, pattern: '[a-zA-Z0-9-]+' },
+      },
+      required: ['customerId'],
+    };
+
+    it('rejects attenuation that drops the parent argumentSchema', () => {
+      const service = makeService(['Viewer']);
+      // Reach into the private subset validator — the public attenuate
+      // path requires a real signed token, which is overkill here.
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [{ resource: 'api://crm/customers', actions: ['read'] }]
+        )
+      ).toThrow(/argumentSchema/);
+    });
+
+    it('rejects attenuation that mutates the parent argumentSchema', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: {
+                type: 'object',
+                properties: { customerId: { type: 'string' } },
+                additionalProperties: true, // loosened
+              },
+            },
+          ]
+        )
+      ).toThrow(/argumentSchema/);
+    });
+
+    it('accepts attenuation that preserves the parent argumentSchema (key order independent)', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      // Same content, different key insertion order.
+      const equivalentChildSchema = {
+        required: ['customerId'],
+        properties: {
+          customerId: { pattern: '[a-zA-Z0-9-]+', type: 'string' },
+        },
+        type: 'object',
+      };
+
+      expect(() =>
+        validate(
+          [
+            { resource: 'api://crm/customers', actions: ['read'], argumentSchema: parentSchema },
+          ],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: equivalentChildSchema,
+            },
+          ]
+        )
+      ).not.toThrow();
+    });
+
+    it('allows a child to introduce a new argumentSchema when the parent has none', () => {
+      const service = makeService(['Viewer']);
+      const validate = (service as unknown as {
+        validateCapabilitySubset(
+          parents: unknown[],
+          children: unknown[]
+        ): void;
+      }).validateCapabilitySubset.bind(service);
+
+      expect(() =>
+        validate(
+          [{ resource: 'api://crm/customers', actions: ['read'] }],
+          [
+            {
+              resource: 'api://crm/customers',
+              actions: ['read'],
+              argumentSchema: parentSchema,
+            },
+          ]
+        )
+      ).not.toThrow();
+    });
+  });
 });
 
 describe('CapabilityIssuerService externalised role policy', () => {
   function makeServiceWithPolicy(
     roles: string[],
     tenantId: string | undefined,
-    policy: ConstructorParameters<typeof CapabilityIssuerService>[5],
+    policy: NonNullable<ConstructorParameters<typeof CapabilityIssuerService>[5]>['policy'],
   ) {
     const identity = new StubIdentityProvider({
       userId: 'user-1',
@@ -141,7 +271,7 @@ describe('CapabilityIssuerService externalised role policy', () => {
       claims: {},
     });
     const signer = new StubSigner();
-    return new CapabilityIssuerService(signer, identity, 'did:web:example.com', 900, logger, policy);
+    return new CapabilityIssuerService(signer, identity, 'did:web:example.com', 900, logger, { policy });
   }
 
   it('uses the supplied policy instead of the in-code default', async () => {

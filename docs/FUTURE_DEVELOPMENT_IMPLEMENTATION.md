@@ -188,15 +188,22 @@ Implemented comprehensive security validation for capability types to prevent co
 
 **Function:** `validateFilePath(filePath: string, allowedExtensions?: string[])`
 
-**Prevents:**
+**Prevents (structural / unambiguous checks only):**
 - ✅ Absolute paths (`/etc/passwd`, `C:\Windows\System32`)
-- ✅ Parent directory references (`../`, `..\\`)
+- ✅ Parent directory references (`../`, `..\\`, percent-encoded `%2e%2e`)
 - ✅ Hidden files (`.bashrc`, `.ssh/`)
-- ✅ Null bytes (`\0`)
-- ✅ URL encoding attacks (`%00`, `%2e%2e`)
-- ✅ Variable interpolation (`${var}`)
+- ✅ Null bytes (`\0`, percent-encoded `%00`)
 - ✅ Home directory references (`~/`)
-- ✅ Script injection patterns
+- ✅ Optional file-extension allowlist
+
+> The earlier "dangerous content" denylist (script tags,
+> `javascript:`, variable interpolation, etc.) has been removed —
+> it both missed real attacks and rejected legitimate filenames
+> (`docs/javascript-tutorial.md`, `report-${quarter}.pdf`). The
+> storage layer is responsible for resolving the path against a
+> fixed root and refusing anything outside it; declare an
+> `argumentSchema` with a `pattern`/`enum` on the capability if you
+> need to constrain *which* paths an agent may touch.
 
 **Example Usage:**
 ```typescript
@@ -208,36 +215,51 @@ validateFilePath('data/users.json', ['.json', '.csv']);
 validateFilePath('/etc/passwd');           // Absolute path
 validateFilePath('../secrets.txt');        // Parent reference
 validateFilePath('.bashrc');               // Hidden file
-validateFilePath('file${injection}.txt');  // Injection attempt
+validateFilePath('file%00.txt');           // Encoded null byte
 ```
 
-#### 2.3 SQL Injection Prevention
+#### 2.3 SQL Parameter Hygiene (NOT Injection Prevention)
+
+> **Important correction.** The earlier blacklist-based version of
+> `validateSQLParameter` (regexes for `UNION SELECT`, `xp_cmdshell`, `'OR
+> 1=1`, etc.) has been removed. Blacklist filtering for SQL is a known
+> anti-pattern: it both misses real attacks (encoding tricks, stacked
+> queries, dialect differences, blind / second-order injection) and
+> rejects legitimate input (names containing apostrophes, free-text fields
+> with the word "select", numeric strings that look like hex). It also
+> creates false confidence — callers may believe they have an SQL
+> injection defense when they do not.
+>
+> **The only correct defense against SQL injection is parameterized
+> queries / prepared statements in the data-access layer.** Use them.
 
 **Functions:**
-- `validateSQLParameter(value: string)` - Validate query parameters
-- `validateTableName(tableName: string)` - Validate table names
-- `validateColumnName(columnName: string)` - Validate column names
+- `validateSQLParameter(value: string, allowedPattern?: RegExp, maxLength?: number)`
+  — generic structural hygiene only: rejects null bytes, enforces a
+  length cap, and (optionally) enforces a caller-supplied allowlist
+  regex. **Does not detect SQL injection.**
+- `validateTableName(tableName: string)` — allowlist for identifier
+  syntax (start with letter, alphanumeric + underscore, ≤ 64 chars,
+  reject reserved words).
+- `validateColumnName(columnName: string)` — same shape as table-name
+  validation.
 
-**Prevents:**
-- ✅ SQL comments (`--`, `/*`, `*/`, `#`)
-- ✅ OR-based injection (`' OR '1'='1`)
-- ✅ UNION-based injection (`UNION SELECT`)
-- ✅ Command execution (`EXEC`, `xp_cmdshell`)
-- ✅ File operations (`INTO OUTFILE`, `LOAD_FILE`)
-- ✅ Statement chaining (`; DROP TABLE`)
-- ✅ Excessive quotes (potential string escape)
-- ✅ SQL reserved keywords in table/column names
+**Recommended pattern: declare an `argumentSchema` on the capability**
+instead of remembering to call these helpers from every adapter. The
+tool gateway's enforcement engine validates `argumentSchema` on every
+call (see §3 below).
 
-**Example Usage:**
 ```typescript
 // Valid parameters
 validateSQLParameter('John Doe');
-validateSQLParameter("O'Brien");  // Single quote in name is OK
+validateSQLParameter("O'Brien");
 
-// Invalid parameters (throw CapabilityError)
-validateSQLParameter("' OR '1'='1");           // OR injection
-validateSQLParameter("'; DROP TABLE users--"); // Drop table
-validateSQLParameter("UNION SELECT password"); // Union attack
+// Caller-supplied allowlist for fields with a known narrow grammar:
+validateSQLParameter(uuid, /[0-9a-f-]+/i); // UUID-shaped only
+
+// Structural rejections only:
+validateSQLParameter('test\0value');               // null byte
+validateSQLParameter('a'.repeat(5000));            // exceeds maxLength
 
 // Table name validation
 validateTableName('users');         // Valid
@@ -246,7 +268,38 @@ validateTableName('123users');      // Invalid - starts with number
 validateTableName('DROP');          // Invalid - reserved keyword
 ```
 
-#### 2.4 Resource Pattern Validation
+#### 2.4 First-Class Argument-Level Enforcement
+
+Capabilities can declare an `argumentSchema` (allowlist-based,
+JSON-Schema subset) describing the exact shape of arguments / request
+body permitted under the capability. The tool gateway's enforcement
+engine validates `argumentSchema` on every call after the
+`(action, resource)` authorization check, and rejects any call whose
+arguments do not conform. Unknown properties are rejected by default
+(`additionalProperties: false`).
+
+```typescript
+const cap: CapabilityConstraint = {
+  resource: 'api://crm/customers',
+  actions: ['read'],
+  argumentSchema: {
+    type: 'object',
+    properties: {
+      customerId: { type: 'string', pattern: '[a-zA-Z0-9-]+', maxLength: 64 },
+      fields: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+    },
+    required: ['customerId'],
+  },
+};
+```
+
+With this schema, an agent holding the capability may call
+`api://crm/customers` with `{ customerId, fields }` only. Any extra
+field — `body`, `role`, an SQL fragment hidden in `where`, etc. — is
+rejected and audited as a denial. Capability attenuation cannot drop
+or loosen a parent's `argumentSchema`.
+
+#### 2.5 Resource Pattern Validation
 
 **Function:** `validateResourcePattern(resourcePattern: string)`
 

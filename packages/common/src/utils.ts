@@ -183,6 +183,13 @@ export enum ErrorCode {
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
   AUTHORIZATION_FAILED = 'AUTHORIZATION_FAILED',
   TOKEN_REVOKED = 'TOKEN_REVOKED',
+  /**
+   * The agent or session has been terminated by an out-of-band control-plane
+   * action (kill switch). Distinct from {@link TOKEN_REVOKED} because *any*
+   * future token issued for this agent/session will also be blocked until the
+   * kill switch is released, so callers MUST NOT auto-refresh and retry.
+   */
+  AGENT_TERMINATED = 'AGENT_TERMINATED',
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
   NOT_IMPLEMENTED = 'NOT_IMPLEMENTED',
