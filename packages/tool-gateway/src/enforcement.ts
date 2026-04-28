@@ -133,17 +133,7 @@ export class EnforcementEngine {
       // constraints (preserving existing behaviour for callers that have
       // not yet adopted argument schemas).
       if (matchedCapability?.argumentSchema) {
-        // Conventional context keys: `args` (used by tool-invoke) or
-        // `body` (used by the HTTP proxy middleware). If neither is set,
-        // validate against the entire context object so the schema's
-        // `additionalProperties: false` default still rejects unknown
-        // fields rather than silently passing.
-        const argsToValidate =
-          request.context && Object.prototype.hasOwnProperty.call(request.context, 'args')
-            ? request.context.args
-            : request.context && Object.prototype.hasOwnProperty.call(request.context, 'body')
-              ? request.context.body
-              : undefined;
+        const argsToValidate = extractArgsForValidation(request.context);
 
         try {
           validateArguments(argsToValidate, matchedCapability.argumentSchema);
@@ -327,4 +317,27 @@ export class EnforcementEngine {
 
     this.auditLogger.info('Action denied', auditEntry);
   }
+}
+
+/**
+ * Pick the value to feed into argument-schema validation from a
+ * validation-request context. The tool-gateway sets `args` on the
+ * tool-invoke path and `body` on the proxy path; we honour either,
+ * preferring `args` when both are present. If neither key is set we
+ * return `undefined` so the schema is evaluated against an empty value
+ * (and any `required` constraint correctly rejects the call).
+ */
+function extractArgsForValidation(
+  context: Record<string, unknown> | undefined
+): unknown {
+  if (!context) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(context, 'args')) {
+    return context.args;
+  }
+  if (Object.prototype.hasOwnProperty.call(context, 'body')) {
+    return context.body;
+  }
+  return undefined;
 }

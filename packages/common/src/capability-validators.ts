@@ -194,9 +194,15 @@ export function validateSQLParameter(
   }
 
   // Optional caller-supplied allowlist. Anchored to whole-string match so
-  // callers cannot accidentally accept attacker-controlled prefixes.
+  // callers cannot accidentally accept attacker-controlled prefixes. The
+  // `g` flag would make `.test()` stateful via `lastIndex`, so we strip
+  // it (along with `y`, which is also incompatible with anchored
+  // single-call matching) when re-building the regex.
   if (allowedPattern) {
-    const anchored = new RegExp(`^(?:${allowedPattern.source})$`, allowedPattern.flags.replace('g', ''));
+    const safeFlags = Array.from(allowedPattern.flags)
+      .filter(f => f !== 'g' && f !== 'y')
+      .join('');
+    const anchored = new RegExp(`^(?:${allowedPattern.source})$`, safeFlags);
     if (!anchored.test(value)) {
       throw new CapabilityError(
         ErrorCode.INVALID_REQUEST,

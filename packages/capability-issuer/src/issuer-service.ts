@@ -397,9 +397,9 @@ export class CapabilityIssuerService {
       // tightening, which is always sound).
       const parentsWithSchema = matchingParents.filter(p => p.argumentSchema);
       if (parentsWithSchema.length > 0) {
-        const requestedSchemaJson = stableStringify(requested.argumentSchema);
+        const requestedSchemaSerialized = stableStringify(requested.argumentSchema);
         const matchesAnyParent = parentsWithSchema.some(
-          p => stableStringify(p.argumentSchema) === requestedSchemaJson
+          p => stableStringify(p.argumentSchema) === requestedSchemaSerialized
         );
         if (!matchesAnyParent) {
           throw new CapabilityError(
