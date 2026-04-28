@@ -19,6 +19,8 @@
 
 import { IdentityAdapterRegistry, SigningAdapterRegistry } from '@euno/common';
 import { AzureADIdentityProvider } from './azure-identity-provider';
+import { AWSCognitoIdentityProvider } from './aws-cognito-identity-provider';
+import { GCPIdentityProvider } from './gcp-identity-provider';
 import { DIDIdentityProvider } from './did-identity-provider';
 import { AzureKeyVaultSigner } from './azure-signer';
 import { DIDSigner } from './did-signer';
@@ -28,10 +30,12 @@ import { GCPCloudKMSSigner } from './gcp-cloudkms-signer';
 /**
  * Default identity provider registry with built-in providers pre-registered.
  *
- * Built-in types: `azure-ad`, `did`
+ * Built-in types: `azure-ad`, `aws-cognito`, `gcp-identity`, `did`
  */
 export const defaultIdentityRegistry = new IdentityAdapterRegistry();
 defaultIdentityRegistry.register('azure-ad', AzureADIdentityProvider);
+defaultIdentityRegistry.register('aws-cognito', AWSCognitoIdentityProvider);
+defaultIdentityRegistry.register('gcp-identity', GCPIdentityProvider);
 defaultIdentityRegistry.register('did', DIDIdentityProvider);
 
 /**

@@ -378,6 +378,87 @@ export interface AzureADConfig {
 }
 
 /**
+ * Configuration for Amazon Cognito / AWS IAM Identity Center integration.
+ *
+ * Used to validate OIDC ID/access tokens issued by an Amazon Cognito user pool
+ * (or, equivalently, by an AWS IAM Identity Center OIDC application). The
+ * provider validates the token's signature against the user-pool JWKS and
+ * extracts standard OIDC claims plus AWS-specific group claims
+ * (`cognito:groups`).
+ */
+export interface AWSCognitoConfig {
+  /** AWS region the user pool is hosted in (e.g., us-east-1) */
+  region: string;
+  /** Cognito user pool ID (e.g., us-east-1_aBcDeFgHi) */
+  userPoolId: string;
+  /** App client ID — used as the expected `aud` (or `client_id`) claim */
+  clientId: string;
+  /**
+   * Optional issuer URL override. Defaults to
+   * `https://cognito-idp.{region}.amazonaws.com/{userPoolId}` for Cognito user
+   * pools. Set this when integrating with IAM Identity Center, which uses a
+   * different issuer URL of the form
+   * `https://identitycenter.amazonaws.com/ssoins-{instanceId}`.
+   */
+  issuer?: string;
+  /**
+   * Optional explicit JWKS URI. Defaults to `{issuer}/.well-known/jwks.json`
+   * for both Cognito and IAM Identity Center.
+   */
+  jwksUri?: string;
+  /** Token type to expect (`id` or `access`). Defaults to `id`. */
+  tokenUse?: 'id' | 'access';
+}
+
+/**
+ * Configuration for Google Cloud identity integration.
+ *
+ * Used to validate Google-issued OIDC ID tokens from Cloud Identity, Identity
+ * Platform, Workforce Identity Federation, or Workload Identity Federation.
+ * All of these issue tokens signed by Google's published JWKS at
+ * `https://www.googleapis.com/oauth2/v3/certs` (or, for federated tokens, an
+ * issuer-specific JWKS URL). The provider validates signature, issuer, and
+ * audience claims, then maps Google identity claims into the common
+ * `UserContext`.
+ */
+export interface GCPIdentityConfig {
+  /**
+   * Expected `aud` claim. For OIDC clients this is the OAuth 2.0 client ID;
+   * for Workload/Workforce Identity Federation this is the configured
+   * audience URL.
+   */
+  audience: string;
+  /**
+   * Expected `iss` claim. Defaults to `https://accounts.google.com`. Override
+   * for Identity Platform tenants
+   * (`https://securetoken.google.com/{projectId}`), Workforce Identity
+   * Federation pools, or Workload Identity Federation pools.
+   */
+  issuer?: string;
+  /**
+   * Optional JWKS URI override. Defaults to
+   * `https://www.googleapis.com/oauth2/v3/certs` for Google account tokens.
+   * Identity Platform projects expose JWKS at
+   * `https://www.googleapis.com/service_accounts/v1/metadata/x509/securetoken@system.gserviceaccount.com`,
+   * and federated providers expose a per-pool JWKS URL — set this field
+   * accordingly.
+   */
+  jwksUri?: string;
+  /**
+   * GCP project ID. Required only when using Identity Platform tenants so the
+   * provider can derive the default issuer URL.
+   */
+  projectId?: string;
+  /**
+   * Custom claim name to read role/group memberships from. Defaults to
+   * `groups` (the conventional Cloud Identity / Workforce IF claim). Set to
+   * `roles` or any custom claim name when integrating with Identity Platform
+   * custom claims.
+   */
+  rolesClaim?: string;
+}
+
+/**
  * Service configuration
  */
 export interface ServiceConfig {
@@ -396,9 +477,13 @@ export interface ServiceConfig {
   /** GCP Cloud KMS configuration */
   gcpCloudKMS?: GCPCloudKMSConfig;
   /** Identity provider type */
-  identityProvider?: 'azure-ad' | 'did';
+  identityProvider?: 'azure-ad' | 'aws-cognito' | 'gcp-identity' | 'did';
   /** Azure AD configuration */
   azureAD?: AzureADConfig;
+  /** AWS Cognito / IAM Identity Center configuration */
+  awsCognito?: AWSCognitoConfig;
+  /** Google Cloud identity configuration */
+  gcpIdentity?: GCPIdentityConfig;
   /** Issuer identifier (DID or domain URL) */
   issuerDid?: string;
   /** Default token TTL in seconds */

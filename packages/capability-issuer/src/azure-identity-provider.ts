@@ -13,8 +13,8 @@ import {
   AzureADConfig,
   CapabilityError,
   ErrorCode,
-  Action,
   CapabilityConstraint,
+  mapRolesToCapabilities,
 } from '@euno/common';
 
 /**
@@ -145,43 +145,13 @@ export class AzureADIdentityProvider extends IdentityAdapter {
   }
 
   /**
-   * Map Azure AD roles to capability constraints
-   * This implements the policy-driven issuance logic
+   * Map Azure AD roles to capability constraints.
+   *
+   * Retained as a static method for backwards compatibility; new code should
+   * call {@link mapRolesToCapabilities} from `@euno/common` directly so the
+   * same mapping is shared across every identity provider.
    */
   static mapRolesToCapabilities(roles: string[]): CapabilityConstraint[] {
-    const capabilities: CapabilityConstraint[] = [];
-
-    // Define role to capability mappings
-    const roleMapping: Record<string, CapabilityConstraint[]> = {
-      'SalesManager': [
-        { resource: 'api://crm/customers', actions: ['read' as Action, 'write' as Action] },
-        { resource: 'api://crm/reports', actions: ['read' as Action] },
-        { resource: 'storage://sales-data/**', actions: ['read' as Action, 'write' as Action] },
-      ],
-      'Viewer': [
-        { resource: 'api://crm/customers', actions: ['read' as Action] },
-        { resource: 'api://crm/reports', actions: ['read' as Action] },
-        { resource: 'storage://sales-data/**', actions: ['read' as Action] },
-      ],
-      'DataScientist': [
-        { resource: 'api://analytics/**', actions: ['read' as Action, 'write' as Action] },
-        { resource: 'storage://datasets/**', actions: ['read' as Action] },
-        { resource: 'api://ml-models/**', actions: ['read' as Action, 'execute' as Action] },
-      ],
-      'Administrator': [
-        { resource: 'api://**', actions: ['read' as Action, 'write' as Action, 'admin' as Action] },
-        { resource: 'storage://**', actions: ['read' as Action, 'write' as Action, 'delete' as Action] },
-      ],
-    };
-
-    // Collect all capabilities for user's roles
-    for (const role of roles) {
-      const roleCaps = roleMapping[role];
-      if (roleCaps) {
-        capabilities.push(...roleCaps);
-      }
-    }
-
-    return capabilities;
+    return mapRolesToCapabilities(roles);
   }
 }

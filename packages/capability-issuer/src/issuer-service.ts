@@ -19,8 +19,8 @@ import {
   Logger,
   createAuditLogger,
   AuditLogEntry,
+  mapRolesToCapabilities,
 } from '@euno/common';
-import { AzureADIdentityProvider } from './identity-provider';
 import * as jose from 'jose';
 
 export class CapabilityIssuerService {
@@ -66,12 +66,12 @@ export class CapabilityIssuerService {
       });
 
       let capabilities;
-      if (this.identityProvider instanceof AzureADIdentityProvider) {
-        capabilities = AzureADIdentityProvider.mapRolesToCapabilities(userContext.roles);
-      } else {
-        // Generic fallback
-        capabilities = request.requestedCapabilities || [];
-      }
+      // Map roles to capabilities using the shared, provider-agnostic mapper.
+      // Every built-in identity provider (Azure AD, AWS Cognito / IAM
+      // Identity Center, GCP Cloud Identity / Identity Platform) populates
+      // `userContext.roles` from its native group/role claim, so the same
+      // Sprint-1 mapping applies uniformly across clouds.
+      capabilities = mapRolesToCapabilities(userContext.roles);
 
       // Step 3: If specific capabilities were requested, validate they're allowed
       if (request.requestedCapabilities) {
