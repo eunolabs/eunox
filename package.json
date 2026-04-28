@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @euno/common && npm run build -w @euno/capability-issuer && npm run build -w @euno/tool-gateway && npm run build -w @euno/agent-runtime && npm run build -w @euno/framework-adapters && npm run build -w @euno/cli && npm run build -w @euno/integration-tests",
+    "build": "npm run build -w @euno/common && npm run build --workspaces",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules"
