@@ -162,4 +162,21 @@ describe('GCPIdentityProvider', () => {
     const provider = makeProvider();
     await expect(provider.getUserRoles('any')).rejects.toMatchObject({ statusCode: 501 });
   });
+
+  it('rejects tokens that lack any subject claim (sub or user_id)', async () => {
+    const provider = makeProvider();
+    // Sign a token with no `sub` claim
+    const token = await new jose.SignJWT({ email: 'nobody@example.com' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .setIssuer('https://accounts.google.com')
+      .setAudience(AUDIENCE)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(privateKey);
+
+    await expect(provider.validateToken(token)).rejects.toMatchObject({
+      statusCode: 401,
+      message: expect.stringMatching(/missing subject claim/),
+    });
+  });
 });

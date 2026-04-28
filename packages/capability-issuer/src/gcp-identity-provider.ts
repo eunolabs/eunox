@@ -87,13 +87,32 @@ export class GCPIdentityProvider extends IdentityAdapter {
         audience: this.gcpConfig.audience,
       });
 
+      // Explicitly validate that a non-empty string subject claim is
+      // present. Without this the `as string` cast below would silently
+      // produce an `undefined` userId at runtime when both `sub` and
+      // `user_id` are missing.
+      const subjectClaim =
+        typeof payload.sub === 'string' && payload.sub.length > 0
+          ? payload.sub
+          : typeof payload.user_id === 'string' && payload.user_id.length > 0
+            ? payload.user_id
+            : undefined;
+
+      if (!subjectClaim) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'Failed to validate GCP identity token: missing subject claim',
+          401,
+        );
+      }
+
       const rawRoles = payload[this.rolesClaim];
       const roles: string[] = Array.isArray(rawRoles)
         ? rawRoles.filter((r): r is string => typeof r === 'string')
         : [];
 
       const userContext: UserContext = {
-        userId: (payload.sub as string) || (payload.user_id as string),
+        userId: subjectClaim,
         email: (payload.email as string) || undefined,
         roles,
         // Identity Platform tokens carry the Firebase project ID in `aud`,
@@ -109,6 +128,12 @@ export class GCPIdentityProvider extends IdentityAdapter {
 
       return userContext;
     } catch (error) {
+      // Re-throw existing CapabilityErrors (e.g. the missing-subject error
+      // raised above) without wrapping so their original status codes and
+      // messages survive.
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
         `Failed to validate GCP identity token: ${

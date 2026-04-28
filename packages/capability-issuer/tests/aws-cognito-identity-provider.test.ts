@@ -186,4 +186,63 @@ describe('AWSCognitoIdentityProvider', () => {
       statusCode: 501,
     });
   });
+
+  it('treats non-array group claims as empty role lists (defensive parsing)', async () => {
+    const provider = makeProvider();
+    const token = await signCognitoToken({
+      sub: 'user-bad-claim',
+      // misconfigured IdP that emits a single string instead of an array
+      'cognito:groups': 'SalesManager',
+    });
+
+    const ctx = await provider.validateToken(token);
+    expect(ctx.roles).toEqual([]);
+  });
+
+  it('filters non-string entries out of the groups claim', async () => {
+    const provider = makeProvider();
+    const token = await signCognitoToken({
+      sub: 'user-mixed-claim',
+      'cognito:groups': ['SalesManager', 42, null, 'Viewer'],
+    });
+
+    const ctx = await provider.validateToken(token);
+    expect(ctx.roles).toEqual(['SalesManager', 'Viewer']);
+  });
+
+  it('supports IAM Identity Center config without region/userPoolId', async () => {
+    const ICENTER_ISSUER = 'https://identitycenter.amazonaws.com/ssoins-only';
+    const provider = new AWSCognitoIdentityProvider({
+      type: 'aws-cognito',
+      name: 'test-ic',
+      awsCognito: {
+        // region + userPoolId intentionally omitted
+        clientId: CLIENT_ID,
+        issuer: ICENTER_ISSUER,
+      },
+    });
+
+    const token = await new jose.SignJWT({ sub: 'sso-user', groups: ['Viewer'] })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .setIssuer(ICENTER_ISSUER)
+      .setAudience(CLIENT_ID)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(privateKey);
+
+    const ctx = await provider.validateToken(token);
+    expect(ctx.userId).toBe('sso-user');
+    expect(ctx.roles).toEqual(['Viewer']);
+  });
+
+  it('throws a clear error when neither issuer nor (region + userPoolId) is supplied', () => {
+    expect(
+      () =>
+        new AWSCognitoIdentityProvider({
+          type: 'aws-cognito',
+          name: 'test-bad',
+          awsCognito: { clientId: CLIENT_ID },
+        }),
+    ).toThrow(/issuer.*region.*userPoolId/);
+  });
 });

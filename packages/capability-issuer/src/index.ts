@@ -66,9 +66,12 @@ const config: ServiceConfig = {
     clientSecret: process.env.AZURE_AD_CLIENT_SECRET,
     authority: process.env.AZURE_AD_AUTHORITY,
   } : undefined,
-  // AWS Cognito / IAM Identity Center configuration
-  awsCognito: (process.env.AWS_COGNITO_USER_POOL_ID && process.env.AWS_COGNITO_CLIENT_ID) ? {
-    region: process.env.AWS_COGNITO_REGION || 'us-east-1',
+  // AWS Cognito / IAM Identity Center configuration.
+  // Accept either:
+  //   * a Cognito user pool: AWS_COGNITO_USER_POOL_ID + AWS_COGNITO_CLIENT_ID
+  //   * an IAM Identity Center / generic OIDC source: AWS_COGNITO_ISSUER + AWS_COGNITO_CLIENT_ID
+  awsCognito: (process.env.AWS_COGNITO_CLIENT_ID && (process.env.AWS_COGNITO_USER_POOL_ID || process.env.AWS_COGNITO_ISSUER)) ? {
+    region: process.env.AWS_COGNITO_REGION,
     userPoolId: process.env.AWS_COGNITO_USER_POOL_ID,
     clientId: process.env.AWS_COGNITO_CLIENT_ID,
     issuer: process.env.AWS_COGNITO_ISSUER,

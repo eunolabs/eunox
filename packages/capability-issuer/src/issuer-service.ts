@@ -75,24 +75,29 @@ export class CapabilityIssuerService {
 
       // Step 3: If specific capabilities were requested, validate they're allowed
       if (request.requestedCapabilities) {
-        // Validate that requested capabilities are a subset of what the user's roles allow
-        const allowedCapabilitiesByResource = new Map<string, Set<string>>();
-        for (const capability of capabilities) {
-          const allowedActions = allowedCapabilitiesByResource.get(capability.resource) || new Set<string>();
-          for (const action of capability.actions) {
-            allowedActions.add(action);
-          }
-          allowedCapabilitiesByResource.set(capability.resource, allowedActions);
-        }
-
+        // Validate that requested capabilities are a subset of what the user's
+        // roles allow. Resource matching uses the same wildcard-aware
+        // `matchesResource` semantics as the gateway enforcement engine, so
+        // role mappings that grant wildcard resources (e.g. `api://**`,
+        // `storage://sales-data/**`) correctly authorize requests for
+        // concrete resources beneath them.
         for (const requested of request.requestedCapabilities) {
-          const allowedActions = allowedCapabilitiesByResource.get(requested.resource);
-          if (!allowedActions) {
+          const matchingCaps = capabilities.filter((cap) =>
+            matchesResource(requested.resource, cap.resource),
+          );
+          if (matchingCaps.length === 0) {
             throw new CapabilityError(
               ErrorCode.INSUFFICIENT_PERMISSIONS,
               `User does not have permission for resource: ${requested.resource}`,
-              403
+              403,
             );
+          }
+
+          const allowedActions = new Set<string>();
+          for (const cap of matchingCaps) {
+            for (const action of cap.actions) {
+              allowedActions.add(action);
+            }
           }
 
           for (const action of requested.actions) {
@@ -100,7 +105,7 @@ export class CapabilityIssuerService {
               throw new CapabilityError(
                 ErrorCode.INSUFFICIENT_PERMISSIONS,
                 `User does not have permission for action '${action}' on resource: ${requested.resource}`,
-                403
+                403,
               );
             }
           }

@@ -385,12 +385,32 @@ export interface AzureADConfig {
  * provider validates the token's signature against the user-pool JWKS and
  * extracts standard OIDC claims plus AWS-specific group claims
  * (`cognito:groups`).
+ *
+ * Two configuration shapes are supported:
+ *   * **Cognito user pool:** supply `region` + `userPoolId` (+ `clientId`).
+ *     The default issuer URL is derived as
+ *     `https://cognito-idp.{region}.amazonaws.com/{userPoolId}`.
+ *   * **AWS IAM Identity Center (or any other OIDC source):** supply
+ *     `issuer` (and optionally `jwksUri`) + `clientId`. `region` and
+ *     `userPoolId` are not required when an explicit `issuer` is provided.
+ *
+ * At least one of (`region` + `userPoolId`) or `issuer` MUST be supplied;
+ * the {@link AWSCognitoIdentityProvider} constructor enforces this at
+ * runtime.
  */
 export interface AWSCognitoConfig {
-  /** AWS region the user pool is hosted in (e.g., us-east-1) */
-  region: string;
-  /** Cognito user pool ID (e.g., us-east-1_aBcDeFgHi) */
-  userPoolId: string;
+  /**
+   * AWS region the user pool is hosted in (e.g., us-east-1). Required when
+   * configuring a Cognito user pool; omit (along with `userPoolId`) when
+   * configuring IAM Identity Center via an explicit `issuer`.
+   */
+  region?: string;
+  /**
+   * Cognito user pool ID (e.g., us-east-1_aBcDeFgHi). Required when
+   * configuring a Cognito user pool; omit (along with `region`) when
+   * configuring IAM Identity Center via an explicit `issuer`.
+   */
+  userPoolId?: string;
   /** App client ID — used as the expected `aud` (or `client_id`) claim */
   clientId: string;
   /**

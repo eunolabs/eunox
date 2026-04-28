@@ -46,9 +46,22 @@ export class AWSCognitoIdentityProvider extends IdentityAdapter {
   constructor(config: AWSCognitoAdapterConfig) {
     super(config);
     this.cognitoConfig = config.awsCognito;
-    this.issuer =
-      this.cognitoConfig.issuer ||
-      `https://cognito-idp.${this.cognitoConfig.region}.amazonaws.com/${this.cognitoConfig.userPoolId}`;
+
+    // Resolve the issuer URL. Either an explicit `issuer` (e.g. for IAM
+    // Identity Center) or both `region` + `userPoolId` (for Cognito user
+    // pools) must be supplied.
+    if (this.cognitoConfig.issuer) {
+      this.issuer = this.cognitoConfig.issuer;
+    } else if (this.cognitoConfig.region && this.cognitoConfig.userPoolId) {
+      this.issuer = `https://cognito-idp.${this.cognitoConfig.region}.amazonaws.com/${this.cognitoConfig.userPoolId}`;
+    } else {
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        'AWS Cognito configuration requires either `issuer` (for IAM Identity Center) or both `region` and `userPoolId` (for Cognito user pools)',
+        500,
+      );
+    }
+
     this.jwksUri =
       this.cognitoConfig.jwksUri || `${this.issuer}/.well-known/jwks.json`;
     this.tokenUse = this.cognitoConfig.tokenUse || 'id';
@@ -90,10 +103,18 @@ export class AWSCognitoIdentityProvider extends IdentityAdapter {
         }
       }
 
-      const groups =
-        (payload['cognito:groups'] as string[] | undefined) ||
-        (payload.groups as string[] | undefined) ||
-        [];
+      // Normalize the groups claim defensively: only accept arrays and
+      // filter to strings. A non-array value (e.g. a single string from a
+      // misconfigured identity provider) is treated as an empty role list
+      // rather than coerced into `roles`, which would otherwise produce an
+      // invalid `UserContext`.
+      const cognitoGroups = payload['cognito:groups'];
+      const oidcGroups = payload.groups;
+      const groups: string[] = Array.isArray(cognitoGroups)
+        ? cognitoGroups.filter((g): g is string => typeof g === 'string')
+        : Array.isArray(oidcGroups)
+          ? oidcGroups.filter((g): g is string => typeof g === 'string')
+          : [];
 
       const userContext: UserContext = {
         userId:
