@@ -146,9 +146,11 @@ export function createEunoFunctionToolMiddleware(
     }
 
     const correlationId = newCorrelationId();
-    if (context.metadata && typeof context.metadata === 'object') {
-      context.metadata.eunoCorrelationId = correlationId;
-    }
+    // `metadata` is optional on the MAF context; initialize it so the
+    // correlation ID is always surfaced to downstream middlewares
+    // regardless of whether the caller supplied a metadata bag.
+    context.metadata = context.metadata ?? {};
+    context.metadata.eunoCorrelationId = correlationId;
 
     audit?.({
       phase: 'tool-start',

@@ -191,7 +191,13 @@ export class EunoLangChainCallbackHandler implements LangChainCallbacks {
   /** LangChain looks at `name` to namespace handler logs. */
   public readonly name = 'EunoLangChainCallbackHandler';
   private readonly sink: EunoCallbackSink;
-  private readonly runCorrelations = new Map<string, string>();
+  /**
+   * Per-runId state captured at `tool-start` so `tool-end` and
+   * `tool-error` events can carry the same correlation ID *and* the
+   * same tool name (LangChain only passes the tool object to
+   * `handleToolStart`, so we have to remember it).
+   */
+  private readonly runState = new Map<string, { correlationId: string; toolName: string }>();
 
   constructor(sink: EunoCallbackSink) {
     if (typeof sink !== 'function') {
@@ -204,10 +210,11 @@ export class EunoLangChainCallbackHandler implements LangChainCallbacks {
 
   handleToolStart(tool: { name: string }, _input: string, runId: string, parentRunId?: string): void {
     const correlationId = newCorrelationId();
-    this.runCorrelations.set(runId, correlationId);
+    const toolName = tool?.name ?? '<unknown>';
+    this.runState.set(runId, { correlationId, toolName });
     this.sink({
       phase: 'tool-start',
-      toolName: tool?.name ?? '<unknown>',
+      toolName,
       runId,
       parentRunId,
       correlationId,
@@ -216,28 +223,31 @@ export class EunoLangChainCallbackHandler implements LangChainCallbacks {
   }
 
   handleToolEnd(_output: string, runId: string, parentRunId?: string): void {
-    const correlationId = this.runCorrelations.get(runId) ?? newCorrelationId();
-    this.runCorrelations.delete(runId);
+    const state = this.runState.get(runId);
+    this.runState.delete(runId);
     this.sink({
       phase: 'tool-end',
-      toolName: '<resolved-by-runId>',
+      toolName: state?.toolName ?? '<unknown>',
       runId,
       parentRunId,
-      correlationId,
+      correlationId: state?.correlationId ?? newCorrelationId(),
       ts: new Date().toISOString(),
     });
   }
 
   handleToolError(err: Error, runId: string, parentRunId?: string): void {
-    const correlationId = this.runCorrelations.get(runId) ?? newCorrelationId();
-    this.runCorrelations.delete(runId);
+    const state = this.runState.get(runId);
+    this.runState.delete(runId);
     const denial = err instanceof CapabilityDenialError ? err : undefined;
     this.sink({
       phase: 'tool-error',
-      toolName: denial?.tool ?? '<resolved-by-runId>',
+      // Prefer the tool name remembered from `handleToolStart`; fall
+      // back to the denial's gateway tool if the start hook never
+      // fired (e.g. error raised before the run was registered).
+      toolName: state?.toolName ?? denial?.tool ?? '<unknown>',
       runId,
       parentRunId,
-      correlationId,
+      correlationId: state?.correlationId ?? newCorrelationId(),
       ts: new Date().toISOString(),
       errorCode: denial?.errorCode,
       statusCode: denial?.statusCode,

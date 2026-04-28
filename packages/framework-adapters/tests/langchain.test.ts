@@ -121,15 +121,18 @@ describe('LangChain adapter', () => {
   });
 
   describe('EunoLangChainCallbackHandler', () => {
-    it('emits start/end events with the same correlationId per runId', () => {
+    it('emits start/end events with the same correlationId AND toolName per runId', () => {
       const events: any[] = [];
       const handler = new EunoLangChainCallbackHandler((e) => events.push(e));
-      handler.handleToolStart({ name: 't' }, 'in', 'run-1');
+      handler.handleToolStart({ name: 'lookup_customer' }, 'in', 'run-1');
       handler.handleToolEnd('out', 'run-1');
       expect(events).toHaveLength(2);
       expect(events[0].phase).toBe('tool-start');
       expect(events[1].phase).toBe('tool-end');
       expect(events[0].correlationId).toBe(events[1].correlationId);
+      // tool-end must surface the same tool name captured at tool-start
+      expect(events[0].toolName).toBe('lookup_customer');
+      expect(events[1].toolName).toBe('lookup_customer');
     });
 
     it('emits error events with structured fields from CapabilityDenialError', () => {
@@ -155,6 +158,46 @@ describe('LangChain adapter', () => {
 
     it('rejects non-function sinks', () => {
       expect(() => new EunoLangChainCallbackHandler(undefined as never)).toThrow(TypeError);
+    });
+
+    it('also propagates toolName on tool-error events', () => {
+      const events: any[] = [];
+      const handler = new EunoLangChainCallbackHandler((e) => events.push(e));
+      handler.handleToolStart({ name: 'crm_lookup' }, 'in', 'run-3');
+      handler.handleToolError(new Error('boom'), 'run-3');
+      expect(events[1].toolName).toBe('crm_lookup');
+    });
+  });
+
+  describe('argument validation (invokeBoundTool)', () => {
+    it('coerces non-object inputs to {} when no transformArgs is supplied', async () => {
+      const runtime = new FakeRuntime();
+      const tool = wrapAsLangChainTool(runtime, {
+        frameworkToolName: 't',
+        gatewayTool: 'gw',
+      });
+      await tool.invoke('plain-string');
+      expect(runtime.calls[0]!.request.args).toEqual({});
+    });
+
+    it('forwards plain objects verbatim when no transformArgs is supplied', async () => {
+      const runtime = new FakeRuntime();
+      const tool = wrapAsLangChainTool(runtime, {
+        frameworkToolName: 't',
+        gatewayTool: 'gw',
+      });
+      await tool.invoke({ a: 1 });
+      expect(runtime.calls[0]!.request.args).toEqual({ a: 1 });
+    });
+
+    it('throws TypeError when transformArgs returns a non-plain-object', async () => {
+      const runtime = new FakeRuntime();
+      const tool = wrapAsLangChainTool(runtime, {
+        frameworkToolName: 't',
+        gatewayTool: 'gw',
+        transformArgs: () => 'not-an-object' as never,
+      });
+      await expect(tool.invoke({})).rejects.toThrow(TypeError);
     });
   });
 });

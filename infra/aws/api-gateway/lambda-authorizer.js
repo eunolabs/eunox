@@ -62,17 +62,34 @@ const { createRemoteJWKSet, jwtVerify } = require('jose');
 const ISSUER_JWKS_URL = process.env.ISSUER_JWKS_URL;
 const EXPECTED_AUDIENCE = process.env.EXPECTED_AUDIENCE;
 const EXPECTED_ISSUER = process.env.EXPECTED_ISSUER;
-const ALLOWED_ALGORITHMS = (process.env.ALLOWED_ALGORITHMS || 'RS256')
+const parsedAllowedAlgorithms = (process.env.ALLOWED_ALGORITHMS || 'RS256')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+// Fall back to RS256 when the env var was set to an empty/whitespace
+// value: passing an empty allow-list to `jwtVerify` would silently
+// reject every token, which is a confusing misconfiguration mode.
+const ALLOWED_ALGORITHMS =
+  parsedAllowedAlgorithms.length > 0 ? parsedAllowedAlgorithms : ['RS256'];
 const SUPPORTED_SCHEMA_VERSIONS = new Set(
   (process.env.SUPPORTED_SCHEMA_VERSIONS || '1.0')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
 );
-const JWKS_CACHE_MAX_AGE_MS = Number(process.env.JWKS_CACHE_MAX_AGE_MS || 600000);
+const RAW_JWKS_CACHE_MAX_AGE_MS = process.env.JWKS_CACHE_MAX_AGE_MS;
+const JWKS_CACHE_MAX_AGE_MS =
+  RAW_JWKS_CACHE_MAX_AGE_MS === undefined || RAW_JWKS_CACHE_MAX_AGE_MS === ''
+    ? 600000
+    : Number(RAW_JWKS_CACHE_MAX_AGE_MS);
+if (!Number.isFinite(JWKS_CACHE_MAX_AGE_MS) || JWKS_CACHE_MAX_AGE_MS < 0) {
+  // Surface bad numeric config at module-load time rather than passing
+  // NaN / negative values into `createRemoteJWKSet`, where they would
+  // either disable caching entirely or produce confusing runtime errors.
+  throw new Error(
+    `[euno-authorizer] Invalid JWKS_CACHE_MAX_AGE_MS=${String(RAW_JWKS_CACHE_MAX_AGE_MS)}; must be a finite, non-negative number of milliseconds.`
+  );
+}
 
 if (!ISSUER_JWKS_URL || !EXPECTED_AUDIENCE || !EXPECTED_ISSUER) {
   // Surface misconfiguration at module-load time so a misconfigured

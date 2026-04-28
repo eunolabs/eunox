@@ -131,9 +131,13 @@ export class CapabilityDenialError extends Error {
 
 /**
  * Generate a correlation ID used to tie framework-side traces to the
- * gateway-side audit log entry. The ID is opaque to the gateway but is
- * surfaced via the `X-Correlation-ID` header (when supported) and
- * recorded by each adapter's lifecycle hooks.
+ * gateway-side audit log entry. The ID is opaque to the gateway and is
+ * carried through adapter flows (recorded by the LangChain / MAF /
+ * CrewAI lifecycle hooks and attached to translated denial errors via
+ * {@link CapabilityDenialError.correlationId}) for framework-side
+ * correlation. This module does not itself read or write an
+ * `X-Correlation-ID` header — wiring the ID into outbound requests is
+ * the integrator's responsibility.
  *
  * Uses `globalThis.crypto.randomUUID`, which is guaranteed available on
  * the monorepo's `engines.node >=18.0.0` floor.
@@ -166,6 +170,21 @@ export function findBinding(
 }
 
 /**
+ * True when `value` is a plain JSON-shaped object (`{}` or
+ * `Object.create(null)`), as opposed to an array, primitive, function,
+ * or class instance.  Used by {@link invokeBoundTool} to enforce that
+ * arguments forwarded to the gateway match the
+ * `Record<string, unknown>` contract on `ToolCallRequest.args`.
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
  * Internal helper used by every adapter: invoke the gateway with the
  * binding's `(tool, resource)` pair and translate the response into
  * either the raw `data` (success) or a {@link CapabilityDenialError}
@@ -174,6 +193,17 @@ export function findBinding(
  * Adapters call this so that the denial-translation policy lives in
  * exactly one place — keeping LangChain / MAF / CrewAI behaviours
  * identical at the wire level.
+ *
+ * Argument-shape contract:
+ *   - When `binding.transformArgs` is supplied it MUST return a plain
+ *     object; anything else is a programming error and raises
+ *     `TypeError` at the wrapper boundary (vs. silently violating
+ *     `ToolCallRequest.args` deeper in the stack).
+ *   - When no transform is supplied, plain-object inputs are forwarded
+ *     verbatim; non-object inputs (strings, numbers, arrays — common in
+ *     legacy LangChain `Tool` calls) are coerced to `{}` so the gateway
+ *     still receives a well-typed payload. Bindings that need to
+ *     forward the raw input MUST declare a `transformArgs`.
  */
 export async function invokeBoundTool(
   runtime: CapabilityRuntime,
@@ -181,10 +211,18 @@ export async function invokeBoundTool(
   rawArgs: unknown,
   correlationId: string
 ): Promise<unknown> {
-  const args =
-    typeof binding.transformArgs === 'function'
-      ? binding.transformArgs(rawArgs)
-      : (rawArgs as Record<string, unknown>) ?? {};
+  let args: Record<string, unknown>;
+  if (typeof binding.transformArgs === 'function') {
+    const transformed = binding.transformArgs(rawArgs);
+    if (!isPlainRecord(transformed)) {
+      throw new TypeError(
+        `Tool binding "${binding.frameworkToolName}" transformArgs must return a plain object.`
+      );
+    }
+    args = transformed;
+  } else {
+    args = isPlainRecord(rawArgs) ? rawArgs : {};
+  }
 
   const response = await runtime.invokeTool({
     tool: binding.gatewayTool,
