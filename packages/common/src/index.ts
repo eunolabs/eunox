@@ -6,3 +6,4 @@ export * from './kill-switch';
 export * from './adapters';
 export * from './capability-validators';
 export * from './role-mapping';
+export * from './log-transports';

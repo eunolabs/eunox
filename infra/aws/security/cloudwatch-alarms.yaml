@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Euno Sprint-1 OBS multi-cloud parity for infra/sentinel/analytic-rules.json
+  on AWS.  Materializes each Logs Insights query in
+  cloudwatch-logs-insights.json as a Metric Filter + CloudWatch Alarm pair,
+  and routes alarms into an SNS topic that AWS Security Hub picks up via
+  CloudWatch Events.
+
+Parameters:
+  RuntimeLogGroup:
+    Type: String
+    Default: /euno/runtime
+    Description: Runtime log group (CreateLogGroup'd by infra/terraform/aws).
+  AuditLogGroup:
+    Type: String
+    Default: /euno/audit
+    Description: Audit log group (logType=audit entries).
+  AlertTopicArn:
+    Type: String
+    Default: ""
+    Description: >
+      Optional pre-existing SNS topic ARN for security alerts.  Leave empty
+      to have this stack create one named euno-security-alerts.
+
+Conditions:
+  CreateAlertTopic: !Equals [!Ref AlertTopicArn, ""]
+
+Resources:
+  # -------------------------------------------------------------------------
+  # SNS topic for security alerts (Security Hub picks these up via the
+  # default ImportFindingsToSecurityHub rule when configured).
+  # -------------------------------------------------------------------------
+  SecurityAlertsTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateAlertTopic
+    Properties:
+      TopicName: euno-security-alerts
+      DisplayName: Euno security alerts (Sprint-1 OBS parity)
+
+  # -------------------------------------------------------------------------
+  # Metric filters — one per Sentinel-equivalent rule.  We use simple
+  # filter patterns rather than re-running Logs Insights queries to keep
+  # alarm cost low; they are deliberately conservative (the Logs Insights
+  # queries in the JSON file beside this template stay authoritative for
+  # dashboard / hunting use).
+  # -------------------------------------------------------------------------
+  DenialFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref RuntimeLogGroup
+      FilterName: euno-deny-spike
+      FilterPattern: '?"Action denied" ?"AUTHORIZATION_FAILED" ?"INVALID_TOKEN"'
+      MetricTransformations:
+        - MetricNamespace: Euno/Security
+          MetricName: DenialEvents
+          MetricValue: "1"
+          DefaultValue: 0
+
+  WriteInReadOnlyFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AuditLogGroup
+      FilterName: euno-write-in-readonly
+      FilterPattern: '{ ($.logType = "audit") && ($.decision = "deny") && (($.action = "write") || ($.action = "delete") || ($.action = "update") || ($.action = "create")) }'
+      MetricTransformations:
+        - MetricNamespace: Euno/Security
+          MetricName: WriteInReadOnly
+          MetricValue: "1"
+          DefaultValue: 0
+
+  InvalidTokenFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref RuntimeLogGroup
+      FilterName: euno-invalid-token-burst
+      FilterPattern: '?"INVALID_TOKEN" ?"EXPIRED_TOKEN" ?"invalid signature"'
+      MetricTransformations:
+        - MetricNamespace: Euno/Security
+          MetricName: InvalidToken
+          MetricValue: "1"
+          DefaultValue: 0
+
+  KillSwitchFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AuditLogGroup
+      FilterName: euno-kill-switch-activated
+      FilterPattern: '?"Kill switch activated" ?"KILL_ALL_AGENTS" ?"kill switch enabled"'
+      MetricTransformations:
+        - MetricNamespace: Euno/Security
+          MetricName: KillSwitchActivated
+          MetricValue: "1"
+          DefaultValue: 0
+
+  RevocationFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AuditLogGroup
+      FilterName: euno-token-revocation-spike
+      FilterPattern: '"Token revoked via admin API"'
+      MetricTransformations:
+        - MetricNamespace: Euno/Security
+          MetricName: TokenRevocation
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # -------------------------------------------------------------------------
+  # Alarms — wire each metric to the SNS topic.
+  # -------------------------------------------------------------------------
+  DenialSpikeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Euno-DenialSpike
+      AlarmDescription: ">=5 capability denials in 5m"
+      Namespace: Euno/Security
+      MetricName: DenialEvents
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]
+
+  WriteInReadOnlyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Euno-WriteInReadOnly
+      AlarmDescription: "Write attempt from a read-only session"
+      Namespace: Euno/Security
+      MetricName: WriteInReadOnly
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]
+
+  InvalidTokenBurstAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Euno-InvalidTokenBurst
+      AlarmDescription: ">20 invalid/expired token errors in 5m"
+      Namespace: Euno/Security
+      MetricName: InvalidToken
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]
+
+  KillSwitchAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Euno-KillSwitchActivated
+      AlarmDescription: "Operational kill-switch event"
+      Namespace: Euno/Security
+      MetricName: KillSwitchActivated
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]
+
+  TokenRevocationSpikeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: Euno-TokenRevocationSpike
+      AlarmDescription: ">10 admin-API revocations in 5m"
+      Namespace: Euno/Security
+      MetricName: TokenRevocation
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]
+
+Outputs:
+  AlertsTopicArn:
+    Description: ARN of the SNS topic alarms publish to.
+    Value: !If [CreateAlertTopic, !Ref SecurityAlertsTopic, !Ref AlertTopicArn]

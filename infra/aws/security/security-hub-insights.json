@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://euno.dev/schemas/aws/security-hub-insights.json",
+  "title": "Euno - AWS Security Hub custom insights (Sprint-1 OBS parity)",
+  "description": "Custom Security Hub insights that group the CloudWatch Alarm-driven findings produced by `cloudwatch-alarms.yaml` into the same operational views as the Microsoft Sentinel rules in `infra/sentinel/analytic-rules.json`. Apply with: aws securityhub create-insight --cli-input-json file://<one of these objects>.",
+  "insights": [
+    {
+      "Name": "Euno - Capability denial spikes by agent/session",
+      "GroupByAttribute": "ResourceId",
+      "Filters": {
+        "ProductName": [{ "Value": "CloudWatch", "Comparison": "EQUALS" }],
+        "Title":       [{ "Value": "Euno-DenialSpike", "Comparison": "PREFIX" }],
+        "RecordState": [{ "Value": "ACTIVE", "Comparison": "EQUALS" }],
+        "WorkflowStatus": [{ "Value": "NEW", "Comparison": "EQUALS" }]
+      }
+    },
+    {
+      "Name": "Euno - Write attempts under read-only sessions",
+      "GroupByAttribute": "ResourceId",
+      "Filters": {
+        "ProductName": [{ "Value": "CloudWatch", "Comparison": "EQUALS" }],
+        "Title":       [{ "Value": "Euno-WriteInReadOnly", "Comparison": "PREFIX" }],
+        "RecordState": [{ "Value": "ACTIVE", "Comparison": "EQUALS" }]
+      }
+    },
+    {
+      "Name": "Euno - Invalid capability token bursts",
+      "GroupByAttribute": "ResourceId",
+      "Filters": {
+        "ProductName": [{ "Value": "CloudWatch", "Comparison": "EQUALS" }],
+        "Title":       [{ "Value": "Euno-InvalidTokenBurst", "Comparison": "PREFIX" }],
+        "RecordState": [{ "Value": "ACTIVE", "Comparison": "EQUALS" }]
+      }
+    },
+    {
+      "Name": "Euno - Kill-switch activations",
+      "GroupByAttribute": "ResourceId",
+      "Filters": {
+        "ProductName": [{ "Value": "CloudWatch", "Comparison": "EQUALS" }],
+        "Title":       [{ "Value": "Euno-KillSwitchActivated", "Comparison": "PREFIX" }],
+        "RecordState": [{ "Value": "ACTIVE", "Comparison": "EQUALS" }]
+      }
+    },
+    {
+      "Name": "Euno - Token revocation spikes",
+      "GroupByAttribute": "ResourceId",
+      "Filters": {
+        "ProductName": [{ "Value": "CloudWatch", "Comparison": "EQUALS" }],
+        "Title":       [{ "Value": "Euno-TokenRevocationSpike", "Comparison": "PREFIX" }],
+        "RecordState": [{ "Value": "ACTIVE", "Comparison": "EQUALS" }]
+      }
+    }
+  ],
+  "guardDutyNotes": [
+    "GuardDuty is enabled at the account level by Terraform's aws_securityhub_account resource (see infra/terraform/aws/main.tf).  It produces VPC- and DNS-level findings (e.g. UnauthorizedAccess:EC2/MaliciousIPCaller.Custom) for the EKS nodes hosting Euno workloads — these complement, not replace, the application-level rules above.",
+    "To correlate GuardDuty findings with Euno workloads, tag the EKS cluster and node group with `product=euno` (already done by the Terraform module) and create a Security Hub insight with GroupByAttribute=`ResourceTags.product` filter `EQUALS euno`."
+  ]
+}
