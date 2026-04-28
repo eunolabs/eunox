@@ -77,7 +77,7 @@ tests/load/
   lib/
     auth.js                     # generates synthetic OIDC tokens (signed
                                 # with a test JWKS the issuer trusts in
-                                # LOAD_MODE=true)
+                                # LOAD_TEST_MODE=true)
     capabilities.js             # request payload builder
   thresholds.js                 # shared SLO thresholds (p95 etc)
   results/                      # gitignored; JSON output lands here

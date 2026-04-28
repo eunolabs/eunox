@@ -85,18 +85,19 @@ to all three surfaces (the emitters do *not* rename them).
 
 ### 2. Manifest hashing
 
-Define a single canonicalization function in `@euno/common`:
+Reuse the existing deterministic hashing helper from
+`@euno/common`. `packages/common/src/utils.ts` already exports
+`canonicalize()` (sorted-key JSON serializer with cycle detection)
+and `canonicalSha256()` (SHA-256 of the canonical form), and
+`packages/common/src/evidence.ts` already uses them for cross-runtime
+evidence hashing. The posture emitter MUST call `canonicalSha256(m)`
+on `AgentCapabilityManifest`; introducing a second `hashManifest()`
+implementation would risk drift between posture records and audit
+evidence.
 
-```
-hashManifest(m: AgentCapabilityManifest): string
-  // 1. JSON.stringify with sorted keys (deterministic).
-  // 2. SHA-256, hex.
-```
-
-Place it in `packages/common/src/utils.ts` next to other shared
-helpers. Reuse the same hash everywhere it's referenced (audit logs
-already have a `metadata.manifestHash` field on some events — verify
-and wire to the same function).
+If a thin wrapper is wanted for readability, define it in the
+posture package as `export const hashManifest = canonicalSha256;`
+(re-export, not re-implement).
 
 ### 3. New package: `packages/posture-emitter/`
 

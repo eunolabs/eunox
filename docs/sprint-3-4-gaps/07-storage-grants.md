@@ -13,7 +13,9 @@
 `packages/capability-issuer/src/storage-grant/{azure,aws,gcp,index}.ts`,
 `packages/common/src/types.ts` (new types), `issuer-service.ts`
 (integration point), `packages/common/src/capability-validators.ts`
-(already validates `storage://` resource patterns — no change).
+(extend to recognize and validate the canonical
+`storage://{cloud}/{bucket}/...` form so non-canonical patterns are
+rejected at issuance time rather than silently skipped at grant time).
 
 ## Problem
 
@@ -72,9 +74,17 @@ storage://{cloud}/{account-or-bucket}/{container-or-prefix}/{key-or-pattern}
 
 examples:
   storage://azure/salesdata/reports/2026/**
-  storage://aws/euno-uploads/incoming/*.json
+  storage://aws/euno-uploads/incoming/**
   storage://gcp/euno-models/v3/checkpoint.pt
 ```
+
+Wildcard grammar matches the existing `matchesResource()` /
+`validateResourcePattern()` rules — only a trailing `/*` (single
+segment) or `/**` (recursive) is supported. Filename-glob patterns
+like `*.json` are **not** supported by the current validator/matcher;
+either the design must be limited to path-prefix wildcards (the
+recommendation here) or the wildcard grammar and both the validator
+and `matchesResource()` must be expanded — a separate, larger change.
 
 Backwards compat: existing `storage://*` patterns that don't match
 this canonical form continue to work for *validation* (gateway-side
@@ -98,9 +108,25 @@ interface StorageGrant {
   // ISO-8601 expiry of the cloud credential itself (independent of VC exp).
   expiresAt: string;
   // Provider-specific credential payload — exactly one of these is set.
+  // Use signed-URL variants for single-object grants, and session /
+  // downscoped credential variants for wildcard / prefix-scoped grants.
   azureSas?: { url: string; sasToken: string };
   s3Presigned?: { method: 'GET'|'PUT'|'DELETE'; url: string; headers?: Record<string,string> }[];
+  s3Session?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken: string;
+    region: string;
+    bucket: string;
+    prefix?: string;
+  };
   gcsSigned?:   { method: 'GET'|'PUT'|'DELETE'; url: string }[];
+  gcsDownscoped?: {
+    accessToken: string;
+    bucket: string;
+    prefix?: string;
+    availabilityCondition?: string;
+  };
 }
 
 // Extension to existing IssueCapabilityResponse — additive, optional.
@@ -113,12 +139,14 @@ interface IssueCapabilityResponse {
 For multi-object capabilities (wildcards), AWS and GCP cannot mint a
 single URL; they need either downscoped session credentials (AWS STS
 AssumeRole + scope-down policy; GCP downscoped credentials with
-Credential Access Boundaries). Provider modules handle this:
+Credential Access Boundaries). The `s3Session` / `gcsDownscoped`
+variants of `StorageGrant` (above) carry these:
 
-- **Wildcard or prefix** → return downscoped session credentials
-  (`StorageGrant.s3Session?: {accessKeyId, secretAccessKey,
-  sessionToken, expiration}` and equivalent for GCS).
-- **Single-object** → presigned URL.
+- **Wildcard or prefix** → set `s3Session` / `gcsDownscoped` (and
+  for Azure, a SAS scoped to the container with a `signedResource=c`
+  / signed prefix).
+- **Single-object** → set `s3Presigned` / `gcsSigned` (one URL per
+  permitted method).
 
 The plan explicitly mentions both as acceptable, so the union type
 covers both shapes.

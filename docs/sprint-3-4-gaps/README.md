@@ -45,10 +45,14 @@ The seven items are not equally urgent and have natural pairings. Suggested orde
 These principles apply to every item below and are stated once here so
 each individual doc can stay focused.
 
-- **Fail closed.** Any new check (CA, PIM, consent, posture) that
-  cannot be evaluated MUST deny issuance, not skip the check. This
-  matches the existing `condition-registry.ts` posture (see
-  `packages/common/src/condition-registry.ts` lines 1–20).
+- **Fail closed.** Any new control-plane authorization check (for
+  example CA, PIM, or consent) that cannot be evaluated MUST deny
+  issuance, not skip the check. This matches the existing
+  `condition-registry.ts` posture (see
+  `packages/common/src/condition-registry.ts` lines 1–20). By
+  contrast, item #9 posture emission is an observability feed and
+  must remain best-effort: emitter failures should be audited, but
+  MUST NOT block issuance.
 - **Config-driven, not code-driven.** Each cloud integration is opt-in
   via configuration. A deployment that only uses Azure must not be
   forced to install AWS / GCP SDKs at runtime — use lazy `import()` at

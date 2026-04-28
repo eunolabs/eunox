@@ -9,16 +9,17 @@
    Gateway accepts it by resolving the partner's DID document.
 
 **Files affected:** new `packages/partner-issuer-sim/` (source +
-Dockerfile), new `k8s/partner-sim/` (manifests),
-`packages/integration-tests/tests/cross-org.test.ts` (new),
+Dockerfile), new `k8s/partner-sim/` manifests (with TLS termination —
+see §3), `packages/integration-tests/tests/cross-org.test.ts` (new),
 `docs/cross-organizations.md` (already exists — extend with harness
-docs).
+docs), and possibly `packages/capability-issuer/src/did-resolver.ts`
+(opt-in localhost/test-mode HTTP exception — see §2).
 
 ## Problem
 
 The codebase has all the *primitives* for cross-org trust: the DID
 resolver in `packages/capability-issuer/src/did-resolver.ts` (869
-lines) supports `did:web` / `did:key` / `did:plc` resolution and the
+lines) supports `did:web` / `did:key` / `did:ion` resolution and the
 gateway already validates JWT signatures against resolved DIDs.
 What's missing is an end-to-end harness that proves the round trip
 works in a deployment shape that mirrors a real partner integration.
@@ -84,18 +85,38 @@ monorepo solely for testing.
 The gateway already supports a list of trusted issuers (verify via
 DID resolution). Extend the gateway's deployment config to accept
 `TRUSTED_PARTNER_DIDS=did:web:partner.local,did:web:other-partner.com`.
-The integration test injects `did:web:partner-issuer-sim.partner-sim.svc.cluster.local`
-(in-cluster DNS) or `did:web:localhost%3A4001` (docker-compose).
+The integration test injects
+`did:web:partner-issuer-sim.partner-sim.svc.cluster.local` (in-cluster
+DNS, served via the in-cluster TLS terminator described in §3) for
+the Kubernetes path. For the docker-compose path, the harness runs
+the partner sim behind a local TLS terminator (e.g. an `nginx`
+sidecar with a self-signed cert mounted into the gateway's trust
+store) and uses `did:web:partner-sim.local` mapped via
+`extra_hosts`. A pure-HTTP fallback (`did:web:localhost%3A4001`)
+is **not** supported by the current `did-resolver.ts`, which always
+fetches over HTTPS — picking it would require an opt-in
+localhost/test-mode HTTP exception in the resolver, gated behind a
+`DID_WEB_ALLOW_HTTP_FOR_HOSTS` allow-list and covered by a dedicated
+unit test. This doc recommends the TLS-terminator path; the resolver
+change is listed as an alternative in the open questions.
 
 `did:web` resolution must support custom ports — verify in
-`did-resolver.ts` and add a unit test if missing.
+`did-resolver.ts` and add a unit test if missing. If the
+localhost/test-mode HTTP exception is adopted instead, that path
+must also be covered by an explicit unit test in `did-resolver.ts`.
 
 ### 3. Kubernetes manifests: `k8s/partner-sim/`
 
 - `namespace.yaml` — `partner-sim` namespace.
 - `deployment.yaml` — single-replica Deployment of
   `partner-issuer-sim` with a PVC for the key directory.
-- `service.yaml` — ClusterIP exposing port 80 → 4001.
+- `service.yaml` — ClusterIP exposing port 443 → 4001 with TLS
+  termination (either at an Ingress in front of the Service, or via
+  a sidecar reverse proxy in the pod). The current `did-resolver.ts`
+  always fetches DID documents over HTTPS, so a plain-HTTP Service
+  will not be resolvable from the gateway. The self-signed CA used
+  by the partner sim is mounted into the gateway pod's trust store
+  in CI (init-container that appends to `/etc/ssl/certs/`).
 - `network-policy.yaml` — allow ingress only from the test runner
   namespace and from the `tool-gateway` namespace (so the gateway
   can fetch `did:web` documents). Egress only to DNS + the issuer's
@@ -175,6 +196,15 @@ Other PRs run it nightly only.
 
 ## Open questions
 
+- TLS terminator vs. resolver HTTP exception: this doc recommends
+  running the partner sim behind a TLS terminator (Ingress / nginx
+  sidecar) and trusting its self-signed CA in CI. The alternative is
+  to add an opt-in `DID_WEB_ALLOW_HTTP_FOR_HOSTS` allow-list to
+  `did-resolver.ts` so `did:web:localhost%3A4001` resolves over
+  plain HTTP for local/CI runs only. The TLS path is more faithful
+  to production but heavier; the HTTP-exception path is simpler but
+  introduces a new branch in security-critical code. Pick before
+  implementation begins.
 - Does the gateway need to support partner DIDs being *added* at
   runtime (admin API), or is a config-file restart acceptable for
   Sprint 4? Recommend config-file (simpler; matches current pattern

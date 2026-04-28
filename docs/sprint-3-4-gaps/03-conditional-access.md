@@ -61,8 +61,12 @@ In `packages/common/src/types.ts`, extend `AzureADConfig`:
 conditionalAccess?: {
   // When true, validateToken() requires the listed acrs values to be
   // present in the token's `acrs` claim. Maps action tier → required
-  // acrs reference. Tiers match the existing SENSITIVE_ACTIONS set in
-  // issuer-service.ts (read | write | delete | admin).
+  // acrs reference. This configuration uses the broader action-tier
+  // set (read | write | delete | admin); note that the existing
+  // SENSITIVE_ACTIONS set in issuer-service.ts currently includes
+  // only write | delete | admin (read is not treated as sensitive),
+  // so a `read` entry here is meaningful only if SENSITIVE_ACTIONS
+  // is also extended.
   requiredAcrsByTier?: Record<'read'|'write'|'delete'|'admin', string[]>;
 
   // When true, after claim-based checks pass, call Microsoft Graph

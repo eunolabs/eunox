@@ -10,8 +10,10 @@
 **Files affected:** new
 `packages/capability-issuer/src/db-token/{azure-sql,rds,cloudsql,index}.ts`,
 `packages/common/src/types.ts`, `issuer-service.ts`,
-`packages/common/src/capability-validators.ts` (already validates
-`db://` patterns — no change).
+`packages/common/src/capability-validators.ts` (generic `db://`
+capability-family validation only — canonical `db://{cloud}/...`
+form parsing and validation lives in the DB token minter/parser
+module, so no validator change is required here).
 
 ## Problem
 
@@ -62,7 +64,8 @@ differ enough to justify a separate module.
 
 ### 1. Resource URI parsing
 
-Canonical form (validated in `capability-validators.ts`):
+Canonical form (parsed and validated by the DB token minter, **not**
+by `capability-validators.ts` — see "Files affected" above):
 
 ```
 db://{cloud}/{instance}/{database}/{schema-or-table}.{action}
