@@ -17,6 +17,8 @@ import {
   createLogger,
   ServiceConfig,
   DefaultKillSwitchManager,
+  EvidenceSigner,
+  createSoftwareEvidenceSignerFromEnv,
   KillSwitchManager,
   createKillSwitchManagerFromEnv,
 } from '@euno/common';
@@ -74,21 +76,46 @@ async function initializeServices() {
     killSwitchManager = await createKillSwitchManagerFromEnv(process.env, logger);
 
     verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
+
+    // Build the cryptographic evidence signer when audit signing is enabled.
+    // Historically the gateway emitted a warning and silently continued
+    // unsigned, which let operators believe audit signing was active when it
+    // was not. We now treat the missing-signer case as a startup error so
+    // misconfiguration cannot survive into a running process. KMS-backed
+    // signers can still be supplied programmatically by importing this
+    // module, constructing an EnforcementEngine with `evidenceSigner`, and
+    // bypassing this default path.
+    let evidenceSigner: EvidenceSigner | undefined;
+    if (config.enableCryptographicAudit) {
+      try {
+        evidenceSigner = createSoftwareEvidenceSignerFromEnv(process.env);
+      } catch (err) {
+        throw new Error(
+          'ENABLE_CRYPTOGRAPHIC_AUDIT=true but the configured evidence signer ' +
+            'could not be initialised: ' +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+      if (!evidenceSigner) {
+        throw new Error(
+          'ENABLE_CRYPTOGRAPHIC_AUDIT=true but no evidence signer is configured. ' +
+            'Provide EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+            'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / EVIDENCE_SIGNING_KEY_ID, ' +
+            'or wire a KMS-backed EvidenceSigner programmatically. Refusing to start ' +
+            'with cryptographic audit enabled but no signer attached.',
+        );
+      }
+      logger.info('Cryptographic audit enabled with software evidence signer');
+    }
+
     enforcementEngine = new EnforcementEngine({
       verifier,
       logger,
       killSwitchManager,
-      // evidenceSigner must be supplied externally (e.g. Azure Key Vault backed)
+      evidenceSigner,
       enableCryptographicAudit: config.enableCryptographicAudit,
       policyVersion: config.policyVersion,
     });
-
-    if (config.enableCryptographicAudit) {
-      logger.warn(
-        'Cryptographic audit is enabled but no evidenceSigner has been configured. ' +
-        'Signed evidence will not be generated until an evidenceSigner implementation is provided.'
-      );
-    }
 
     logger.info('Tool Gateway services initialized successfully');
   } catch (error) {
@@ -236,21 +263,28 @@ async function validateCapabilityMiddleware(
     const headerHost = (req.headers['x-target-host'] as string | undefined)?.trim();
     const rawPath = req.path.replace(/^\/+/, '');
     const firstSegment = rawPath.split('/')[0] || '';
-    const looksLikeHost = /^[A-Za-z0-9.\-]+(:\d+)?$/.test(firstSegment) && firstSegment.includes('.');
+    // A segment looks like a host if it passes a basic hostname/IP pattern.
+    // We no longer require a dot so single-label names like `localhost` are
+    // recognised; bracketed IPv6 addresses are also accepted.
+    const looksLikeHost = /^(\[[\da-fA-F:]+\]|[A-Za-z0-9.\-]+)(:\d+)?$/.test(firstSegment);
 
     let resource: string;
     if (headerHost) {
       // Header explicitly identifies the host; use it.
-      // If the path also encodes a host segment, it must match — otherwise
-      // we treat the request as tampered and refuse to authorize it.
-      if (looksLikeHost && firstSegment.toLowerCase() !== headerHost.toLowerCase()) {
+      // Strip the leading path segment only when it equals the header host
+      // (case-insensitive).  Using equality rather than the dot-based
+      // heuristic means single-label hosts (e.g. `localhost`) and IPv6
+      // addresses are handled correctly.
+      const pathHasHostSegment = firstSegment.toLowerCase() === headerHost.toLowerCase();
+      // If the path encodes a *different* host segment, treat as tampered.
+      if (looksLikeHost && !pathHasHostSegment) {
         throw new CapabilityError(
           ErrorCode.AUTHORIZATION_FAILED,
           'Mismatch between X-Target-Host header and proxy path host segment',
           400
         );
       }
-      const tail = looksLikeHost ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
+      const tail = pathHasHostSegment ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
       resource = `api://${headerHost}/${tail}`;
     } else if (looksLikeHost) {
       const tail = rawPath.slice(firstSegment.length).replace(/^\/+/, '');

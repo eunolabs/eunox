@@ -131,25 +131,37 @@ export function canonicalSha256(data: unknown): string {
  * non-cryptographic comparison. Tolerates BigInt, circular references, and
  * `undefined`. NOT canonical — use {@link canonicalize} when reproducibility
  * matters.
+ *
+ * Uses a traversal-path ancestor stack rather than a global "seen" set so that
+ * repeated (non-circular) references such as `{ a: shared, b: shared }` are
+ * serialised correctly and are NOT falsely flagged as `[Circular]`.
  */
 export function safeSerialize(data: unknown): string {
   if (data === undefined || data === null) {
     return '';
   }
   try {
-    const seen = new WeakSet<object>();
-    return JSON.stringify(data, (_key, value) => {
+    const serialize = (value: unknown, ancestors: object[]): unknown => {
       if (typeof value === 'bigint') {
         return value.toString() + 'n';
       }
       if (typeof value === 'object' && value !== null) {
-        if (seen.has(value)) {
+        if (ancestors.includes(value)) {
           return '[Circular]';
         }
-        seen.add(value);
+        const nextAncestors = [...ancestors, value];
+        if (Array.isArray(value)) {
+          return value.map((item) => serialize(item, nextAncestors));
+        }
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          out[k] = serialize(v, nextAncestors);
+        }
+        return out;
       }
       return value;
-    });
+    };
+    return JSON.stringify(serialize(data, [])) ?? '';
   } catch {
     return String(data);
   }

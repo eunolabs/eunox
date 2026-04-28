@@ -207,7 +207,7 @@ async function startGatewayServer(
 ): Promise<RunningServer> {
   return listen(async (req, res) => {
     try {
-      const url = req.url || '/';
+      const url = new URL(req.url || '/', 'http://localhost').pathname;
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
       if (!token) {
@@ -234,20 +234,25 @@ async function startGatewayServer(
       }
 
       if (url.startsWith('/proxy/')) {
-        // Mirror the gateway's host-aware resource derivation
+        // Mirror the gateway's host-aware resource derivation.
+        // Use pathname only (no query string) to match production gateway behaviour.
         const rawPath = url.slice('/proxy/'.length);
         const headerHost = (req.headers['x-target-host'] as string | undefined)?.trim();
         const firstSegment = rawPath.split('/')[0] || '';
+        // Recognise single-label hosts (e.g. localhost) and bracketed IPv6; no
+        // dot requirement so the heuristic matches the updated production gateway.
         const looksLikeHost =
-          /^[A-Za-z0-9.\-]+(:\d+)?$/.test(firstSegment) && firstSegment.includes('.');
+          /^(\[[\da-fA-F:]+\]|[A-Za-z0-9.\-]+)(:\d+)?$/.test(firstSegment);
 
         let resource: string;
         if (headerHost) {
-          if (looksLikeHost && firstSegment.toLowerCase() !== headerHost.toLowerCase()) {
+          // Strip the leading segment only when it equals the header host.
+          const pathHasHostSegment = firstSegment.toLowerCase() === headerHost.toLowerCase();
+          if (looksLikeHost && !pathHasHostSegment) {
             send(res, 400, { error: { code: 'AUTHORIZATION_FAILED', message: 'host mismatch' } });
             return;
           }
-          const tail = looksLikeHost ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
+          const tail = pathHasHostSegment ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
           resource = `api://${headerHost}/${tail}`;
         } else if (looksLikeHost) {
           const tail = rawPath.slice(firstSegment.length).replace(/^\/+/, '');

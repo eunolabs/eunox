@@ -307,6 +307,15 @@ export class AgentRuntime {
       );
     }
 
+    // Single-flight: if an acquisition is already in progress, return the
+    // same promise instead of spawning a second concurrent request.  This
+    // prevents the periodic refresh and a concurrent 401-triggered refresh
+    // from each creating their own AbortController/promise and causing
+    // shutdown() to only abort/await the most-recent one.
+    if (this.pendingAcquire) {
+      return this.pendingAcquire;
+    }
+
     // Track this acquisition so shutdown() can abort + await it.
     const controller = new AbortController();
     this.acquireAbortController = controller;
@@ -388,15 +397,22 @@ export class AgentRuntime {
     };
 
     const acquirePromise = run();
-    this.pendingAcquire = acquirePromise.finally(() => {
+    // Capture the wrapped promise so the .finally() callback can compare by
+    // reference against the *same* object stored in this.pendingAcquire.
+    // Previously the callback compared against `acquirePromise` (the unwrapped
+    // run() promise), which is a different object from `acquirePromise.finally()`
+    // and therefore never cleared pendingAcquire.
+    let pending: Promise<void>;
+    pending = acquirePromise.finally(() => {
       // Only clear if we are still the active acquisition.
       if (this.acquireAbortController === controller) {
         this.acquireAbortController = undefined;
       }
-      if (this.pendingAcquire === acquirePromise) {
+      if (this.pendingAcquire === pending) {
         this.pendingAcquire = undefined;
       }
     });
+    this.pendingAcquire = pending;
 
     return this.pendingAcquire;
   }
