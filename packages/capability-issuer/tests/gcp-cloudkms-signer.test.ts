@@ -4,6 +4,7 @@
  */
 
 import * as jose from 'jose';
+import { CAPABILITY_TOKEN_SCHEMA_VERSION } from '@euno/common';
 
 // ---------------------------------------------------------------------------
 // Mock @google-cloud/kms at module level
@@ -194,6 +195,7 @@ describe('GCPCloudKMSSigner – sign() ECDSA DER-to-JOSE conversion', () => {
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
       jti: 'test-jti',
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
       capabilities: [],
     };
 
@@ -242,6 +244,7 @@ describe('GCPCloudKMSSigner – sign() ECDSA DER-to-JOSE conversion', () => {
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
       jti: 'test-jti-2',
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
       capabilities: [],
     };
 
