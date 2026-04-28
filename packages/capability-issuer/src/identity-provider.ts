@@ -29,4 +29,6 @@ export {
 
 // Re-export built-in provider implementations
 export { AzureADIdentityProvider, AzureADAdapterConfig } from './azure-identity-provider';
+export { AWSCognitoIdentityProvider, AWSCognitoAdapterConfig } from './aws-cognito-identity-provider';
+export { GCPIdentityProvider, GCPIdentityAdapterConfig } from './gcp-identity-provider';
 export { DIDIdentityProvider, DIDIdentityAdapterConfig } from './did-identity-provider';

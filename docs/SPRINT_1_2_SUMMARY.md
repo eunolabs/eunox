@@ -100,6 +100,54 @@ This document summarizes the implementation of sandboxing requirements from Spri
 - `packages/capability-issuer/src/azure-identity-provider.ts`
 - `packages/capability-issuer/src/index.ts` - OAuth 2.0/OIDC authentication
 
+#### ✅ Requirement: Multi-cloud identity provider parity (Sprint 1 — AWS / GCP)
+**Status:** Implemented
+
+The Sprint-1 plan calls for adapter contracts that map AWS-native (Cognito,
+IAM Identity Center) and Google-native (Cloud Identity, Identity Platform,
+Workforce / Workload Identity Federation) claims into the same
+`UserContext` and capability-manifest model used by Azure AD, with no
+cloud-specific claims leaking into policy logic.
+
+**Deliverables:**
+- `packages/capability-issuer/src/aws-cognito-identity-provider.ts` —
+  validates Cognito user-pool ID/access tokens (and IAM Identity Center
+  OIDC tokens via `issuer` / `jwksUri` overrides), maps `cognito:groups`
+  / `groups` into `UserContext.roles`.
+- `packages/capability-issuer/src/gcp-identity-provider.ts` — validates
+  Google ID tokens (Cloud Identity, Identity Platform, Workforce /
+  Workload IF) and maps the configured `rolesClaim` (default `groups`)
+  into `UserContext.roles`.
+- `packages/common/src/role-mapping.ts` — provider-agnostic role →
+  capability mapper used by every identity provider, replacing the
+  Azure-only `instanceof` branch in the issuer service.
+- `packages/common/src/types.ts` — `AWSCognitoConfig`,
+  `GCPIdentityConfig`, and the extended `ServiceConfig.identityProvider`
+  union (`'azure-ad' | 'aws-cognito' | 'gcp-identity' | 'did'`).
+- `packages/capability-issuer/src/default-registries.ts` — both new
+  providers pre-registered in `defaultIdentityRegistry`.
+- `packages/capability-issuer/src/index.ts` — env-driven wiring:
+  `AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_CLIENT_ID` (+ optional
+  `AWS_COGNITO_REGION`, `AWS_COGNITO_ISSUER`, `AWS_COGNITO_JWKS_URI`,
+  `AWS_COGNITO_TOKEN_USE`) and `GCP_IDENTITY_AUDIENCE` (+ optional
+  `GCP_IDENTITY_ISSUER`, `GCP_IDENTITY_JWKS_URI`,
+  `GCP_IDENTITY_PROJECT_ID`, `GCP_IDENTITY_ROLES_CLAIM`).
+- Tests: `packages/capability-issuer/tests/aws-cognito-identity-provider.test.ts`,
+  `packages/capability-issuer/tests/gcp-identity-provider.test.ts`,
+  `packages/common/tests/role-mapping.test.ts`, plus extended
+  `registry.test.ts` coverage.
+
+**Sprint-1 multi-cloud parity matrix (code-level adapters):**
+
+| Capability                             | Azure                | AWS                          | GCP                                               |
+|----------------------------------------|----------------------|------------------------------|---------------------------------------------------|
+| Token signer (KMS-backed)              | `AzureKeyVaultSigner`| `AWSKMSSigner`               | `GCPCloudKMSSigner`                               |
+| Identity provider                      | `AzureADIdentityProvider` | `AWSCognitoIdentityProvider` | `GCPIdentityProvider`                         |
+| `ServiceConfig.identityProvider` value | `'azure-ad'`         | `'aws-cognito'`              | `'gcp-identity'`                                  |
+| Role → capability mapping              | shared `mapRolesToCapabilities` from `@euno/common` | same                          | same                                              |
+| Pre-registered in default registry     | ✅                   | ✅                            | ✅                                                |
+| Env-driven wiring in `index.ts`        | ✅                   | ✅                            | ✅                                                |
+
 #### ✅ Requirement: Capability Issuer & Token Format
 **Status:** Already implemented
 
@@ -107,12 +155,13 @@ This document summarizes the implementation of sandboxing requirements from Spri
 - `packages/capability-issuer/src/issuer-service.ts`
 - JWT format with W3C VC compliance
 
-#### ✅ Requirement: Azure Key Vault Integration
+#### ✅ Requirement: Azure Key Vault Integration (and AWS KMS / GCP Cloud KMS parity)
 **Status:** Already implemented
 
 **Evidence:**
-- `packages/capability-issuer/src/azure-signer.ts`
-- Sign operations using Azure Key Vault
+- `packages/capability-issuer/src/azure-signer.ts` — Azure Key Vault
+- `packages/capability-issuer/src/aws-kms-signer.ts` — AWS KMS
+- `packages/capability-issuer/src/gcp-cloudkms-signer.ts` — GCP Cloud KMS
 
 ### Team OBS (Observability & Compliance)
 
@@ -136,6 +185,24 @@ This document summarizes the implementation of sandboxing requirements from Spri
 **Evidence:**
 - `packages/tool-gateway/src/enforcement.ts` - Denied action logging
 - Kill-switch detection
+
+## Sprint 1 multi-cloud parity gaps NOT addressed in this iteration
+
+The following Sprint-1 line items remain Azure-only and require larger,
+ops-heavy deliverables (each is a separate PR-sized effort that requires
+live cloud accounts to validate end-to-end). They are tracked here for
+visibility:
+
+| Area                                            | Azure status                                              | AWS gap                                                                            | GCP gap                                                                          |
+|-------------------------------------------------|-----------------------------------------------------------|------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| Infrastructure-as-Code                          | `infra/bicep/main.bicep` provisions AKS, Key Vault, ACR, LAW, App Insights | No Terraform / CloudFormation for EKS, KMS, IAM roles, CloudWatch                  | No Terraform / Deployment Manager for GKE, Cloud KMS, IAM, Cloud Logging         |
+| Tool-Gateway profile (Sprint-1 DP, "v1 cloud gateway") | Generic Express gateway + Azure APIM `validate-jwt` policy mentioned in plan | No AWS API Gateway + Lambda Authorizer / ALB profile or sample policy              | No GCP Apigee / Cloud Endpoints / API Gateway profile or sample policy           |
+| Sprint-1 OBS — security analytics rules         | `infra/sentinel/analytic-rules.json` (KQL)                | No CloudWatch Logs Insights / Security Hub / GuardDuty rule set                    | No Cloud Logging queries / Security Command Center findings / Chronicle rules    |
+| Sprint-1 OBS — log shipping transports          | Logger documents Azure Monitor / Log Analytics as the production transport | No CloudWatch Logs / CloudTrail transport implementation                           | No Cloud Logging transport implementation                                        |
+
+The code-level abstractions (signer, identity provider, audit log schema,
+gateway enforcement) are now provider-agnostic, so each of these gaps can
+be filled independently without touching the application code.
 
 ## Sprint 2 Requirements - Status: ✅ COMPLETE
 

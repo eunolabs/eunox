@@ -66,6 +66,26 @@ const config: ServiceConfig = {
     clientSecret: process.env.AZURE_AD_CLIENT_SECRET,
     authority: process.env.AZURE_AD_AUTHORITY,
   } : undefined,
+  // AWS Cognito / IAM Identity Center configuration.
+  // Accept either:
+  //   * a Cognito user pool: AWS_COGNITO_USER_POOL_ID + AWS_COGNITO_CLIENT_ID
+  //   * an IAM Identity Center / generic OIDC source: AWS_COGNITO_ISSUER + AWS_COGNITO_CLIENT_ID
+  awsCognito: (process.env.AWS_COGNITO_CLIENT_ID && (process.env.AWS_COGNITO_USER_POOL_ID || process.env.AWS_COGNITO_ISSUER)) ? {
+    region: process.env.AWS_COGNITO_REGION,
+    userPoolId: process.env.AWS_COGNITO_USER_POOL_ID,
+    clientId: process.env.AWS_COGNITO_CLIENT_ID,
+    issuer: process.env.AWS_COGNITO_ISSUER,
+    jwksUri: process.env.AWS_COGNITO_JWKS_URI,
+    tokenUse: (process.env.AWS_COGNITO_TOKEN_USE as 'id' | 'access' | undefined),
+  } : undefined,
+  // Google Cloud identity configuration
+  gcpIdentity: process.env.GCP_IDENTITY_AUDIENCE ? {
+    audience: process.env.GCP_IDENTITY_AUDIENCE,
+    issuer: process.env.GCP_IDENTITY_ISSUER,
+    jwksUri: process.env.GCP_IDENTITY_JWKS_URI,
+    projectId: process.env.GCP_IDENTITY_PROJECT_ID,
+    rolesClaim: process.env.GCP_IDENTITY_ROLES_CLAIM,
+  } : undefined,
   issuerDid: process.env.ISSUER_DID || 'did:web:example.com',
   defaultTokenTTL: parseInt(process.env.DEFAULT_TOKEN_TTL || '900', 10),
   enableDetailedLogging: process.env.ENABLE_DETAILED_LOGGING === 'true',
@@ -131,6 +151,26 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
         type: 'azure-ad',
         name: 'Azure AD Identity Provider',
         azureAD: config.azureAD,
+      });
+
+    case 'aws-cognito':
+      if (!config.awsCognito) {
+        throw new Error('AWS Cognito configuration is required when IDENTITY_PROVIDER=aws-cognito');
+      }
+      return await defaultIdentityRegistry.createIdentityAdapter({
+        type: 'aws-cognito',
+        name: 'AWS Cognito Identity Provider',
+        awsCognito: config.awsCognito,
+      });
+
+    case 'gcp-identity':
+      if (!config.gcpIdentity) {
+        throw new Error('GCP identity configuration is required when IDENTITY_PROVIDER=gcp-identity');
+      }
+      return await defaultIdentityRegistry.createIdentityAdapter({
+        type: 'gcp-identity',
+        name: 'GCP Identity Provider',
+        gcpIdentity: config.gcpIdentity,
       });
 
     case 'did':

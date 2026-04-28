@@ -12,6 +12,8 @@ import {
   CapabilityTokenPayload,
 } from '@euno/common';
 import { AzureADIdentityProvider } from '../src/azure-identity-provider';
+import { AWSCognitoIdentityProvider } from '../src/aws-cognito-identity-provider';
+import { GCPIdentityProvider } from '../src/gcp-identity-provider';
 import { DIDIdentityProvider } from '../src/did-identity-provider';
 import { AzureKeyVaultSigner } from '../src/azure-signer';
 import { DIDSigner } from '../src/did-signer';
@@ -53,6 +55,40 @@ describe('defaultIdentityRegistry', () => {
     });
 
     expect(provider).toBeInstanceOf(DIDIdentityProvider);
+  });
+
+  it('should have aws-cognito registered as a built-in type', () => {
+    expect(defaultIdentityRegistry.getSupportedTypes()).toContain('aws-cognito');
+  });
+
+  it('should have gcp-identity registered as a built-in type', () => {
+    expect(defaultIdentityRegistry.getSupportedTypes()).toContain('gcp-identity');
+  });
+
+  it('should create an AWSCognitoIdentityProvider for type aws-cognito', async () => {
+    const provider = await defaultIdentityRegistry.createIdentityAdapter({
+      type: 'aws-cognito',
+      name: 'Test AWS Cognito',
+      awsCognito: {
+        region: 'us-east-1',
+        userPoolId: 'us-east-1_TestPool',
+        clientId: 'test-client-id',
+      },
+    });
+
+    expect(provider).toBeInstanceOf(AWSCognitoIdentityProvider);
+  });
+
+  it('should create a GCPIdentityProvider for type gcp-identity', async () => {
+    const provider = await defaultIdentityRegistry.createIdentityAdapter({
+      type: 'gcp-identity',
+      name: 'Test GCP Identity',
+      gcpIdentity: {
+        audience: 'test-audience',
+      },
+    });
+
+    expect(provider).toBeInstanceOf(GCPIdentityProvider);
   });
 
   it('should throw a clear error for unknown types', async () => {
