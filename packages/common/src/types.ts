@@ -265,6 +265,44 @@ export interface IssueCapabilityRequest {
   requestedCapabilities?: CapabilityConstraint[];
   /** Optional: capability manifest for the agent */
   manifest?: AgentCapabilityManifest;
+  /**
+   * Optional: explicit user consent record authorizing the issuance. When
+   * present the issuer validates that the consent was granted by the same
+   * user that owns the {@link authToken}, was granted to the same {@link agentId}
+   * being requested, has not expired, and covers every requested capability.
+   *
+   * Issuer deployments can require this for every issuance via the
+   * `requireConsent` constructor option (env: `REQUIRE_USER_CONSENT=true`),
+   * and it is always required when the requested capabilities include
+   * sensitive actions (`write`, `delete`, `admin`).
+   */
+  consent?: UserConsent;
+}
+
+/**
+ * Explicit, auditable user-consent record produced by the consent UI.
+ *
+ * Adding consent at issuance time prevents an agent from silently obtaining
+ * capabilities that fall within the user's roles but were never explicitly
+ * approved for that agent.
+ */
+export interface UserConsent {
+  /** Subject of the user authentication token (must match `authToken`'s userId). */
+  userId: string;
+  /** Agent the user consented to grant capabilities to (must match `agentId`). */
+  agentId: string;
+  /**
+   * The capabilities the user explicitly approved. Resource patterns may be
+   * wildcards (e.g. `storage://sales-data/**`); the issuer uses
+   * `matchesResource()` to check that each requested capability is covered.
+   */
+  grantedCapabilities: CapabilityConstraint[];
+  /** Unix-seconds timestamp when the user granted consent. */
+  grantedAt: number;
+  /** Optional unix-seconds expiry for the consent record itself. */
+  expiresAt?: number;
+  /** Optional consent identifier for audit cross-reference (e.g. consent UI receipt id). */
+  consentId?: string;
 }
 
 /**
