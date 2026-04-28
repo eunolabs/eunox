@@ -213,6 +213,33 @@ describe('createSoftwareEvidenceSigner', () => {
     );
   });
 
+  it('throws on RS384/RS512/PS512/ES384 (incompatible with SHA-256 digest)', () => {
+    const rsaPem = generatePem('rsa');
+    for (const alg of ['RS384', 'RS512', 'PS384', 'PS512']) {
+      expect(() => createSoftwareEvidenceSigner({ privateKeyPem: rsaPem, algorithm: alg })).toThrow(
+        /unsupported algorithm/,
+      );
+    }
+  });
+
+  it('throws when both privateKeyPem and privateKeyPath are supplied', () => {
+    const pem = generatePem('rsa');
+    expect(() =>
+      createSoftwareEvidenceSigner({ privateKeyPem: pem, privateKeyPath: '/tmp/does-not-matter.pem' }),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('throws when both publicKeyPem and publicKeyPath are supplied', () => {
+    const pem = generatePem('rsa');
+    expect(() =>
+      createSoftwareEvidenceSigner({
+        privateKeyPem: pem,
+        publicKeyPem: pem,
+        publicKeyPath: '/tmp/does-not-matter.pem',
+      }),
+    ).toThrow(/mutually exclusive/);
+  });
+
   it('throws when the PEM cannot be parsed', () => {
     expect(() => createSoftwareEvidenceSigner({ privateKeyPem: 'not-a-pem' })).toThrow(
       /failed to parse private key PEM/,

@@ -199,29 +199,32 @@ export function createAuditEvidence(params: {
 }
 
 /**
- * Hash algorithm names accepted by Node.js' `crypto` module for the
- * supported JWS-style signing algorithms.
+ * Algorithms supported by the software evidence signer.
+ *
+ * {@link AuditEvidenceSigner} always pre-computes a SHA-256 digest of the
+ * canonical evidence and passes it to {@link CryptoSigner.signDigest}. The
+ * software signer therefore restricts itself to JWS algorithms whose
+ * underlying hash is SHA-256, plus EdDSA which signs the message bytes
+ * directly. RS/PS/ES384/512 would require a different digest size and are
+ * rejected at construction so misconfigured deployments fail fast rather
+ * than silently producing signatures that no JWS verifier accepts.
  */
-const HASH_ALGORITHMS: Record<string, string> = {
-  RS256: 'sha256',
-  RS384: 'sha384',
-  RS512: 'sha512',
-  ES256: 'sha256',
-  ES384: 'sha384',
-  ES512: 'sha512',
-  PS256: 'sha256',
-  PS384: 'sha384',
-  PS512: 'sha512',
-};
+const SUPPORTED_ALGORITHMS: ReadonlySet<string> = new Set([
+  'RS256',
+  'PS256',
+  'ES256',
+  'EDDSA',
+]);
 
 /**
  * Configuration for {@link createSoftwareEvidenceSigner}.
  *
- * Exactly one of `privateKeyPem` / `privateKeyPath` must be supplied. The
- * matching public key is derived from the private key automatically (used
- * by `verifyEvidence`) but a `publicKeyPem` may be supplied explicitly
- * when, for example, the private key lives in an HSM-backed PEM container
- * with a separate public certificate.
+ * Exactly one of `privateKeyPem` / `privateKeyPath` must be supplied;
+ * supplying both throws at construction. The matching public key is
+ * derived from the private key automatically (used by `verifyEvidence`)
+ * but a `publicKeyPem` (or `publicKeyPath`, again mutually exclusive)
+ * may be supplied explicitly when, for example, the private key lives in
+ * an HSM-backed PEM container with a separate public certificate.
  *
  * The resulting signer keeps signing material strictly in-process — it is
  * suitable for development, CI, and lightweight production deployments
@@ -240,7 +243,9 @@ export interface SoftwareEvidenceSignerConfig {
   keyId?: string;
   /**
    * JWS-style algorithm name. Defaults to `RS256`. Must be one of:
-   * RS256/384/512, PS256/384/512, ES256/384/512, EdDSA.
+   * `RS256`, `PS256`, `ES256`, `EdDSA`. The `*384` / `*512` variants
+   * are intentionally unsupported because the audit signer's digest is
+   * always SHA-256.
    */
   algorithm?: string;
 }
@@ -261,19 +266,33 @@ export interface SoftwareEvidenceSignerConfig {
  */
 export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfig): AuditEvidenceSigner {
   // Preserve the canonical JWS casing for the algorithm in the signed
-  // record (`EdDSA`, `RS256`, `ES256`, …) so downstream verifiers that
-  // compare against the JWS spec see the expected value. Internally we
-  // normalise to upper-case for control-flow comparisons only.
+  // record (`EdDSA`, `RS256`, `ES256`, `PS256`) so downstream verifiers
+  // that compare against the JWS spec see the expected value. Internally
+  // we normalise to upper-case for control-flow comparisons only.
   const rawAlgorithm = config.algorithm ?? 'RS256';
   const algorithmUpper = rawAlgorithm.toUpperCase();
   const CANONICAL_ALGORITHMS: Record<string, string> = {
-    RS256: 'RS256', RS384: 'RS384', RS512: 'RS512',
-    PS256: 'PS256', PS384: 'PS384', PS512: 'PS512',
-    ES256: 'ES256', ES384: 'ES384', ES512: 'ES512',
+    RS256: 'RS256',
+    PS256: 'PS256',
+    ES256: 'ES256',
     EDDSA: 'EdDSA',
   };
   const canonicalAlgorithm = CANONICAL_ALGORITHMS[algorithmUpper];
   const keyId = config.keyId ?? 'software-key';
+
+  // Enforce mutual exclusivity of inline PEM and PEM file path so
+  // operators do not get silent "which one wins?" precedence behaviour
+  // when both are accidentally configured.
+  if (config.privateKeyPem !== undefined && config.privateKeyPath !== undefined) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: privateKeyPem and privateKeyPath are mutually exclusive — supply exactly one',
+    );
+  }
+  if (config.publicKeyPem !== undefined && config.publicKeyPath !== undefined) {
+    throw new Error(
+      'createSoftwareEvidenceSigner: publicKeyPem and publicKeyPath are mutually exclusive — supply exactly one',
+    );
+  }
 
   const privatePem = config.privateKeyPem
     ?? (config.privateKeyPath ? require('fs').readFileSync(config.privateKeyPath, 'utf8') : undefined);
@@ -310,20 +329,22 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
   }
 
   const isEdDsa = algorithmUpper === 'EDDSA';
-  const isPss = algorithmUpper.startsWith('PS');
-  const isEcdsa = algorithmUpper.startsWith('ES');
-  const hashAlgorithm = HASH_ALGORITHMS[algorithmUpper];
-  if (!canonicalAlgorithm || (!isEdDsa && !hashAlgorithm)) {
+  const isPss = algorithmUpper === 'PS256';
+  const isEcdsa = algorithmUpper === 'ES256';
+  const isRsaPkcs1 = algorithmUpper === 'RS256';
+  if (!canonicalAlgorithm || !SUPPORTED_ALGORITHMS.has(algorithmUpper)) {
     throw new Error(
       `createSoftwareEvidenceSigner: unsupported algorithm '${rawAlgorithm}'. ` +
-        'Supported: RS256/RS384/RS512, PS256/PS384/PS512, ES256/ES384/ES512, EdDSA.',
+        'Supported: RS256, PS256, ES256, EdDSA. ' +
+        'RS/PS/ES384/512 are intentionally rejected because AuditEvidenceSigner ' +
+        'always pre-computes a SHA-256 digest before calling signDigest.',
     );
   }
 
   // Validate the key type is compatible with the requested algorithm so
   // misconfigurations surface at startup rather than at first signing.
   const keyType = privateKey.asymmetricKeyType;
-  if (algorithmUpper.startsWith('RS') || isPss) {
+  if (isRsaPkcs1 || isPss) {
     if (keyType !== 'rsa') {
       throw new Error(
         `createSoftwareEvidenceSigner: algorithm '${canonicalAlgorithm}' requires an RSA key, got '${keyType}'`,
@@ -345,10 +366,13 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
 
   const cryptoSigner: CryptoSigner = {
     async signDigest(digest: Buffer): Promise<Buffer> {
+      // The CryptoSigner contract receives a precomputed SHA-256 digest
+      // from AuditEvidenceSigner; pass `null` as the algorithm so Node
+      // signs the digest bytes directly rather than re-hashing them. For
+      // EdDSA, Node's signer expects the message and signs it without an
+      // intermediate hash step, which is the correct interpretation of
+      // the digest bytes as a fixed-length message.
       if (isEdDsa) {
-        // Node's EdDSA signer takes the message, not a precomputed digest;
-        // AuditEvidenceSigner already produced the SHA-256 digest of the
-        // canonical evidence so we sign that 32-byte value directly.
         return crypto.sign(null, digest, privateKey);
       }
       const signOptions: crypto.SignKeyObjectInput = { key: privateKey };
@@ -360,7 +384,7 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
         // JWS-compatible (P1363 / r||s) ECDSA signatures.
         (signOptions as crypto.SignKeyObjectInput & { dsaEncoding?: 'ieee-p1363' | 'der' }).dsaEncoding = 'ieee-p1363';
       }
-      return crypto.sign(hashAlgorithm, digest, signOptions);
+      return crypto.sign(null, digest, signOptions);
     },
     async verifyDigest(digest: Buffer, signature: Buffer, _keyId: string, alg: string): Promise<boolean> {
       // Reject algorithm mismatches: a record signed under one algorithm
@@ -379,7 +403,7 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
       if (isEcdsa) {
         (verifyOptions as crypto.VerifyKeyObjectInput & { dsaEncoding?: 'ieee-p1363' | 'der' }).dsaEncoding = 'ieee-p1363';
       }
-      return crypto.verify(hashAlgorithm, digest, verifyOptions, signature);
+      return crypto.verify(null, digest, verifyOptions, signature);
     },
     async getKeyId(): Promise<string> {
       return keyId;

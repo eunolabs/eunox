@@ -150,6 +150,17 @@ describe('RoleCapabilityPolicy', () => {
     resolveRoleCapabilityMap(basePolicy, 'tenant-b');
     expect(JSON.stringify(basePolicy.default)).toEqual(before);
   });
+
+  it('returns a deep copy so mutating capability arrays in the result does not leak into the policy', () => {
+    const map = resolveRoleCapabilityMap(basePolicy);
+    const viewer = map.Viewer!;
+    // Mutate the resolved arrays / nested arrays in every way we can
+    viewer.push({ resource: 'api://injected', actions: ['admin'] });
+    viewer[0]!.actions.push('admin');
+    const sourceViewer = basePolicy.default.Viewer!;
+    expect(sourceViewer).toHaveLength(1);
+    expect(sourceViewer[0]!.actions).toEqual(['read']);
+  });
 });
 
 describe('validateRoleCapabilityPolicy', () => {

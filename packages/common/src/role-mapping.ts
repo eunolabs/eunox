@@ -104,14 +104,26 @@ export interface RoleCapabilityPolicy {
 /**
  * Resolve the effective role → capability map for a tenant. Combines the
  * policy's `default` map with the tenant-specific overrides (if any). The
- * default policy is always returned as a defensive copy so callers cannot
- * mutate the source map.
+ * returned map is a deep copy of the source data — both the role keys and
+ * the capability arrays/objects underneath them — so callers can mutate
+ * the result without affecting the source policy or other tenants.
  */
 export function resolveRoleCapabilityMap(
   policy: RoleCapabilityPolicy,
   tenantId?: string,
 ): RoleCapabilityMap {
-  const merged: RoleCapabilityMap = { ...policy.default };
+  const cloneCapability = (cap: CapabilityConstraint): CapabilityConstraint => ({
+    resource: cap.resource,
+    actions: [...cap.actions],
+    ...(cap.conditions !== undefined ? { conditions: { ...cap.conditions } } : {}),
+  });
+  const cloneCapabilityArray = (caps: CapabilityConstraint[]): CapabilityConstraint[] =>
+    caps.map(cloneCapability);
+
+  const merged: RoleCapabilityMap = {};
+  for (const [role, caps] of Object.entries(policy.default)) {
+    merged[role] = cloneCapabilityArray(caps);
+  }
   if (tenantId && policy.tenants && policy.tenants[tenantId]) {
     const overrides = policy.tenants[tenantId];
     for (const role of Object.keys(overrides)) {
@@ -120,7 +132,7 @@ export function resolveRoleCapabilityMap(
       if (Array.isArray(caps) && caps.length === 0) {
         delete merged[role];
       } else if (Array.isArray(caps)) {
-        merged[role] = caps;
+        merged[role] = cloneCapabilityArray(caps);
       }
     }
   }
