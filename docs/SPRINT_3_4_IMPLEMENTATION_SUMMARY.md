@@ -18,7 +18,7 @@ reconciliation against the **current code in `packages/`**.
 | Feature | Original status | Current status | Code reference |
 | ------- | --------------- | -------------- | -------------- |
 | DID resolution (`did:web` / `did:ion` / `did:key`) | 75% — "infrastructure only, resolution stubbed" | ✅ All three methods fully implemented | `packages/capability-issuer/src/did-resolver.ts` |
-| Developer CLI | 90% — "`request` stubbed (curl example)" | ✅ 8 commands shipped (`init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`); `init --framework` flag emits LangChain / MAF / CrewAI scaffolding | `packages/cli/src/index.ts` |
+| Developer CLI | 90% — "`request` stubbed (curl example)" | ✅ 8 commands shipped (`init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`); `init --framework` flag emits LangChain / MAF / CrewAI scaffolding; `init --cloud` flag emits Azure / AWS / GCP deployment-config scaffolding | `packages/cli/src/index.ts` |
 | Token revocation | 90% — "in-memory only, no multi-instance sync" | ✅ Redis-backed `RedisRevocationStore` wired via `createRevocationStoreFromEnv` (uses `REDIS_URL`); falls back to in-memory in single-instance dev | `packages/tool-gateway/src/revocation-store.ts`, `packages/tool-gateway/src/index.ts` |
 | Kill switch | "v2 — global / session / agent" | ✅ Distributed `RedisKillSwitchManager` shares state across replicas via `REDIS_URL`; in-memory fallback for dev | `packages/common/src/redis-kill-switch.ts`, `packages/common/src/kill-switch.ts` |
 | Specialized capability validators | 80% — "no file-path / DB-specific validation" | ✅ Typed `CapabilityCondition` discriminated union enforced at issuance and at the gateway; file-path / SQL / table / column / resource-pattern validators ship in `packages/common/src/capability-validators.ts` | `packages/common/src/condition-registry.ts`, `packages/common/src/capability-validators.ts` |
@@ -305,20 +305,7 @@ The following features are documented but require additional implementation:
 ---
 
 ### 2. W3C Verifiable Credential Format
-**Status:** Current tokens are JWT format, VC upgrade not implemented
-
-**Required Work:**
-- Add `@digitalbazaar/vc` or similar VC library
-- Update token issuance to produce W3C VC format
-- Update verifier to validate VC signatures
-- Maintain backward compatibility with JWT tokens
-
-**Estimated Effort:** 2-3 weeks
-
-**Files to Update:**
-- `packages/capability-issuer/src/issuer-service.ts`
-- `packages/tool-gateway/src/verifier.ts`
-- `packages/common/src/types.ts`
+**Status:** ✅ **Implemented (April 2026).** Capability tokens now embed a W3C VC envelope (`vc.@context`, `vc.type: ["VerifiableCredential","CapabilityCredential"]`, `vc.credentialSubject`) on issuance, attenuation, and renewal. The envelope mirrors the JWT claim set so verifiers built on standard VC libraries (e.g. `@digitalbazaar/vc`, Microsoft Entra Verified ID) can consume the same token without proprietary code. See `CapabilityIssuerService.buildVerifiableCredential` in `packages/capability-issuer/src/issuer-service.ts` and `packages/capability-issuer/tests/issuer-service-vc.test.ts`.
 
 ---
 

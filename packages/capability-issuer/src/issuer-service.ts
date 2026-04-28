@@ -67,6 +67,64 @@ export class CapabilityIssuerService {
    *  from the {@link SigningAlgorithm} type. */
   private static readonly ALLOWED_ALGORITHMS = SIGNING_ALGORITHMS;
 
+  /**
+   * W3C Verifiable Credentials Data Model `@context`.  Per
+   * `docs/execution-plan.md` Sprint 4 (Team CP, "Verifiable Credential
+   * Issuance"), capability tokens carry a W3C VC envelope so that
+   * verifiers built around standard VC libraries (e.g. `@digitalbazaar/vc`,
+   * Microsoft Entra Verified ID) can consume them without bespoke code.
+   *
+   * The base context (`https://www.w3.org/2018/credentials/v1`) is
+   * required by the spec; the second URI namespaces our
+   * `CapabilityCredential` type and its `capabilities` /
+   * `parentCapabilityId` fields so they are unambiguous when the token
+   * is presented to a third party.
+   */
+  private static readonly VC_CONTEXT: readonly string[] = [
+    'https://www.w3.org/2018/credentials/v1',
+    'https://schemas.euno.dev/capability-credential/v1',
+  ];
+
+  /** W3C VC `type` array used by every capability token. */
+  private static readonly VC_TYPE: readonly string[] = [
+    'VerifiableCredential',
+    'CapabilityCredential',
+  ];
+
+  /**
+   * Build the W3C Verifiable Credential envelope embedded in a
+   * capability token.  The envelope mirrors the JWT claims so that a
+   * verifier inspecting only the `vc` object (e.g. a `@digitalbazaar/vc`
+   * presentation pipeline) sees the same authoritative subject,
+   * issuer, validity window, and capability constraints as a verifier
+   * inspecting only the JWT claims.  Both views MUST stay in sync —
+   * any change to the JWT claim set on issuance / attenuation /
+   * renewal must be reflected here.
+   *
+   * The `id` field is the JWT id (`jti`) prefixed with `urn:uuid:` so
+   * the resulting credential identifier is a valid URI per the VC
+   * Data Model § 4.2.
+   */
+  private buildVerifiableCredential(
+    payload: Omit<CapabilityTokenPayload, 'vc'>
+  ): NonNullable<CapabilityTokenPayload['vc']> {
+    const credentialSubject: Record<string, unknown> = {
+      id: payload.sub,
+      capabilities: payload.capabilities,
+    };
+    if (payload.parentCapabilityId !== undefined) {
+      credentialSubject.parentCapabilityId = payload.parentCapabilityId;
+    }
+    if (payload.authorizedBy !== undefined) {
+      credentialSubject.authorizedBy = payload.authorizedBy;
+    }
+    return {
+      '@context': [...CapabilityIssuerService.VC_CONTEXT],
+      type: [...CapabilityIssuerService.VC_TYPE],
+      credentialSubject,
+    };
+  }
+
   constructor(
     signer: TokenSigner,
     identityProvider: IdentityProvider,
@@ -235,6 +293,12 @@ export class CapabilityIssuerService {
           tenantId: userContext.tenantId,
         },
       };
+      // Embed the W3C Verifiable Credential envelope so verifiers built
+      // around standard VC libraries can consume the same token (Sprint
+      // 4 exit criterion: "Credentials conform to open standards and
+      // can be verified using only the DID Document and standard
+      // JWT/VC libraries, without proprietary code").
+      payload.vc = this.buildVerifiableCredential(payload);
 
       // Step 5: Sign the token
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
@@ -586,6 +650,10 @@ export class CapabilityIssuerService {
         parentCapabilityId: parentPayload.jti, // Link to parent
         authorizedBy: parentPayload.authorizedBy,
       };
+      // Re-build the VC envelope from the *attenuated* claim set so the
+      // VC view of the token reflects the narrowed capabilities, not
+      // the parent's broader set.
+      childPayload.vc = this.buildVerifiableCredential(childPayload);
 
       // Step 6: Sign the child token
       this.logger.info('Signing attenuated capability token', {
@@ -834,6 +902,10 @@ export class CapabilityIssuerService {
         parentCapabilityId: currentPayload.jti, // Link to previous token for audit trail
         authorizedBy: currentPayload.authorizedBy,
       };
+      // Re-build the VC envelope so its `id` (urn:uuid:<jti>) and
+      // `parentCapabilityId` reference the new token, not the previous
+      // one.
+      renewedPayload.vc = this.buildVerifiableCredential(renewedPayload);
 
       // Step 3: Sign the renewed token
       this.logger.info('Signing renewed capability token', {
