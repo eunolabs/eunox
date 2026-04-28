@@ -653,6 +653,27 @@ export class CapabilityIssuerService {
           );
         }
       }
+
+      // Attenuation must not LOOSEN argument-level constraints declared on
+      // the parent. If any matching parent capability has an
+      // `argumentSchema`, the child must carry the same schema (deep
+      // equal). The child is allowed to introduce a new schema only when
+      // no matching parent has one (introducing a constraint is a
+      // tightening, which is always sound).
+      const parentsWithSchema = matchingParents.filter(p => p.argumentSchema);
+      if (parentsWithSchema.length > 0) {
+        const requestedSchemaSerialized = stableStringify(requested.argumentSchema);
+        const matchesAnyParent = parentsWithSchema.some(
+          p => stableStringify(p.argumentSchema) === requestedSchemaSerialized
+        );
+        if (!matchesAnyParent) {
+          throw new CapabilityError(
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+            `Cannot attenuate: argumentSchema on resource '${requested.resource}' must match the parent capability's argumentSchema`,
+            403
+          );
+        }
+      }
     }
   }
 
@@ -846,4 +867,25 @@ export class CapabilityIssuerService {
   async getPublicKey(): Promise<string> {
     return await this.signer.getPublicKey();
   }
+}
+
+/**
+ * Deterministic JSON serialiser used to compare `argumentSchema` objects
+ * across capability boundaries. Object keys are sorted recursively so that
+ * the comparison is independent of property order.
+ */
+function stableStringify(value: unknown): string {
+  if (value === undefined) {
+    return 'undefined';
+  }
+  return JSON.stringify(value, (_key, v) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(v).sort()) {
+        sorted[k] = (v as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return v;
+  });
 }

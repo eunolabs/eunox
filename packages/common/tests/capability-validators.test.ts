@@ -72,11 +72,22 @@ describe('validateFilePath', () => {
       expect(() => validateFilePath('data.xml', ['.json'])).toThrow(CapabilityError);
     });
 
-    it('should reject dangerous patterns', () => {
+    it('should reject home-directory and encoded-traversal patterns', () => {
       expect(() => validateFilePath('~/secrets')).toThrow(CapabilityError);
-      expect(() => validateFilePath('file${var}.txt')).toThrow(CapabilityError);
       expect(() => validateFilePath('file%00.txt')).toThrow(CapabilityError);
       expect(() => validateFilePath('file%2e%2e/etc')).toThrow(CapabilityError);
+    });
+
+    it('does not pretend to detect "dangerous content" inside legitimate paths', () => {
+      // Earlier versions rejected these via a kitchen-sink denylist that
+      // both missed real attacks and rejected legitimate filenames. The
+      // structural checks (absolute / traversal / null byte / hidden /
+      // empty) remain — those are unambiguous. Content-style rejections
+      // are deliberately removed; the storage layer is responsible for
+      // resolving paths against a fixed root.
+      expect(() => validateFilePath('docs/file${var}.txt')).not.toThrow();
+      expect(() => validateFilePath('docs/javascript-tutorial.md')).not.toThrow();
+      expect(() => validateFilePath('docs/script-tag-guide.md')).not.toThrow();
     });
   });
 });
@@ -98,44 +109,57 @@ describe('validateSQLParameter', () => {
     it('should accept email address', () => {
       expect(() => validateSQLParameter('user@example.com')).not.toThrow();
     });
+
+    // The previous blacklist-based implementation rejected these
+    // legitimate strings because they happened to contain SQL-looking
+    // tokens. The new contract is structural-only: the validator does
+    // not pretend to detect SQL injection. Real defense is parameterized
+    // queries upstream.
+    it('should accept legitimate strings that look SQL-ish', () => {
+      expect(() => validateSQLParameter('admin--user')).not.toThrow();
+      expect(() => validateSQLParameter("'''triple''' quoted name")).not.toThrow();
+      expect(() => validateSQLParameter('UNION pacific railroad')).not.toThrow();
+      expect(() => validateSQLParameter('Order #1234')).not.toThrow();
+    });
   });
 
-  describe('invalid SQL parameters', () => {
-    it('should reject SQL comments', () => {
-      expect(() => validateSQLParameter('admin--')).toThrow(CapabilityError);
-      expect(() => validateSQLParameter('test/*comment*/')).toThrow(CapabilityError);
-      expect(() => validateSQLParameter('value#comment')).toThrow(CapabilityError);
-    });
-
-    it('should reject SQL injection patterns', () => {
-      expect(() => validateSQLParameter("' OR '1'='1")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter("' OR 1=1--")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter("'; DROP TABLE users--")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter("'; DELETE FROM users--")).toThrow(CapabilityError);
-    });
-
-    it('should reject UNION-based injection', () => {
-      expect(() => validateSQLParameter("' UNION SELECT password FROM users--")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter("' UNION ALL SELECT * FROM admin--")).toThrow(CapabilityError);
-    });
-
-    it('should reject command execution attempts', () => {
-      expect(() => validateSQLParameter('EXEC(xp_cmdshell)')).toThrow(CapabilityError);
-      expect(() => validateSQLParameter('EXECUTE(sp_executesql)')).toThrow(CapabilityError);
-    });
-
-    it('should reject file operations', () => {
-      expect(() => validateSQLParameter("' INTO OUTFILE '/tmp/dump'")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter('LOAD_FILE(\'/etc/passwd\')')).toThrow(CapabilityError);
-    });
-
-    it('should reject excessive quotes', () => {
-      expect(() => validateSQLParameter("'''test'''")).toThrow(CapabilityError);
-      expect(() => validateSQLParameter('"""test"""')).toThrow(CapabilityError);
-    });
-
+  describe('structural rejections', () => {
     it('should reject null bytes', () => {
       expect(() => validateSQLParameter('test\0value')).toThrow(CapabilityError);
+      expect(() => validateSQLParameter('test\0value')).toThrow('null byte');
+    });
+
+    it('should reject non-string values', () => {
+      // Type-erased call to mirror real callers handling untyped JSON input.
+      expect(() => validateSQLParameter(123 as unknown as string)).toThrow(CapabilityError);
+    });
+
+    it('should reject values exceeding maxLength', () => {
+      const huge = 'a'.repeat(5000);
+      expect(() => validateSQLParameter(huge)).toThrow(CapabilityError);
+      expect(() => validateSQLParameter(huge, undefined, 10000)).not.toThrow();
+    });
+  });
+
+  describe('caller-supplied allowlist', () => {
+    it('accepts values that match the allowlist pattern', () => {
+      expect(() =>
+        validateSQLParameter('123e4567-e89b-12d3-a456-426614174000', /[0-9a-f-]+/i)
+      ).not.toThrow();
+    });
+
+    it('rejects values that do not match the allowlist pattern', () => {
+      expect(() =>
+        validateSQLParameter("' OR '1'='1", /[0-9a-f-]+/i)
+      ).toThrow(CapabilityError);
+    });
+
+    it('anchors the allowlist pattern to the whole value', () => {
+      // A bare alphanumeric pattern must not accept a value that happens
+      // to *start* with alphanumeric characters.
+      expect(() =>
+        validateSQLParameter('abc; DROP TABLE users', /[a-z]+/)
+      ).toThrow(CapabilityError);
     });
   });
 });

@@ -218,7 +218,11 @@ async function validateCapabilityMiddleware(
     const resourcePath = req.path.replace(/^\/+/, '');
     const resource = `api://${resourcePath}`;
 
-    // Validate the action
+    // Validate the action. The request body is included in the context
+    // so that the enforcement engine can apply the matched capability's
+    // `argumentSchema` (if any) — argument-level enforcement is a
+    // first-class part of the gateway, not something callers have to
+    // remember to invoke.
     const validationRequest: ValidateActionRequest = {
       token,
       action: action as any,
@@ -226,6 +230,8 @@ async function validateCapabilityMiddleware(
       context: {
         method: req.method,
         path: req.path,
+        body: req.body,
+        query: req.query,
       },
     };
 

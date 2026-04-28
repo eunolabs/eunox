@@ -18,6 +18,7 @@ import {
   EvidenceSigner,
   SignedAuditEvidence,
   createAuditEvidence,
+  validateArguments,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -124,6 +125,60 @@ export class EnforcementEngine {
       const matchedCapability = payload.capabilities.find(cap => {
         return isActionAllowed(request.action, request.resource, [cap]);
       });
+
+      // Step 5b: Argument-level enforcement.
+      // After the (action, resource) check passes, validate the actual
+      // arguments / request body against the matched capability's
+      // declared `argumentSchema`. This is the first-class enforcement
+      // point that prevents an agent with `read on api://crm/customers`
+      // from passing an arbitrary body to that endpoint.
+      //
+      // Capabilities without an `argumentSchema` impose no argument
+      // constraints (preserving existing behaviour for callers that have
+      // not yet adopted argument schemas).
+      if (matchedCapability?.argumentSchema) {
+        const argsToValidate = extractArgsForValidation(request.context);
+
+        try {
+          validateArguments(argsToValidate, matchedCapability.argumentSchema);
+        } catch (err) {
+          const reason =
+            err instanceof CapabilityError
+              ? err.message
+              : 'Argument validation failed';
+
+          await this.logDenial(
+            payload.sub,
+            request.action,
+            request.resource,
+            reason,
+            sessionId
+          );
+
+          if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+            // Hash the *exact* value that was validated, not the
+            // surrounding context metadata. This keeps the evidence
+            // hash tightly coupled to the input that caused the denial
+            // and avoids drift from method/path/session noise.
+            await this.generateEvidence({
+              sessionId: sessionId || 'unknown',
+              userId: payload.authorizedBy.userId,
+              tool: request.resource,
+              args: argsToValidate,
+              agentId: payload.sub,
+              resource: request.resource,
+              action: request.action,
+              capabilityId: payload.jti,
+              decision: 'deny',
+            });
+          }
+
+          return {
+            allowed: false,
+            reason,
+          };
+        }
+      }
 
       // Step 6: Log the successful validation
       await this.logValidation(
@@ -270,4 +325,27 @@ export class EnforcementEngine {
 
     this.auditLogger.info('Action denied', auditEntry);
   }
+}
+
+/**
+ * Pick the value to feed into argument-schema validation from a
+ * validation-request context. The tool-gateway sets `args` on the
+ * tool-invoke path and `body` on the proxy path; we honour either,
+ * preferring `args` when both are present. If neither key is set we
+ * return `undefined` so the schema is evaluated against an empty value
+ * (and any `required` constraint correctly rejects the call).
+ */
+function extractArgsForValidation(
+  context: Record<string, unknown> | undefined
+): unknown {
+  if (!context) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(context, 'args')) {
+    return context.args;
+  }
+  if (Object.prototype.hasOwnProperty.call(context, 'body')) {
+    return context.body;
+  }
+  return undefined;
 }
