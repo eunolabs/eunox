@@ -89,9 +89,19 @@ For deeper background see:
 
 - [ ] Structured logs shipped to a log aggregator (Azure Monitor, ELK,
       Datadog, etc.) – ensure JSON output is preserved.
-- [ ] `ENABLE_CRYPTOGRAPHIC_AUDIT=true` AND a real `evidenceSigner` is
-      configured before audit signatures are required for compliance.
-      Until then the logs are unsigned.
+- [ ] `ENABLE_CRYPTOGRAPHIC_AUDIT=true` AND a real evidence signer is
+      configured. The gateway now refuses to start when audit signing is
+      enabled but no signer is available — provide either
+      `EVIDENCE_SIGNING_KEY_PEM` (inline PEM) or `EVIDENCE_SIGNING_KEY_FILE`
+      (path to a PEM-encoded private key), with optional
+      `EVIDENCE_SIGNING_ALGORITHM` (default `RS256`) and
+      `EVIDENCE_SIGNING_KEY_ID`. KMS-backed signers may be supplied
+      programmatically by importing the `EnforcementEngine` and passing a
+      custom `evidenceSigner`.
+- [ ] Audit logs verified to carry the tamper-evident `auditChain` field
+      (`seq`, `prevHash`, `hash`). For cross-replica continuity, seed the
+      previous run's terminal hash via
+      `EUNO_AUDIT_CHAIN_SEED_<SERVICE_NAME>`.
 - [ ] Metrics scraped: request rate, p50/p95/p99 latency per route, 4xx/5xx
       rate, active kill-switches, revocations per minute, Redis errors.
 - [ ] Alerts wired:

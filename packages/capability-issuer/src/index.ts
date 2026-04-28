@@ -18,6 +18,8 @@ import {
   ServiceConfig,
   TokenSigner,
   IdentityProvider,
+  RoleCapabilityPolicy,
+  loadRoleCapabilityPolicyFromFile,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -192,12 +194,29 @@ async function initializeServices() {
     const signer = await createSigner();
     const identityProvider = await createIdentityProvider();
 
+    // Load externalised role → capability policy if ROLE_POLICY_FILE is set.
+    // When unset the issuer falls back to the in-code Sprint-1 default
+    // mapping, preserving backward compatibility.  See
+    // `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md` for the recommended
+    // production configuration.
+    let rolePolicy: RoleCapabilityPolicy | undefined;
+    const policyFile = process.env.ROLE_POLICY_FILE;
+    if (policyFile && policyFile.trim().length > 0) {
+      logger.info('Loading role → capability policy from file', { path: policyFile });
+      rolePolicy = loadRoleCapabilityPolicyFromFile(policyFile);
+      logger.info('Role policy loaded', {
+        defaultRoles: Object.keys(rolePolicy.default).sort(),
+        tenantOverrides: rolePolicy.tenants ? Object.keys(rolePolicy.tenants).sort() : [],
+      });
+    }
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
       config.issuerDid!,
       config.defaultTokenTTL,
-      logger
+      logger,
+      rolePolicy,
     );
 
     logger.info('Services initialized successfully');

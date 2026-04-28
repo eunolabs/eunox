@@ -19,7 +19,9 @@ import {
   Logger,
   createAuditLogger,
   AuditLogEntry,
-  mapRolesToCapabilities,
+  mapRolesToCapabilitiesForPolicy,
+  RoleCapabilityPolicy,
+  DEFAULT_ROLE_CAPABILITY_MAP,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -30,6 +32,7 @@ export class CapabilityIssuerService {
   private defaultTTL: number;
   private logger: Logger;
   private auditLogger: Logger;
+  private policy: RoleCapabilityPolicy;
 
   /** Algorithms permitted for capability token signatures. */
   private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'ES256K', 'EdDSA'] as const;
@@ -39,7 +42,15 @@ export class CapabilityIssuerService {
     identityProvider: IdentityProvider,
     issuerDid: string,
     defaultTTL: number = 900, // 15 minutes default
-    logger: Logger
+    logger: Logger,
+    /**
+     * Optional externalised role → capability policy. When omitted the
+     * service falls back to the in-code Sprint-1 default mapping. Supplying
+     * a policy here is the recommended way to make the issuer's
+     * authorization decisions data-driven (loaded from a file, config
+     * service, or per-tenant override map) rather than hard-coded.
+     */
+    policy?: RoleCapabilityPolicy,
   ) {
     this.signer = signer;
     this.identityProvider = identityProvider;
@@ -47,6 +58,7 @@ export class CapabilityIssuerService {
     this.defaultTTL = defaultTTL;
     this.logger = logger;
     this.auditLogger = createAuditLogger('capability-issuer');
+    this.policy = policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
   }
 
   /**
@@ -66,12 +78,19 @@ export class CapabilityIssuerService {
       });
 
       let capabilities;
-      // Map roles to capabilities using the shared, provider-agnostic mapper.
-      // Every built-in identity provider (Azure AD, AWS Cognito / IAM
-      // Identity Center, GCP Cloud Identity / Identity Platform) populates
-      // `userContext.roles` from its native group/role claim, so the same
-      // Sprint-1 mapping applies uniformly across clouds.
-      capabilities = mapRolesToCapabilities(userContext.roles);
+      // Map roles to capabilities using the externalised policy (with
+      // optional per-tenant overrides). Every built-in identity provider
+      // (Azure AD, AWS Cognito / IAM Identity Center, GCP Cloud Identity /
+      // Identity Platform) populates `userContext.roles` from its native
+      // group/role claim, and `userContext.tenantId` from the tenant claim
+      // (Azure `tid`, Cognito `cognito:groups`-derived tenant, GCP project
+      // ID), so the same policy applies uniformly across clouds while still
+      // honouring per-tenant overrides when configured.
+      capabilities = mapRolesToCapabilitiesForPolicy(
+        userContext.roles,
+        this.policy,
+        userContext.tenantId,
+      );
 
       // Step 3: If specific capabilities were requested, validate they're allowed
       if (request.requestedCapabilities) {

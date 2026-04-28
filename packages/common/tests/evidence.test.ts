@@ -7,6 +7,8 @@ import {
   AuditEvidenceSigner,
   CryptoSigner,
   createAuditEvidence,
+  createSoftwareEvidenceSigner,
+  createSoftwareEvidenceSignerFromEnv,
 } from '../src/evidence';
 
 /**
@@ -142,5 +144,97 @@ describe('AuditEvidenceSigner', () => {
     const signed = await signer.signEvidence(makeEvidence());
     // Empty buffer after base64 decode → reject without invoking the signer
     expect(await signer.verifyEvidence({ ...signed, signature: '' })).toBe(false);
+  });
+});
+
+describe('createSoftwareEvidenceSigner', () => {
+  function generatePem(type: 'rsa' | 'ec' | 'ed25519'): string {
+    if (type === 'rsa') {
+      const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+      return privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    }
+    if (type === 'ec') {
+      const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+      return privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    }
+    const { privateKey } = crypto.generateKeyPairSync('ed25519');
+    return privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+  }
+
+  it('round-trips evidence using an RSA PEM key (RS256)', async () => {
+    const pem = generatePem('rsa');
+    const signer = createSoftwareEvidenceSigner({ privateKeyPem: pem, keyId: 'sw-1' });
+    const signed = await signer.signEvidence(makeEvidence());
+    expect(signed.keyId).toBe('sw-1');
+    expect(signed.algorithm).toBe('RS256');
+    expect(await signer.verifyEvidence(signed)).toBe(true);
+  });
+
+  it('round-trips evidence using an EC PEM key (ES256)', async () => {
+    const pem = generatePem('ec');
+    const signer = createSoftwareEvidenceSigner({ privateKeyPem: pem, algorithm: 'ES256' });
+    const signed = await signer.signEvidence(makeEvidence());
+    expect(signed.algorithm).toBe('ES256');
+    expect(await signer.verifyEvidence(signed)).toBe(true);
+  });
+
+  it('round-trips evidence using an Ed25519 PEM key (EdDSA)', async () => {
+    const pem = generatePem('ed25519');
+    const signer = createSoftwareEvidenceSigner({ privateKeyPem: pem, algorithm: 'EdDSA' });
+    const signed = await signer.signEvidence(makeEvidence());
+    expect(signed.algorithm).toBe('EDDSA');
+    expect(await signer.verifyEvidence(signed)).toBe(true);
+  });
+
+  it('detects tampering with the signed payload', async () => {
+    const pem = generatePem('rsa');
+    const signer = createSoftwareEvidenceSigner({ privateKeyPem: pem });
+    const signed = await signer.signEvidence(makeEvidence());
+    expect(await signer.verifyEvidence({ ...signed, action: 'write' })).toBe(false);
+  });
+
+  it('throws when the algorithm does not match the key type', () => {
+    const rsaPem = generatePem('rsa');
+    expect(() => createSoftwareEvidenceSigner({ privateKeyPem: rsaPem, algorithm: 'ES256' })).toThrow(
+      /requires an EC key/,
+    );
+  });
+
+  it('throws when no private key is supplied', () => {
+    expect(() => createSoftwareEvidenceSigner({} as { privateKeyPem?: string })).toThrow(
+      /privateKeyPem or privateKeyPath/,
+    );
+  });
+
+  it('throws on an unsupported algorithm', () => {
+    const pem = generatePem('rsa');
+    expect(() => createSoftwareEvidenceSigner({ privateKeyPem: pem, algorithm: 'HS256' })).toThrow(
+      /unsupported algorithm/,
+    );
+  });
+
+  it('throws when the PEM cannot be parsed', () => {
+    expect(() => createSoftwareEvidenceSigner({ privateKeyPem: 'not-a-pem' })).toThrow(
+      /failed to parse private key PEM/,
+    );
+  });
+});
+
+describe('createSoftwareEvidenceSignerFromEnv', () => {
+  it('returns undefined when no key env vars are set', () => {
+    expect(createSoftwareEvidenceSignerFromEnv({})).toBeUndefined();
+  });
+
+  it('builds a signer from EVIDENCE_SIGNING_KEY_PEM', async () => {
+    const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    const signer = createSoftwareEvidenceSignerFromEnv({
+      EVIDENCE_SIGNING_KEY_PEM: pem,
+      EVIDENCE_SIGNING_KEY_ID: 'env-key',
+    } as NodeJS.ProcessEnv);
+    expect(signer).toBeDefined();
+    const signed = await signer!.signEvidence(makeEvidence());
+    expect(signed.keyId).toBe('env-key');
+    expect(await signer!.verifyEvidence(signed)).toBe(true);
   });
 });
