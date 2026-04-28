@@ -22,6 +22,7 @@ import {
   CallCounterStore,
   ConditionContext,
   enforceConditions,
+  CapabilityTokenPayload,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -172,17 +173,7 @@ export class EnforcementEngine {
             // surrounding context metadata. This keeps the evidence
             // hash tightly coupled to the input that caused the denial
             // and avoids drift from method/path/session noise.
-            await this.generateEvidence({
-              sessionId: sessionId || 'unknown',
-              userId: payload.authorizedBy.userId,
-              tool: request.resource,
-              args: argsToValidate,
-              agentId: payload.sub,
-              resource: request.resource,
-              action: request.action,
-              capabilityId: payload.jti,
-              decision: 'deny',
-            });
+            await this.emitDenialEvidence(payload, request, sessionId, argsToValidate);
           }
 
           return {
@@ -215,17 +206,7 @@ export class EnforcementEngine {
           );
 
           if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
-            await this.generateEvidence({
-              sessionId: sessionId || 'unknown',
-              userId: payload.authorizedBy.userId,
-              tool: request.resource,
-              args: request.context || {},
-              agentId: payload.sub,
-              resource: request.resource,
-              action: request.action,
-              capabilityId: payload.jti,
-              decision: 'deny',
-            });
+            await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
           }
 
           return {
@@ -291,6 +272,38 @@ export class EnforcementEngine {
   /**
    * Generate cryptographic audit evidence
    */
+  /**
+   * Convenience wrapper around {@link generateEvidence} for the
+   * gateway's three denial paths (argument-schema validation, condition
+   * enforcement, and any future deny site). Centralizes the field
+   * mapping from `payload + request → AuditEvidence` so each call site
+   * stays a single line and the evidence shape cannot drift across
+   * paths.
+   *
+   * Caller is responsible for the `enableCryptographicAudit` /
+   * `evidenceSigner` / `payload.authorizedBy` guard so the cost of
+   * building this object isn't paid when audit signing is disabled.
+   */
+  private async emitDenialEvidence(
+    payload: CapabilityTokenPayload,
+    request: ValidateActionRequest,
+    sessionId: string | undefined,
+    args: unknown,
+  ): Promise<void> {
+    if (!payload.authorizedBy) return;
+    await this.generateEvidence({
+      sessionId: sessionId || 'unknown',
+      userId: payload.authorizedBy.userId,
+      tool: request.resource,
+      args,
+      agentId: payload.sub,
+      resource: request.resource,
+      action: request.action,
+      capabilityId: payload.jti,
+      decision: 'deny',
+    });
+  }
+
   private async generateEvidence(params: {
     sessionId: string;
     userId: string;

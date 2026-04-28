@@ -292,18 +292,15 @@ export function matchesResource(resource: string, pattern: string): boolean {
   // Enforce scheme equality when either side declares one. A pattern
   // without a scheme must not match a resource that has one (and vice
   // versa) — the gateway treats `file://data/x` and `db://data/x` as
-  // entirely separate authorization domains. We strip the trailing
-  // separator slash before locating `://` so the lookup still succeeds
-  // for prefixes like `api://`.
-  const prefixForScheme = prefix.endsWith('/')
-    ? prefix.slice(0, prefix.endsWith('://') ? prefix.length : -1)
-    : prefix;
-  const patternSchemeIdx = prefixForScheme.indexOf('://');
+  // entirely separate authorization domains. `indexOf('://')` finds
+  // the scheme separator inside `prefix` regardless of any trailing
+  // slash, so no normalization step is required.
+  const patternSchemeIdx = prefix.indexOf('://');
   const resourceSchemeIdx = resource.indexOf('://');
   if (patternSchemeIdx >= 0 || resourceSchemeIdx >= 0) {
     if (patternSchemeIdx < 0 || resourceSchemeIdx < 0) return false;
     if (
-      prefixForScheme.slice(0, patternSchemeIdx) !==
+      prefix.slice(0, patternSchemeIdx) !==
       resource.slice(0, resourceSchemeIdx)
     ) {
       return false;
