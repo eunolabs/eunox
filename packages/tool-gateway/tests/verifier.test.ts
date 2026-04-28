@@ -3,7 +3,12 @@
  */
 
 import { JWTTokenVerifier } from '../src/verifier';
-import { CapabilityTokenPayload, getCurrentTimestamp, getExpirationTimestamp } from '@euno/common';
+import {
+  CapabilityTokenPayload,
+  getCurrentTimestamp,
+  getExpirationTimestamp,
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
+} from '@euno/common';
 import * as jose from 'jose';
 
 describe('JWTTokenVerifier', () => {
@@ -30,6 +35,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: 'test-token-id',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [
           { resource: 'api://test/endpoint', actions: ['read'] },
         ],
@@ -44,6 +50,7 @@ describe('JWTTokenVerifier', () => {
       expect(decoded.iss).toBe(payload.iss);
       expect(decoded.sub).toBe(payload.sub);
       expect(decoded.jti).toBe(payload.jti);
+      expect(decoded.schemaVersion).toBe(CAPABILITY_TOKEN_SCHEMA_VERSION);
     });
 
     it('should reject expired tokens', async () => {
@@ -54,6 +61,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp() - 1000,
         exp: getCurrentTimestamp() - 100, // Expired
         jti: 'test-token-id',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [],
       };
 
@@ -90,6 +98,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: tokenId,
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [],
       };
 
@@ -183,6 +192,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: 'test-token-id',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [
           { resource: 'api://test/endpoint', actions: ['read'] },
         ],
@@ -213,6 +223,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: 'test-token-id',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities: [],
       };
 
@@ -231,6 +242,111 @@ describe('JWTTokenVerifier', () => {
 
       const decoded384 = await multiAlgoVerifier.verify(rs384Token);
       expect(decoded384.iss).toBe(payload.iss);
+    });
+  });
+
+  describe('schema version validation', () => {
+    it('should accept tokens with supported schema version', async () => {
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        schemaVersion: '1.0', // Supported version
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      const decoded = await verifier.verify(token);
+      expect(decoded.schemaVersion).toBe('1.0');
+    });
+
+    it('should reject tokens with missing schemaVersion', async () => {
+      const payload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        capabilities: [],
+        // schemaVersion missing
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(verifier.verify(token)).rejects.toThrow('missing required schemaVersion');
+    });
+
+    it('should reject tokens with unsupported schema version', async () => {
+      const payload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        schemaVersion: '2.0', // Unsupported version
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(verifier.verify(token)).rejects.toThrow('Unsupported token schema version: 2.0');
+    });
+
+    it('should include list of supported versions in error message', async () => {
+      const payload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        schemaVersion: '99.0',
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      try {
+        await verifier.verify(token);
+        fail('Should have thrown error');
+      } catch (error: any) {
+        expect(error.message).toContain('Supported versions:');
+        expect(error.message).toContain('1.0');
+      }
+    });
+
+    it('should reject tokens with non-string schema version', async () => {
+      const payload = {
+        iss: 'did:web:test.com',
+        sub: 'test-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti: 'test-token-id',
+        schemaVersion: 1.0, // Number instead of string
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      // Should be rejected - either as missing or unsupported depending on type coercion
+      await expect(verifier.verify(token)).rejects.toThrow();
     });
   });
 });
