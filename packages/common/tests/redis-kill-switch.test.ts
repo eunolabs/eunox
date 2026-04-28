@@ -217,7 +217,7 @@ describe('RedisKillSwitchManager', () => {
     await mgr.close();
   });
 
-  it('does NOT update the local cache when a write fails (default fail-closed)', async () => {
+  it('reverts the local cache when a write fails (default fail-closed)', async () => {
     const client = makeFakeClient({
       sadd: async () => {
         throw new Error('redis down');
@@ -227,16 +227,20 @@ describe('RedisKillSwitchManager', () => {
     await mgr.start();
 
     mgr.killSession('sess-broken');
+    // Synchronously the cache reflects the kill so the issuing pod
+    // honours it immediately – there is no race window.
+    expect(mgr.isSessionKilled('sess-broken')).toBe(true);
+
     await flushMicrotasks();
 
-    // Cache must NOT reflect the failed write – otherwise this pod would
-    // silently disagree with every other replica.
+    // Once the failed Redis write settles the cache is rolled back so
+    // this pod does not silently disagree with every other replica.
     expect(mgr.isSessionKilled('sess-broken')).toBe(false);
 
     await mgr.close();
   });
 
-  it('updates the local cache when a write fails and failOpenOnWrite=true', async () => {
+  it('keeps the optimistic cache update when a write fails and failOpenOnWrite=true', async () => {
     const client = makeFakeClient({
       sadd: async () => {
         throw new Error('redis down');
@@ -249,10 +253,100 @@ describe('RedisKillSwitchManager', () => {
     await mgr.start();
 
     mgr.killSession('sess-best-effort');
+    // Cache reflects the kill synchronously…
+    expect(mgr.isSessionKilled('sess-best-effort')).toBe(true);
+
     await flushMicrotasks();
 
-    // Best-effort: local pod still honours the operator's intent.
+    // …and is preserved as best-effort local state when Redis fails.
     expect(mgr.isSessionKilled('sess-best-effort')).toBe(true);
+
+    await mgr.close();
+  });
+
+  it('reverts a failed killAgent without removing pre-existing kills', async () => {
+    let firstCall = true;
+    const client = makeFakeClient({
+      sadd: async () => {
+        if (firstCall) {
+          firstCall = false;
+          return 1;
+        }
+        throw new Error('redis down');
+      },
+    });
+    const mgr = new RedisKillSwitchManager(client, logger, { refreshIntervalMs: 0 });
+    await mgr.start();
+
+    // First kill succeeds.
+    mgr.killAgent('agent-1');
+    await flushMicrotasks();
+    expect(mgr.isAgentKilled('agent-1')).toBe(true);
+
+    // Second kill (different agent) fails on Redis – cache must roll
+    // back the new entry without disturbing agent-1.
+    mgr.killAgent('agent-2');
+    expect(mgr.isAgentKilled('agent-2')).toBe(true); // applied optimistically
+    await flushMicrotasks();
+    expect(mgr.isAgentKilled('agent-2')).toBe(false); // rolled back
+    expect(mgr.isAgentKilled('agent-1')).toBe(true); // unaffected
+
+    await mgr.close();
+  });
+
+  it('reverts a failed resetAll back to the previous full state', async () => {
+    const client = makeFakeClient();
+    client.store.strings.set('killswitch:global', '1');
+    client.store.sets.set('killswitch:killed_sessions', new Set(['s1', 's2']));
+    client.store.sets.set('killswitch:killed_agents', new Set(['a1']));
+
+    const mgr = new RedisKillSwitchManager(client, logger, { refreshIntervalMs: 0 });
+    await mgr.start();
+    expect(mgr.getStatus()).toEqual({
+      globalKill: true,
+      killedSessionCount: 2,
+      killedAgentCount: 1,
+    });
+
+    // Make the next del() round fail.
+    client.del = async () => {
+      throw new Error('redis down');
+    };
+
+    mgr.resetAll();
+    // Optimistically cleared synchronously…
+    expect(mgr.getStatus()).toEqual({
+      globalKill: false,
+      killedSessionCount: 0,
+      killedAgentCount: 0,
+    });
+    await flushMicrotasks();
+    // …then rolled back to the full prior state.
+    expect(mgr.getStatus()).toEqual({
+      globalKill: true,
+      killedSessionCount: 2,
+      killedAgentCount: 1,
+    });
+    expect(mgr.isSessionKilled('s1')).toBe(true);
+    expect(mgr.isSessionKilled('s2')).toBe(true);
+    expect(mgr.isAgentKilled('a1')).toBe(true);
+
+    await mgr.close();
+  });
+
+  it('start() is idempotent even when refreshIntervalMs=0', async () => {
+    const client = makeFakeClient();
+    const mgr = new RedisKillSwitchManager(client, logger, { refreshIntervalMs: 0 });
+
+    await mgr.start();
+    const callsAfterFirst = client.calls.length;
+    await mgr.start();
+    await mgr.start();
+
+    // Repeated start() must not re-run the initial refresh – without a
+    // dedicated `started` guard the timer-disabled code path would
+    // re-issue GET + 2x SMEMBERS on every call.
+    expect(client.calls.length).toBe(callsAfterFirst);
 
     await mgr.close();
   });

@@ -18,7 +18,6 @@ import {
   ServiceConfig,
   DefaultKillSwitchManager,
   KillSwitchManager,
-  RedisKillSwitchManager,
   createKillSwitchManagerFromEnv,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
@@ -510,9 +509,12 @@ async function startServer() {
           });
         }
         try {
-          // Only the Redis-backed implementation needs explicit teardown
-          // (timer + connection); the in-process default is a no-op.
-          if (killSwitchManager instanceof RedisKillSwitchManager) {
+          // Use a structural check rather than `instanceof` so any
+          // KillSwitchManager implementation that holds external
+          // resources (timers, network connections, …) gets cleaned up
+          // – not just the bundled RedisKillSwitchManager.  The
+          // in-process default omits `close()` entirely.
+          if (typeof killSwitchManager.close === 'function') {
             await killSwitchManager.close();
           }
         } catch (err) {

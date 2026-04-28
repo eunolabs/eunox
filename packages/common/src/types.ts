@@ -571,4 +571,11 @@ export interface KillSwitchManager {
 
   /** Reset all kill switches */
   resetAll(): void;
+
+  /**
+   * Optional teardown for implementations that hold external resources
+   * (network connections, timers, etc.).  In-process implementations
+   * may omit this entirely.  Idempotent.
+   */
+  close?(): Promise<void>;
 }

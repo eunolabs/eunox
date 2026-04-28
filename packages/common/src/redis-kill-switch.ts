@@ -109,6 +109,7 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   };
 
   private refreshTimer?: NodeJS.Timeout;
+  private started = false;
   private closed = false;
 
   constructor(client: RedisKillSwitchClient, logger?: Logger, options: RedisKillSwitchOptions = {}) {
@@ -136,9 +137,14 @@ export class RedisKillSwitchManager implements KillSwitchManager {
    * Redis errors.
    */
   async start(): Promise<void> {
-    if (this.refreshTimer || this.closed) {
+    // Track `started` separately from `refreshTimer` so the method is
+    // truly idempotent even when `refreshIntervalMs === 0` (timer
+    // disabled) – without this guard, repeated start() calls would
+    // re-run the initial refresh on every invocation.
+    if (this.started || this.closed) {
       return;
     }
+    this.started = true;
     try {
       await this.refresh();
     } catch (error) {
@@ -182,44 +188,56 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   }
 
   activateGlobalKill(): void {
+    const previous = this.cache.globalKillSwitch;
+    this.cache.globalKillSwitch = true;
     this.runWrite(
       'activateGlobalKill',
       () => this.client.set(this.globalKey(), '1'),
       () => {
-        this.cache.globalKillSwitch = true;
+        this.cache.globalKillSwitch = previous;
       }
     );
     this.logger?.warn('Global kill switch activated - all agent requests will be blocked');
   }
 
   deactivateGlobalKill(): void {
+    const previous = this.cache.globalKillSwitch;
+    this.cache.globalKillSwitch = false;
     this.runWrite(
       'deactivateGlobalKill',
       () => this.client.del(this.globalKey()),
       () => {
-        this.cache.globalKillSwitch = false;
+        this.cache.globalKillSwitch = previous;
       }
     );
     this.logger?.info('Global kill switch deactivated - agent requests are now allowed');
   }
 
   killSession(sessionId: string): void {
+    const wasKilled = this.cache.killedSessions.has(sessionId);
+    this.cache.killedSessions.add(sessionId);
     this.runWrite(
       'killSession',
       () => this.client.sadd(this.sessionsKey(), sessionId),
       () => {
-        this.cache.killedSessions.add(sessionId);
+        if (!wasKilled) {
+          this.cache.killedSessions.delete(sessionId);
+        }
       }
     );
     this.logger?.warn('Session killed', { sessionId });
   }
 
   killAgent(agentId: string): void {
+    const wasKilled = this.cache.killedAgents.has(agentId);
+    this.cache.killedAgents.add(agentId);
     this.runWrite(
       'killAgent',
       () => this.client.sadd(this.agentsKey(), agentId),
       () => {
-        this.cache.killedAgents.add(agentId);
+        if (!wasKilled) {
+          this.cache.killedAgents.delete(agentId);
+        }
       }
     );
     this.logger?.warn('Agent killed', { agentId });
@@ -247,22 +265,30 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   }
 
   reviveSession(sessionId: string): void {
+    const wasKilled = this.cache.killedSessions.has(sessionId);
+    this.cache.killedSessions.delete(sessionId);
     this.runWrite(
       'reviveSession',
       () => this.client.srem(this.sessionsKey(), sessionId),
       () => {
-        this.cache.killedSessions.delete(sessionId);
+        if (wasKilled) {
+          this.cache.killedSessions.add(sessionId);
+        }
       }
     );
     this.logger?.info('Session revived', { sessionId });
   }
 
   reviveAgent(agentId: string): void {
+    const wasKilled = this.cache.killedAgents.has(agentId);
+    this.cache.killedAgents.delete(agentId);
     this.runWrite(
       'reviveAgent',
       () => this.client.srem(this.agentsKey(), agentId),
       () => {
-        this.cache.killedAgents.delete(agentId);
+        if (wasKilled) {
+          this.cache.killedAgents.add(agentId);
+        }
       }
     );
     this.logger?.info('Agent revived', { agentId });
@@ -277,6 +303,12 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   }
 
   resetAll(): void {
+    const previousGlobal = this.cache.globalKillSwitch;
+    const previousSessions = new Set(this.cache.killedSessions);
+    const previousAgents = new Set(this.cache.killedAgents);
+    this.cache.globalKillSwitch = false;
+    this.cache.killedSessions.clear();
+    this.cache.killedAgents.clear();
     this.runWrite(
       'resetAll',
       async () => {
@@ -287,9 +319,9 @@ export class RedisKillSwitchManager implements KillSwitchManager {
         ]);
       },
       () => {
-        this.cache.globalKillSwitch = false;
-        this.cache.killedSessions.clear();
-        this.cache.killedAgents.clear();
+        this.cache.globalKillSwitch = previousGlobal;
+        this.cache.killedSessions = previousSessions;
+        this.cache.killedAgents = previousAgents;
       }
     );
     this.logger?.warn('All kill switches reset');
@@ -315,46 +347,45 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   }
 
   /**
-   * Execute the Redis side of a mutating operation, then update the local
-   * cache.  We intentionally update the cache **after** Redis succeeds so
-   * a Redis-failed write is not silently visible only on this pod (unless
-   * the operator opted into `failOpenOnWrite`).
+   * Persist a mutating operation to Redis.  The local cache has *already*
+   * been updated synchronously by the caller before this method runs, so
+   * the kill-switch decision is in effect on this pod the moment the
+   * `KillSwitchManager` method returns – there is no race between the
+   * admin call and the Redis round-trip.
    *
-   * The {@link KillSwitchManager} interface is sync, so the Redis call is
-   * fire-and-forget from the caller's perspective.  Errors are surfaced
-   * via the structured logger and (when `failOpenOnWrite` is false) cause
-   * an `unhandledRejection` event which the runtime is expected to log /
-   * alert on.  Admin endpoints that want strict acknowledgement should
-   * bypass this and call the underlying client / `refresh()` directly.
+   * The {@link KillSwitchManager} interface is synchronous (`void`
+   * return), so this method cannot surface the Redis write outcome to
+   * the caller.  Instead, on failure we either:
+   *
+   *   * **fail-closed (default):** invoke `revertCache()` to roll the
+   *     local cache back to its pre-call state.  Net effect: the kill
+   *     does not stick anywhere – including this pod – and the
+   *     structured logger emits an `error` line so operators can alert
+   *     on it.  This avoids silent per-pod divergence from Redis.
+   *   * **fail-open (`failOpenOnWrite: true`):** keep the optimistic
+   *     local change so this pod still honours the operator's intent.
+   *     Other pods will only see the kill once Redis recovers and a
+   *     refresh tick runs.
+   *
+   * Failures are *not* propagated to the synchronous caller and *not*
+   * raised as `unhandledRejection` events; the structured `error` log
+   * line is the sole signal.  Admin endpoints that need strict
+   * acknowledgement should use the underlying client / `refresh()`
+   * directly, or extend this class with explicit async write methods.
    */
-  private runWrite(op: string, redisOp: () => Promise<unknown>, applyToCache: () => void): void {
-    const promise = (async () => {
-      try {
-        await redisOp();
-        applyToCache();
-      } catch (error) {
-        this.logger?.error('Redis kill-switch write failed', {
-          op,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          failOpenOnWrite: this.failOpenOnWrite,
-        });
-        if (this.failOpenOnWrite) {
-          // Best-effort: keep the local kill in place so this pod still
-          // honours the operator's intent.  Other pods will only see it
-          // on the next refresh once Redis recovers.
-          applyToCache();
-          return;
-        }
-        throw error;
+  private runWrite(op: string, redisOp: () => Promise<unknown>, revertCache: () => void): void {
+    redisOp().catch((error: unknown) => {
+      this.logger?.error('Redis kill-switch write failed', {
+        op,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        failOpenOnWrite: this.failOpenOnWrite,
+      });
+      if (!this.failOpenOnWrite) {
+        // Roll the local cache back so this pod does not silently
+        // disagree with Redis (and therefore with every other replica
+        // that will pick up the missing entry on its next refresh).
+        revertCache();
       }
-    })();
-    // Surface unexpected rejection without forcing every caller to await –
-    // the structured logger above is the primary signal.  We attach a
-    // benign catch handler so Node does not emit an `unhandledRejection`
-    // for the propagated throw above; operators get the structured log
-    // line they need either way.
-    promise.catch(() => {
-      /* already logged */
     });
   }
 
