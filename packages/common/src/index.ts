@@ -9,3 +9,5 @@ export * from './capability-validators';
 export * from './argument-validator';
 export * from './role-mapping';
 export * from './log-transports';
+export * from './condition-registry';
+export * from './call-counter-store';

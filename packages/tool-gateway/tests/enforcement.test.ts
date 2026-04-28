@@ -14,6 +14,7 @@ import {
   AuditEvidence,
   SignedAuditEvidence,
   EvidenceSigner,
+  InMemoryCallCounterStore,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -461,6 +462,247 @@ describe('EnforcementEngine', () => {
       });
 
       expect(signEvidence).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('typed-condition enforcement', () => {
+    // Spin up a dedicated engine wired with an in-memory counter store so
+    // `maxCalls` can be exercised end-to-end. All other handlers are
+    // stateless and run on the shared `engine`.
+    let conditionEngine: EnforcementEngine;
+    let counterStore: InMemoryCallCounterStore;
+
+    beforeAll(() => {
+      counterStore = new InMemoryCallCounterStore();
+      conditionEngine = new EnforcementEngine({
+        verifier,
+        logger,
+        callCounterStore: counterStore,
+      });
+    });
+
+    beforeEach(() => counterStore.reset());
+
+    it('allows a request whose conditions all evaluate to allow', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+          conditions: [
+            { type: 'timeWindow', notAfter: '2099-01-01T00:00:00Z' },
+            { type: 'allowedOperations', operations: ['SELECT'] },
+          ],
+        },
+      ]);
+
+      const result = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        context: { operation: 'select' },
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+
+    it('denies when a timeWindow has expired', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+          conditions: [{ type: 'timeWindow', notAfter: '2000-01-01T00:00:00Z' }],
+        },
+      ]);
+
+      const result = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('Condition not satisfied');
+      expect(result.reason).toMatch(/timeWindow/);
+    });
+
+    it('denies when the request sourceIp is outside the ipRange CIDR', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+          conditions: [{ type: 'ipRange', cidrs: ['10.0.0.0/8'] }],
+        },
+      ]);
+
+      const denied = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        context: { sourceIp: '192.168.1.1' },
+      });
+      expect(denied.allowed).toBe(false);
+
+      const allowed = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        context: { sourceIp: '10.5.6.7' },
+      });
+      expect(allowed.allowed).toBe(true);
+    });
+
+    it('denies when the requested operation is not in allowedOperations', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'db://crm/customers',
+          actions: ['execute'],
+          conditions: [{ type: 'allowedOperations', operations: ['SELECT'] }],
+        },
+      ]);
+
+      const result = await conditionEngine.validateAction({
+        token,
+        action: 'execute',
+        resource: 'db://crm/customers',
+        context: { operation: 'DROP' },
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/operation/);
+    });
+
+    it('denies when the requested table is not in allowedTables', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'db://crm/customers',
+          actions: ['read'],
+          conditions: [{ type: 'allowedTables', tables: ['customers'] }],
+        },
+      ]);
+
+      const denied = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'db://crm/customers',
+        context: { tables: [{ table: 'salaries' }] },
+      });
+      expect(denied.allowed).toBe(false);
+
+      const allowed = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'db://crm/customers',
+        context: { tables: [{ table: 'customers' }] },
+      });
+      expect(allowed.allowed).toBe(true);
+    });
+
+    it('denies when the file extension is not allowed', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'file://reports',
+          actions: ['read'],
+          conditions: [{ type: 'allowedExtensions', extensions: ['.pdf'] }],
+        },
+      ]);
+
+      const denied = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'file://reports',
+        context: { filePath: 'malware.exe' },
+      });
+      expect(denied.allowed).toBe(false);
+
+      const allowed = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'file://reports',
+        context: { filePath: 'q4.pdf' },
+      });
+      expect(allowed.allowed).toBe(true);
+    });
+
+    it('denies when a recipient domain is outside the allowed list', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'mail://outbound',
+          actions: ['write'],
+          conditions: [{ type: 'recipientDomain', domains: ['example.com'] }],
+        },
+      ]);
+
+      const result = await conditionEngine.validateAction({
+        token,
+        action: 'write',
+        resource: 'mail://outbound',
+        context: { recipients: ['ok@example.com', 'leak@evil.com'] },
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/recipient/);
+    });
+
+    it('enforces maxCalls across requests sharing the same capability id', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://rate-limited/endpoint',
+          actions: ['read'],
+          conditions: [{ type: 'maxCalls', count: 2, windowSeconds: 60 }],
+        },
+      ]);
+
+      const req = {
+        token,
+        action: 'read',
+        resource: 'api://rate-limited/endpoint',
+      };
+      expect((await conditionEngine.validateAction(req)).allowed).toBe(true);
+      expect((await conditionEngine.validateAction(req)).allowed).toBe(true);
+      const third = await conditionEngine.validateAction(req);
+      expect(third.allowed).toBe(false);
+      expect(third.reason).toMatch(/maxCalls/);
+    });
+
+    it('denies maxCalls when the engine has no counter store wired (deny-by-default)', async () => {
+      const noStoreEngine = new EnforcementEngine({ verifier, logger });
+      const token = await createTestToken([
+        {
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+          conditions: [{ type: 'maxCalls', count: 5, windowSeconds: 60 }],
+        },
+      ]);
+
+      const result = await noStoreEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/maxCalls/);
+    });
+
+    it('denies on an unknown condition type carried in a token (forward-compat)', async () => {
+      // A future issuer might mint a condition this gateway has never
+      // heard of. Deny-by-default is the only safe behavior — the
+      // gateway must NOT silently allow.
+      const token = await createTestToken([
+        {
+          resource: 'api://service/endpoint',
+          actions: ['read'],
+          conditions: [
+            { type: 'futureCondition' as 'timeWindow', notAfter: '2099-01-01T00:00:00Z' } as any,
+          ],
+        },
+      ]);
+
+      const result = await conditionEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/futureCondition/);
     });
   });
 });

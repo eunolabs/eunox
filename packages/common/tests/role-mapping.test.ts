@@ -181,12 +181,28 @@ describe('validateRoleCapabilityPolicy', () => {
     expect(() => validateRoleCapabilityPolicy([])).toThrow(/must be a JSON object/);
   });
 
-  it('rejects capability entries with invalid actions', () => {
+  it('rejects capability entries whose actions are not non-empty strings', () => {
+    // After widening `Action` to `string`, arbitrary verb names (e.g.
+    // `hack`, `db:select`) are accepted by the policy validator — the
+    // condition registry / gateway is the layer responsible for
+    // semantic restrictions. The validator still rejects structurally
+    // invalid entries: empty strings and non-string values.
     expect(() =>
       validateRoleCapabilityPolicy({
-        default: { Viewer: [{ resource: 'api://x', actions: ['hack'] }] },
+        default: { Viewer: [{ resource: 'api://x', actions: [''] }] },
       }),
-    ).toThrow(/invalid action 'hack'/);
+    ).toThrow(/invalid action/);
+    expect(() =>
+      validateRoleCapabilityPolicy({
+        default: { Viewer: [{ resource: 'api://x', actions: [123 as unknown as string] }] },
+      }),
+    ).toThrow(/invalid action/);
+    // A namespaced verb is now accepted.
+    expect(() =>
+      validateRoleCapabilityPolicy({
+        default: { Viewer: [{ resource: 'db://crm/customers', actions: ['db:select'] }] },
+      }),
+    ).not.toThrow();
   });
 
   it('rejects capability entries with empty resource', () => {

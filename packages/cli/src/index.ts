@@ -36,7 +36,10 @@ program
         {
           resource: 'api://service/endpoint',
           actions: ['read'],
-          conditions: {},
+          // Conditions are now a typed array (see CapabilityCondition).
+          // Leave empty in the scaffold; callers add e.g.
+          //   { type: 'timeWindow', notAfter: '2026-01-01T00:00:00Z' }.
+          conditions: [],
         },
       ],
       optionalCapabilities: [],

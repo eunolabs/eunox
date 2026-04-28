@@ -26,7 +26,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { CapabilityConstraint, Action } from './types';
+import { CapabilityConstraint, Action, CapabilityCondition } from './types';
+import { validateConditions } from './condition-registry';
 
 /**
  * Mapping from a role name to the set of capability constraints that role
@@ -115,7 +116,14 @@ export function resolveRoleCapabilityMap(
   const cloneCapability = (cap: CapabilityConstraint): CapabilityConstraint => ({
     resource: cap.resource,
     actions: [...cap.actions],
-    ...(cap.conditions !== undefined ? { conditions: { ...cap.conditions } } : {}),
+    // Conditions are now a typed array of {type, ...} payloads. Each
+    // entry is shallow-cloned so callers can mutate the result without
+    // affecting the source policy. The condition payloads themselves
+    // are treated as immutable value objects (issuer + gateway only
+    // ever read them), so a shallow clone is sufficient.
+    ...(cap.conditions !== undefined
+      ? { conditions: cap.conditions.map((c) => ({ ...c })) as CapabilityCondition[] }
+      : {}),
   });
   const cloneCapabilityArray = (caps: CapabilityConstraint[]): CapabilityConstraint[] =>
     caps.map(cloneCapability);
@@ -168,12 +176,15 @@ function validateCapabilityConstraint(value: unknown, contextPath: string): Capa
   if (!Array.isArray(obj.actions) || obj.actions.length === 0) {
     throw new Error(`${contextPath}: capability 'actions' must be a non-empty array`);
   }
-  const allowedActions: ReadonlyArray<Action> = ['read', 'write', 'execute', 'delete', 'admin'];
+  // `Action` is now `string` so resource-specific verbs (e.g.
+  // `db:select`, `s3:putObject`) are first-class. We still reject
+  // empty strings and non-string entries so policy files cannot
+  // accidentally smuggle structural junk into the action set.
   for (const action of obj.actions) {
-    if (typeof action !== 'string' || !allowedActions.includes(action as Action)) {
+    if (typeof action !== 'string' || action.length === 0) {
       throw new Error(
         `${contextPath}: capability 'actions' contains invalid action '${String(action)}' ` +
-          `(allowed: ${allowedActions.join(', ')})`,
+          `(actions must be non-empty strings)`,
       );
     }
   }
@@ -182,10 +193,18 @@ function validateCapabilityConstraint(value: unknown, contextPath: string): Capa
     actions: obj.actions as Action[],
   };
   if (obj.conditions !== undefined) {
-    if (typeof obj.conditions !== 'object' || obj.conditions === null || Array.isArray(obj.conditions)) {
-      throw new Error(`${contextPath}: capability 'conditions' must be an object`);
+    if (!Array.isArray(obj.conditions)) {
+      throw new Error(
+        `${contextPath}: capability 'conditions' must be an array of typed condition objects`,
+      );
     }
-    out.conditions = obj.conditions as Record<string, unknown>;
+    try {
+      validateConditions(obj.conditions as CapabilityCondition[]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${contextPath}: ${msg}`);
+    }
+    out.conditions = obj.conditions as CapabilityCondition[];
   }
   return out;
 }

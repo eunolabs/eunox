@@ -19,6 +19,10 @@ import {
   SignedAuditEvidence,
   createAuditEvidence,
   validateArguments,
+  CallCounterStore,
+  ConditionContext,
+  enforceConditions,
+  CapabilityTokenPayload,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -28,6 +32,13 @@ export interface EnforcementEngineOptions {
   evidenceSigner?: EvidenceSigner;
   policyVersion?: string;
   enableCryptographicAudit?: boolean;
+  /**
+   * Counter store used for {@link MaxCallsCondition} enforcement. When
+   * omitted, capabilities that carry a `maxCalls` condition are denied
+   * (deny-by-default on missing infrastructure) — wire in
+   * {@link createCallCounterStoreFromEnv} at startup to enable it.
+   */
+  callCounterStore?: CallCounterStore;
 }
 
 export class EnforcementEngine {
@@ -38,6 +49,7 @@ export class EnforcementEngine {
   private evidenceSigner?: EvidenceSigner;
   private policyVersion: string;
   private enableCryptographicAudit: boolean;
+  private callCounterStore?: CallCounterStore;
 
   constructor(options: EnforcementEngineOptions) {
     this.verifier = options.verifier;
@@ -47,6 +59,7 @@ export class EnforcementEngine {
     this.evidenceSigner = options.evidenceSigner;
     this.policyVersion = options.policyVersion || '1.0.0';
     this.enableCryptographicAudit = options.enableCryptographicAudit || false;
+    this.callCounterStore = options.callCounterStore;
   }
 
   /**
@@ -160,17 +173,40 @@ export class EnforcementEngine {
             // surrounding context metadata. This keeps the evidence
             // hash tightly coupled to the input that caused the denial
             // and avoids drift from method/path/session noise.
-            await this.generateEvidence({
-              sessionId: sessionId || 'unknown',
-              userId: payload.authorizedBy.userId,
-              tool: request.resource,
-              args: argsToValidate,
-              agentId: payload.sub,
-              resource: request.resource,
-              action: request.action,
-              capabilityId: payload.jti,
-              decision: 'deny',
-            });
+            await this.emitDenialEvidence(payload, request, sessionId, argsToValidate);
+          }
+
+          return {
+            allowed: false,
+            reason,
+          };
+        }
+      }
+
+      // Step 5c: Condition enforcement. After the (action, resource)
+      // match and any argument-schema check pass, every typed
+      // condition on the matched capability must also evaluate to
+      // "allow" (typed-condition contract from
+      // docs/capability-model.md). Conditions are validated at mint
+      // time, so any condition that reaches enforcement is structurally
+      // sound — we still defend against unknown types here by treating
+      // them as denials, in case a token from a future issuer carries
+      // a condition this gateway does not yet implement.
+      if (matchedCapability?.conditions && matchedCapability.conditions.length > 0) {
+        const conditionCtx = this.buildConditionContext(request, payload.jti);
+        const result = await enforceConditions(matchedCapability.conditions, conditionCtx);
+        if (!result.allow) {
+          const reason = `Condition not satisfied: ${result.reason}`;
+          await this.logDenial(
+            payload.sub,
+            request.action,
+            request.resource,
+            reason,
+            sessionId
+          );
+
+          if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+            await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
           }
 
           return {
@@ -236,6 +272,38 @@ export class EnforcementEngine {
   /**
    * Generate cryptographic audit evidence
    */
+  /**
+   * Convenience wrapper around {@link generateEvidence} for the
+   * gateway's three denial paths (argument-schema validation, condition
+   * enforcement, and any future deny site). Centralizes the field
+   * mapping from `payload + request → AuditEvidence` so each call site
+   * stays a single line and the evidence shape cannot drift across
+   * paths.
+   *
+   * Caller is responsible for the `enableCryptographicAudit` /
+   * `evidenceSigner` / `payload.authorizedBy` guard so the cost of
+   * building this object isn't paid when audit signing is disabled.
+   */
+  private async emitDenialEvidence(
+    payload: CapabilityTokenPayload,
+    request: ValidateActionRequest,
+    sessionId: string | undefined,
+    args: unknown,
+  ): Promise<void> {
+    if (!payload.authorizedBy) return;
+    await this.generateEvidence({
+      sessionId: sessionId || 'unknown',
+      userId: payload.authorizedBy.userId,
+      tool: request.resource,
+      args,
+      agentId: payload.sub,
+      resource: request.resource,
+      action: request.action,
+      capabilityId: payload.jti,
+      decision: 'deny',
+    });
+  }
+
   private async generateEvidence(params: {
     sessionId: string;
     userId: string;
@@ -324,6 +392,62 @@ export class EnforcementEngine {
     };
 
     this.auditLogger.info('Action denied', auditEntry);
+  }
+
+  /**
+   * Build a {@link ConditionContext} from the validation request.
+   *
+   * The gateway's `ValidateActionRequest.context` is an open
+   * `Record<string, unknown>` populated by the upstream tool / proxy
+   * adapter. Each typed condition handler reads exactly the fields it
+   * needs from this record; missing fields cause that handler to deny
+   * (deny-by-default on missing context).
+   *
+   * Conventions consumed here (all optional):
+   *   - `sourceIp: string`               — for `ipRange`
+   *   - `operation: string`              — for `allowedOperations`
+   *   - `filePath: string`               — for `allowedExtensions`
+   *   - `tables: Array<{table, columns?}>` — for `allowedTables`
+   *   - `recipients: string[]`           — for `recipientDomain`
+   *
+   * The counter store and a per-capability `counterKey` are wired in
+   * directly so the handler does not depend on the request shape.
+   */
+  private buildConditionContext(
+    request: ValidateActionRequest,
+    capabilityId: string,
+  ): ConditionContext {
+    const ctx = (request.context ?? {}) as Record<string, unknown>;
+    const ctxOut: ConditionContext = {
+      now: new Date(),
+      counterStore: this.callCounterStore,
+      counterKey: capabilityId,
+    };
+    if (typeof ctx.sourceIp === 'string') ctxOut.sourceIp = ctx.sourceIp;
+    if (typeof ctx.operation === 'string') ctxOut.operation = ctx.operation;
+    if (typeof ctx.filePath === 'string') ctxOut.filePath = ctx.filePath;
+    if (Array.isArray(ctx.tables)) {
+      const tables: Array<{ table: string; columns?: string[] }> = [];
+      for (const entry of ctx.tables) {
+        if (
+          entry &&
+          typeof entry === 'object' &&
+          typeof (entry as { table?: unknown }).table === 'string'
+        ) {
+          const e = entry as { table: string; columns?: unknown };
+          const cleaned: { table: string; columns?: string[] } = { table: e.table };
+          if (Array.isArray(e.columns) && e.columns.every((c) => typeof c === 'string')) {
+            cleaned.columns = e.columns as string[];
+          }
+          tables.push(cleaned);
+        }
+      }
+      if (tables.length > 0) ctxOut.tables = tables;
+    }
+    if (Array.isArray(ctx.recipients) && ctx.recipients.every((r) => typeof r === 'string')) {
+      ctxOut.recipients = ctx.recipients as string[];
+    }
+    return ctxOut;
   }
 }
 

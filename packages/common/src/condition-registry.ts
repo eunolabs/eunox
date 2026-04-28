@@ -1,0 +1,700 @@
+/**
+ * Condition registry: shared validation + enforcement for the typed
+ * conditions carried inside a {@link CapabilityConstraint}.
+ *
+ * Background
+ * ----------
+ * Earlier versions of this codebase carried `conditions` as an opaque
+ * `Record<string, unknown>` that was signed into capability tokens but
+ * silently dropped at enforcement time — a fail-open posture for a
+ * security-critical field. This module replaces that with a single
+ * registry consulted by both the issuer (at mint time) and the gateway
+ * (at request time):
+ *
+ *   - the issuer calls {@link validateCondition} on every condition of
+ *     every capability before signing, rejecting the mint request with
+ *     a structured error if any condition is malformed or unknown;
+ *   - the gateway calls {@link enforceConditions} after the basic
+ *     (action, resource) match passes, requiring every condition to
+ *     resolve to `allow` and denying with a structured reason
+ *     otherwise.
+ *
+ * Unknown / unrecognized condition types are treated as a hard denial
+ * in both phases (deny-by-default) so that vendor extensions or future
+ * condition types cannot silently round-trip into an unconstrained
+ * token. Registering a custom handler via {@link registerCustomCondition}
+ * is the explicit, auditable way to add new condition types.
+ */
+
+import {
+  CapabilityCondition,
+  TimeWindowCondition,
+  IpRangeCondition,
+  AllowedOperationsCondition,
+  AllowedExtensionsCondition,
+  AllowedTablesCondition,
+  MaxCallsCondition,
+  RecipientDomainCondition,
+  RedactFieldsCondition,
+  CustomCondition,
+} from './types';
+
+/**
+ * Per-request context passed to {@link enforceCondition}. Fields are
+ * optional because not every condition needs every piece of context —
+ * however, when a condition *does* need a piece of context that the
+ * caller did not supply, the handler returns `deny` rather than
+ * silently skipping the check (deny-by-default on missing context).
+ */
+export interface ConditionContext {
+  /** Wall-clock time of the request (defaults to `Date.now()`). */
+  now?: Date;
+  /** Source IP of the request, if known. */
+  sourceIp?: string;
+  /**
+   * The operation the agent is asking the backend to perform within
+   * the targeted resource (e.g. SQL verb, S3 sub-action). Used by
+   * {@link AllowedOperationsCondition}.
+   */
+  operation?: string;
+  /** File path the request targets, used by `allowedExtensions`. */
+  filePath?: string;
+  /**
+   * Database tables the request targets, used by `allowedTables`.
+   * Each entry may optionally carry the columns being read/written.
+   */
+  tables?: Array<{ table: string; columns?: string[] }>;
+  /**
+   * Recipients (e.g. email addresses) the request targets, used by
+   * `recipientDomain`.
+   */
+  recipients?: string[];
+  /**
+   * Stable identifier the {@link CallCounterStore} keys on. Typically
+   * `${capabilityId}:${conditionIndex}` so attenuated child tokens get
+   * an independent counter from their parent.
+   */
+  counterKey?: string;
+  /** Counter store used by {@link MaxCallsCondition}. */
+  counterStore?: CallCounterStore;
+  /**
+   * Map of registered custom-condition handlers keyed by the
+   * `CustomCondition.name` they implement.
+   */
+  customHandlers?: Map<string, CustomConditionHandler>;
+}
+
+/** Outcome of evaluating a single condition. */
+export type ConditionResult =
+  | { allow: true }
+  | { allow: false; reason: string };
+
+/**
+ * A condition handler implements both halves of the
+ * validate-then-enforce contract. `validate` runs at issuance time and
+ * MUST throw a `ConditionValidationError` on bad data. `enforce` runs
+ * at request time and returns a {@link ConditionResult}.
+ */
+export interface ConditionHandler<C extends CapabilityCondition = CapabilityCondition> {
+  validate(condition: C): void;
+  enforce(condition: C, ctx: ConditionContext): ConditionResult | Promise<ConditionResult>;
+}
+
+/** Custom condition handlers don't see the discriminator-only `type`/`name`. */
+export interface CustomConditionHandler {
+  validate(config: unknown): void;
+  enforce(config: unknown, ctx: ConditionContext): ConditionResult | Promise<ConditionResult>;
+}
+
+/** Storage for {@link MaxCallsCondition} counters. */
+export interface CallCounterStore {
+  /**
+   * Increment the counter identified by `key` by 1 and return the
+   * post-increment value. The counter MUST expire `windowSeconds`
+   * after first creation (sliding-window semantics within
+   * `windowSeconds` granularity).
+   */
+  incrementAndGet(key: string, windowSeconds: number): Promise<number>;
+}
+
+/** Thrown by `validate*` helpers — surfaced by the issuer as `INVALID_REQUEST`. */
+export class ConditionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConditionValidationError';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Registry plumbing
+// ---------------------------------------------------------------------------
+
+const customHandlers = new Map<string, CustomConditionHandler>();
+
+/**
+ * Register (or replace) a handler for the named custom condition. New
+ * `CustomCondition` payloads carrying that `name` are then validated
+ * and enforced via the supplied handler. Without an explicit
+ * registration, a `custom` condition is denied at both issuance and
+ * enforcement.
+ */
+export function registerCustomCondition(
+  name: string,
+  handler: CustomConditionHandler,
+): void {
+  if (!name || typeof name !== 'string') {
+    throw new Error('registerCustomCondition: name must be a non-empty string');
+  }
+  customHandlers.set(name, handler);
+}
+
+/** Test helper — clears every registered custom handler. */
+export function _resetCustomConditionRegistry(): void {
+  customHandlers.clear();
+}
+
+/** Shallow snapshot of the current custom handler map. */
+export function getCustomConditionHandlers(): Map<string, CustomConditionHandler> {
+  return new Map(customHandlers);
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a single condition. Throws {@link ConditionValidationError}
+ * on a structural problem. Issuers call this for every condition of
+ * every capability before signing.
+ */
+export function validateCondition(condition: unknown): asserts condition is CapabilityCondition {
+  if (typeof condition !== 'object' || condition === null) {
+    throw new ConditionValidationError('condition must be an object');
+  }
+  const c = condition as { type?: unknown };
+  if (typeof c.type !== 'string' || c.type.length === 0) {
+    throw new ConditionValidationError("condition is missing a 'type' discriminator");
+  }
+  const handler = (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[c.type];
+  if (handler) {
+    handler.validate(condition as CapabilityCondition);
+    return;
+  }
+  if (c.type === 'custom') {
+    validateCustomCondition(condition as CustomCondition);
+    return;
+  }
+  throw new ConditionValidationError(`unrecognized condition type '${c.type}'`);
+}
+
+/** Validate every condition on a capability. */
+export function validateConditions(conditions: readonly CapabilityCondition[] | undefined): void {
+  if (!conditions) return;
+  if (!Array.isArray(conditions)) {
+    throw new ConditionValidationError('conditions must be an array');
+  }
+  for (let i = 0; i < conditions.length; i++) {
+    try {
+      validateCondition(conditions[i]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ConditionValidationError(`conditions[${i}]: ${msg}`);
+    }
+  }
+}
+
+function validateCustomCondition(c: CustomCondition): void {
+  if (typeof c.name !== 'string' || c.name.length === 0) {
+    throw new ConditionValidationError("custom condition is missing 'name'");
+  }
+  const handler = customHandlers.get(c.name);
+  if (!handler) {
+    throw new ConditionValidationError(
+      `custom condition '${c.name}' has no registered handler`,
+    );
+  }
+  handler.validate(c.config);
+}
+
+// ---------------------------------------------------------------------------
+// Enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Enforce a single condition against the provided request context.
+ * Unknown types resolve to `deny` (deny-by-default).
+ */
+export async function enforceCondition(
+  condition: CapabilityCondition,
+  ctx: ConditionContext,
+): Promise<ConditionResult> {
+  const handler = (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[condition.type];
+  if (handler) {
+    return handler.enforce(condition, ctx);
+  }
+  if (condition.type === 'custom') {
+    const cc = condition as CustomCondition;
+    const map = ctx.customHandlers ?? customHandlers;
+    const ch = map.get(cc.name);
+    if (!ch) {
+      return { allow: false, reason: `unrecognized custom condition '${cc.name}'` };
+    }
+    return ch.enforce(cc.config, ctx);
+  }
+  return {
+    allow: false,
+    reason: `unrecognized condition type '${(condition as { type: string }).type}'`,
+  };
+}
+
+/**
+ * Enforce every condition. Returns the first denial encountered, or
+ * `{ allow: true }` if every condition allowed (or the list is empty).
+ * Conditions are evaluated sequentially so side-effecting handlers
+ * (e.g. `maxCalls` increment) run in declaration order.
+ */
+export async function enforceConditions(
+  conditions: readonly CapabilityCondition[] | undefined,
+  ctx: ConditionContext,
+): Promise<ConditionResult> {
+  if (!conditions || conditions.length === 0) {
+    return { allow: true };
+  }
+  for (let i = 0; i < conditions.length; i++) {
+    const cond = conditions[i];
+    if (!cond) continue;
+    const scopedCtx: ConditionContext =
+      cond.type === 'maxCalls' && ctx.counterKey
+        ? { ...ctx, counterKey: `${ctx.counterKey}:${i}` }
+        : ctx;
+    const result = await enforceCondition(cond, scopedCtx);
+    if (!result.allow) {
+      return result;
+    }
+  }
+  return { allow: true };
+}
+
+// ---------------------------------------------------------------------------
+// Built-in handlers
+// ---------------------------------------------------------------------------
+
+function expectStringArray(field: string, value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ConditionValidationError(`${field} must be a non-empty array of strings`);
+  }
+  for (const v of value) {
+    if (typeof v !== 'string' || v.length === 0) {
+      throw new ConditionValidationError(`${field} entries must be non-empty strings`);
+    }
+  }
+  return value as string[];
+}
+
+function parseIsoTimestamp(field: string, value: string): number {
+  // `Date.parse` accepts a wide range of inputs; require an explicit `T`
+  // so we reject calendar-only ("2026-01-01") and ambiguous formats
+  // that otherwise interpret as UTC midnight in some runtimes and local
+  // midnight in others.
+  if (!/T/.test(value)) {
+    throw new ConditionValidationError(
+      `${field} must be a full ISO 8601 datetime (e.g. 2026-01-01T00:00:00Z)`,
+    );
+  }
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) {
+    throw new ConditionValidationError(`${field} is not a valid ISO 8601 datetime`);
+  }
+  return ms;
+}
+
+const timeWindowHandler: ConditionHandler<TimeWindowCondition> = {
+  validate(c) {
+    if (c.notBefore === undefined && c.notAfter === undefined) {
+      throw new ConditionValidationError(
+        "timeWindow requires at least one of 'notBefore' or 'notAfter'",
+      );
+    }
+    let nb: number | undefined;
+    let na: number | undefined;
+    if (c.notBefore !== undefined) {
+      if (typeof c.notBefore !== 'string') {
+        throw new ConditionValidationError('timeWindow.notBefore must be a string');
+      }
+      nb = parseIsoTimestamp('timeWindow.notBefore', c.notBefore);
+    }
+    if (c.notAfter !== undefined) {
+      if (typeof c.notAfter !== 'string') {
+        throw new ConditionValidationError('timeWindow.notAfter must be a string');
+      }
+      na = parseIsoTimestamp('timeWindow.notAfter', c.notAfter);
+    }
+    if (nb !== undefined && na !== undefined && nb > na) {
+      throw new ConditionValidationError(
+        'timeWindow.notAfter must be on or after timeWindow.notBefore',
+      );
+    }
+  },
+  enforce(c, ctx) {
+    const now = (ctx.now ?? new Date()).getTime();
+    if (c.notBefore !== undefined) {
+      const nb = Date.parse(c.notBefore);
+      if (Number.isFinite(nb) && now < nb) {
+        return { allow: false, reason: `timeWindow not yet active (notBefore=${c.notBefore})` };
+      }
+    }
+    if (c.notAfter !== undefined) {
+      const na = Date.parse(c.notAfter);
+      if (Number.isFinite(na) && now > na) {
+        return { allow: false, reason: `timeWindow expired (notAfter=${c.notAfter})` };
+      }
+    }
+    return { allow: true };
+  },
+};
+
+const ipRangeHandler: ConditionHandler<IpRangeCondition> = {
+  validate(c) {
+    const cidrs = expectStringArray('ipRange.cidrs', c.cidrs);
+    for (const cidr of cidrs) {
+      if (!isValidCidr(cidr)) {
+        throw new ConditionValidationError(`ipRange.cidrs contains invalid CIDR '${cidr}'`);
+      }
+    }
+  },
+  enforce(c, ctx) {
+    if (!ctx.sourceIp) {
+      return { allow: false, reason: 'ipRange requires sourceIp in request context' };
+    }
+    for (const cidr of c.cidrs) {
+      if (ipMatchesCidr(ctx.sourceIp, cidr)) {
+        return { allow: true };
+      }
+    }
+    return { allow: false, reason: `sourceIp ${ctx.sourceIp} not in any allowed CIDR` };
+  },
+};
+
+const allowedOperationsHandler: ConditionHandler<AllowedOperationsCondition> = {
+  validate(c) {
+    expectStringArray('allowedOperations.operations', c.operations);
+  },
+  enforce(c, ctx) {
+    if (!ctx.operation) {
+      return { allow: false, reason: 'allowedOperations requires operation in request context' };
+    }
+    const op = ctx.operation.toLowerCase();
+    for (const allowed of c.operations) {
+      if (allowed.toLowerCase() === op) {
+        return { allow: true };
+      }
+    }
+    return {
+      allow: false,
+      reason: `operation '${ctx.operation}' is not in the allowed list`,
+    };
+  },
+};
+
+const allowedExtensionsHandler: ConditionHandler<AllowedExtensionsCondition> = {
+  validate(c) {
+    expectStringArray('allowedExtensions.extensions', c.extensions);
+  },
+  enforce(c, ctx) {
+    if (!ctx.filePath) {
+      return { allow: false, reason: 'allowedExtensions requires filePath in request context' };
+    }
+    const path = ctx.filePath.toLowerCase();
+    for (const ext of c.extensions) {
+      const norm = ext.startsWith('.') ? ext.toLowerCase() : '.' + ext.toLowerCase();
+      if (path.endsWith(norm)) {
+        return { allow: true };
+      }
+    }
+    return {
+      allow: false,
+      reason: `file extension of '${ctx.filePath}' is not in the allowed list`,
+    };
+  },
+};
+
+const allowedTablesHandler: ConditionHandler<AllowedTablesCondition> = {
+  validate(c) {
+    expectStringArray('allowedTables.tables', c.tables);
+    if (c.columns !== undefined) {
+      if (typeof c.columns !== 'object' || c.columns === null || Array.isArray(c.columns)) {
+        throw new ConditionValidationError('allowedTables.columns must be an object');
+      }
+      for (const [tbl, cols] of Object.entries(c.columns)) {
+        expectStringArray(`allowedTables.columns['${tbl}']`, cols);
+      }
+    }
+  },
+  enforce(c, ctx) {
+    if (!ctx.tables || ctx.tables.length === 0) {
+      return { allow: false, reason: 'allowedTables requires tables in request context' };
+    }
+    const allowedTables = new Set(c.tables.map((t) => t.toLowerCase()));
+    // Build a case-insensitive view of the columns map so that an
+    // issuer-side casing of e.g. `{"Customers": [...]}` still applies
+    // to a request that names the table as `customers`. Without this
+    // normalization the column allowlist would be silently skipped on
+    // any case mismatch — a fail-open path on a security-critical
+    // narrowing condition.
+    const columnsLower: Record<string, string[]> | undefined = c.columns
+      ? Object.fromEntries(
+          Object.entries(c.columns).map(([k, v]) => [k.toLowerCase(), v]),
+        )
+      : undefined;
+    for (const entry of ctx.tables) {
+      const tableLower = entry.table.toLowerCase();
+      if (!allowedTables.has(tableLower)) {
+        return {
+          allow: false,
+          reason: `table '${entry.table}' is not in the allowed list`,
+        };
+      }
+      const colSpec = columnsLower?.[tableLower];
+      if (colSpec && entry.columns) {
+        if (colSpec.includes('*')) continue;
+        const allowedCols = new Set(colSpec.map((col) => col.toLowerCase()));
+        for (const col of entry.columns) {
+          if (!allowedCols.has(col.toLowerCase())) {
+            return {
+              allow: false,
+              reason: `column '${col}' on table '${entry.table}' is not allowed`,
+            };
+          }
+        }
+      }
+    }
+    return { allow: true };
+  },
+};
+
+const maxCallsHandler: ConditionHandler<MaxCallsCondition> = {
+  validate(c) {
+    if (typeof c.count !== 'number' || !Number.isInteger(c.count) || c.count < 1) {
+      throw new ConditionValidationError('maxCalls.count must be a positive integer');
+    }
+    if (
+      typeof c.windowSeconds !== 'number' ||
+      !Number.isInteger(c.windowSeconds) ||
+      c.windowSeconds < 1
+    ) {
+      throw new ConditionValidationError('maxCalls.windowSeconds must be a positive integer');
+    }
+  },
+  async enforce(c, ctx) {
+    if (!ctx.counterStore || !ctx.counterKey) {
+      return {
+        allow: false,
+        reason: 'maxCalls requires counterStore and counterKey in request context',
+      };
+    }
+    const current = await ctx.counterStore.incrementAndGet(ctx.counterKey, c.windowSeconds);
+    if (current > c.count) {
+      return {
+        allow: false,
+        reason: `maxCalls exceeded (${current} > ${c.count} in ${c.windowSeconds}s)`,
+      };
+    }
+    return { allow: true };
+  },
+};
+
+const recipientDomainHandler: ConditionHandler<RecipientDomainCondition> = {
+  validate(c) {
+    const domains = expectStringArray('recipientDomain.domains', c.domains);
+    for (const d of domains) {
+      // Reject `@` so callers don't accidentally write a full address.
+      if (d.includes('@')) {
+        throw new ConditionValidationError(
+          `recipientDomain.domains entry '${d}' must be a bare domain, not an address`,
+        );
+      }
+    }
+  },
+  enforce(c, ctx) {
+    if (!ctx.recipients || ctx.recipients.length === 0) {
+      return { allow: false, reason: 'recipientDomain requires recipients in request context' };
+    }
+    const allowed = new Set(c.domains.map((d) => d.toLowerCase()));
+    for (const recipient of ctx.recipients) {
+      const at = recipient.lastIndexOf('@');
+      // Require a non-empty local part *and* a non-empty domain part.
+      // `at < 1` catches both no-`@` (`-1`) and empty-local (`0`); a
+      // trailing `@` (domain empty) is caught by the slice length.
+      if (at < 1 || at === recipient.length - 1) {
+        return { allow: false, reason: `recipient '${recipient}' is not a valid address` };
+      }
+      const domain = recipient.slice(at + 1).toLowerCase();
+      if (!allowed.has(domain)) {
+        return {
+          allow: false,
+          reason: `recipient domain '${domain}' is not in the allowed list`,
+        };
+      }
+    }
+    return { allow: true };
+  },
+};
+
+const redactFieldsHandler: ConditionHandler<RedactFieldsCondition> = {
+  validate(c) {
+    expectStringArray('redactFields.fields', c.fields);
+  },
+  // The redaction itself is performed by the response post-processor;
+  // at the authorization layer we only certify that the obligation is
+  // structurally valid. Returning `allow` here means "the request may
+  // proceed; the gateway must apply the redaction to the response".
+  enforce() {
+    return { allow: true };
+  },
+};
+
+/** Built-in handler table keyed by `type`. */
+export const BUILTIN_HANDLERS: {
+  timeWindow: ConditionHandler<TimeWindowCondition>;
+  ipRange: ConditionHandler<IpRangeCondition>;
+  allowedOperations: ConditionHandler<AllowedOperationsCondition>;
+  allowedExtensions: ConditionHandler<AllowedExtensionsCondition>;
+  allowedTables: ConditionHandler<AllowedTablesCondition>;
+  maxCalls: ConditionHandler<MaxCallsCondition>;
+  recipientDomain: ConditionHandler<RecipientDomainCondition>;
+  redactFields: ConditionHandler<RedactFieldsCondition>;
+} = {
+  timeWindow: timeWindowHandler,
+  ipRange: ipRangeHandler,
+  allowedOperations: allowedOperationsHandler,
+  allowedExtensions: allowedExtensionsHandler,
+  allowedTables: allowedTablesHandler,
+  maxCalls: maxCallsHandler,
+  recipientDomain: recipientDomainHandler,
+  redactFields: redactFieldsHandler,
+};
+
+// ---------------------------------------------------------------------------
+// CIDR helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a CIDR string. Supports IPv4 (`a.b.c.d/n`, n in 0..32) and
+ * unbracketed IPv6 (`addr/n`, n in 0..128). The IPv6 path accepts the
+ * `::` zero-compression and one optional embedded IPv4 suffix.
+ */
+export function isValidCidr(cidr: string): boolean {
+  const slash = cidr.indexOf('/');
+  if (slash < 0) return false;
+  const addr = cidr.slice(0, slash);
+  const prefix = Number(cidr.slice(slash + 1));
+  if (!Number.isInteger(prefix) || prefix < 0) return false;
+  if (addr.includes('.') && !addr.includes(':')) {
+    return prefix <= 32 && parseIPv4(addr) !== null;
+  }
+  return prefix <= 128 && parseIPv6(addr) !== null;
+}
+
+/**
+ * Return true if `ip` lies inside `cidr`. Mismatched address families
+ * (IPv4 vs IPv6) return false rather than throwing — the handler will
+ * report a generic deny reason in that case.
+ */
+export function ipMatchesCidr(ip: string, cidr: string): boolean {
+  const slash = cidr.indexOf('/');
+  if (slash < 0) return false;
+  const addrStr = cidr.slice(0, slash);
+  const prefix = Number(cidr.slice(slash + 1));
+  if (!Number.isInteger(prefix) || prefix < 0) return false;
+
+  const cidrIsV4 = addrStr.includes('.') && !addrStr.includes(':');
+  const ipIsV4 = ip.includes('.') && !ip.includes(':');
+  if (cidrIsV4 !== ipIsV4) return false;
+
+  if (cidrIsV4) {
+    if (prefix > 32) return false;
+    const a = parseIPv4(ip);
+    const b = parseIPv4(addrStr);
+    if (a === null || b === null) return false;
+    if (prefix === 0) return true;
+    const mask = prefix === 32 ? 0xffffffff : (~((1 << (32 - prefix)) - 1)) >>> 0;
+    return (a & mask) === (b & mask);
+  }
+
+  if (prefix > 128) return false;
+  const a = parseIPv6(ip);
+  const b = parseIPv6(addrStr);
+  if (a === null || b === null) return false;
+  let bitsLeft = prefix;
+  for (let i = 0; i < 8; i++) {
+    if (bitsLeft <= 0) return true;
+    const groupBits = bitsLeft >= 16 ? 16 : bitsLeft;
+    const shift = 16 - groupBits;
+    if ((a[i]! >>> shift) !== (b[i]! >>> shift)) return false;
+    bitsLeft -= groupBits;
+  }
+  return true;
+}
+
+function parseIPv4(s: string): number | null {
+  const parts = s.split('.');
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    // Reject leading zeros (e.g. `010`) which some host-resolver
+    // implementations interpret as octal — accepting them would let
+    // two textually-distinct CIDRs evaluate to different ranges
+    // depending on the runtime that parses them. The single literal
+    // `0` is allowed.
+    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
+    const n = Number(part);
+    if (n < 0 || n > 255) return null;
+    out = (out * 256 + n) >>> 0;
+  }
+  return out;
+}
+
+function parseIPv6(s: string): number[] | null {
+  // Allow embedded IPv4 in the last 32 bits.
+  let trailingV4: number | null = null;
+  let work = s;
+  const lastColon = work.lastIndexOf(':');
+  if (lastColon >= 0 && work.slice(lastColon + 1).includes('.')) {
+    const v4 = parseIPv4(work.slice(lastColon + 1));
+    if (v4 === null) return null;
+    trailingV4 = v4;
+    work = work.slice(0, lastColon + 1) + '0:0';
+  }
+
+  const doubleColon = work.indexOf('::');
+  let head: string[] = [];
+  let tail: string[] = [];
+  if (doubleColon < 0) {
+    head = work.split(':');
+  } else {
+    if (work.indexOf('::', doubleColon + 1) >= 0) return null;
+    const h = work.slice(0, doubleColon);
+    const t = work.slice(doubleColon + 2);
+    head = h === '' ? [] : h.split(':');
+    tail = t === '' ? [] : t.split(':');
+  }
+  const total = head.length + tail.length;
+  if (total > 8) return null;
+  if (doubleColon < 0 && total !== 8) return null;
+  const fillCount = 8 - total;
+  const groups: number[] = [];
+  for (const g of head) groups.push(parseHextet(g));
+  for (let i = 0; i < fillCount; i++) groups.push(0);
+  for (const g of tail) groups.push(parseHextet(g));
+  if (groups.some((g) => g < 0)) return null;
+  if (trailingV4 !== null) {
+    groups[6] = (trailingV4 >>> 16) & 0xffff;
+    groups[7] = trailingV4 & 0xffff;
+  }
+  return groups;
+}
+
+function parseHextet(s: string): number {
+  if (!/^[0-9a-fA-F]{1,4}$/.test(s)) return -1;
+  return parseInt(s, 16);
+}

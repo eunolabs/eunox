@@ -21,6 +21,9 @@ import {
   createSoftwareEvidenceSignerFromEnv,
   KillSwitchManager,
   createKillSwitchManagerFromEnv,
+  CallCounterStore,
+  createCallCounterStoreFromEnv,
+  RedisCallCounterStore,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
@@ -51,6 +54,7 @@ const logger = createLogger(config.name, config.environment);
 // RedisKillSwitchManager when REDIS_URL is configured so kills propagate
 // across replicas.  See docs/DISTRIBUTED_KILL_SWITCH.md.
 let killSwitchManager: KillSwitchManager = new DefaultKillSwitchManager(logger);
+let callCounterStore: CallCounterStore | undefined;
 
 // Initialize verifier and enforcement engine
 let verifier: JWTTokenVerifier;
@@ -74,6 +78,12 @@ async function initializeServices() {
     // manager so kills (global / session / agent) propagate across every
     // gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
     killSwitchManager = await createKillSwitchManagerFromEnv(process.env, logger);
+
+    // Build the call-counter store used by `maxCalls` condition
+    // enforcement. Defaults to in-memory; when REDIS_URL is set it
+    // reuses the same Redis client wiring as the kill-switch manager so
+    // call budgets are shared across every gateway replica.
+    callCounterStore = await createCallCounterStoreFromEnv(process.env, logger);
 
     verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
 
@@ -115,6 +125,7 @@ async function initializeServices() {
       evidenceSigner,
       enableCryptographicAudit: config.enableCryptographicAudit,
       policyVersion: config.policyVersion,
+      callCounterStore,
     });
 
     logger.info('Tool Gateway services initialized successfully');
@@ -589,6 +600,17 @@ async function startServer() {
           }
         } catch (err) {
           logger.warn('Error while closing kill-switch manager', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        try {
+          // Same structural check for the call-counter store: only the
+          // Redis-backed implementation owns a connection to close.
+          if (callCounterStore instanceof RedisCallCounterStore) {
+            await callCounterStore.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing call-counter store', {
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         }

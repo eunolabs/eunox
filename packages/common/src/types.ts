@@ -14,9 +14,166 @@ export type DID = string;
 export type ResourceId = string;
 
 /**
- * Action types that can be performed on resources
+ * Action types that can be performed on resources.
+ *
+ * Originally a fixed five-value union. Widened to `string` so capability
+ * tokens can express resource-specific verbs (e.g. `db:select`,
+ * `s3:putObject`, `kafka:publish`) when callers want finer-grained
+ * authorization than the legacy categories provide. The original five
+ * values remain available as named constants in {@link LEGACY_ACTIONS}
+ * and continue to be the recognized values produced by the default
+ * role mapping.
+ *
+ * Use {@link isLegacyAction} to test whether an action string belongs
+ * to the legacy set.
  */
-export type Action = 'read' | 'write' | 'execute' | 'delete' | 'admin';
+export type Action = string;
+
+/**
+ * The original five-action set, preserved as a named tuple so existing
+ * role mappings and tests can continue to refer to them by symbol.
+ */
+export const LEGACY_ACTIONS = ['read', 'write', 'execute', 'delete', 'admin'] as const;
+
+/** Element type of {@link LEGACY_ACTIONS}. */
+export type LegacyAction = (typeof LEGACY_ACTIONS)[number];
+
+/** True when `action` is one of the five legacy generic verbs. */
+export function isLegacyAction(action: string): action is LegacyAction {
+  return (LEGACY_ACTIONS as readonly string[]).includes(action);
+}
+
+/**
+ * Discriminated union of capability conditions enforceable by the
+ * tool-gateway and validated at mint time by the capability issuer.
+ *
+ * Conditions narrow what an otherwise-permitted (action, resource) match
+ * is allowed to do. The `type` discriminator selects the handler in the
+ * shared {@link ConditionRegistry}. Unknown types are rejected at both
+ * issuance and enforcement (deny-by-default), so a typo cannot silently
+ * round-trip through signing into an unconstrained token.
+ *
+ * The 8 built-in types correspond to the constraint families called out
+ * in `docs/capability-model.md`. Extension via {@link CustomCondition}
+ * is supported but requires a registered handler — there is no
+ * "unrecognized = allow" path.
+ */
+export type CapabilityCondition =
+  | TimeWindowCondition
+  | IpRangeCondition
+  | AllowedOperationsCondition
+  | AllowedExtensionsCondition
+  | AllowedTablesCondition
+  | MaxCallsCondition
+  | RecipientDomainCondition
+  | RedactFieldsCondition
+  | CustomCondition;
+
+/**
+ * Restrict use of the capability to a specific time window. Both
+ * boundaries are optional (an open-ended window in either direction is
+ * permitted) but at least one must be provided. Timestamps are RFC 3339
+ * / ISO 8601 strings interpreted as absolute UTC instants.
+ */
+export interface TimeWindowCondition {
+  type: 'timeWindow';
+  /** Earliest ISO 8601 timestamp at which the capability is valid. */
+  notBefore?: string;
+  /** Latest ISO 8601 timestamp at which the capability is valid. */
+  notAfter?: string;
+}
+
+/** Restrict the source IP of the request to one of the listed CIDRs. */
+export interface IpRangeCondition {
+  type: 'ipRange';
+  /** Non-empty list of CIDR ranges (IPv4 or IPv6). */
+  cidrs: string[];
+}
+
+/**
+ * For generic actions (e.g. `execute`), narrow the operation actually
+ * allowed (e.g. `SELECT` but not `INSERT`). Matched case-insensitively
+ * against the operation string the gateway pulls from request context.
+ */
+export interface AllowedOperationsCondition {
+  type: 'allowedOperations';
+  /** Non-empty allowlist of operation names. */
+  operations: string[];
+}
+
+/**
+ * Restrict file paths to the named extensions. Comparison is
+ * case-insensitive and the extension may include or omit the leading dot.
+ */
+export interface AllowedExtensionsCondition {
+  type: 'allowedExtensions';
+  /** Non-empty list of file extensions, e.g. `['.txt', 'json']`. */
+  extensions: string[];
+}
+
+/**
+ * Restrict database access to specific tables, optionally further
+ * narrowing the columns each table may expose.
+ */
+export interface AllowedTablesCondition {
+  type: 'allowedTables';
+  /** Non-empty list of permitted table names. */
+  tables: string[];
+  /**
+   * Optional per-table column allowlist. Tables present in `tables` but
+   * absent from `columns` impose no per-column restriction. A column
+   * value of `'*'` is shorthand for "all columns of this table".
+   */
+  columns?: Record<string, string[]>;
+}
+
+/**
+ * Cap the number of calls authorized by this capability inside a
+ * sliding window. Enforced via the `CallCounterStore` plugged into the
+ * gateway (in-memory by default, Redis-backed in production).
+ */
+export interface MaxCallsCondition {
+  type: 'maxCalls';
+  /** Maximum number of permitted calls in the window (>= 1). */
+  count: number;
+  /** Length of the sliding window in seconds (>= 1). */
+  windowSeconds: number;
+}
+
+/**
+ * Restrict outbound message recipients (typically email) to the listed
+ * domains. Domain comparison is case-insensitive; `recipient` is parsed
+ * as a `local@domain` address.
+ */
+export interface RecipientDomainCondition {
+  type: 'recipientDomain';
+  /** Non-empty list of permitted recipient domains. */
+  domains: string[];
+}
+
+/**
+ * Declare that the named fields must be redacted from the response
+ * before it leaves the gateway. The condition is satisfied at
+ * enforcement time (the gateway records the obligation in the audit log
+ * for downstream redaction); validation here confirms the field list is
+ * well-formed.
+ */
+export interface RedactFieldsCondition {
+  type: 'redactFields';
+  /** Non-empty list of dotted field paths to redact. */
+  fields: string[];
+}
+
+/**
+ * Escape hatch for vendor-specific conditions. The named handler MUST
+ * be registered in the {@link ConditionRegistry}; unknown `name`s are
+ * denied at both issuance and enforcement.
+ */
+export interface CustomCondition {
+  type: 'custom';
+  name: string;
+  config: unknown;
+}
 
 /**
  * Allowlist-based schema describing the shape of arguments a tool/proxy call
@@ -92,8 +249,16 @@ export interface CapabilityConstraint {
    * call whose arguments do not conform.
    */
   argumentSchema?: ArgumentSchema;
-  /** Optional additional constraints (e.g., rate limits, data filters) */
-  conditions?: Record<string, unknown>;
+  /**
+   * Optional list of additional constraints (rate limits, time
+   * windows, data filters, ...) that further narrow what this
+   * capability authorizes. Conditions are typed via the
+   * {@link CapabilityCondition} discriminated union and enforced by
+   * the shared {@link ConditionRegistry}: every entry MUST evaluate
+   * to "allow" for the request to be permitted, and unknown types
+   * are denied by default.
+   */
+  conditions?: CapabilityCondition[];
 }
 
 /**
