@@ -161,6 +161,15 @@ export class AgentRuntime {
   private capabilityToken?: string;
   private httpClient: AxiosInstance;
   private tokenRefreshTimer?: NodeJS.Timeout;
+  /** AbortController used to cancel any in-flight token acquisition during
+   *  shutdown so a refresh racing with shutdown does not resurrect state. */
+  private acquireAbortController?: AbortController;
+  /** Promise of the currently running token acquisition, if any. Awaited by
+   *  shutdown so callers know the in-flight request has fully settled. */
+  private pendingAcquire?: Promise<void>;
+  /** Set once {@link shutdown} has been invoked; used to short-circuit any
+   *  scheduled refresh callback or 401 retry. */
+  private shuttingDown = false;
   /**
    * Set to `true` once the gateway has reported that this agent/session has
    * been killed via the control-plane kill switch.  When set, the periodic
@@ -201,12 +210,30 @@ export class AgentRuntime {
   }
 
   /**
-   * Shutdown the runtime - cleanup resources
+   * Shutdown the runtime - cleanup resources and cancel in-flight work.
+   *
+   * Aborts any acquireCapabilityToken request currently in flight (so a
+   * shutdown that races with a periodic refresh cannot leave a settled-after-
+   * shutdown promise to clobber state) and refuses any further refresh or
+   * retry attempts.
    */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     if (this.tokenRefreshTimer) {
       clearTimeout(this.tokenRefreshTimer);
       this.tokenRefreshTimer = undefined;
+    }
+    if (this.acquireAbortController) {
+      this.acquireAbortController.abort();
+    }
+    // Wait for the in-flight acquisition (if any) to settle before returning,
+    // so the caller is guaranteed no further state mutation will happen.
+    if (this.pendingAcquire) {
+      try {
+        await this.pendingAcquire;
+      } catch {
+        // The aborted request will reject; that's expected during shutdown.
+      }
     }
   }
 
@@ -265,6 +292,13 @@ export class AgentRuntime {
    * Acquire a capability token from the Issuer
    */
   private async acquireCapabilityToken(): Promise<void> {
+    if (this.shuttingDown) {
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        'AgentRuntime is shutting down; refusing to acquire capability token',
+        500
+      );
+    }
     if (this.terminated) {
       throw new CapabilityError(
         ErrorCode.AGENT_TERMINATED,
@@ -273,61 +307,113 @@ export class AgentRuntime {
       );
     }
 
-    const issuerClient = axios.create({
-      baseURL: this.config.issuerUrl,
-      timeout: 10000,
-      validateStatus: () => true, // Handle all status codes manually
-    });
-
-    const userAuthToken = await this.resolveAuthToken();
-    const hints = await this.resolveIssuanceHints();
-
-    // Build the request body.  Only include hint fields that were actually
-    // supplied so we don't accidentally send `undefined`/`null` values that
-    // the issuer's input validators might choke on.
-    const body: Record<string, unknown> = { agentId: this.config.agentId };
-    if (hints.requestedCapabilities !== undefined) {
-      body.requestedCapabilities = hints.requestedCapabilities;
-    }
-    if (hints.manifest !== undefined) {
-      body.manifest = hints.manifest;
-    }
-    if (hints.consent !== undefined) {
-      body.consent = hints.consent;
+    // Single-flight: if an acquisition is already in progress, return the
+    // same promise instead of spawning a second concurrent request.  This
+    // prevents the periodic refresh and a concurrent 401-triggered refresh
+    // from each creating their own AbortController/promise and causing
+    // shutdown() to only abort/await the most-recent one.
+    if (this.pendingAcquire) {
+      return this.pendingAcquire;
     }
 
-    let response;
-    try {
-      response = await issuerClient.post('/api/v1/issue', body, {
-        headers: {
-          'Authorization': `Bearer ${userAuthToken}`,
-        },
+    // Track this acquisition so shutdown() can abort + await it.
+    const controller = new AbortController();
+    this.acquireAbortController = controller;
+
+    const run = async (): Promise<void> => {
+      const issuerClient = axios.create({
+        baseURL: this.config.issuerUrl,
+        timeout: 10000,
+        validateStatus: () => true, // Handle all status codes manually
       });
-    } catch (error) {
-      throw new CapabilityError(
-        ErrorCode.INTERNAL_ERROR,
-        `Network error contacting Capability Issuer: ${error instanceof Error ? error.message : String(error)}`,
-        500
-      );
-    }
 
-    if (response.status === 401 || response.status === 403) {
-      throw new CapabilityError(
-        ErrorCode.AUTHENTICATION_FAILED,
-        `Capability Issuer rejected authentication (HTTP ${response.status})`,
-        response.status
-      );
-    }
+      const userAuthToken = await this.resolveAuthToken();
+      const hints = await this.resolveIssuanceHints();
 
-    if (response.status !== 200 || !response.data?.token) {
-      throw new CapabilityError(
-        ErrorCode.INTERNAL_ERROR,
-        `Failed to acquire capability token: HTTP ${response.status}`,
-        500
-      );
-    }
+      // Build the request body.  Only include hint fields that were actually
+      // supplied so we don't accidentally send `undefined`/`null` values that
+      // the issuer's input validators might choke on.
+      const body: Record<string, unknown> = { agentId: this.config.agentId };
+      if (hints.requestedCapabilities !== undefined) {
+        body.requestedCapabilities = hints.requestedCapabilities;
+      }
+      if (hints.manifest !== undefined) {
+        body.manifest = hints.manifest;
+      }
+      if (hints.consent !== undefined) {
+        body.consent = hints.consent;
+      }
 
-    this.capabilityToken = response.data.token;
+      let response;
+      try {
+        response = await issuerClient.post('/api/v1/issue', body, {
+          headers: {
+            'Authorization': `Bearer ${userAuthToken}`,
+          },
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new CapabilityError(
+            ErrorCode.INTERNAL_ERROR,
+            'Capability token acquisition aborted (runtime shutting down)',
+            500
+          );
+        }
+        throw new CapabilityError(
+          ErrorCode.INTERNAL_ERROR,
+          `Network error contacting Capability Issuer: ${error instanceof Error ? error.message : String(error)}`,
+          500
+        );
+      }
+
+      // If shutdown completed while the network call was in flight, do not
+      // mutate state — discard the response.
+      if (this.shuttingDown) {
+        throw new CapabilityError(
+          ErrorCode.INTERNAL_ERROR,
+          'AgentRuntime shut down during token acquisition',
+          500
+        );
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          `Capability Issuer rejected authentication (HTTP ${response.status})`,
+          response.status
+        );
+      }
+
+      if (response.status !== 200 || !response.data?.token) {
+        throw new CapabilityError(
+          ErrorCode.INTERNAL_ERROR,
+          `Failed to acquire capability token: HTTP ${response.status}`,
+          500
+        );
+      }
+
+      this.capabilityToken = response.data.token;
+    };
+
+    const acquirePromise = run();
+    // Capture the wrapped promise so the .finally() callback can compare by
+    // reference against the *same* object stored in this.pendingAcquire.
+    // Previously the callback compared against `acquirePromise` (the unwrapped
+    // run() promise), which is a different object from `acquirePromise.finally()`
+    // and therefore never cleared pendingAcquire.
+    const pending: Promise<void> = acquirePromise.finally(() => {
+      // Only clear if we are still the active acquisition.
+      if (this.acquireAbortController === controller) {
+        this.acquireAbortController = undefined;
+      }
+      if (this.pendingAcquire === pending) {
+        this.pendingAcquire = undefined;
+      }
+    });
+    this.pendingAcquire = pending;
+
+    return this.pendingAcquire;
   }
 
   /**
@@ -342,6 +428,7 @@ export class AgentRuntime {
     const interval = (this.config.tokenRefreshInterval || 600) * 1000;
 
     const refreshCycle = async (): Promise<void> => {
+      if (this.shuttingDown) return;
       if (this.terminated) {
         // Control-plane kill switch fired — stop the loop entirely.
         this.tokenRefreshTimer = undefined;
@@ -350,9 +437,13 @@ export class AgentRuntime {
       try {
         await this.acquireCapabilityToken();
       } catch (error) {
-        console.error('Failed to refresh capability token:', error);
+        // If shutdown raced with the refresh, swallow silently — the abort is
+        // expected and not an operational failure.
+        if (!this.shuttingDown) {
+          console.error('Failed to refresh capability token:', error);
+        }
       } finally {
-        if (!this.terminated) {
+        if (!this.shuttingDown && !this.terminated) {
           this.tokenRefreshTimer = setTimeout(() => {
             void refreshCycle();
           }, interval);
@@ -523,8 +614,27 @@ export class AgentRuntime {
    * Make a raw HTTP request through the gateway's proxy endpoint.
    *
    * Sprint 2: External HTTP(S) requests are routed through the gateway via the
-   * `/proxy/<path>` endpoint.  NetworkPolicy enforcement ensures no direct egress
-   * is possible at the kernel level.
+   * `/proxy/<host>/<path>` endpoint.  NetworkPolicy enforcement ensures no
+   * direct egress is possible at the kernel level.
+   *
+   * Host forwarding
+   * ---------------
+   * For absolute URLs we encode the intended target host in BOTH the proxy
+   * path (`/proxy/<host><path>`) AND the `X-Target-Host` / `X-Target-Scheme`
+   * headers. This allows the gateway to:
+   *
+   *   1. Derive a host-qualified resource (e.g. `api://api.example.com/data`)
+   *      so capability tokens can be constrained by intended host, not just
+   *      path. The previous implementation stripped the host and forwarded
+   *      only the path, decoupling the authorized resource (e.g. `api://crm/`)
+   *      from the actual destination URL — meaning a token authorising "talk
+   *      to CRM" could not be cryptographically bound to "you actually called
+   *      CRM and not a look-alike".
+   *   2. Cross-check the path-encoded host against the header to detect
+   *      tampering.
+   *
+   * Relative paths (no host known to the agent) are routed under
+   * `/proxy/<path>` as before.
    */
   async makeRequest(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -548,9 +658,18 @@ export class AgentRuntime {
       // Derive the proxy path from the URL so requests are forwarded via
       // the gateway's /proxy/* mount point rather than sent as a JSON payload.
       let proxyPath: string;
+      const extraHeaders: Record<string, string> = {};
       if (/^https?:\/\//i.test(url)) {
         const targetUrl = new URL(url);
-        proxyPath = targetUrl.pathname + targetUrl.search;
+        // Include the intended target host in the proxy path so the gateway
+        // can derive a host-qualified resource identifier. URL.pathname is
+        // guaranteed to start with '/' per the WHATWG URL spec, so we can
+        // concatenate directly.
+        const hostSegment = targetUrl.host; // host:port
+        const pathAndQuery = targetUrl.pathname + targetUrl.search;
+        proxyPath = `/${hostSegment}${pathAndQuery}`;
+        extraHeaders['X-Target-Host'] = hostSegment;
+        extraHeaders['X-Target-Scheme'] = targetUrl.protocol.replace(/:$/, '');
       } else {
         proxyPath = url.startsWith('/') ? url : `/${url}`;
       }
@@ -562,6 +681,7 @@ export class AgentRuntime {
         headers: {
           'Authorization': `Bearer ${this.capabilityToken}`,
           'X-Agent-ID': this.config.agentId,
+          ...extraHeaders,
         },
       });
 

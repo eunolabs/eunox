@@ -251,10 +251,47 @@ async function validateCapabilityMiddleware(
 
     const action = actionMap[req.method] || 'read';
 
-    // Extract resource from path, deriving canonical api:// URI
-    // req.path has the /proxy prefix already stripped by Express route mounting
-    const resourcePath = req.path.replace(/^\/+/, '');
-    const resource = `api://${resourcePath}`;
+    // Extract resource from path, deriving canonical api:// URI.
+    // req.path has the /proxy prefix already stripped by Express route mounting.
+    //
+    // The agent runtime forwards the intended target host (from absolute URLs)
+    // either as the first path segment OR as an X-Target-Host header. We
+    // prefer the header (cheaper, more explicit) and cross-check the path
+    // segment to detect tampering. If neither is supplied (e.g. a relative
+    // path was used) we fall back to the legacy path-only resource so this
+    // change is backwards compatible.
+    const headerHost = (req.headers['x-target-host'] as string | undefined)?.trim();
+    const rawPath = req.path.replace(/^\/+/, '');
+    const firstSegment = rawPath.split('/')[0] || '';
+    // A segment looks like a host if it passes a basic hostname/IP pattern.
+    // We no longer require a dot so single-label names like `localhost` are
+    // recognised; bracketed IPv6 addresses are also accepted.
+    const looksLikeHost = /^(\[[\da-fA-F:]+\]|[A-Za-z0-9.\-]+)(:\d+)?$/.test(firstSegment);
+
+    let resource: string;
+    if (headerHost) {
+      // Header explicitly identifies the host; use it.
+      // Strip the leading path segment only when it equals the header host
+      // (case-insensitive).  Using equality rather than the dot-based
+      // heuristic means single-label hosts (e.g. `localhost`) and IPv6
+      // addresses are handled correctly.
+      const pathHasHostSegment = firstSegment.toLowerCase() === headerHost.toLowerCase();
+      // If the path encodes a *different* host segment, treat as tampered.
+      if (looksLikeHost && !pathHasHostSegment) {
+        throw new CapabilityError(
+          ErrorCode.AUTHORIZATION_FAILED,
+          'Mismatch between X-Target-Host header and proxy path host segment',
+          400
+        );
+      }
+      const tail = pathHasHostSegment ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
+      resource = `api://${headerHost}/${tail}`;
+    } else if (looksLikeHost) {
+      const tail = rawPath.slice(firstSegment.length).replace(/^\/+/, '');
+      resource = `api://${firstSegment}/${tail}`;
+    } else {
+      resource = `api://${rawPath}`;
+    }
 
     // Validate the action. The request body is included in the context
     // so that the enforcement engine can apply the matched capability's

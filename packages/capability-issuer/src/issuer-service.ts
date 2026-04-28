@@ -19,6 +19,7 @@ import {
   Logger,
   createAuditLogger,
   AuditLogEntry,
+  SIGNING_ALGORITHMS,
   mapRolesToCapabilitiesForPolicy,
   RoleCapabilityPolicy,
   DEFAULT_ROLE_CAPABILITY_MAP,
@@ -58,8 +59,10 @@ export class CapabilityIssuerService {
   private requireConsent: boolean;
   private policy: RoleCapabilityPolicy;
 
-  /** Algorithms permitted for capability token signatures. */
-  private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'ES256K', 'EdDSA'] as const;
+  /** Algorithms permitted for capability token signatures. Sourced from the
+   *  shared {@link SIGNING_ALGORITHMS} tuple so this allow-list cannot drift
+   *  from the {@link SigningAlgorithm} type. */
+  private static readonly ALLOWED_ALGORITHMS = SIGNING_ALGORITHMS;
 
   constructor(
     signer: TokenSigner,

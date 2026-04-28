@@ -27,9 +27,27 @@ export interface IdentityAdapterConfig {
 }
 
 /**
+ * Canonical list of JWT signing algorithms supported across the project.
+ * Exported as a runtime constant so verifier/issuer allow-lists can be derived
+ * from a single source of truth (preventing the {@link SigningAlgorithm}
+ * type from drifting away from runtime checks). When adding a new algorithm,
+ * update this tuple only.
+ */
+export const SIGNING_ALGORITHMS = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'ES512',
+  'ES256K',
+  'EdDSA',
+] as const;
+
+/**
  * Supported JWT signing algorithms
  */
-export type SigningAlgorithm = 'RS256' | 'RS384' | 'RS512' | 'ES256' | 'ES384' | 'ES512' | 'EdDSA';
+export type SigningAlgorithm = (typeof SIGNING_ALGORITHMS)[number];
 
 /**
  * Base configuration for signing adapters

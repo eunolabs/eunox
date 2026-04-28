@@ -4,6 +4,8 @@
 
 import {
   sha256,
+  canonicalize,
+  canonicalSha256,
   generateId,
   isExpired,
   isValidDID,
@@ -12,6 +14,7 @@ import {
   matchesResource,
   parseBearerToken,
   sanitizeForLog,
+  ErrorCode,
 } from '../src/utils';
 
 describe('Utility Functions', () => {
@@ -62,10 +65,27 @@ describe('Utility Functions', () => {
       expect(isValidDID('did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK')).toBe(true);
     });
 
+    it('should accept DIDs with multiple colon-separated segments (per W3C DID Core)', () => {
+      // did:web with path segments
+      expect(isValidDID('did:web:example.com:user:alice')).toBe(true);
+      // did:peer numeric algorithm with dots in the identifier
+      expect(isValidDID('did:peer:2.Ez6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK')).toBe(true);
+    });
+
+    it('should accept DIDs with percent-encoded characters', () => {
+      expect(isValidDID('did:web:example.com:path%20with%20space')).toBe(true);
+    });
+
     it('should reject invalid DID formats', () => {
       expect(isValidDID('not-a-did')).toBe(false);
       expect(isValidDID('did::')).toBe(false);
       expect(isValidDID('did:method')).toBe(false);
+      // method-name must be lowercase letters / digits only
+      expect(isValidDID('did:Method:abc')).toBe(false);
+      // trailing colon (no final 1*idchar segment)
+      expect(isValidDID('did:web:example.com:')).toBe(false);
+      // characters outside the idchar set
+      expect(isValidDID('did:web:example com')).toBe(false);
     });
   });
 
@@ -162,6 +182,124 @@ describe('Utility Functions', () => {
 
       expect(user.name).toBe('test');
       expect(user.secret).toBe('[REDACTED]');
+    });
+
+    it('should redact additional security key names (jwt, bearer, cookie, session, etc.)', () => {
+      const data = {
+        jwt: 'header.payload.sig',
+        bearer: 'tok',
+        cookie: 'sid=abc',
+        session: 'xyz',
+        client_secret: 'shh',
+        private_key: '-----BEGIN-----',
+      };
+      const sanitized = sanitizeForLog(data);
+      expect(sanitized.jwt).toBe('[REDACTED]');
+      expect(sanitized.bearer).toBe('[REDACTED]');
+      expect(sanitized.cookie).toBe('[REDACTED]');
+      expect(sanitized.session).toBe('[REDACTED]');
+      expect(sanitized.client_secret).toBe('[REDACTED]');
+      expect(sanitized.private_key).toBe('[REDACTED]');
+    });
+
+    it('should NOT redact unrelated keys that merely contain a sensitive substring', () => {
+      // Substring-based redaction (the previous implementation) flagged these
+      // as sensitive even though they are not. Exact-match redaction does not.
+      const data = {
+        customerToken: 'value-1', // contains "token" but is not a credential field
+        passwordHint: 'something', // contains "password" but is a non-secret hint
+        notAuthRelated: 42,
+      };
+      const sanitized = sanitizeForLog(data);
+      expect(sanitized.customerToken).toBe('value-1');
+      expect(sanitized.passwordHint).toBe('something');
+      expect(sanitized.notAuthRelated).toBe(42);
+    });
+
+    it('should traverse arrays', () => {
+      const data = {
+        users: [
+          { name: 'a', token: 't1' },
+          { name: 'b', token: 't2' },
+        ],
+      };
+      const sanitized = sanitizeForLog(data);
+      const users = sanitized.users as Array<Record<string, unknown>>;
+      expect(Array.isArray(users)).toBe(true);
+      expect(users[0]!.name).toBe('a');
+      expect(users[0]!.token).toBe('[REDACTED]');
+      expect(users[1]!.token).toBe('[REDACTED]');
+    });
+
+    it('should bound recursion depth and array size to keep cost predictable', () => {
+      // Build a deeply nested object well past the depth limit.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const deep: any = {};
+      let cursor = deep;
+      for (let i = 0; i < 50; i++) {
+        cursor.next = {};
+        cursor = cursor.next;
+      }
+      cursor.token = 'deep-secret';
+      const sanitized = sanitizeForLog(deep);
+      // Must complete without stack overflow / runaway and return an object.
+      expect(typeof sanitized).toBe('object');
+
+      // Large array gets truncated.
+      const big = { items: new Array(500).fill('x') };
+      const sanitizedBig = sanitizeForLog(big);
+      const items = sanitizedBig.items as unknown[];
+      expect(items.length).toBeLessThan(big.items.length);
+    });
+  });
+
+  describe('canonicalize / canonicalSha256', () => {
+    it('produces the same output regardless of key insertion order', () => {
+      const a = { b: 1, a: 2, c: { y: 1, x: 2 } };
+      const b = { c: { x: 2, y: 1 }, a: 2, b: 1 };
+      expect(canonicalize(a)).toBe(canonicalize(b));
+      expect(canonicalSha256(a)).toBe(canonicalSha256(b));
+    });
+
+    it('differs across structurally different inputs', () => {
+      expect(canonicalSha256({ a: 1 })).not.toBe(canonicalSha256({ a: 2 }));
+      expect(canonicalSha256([1, 2, 3])).not.toBe(canonicalSha256([3, 2, 1]));
+    });
+
+    it('handles BigInt, undefined and non-finite numbers without throwing', () => {
+      expect(canonicalize({ x: BigInt(5), y: undefined, z: NaN, w: Infinity })).toBe(
+        '{"w":null,"x":"5n","z":null}',
+      );
+    });
+
+    it('throws on circular references rather than silently producing a partial digest', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj: any = { a: 1 };
+      obj.self = obj;
+      expect(() => canonicalize(obj)).toThrow(/circular/i);
+    });
+
+    it('matches the documented sha256 helper behaviour for primitive inputs', () => {
+      // canonicalSha256 of a primitive equals sha256String of its JSON encoding.
+      expect(canonicalSha256('hello')).toHaveLength(64);
+      // canonicalSha256 is not the same as the legacy sha256 because the
+      // legacy helper does not sort keys.
+      const obj = { b: 1, a: 2 };
+      expect(canonicalSha256(obj)).not.toBe(sha256({ b: 1, a: 2 }));
+    });
+  });
+
+  describe('ErrorCode enum', () => {
+    it('does not contain duplicate string values (no aliased members)', () => {
+      const values = Object.values(ErrorCode).filter((v) => typeof v === 'string') as string[];
+      const unique = new Set(values);
+      expect(values.length).toBe(unique.size);
+    });
+
+    it('exposes EXPIRED_TOKEN as the canonical expiry code', () => {
+      expect(ErrorCode.EXPIRED_TOKEN).toBe('EXPIRED_TOKEN');
+      // The deprecated alias was removed.
+      expect((ErrorCode as Record<string, unknown>).TOKEN_EXPIRED).toBeUndefined();
     });
   });
 });
