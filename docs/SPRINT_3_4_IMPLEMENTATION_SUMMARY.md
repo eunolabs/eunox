@@ -4,7 +4,32 @@
 
 Successfully implemented critical Sprint 3 and Sprint 4 features for the Euno capability-native agent governance system, achieving production-grade quality with comprehensive security hardening, operational documentation, and zero compiler/linter errors.
 
-**Overall Status:** ✅ **85% Complete** (All critical features implemented, some advanced features documented for future implementation)
+**Overall Status:** ✅ **Complete** for the Sprint 3/4 scope. All advanced features that this document originally listed as "partial" or "future" — DID resolution (`did:web` / `did:ion` / `did:key`), the developer CLI surface, distributed token revocation, and the distributed kill switch — have since been delivered. See **[Status reconciliation (April 2026)](#status-reconciliation-april-2026)** below for the per-feature update.
+
+---
+
+## Status reconciliation (April 2026)
+
+When this summary was first written several Sprint 3/4 items were marked
+"partial" or "stubbed". They have since shipped. The detail sections
+below have been updated in-line; the table here is a quick at-a-glance
+reconciliation against the **current code in `packages/`**.
+
+| Feature | Original status | Current status | Code reference |
+| ------- | --------------- | -------------- | -------------- |
+| DID resolution (`did:web` / `did:ion` / `did:key`) | 75% — "infrastructure only, resolution stubbed" | ✅ All three methods fully implemented | `packages/capability-issuer/src/did-resolver.ts` |
+| Developer CLI | 90% — "`request` stubbed (curl example)" | ✅ 8 commands shipped (`init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`); `init --framework` flag emits LangChain / MAF / CrewAI scaffolding | `packages/cli/src/index.ts` |
+| Token revocation | 90% — "in-memory only, no multi-instance sync" | ✅ Redis-backed `RedisRevocationStore` wired via `createRevocationStoreFromEnv` (uses `REDIS_URL`); falls back to in-memory in single-instance dev | `packages/tool-gateway/src/revocation-store.ts`, `packages/tool-gateway/src/index.ts` |
+| Kill switch | "v2 — global / session / agent" | ✅ Distributed `RedisKillSwitchManager` shares state across replicas via `REDIS_URL`; in-memory fallback for dev | `packages/common/src/redis-kill-switch.ts`, `packages/common/src/kill-switch.ts` |
+| Specialized capability validators | 80% — "no file-path / DB-specific validation" | ✅ Typed `CapabilityCondition` discriminated union enforced at issuance and at the gateway; file-path / SQL / table / column / resource-pattern validators ship in `packages/common/src/capability-validators.ts` | `packages/common/src/condition-registry.ts`, `packages/common/src/capability-validators.ts` |
+| Wildcard semantics | "trailing `/*` and `/**` only" | ✅ Segment-aware matching with scheme-equality enforcement | `packages/common/src/utils.ts::matchesResource` |
+| Framework adapters (LangChain, MAF, CrewAI) | not in original Sprint 3/4 summary | ✅ All three shipped on top of `@euno/agent-runtime` | `packages/framework-adapters/src/{langchain,maf,crewai}.ts`; design doc: [`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md) |
+
+The "Future Work" / "Recommendations" sections at the bottom of this
+document have been annotated with ✅ where items have since landed.
+
+---
+
 
 ---
 
@@ -31,11 +56,17 @@ Successfully implemented critical Sprint 3 and Sprint 4 features for the Euno ca
 - Maintains audit trail linking renewed tokens
 - Supports custom TTL with validation
 
-#### 3. DID Integration - **75% Complete**
+#### 3. DID Integration - **100% Complete** *(updated April 2026 — was 75%)*
 - ✅ `/.well-known/did.json` endpoint implemented
 - ✅ DID document structure W3C compliant
-- ✅ Infrastructure for did:web and did:ion support
-- ⚠️ **Partial:** DID resolution and VP/VC validation stubbed (see [Future Work](#future-work))
+- ✅ `did:web`, `did:ion`, **and** `did:key` resolution implemented in
+  `packages/capability-issuer/src/did-resolver.ts` (P-256, secp256k1, and
+  Ed25519 multibase decoding for `did:key`; ION resolver REST API for
+  `did:ion`)
+- ✅ DID-based identity validation and signing wired through
+  `DIDIdentityProvider` and `DIDSigner`
+- See [`FUTURE_DEVELOPMENT_IMPLEMENTATION.md`](./FUTURE_DEVELOPMENT_IMPLEMENTATION.md)
+  for the resolver design and W3C VC roadmap.
 
 #### 4. Sandbox Hardening - **100% Complete**
 - ✅ **AppArmor profiles** blocking dangerous syscalls (ptrace, mount, sys_admin)
@@ -56,17 +87,29 @@ Successfully implemented critical Sprint 3 and Sprint 4 features for the Euno ca
 - ✅ Admin API with timing-safe key comparison
 - ✅ Status endpoint for monitoring
 
-#### 6. Developer CLI Tool - **90% Complete**
-- ✅ `euno init` - Generate capability manifest
-- ✅ `euno validate` - Validate manifest structure
-- ✅ `euno config` - Show configuration
-- ⚠️ `euno request` - Stubbed (shows curl example)
+#### 6. Developer CLI Tool - **100% Complete** *(updated April 2026 — was 90%)*
+- ✅ `euno init` — Generate capability manifest (`--framework {langchain|maf|crewai}` flag emits framework-native scaffolding alongside the manifest, per `execution-plan.md` Sprint 4 acceptance criterion)
+- ✅ `euno validate` — Validate manifest structure
+- ✅ `euno request` — Request a capability token from the issuer (live HTTP call to `/api/v1/issue`, with manifest- or flag-driven capability list)
+- ✅ `euno config` — Show effective configuration
+- ✅ `euno schema-version` — Print the current capability-token schema version
+- ✅ `euno check` — Check whether a capability authorises an action
+- ✅ `euno plan` — Print the capability plan derived from a manifest
+- ✅ `euno validate-token` — Validate / introspect a capability token
 
-#### 7. Additional Capability Types - **80% Complete**
+#### 7. Additional Capability Types - **100% Complete** *(updated April 2026 — was 80%)*
 - ✅ Generic capability types support (resource + actions)
-- ✅ Pattern matching for wildcards (e.g., `api://service/*`)
-- ✅ Support for `file_access` and `api_invoke` resource patterns
-- ⚠️ **Limitation:** No specialized validation for file path restrictions or database-specific tokens
+- ✅ Pattern matching for wildcards with **segment-aware** semantics
+  (`/*` is single-segment, `/**` is multi-segment) and scheme-equality
+  enforcement, in `packages/common/src/utils.ts::matchesResource`
+- ✅ Specialized validators for file paths, SQL parameters, table /
+  column allowlists, and resource patterns in
+  `packages/common/src/capability-validators.ts`
+- ✅ Specialized validators are now wired into the typed
+  `CapabilityCondition` discriminated union and enforced by both the
+  issuer (issuance-time) and the gateway (runtime) — see
+  [`capability-model.md`](./capability-model.md) and
+  [`FUTURE_DEVELOPMENT_IMPLEMENTATION.md`](./FUTURE_DEVELOPMENT_IMPLEMENTATION.md).
 
 ---
 
@@ -78,12 +121,19 @@ Successfully implemented critical Sprint 3 and Sprint 4 features for the Euno ca
 - ✅ Role-to-capability mapping (SalesManager, Viewer, DataScientist, Administrator)
 - ✅ Permission checking functionality
 
-#### 2. Token Revocation with Sync - **90% Complete**
+#### 2. Token Revocation with Sync - **100% Complete** *(updated April 2026 — was 90%)*
 - ✅ POST `/admin/revoke` endpoint implemented
 - ✅ Token ID (JTI) based revocation
 - ✅ Expiration-aware revocation list (auto-pruning)
 - ✅ Comprehensive validation and error handling
-- ⚠️ **Limitation:** In-memory store (not synced across replicas) - documented workaround for multi-instance deployments
+- ✅ **Distributed Redis-backed revocation store**
+  (`RedisRevocationStore` in
+  `packages/tool-gateway/src/revocation-store.ts`) is fully implemented
+  and wired into the gateway entrypoint via
+  `createRevocationStoreFromEnv`. When `REDIS_URL` is configured the
+  revocation list is shared across replicas; when it is unset the
+  gateway falls back to the in-memory store for single-instance dev
+  use. See [`DISTRIBUTED_REVOCATION.md`](./DISTRIBUTED_REVOCATION.md).
 
 #### 3. Incident Response Runbook - **100% Complete**
 - ✅ 50+ page comprehensive runbook
@@ -417,18 +467,18 @@ No changes required for existing deployments. New `/admin/revoke` endpoint is av
 5. Validate audit log completeness
 
 ### Medium-Term (Post-Pilot)
-1. Implement DID resolution (did:web at minimum)
+1. ~~Implement DID resolution (did:web at minimum)~~ — ✅ **Done.** All three of `did:web`, `did:ion`, and `did:key` are implemented in `packages/capability-issuer/src/did-resolver.ts`.
 2. Add Conditional Access policy enforcement
 3. Implement PIM support
-4. Deploy Microsoft Sentinel integration
+4. Deploy Microsoft Sentinel integration (analytic rules now shipped — see [`SPRINT_5_PILOT_LAUNCH.md`](./SPRINT_5_PILOT_LAUNCH.md))
 5. Conduct performance testing at scale
 
 ### Long-Term (Future Milestones)
-1. Upgrade to W3C Verifiable Credential format
-2. Implement cross-organization trust
-3. Add specialized capability type validation
-4. Implement distributed revocation list (Redis)
-5. Add rate limiting and throttling
+1. Upgrade to W3C Verifiable Credential format (`@digitalbazaar/vc`)
+2. Implement cross-organization trust (see [`cross-organizations.md`](./cross-organizations.md))
+3. ~~Add specialized capability type validation~~ — ✅ **Done.** Typed `CapabilityCondition` discriminated union with file-path / SQL / resource-pattern validators; see [`capability-model.md`](./capability-model.md).
+4. ~~Implement distributed revocation list (Redis)~~ — ✅ **Done.** `RedisRevocationStore` + `RedisKillSwitchManager` are wired through `REDIS_URL`.
+5. Add rate limiting and throttling (basic Express rate-limiter is wired in `tool-gateway/src/index.ts`; per-agent / per-session quotas remain future work)
 
 ---
 

@@ -187,6 +187,61 @@ paths:
                     type: array
                     items: { type: string }
 
+  /.well-known/capability-issuer:
+    get:
+      tags: [discovery]
+      summary: Capability-issuer service discovery document
+      description: |
+        Returns a self-describing service-discovery document that lets
+        relying parties (gateways, CLIs, partner organisations) learn
+        the issuer's DID, the capability-token schema version it
+        currently mints, the schema versions it accepts on attenuate /
+        renew, the JWS signing algorithms it supports, and the URLs of
+        its other discovery endpoints.
+
+        This endpoint is unauthenticated and intentionally inexpensive
+        so it can be polled by long-running clients.
+      responses:
+        '200':
+          description: Issuer discovery document
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issuer, schemaVersions, signingAlgorithms, endpoints]
+                properties:
+                  issuer:
+                    type: string
+                    description: The issuer's DID (matches the `iss` claim of issued tokens).
+                    example: did:web:issuer.example.com
+                  schemaVersions:
+                    type: object
+                    required: [current, supported]
+                    properties:
+                      current:
+                        type: string
+                        description: Schema version this issuer mints today.
+                        example: "1.0"
+                      supported:
+                        type: array
+                        description: All schema versions this issuer accepts on attenuate / renew.
+                        items: { type: string }
+                        example: ["1.0"]
+                  signingAlgorithms:
+                    type: array
+                    description: JWS `alg` values this issuer can sign with.
+                    items: { type: string }
+                    example: ["RS256", "ES256"]
+                  endpoints:
+                    type: object
+                    properties:
+                      publicKey:
+                        type: string
+                        example: /api/v1/public-key
+                      didDocument:
+                        type: string
+                        example: /.well-known/did.json
+
 components:
   securitySchemes:
     bearerAuth:

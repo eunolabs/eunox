@@ -36,9 +36,15 @@ Implemented comprehensive DID (Decentralized Identifier) resolution and signing 
 - Signature algorithm detection
 
 **Supported DID Methods:**
-- ✅ `did:web` - Fully implemented with HTTP resolution
-- ⏳ `did:ion` - Stubbed (requires ION node/REST API)
-- ⏳ `did:key` - Stubbed (requires multibase decoding)
+- ✅ `did:web` — Fully implemented with HTTPS resolution to
+  `/.well-known/did.json` (and path-suffixed `/<path>/did.json` for
+  multi-DID hosts)
+- ✅ `did:ion` — Implemented via a pluggable ION resolver REST API
+  (configurable resolver base URL; HTTP error codes mapped to typed
+  `DIDResolutionError` subclasses)
+- ✅ `did:key` — Self-contained resolution: multibase-decoded
+  multicodec public key for Ed25519, P-256 (secp256r1), and secp256k1,
+  with curve-specific elliptic-curve helpers in `did-resolver.ts`
 
 **Key Functions:**
 ```typescript
@@ -496,9 +502,15 @@ function validateCapability(capability: CapabilityConstraint) {
 DID_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----..."
 DID_ISSUER="did:web:organization.com"
 
-# For DID identity validation
-DID_SUPPORTED_METHODS="web"
+# Optional: ION resolver base URL (only consulted when resolving did:ion)
+# Defaults to https://ion.msidentity.com/api/v1.0/identifiers
+ION_RESOLVER_URL="https://ion.msidentity.com/api/v1.0/identifiers"
 ```
+
+Method-level allowlists (`web` / `ion` / `key`) are configured on the
+`DIDIdentityProvider` through the `supportedMethods` field of the
+adapter config rather than via an environment variable; see
+`packages/capability-issuer/src/did-identity-provider.ts`.
 
 ### Configuration
 
@@ -535,13 +547,14 @@ DID_SUPPORTED_METHODS="web"
 
 ### Near-Term (1-2 months)
 
-1. **did:ion Support**
-   - Integrate with ION node or REST API
-   - Test with real ION DIDs
-   - Add caching for DID resolution
+1. **DID Caching & TTLs**
+   - `did:web` and `did:ion` resolutions are HTTP round-trips; add a
+     bounded LRU cache with per-method TTL and explicit invalidation
+     on signature failure
+   - Surface cache hit-rate as a metric
 
 2. **Performance Optimization**
-   - Cache DID Documents (with TTL)
+   - Cache DID Documents (with TTL — see above)
    - Batch validation operations
    - Optimize regex patterns
 
@@ -549,6 +562,11 @@ DID_SUPPORTED_METHODS="web"
    - Add more SQL injection patterns
    - Support for additional file systems
    - Custom validation rules per resource type
+
+> **Note (April 2026):** `did:ion` and `did:key` support, originally
+> listed here as near-term work, has shipped — see "Supported DID
+> Methods" above. The remaining near-term work is caching and
+> performance.
 
 ### Long-Term (3-6 months)
 
@@ -591,8 +609,8 @@ DID_SUPPORTED_METHODS="web"
 
 Successfully implemented two major future development items with production-grade quality:
 
-✅ **DID Resolution** - Full did:web support with signing and identity validation
-✅ **Specialized Validation** - Comprehensive security validation for file paths and SQL
+✅ **DID Resolution** — `did:web`, `did:ion`, and `did:key` resolution + signing + identity validation
+✅ **Specialized Validation** — Comprehensive security validation for file paths and SQL
 
 **Next Steps:**
 1. Update pilot playbook with DID configuration
