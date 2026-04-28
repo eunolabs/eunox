@@ -273,7 +273,7 @@ versionCmd
     const isDowngrade = toMajor < fromMajor || (toMajor === fromMajor && toMinor < fromMinor);
 
     if (isDowngrade) {
-      console.error('✗ Downgrade migrations are not supported. Downgrading past a schema change will reject all tokens with the new shape.');
+      console.error('✗ Downgrade migrations are not supported.');
       process.exit(1);
     }
 
@@ -343,6 +343,7 @@ versionCmd
         console.error('✗ Not a valid JWT (expected 3 parts separated by ".")');
         process.exit(1);
       }
+      // parts[1] is always defined when parts.length === 3; guard against empty string
       const payloadPart = parts[1];
       if (!payloadPart) {
         console.error('✗ Not a valid JWT (empty payload segment)');

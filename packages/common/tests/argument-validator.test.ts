@@ -221,7 +221,7 @@ describe('validateArguments', () => {
   });
 
   describe('strict mode flag', () => {
-    it('rejects unknown properties on objects that do not declare shape in non-strict mode', () => {
+    it('allows unknown properties on objects that do not declare shape in non-strict mode', () => {
       // A schema with type: 'object' already enforces additionalProperties: false by default.
       // The distinction with strict mode: schemas that don't declare any object-shape
       // keywords (no properties, required, additionalProperties, or type:object) do NOT
