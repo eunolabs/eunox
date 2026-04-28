@@ -402,8 +402,7 @@ export class AgentRuntime {
     // Previously the callback compared against `acquirePromise` (the unwrapped
     // run() promise), which is a different object from `acquirePromise.finally()`
     // and therefore never cleared pendingAcquire.
-    let pending: Promise<void>;
-    pending = acquirePromise.finally(() => {
+    const pending: Promise<void> = acquirePromise.finally(() => {
       // Only clear if we are still the active acquisition.
       if (this.acquireAbortController === controller) {
         this.acquireAbortController = undefined;
