@@ -136,6 +136,44 @@ describe('Utility Functions', () => {
     it('should not match non-matching patterns', () => {
       expect(matchesResource('api://service/endpoint', 'api://other/*')).toBe(false);
     });
+
+    // Single-segment wildcard `*` must NOT span path separators.
+    // The earlier `startsWith(prefix)` implementation conflated `*`
+    // and `**`; this pins the corrected segment-aware behavior.
+    it('single-segment wildcard does not match deeper paths', () => {
+      expect(matchesResource('api://service/a/b', 'api://service/*')).toBe(false);
+      expect(matchesResource('api://service/a', 'api://service/*')).toBe(true);
+    });
+
+    it('recursive wildcard matches scheme-rooted resources at any depth', () => {
+      expect(matchesResource('api://crm/customers', 'api://**')).toBe(true);
+      expect(matchesResource('api://crm/customers/123', 'api://**')).toBe(true);
+    });
+
+    // The earlier implementation accepted `prefix/` as a legal expansion
+    // of `prefix/*` (empty tail). Now `prefix/*` and `prefix/**` both
+    // require at least one extra character.
+    it('rejects empty-tail expansions', () => {
+      expect(matchesResource('api://service/', 'api://service/*')).toBe(false);
+      expect(matchesResource('api://service/', 'api://service/**')).toBe(false);
+    });
+
+    // The earlier `startsWith(prefix)` implementation would have
+    // matched `api://service-old/...` against `api://service/*`
+    // because the boundary was not on a path-segment edge. The fix
+    // requires the trailing `/` to be present in the resource.
+    it('rejects matches that do not respect path-segment boundaries', () => {
+      expect(matchesResource('api://service-old/x', 'api://service/*')).toBe(false);
+      expect(matchesResource('api://service-old/x/y', 'api://service/**')).toBe(false);
+    });
+
+    // Scheme-confusion guard: a `file://...` pattern must never
+    // authorize a `db://...` resource (or vice versa).
+    it('refuses to match across schemes', () => {
+      expect(matchesResource('db://data/x', 'file://data/*')).toBe(false);
+      expect(matchesResource('db://data/x/y', 'file://data/**')).toBe(false);
+      expect(matchesResource('file://data/x', 'db://data/*')).toBe(false);
+    });
   });
 
   describe('parseBearerToken', () => {

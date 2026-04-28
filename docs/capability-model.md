@@ -1,5 +1,33 @@
 # Closing Capability Model Gaps: Analysis and Recommendations
 
+> **Implementation note (April 2026):** The recommendations from this
+> document have landed in code. See:
+>
+> - **Typed conditions:** `CapabilityCondition` discriminated union in
+>   `packages/common/src/types.ts` and the shared validate / enforce
+>   pipeline in `packages/common/src/condition-registry.ts`.
+> - **Issuance-time validation:** `CapabilityIssuerService.issueCapability`
+>   and `attenuateCapability` reject malformed or unknown conditions
+>   before signing (`packages/capability-issuer/src/issuer-service.ts`).
+> - **Gateway enforcement:** `EnforcementEngine.validateAction` in
+>   `packages/tool-gateway/src/enforcement.ts` runs every typed
+>   condition; unknown types deny by default.
+> - **Distributed `maxCalls`:** `CallCounterStore` with in-memory and
+>   Redis-backed implementations in
+>   `packages/common/src/call-counter-store.ts`, wired into the gateway
+>   entrypoint via `createCallCounterStoreFromEnv` (reuses the same
+>   `REDIS_URL` as the kill-switch / revocation-store wiring).
+> - **Wildcard fix:** segment-aware `matchesResource` with scheme
+>   equality enforcement in `packages/common/src/utils.ts`.
+> - **Action widening:** `Action = string` (legacy verbs preserved as
+>   `LEGACY_ACTIONS`) so resource-specific verbs (`db:select`,
+>   `s3:putObject`) are first-class.
+>
+> The project is pre-v1 with no production deployments; rather than
+> introducing a `v2` tokens / migration window, the schema converged on
+> a single strict format. Tokens issued before this change predate any
+> deployment and do not need a compatibility shim.
+
 ## Problem Summary
 
 The capability model in the current codebase declares fine-grained, conditional authorization but delivers shallow enforcement. Six interconnected gaps undermine the security guarantees the system is designed to provide:
