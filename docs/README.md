@@ -42,7 +42,7 @@ They are the foundation everything else builds on.
 | [`diagrams.md`](./diagrams.md) | Mermaid diagram set (engineering / product / executive views of the architecture). | 📚 |
 | [`agt-integration-diagrams.md`](./agt-integration-diagrams.md) | Diagrams showing the layered defence between AGT (in-process semantic guard) and the gateway (cryptographic outer guard). | 📚 |
 | [`agt-comparison.md`](./agt-comparison.md) | Comparison of agent governance approaches. | 📚 |
-| [`cross-organizations.md`](./cross-organizations.md) | Cross-organization trust model (federation, delegation chains). | 🔄 |
+| [`cross-organizations.md`](./cross-organizations.md) | Cross-organization trust model (federation, delegation chains). Reference guidance for future federation adoption; not part of the current MVP runtime. | 📚 |
 
 ## 3. Design references
 
@@ -110,3 +110,6 @@ When you change behaviour in `packages/`:
   than leaving the doc to drift.
 - If the change adds a substantial new package, link it from this index
   and from [`IMPLEMENTATION.md`](./IMPLEMENTATION.md).
+- If a previously deferred feature ships, add a short reconciliation note
+  near the original claim and update the matching sprint summary so readers
+  can distinguish historical plan language from current code status.

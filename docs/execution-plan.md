@@ -1,5 +1,19 @@
 # Multi-Cloud Hybrid Execution Plan for Capability-Native Agent Governance
 
+## Current Status (April 2026)
+
+This file is the historical multi-sprint plan. The current codebase has
+completed the core MVP and production-pilot readiness work:
+
+- ✅ **Sprints 1-2:** Azure-first foundation, sandbox baseline, gateway enforcement, audit logging
+- ✅ **Sprints 3-4:** DID support, delegation/attenuation, renewal, distributed revocation, distributed kill switch, framework adapters
+- ✅ **Sprint 5:** Pilot launch materials, Azure Bicep deployment assets, Sentinel analytics, HA policy manifests
+- 🔄 **Sprints 6-8:** Cross-cloud demos, federation depth, and additional advanced controls remain roadmap scope
+
+For implementation evidence and status reconciliation, start with
+`docs/README.md`, `docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`, and
+`docs/SPRINT_5_PILOT_LAUNCH.md`.
+
 ## Milestone 1 – Foundation (Multi-Cloud Integration & Core Architecture)
 
 **Duration:** 2 Sprints (Weeks 1–4)

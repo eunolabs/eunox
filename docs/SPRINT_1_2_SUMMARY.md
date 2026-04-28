@@ -4,6 +4,19 @@
 
 This document summarizes the implementation of sandboxing requirements from Sprint 1 and Sprint 2 as specified in `execution-plan.md`. All key requirements have been successfully implemented.
 
+## Current Reconciliation
+
+Some Sprint 1/2 items were intentionally deferred to later sprints in the
+original execution plan. Current status:
+
+| Deferred item | Current status | Evidence |
+| --- | --- | --- |
+| DID identity and signing | ✅ Implemented for `did:web`, `did:ion`, and `did:key` | `packages/capability-issuer/src/did-{resolver,identity-provider,signer}.ts` |
+| Delegation, attenuation, and renewal | ✅ Implemented | `packages/capability-issuer/src/issuer-service.ts`; `docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md` |
+| Distributed kill switch and revocation | ✅ Implemented with Redis-backed HA mode | `docs/DISTRIBUTED_KILL_SWITCH.md`; `docs/DISTRIBUTED_REVOCATION.md` |
+| Advanced constraints | ✅ Typed conditions and distributed `maxCalls`; ⚠️ data redaction remains roadmap work | `packages/common/src/condition-registry.ts`; `packages/common/src/call-counter-store.ts`; `docs/capability-model.md` |
+| Cross-organization federation | 📚 Reference guidance only, outside current MVP runtime | `docs/cross-organizations.md` |
+
 ## Sprint 1 Requirements - Status: ✅ COMPLETE
 
 ### Team DP (Data Plane) - Agent Environment & Sandbox

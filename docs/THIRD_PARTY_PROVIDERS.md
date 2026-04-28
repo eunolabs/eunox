@@ -18,13 +18,22 @@ The system includes these providers out of the box:
 
 **Identity Providers:**
 - `azure-ad` - Azure Active Directory / Microsoft Entra ID
-- `did` - Decentralized Identifiers (placeholder for future implementation)
+- `aws-cognito` - Amazon Cognito user pools or IAM Identity Center / compatible OIDC issuers
+- `gcp-identity` - Google identity tokens, Workforce Identity Federation, or compatible GCP OIDC issuers
+- `did` - W3C Decentralized Identifiers (`did:web`, `did:ion`, `did:key`)
 
 **Token Signers:**
 - `azure-keyvault` - Azure Key Vault for cryptographic signing
 - `aws-kms` - AWS Key Management Service for cryptographic signing
 - `gcp-cloudkms` - Google Cloud Key Management Service for cryptographic signing
-- `did` - DID-based signing (placeholder for future implementation)
+- `did` - DID-bound local/private-key signing with public discovery via `/.well-known/did.json`
+
+**Implementation references:** the built-in registry is in
+`packages/capability-issuer/src/default-registries.ts`; provider
+implementations live in `azure-identity-provider.ts`,
+`aws-cognito-identity-provider.ts`, `gcp-identity-provider.ts`,
+`did-identity-provider.ts`, `azure-signer.ts`, `aws-kms-signer.ts`,
+`gcp-cloudkms-signer.ts`, and `did-signer.ts`.
 
 ### Registry System
 

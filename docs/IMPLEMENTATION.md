@@ -28,6 +28,11 @@ Issues cryptographically signed capability tokens to authorized agents.
 - DID resolution for `did:web`, `did:ion`, and `did:key`
 - Discovery endpoints: `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`
 
+`/.well-known/capability-issuer` returns issuer metadata for clients and
+gateways: issuer DID, service name, supported schema versions, active schema
+version, supported signing algorithms, and links to the public key and DID
+document endpoints.
+
 ### 2. **Tool Gateway** (`packages/tool-gateway`)
 Enforces capability constraints on all agent actions.
 
@@ -211,13 +216,19 @@ curl -X POST http://localhost:3002/admin/kill-switch/agent/agent-456/kill \
 - ✅ Admin API for operational control
 - ✅ Enhanced monitoring and logging
 
-### Planned (Sprint 3+)
-- ⏳ Full DID integration (did:web, did:ion)
-- ⏳ Capability delegation and attenuation
-- ⏳ Advanced constraints (rate limits, data redaction)
-- ⏳ Cross-organization trust
-- ⏳ Microsoft Sentinel integration
-- ⏳ Evidence verification endpoints
+### Sprint 3+ Reconciliation
+- ✅ Full DID integration for `did:web`, `did:ion`, and `did:key` (see `packages/capability-issuer/src/did-resolver.ts`)
+- ✅ Capability delegation and attenuation (`/api/v1/attenuate`)
+- ✅ Token renewal (`/api/v1/renew`)
+- ✅ Specialized capability validators and typed conditions, including time windows, IP allowlists, `maxCalls`, and argument schemas
+- ✅ Microsoft Sentinel analytics content (`infra/sentinel/analytic-rules.json`)
+- ✅ Cryptographic audit evidence generation and verification helpers
+- ⚠️ Data redaction remains roadmap/design work and is tracked in `capability-model.md`
+- 📚 Cross-organization trust remains reference guidance in `cross-organizations.md`, not current MVP runtime scope
+
+For sprint-by-sprint evidence, see
+[`SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`](./SPRINT_3_4_IMPLEMENTATION_SUMMARY.md)
+and [`SPRINT_5_PILOT_LAUNCH.md`](./SPRINT_5_PILOT_LAUNCH.md).
 
 ## Development
 
