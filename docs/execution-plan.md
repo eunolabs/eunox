@@ -51,6 +51,8 @@
     *   Token is signed by the configured Azure Key Vault key or equivalent AWS KMS / Google Cloud KMS key (verifiable using the corresponding public key).
     *   Token is audience-restricted (contains an `aud` claim for the Tool Gateway).
     *   Cross-team dependency satisfied: **Team OBS** has logging enabled so every issuance is recorded.
+    *   *Multi-Cloud Telemetry Parity:* The same issuance event is recorded with identical normalized fields in **at least one** AWS profile (CloudWatch Logs / CloudTrail) and **at least one** Google Cloud profile (Cloud Logging / Cloud Audit Logs) in addition to Azure Monitor / Log Analytics, even if only the Azure profile is wired into the live pilot.
+    *   *Framework Adapter Scaffolding:* Architectural integration targets for **LangChain**, **Microsoft Agent Framework (MAF)**, and **CrewAI** are checked in as documented interfaces and minimal stub adapters (token retrieval + tool-call interception + denial surfacing), even though full middleware lands in Sprint 2.
 
 ***
 
@@ -78,6 +80,11 @@
         *   Google Cloud: **Cloud Logging, Cloud Monitoring, Cloud Audit Logs, Security Command Center, and Chronicle**.
         *   Normalize fields so cross-cloud dashboards and incident workflows can query the same capability IDs, agent/session IDs, issuer IDs, and policy decisions.
 *   **Monitoring Plan:** Identify critical conditions: repeated `DeniedAction` events (possible prompt injection), high-frequency tool calls (possible runaway loop). The detection layer should match the gates built: *"repeated Prompt Shields detections from the same identity or session," "tool-call spikes after a suspicious document signal," and "APIM denials for write endpoints from sessions in read-only mode"*【5†L357-L359】.
+    *   *Multi-Cloud Detection Parity:* Define equivalent detections so the same logical rules fire regardless of which gateway emitted the telemetry:
+        *   Azure: APIM diagnostic logs in Log Analytics → Sentinel scheduled rules.
+        *   AWS: API Gateway / Lambda Authorizer / ALB access logs in CloudWatch Logs → CloudWatch Metric Filters and Security Hub findings (with optional EventBridge fan-out to GuardDuty).
+        *   Google Cloud: API Gateway / Apigee / Cloud Endpoints request logs in Cloud Logging → log-based metrics, Cloud Monitoring alert policies, and Security Command Center findings (with optional Chronicle forwarding).
+        *   The capability ID, agent/session ID, issuer DID, and decision field names must be identical across clouds so a single detection-as-code definition can be deployed to any of the three control planes.
 
 ***
 
@@ -101,8 +108,16 @@
 
 **Team CP – Tasks:**
 
-*   **Policy-Driven Issuance:** Connect the Capability Issuer to live Azure AD via Microsoft Graph API. Fetch user roles and group memberships to determine which capabilities to issue. Test that two users with different Azure AD roles produce different capability sets for their agents.
-*   **Token Signing & Verification:** Implement actual **token signing** using Azure Key Vault and update the Tool Gateway to **verify token signatures** using the public key. Ensure tokens include a short expiration (15 minutes).
+*   **Policy-Driven Issuance:** Connect the Capability Issuer to live enterprise IAM through pluggable identity adapters so issuance decisions are uniform across clouds.
+    *   Azure: connect to live Azure AD via Microsoft Graph API. Fetch user roles and group memberships to determine which capabilities to issue. Test that two users with different Azure AD roles produce different capability sets for their agents.
+    *   AWS: connect to Amazon Cognito user pool groups, IAM Identity Center group memberships, and STS session tags / IAM role attributes. Test that two principals with different IAM Identity Center group memberships produce different capability sets.
+    *   Google Cloud: connect to Cloud Identity / Workspace groups, IAM principal attributes, Workforce Identity Federation claims (for external workforce), and Workload Identity Federation claims (for service-to-service). Test that two principals with different Cloud Identity group memberships produce different capability sets.
+    *   The role-to-capability mapping logic is shared across all three providers; cloud-specific claims are normalized into the common `UserContext` before policy evaluation. No cloud-specific claim names may appear in the policy code.
+*   **Token Signing & Verification:** Implement actual **token signing** through the cloud-neutral signer abstraction and update the Tool Gateway to **verify token signatures** using the public key resolved via the issuer's `kid` and JWKS / DID Document. Ensure tokens include a short expiration (15 minutes).
+    *   Azure deployments sign with Azure Key Vault keys (Managed Identity for service auth, activity logs for key-use evidence).
+    *   AWS deployments sign with KMS asymmetric keys (IAM role for service auth, CloudTrail for key-use evidence).
+    *   Google Cloud deployments sign with Cloud KMS or Cloud HSM keys (service account or Workload Identity Federation for service auth, Cloud Audit Logs for key-use evidence).
+    *   Public-key discovery (`/.well-known/jwks.json` or `/.well-known/did.json`), `kid`, supported algorithms, and rotation semantics MUST be identical across the three signer implementations so that the Tool Gateway verifier code is unchanged when switching clouds.
 *   **Capability Data Model:** Code the internal representation of capabilities. Include support for basic constraints: resource, action list, TTL. Advanced constraints (data redaction, rate limits) deferred to Sprint 3.
 
 ***
@@ -120,9 +135,10 @@
 
 **Team OBS – Tasks:**
 
-*   **Evidence Generation (Cryptographic Audit):** Move beyond standard logging to **signed evidence chains**. The principle: *"Logs help you debug. Evidence helps you prove"*【5†L285】. For each privileged action, hash the session envelope and tool intent, then sign the digest using Azure Key Vault Keys. The signed evidence schema should include:
+*   **Evidence Generation (Cryptographic Audit):** Move beyond standard logging to **signed evidence chains**. The principle: *"Logs help you debug. Evidence helps you prove"*【5†L285】. For each privileged action, hash the session envelope and tool intent, then sign the digest using the configured cloud KMS through the same signer abstraction used by the Capability Issuer. The signed evidence schema should include:
     *   `sessionId`, `userId`, `promptHash`, `documentsHash`, `tool`, `argsHash`, `nonce`, `ts`, `policyVersion`【5†L296-L306】
     *   This creates tamper-evident audit records verifiable by any party with the enterprise's public key.
+    *   *Multi-Cloud Evidence Parity:* Evidence digests must be signable by **Azure Key Vault**, **AWS KMS**, or **Google Cloud KMS / HSM** with byte-identical canonicalization, the same `kid` resolution, and the same verifier code path. Signed evidence records are routed to the cloud-native sink (Azure Log Analytics, AWS CloudWatch Logs + S3 immutable bucket with Object Lock, or Google Cloud Logging + Cloud Storage bucket with retention lock) using the same field schema so a single verifier tool can replay and check evidence regardless of origin.
 *   **Basic Kill-Switch:** Implement a rudimentary kill-switch for development use. A global flag checked by the Tool Gateway: if `KILL_ALL_AGENTS=true`, reject all requests. The design constraint: place kill switches in a control plane **outside the agent's runtime** for reliability and auditability.
 *   **Monitoring Dashboards:** Stand up an initial dashboard displaying: actions executed, denied actions, active agent sessions. Define an alert for critical conditions (>5 denied actions/minute triggers alert).
 
@@ -133,6 +149,11 @@
 *   **Agent SDK Integration:** Modify the pilot agent's code to retrieve and attach capability tokens. At startup, the agent calls the Issuer's `/issue` endpoint. Every tool invocation includes the token via middleware or proxy configuration. Coordinate with Team CP for token issuance and renewal contracts, and with Team DP for gateway forwarding and denial semantics.
     *   *Framework Middleware:* Provide framework-native hooks as library adapters plus documentation: LangChain callback handlers and tool wrappers; MAF agent-run middleware and function/tool-calling middleware; and CrewAI tool wrappers plus task lifecycle hooks. Each integration must acquire or refresh capability tokens, attach them to gateway-bound tool calls, surface denials as structured framework errors, and emit correlation IDs for audit logs.
 *   **Unit Tests:** Valid tokens accepted; invalid tokens rejected; expired token rejected; agent obtains new token and proceeds.
+*   **Framework Adapter Acceptance:** Each framework adapter ships with the same minimum acceptance suite, executed in CI for every PR:
+    *   **LangChain** (callback handler + tool wrapper): a tool call without a token raises a structured `CapabilityDeniedError`; a tool call with an expired token triggers refresh-and-retry; a denial response from the gateway is surfaced in the agent trace with the same correlation ID emitted to the audit log.
+    *   **Microsoft Agent Framework (MAF)** (agent-run middleware + function/tool-calling middleware): identical three-scenario suite, plus a check that MAF's tool-calling middleware short-circuits before the model sees the result on a denial.
+    *   **CrewAI** (tool wrapper + task lifecycle hook): identical three-scenario suite, plus a check that a denied tool call fails the owning task without crashing the crew.
+    *   All three adapters share the same correlation-ID and error-shape contract so downstream observability is identical regardless of framework.
 
 ***
 
@@ -159,11 +180,19 @@
 
 *   **Additional Capability Types:** Based on pilot agent functionality, define capabilities for all tool categories. Examples: `file_access` capabilities with allowed path/directory and actions (`read`/`write`); `api_invoke` capabilities with resource identifiers like `api://service-name/endpoint`. Update the Capability Schema.
 *   **Delegation / Attenuation Mechanism:** Implement capability attenuation via a new Issuer endpoint (e.g., `/attenuate?parent_token=X&constraints=Y`). Enforce that child capability scope is a subset of parent scope (no new privileges). Support simplified subset operations (copy one token with reduced TTL) as the invariant holds.
-*   **Establish Enterprise DID:** Register a Decentralized Identifier for the enterprise's issuer. For Azure, use **Microsoft Entra Verified ID**, which is designed to allow *"centralized and decentralized identity architectures to be combined to provide a solution that reduces risk and offers significant operational benefits"*【2†L73-L74】. Practical options:
-    *   **`did:web`**: Anchored in DNS, where the enterprise hosts a DID Document at a well-known URL. In decentralized identity systems, a DID Document *"is accessible using a verifiable data registry and contains information related to a specific decentralized identifier, such as the associated repository and public key information"*【2†L63】. A trust system can be either a distributed ledger or *"something centralized, such as DID Web"*【2†L68】.
-    *   **`did:ion`**: A public, permissionless DID network on Bitcoin (Microsoft is a contributor). Provides globally verifiable DIDs without central authority, at the cost of higher latency for updates.
-    *   Generate a DID Document containing the enterprise's public keys (corresponding to the Key Vault key pair) and host it for verifier resolution.
-*   **Agent DID Strategy:** Determine how each agent will be identified in a decentralized way. The Zero-Trust Agents reference implementation anticipates Microsoft's **Entra Agent ID** initiative, which *"similarly assigns unique Entra identities to AI agents for robust authentication and governance"*【9†L43】. Our design aligns with this by giving each agent a unique, verifiable identity.
+*   **Establish Enterprise DID:** Register a Decentralized Identifier for the enterprise's issuer using a method that is portable across clouds.
+    *   Azure: use **Microsoft Entra Verified ID**, which is designed to allow *"centralized and decentralized identity architectures to be combined to provide a solution that reduces risk and offers significant operational benefits"*【2†L73-L74】.
+    *   AWS: host the `did:web` document behind **Amazon CloudFront + S3** (or API Gateway) with the controlling key material in **AWS KMS**; optionally use **AWS Certificate Manager** for the well-known TLS endpoint and **IAM Roles Anywhere** for issuer-service authentication to KMS.
+    *   Google Cloud: host the `did:web` document on **Cloud Storage + Cloud CDN** (or Cloud Run) backed by **Cloud DNS** with the controlling key material in **Cloud KMS / Cloud HSM**; use **Workload Identity Federation** for issuer-service authentication to KMS.
+    *   Practical method options:
+        *   **`did:web`**: Anchored in DNS, where the enterprise hosts a DID Document at a well-known URL. In decentralized identity systems, a DID Document *"is accessible using a verifiable data registry and contains information related to a specific decentralized identifier, such as the associated repository and public key information"*【2†L63】. A trust system can be either a distributed ledger or *"something centralized, such as DID Web"*【2†L68】. `did:web` is the recommended cloud-neutral baseline because it works identically on Azure / AWS / GCP using only DNS + HTTPS.
+        *   **`did:ion`**: A public, permissionless DID network on Bitcoin (Microsoft is a contributor). Provides globally verifiable DIDs without central authority, at the cost of higher latency for updates. Resolution is cloud-neutral because clients only need an ION resolver endpoint.
+    *   Generate a DID Document containing the enterprise's public keys (corresponding to the Azure Key Vault, AWS KMS, or Google Cloud KMS / HSM key pair) and host it for verifier resolution. The DID Document MUST be byte-identical regardless of which cloud hosts it so the same public-key resolution code works for all verifiers.
+*   **Agent DID Strategy:** Determine how each agent will be identified in a decentralized way. The Zero-Trust Agents reference implementation anticipates Microsoft's **Entra Agent ID** initiative, which *"similarly assigns unique Entra identities to AI agents for robust authentication and governance"*【9†L43】. Our design aligns with this by giving each agent a unique, verifiable identity, and we map this concept to the equivalent cloud-native primitives so the same agent identity can be issued and verified on any of the three clouds:
+    *   Azure: **Entra Agent ID** (or, until GA, a per-agent **Managed Identity** plus a `did:web` subject identifier issued by the Capability Issuer).
+    *   AWS: a per-agent **IAM role** assumable via **IAM Roles Anywhere** (X.509-bound) or via **Cognito** for human-initiated agents, paired with a `did:web` subject identifier; **Verified Permissions** can be used to express agent-scoped policies that mirror the capability manifest.
+    *   Google Cloud: a per-agent **Service Account** federated through **Workload Identity Federation** (X.509 / OIDC bound), paired with a `did:web` subject identifier.
+    *   In all three cases the cloud-native principal is bound to the agent's DID via the issuer's signing key, so the verifier never has to know which cloud the agent runs in.
 
 ***
 
@@ -187,12 +216,19 @@
 **Team OBS – Tasks:**
 
 *   **Audit Log Schema Finalization:** Add a `ParentCapabilityID` field for delegation events linking child capabilities to their parent.
-*   **Microsoft Sentinel Integration:** Set up **Microsoft Sentinel** to turn telemetry into incidents with scheduled analytics rules【5†L353】. Create analytic rules for:
+*   **SIEM / Detection-as-Code Integration:** Set up **Microsoft Sentinel** to turn telemetry into incidents with scheduled analytics rules【5†L353】, and ship the equivalent rules for the AWS and Google Cloud SIEM stacks so detections are deployable to whichever cloud is hosting the pilot. The same logical analytic rules are maintained as a single set of detection-as-code definitions and rendered per platform:
+    *   Azure: Sentinel scheduled analytics rules + automation playbooks.
+    *   AWS: Security Hub custom insights and findings, EventBridge rules, GuardDuty custom finding ingestion, and (optionally) Amazon Detective for graph correlation.
+    *   Google Cloud: Security Command Center custom modules / posture findings, Cloud Logging log-based alerts, and Chronicle YARA-L rules.
+    Required logical rules (must exist in all three platforms with identical thresholds and field names):
     *   Repeated denied tool requests by the same agent.
     *   Tool-call spikes after a suspicious document signal.
-    *   APIM denials for write endpoints from sessions in read-only mode.
+    *   Gateway denials for write endpoints from sessions in read-only mode (APIM in Azure; API Gateway / Lambda Authorizer / ALB in AWS; API Gateway / Apigee / Cloud Endpoints in GCP).
     *   High-sensitivity label retrieval by identities that should never touch that tier【5†L357-L360】.
-*   **Posture Management Integration:** Microsoft Defender for Cloud's Defender CSPM plan includes *"AI security posture management for generative AI apps and AI agents (Preview), including discovery/inventory of AI agents deployed with Azure AI Foundry"*【5†L351】. Enable this for automated discovery of agent deployments.
+*   **AI Posture Management Integration:** Microsoft Defender for Cloud's Defender CSPM plan includes *"AI security posture management for generative AI apps and AI agents (Preview), including discovery/inventory of AI agents deployed with Azure AI Foundry"*【5†L351】. Enable this for automated discovery of agent deployments, and enable the equivalent posture surfaces on the other clouds for parity:
+    *   AWS: **GuardDuty** (including extended threat detection for workloads), **Amazon Inspector** for container/runtime CVE discovery, and **Security Hub** AI / generative-AI security standards once enabled in the account. Feed agent inventory from EKS / ECS / Lambda tags into Security Hub.
+    *   Google Cloud: **Security Command Center** (Premium / Enterprise) AI posture findings, **Sensitive Data Protection** for label-driven retrieval governance, and Chronicle for cross-tenant agent-behavior baselining. Feed agent inventory from GKE / Cloud Run / Vertex AI Agent Builder labels into SCC.
+    *   Inventory records (agent ID, owning team, capability manifest hash, runtime, region) MUST share field names across the three posture surfaces so a single dashboard can show the full agent estate.
 *   **Kill Switch v2 (Session-Scoped):** Extend from global kill to session-specific kill. Provide an admin API (authenticated, internal-only) to add a session to the kill list. Once killed, the Gateway rejects further tool calls from that session.
 
 ***
@@ -200,7 +236,11 @@
 **Team DX – Tasks:**
 
 *   **Developer CLI for Capabilities:** Provide a CLI tool for capability management — e.g., `agentcap init --agent SalesEmailAgent` generates a template YAML manifest.
+    *   *Framework-Aware Scaffolding:* The CLI must accept a `--framework {langchain|maf|crewai}` flag and emit framework-native wiring (LangChain callback handler + tool wrapper, MAF agent-run / function-calling middleware, or CrewAI tool wrapper + task lifecycle hook) preconfigured to call the Capability Issuer and route tool calls through the gateway.
+    *   *Cloud-Aware Scaffolding:* The CLI must accept a `--cloud {azure|aws|gcp}` flag and emit the matching identity-provider, signer, and gateway configuration block (Azure AD + Key Vault + APIM, Cognito / IAM Identity Center + KMS + API Gateway, or Cloud Identity + Cloud KMS + API Gateway / Apigee). The generated manifest itself is cloud-neutral; only the deployment block changes.
 *   **UAT Plan:** Work with intended pilot users to define UAT scenarios: agent sends email within allowed domain → succeeds; agent attempts email outside domain → blocked and logged; agent tries unapproved file write → blocked; agent with expired token fetches new token and succeeds.
+    *   *Framework-Specific UAT:* Run the same scenario matrix against each of the three supported frameworks (LangChain, MAF, CrewAI) and confirm that denials surface as the framework-native structured error documented in Sprint 2's adapter acceptance suite, that the audit log carries the same correlation ID as the framework trace, and that token refresh is transparent to the agent author.
+    *   *Multi-Cloud UAT (smoke):* For at least one denial scenario and one allow scenario, run the same UAT manifest unchanged against the AWS and Google Cloud deployment profiles and confirm identical allow/deny outcomes and identical audit-field shapes.
 
 ***
 
@@ -208,9 +248,12 @@
 
 *   All high-risk agent actions are mediated by the capability layer. Agent container with no capabilities issued **cannot** perform any external action.
 *   Child agents cannot escalate privileges beyond explicit parent grants.
-*   Enterprise DID is operational: other team members can resolve the DID and obtain the public key needed to verify credentials.
+*   Enterprise DID is operational: other team members can resolve the DID and obtain the public key needed to verify credentials. The DID Document resolves identically whether hosted on Azure (Entra Verified ID / Storage), AWS (CloudFront + S3), or Google Cloud (Cloud CDN + Cloud Storage).
 *   Static code analysis shows no critical vulnerabilities. Secrets scanning confirms no sensitive data in repos or logs.
 *   10 concurrent agents at \~5 tool calls/min shows Gateway latency <5ms overhead per call at p95.
+*   *Multi-Cloud Parity Exit:* For the same capability manifest, the Azure deployment profile and at least one of {AWS, Google Cloud} produce **identical allow/deny outcomes**, **identical normalized audit-log fields**, and **interchangeable signer / verifier behavior** (a token signed in one cloud verifies in another using only the published DID Document / JWKS).
+*   *Framework Adapter Exit:* The LangChain, Microsoft Agent Framework (MAF), and CrewAI adapters each pass the Sprint 2 adapter acceptance suite **and** the Sprint 3 framework-specific UAT scenarios with no framework-private code paths in the gateway or issuer.
+*   *Detection-as-Code Exit:* The four required logical analytic rules (denied-request bursts, post-document tool spikes, write-endpoint denials in read-only sessions, high-sensitivity label retrieval) are deployed in Microsoft Sentinel and rendered for AWS Security Hub / EventBridge and Google Cloud Security Command Center / Chronicle from a single source-of-truth definition.
 
 ***
 
