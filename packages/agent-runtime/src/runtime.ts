@@ -371,10 +371,12 @@ export class AgentRuntime {
       if (/^https?:\/\//i.test(url)) {
         const targetUrl = new URL(url);
         // Include the intended target host in the proxy path so the gateway
-        // can derive a host-qualified resource identifier.
+        // can derive a host-qualified resource identifier. URL.pathname is
+        // guaranteed to start with '/' per the WHATWG URL spec, so we can
+        // concatenate directly.
         const hostSegment = targetUrl.host; // host:port
         const pathAndQuery = targetUrl.pathname + targetUrl.search;
-        proxyPath = `/${hostSegment}${pathAndQuery.startsWith('/') ? pathAndQuery : '/' + pathAndQuery}`;
+        proxyPath = `/${hostSegment}${pathAndQuery}`;
         extraHeaders['X-Target-Host'] = hostSegment;
         extraHeaders['X-Target-Scheme'] = targetUrl.protocol.replace(/:$/, '');
       } else {

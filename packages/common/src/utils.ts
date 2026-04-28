@@ -184,6 +184,15 @@ export function getExpirationTimestamp(ttlSeconds: number): number {
   return getCurrentTimestamp() + ttlSeconds;
 }
 
+// Pre-compiled DID validation regex per the W3C DID Core grammar.
+// idchar = ALPHA / DIGIT / "." / "-" / "_" / pct-encoded
+// method-specific-id = *( *idchar ":" ) 1*idchar
+const DID_PATTERN = (() => {
+  const idchar = '(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})';
+  const methodSpecificId = `(?:${idchar}*:)*${idchar}+`;
+  return new RegExp(`^did:[a-z0-9]+:${methodSpecificId}$`);
+})();
+
 /**
  * Validate DID format per the W3C DID Core specification.
  *
@@ -201,13 +210,7 @@ export function getExpirationTimestamp(ttlSeconds: number): number {
  * many production DID methods. This implementation matches the spec.
  */
 export function isValidDID(did: string): boolean {
-  // idchar = ALPHA / DIGIT / "." / "-" / "_" / pct-encoded
-  const idchar = '(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})';
-  // method-specific-id = *( *idchar ":" ) 1*idchar
-  // Each colon-separated segment may be empty except the final one.
-  const methodSpecificId = `(?:${idchar}*:)*${idchar}+`;
-  const didPattern = new RegExp(`^did:[a-z0-9]+:${methodSpecificId}$`);
-  return didPattern.test(did);
+  return DID_PATTERN.test(did);
 }
 
 /**

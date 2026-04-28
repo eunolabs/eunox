@@ -403,7 +403,7 @@ describe('e2e: capability issuer + tool gateway + agent runtime', () => {
     expect(response.success).toBe(true);
   });
 
-  it('rejects an action that exceeds the agent\'s capabilities (audience-bound 403)', async () => {
+  it('rejects an action that exceeds the agent\'s capabilities (role-based 403)', async () => {
     // Viewer role only grants read on api://**
     harness = await buildHarness({ roles: ['Viewer'] });
     runtime = new AgentRuntime({
