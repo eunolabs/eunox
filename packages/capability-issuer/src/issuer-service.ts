@@ -25,6 +25,8 @@ import {
   DEFAULT_ROLE_CAPABILITY_MAP,
   UserConsent,
   AgentCapabilityManifest,
+  validateConditions,
+  ConditionValidationError,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -203,6 +205,14 @@ export class CapabilityIssuerService {
           400,
         );
       }
+
+      // Step 3d: Validate every condition on every capability before
+      // signing. This closes the loop on the typed-condition contract:
+      // an unrecognized or malformed condition (typo, wrong value
+      // type, unknown discriminator) is rejected at mint time rather
+      // than silently round-tripping into a token where the gateway
+      // would deny it after issuance — or worse, ignore it entirely.
+      this.validateConditionsForCapabilities(capabilities);
 
       // Step 4: Create the capability token payload
       const now = getCurrentTimestamp();
@@ -548,6 +558,12 @@ export class CapabilityIssuerService {
       // Step 3: Validate requested capabilities are a subset of parent capabilities
       this.validateCapabilitySubset(parentPayload.capabilities, requestedCapabilities);
 
+      // Step 3b: Validate the typed conditions on the attenuated set.
+      // Even though the parent's conditions were validated when the
+      // parent was minted, the child may carry a *narrower* condition
+      // set (e.g. a tighter `maxCalls`) that must itself be well-formed.
+      this.validateConditionsForCapabilities(requestedCapabilities);
+
       // Step 4: Calculate expiration (cannot exceed parent's expiration)
       const requestedTTL = ttl || this.defaultTTL;
       const maxExpiration = parentPayload.exp;
@@ -631,6 +647,32 @@ export class CapabilityIssuerService {
         `Failed to attenuate capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
         500
       );
+    }
+  }
+
+  /**
+   * Validate every typed condition on every capability in the list,
+   * raising a structured `CapabilityError(INVALID_REQUEST)` on the first
+   * failure. Replaces the old fail-open posture where unknown or
+   * malformed conditions were silently signed into tokens.
+   */
+  private validateConditionsForCapabilities(capabilities: CapabilityConstraint[]): void {
+    for (let i = 0; i < capabilities.length; i++) {
+      const cap = capabilities[i]!;
+      if (!cap.conditions) continue;
+      try {
+        validateConditions(cap.conditions);
+      } catch (err) {
+        const detail =
+          err instanceof ConditionValidationError || err instanceof Error
+            ? err.message
+            : String(err);
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `Invalid condition on capability[${i}] (resource '${cap.resource}'): ${detail}`,
+          400,
+        );
+      }
     }
   }
 

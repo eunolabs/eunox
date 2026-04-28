@@ -250,25 +250,82 @@ export function isActionAllowed(
 }
 
 /**
- * Match resource patterns
- * Supports wildcards: api://service/* matches api://service/endpoint
+ * Match a concrete resource string against a capability resource
+ * pattern.
+ *
+ * Patterns are URI-shaped strings (e.g. `file://reports/2024.pdf`,
+ * `db://analytics/customers`) and may include a single trailing
+ * wildcard segment:
+ *
+ *   - `pattern/*`   matches exactly one additional path segment under
+ *                   `pattern/` (does not span `/`).
+ *   - `pattern/**`  matches any number (including zero) of additional
+ *                   path segments under `pattern/`.
+ *
+ * Matching is anchored: a non-wildcard pattern must equal the resource
+ * exactly. Schemes (the substring before `://`) must match exactly so
+ * that `file://data/*` does not authorize `db://data/x`. When either
+ * value omits a `://` scheme, the strings are compared as opaque path
+ * segments — preserving the legacy behavior for non-URI resources.
+ *
+ * The earlier implementation used `startsWith(prefix)` for both `/*`
+ * and `/**`, which (a) failed to distinguish single-segment from
+ * recursive wildcards and (b) silently allowed scheme confusion. The
+ * new implementation closes both gaps.
  */
 export function matchesResource(resource: string, pattern: string): boolean {
   if (pattern === resource) {
     return true;
   }
 
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -1);
-    return resource.startsWith(prefix);
+  const recursive = pattern.endsWith('/**');
+  const single = !recursive && pattern.endsWith('/*');
+  if (!recursive && !single) {
+    return false;
   }
 
-  if (pattern.endsWith('/**')) {
-    const prefix = pattern.slice(0, -2);
-    return resource.startsWith(prefix);
+  // Strip only the trailing wildcard token (`*` or `**`), preserving
+  // the separator slash so `api://**` keeps its full scheme prefix
+  // (`api://`) rather than being truncated to `api:/`.
+  const prefix = recursive ? pattern.slice(0, -2) : pattern.slice(0, -1);
+
+  // Enforce scheme equality when either side declares one. A pattern
+  // without a scheme must not match a resource that has one (and vice
+  // versa) — the gateway treats `file://data/x` and `db://data/x` as
+  // entirely separate authorization domains. We strip the trailing
+  // separator slash before locating `://` so the lookup still succeeds
+  // for prefixes like `api://`.
+  const prefixForScheme = prefix.endsWith('/')
+    ? prefix.slice(0, prefix.endsWith('://') ? prefix.length : -1)
+    : prefix;
+  const patternSchemeIdx = prefixForScheme.indexOf('://');
+  const resourceSchemeIdx = resource.indexOf('://');
+  if (patternSchemeIdx >= 0 || resourceSchemeIdx >= 0) {
+    if (patternSchemeIdx < 0 || resourceSchemeIdx < 0) return false;
+    if (
+      prefixForScheme.slice(0, patternSchemeIdx) !==
+      resource.slice(0, resourceSchemeIdx)
+    ) {
+      return false;
+    }
   }
 
-  return false;
+  // The resource must extend the prefix, and there must be at least
+  // one extra character (segment) after the trailing slash.
+  if (!resource.startsWith(prefix)) {
+    return false;
+  }
+  const tail = resource.slice(prefix.length);
+  if (tail.length === 0) {
+    return false;
+  }
+
+  if (recursive) {
+    return true;
+  }
+
+  // Single-segment wildcard: the tail must not span a `/`.
+  return !tail.includes('/');
 }
 
 /**
