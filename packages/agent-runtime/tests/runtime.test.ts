@@ -211,7 +211,7 @@ describe('AgentRuntime – makeRequest', () => {
     return rt;
   }
 
-  it('routes absolute URLs through /proxy/<path>', async () => {
+  it('routes absolute URLs through /proxy/<host><path> and forwards X-Target-Host', async () => {
     const rt = await initializedRuntime();
 
     gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: {} });
@@ -219,7 +219,13 @@ describe('AgentRuntime – makeRequest', () => {
     await rt.makeRequest('GET', 'http://api.example.com/data/items');
 
     expect(gatewayInstance.request).toHaveBeenCalledWith(
-      expect.objectContaining({ url: '/proxy/data/items' })
+      expect.objectContaining({
+        url: '/proxy/api.example.com/data/items',
+        headers: expect.objectContaining({
+          'X-Target-Host': 'api.example.com',
+          'X-Target-Scheme': 'http',
+        }),
+      })
     );
   });
 
@@ -264,5 +270,40 @@ describe('AgentRuntime – cleanup', () => {
 
     // After shutdown the token is still accessible (not cleared), but the timer is gone
     expect(rt).toBeDefined();
+  });
+
+  it('aborts an in-flight token acquisition triggered by shutdown', async () => {
+    // Initial acquisition succeeds so initialize() returns.
+    issuerInstance.post.mockResolvedValueOnce({
+      status: 200,
+      data: { token: 'cap-token-initial' },
+    });
+
+    const rt = buildRuntime({ tokenRefreshInterval: 1 });
+    await rt.initialize();
+
+    // Now arrange a refresh that hangs forever — but rejects when the
+    // AbortController fires. AxiosRequestConfig with signal will be passed
+    // through; we simulate by inspecting the call args.
+    let abortListener: (() => void) | undefined;
+    const hangingPromise = new Promise<never>((_resolve, reject) => {
+      abortListener = () => reject(new Error('aborted'));
+    });
+    issuerInstance.post.mockImplementationOnce(((_url: string, _body: unknown, cfg: { signal?: AbortSignal }) => {
+      cfg?.signal?.addEventListener('abort', () => abortListener?.());
+      return hangingPromise;
+    }) as never);
+
+    // Trigger a refresh by advancing fake timers past the refresh interval.
+    jest.advanceTimersByTime(1500);
+
+    // Give the microtask queue a chance to start the refresh.
+    await Promise.resolve();
+
+    // Shutdown — this should abort the hanging refresh and resolve.
+    await rt.shutdown();
+
+    // The acquisition should not have replaced the token.
+    expect(rt.getCapabilityToken()).toBe('cap-token-initial');
   });
 });

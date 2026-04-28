@@ -5,7 +5,7 @@
 
 import * as crypto from 'crypto';
 import { AuditEvidence, SignedAuditEvidence, EvidenceSigner } from './types';
-import { sha256String, safeSerialize, generateId } from './utils';
+import { sha256String, canonicalize, generateId } from './utils';
 
 /**
  * Interface for cryptographic signing operations.
@@ -184,9 +184,9 @@ export function createAuditEvidence(params: {
     sessionId: params.sessionId,
     userId: params.userId,
     promptHash: params.prompt !== undefined ? sha256String(params.prompt) : sha256String(''),
-    documentsHash: params.documents !== undefined ? sha256String(safeSerialize(params.documents)) : undefined,
+    documentsHash: params.documents !== undefined ? sha256String(canonicalize(params.documents)) : undefined,
     tool: params.tool,
-    argsHash: sha256String(safeSerialize(params.args)),
+    argsHash: sha256String(canonicalize(params.args)),
     nonce,
     ts,
     policyVersion: params.policyVersion,

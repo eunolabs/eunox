@@ -20,6 +20,7 @@ import {
   createAuditLogger,
   AuditLogEntry,
   mapRolesToCapabilities,
+  SIGNING_ALGORITHMS,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -31,8 +32,10 @@ export class CapabilityIssuerService {
   private logger: Logger;
   private auditLogger: Logger;
 
-  /** Algorithms permitted for capability token signatures. */
-  private static readonly ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'ES256K', 'EdDSA'] as const;
+  /** Algorithms permitted for capability token signatures. Sourced from the
+   *  shared {@link SIGNING_ALGORITHMS} tuple so this allow-list cannot drift
+   *  from the {@link SigningAlgorithm} type. */
+  private static readonly ALLOWED_ALGORITHMS = SIGNING_ALGORITHMS;
 
   constructor(
     signer: TokenSigner,

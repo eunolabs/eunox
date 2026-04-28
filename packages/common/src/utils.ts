@@ -6,10 +6,15 @@ import * as crypto from 'crypto';
 
 /**
  * Generate SHA-256 hash of an object by serialising with JSON.stringify first.
- * Use this only when you explicitly want JSON-encoded bytes (e.g. hashing an
- * arbitrary object so that all callers agree on serialisation).
- * Do NOT use for plain string inputs where double-encoding would produce a
- * different digest than hashing the raw string bytes.
+ *
+ * NOTE: Standard `JSON.stringify` is **not** canonical — key order, number
+ * formatting and Unicode escaping vary across runtimes/versions. Two callers
+ * that pass deeply-equal objects can therefore produce different digests.
+ *
+ * Use this only when both producer and consumer are guaranteed to use the same
+ * exact serialised string (e.g. you already hold the JSON text). For any
+ * audit, evidence, signing or cross-version comparison purpose use
+ * {@link canonicalSha256} instead, which sorts keys recursively.
  */
 export function sha256(data: unknown): string {
   return crypto
@@ -31,17 +36,117 @@ export function sha256String(data: string): string {
 }
 
 /**
- * Serialise an arbitrary unknown value to a stable string suitable for
- * hashing. Handles BigInt, circular references, and undefined gracefully.
+ * Produce a canonical JSON string of an arbitrary value.
+ *
+ * Guarantees deterministic byte output for deeply-equal inputs:
+ *   - Object keys are sorted lexicographically (recursively).
+ *   - `undefined` values and function values inside objects are omitted (matching
+ *     `JSON.stringify` semantics).
+ *   - `undefined` values inside arrays are encoded as `null` (matching
+ *     `JSON.stringify` semantics).
+ *   - `BigInt` values are rendered as a string suffixed with `n`.
+ *   - Non-finite numbers (`NaN`, `Infinity`) are encoded as `null` (matching
+ *     `JSON.stringify` semantics) so output remains valid JSON.
+ *   - Circular references throw a `TypeError` rather than producing a
+ *     misleading partial digest.
+ *
+ * Suitable for use as the input to a hash for audit evidence, token-content
+ * comparison, or cross-runtime equality checks.
+ */
+export function canonicalize(data: unknown): string {
+  const seen = new WeakSet<object>();
+
+  const encode = (value: unknown): string | undefined => {
+    if (value === null) return 'null';
+    if (value === undefined) return undefined;
+
+    const t = typeof value;
+
+    if (t === 'bigint') {
+      return JSON.stringify((value as bigint).toString() + 'n');
+    }
+    if (t === 'string') {
+      return JSON.stringify(value);
+    }
+    if (t === 'boolean') {
+      return value ? 'true' : 'false';
+    }
+    if (t === 'number') {
+      return Number.isFinite(value as number) ? JSON.stringify(value) : 'null';
+    }
+    if (t === 'function' || t === 'symbol') {
+      return undefined;
+    }
+
+    // Object / Array
+    if (typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+      return encode((value as { toJSON: () => unknown }).toJSON());
+    }
+
+    if (seen.has(value as object)) {
+      throw new TypeError('canonicalize: circular reference detected');
+    }
+    seen.add(value as object);
+
+    try {
+      if (Array.isArray(value)) {
+        const parts = value.map((item) => {
+          const encoded = encode(item);
+          return encoded === undefined ? 'null' : encoded;
+        });
+        return '[' + parts.join(',') + ']';
+      }
+
+      const obj = value as Record<string, unknown>;
+      const keys = Object.keys(obj).sort();
+      const parts: string[] = [];
+      for (const key of keys) {
+        const encoded = encode(obj[key]);
+        if (encoded === undefined) continue;
+        parts.push(JSON.stringify(key) + ':' + encoded);
+      }
+      return '{' + parts.join(',') + '}';
+    } finally {
+      seen.delete(value as object);
+    }
+  };
+
+  const result = encode(data);
+  return result === undefined ? 'null' : result;
+}
+
+/**
+ * Generate a SHA-256 digest of a value using its canonical JSON representation.
+ * The output is stable across runtimes and key-insertion orders.
+ *
+ * Prefer this over {@link sha256} for any use that may be compared across
+ * processes, machines, or versions (audit evidence, capability digests, etc.).
+ */
+export function canonicalSha256(data: unknown): string {
+  return sha256String(canonicalize(data));
+}
+
+/**
+ * Serialise an arbitrary unknown value to a string suitable for logging or
+ * non-cryptographic comparison. Tolerates BigInt, circular references, and
+ * `undefined`. NOT canonical — use {@link canonicalize} when reproducibility
+ * matters.
  */
 export function safeSerialize(data: unknown): string {
   if (data === undefined || data === null) {
     return '';
   }
   try {
+    const seen = new WeakSet<object>();
     return JSON.stringify(data, (_key, value) => {
       if (typeof value === 'bigint') {
         return value.toString() + 'n';
+      }
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular]';
+        }
+        seen.add(value);
       }
       return value;
     });
@@ -80,11 +185,28 @@ export function getExpirationTimestamp(ttlSeconds: number): number {
 }
 
 /**
- * Validate DID format
- * Basic validation for DID format: did:method:identifier
+ * Validate DID format per the W3C DID Core specification.
+ *
+ * Grammar (simplified):
+ *   did                = "did:" method-name ":" method-specific-id
+ *   method-name        = 1*method-char
+ *   method-char        = %x61-7A / DIGIT          ; lowercase letters and digits
+ *   method-specific-id = *( *idchar ":" ) 1*idchar
+ *   idchar             = ALPHA / DIGIT / "." / "-" / "_" / pct-encoded
+ *   pct-encoded        = "%" HEXDIG HEXDIG
+ *
+ * The previous implementation rejected DIDs that contain colons or
+ * percent-encoded characters in the method-specific-id (e.g.
+ * `did:web:example.com:user:alice`, `did:peer:2.Ez6...`), which are valid for
+ * many production DID methods. This implementation matches the spec.
  */
 export function isValidDID(did: string): boolean {
-  const didPattern = /^did:[a-z0-9]+:[a-zA-Z0-9._-]+$/;
+  // idchar = ALPHA / DIGIT / "." / "-" / "_" / pct-encoded
+  const idchar = '(?:[A-Za-z0-9._-]|%[0-9A-Fa-f]{2})';
+  // method-specific-id = *( *idchar ":" ) 1*idchar
+  // Each colon-separated segment may be empty except the final one.
+  const methodSpecificId = `(?:${idchar}*:)*${idchar}+`;
+  const didPattern = new RegExp(`^did:[a-z0-9]+:${methodSpecificId}$`);
   return didPattern.test(did);
 }
 
@@ -135,24 +257,108 @@ export function matchesResource(resource: string, pattern: string): boolean {
 }
 
 /**
- * Sanitize log data to remove sensitive information
+ * Default set of object keys whose values are redacted by {@link sanitizeForLog}.
+ * Matched case-insensitively, exact-match (NOT substring) so a key like
+ * `customerToken` is no longer redacted by accident, but common security keys
+ * such as `jwt`, `bearer`, `cookie` or `session` are.
  */
-export function sanitizeForLog(data: Record<string, unknown>): Record<string, unknown> {
-  const sensitiveKeys = ['password', 'secret', 'token', 'authorization', 'apikey', 'api_key'];
-  const sanitized: Record<string, unknown> = {};
+export const SENSITIVE_LOG_KEYS: readonly string[] = [
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'access_token',
+  'accesstoken',
+  'refresh_token',
+  'refreshtoken',
+  'id_token',
+  'idtoken',
+  'authorization',
+  'auth',
+  'apikey',
+  'api_key',
+  'x-api-key',
+  'jwt',
+  'bearer',
+  'cookie',
+  'set-cookie',
+  'session',
+  'sessionid',
+  'session_id',
+  'client_secret',
+  'clientsecret',
+  'private_key',
+  'privatekey',
+];
 
-  for (const [key, value] of Object.entries(data)) {
-    const lowerKey = key.toLowerCase();
-    if (sensitiveKeys.some(sensitive => lowerKey.includes(sensitive))) {
-      sanitized[key] = '[REDACTED]';
-    } else if (typeof value === 'object' && value !== null) {
-      sanitized[key] = sanitizeForLog(value as Record<string, unknown>);
-    } else {
-      sanitized[key] = value;
+/** Maximum recursion depth for {@link sanitizeForLog} to prevent runaway
+ *  traversal of large/deep payloads. */
+const SANITIZE_MAX_DEPTH = 8;
+/** Maximum number of array entries traversed by {@link sanitizeForLog}.
+ *  Remaining entries are summarised. */
+const SANITIZE_MAX_ARRAY_ENTRIES = 100;
+
+/**
+ * Sanitize log data to remove sensitive information.
+ *
+ * - Keys are matched case-insensitively against {@link SENSITIVE_LOG_KEYS}
+ *   using exact equality (not substring) — this fixes the previous behaviour
+ *   where any key containing the substring `token` (e.g. `customerToken`) was
+ *   redacted while obvious-but-non-listed names like `jwt` or `bearer` were
+ *   not.
+ * - Arrays are traversed (previously they were silently treated as objects,
+ *   which produced index-keyed records).
+ * - Recursion is bounded by {@link SANITIZE_MAX_DEPTH} and arrays larger than
+ *   {@link SANITIZE_MAX_ARRAY_ENTRIES} are truncated, so very large payloads
+ *   cannot blow up logging.
+ * - Callers may supply additional sensitive key names via `extraSensitiveKeys`.
+ */
+export function sanitizeForLog(
+  data: Record<string, unknown>,
+  extraSensitiveKeys: readonly string[] = []
+): Record<string, unknown> {
+  const sensitive = new Set<string>(
+    [...SENSITIVE_LOG_KEYS, ...extraSensitiveKeys].map((k) => k.toLowerCase())
+  );
+
+  const sanitizeValue = (value: unknown, depth: number): unknown => {
+    if (depth >= SANITIZE_MAX_DEPTH) {
+      return '[TRUNCATED:max-depth]';
     }
-  }
+    if (value === null || typeof value !== 'object') {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      const limit = Math.min(value.length, SANITIZE_MAX_ARRAY_ENTRIES);
+      const out: unknown[] = new Array(limit);
+      for (let i = 0; i < limit; i++) {
+        out[i] = sanitizeValue(value[i], depth + 1);
+      }
+      if (value.length > limit) {
+        out.push(`[TRUNCATED:${value.length - limit} more entries]`);
+      }
+      return out;
+    }
+    return sanitizeRecord(value as Record<string, unknown>, depth + 1);
+  };
 
-  return sanitized;
+  const sanitizeRecord = (
+    record: Record<string, unknown>,
+    depth: number
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (sensitive.has(key.toLowerCase())) {
+        out[key] = '[REDACTED]';
+      } else {
+        out[key] = sanitizeValue(value, depth);
+      }
+    }
+    return out;
+  };
+
+  return sanitizeRecord(data, 0);
 }
 
 /**
@@ -177,7 +383,6 @@ export function parseBearerToken(authHeader?: string): string | null {
 export enum ErrorCode {
   INVALID_TOKEN = 'INVALID_TOKEN',
   EXPIRED_TOKEN = 'EXPIRED_TOKEN',
-  TOKEN_EXPIRED = 'EXPIRED_TOKEN', // Alias for EXPIRED_TOKEN
   INSUFFICIENT_PERMISSIONS = 'INSUFFICIENT_PERMISSIONS',
   INVALID_REQUEST = 'INVALID_REQUEST',
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',

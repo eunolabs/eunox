@@ -213,10 +213,40 @@ async function validateCapabilityMiddleware(
 
     const action = actionMap[req.method] || 'read';
 
-    // Extract resource from path, deriving canonical api:// URI
-    // req.path has the /proxy prefix already stripped by Express route mounting
-    const resourcePath = req.path.replace(/^\/+/, '');
-    const resource = `api://${resourcePath}`;
+    // Extract resource from path, deriving canonical api:// URI.
+    // req.path has the /proxy prefix already stripped by Express route mounting.
+    //
+    // The agent runtime forwards the intended target host (from absolute URLs)
+    // either as the first path segment OR as an X-Target-Host header. We
+    // prefer the header (cheaper, more explicit) and cross-check the path
+    // segment to detect tampering. If neither is supplied (e.g. a relative
+    // path was used) we fall back to the legacy path-only resource so this
+    // change is backwards compatible.
+    const headerHost = (req.headers['x-target-host'] as string | undefined)?.trim();
+    const rawPath = req.path.replace(/^\/+/, '');
+    const firstSegment = rawPath.split('/')[0] || '';
+    const looksLikeHost = /^[A-Za-z0-9.\-]+(:\d+)?$/.test(firstSegment) && firstSegment.includes('.');
+
+    let resource: string;
+    if (headerHost) {
+      // Header explicitly identifies the host; use it.
+      // If the path also encodes a host segment, it must match — otherwise
+      // we treat the request as tampered and refuse to authorize it.
+      if (looksLikeHost && firstSegment.toLowerCase() !== headerHost.toLowerCase()) {
+        throw new CapabilityError(
+          ErrorCode.AUTHORIZATION_FAILED,
+          'Mismatch between X-Target-Host header and proxy path host segment',
+          400
+        );
+      }
+      const tail = looksLikeHost ? rawPath.slice(firstSegment.length).replace(/^\/+/, '') : rawPath;
+      resource = `api://${headerHost}/${tail}`;
+    } else if (looksLikeHost) {
+      const tail = rawPath.slice(firstSegment.length).replace(/^\/+/, '');
+      resource = `api://${firstSegment}/${tail}`;
+    } else {
+      resource = `api://${rawPath}`;
+    }
 
     // Validate the action
     const validationRequest: ValidateActionRequest = {
