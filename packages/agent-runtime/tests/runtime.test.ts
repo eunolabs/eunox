@@ -347,6 +347,98 @@ describe('AgentRuntime – authTokenProvider', () => {
   });
 });
 
+// ── issuance hints (manifest / consent forwarding) ───────────────────────────
+
+describe('AgentRuntime – issuanceHints / issuanceHintsProvider', () => {
+  it('forwards static requestedCapabilities, manifest and consent on every issuance', async () => {
+    issuerInstance.post.mockResolvedValueOnce({
+      status: 200,
+      data: { token: 'cap-with-hints' },
+    });
+
+    const manifest = {
+      agentId: 'test-agent',
+      name: 'Test',
+      version: '1.0.0',
+      requiredCapabilities: [{ resource: 'api://crm/**', actions: ['read'] as const }],
+    };
+    const consent = {
+      userId: 'u1',
+      agentId: 'test-agent',
+      grantedCapabilities: [{ resource: 'api://crm/**', actions: ['read'] as const }],
+      grantedAt: 1700000000,
+    };
+    const requestedCapabilities = [{ resource: 'api://crm/customers', actions: ['read'] as const }];
+
+    const rt = buildRuntime({
+      issuanceHints: { requestedCapabilities, manifest, consent } as any,
+    });
+    await rt.initialize();
+
+    expect(issuerInstance.post).toHaveBeenCalledWith(
+      '/api/v1/issue',
+      {
+        agentId: 'test-agent',
+        requestedCapabilities,
+        manifest,
+        consent,
+      },
+      expect.any(Object),
+    );
+  });
+
+  it('omits unspecified hint fields rather than sending undefined', async () => {
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap' } });
+
+    const rt = buildRuntime();
+    await rt.initialize();
+
+    // Only `agentId` should be in the body — no `requestedCapabilities`, no
+    // `manifest`, no `consent` keys at all.
+    expect(issuerInstance.post.mock.calls[0][1]).toEqual({ agentId: 'test-agent' });
+  });
+
+  it('issuanceHintsProvider takes precedence over static issuanceHints and is called per refresh', async () => {
+    const consentA = {
+      userId: 'u1', agentId: 'test-agent',
+      grantedCapabilities: [{ resource: 'api://crm/**', actions: ['read'] as const }],
+      grantedAt: 1700000000, consentId: 'A',
+    };
+    const consentB = {
+      userId: 'u1', agentId: 'test-agent',
+      grantedCapabilities: [{ resource: 'api://crm/**', actions: ['read'] as const }],
+      grantedAt: 1700000001, consentId: 'B',
+    };
+    const provider = jest.fn()
+      .mockResolvedValueOnce({ consent: consentA })
+      .mockResolvedValueOnce({ consent: consentB });
+
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-1' } });
+
+    const rt = buildRuntime({
+      issuanceHints: { consent: { ...consentA, consentId: 'static-should-be-ignored' } } as any,
+      issuanceHintsProvider: provider as any,
+    });
+    await rt.initialize();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(issuerInstance.post.mock.calls[0][1]).toMatchObject({ consent: consentA });
+
+    // Trigger a refresh via 401 EXPIRED_TOKEN — provider must be invoked again.
+    gatewayInstance.post.mockResolvedValueOnce({
+      status: 401,
+      data: { error: { code: 'EXPIRED_TOKEN', message: 'expired' } },
+    });
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-2' } });
+    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    await rt.invokeTool({ tool: 'read_file', args: {} });
+
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(issuerInstance.post.mock.calls[1][1]).toMatchObject({ consent: consentB });
+  });
+});
+
 // ── failure-mode discrimination on 401 / 403 ──────────────────────────────────
 
 describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () => {

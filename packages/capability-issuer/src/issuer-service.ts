@@ -386,12 +386,46 @@ export class CapabilityIssuerService {
       );
     }
 
-    if (typeof consent.expiresAt === 'number' && consent.expiresAt <= getCurrentTimestamp()) {
+    // Validate `grantedAt` is a finite unix-seconds number that isn't in the
+    // future.  Without this check a missing/invalid `grantedAt` would be
+    // silently accepted from the untyped HTTP body and then written into the
+    // audit log as-is, undermining its evidentiary value.
+    const now = getCurrentTimestamp();
+    if (typeof consent.grantedAt !== 'number' || !Number.isFinite(consent.grantedAt)) {
       throw new CapabilityError(
-        ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'User consent has expired',
-        403,
+        ErrorCode.INVALID_REQUEST,
+        'User consent grantedAt must be a finite unix-seconds number',
+        400,
       );
+    }
+    // Allow a small skew window for clock drift between the consent UI and
+    // the issuer (60 seconds), but reject obviously fabricated future dates.
+    if (consent.grantedAt > now + 60) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'User consent grantedAt is in the future',
+        400,
+      );
+    }
+
+    // `expiresAt` is optional, but when present it must be a finite number.
+    // Reject non-undefined non-number values so callers can't bypass the
+    // expiry check by sending e.g. a string or boolean.
+    if (consent.expiresAt !== undefined) {
+      if (typeof consent.expiresAt !== 'number' || !Number.isFinite(consent.expiresAt)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          'User consent expiresAt must be a finite unix-seconds number when provided',
+          400,
+        );
+      }
+      if (consent.expiresAt <= now) {
+        throw new CapabilityError(
+          ErrorCode.INSUFFICIENT_PERMISSIONS,
+          'User consent has expired',
+          403,
+        );
+      }
     }
 
     if (!Array.isArray(consent.grantedCapabilities) || consent.grantedCapabilities.length === 0) {

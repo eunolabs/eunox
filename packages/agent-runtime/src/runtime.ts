@@ -8,7 +8,13 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
-import { CapabilityError, ErrorCode } from '@euno/common';
+import {
+  CapabilityError,
+  ErrorCode,
+  CapabilityConstraint,
+  AgentCapabilityManifest,
+  UserConsent,
+} from '@euno/common';
 
 /**
  * Async provider for short-lived user authentication tokens.
@@ -22,6 +28,33 @@ import { CapabilityError, ErrorCode } from '@euno/common';
  * takes precedence and the static `authToken` is ignored.
  */
 export type AuthTokenProvider = () => Promise<string>;
+
+/**
+ * Per-issuance hints supplied to the Capability Issuer alongside `agentId`.
+ *
+ * The runtime forwards every populated field to `POST /api/v1/issue`, so
+ * deployments can opt into the issuer's manifest- and consent-based
+ * issuance hardening (including strict `REQUIRE_USER_CONSENT=true` mode)
+ * without bypassing the runtime's refresh / retry logic.
+ *
+ * Returned synchronously or asynchronously by {@link IssuanceHintsProvider}
+ * so callers can mint fresh consent receipts per refresh if they wish.
+ */
+export interface IssuanceHints {
+  /** Specific capabilities the runtime is requesting (subset of role/manifest). */
+  requestedCapabilities?: CapabilityConstraint[];
+  /** Agent capability manifest — declarative upper bound enforced by the issuer. */
+  manifest?: AgentCapabilityManifest;
+  /** Explicit user consent record bound to (userId, agentId). */
+  consent?: UserConsent;
+}
+
+/**
+ * Async provider for {@link IssuanceHints}.  Invoked on every issuance and
+ * refresh so deployments can supply freshly-signed consent receipts that
+ * expire on a tighter schedule than the capability token itself.
+ */
+export type IssuanceHintsProvider = () => Promise<IssuanceHints> | IssuanceHints;
 
 export interface AgentRuntimeConfig {
   /** Agent identifier */
@@ -53,6 +86,25 @@ export interface AgentRuntimeConfig {
    * {@link authToken}.
    */
   authTokenProvider?: AuthTokenProvider;
+
+  /**
+   * Static issuance hints (`requestedCapabilities`, `manifest`, `consent`)
+   * forwarded on every `/api/v1/issue` call.  Use this for deployments
+   * that have a fixed manifest and a long-lived consent receipt.
+   *
+   * If both {@link issuanceHints} and {@link issuanceHintsProvider} are
+   * supplied, the provider takes precedence so callers can rotate consent
+   * per refresh.
+   */
+  issuanceHints?: IssuanceHints;
+
+  /**
+   * Async provider invoked on every issuance / refresh to produce fresh
+   * issuance hints (e.g. a newly-signed consent receipt). Required when
+   * the issuer is configured with `REQUIRE_USER_CONSENT=true` *and* the
+   * caller wants per-refresh consent rotation.
+   */
+  issuanceHintsProvider?: IssuanceHintsProvider;
 
   /** Token refresh interval in seconds (default: 600s = 10 minutes) */
   tokenRefreshInterval?: number;
@@ -196,6 +248,20 @@ export class AgentRuntime {
   }
 
   /**
+   * Resolve issuance hints (`requestedCapabilities` / `manifest` / `consent`)
+   * to send with the issuance request.  The async provider takes precedence
+   * over the static config so deployments can rotate consent receipts on
+   * every refresh.
+   */
+  private async resolveIssuanceHints(): Promise<IssuanceHints> {
+    if (this.config.issuanceHintsProvider) {
+      const hints = await this.config.issuanceHintsProvider();
+      return hints ?? {};
+    }
+    return this.config.issuanceHints ?? {};
+  }
+
+  /**
    * Acquire a capability token from the Issuer
    */
   private async acquireCapabilityToken(): Promise<void> {
@@ -214,12 +280,25 @@ export class AgentRuntime {
     });
 
     const userAuthToken = await this.resolveAuthToken();
+    const hints = await this.resolveIssuanceHints();
+
+    // Build the request body.  Only include hint fields that were actually
+    // supplied so we don't accidentally send `undefined`/`null` values that
+    // the issuer's input validators might choke on.
+    const body: Record<string, unknown> = { agentId: this.config.agentId };
+    if (hints.requestedCapabilities !== undefined) {
+      body.requestedCapabilities = hints.requestedCapabilities;
+    }
+    if (hints.manifest !== undefined) {
+      body.manifest = hints.manifest;
+    }
+    if (hints.consent !== undefined) {
+      body.consent = hints.consent;
+    }
 
     let response;
     try {
-      response = await issuerClient.post('/api/v1/issue', {
-        agentId: this.config.agentId,
-      }, {
+      response = await issuerClient.post('/api/v1/issue', body, {
         headers: {
           'Authorization': `Bearer ${userAuthToken}`,
         },

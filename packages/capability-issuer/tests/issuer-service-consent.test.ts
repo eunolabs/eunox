@@ -220,6 +220,57 @@ describe('CapabilityIssuerService — explicit user consent', () => {
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 
+  it('rejects consent with a missing/non-numeric grantedAt', async () => {
+    const service = makeService(['Administrator']);
+    await expect(
+      service.issueCapability({
+        authToken: 'irrelevant',
+        agentId: 'agent-1',
+        requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['write'] }],
+        // Simulate the untyped HTTP body case where grantedAt arrives as a string.
+        consent: validConsent({ grantedAt: 'yesterday' as unknown as number }),
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects consent whose grantedAt is in the future (beyond clock-skew tolerance)', async () => {
+    const service = makeService(['Administrator']);
+    await expect(
+      service.issueCapability({
+        authToken: 'irrelevant',
+        agentId: 'agent-1',
+        requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['write'] }],
+        consent: validConsent({ grantedAt: Math.floor(Date.now() / 1000) + 3600 }),
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects consent with a non-numeric expiresAt', async () => {
+    const service = makeService(['Administrator']);
+    await expect(
+      service.issueCapability({
+        authToken: 'irrelevant',
+        agentId: 'agent-1',
+        requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['write'] }],
+        // Pre-fix, a non-number `expiresAt` (e.g. boolean from JSON body) was
+        // silently accepted because the check only fired when typeof === 'number'.
+        consent: validConsent({ expiresAt: 'never' as unknown as number }),
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects consent with a non-finite expiresAt (Infinity)', async () => {
+    const service = makeService(['Administrator']);
+    await expect(
+      service.issueCapability({
+        authToken: 'irrelevant',
+        agentId: 'agent-1',
+        requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['write'] }],
+        consent: validConsent({ expiresAt: Infinity }),
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   it('rejects consent that does not cover the requested action', async () => {
     const service = makeService(['Administrator']);
     await expect(
