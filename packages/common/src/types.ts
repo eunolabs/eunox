@@ -204,6 +204,12 @@ export interface CustomCondition {
  *    gateway's enforcement engine, so capabilities can constrain *what* a tool
  *    is invoked with, not just whether it can be invoked.
  *
+ * Set `strict: true` to enable maximum-strictness mode:
+ *  - ALL object values must explicitly list every allowed property in `properties`
+ *    (object-shape constraints are no longer required to "declare" the shape first)
+ *  - `strict` is propagated automatically to all nested property schemas and
+ *    `items` schemas so the whole schema tree is evaluated with the same stance
+ *
  * NOTE: This is NOT a substitute for parameterized queries / safe APIs in the
  * downstream backend. It enforces *agent-visible* contracts (what an agent
  * may send), so an attacker-controlled prompt cannot smuggle arbitrary fields
@@ -249,6 +255,21 @@ export interface ArgumentSchema {
   minItems?: number;
   /** Optional human-readable description of the constraint (for audit). */
   description?: string;
+  /**
+   * Enable strict validation mode. When `true`:
+   *  - Every object value is treated as if it declares its shape, so
+   *    `additionalProperties: false` is enforced on ALL plain-object values
+   *    regardless of whether `properties`, `required`, or `additionalProperties`
+   *    are explicitly present in the schema.
+   *  - Strict mode is propagated automatically to all nested `properties` schemas
+   *    and to the `items` schema for array types, so the entire schema tree is
+   *    validated with the same strictness.
+   *
+   * Defaults to `false` to preserve backward-compatibility. New capabilities
+   * that want the strongest argument-allowlisting guarantees should set this
+   * to `true`.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -299,12 +320,13 @@ export interface CapabilityTokenPayload {
    * Schema version of this capability token. Enables forward/backward
    * compatibility during schema evolution. Current version is "1.0".
    *
-   * - Missing or "1.0": Current schema with typed conditions
+   * - "1.0": Current schema with typed conditions
    * - Future versions: May introduce new fields or change semantics
    *
-   * Gateways MUST reject tokens with schema versions they don't recognize
-   * (fail-closed on unknown versions). The `kid` (key ID) in the JWT header
-   * provides an orthogonal "rotate all tokens signed with key X" mechanism.
+   * This field is required. Gateways MUST reject tokens with missing,
+   * malformed, or unrecognized schema versions (fail-closed). The `kid`
+   * (key ID) in the JWT header provides an orthogonal "rotate all tokens
+   * signed with key X" mechanism.
    */
   schemaVersion: string;
   /** Capability constraints defining allowed actions */

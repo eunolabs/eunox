@@ -59,7 +59,7 @@ Schema versions follow a `MAJOR.MINOR` format:
 - New condition types
 - Additional validation rules (backward-compatible)
 
-**Compatibility:** Old gateways CAN process tokens with newer minor versions, ignoring unknown optional fields
+**Compatibility:** Minor versions are intended to be backward-compatible, but gateways only accept schema versions explicitly listed as supported. An old gateway that has not been updated will reject tokens with a newer minor version until that exact version is added to the supported set.
 
 ## Version Validation
 
@@ -72,8 +72,8 @@ The capability issuer populates `schemaVersion` in all token creation paths:
    - Current value: `"1.0"`
 
 2. **Delegation/Attenuation** (`attenuateCapability`)
-   - Inherits same schema version as parent
-   - Currently: `"1.0"`
+   - Preserves the parent token's `schemaVersion`
+   - Note: during migrations, this may differ from the issuer's current `CAPABILITY_TOKEN_SCHEMA_VERSION`
 
 3. **Token Renewal** (`renewCapability`)
    - Preserves capabilities from original token

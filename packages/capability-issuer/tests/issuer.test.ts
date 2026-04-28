@@ -185,6 +185,25 @@ describe('Capability Issuer API', () => {
       }
     });
   });
+
+  describe('GET /.well-known/capability-issuer', () => {
+    it('should return issuer metadata without requiring service initialization', async () => {
+      const response = await request(app).get('/.well-known/capability-issuer');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('issuer');
+      expect(response.body).toHaveProperty('schemaVersions');
+      expect(response.body.schemaVersions).toHaveProperty('current');
+      expect(response.body.schemaVersions).toHaveProperty('supported');
+      expect(Array.isArray(response.body.schemaVersions.supported)).toBe(true);
+      expect(response.body.schemaVersions.supported).toContain(response.body.schemaVersions.current);
+      expect(response.body).toHaveProperty('signingAlgorithms');
+      expect(Array.isArray(response.body.signingAlgorithms)).toBe(true);
+      expect(response.body).toHaveProperty('endpoints');
+      expect(response.body.endpoints).toHaveProperty('publicKey');
+      expect(response.body.endpoints).toHaveProperty('didDocument');
+    });
+  });
 });
 
 describe('Capability Issuance Logic', () => {

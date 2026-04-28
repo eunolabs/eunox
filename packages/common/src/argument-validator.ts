@@ -69,7 +69,7 @@ export function validateArguments(
     return;
   }
 
-  const reason = checkAgainstSchema(value, schema, path);
+  const reason = checkAgainstSchema(value, schema, path, schema.strict ?? false);
   if (reason !== null) {
     throw new CapabilityError(
       ErrorCode.INVALID_REQUEST,
@@ -82,8 +82,11 @@ export function validateArguments(
 function checkAgainstSchema(
   value: unknown,
   schema: ArgumentSchema,
-  path: string
+  path: string,
+  strict: boolean
 ): ValidationResult {
+  // Inherit strict flag from the schema if it explicitly sets it, otherwise use the parent's
+  const effectiveStrict = schema.strict ?? strict;
   // 1. enum (exact-match allowlist). Checked first because enum is the
   //    strictest possible constraint.
   if (schema.enum !== undefined) {
@@ -169,7 +172,7 @@ function checkAgainstSchema(
     }
     if (schema.items) {
       for (let i = 0; i < value.length; i++) {
-        const reason = checkAgainstSchema(value[i], schema.items, `${path}[${i}]`);
+        const reason = checkAgainstSchema(value[i], schema.items, `${path}[${i}]`, effectiveStrict);
         if (reason !== null) {
           return reason;
         }
@@ -178,12 +181,11 @@ function checkAgainstSchema(
   }
 
   if (isPlainObject(value)) {
-    // Only enforce object-shape constraints when the schema actually
-    // declares them. A schema like `{ enum: [...] }` (no `type`, no
-    // `properties`) is a value-equality constraint, not a shape
-    // constraint, and should not impose `additionalProperties: false`
-    // on every property of the matched value.
+    // Enforce object-shape constraints when:
+    //  - the schema explicitly declares them (properties/required/additionalProperties/type:object), OR
+    //  - strict mode is active (treat every plain-object value as if it declares its shape)
     const declaresObjectShape =
+      effectiveStrict ||
       schema.properties !== undefined ||
       schema.required !== undefined ||
       schema.additionalProperties !== undefined ||
@@ -213,7 +215,8 @@ function checkAgainstSchema(
         const reason = checkAgainstSchema(
           (value as Record<string, unknown>)[key],
           propSchema,
-          `${path}.${key}`
+          `${path}.${key}`,
+          effectiveStrict
         );
         if (reason !== null) {
           return reason;

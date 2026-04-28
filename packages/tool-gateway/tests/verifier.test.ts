@@ -254,7 +254,7 @@ describe('JWTTokenVerifier', () => {
         iat: getCurrentTimestamp(),
         exp: getExpirationTimestamp(900),
         jti: 'test-token-id',
-        schemaVersion: '1.0', // Supported version
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION, // Use constant, not hardcoded value
         capabilities: [],
       };
 
@@ -263,7 +263,7 @@ describe('JWTTokenVerifier', () => {
         .sign(privateKey);
 
       const decoded = await verifier.verify(token);
-      expect(decoded.schemaVersion).toBe('1.0');
+      expect(decoded.schemaVersion).toBe(CAPABILITY_TOKEN_SCHEMA_VERSION);
     });
 
     it('should reject tokens with missing schemaVersion', async () => {
@@ -320,13 +320,7 @@ describe('JWTTokenVerifier', () => {
         .setProtectedHeader({ alg: 'RS256' })
         .sign(privateKey);
 
-      try {
-        await verifier.verify(token);
-        fail('Should have thrown error');
-      } catch (error: any) {
-        expect(error.message).toContain('Supported versions:');
-        expect(error.message).toContain('1.0');
-      }
+      await expect(verifier.verify(token)).rejects.toThrow(/Supported versions:.*1\.0/s);
     });
 
     it('should reject tokens with non-string schema version', async () => {

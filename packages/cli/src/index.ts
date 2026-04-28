@@ -217,6 +217,159 @@ program
     console.log(`  EUNO_GATEWAY_URL: ${process.env.EUNO_GATEWAY_URL || '(not set)'}`);
   });
 
+/**
+ * Schema version management commands
+ * Check and plan token schema version migrations
+ */
+const versionCmd = program
+  .command('schema-version')
+  .description('Manage and migrate capability token schema versions');
+
+versionCmd
+  .command('check')
+  .description('Check supported schema versions on a capability issuer')
+  .option('-i, --issuer <url>', 'Issuer URL', process.env.EUNO_ISSUER_URL || 'http://localhost:3001')
+  .action(async (options) => {
+    try {
+      const url = `${options.issuer}/.well-known/capability-issuer`;
+      const response = await axios.get(url, { timeout: 10000 });
+      const meta = response.data;
+
+      console.log(`Capability issuer: ${meta.issuer}`);
+      console.log(`Current token schema version: ${meta.schemaVersions?.current ?? '(unknown)'}`);
+      console.log(`Supported schema versions:    ${(meta.schemaVersions?.supported ?? []).join(', ')}`);
+      console.log(`Signing algorithms:           ${(meta.signingAlgorithms ?? []).join(', ')}`);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        console.error(`✗ Could not reach issuer at ${options.issuer}`);
+        console.error(`  ${error.message}`);
+      } else {
+        console.error(`✗ Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      process.exit(1);
+    }
+  });
+
+versionCmd
+  .command('plan')
+  .description('Generate a step-by-step migration plan for a schema version upgrade')
+  .argument('<from>', 'Current schema version (e.g. 1.0)')
+  .argument('<to>', 'Target schema version (e.g. 1.1)')
+  .option('--json', 'Output plan as JSON')
+  .action((from: string, to: string, options) => {
+    const fromParts = from.split('.').map(Number);
+    const toParts = to.split('.').map(Number);
+    const fromMajor = fromParts[0] ?? NaN;
+    const fromMinor = fromParts[1] ?? NaN;
+    const toMajor = toParts[0] ?? NaN;
+    const toMinor = toParts[1] ?? NaN;
+
+    if (isNaN(fromMajor) || isNaN(fromMinor) || isNaN(toMajor) || isNaN(toMinor)) {
+      console.error('✗ Versions must be in MAJOR.MINOR format (e.g. 1.0, 1.1, 2.0)');
+      process.exit(1);
+    }
+
+    const isMajor = toMajor > fromMajor;
+    const isDowngrade = toMajor < fromMajor || (toMajor === fromMajor && toMinor < fromMinor);
+
+    if (isDowngrade) {
+      console.error('✗ Downgrade migrations are not supported. Downgrading past a schema change will reject all tokens with the new shape.');
+      process.exit(1);
+    }
+
+    const plan = {
+      from,
+      to,
+      type: isMajor ? 'major' : 'minor',
+      steps: isMajor
+        ? [
+            { phase: 'Preparation (Week 1–4)', action: `Add "${to}" to SUPPORTED_SCHEMA_VERSIONS in gateway` },
+            { phase: 'Preparation (Week 1–4)', action: 'Implement version-specific parsing/validation logic for new schema shape' },
+            { phase: 'Preparation (Week 1–4)', action: 'Deploy gateway updates and verify 100% rollout before proceeding' },
+            { phase: 'Transition (Week 5–8)', action: `Update CAPABILITY_TOKEN_SCHEMA_VERSION to "${to}" in issuer` },
+            { phase: 'Transition (Week 5–8)', action: 'Deploy issuer updates; both versions coexist during token TTL window' },
+            { phase: 'Validation (Week 9–12)', action: `Monitor token version distribution; ensure no "${from}" tokens remain (check TTL)` },
+            { phase: 'Deprecation (Week 13+)', action: `Remove "${from}" from SUPPORTED_SCHEMA_VERSIONS in gateway` },
+            { phase: 'Deprecation (Week 13+)', action: 'Deploy gateway updates and update documentation' },
+          ]
+        : [
+            { phase: 'Step 1', action: `Add "${to}" to SUPPORTED_SCHEMA_VERSIONS in gateway (packages/common/src/types.ts)` },
+            { phase: 'Step 1', action: 'Deploy gateway updates and verify rollout' },
+            { phase: 'Step 2', action: `Update CAPABILITY_TOKEN_SCHEMA_VERSION to "${to}" in issuer (packages/common/src/types.ts)` },
+            { phase: 'Step 2', action: 'Deploy issuer updates; monitor token version distribution' },
+            { phase: 'Step 3 (optional)', action: `After migration window, remove "${from}" from SUPPORTED_SCHEMA_VERSIONS` },
+          ],
+      warnings: isMajor
+        ? [
+            'NEVER deploy issuer before all gateways are updated',
+            'Old gateways will reject tokens with the new major version',
+            `Cross-version delegation is blocked: cannot attenuate a "${from}" token into a "${to}" token`,
+          ]
+        : [
+            'NEVER deploy issuer before all gateways are updated',
+            `Gateways only accept versions explicitly listed in SUPPORTED_SCHEMA_VERSIONS — an unupdated gateway will reject "${to}" tokens`,
+          ],
+    };
+
+    if (options.json) {
+      console.log(JSON.stringify(plan, null, 2));
+    } else {
+      console.log(`\nMigration plan: ${from} → ${to} (${plan.type} version bump)\n`);
+      let lastPhase = '';
+      for (const step of plan.steps) {
+        if (step.phase !== lastPhase) {
+          console.log(`\n  ${step.phase}:`);
+          lastPhase = step.phase;
+        }
+        console.log(`    • ${step.action}`);
+      }
+      console.log('\n  ⚠  Warnings:');
+      for (const w of plan.warnings) {
+        console.log(`    • ${w}`);
+      }
+      console.log('');
+    }
+  });
+
+versionCmd
+  .command('validate-token')
+  .description('Decode and validate the schema version of a capability token')
+  .argument('<token>', 'JWT capability token to inspect')
+  .action((token: string) => {
+    try {
+      // Decode without verification (inspection only)
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        console.error('✗ Not a valid JWT (expected 3 parts separated by ".")');
+        process.exit(1);
+      }
+      const payloadPart = parts[1];
+      if (!payloadPart) {
+        console.error('✗ Not a valid JWT (empty payload segment)');
+        process.exit(1);
+      }
+      const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+      const schemaVersion: unknown = payload.schemaVersion;
+
+      if (!schemaVersion) {
+        console.error('✗ Token is missing the required schemaVersion field');
+        process.exit(1);
+      }
+      if (typeof schemaVersion !== 'string') {
+        console.error(`✗ schemaVersion must be a string, got: ${typeof schemaVersion}`);
+        process.exit(1);
+      }
+
+      console.log(`Token schema version: ${schemaVersion}`);
+      console.log(`Issuer:  ${payload.iss ?? '(none)'}`);
+      console.log(`Subject: ${payload.sub ?? '(none)'}`);
+      console.log(`Expires: ${payload.exp ? new Date(payload.exp * 1000).toISOString() : '(none)'}`);
+    } catch (error) {
+      console.error(`✗ Failed to decode token: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
 program.parse(process.argv);
 
 // Show help if no command specified

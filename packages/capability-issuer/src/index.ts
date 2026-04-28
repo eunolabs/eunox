@@ -20,6 +20,9 @@ import {
   IdentityProvider,
   RoleCapabilityPolicy,
   loadRoleCapabilityPolicyFromFile,
+  CAPABILITY_TOKEN_SCHEMA_VERSION,
+  SUPPORTED_SCHEMA_VERSIONS,
+  SIGNING_ALGORITHMS,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -517,6 +520,32 @@ app.get('/.well-known/did.json', async (_req: Request, res: Response, next: Next
   } catch (error) {
     next(error);
   }
+});
+
+/**
+ * Issuer metadata endpoint
+ * GET /.well-known/capability-issuer
+ *
+ * Returns metadata about this capability issuer:
+ * - Issuer DID
+ * - Supported token schema versions
+ * - Current token schema version being minted
+ * - Supported signing algorithms
+ * - Link to public key and DID document
+ */
+app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
+  res.json({
+    issuer: config.issuerDid,
+    schemaVersions: {
+      current: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      supported: Array.from(SUPPORTED_SCHEMA_VERSIONS),
+    },
+    signingAlgorithms: SIGNING_ALGORITHMS,
+    endpoints: {
+      publicKey: '/api/v1/public-key',
+      didDocument: '/.well-known/did.json',
+    },
+  });
 });
 
 // Error handling middleware

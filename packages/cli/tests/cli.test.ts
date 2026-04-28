@@ -193,3 +193,83 @@ describe('euno config', () => {
     expect(r.stdout).toContain('https://gateway.example');
   });
 });
+
+describe('euno schema-version', () => {
+  it('shows help for schema-version command', () => {
+    const r = runCli(['schema-version', '--help']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('schema-version');
+  });
+
+  describe('plan subcommand', () => {
+    it('generates a minor version migration plan', () => {
+      const r = runCli(['schema-version', 'plan', '1.0', '1.1']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('1.0 → 1.1');
+      expect(r.stdout).toContain('minor');
+      expect(r.stdout).toContain('SUPPORTED_SCHEMA_VERSIONS');
+    });
+
+    it('generates a major version migration plan', () => {
+      const r = runCli(['schema-version', 'plan', '1.0', '2.0']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('1.0 → 2.0');
+      expect(r.stdout).toContain('major');
+    });
+
+    it('outputs JSON when --json is supplied', () => {
+      const r = runCli(['schema-version', 'plan', '1.0', '1.1', '--json']);
+      expect(r.status).toBe(0);
+      const parsed = JSON.parse(r.stdout);
+      expect(parsed.from).toBe('1.0');
+      expect(parsed.to).toBe('1.1');
+      expect(parsed.type).toBe('minor');
+      expect(Array.isArray(parsed.steps)).toBe(true);
+      expect(Array.isArray(parsed.warnings)).toBe(true);
+    });
+
+    it('rejects invalid version format', () => {
+      const r = runCli(['schema-version', 'plan', 'v1', '1.1']);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('MAJOR.MINOR');
+    });
+
+    it('rejects downgrade migrations', () => {
+      const r = runCli(['schema-version', 'plan', '1.1', '1.0']);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('Downgrade');
+    });
+  });
+
+  describe('validate-token subcommand', () => {
+    it('rejects non-JWT input', () => {
+      const r = runCli(['schema-version', 'validate-token', 'not-a-jwt']);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('valid JWT');
+    });
+
+    it('reports schema version from a valid-looking JWT payload', () => {
+      // Construct a minimal JWT (header.payload.signature) without actually signing it
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+      const payload = Buffer.from(
+        JSON.stringify({ schemaVersion: '1.0', iss: 'did:web:test.com', sub: 'agent-1', exp: 9999999999 })
+      ).toString('base64url');
+      const token = `${header}.${payload}.fakesig`;
+
+      const r = runCli(['schema-version', 'validate-token', token]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('Token schema version: 1.0');
+      expect(r.stdout).toContain('did:web:test.com');
+    });
+
+    it('reports missing schemaVersion', () => {
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({ iss: 'did:web:test.com' })).toString('base64url');
+      const token = `${header}.${payload}.fakesig`;
+
+      const r = runCli(['schema-version', 'validate-token', token]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('missing');
+    });
+  });
+});

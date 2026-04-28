@@ -581,7 +581,7 @@ export class CapabilityIssuerService {
         iat: now,
         exp: expiresAt,
         jti: tokenId,
-        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        schemaVersion: parentPayload.schemaVersion,
         capabilities: requestedCapabilities,
         parentCapabilityId: parentPayload.jti, // Link to parent
         authorizedBy: parentPayload.authorizedBy,
