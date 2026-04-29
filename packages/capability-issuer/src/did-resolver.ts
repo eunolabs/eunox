@@ -104,13 +104,43 @@ export async function resolveDID(did: string): Promise<DIDDocument> {
 }
 
 /**
+ * Parse the comma-separated `DID_WEB_ALLOW_HTTP_FOR_HOSTS` allow-list into
+ * a Set of lower-cased host[:port] entries. Empty / unset values yield an
+ * empty set (the default — fail closed).
+ *
+ * Exported only for unit tests.
+ */
+export function parseDidWebHttpAllowList(raw: string | undefined): Set<string> {
+  if (!raw) {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0)
+  );
+}
+
+/**
  * Resolve did:web to DID Document
  *
  * did:web method specification:
  * - did:web:example.com -> https://example.com/.well-known/did.json
  * - did:web:example.com:user:alice -> https://example.com/user/alice/did.json
+ * - Custom ports are encoded into the host label as %3A, for example
+ *   did:web:partner-sim.local%3A4001 -> https://partner-sim.local:4001/.well-known/did.json
  *
  * Reference: https://w3c-ccg.github.io/did-method-web/
+ *
+ * **Test-mode HTTP exception (cross-org harness, gap #5):**
+ * The default behaviour is HTTPS-only — production DID resolution MUST go
+ * over TLS. For local docker-compose / CI harnesses that cannot terminate
+ * TLS, set `DID_WEB_ALLOW_HTTP_FOR_HOSTS=partner-sim.local:4001,...` on the
+ * resolver process: any host[:port] in that allow-list will be fetched over
+ * plain HTTP. Hosts NOT in the allow-list still go over HTTPS. The
+ * allow-list is consulted on every call so that an empty / unset value
+ * means "no exceptions" (fail closed).
  */
 export async function resolveDidWeb(did: string): Promise<DIDDocument> {
   if (!did.startsWith('did:web:')) {
@@ -134,14 +164,20 @@ export async function resolveDidWeb(did: string): Promise<DIDDocument> {
   const domain = decodeURIComponent(didParts[0]);
   const path = didParts.slice(1).map(decodeURIComponent).join('/');
 
+  // Decide HTTP vs HTTPS. Default is HTTPS — the allow-list is opt-in and
+  // only consulted when the env var is set, so production deployments that
+  // never set DID_WEB_ALLOW_HTTP_FOR_HOSTS are unaffected.
+  const httpAllowed = parseDidWebHttpAllowList(process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS);
+  const scheme = httpAllowed.has(domain.toLowerCase()) ? 'http' : 'https';
+
   // Construct URL to DID Document
   let url: string;
   if (path) {
     // did:web:example.com:user:alice -> https://example.com/user/alice/did.json
-    url = `https://${domain}/${path}/did.json`;
+    url = `${scheme}://${domain}/${path}/did.json`;
   } else {
     // did:web:example.com -> https://example.com/.well-known/did.json
-    url = `https://${domain}/.well-known/did.json`;
+    url = `${scheme}://${domain}/.well-known/did.json`;
   }
 
   try {
