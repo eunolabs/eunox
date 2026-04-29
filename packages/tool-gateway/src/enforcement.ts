@@ -31,7 +31,30 @@ export interface EnforcementEngineOptions {
   killSwitchManager?: KillSwitchManager;
   evidenceSigner?: EvidenceSigner;
   policyVersion?: string;
+  /**
+   * Legacy single-toggle for evidence signing. When `true`, both `allow`
+   * and `deny` decisions are signed; when `false`, neither is. Kept for
+   * backward compatibility — for finer-grained control prefer
+   * {@link signedDecisions} (I-8).
+   */
   enableCryptographicAudit?: boolean;
+  /**
+   * Per-decision evidence-signing selection (I-8). When provided, this
+   * is authoritative and {@link enableCryptographicAudit} is ignored.
+   * Lets operators express asymmetric policies such as "sign every
+   * `deny` but skip `allow`" — impossible to express with a single
+   * boolean. An empty array disables signing entirely.
+   */
+  signedDecisions?: Array<'allow' | 'deny'>;
+  /**
+   * Strict argument-schema mode (I-7). When `true`, any matched
+   * capability that does not declare an `argumentSchema` is denied
+   * outright. Default `false` preserves existing behaviour: capabilities
+   * without a schema impose no argument-level constraint. Enable once
+   * every capability accepted by this gateway has been migrated to
+   * declare an explicit argument schema.
+   */
+  argumentSchemaRequired?: boolean;
   /**
    * Counter store used for {@link MaxCallsCondition} enforcement. When
    * omitted, capabilities that carry a `maxCalls` condition are denied
@@ -48,7 +71,14 @@ export class EnforcementEngine {
   private killSwitchManager?: KillSwitchManager;
   private evidenceSigner?: EvidenceSigner;
   private policyVersion: string;
-  private enableCryptographicAudit: boolean;
+  /**
+   * Resolved per-decision signing set (I-8). Built once in the
+   * constructor from `signedDecisions` (when provided) or from the
+   * legacy `enableCryptographicAudit` boolean. All hot-path checks read
+   * from this set so the per-call cost is a single Set.has lookup.
+   */
+  private signedDecisions: Set<'allow' | 'deny'>;
+  private argumentSchemaRequired: boolean;
   private callCounterStore?: CallCounterStore;
 
   constructor(options: EnforcementEngineOptions) {
@@ -58,8 +88,27 @@ export class EnforcementEngine {
     this.killSwitchManager = options.killSwitchManager;
     this.evidenceSigner = options.evidenceSigner;
     this.policyVersion = options.policyVersion || '1.0.0';
-    this.enableCryptographicAudit = options.enableCryptographicAudit || false;
+    if (options.signedDecisions !== undefined) {
+      this.signedDecisions = new Set(options.signedDecisions);
+    } else if (options.enableCryptographicAudit) {
+      this.signedDecisions = new Set<'allow' | 'deny'>(['allow', 'deny']);
+    } else {
+      this.signedDecisions = new Set();
+    }
+    this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
+  }
+
+  /**
+   * Returns true when audit evidence for the given decision should be
+   * cryptographically signed under the current configuration. Used at
+   * every signing site so the policy lives in one place.
+   */
+  private shouldSignDecision(decision: 'allow' | 'deny'): boolean {
+    return (
+      this.signedDecisions.has(decision) &&
+      this.evidenceSigner !== undefined
+    );
   }
 
   /**
@@ -114,7 +163,7 @@ export class EnforcementEngine {
         );
 
         // Generate cryptographic evidence for denied action if enabled
-        if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+        if (this.shouldSignDecision('deny') && payload.authorizedBy) {
           await this.generateEvidence({
             sessionId: sessionId || 'unknown',
             userId: payload.authorizedBy.userId,
@@ -147,8 +196,35 @@ export class EnforcementEngine {
       // from passing an arbitrary body to that endpoint.
       //
       // Capabilities without an `argumentSchema` impose no argument
-      // constraints (preserving existing behaviour for callers that have
-      // not yet adopted argument schemas).
+      // constraints by default (preserving existing behaviour for
+      // callers that have not yet adopted argument schemas).
+      //
+      // I-7 strict mode: when `argumentSchemaRequired` is true the
+      // gateway instead denies any matched capability that does not
+      // declare an argument schema. This lets operators fail-closed on
+      // schema-less tokens once every capability accepted by this
+      // gateway has been migrated.
+      if (this.argumentSchemaRequired && matchedCapability && !matchedCapability.argumentSchema) {
+        const reason =
+          'Argument schema required: matched capability has no argumentSchema and the gateway is in strict argument-schema mode';
+        await this.logDenial(
+          payload.sub,
+          request.action,
+          request.resource,
+          reason,
+          sessionId,
+        );
+
+        if (this.shouldSignDecision('deny') && payload.authorizedBy) {
+          await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
+        }
+
+        return {
+          allowed: false,
+          reason,
+        };
+      }
+
       if (matchedCapability?.argumentSchema) {
         const argsToValidate = extractArgsForValidation(request.context);
 
@@ -168,7 +244,7 @@ export class EnforcementEngine {
             sessionId
           );
 
-          if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+          if (this.shouldSignDecision('deny') && payload.authorizedBy) {
             // Hash the *exact* value that was validated, not the
             // surrounding context metadata. This keeps the evidence
             // hash tightly coupled to the input that caused the denial
@@ -205,7 +281,7 @@ export class EnforcementEngine {
             sessionId
           );
 
-          if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+          if (this.shouldSignDecision('deny') && payload.authorizedBy) {
             await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
           }
 
@@ -226,7 +302,7 @@ export class EnforcementEngine {
       );
 
       // Step 7: Generate cryptographic evidence for allowed action if enabled
-      if (this.enableCryptographicAudit && this.evidenceSigner && payload.authorizedBy) {
+      if (this.shouldSignDecision('allow') && payload.authorizedBy) {
         await this.generateEvidence({
           sessionId: sessionId || 'unknown',
           userId: payload.authorizedBy.userId,

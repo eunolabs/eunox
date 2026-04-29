@@ -575,6 +575,19 @@ export interface ServiceConfig {
   enableDetailedLogging?: boolean;
   /** Enable cryptographic audit evidence */
   enableCryptographicAudit?: boolean;
+  /**
+   * Decisions whose audit evidence is cryptographically signed (I-8).
+   *
+   * When omitted, the legacy `enableCryptographicAudit` boolean is the
+   * single source of truth: `true` ⇒ both `allow` and `deny` are signed,
+   * `false` ⇒ neither. When provided, this set is authoritative and
+   * the legacy boolean is ignored. An empty set disables signing.
+   *
+   * Lets operators express "sign critical events but not every event"
+   * (e.g. `['deny']` to keep an evidentiary record of refusals without
+   * paying the per-allow signing cost).
+   */
+  signedAuditDecisions?: Array<'allow' | 'deny'>;
   /** Policy version for audit evidence */
   policyVersion?: string;
 }

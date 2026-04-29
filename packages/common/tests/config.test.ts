@@ -186,6 +186,98 @@ describe('loadConfig (gateway)', () => {
     expect(result.ok).toBe(true);
   });
 
+  // I-8: per-decision evidence signing
+  it('parses EVIDENCE_SIGNED_DECISIONS as a CSV of decisions', () => {
+    const result = loadConfig(
+      {
+        EVIDENCE_SIGNED_DECISIONS: 'deny',
+        EVIDENCE_SIGNING_KEY_FILE: '/etc/euno/key.pem',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.EVIDENCE_SIGNED_DECISIONS).toEqual(['deny']);
+  });
+
+  it('rejects EVIDENCE_SIGNED_DECISIONS with unsupported values', () => {
+    const result = loadConfig(
+      {
+        EVIDENCE_SIGNED_DECISIONS: 'allow,maybe',
+        EVIDENCE_SIGNING_KEY_FILE: '/etc/euno/key.pem',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'EVIDENCE_SIGNED_DECISIONS',
+          message: expect.stringMatching(/maybe/),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects a non-empty EVIDENCE_SIGNED_DECISIONS without an evidence key', () => {
+    const result = loadConfig(
+      { EVIDENCE_SIGNED_DECISIONS: 'deny' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'EVIDENCE_SIGNING_KEY_PEM',
+          message: expect.stringMatching(/EVIDENCE_SIGNED_DECISIONS/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts an empty EVIDENCE_SIGNED_DECISIONS value (signing disabled, no key needed)', () => {
+    const result = loadConfig(
+      { EVIDENCE_SIGNED_DECISIONS: '' },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  // Regression: when EVIDENCE_SIGNED_DECISIONS is defined it must be
+  // authoritative — even an explicitly-empty list (e.g. only commas /
+  // whitespace, which `envCsv` reduces to []) must disable signing
+  // regardless of the legacy ENABLE_CRYPTOGRAPHIC_AUDIT boolean. The
+  // schema must therefore NOT demand an evidence signing key in this
+  // combination, since the EnforcementEngine will not sign anything.
+  it('treats EVIDENCE_SIGNED_DECISIONS as authoritative: empty list overrides ENABLE_CRYPTOGRAPHIC_AUDIT=true', () => {
+    const result = loadConfig(
+      {
+        EVIDENCE_SIGNED_DECISIONS: ',',
+        ENABLE_CRYPTOGRAPHIC_AUDIT: 'true',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.EVIDENCE_SIGNED_DECISIONS).toEqual([]);
+    expect(result.config.ENABLE_CRYPTOGRAPHIC_AUDIT).toBe(true);
+  });
+
+  // I-7: strict argument-schema mode
+  it('parses ARGUMENT_SCHEMA_REQUIRED as a boolean (default false)', () => {
+    const off = loadConfig({}, 'gateway');
+    expect(off.ok).toBe(true);
+    if (!off.ok) return;
+    expect(off.config.ARGUMENT_SCHEMA_REQUIRED).toBe(false);
+
+    const on = loadConfig({ ARGUMENT_SCHEMA_REQUIRED: 'true' }, 'gateway');
+    expect(on.ok).toBe(true);
+    if (!on.ok) return;
+    expect(on.config.ARGUMENT_SCHEMA_REQUIRED).toBe(true);
+  });
+
   it('rejects a non-boolean ENABLE_DETAILED_LOGGING with a structured error', () => {
     const result = loadConfig(
       { ENABLE_DETAILED_LOGGING: 'yes' },

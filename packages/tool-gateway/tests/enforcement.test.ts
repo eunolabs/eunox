@@ -466,6 +466,233 @@ describe('EnforcementEngine', () => {
 
       expect(signEvidence).not.toHaveBeenCalled();
     });
+
+    // I-8: per-decision evidence signing. The single boolean
+    // `enableCryptographicAudit` cannot express asymmetric policies
+    // (e.g. "sign every deny but skip allow"); `signedDecisions`
+    // replaces it for callers that want fine-grained control.
+    describe('per-decision signing (I-8)', () => {
+      function makeMockSigner() {
+        const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
+          async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
+        );
+        const mockSigner: EvidenceSigner = {
+          signEvidence,
+          verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false),
+        };
+        return { signEvidence, mockSigner };
+      }
+
+      it('signs only deny when signedDecisions=["deny"]', async () => {
+        const { signEvidence, mockSigner } = makeMockSigner();
+
+        const auditEngine = new EnforcementEngine({
+          verifier,
+          logger,
+          evidenceSigner: mockSigner,
+          signedDecisions: ['deny'],
+          policyVersion: '1.0.0',
+        });
+
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+        );
+
+        // allow path — should NOT sign
+        const allowResult = await auditEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          context: { sessionId: 'sess-allow' },
+        });
+        expect(allowResult.allowed).toBe(true);
+        expect(signEvidence).not.toHaveBeenCalled();
+
+        // deny path — SHOULD sign
+        const denyResult = await auditEngine.validateAction({
+          token,
+          action: 'write',
+          resource: 'api://service/endpoint',
+          context: { sessionId: 'sess-deny' },
+        });
+        expect(denyResult.allowed).toBe(false);
+        expect(signEvidence).toHaveBeenCalledTimes(1);
+        expect(signEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({ decision: 'deny', sessionId: 'sess-deny' })
+        );
+      });
+
+      it('signs only allow when signedDecisions=["allow"]', async () => {
+        const { signEvidence, mockSigner } = makeMockSigner();
+
+        const auditEngine = new EnforcementEngine({
+          verifier,
+          logger,
+          evidenceSigner: mockSigner,
+          signedDecisions: ['allow'],
+          policyVersion: '1.0.0',
+        });
+
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+        );
+
+        await auditEngine.validateAction({
+          token,
+          action: 'write',
+          resource: 'api://service/endpoint',
+          context: { sessionId: 'sess-deny' },
+        });
+        // deny path — must NOT sign in allow-only mode
+        expect(signEvidence).not.toHaveBeenCalled();
+
+        await auditEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          context: { sessionId: 'sess-allow' },
+        });
+        expect(signEvidence).toHaveBeenCalledTimes(1);
+        expect(signEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({ decision: 'allow', sessionId: 'sess-allow' })
+        );
+      });
+
+      it('signs nothing when signedDecisions=[] regardless of legacy boolean', async () => {
+        const { signEvidence, mockSigner } = makeMockSigner();
+
+        const auditEngine = new EnforcementEngine({
+          verifier,
+          logger,
+          evidenceSigner: mockSigner,
+          signedDecisions: [],
+          enableCryptographicAudit: true, // overridden by signedDecisions=[]
+          policyVersion: '1.0.0',
+        });
+
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+        );
+
+        await auditEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        });
+        await auditEngine.validateAction({
+          token,
+          action: 'write',
+          resource: 'api://service/endpoint',
+        });
+
+        expect(signEvidence).not.toHaveBeenCalled();
+      });
+
+      it('legacy enableCryptographicAudit=true still signs both decisions when signedDecisions is omitted', async () => {
+        const { signEvidence, mockSigner } = makeMockSigner();
+
+        const auditEngine = new EnforcementEngine({
+          verifier,
+          logger,
+          evidenceSigner: mockSigner,
+          enableCryptographicAudit: true,
+          policyVersion: '1.0.0',
+        });
+
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+        );
+
+        await auditEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        });
+        await auditEngine.validateAction({
+          token,
+          action: 'write',
+          resource: 'api://service/endpoint',
+        });
+
+        expect(signEvidence).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
+  // I-7: strict argument-schema mode. By default, capabilities without
+  // an `argumentSchema` impose no argument-level constraint. Strict mode
+  // flips that to deny-by-default for schema-less capabilities so an
+  // operator can fail closed once every capability has been migrated.
+  describe('strict argument-schema mode (I-7)', () => {
+    let strictEngine: EnforcementEngine;
+
+    beforeAll(() => {
+      strictEngine = new EnforcementEngine({
+        verifier,
+        logger,
+        argumentSchemaRequired: true,
+      });
+    });
+
+    it('denies a matched capability that has no argumentSchema', async () => {
+      const token = await createTestToken([
+        { resource: 'api://crm/customers', actions: ['read'] },
+      ]);
+
+      const result = await strictEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: { args: { anything: 'goes' } },
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/argument schema required/i);
+    });
+
+    it('allows a matched capability whose argumentSchema accepts the input', async () => {
+      const token = await createTestToken([
+        {
+          resource: 'api://crm/customers',
+          actions: ['read'],
+          argumentSchema: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+            },
+            required: ['id'],
+          },
+        },
+      ]);
+
+      const result = await strictEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: { args: { id: 'cust-1' } },
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+
+    it('default (non-strict) engine still allows schema-less capabilities', async () => {
+      const token = await createTestToken([
+        { resource: 'api://crm/customers', actions: ['read'] },
+      ]);
+
+      const result = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://crm/customers',
+        context: { args: { anything: 'goes' } },
+      });
+
+      expect(result.allowed).toBe(true);
+    });
   });
 
   describe('typed-condition enforcement', () => {

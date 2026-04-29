@@ -509,7 +509,11 @@ export const GatewayConfigSchema = z
     ENABLE_CRYPTOGRAPHIC_AUDIT: envBoolean({
       default: false,
       description:
-        'Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits.',
+        'Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits. Legacy single-toggle for evidence signing; for finer-grained control use EVIDENCE_SIGNED_DECISIONS (I-8).',
+    }),
+    EVIDENCE_SIGNED_DECISIONS: envCsv({
+      description:
+        'Comma-separated list of validation decisions whose audit evidence is signed. Allowed values: allow, deny. When set, this overrides ENABLE_CRYPTOGRAPHIC_AUDIT (which becomes the legacy on/off shorthand). Use "deny" alone to record a tamper-evident trail of refusals without paying the per-allow signing cost (I-8). An evidence signer MUST be configured if this is non-empty.',
     }),
     EVIDENCE_SIGNING_KEY_PEM: optionalString.describe(
       'Inline PEM-encoded private key for evidence signing. Provide this OR EVIDENCE_SIGNING_KEY_FILE.',
@@ -540,6 +544,11 @@ export const GatewayConfigSchema = z
     POLICY_VERSION: optionalString.describe(
       'Version identifier for the active policy (string, default "1.0.0").',
     ),
+    ARGUMENT_SCHEMA_REQUIRED: envBoolean({
+      default: false,
+      description:
+        'When true, the gateway denies any matched capability that does not declare an `argumentSchema` (strict mode for I-7). The default (false) preserves existing behaviour: capabilities without an argument schema impose no argument-level constraint. Enable this once every capability your gateway accepts has been migrated to declare an explicit argument schema, to fail closed on schema-less tokens.',
+    }),
     ENABLE_DETAILED_LOGGING: envBoolean({
       default: false,
       description: 'Enable verbose request / decision logs. Boolean: true | false.',
@@ -570,7 +579,7 @@ export const GatewayConfigSchema = z
     }),
     LOCAL_ISSUER_IDS: envCsv({
       description:
-        'Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_PUBLIC_KEY_URL).',
+        'Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_JWKS_URL).',
     }),
 
     // Distributed coordination (Redis) --------------------------------------
@@ -603,8 +612,37 @@ export const GatewayConfigSchema = z
     ),
   })
   .superRefine((cfg, ctx) => {
+    const signedDecisions = cfg.EVIDENCE_SIGNED_DECISIONS;
+    if (signedDecisions !== undefined) {
+      const allowed = new Set(['allow', 'deny']);
+      const bad = signedDecisions.filter((d) => !allowed.has(d));
+      if (bad.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['EVIDENCE_SIGNED_DECISIONS'],
+          message:
+            `EVIDENCE_SIGNED_DECISIONS contains unsupported value(s): ${bad.join(', ')}. ` +
+            `Allowed values are "allow" and "deny".`,
+        });
+      }
+    }
+
+    // Evidence signing is enabled when:
+    //   - EVIDENCE_SIGNED_DECISIONS is defined (authoritative): only when
+    //     it carries at least one decision; an explicitly-empty list
+    //     disables signing even if the legacy boolean is true.
+    //   - EVIDENCE_SIGNED_DECISIONS is undefined: fall back to the
+    //     legacy ENABLE_CRYPTOGRAPHIC_AUDIT boolean.
+    // This matches the per-decision semantics enforced by
+    // EnforcementEngine and the documented override behaviour in the
+    // PR / docs.
+    const willSignSomething =
+      signedDecisions !== undefined
+        ? signedDecisions.length > 0
+        : !!cfg.ENABLE_CRYPTOGRAPHIC_AUDIT;
+
     if (
-      cfg.ENABLE_CRYPTOGRAPHIC_AUDIT &&
+      willSignSomething &&
       !cfg.EVIDENCE_SIGNING_KEY_PEM &&
       !cfg.EVIDENCE_SIGNING_KEY_FILE
     ) {
@@ -612,7 +650,7 @@ export const GatewayConfigSchema = z
         code: z.ZodIssueCode.custom,
         path: ['EVIDENCE_SIGNING_KEY_PEM'],
         message:
-          'When ENABLE_CRYPTOGRAPHIC_AUDIT=true, either EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE must be set.',
+          'When evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS non-empty), either EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE must be set.',
       });
     }
   });

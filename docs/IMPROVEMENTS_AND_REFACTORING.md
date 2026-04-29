@@ -80,8 +80,8 @@ ladder; effort is `S` (≤ 1 sprint), `M` (1–2 sprints), `L` (>2 sprints).
 | I-4   | Medium   |   S    | **HTTP-method → action mapping is a fixed table** in `tool-gateway/src/index.ts` ll. 292–298. Any backend that uses `POST` for read-style RPC (very common for GraphQL, search, and SDKs that disable GETs with a body) is over-authorized as `write`. |
 | I-5   | Medium   |   S    | **Action coercion in `actionToCaTier` uses substring matching** (`a.includes('write')`, `a.includes('delete')`). A custom verb like `acknowledge` (`includes('know')` no, but `forward_delete_request` would tier as `delete`) can land in the wrong CA tier. Replace with a registered, declarative mapping per verb. |
 | I-6   | Medium   |   M    | **No JWKS-style key rotation contract for the local issuer.** `/api/v1/public-key` returns a single SPKI; rotating it requires every gateway to restart or reload at the same time. JWKS with `kid` selection plus a small TTL would let issuer and gateway rotate independently. |
-| I-7   | Medium   |   S    | **Argument validator runs only when `argumentSchema` is present** (`enforcement.ts`); there is no opt-in "schema required" mode at the gateway, so a missing schema silently relaxes input validation. |
-| I-8   | Low      |   S    | **`enableCryptographicAudit` is a single boolean** at the gateway. The asymmetric case (sign critical events but not all events) is impossible to express today. |
+| I-7   | Medium   |   S    | **Argument validator runs only when `argumentSchema` is present** (`enforcement.ts`); there is no opt-in "schema required" mode at the gateway, so a missing schema silently relaxes input validation. ✅ Resolved — set `ARGUMENT_SCHEMA_REQUIRED=true` to deny matched capabilities that lack an `argumentSchema`. |
+| I-8   | Low      |   S    | **`enableCryptographicAudit` is a single boolean** at the gateway. The asymmetric case (sign critical events but not all events) is impossible to express today. ✅ Resolved — `EVIDENCE_SIGNED_DECISIONS` is a CSV of `allow,deny` that overrides the legacy boolean (e.g. `EVIDENCE_SIGNED_DECISIONS=deny` signs refusals only). |
 
 ### 3.2 Modularity & maintainability
 

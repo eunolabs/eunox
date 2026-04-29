@@ -73,6 +73,9 @@ function gatewayConfigToServiceConfig(cfg: GatewayConfig): ServiceConfig {
     port: cfg.PORT,
     environment: cfg.NODE_ENV,
     enableCryptographicAudit: cfg.ENABLE_CRYPTOGRAPHIC_AUDIT,
+    signedAuditDecisions: cfg.EVIDENCE_SIGNED_DECISIONS as
+      | Array<'allow' | 'deny'>
+      | undefined,
     policyVersion: cfg.POLICY_VERSION || '1.0.0',
   };
 }
@@ -221,27 +224,52 @@ export async function initializeServices(
   // Build the cryptographic evidence signer when audit signing is enabled.
   // Missing-signer is treated as a startup error so misconfiguration cannot
   // survive into a running process.
+  //
+  // I-8: when EVIDENCE_SIGNED_DECISIONS is defined it is authoritative
+  // (an explicitly-empty list disables signing even if the legacy
+  // boolean is true); only fall back to ENABLE_CRYPTOGRAPHIC_AUDIT when
+  // the env var is unset. This must match the schema-level rule and the
+  // EnforcementEngine constructor so all three layers agree.
+  const signedDecisions = validated.EVIDENCE_SIGNED_DECISIONS as
+    | Array<'allow' | 'deny'>
+    | undefined;
+  const willSignSomething =
+    signedDecisions !== undefined
+      ? signedDecisions.length > 0
+      : !!config.enableCryptographicAudit;
+
   let evidenceSigner: EvidenceSigner | undefined;
-  if (config.enableCryptographicAudit) {
+  if (willSignSomething) {
     try {
       evidenceSigner = createSoftwareEvidenceSignerFromEnv(env);
     } catch (err) {
       throw new Error(
-        'ENABLE_CRYPTOGRAPHIC_AUDIT=true but the configured evidence signer ' +
-          'could not be initialised: ' +
+        'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
+          'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
+          'non-empty) but the configured evidence signer could not be ' +
+          'initialised: ' +
           (err instanceof Error ? err.message : String(err)),
       );
     }
     if (!evidenceSigner) {
       throw new Error(
-        'ENABLE_CRYPTOGRAPHIC_AUDIT=true but no evidence signer is configured. ' +
-          'Provide EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
-          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / EVIDENCE_SIGNING_KEY_ID, ' +
-          'or wire a KMS-backed EvidenceSigner programmatically. Refusing to start ' +
-          'with cryptographic audit enabled but no signer attached.',
+        'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
+          'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
+          'non-empty) but no evidence signer is configured. Provide ' +
+          'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
+          'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
+          'programmatically. Refusing to start with cryptographic audit ' +
+          'enabled but no signer attached.',
       );
     }
-    logger.info('Cryptographic audit enabled with software evidence signer');
+    if (signedDecisions !== undefined) {
+      logger.info('Cryptographic audit enabled with per-decision signing', {
+        signedDecisions,
+      });
+    } else {
+      logger.info('Cryptographic audit enabled with software evidence signer');
+    }
   }
 
   const enforcementEngine = new EnforcementEngine({
@@ -250,6 +278,8 @@ export async function initializeServices(
     killSwitchManager,
     evidenceSigner,
     enableCryptographicAudit: config.enableCryptographicAudit,
+    signedDecisions,
+    argumentSchemaRequired: validated.ARGUMENT_SCHEMA_REQUIRED,
     policyVersion: config.policyVersion,
     callCounterStore,
   });
