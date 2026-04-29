@@ -193,6 +193,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     const token = await mintPartnerJWT(partner.privateKey, PARTNER_DID);
     // Flip a byte in the signature segment.
     const parts = token.split('.');
+    expect(parts).toHaveLength(3);
     const sig = Buffer.from(parts[2]!, 'base64url');
     sig[0] = sig[0]! ^ 0xff;
     parts[2] = sig.toString('base64url');

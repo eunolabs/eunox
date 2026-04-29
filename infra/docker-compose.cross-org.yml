@@ -43,8 +43,10 @@ services:
       PARTNER_AUDIENCE: "tool-gateway"
       PARTNER_TOKEN_TTL: "900"
       # 32-byte hex seed.  Replace in your own harness — leaking this seed
-      # would let anyone forge tokens from this DID.
-      PARTNER_SEED: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      # would let anyone forge tokens from this DID.  Generate a fresh value
+      # with `openssl rand -hex 32` and override via a `.env` file or shell
+      # export rather than checking the value into source control.
+      PARTNER_SEED: "${PARTNER_SEED:-7b9f2c41a8d6e35710f4c8b29ad57e63bc0a4e8f1d2935a76c4810b5f2e9ad3c}"
       # The partner trusts our issuer's DID for its outbound /validate call.
       PARTNER_TRUSTED_ISSUER_DIDS: "did:web:our-issuer%3A3000"
       # Allow our gateway to be resolved over HTTP from inside the partner

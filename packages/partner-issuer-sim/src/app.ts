@@ -75,6 +75,36 @@ interface ValidateRequestBody {
 }
 
 /**
+ * Tiny in-memory token-bucket per client IP.  The partner sim is a test
+ * harness, but its `/validate` endpoint performs cryptographic work
+ * (DID resolution + JWT signature verification) and would otherwise be
+ * an obvious DoS amplifier.  60 requests / minute / IP is generous for
+ * the integration tests and harsh enough to stop a runaway loop.
+ *
+ * Implemented in-process (no Redis dep) on purpose — this is a single-
+ * replica test container, not a production component.
+ */
+function createInMemoryRateLimiter(maxPerMinute: number) {
+  const buckets = new Map<string, { count: number; windowStart: number }>();
+  const windowMs = 60_000;
+  return (req: Request, res: Response, next: NextFunction) => {
+    const ip = (req.ip || req.socket.remoteAddress || 'unknown').toString();
+    const now = Date.now();
+    let bucket = buckets.get(ip);
+    if (!bucket || now - bucket.windowStart >= windowMs) {
+      bucket = { count: 0, windowStart: now };
+      buckets.set(ip, bucket);
+    }
+    bucket.count += 1;
+    if (bucket.count > maxPerMinute) {
+      res.status(429).json({ error: 'rate limit exceeded' });
+      return;
+    }
+    next();
+  };
+}
+
+/**
  * Build the partner-issuer-sim Express app. Returned as a stand-alone
  * `express.Application` so integration tests can mount it on an ephemeral
  * port without a network round-trip.
@@ -84,6 +114,7 @@ export function createPartnerApp(config: PartnerAppConfig): express.Express {
   app.use(express.json({ limit: '64kb' }));
 
   const privateKeyPromise = jose.importPKCS8(config.key.privateKeyPem, 'EdDSA');
+  const validateRateLimiter = createInMemoryRateLimiter(60);
 
   // --- Health -------------------------------------------------------------
 
@@ -161,7 +192,7 @@ export function createPartnerApp(config: PartnerAppConfig): express.Express {
 
   // --- Validate (outbound trust check) -----------------------------------
 
-  app.post('/validate', async (req: Request, res: Response, next: NextFunction) => {
+  app.post('/validate', validateRateLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const body = (req.body || {}) as ValidateRequestBody;
       if (!body.token || typeof body.token !== 'string') {
@@ -217,8 +248,10 @@ export function createPartnerApp(config: PartnerAppConfig): express.Express {
         });
       }
 
+      const requestedAction = body.action!;
+      const requestedResource = body.resource!;
       const cap = (payload.capabilities || []).find(
-        (c) => matchesResource(body.resource!, c.resource) && c.actions.includes(body.action as never)
+        (c) => matchesResource(requestedResource, c.resource) && c.actions.some((a) => a === requestedAction)
       );
       if (!cap) {
         return res.status(403).json({ allowed: false, reason: 'no capability matches the requested action/resource' });

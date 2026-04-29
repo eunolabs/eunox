@@ -128,7 +128,15 @@ export function loadOrCreateKey(opts: { seed?: string; keyDir?: string }): Partn
   if (keyDir) {
     fs.mkdirSync(keyDir, { recursive: true });
     const keyPath = path.join(keyDir, KEY_FILE_NAME);
-    fs.writeFileSync(keyPath, JSON.stringify(material, null, 2), { mode: 0o600 });
+    // Open with the restrictive mode atomically (O_CREAT | O_WRONLY | O_TRUNC)
+    // so the file is never world-readable, even briefly, between create and
+    // chmod.
+    const fd = fs.openSync(keyPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC, 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(material, null, 2));
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 
   return material;

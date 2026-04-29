@@ -33,8 +33,10 @@ metadata:
 type: Opaque
 stringData:
   # 32-byte hex seed.  Replace before deployment — committing the example
-  # value would let anyone impersonate this DID.
-  PARTNER_SEED: "REPLACE_ME_WITH_32_BYTE_HEX_SEED"
+  # value would let anyone impersonate this DID.  The placeholder below is
+  # intentionally not valid hex so the partner sim will fail fast at start-up
+  # if it is ever applied unmodified.
+  PARTNER_SEED: "REPLACE_THIS_WITH_OUTPUT_OF_openssl_rand_hex_32"
 
 ---
 apiVersion: v1

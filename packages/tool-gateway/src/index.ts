@@ -95,8 +95,15 @@ async function initializeServices() {
     // See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
     const partnerResolver = createPartnerIssuerResolverFromEnv(process.env);
     if (partnerResolver) {
+      // Log only the count of configured partner DIDs; the DID strings
+      // themselves are technically public but not worth emitting on every
+      // boot to logs that may be aggregated.
+      const partnerDidCount = (process.env.TRUSTED_PARTNER_DIDS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean).length;
       logger.info('Cross-org partner-issuer trust resolver enabled', {
-        trustedPartnerDids: (process.env.TRUSTED_PARTNER_DIDS || '').split(',').map(s => s.trim()).filter(Boolean),
+        partnerDidCount,
       });
     }
 
