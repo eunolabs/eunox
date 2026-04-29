@@ -35,6 +35,8 @@ They are the foundation everything else builds on.
 
 | Doc | What it is | Status |
 | --- | ---------- | ------ |
+| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | Consolidated architecture reference for the code in `packages/`: C4 context/container/component views, sequence diagrams (issuance, enforcement, attenuation, renewal, kill switch, posture), dataflow diagrams (control vs. data plane, cross-org), deployment view, and cross-cutting concerns. Authoritative for the implementation; see `diagrams.md` for the abstract/pattern view. | ✅ |
+| [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md) | Evaluation of the architecture & design (scoring, strengths, prioritised issue list), refactoring proposals (R-1 … R-9), feature-shaped improvements (F-1 … F-10), and a four-wave execution plan with dependency graph and risk register. Companion to `NEXT_STEPS_BACKLOG.md` (which is feature-only). | ✅ |
 | [`capability-model.md`](./capability-model.md) | Gap analysis of the capability model and the recommendations that closed those gaps. Includes an in-place implementation note pointing at the code that delivers each recommendation. | ✅ |
 | [`enforcement.md`](./enforcement.md) | Why the gateway (not individual tools or the framework) is the policy decision point. | ✅ |
 | [`sandboxing.md`](./sandboxing.md) | Reference architecture for the sandbox boundary: threat models, design principles, layered defence. | ✅ |
@@ -87,7 +89,9 @@ Detailed design for specific subsystems.
 ## How to read these docs
 
 1. New to Euno? Read **[`IMPLEMENTATION.md`](./IMPLEMENTATION.md)** for
-   the system overview, then **[`capability-model.md`](./capability-model.md)**
+   the system overview, then **[`ARCHITECTURE.md`](./ARCHITECTURE.md)**
+   for the implementation-level architecture (diagrams, dataflows,
+   sequence diagrams), then **[`capability-model.md`](./capability-model.md)**
    for the security model.
 2. Adopting Euno from an agent framework? Read
    **[`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md)** and
@@ -100,6 +104,10 @@ Detailed design for specific subsystems.
 5. Evaluating the project's roadmap or sprint deltas? Read
    **[`execution-plan.md`](./execution-plan.md)** and the matching
    `SPRINT_*_SUMMARY.md` files.
+6. Planning the next quarter of engineering work (refactors + hardening,
+   not just new features)? Read
+   **[`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md)**
+   alongside **[`NEXT_STEPS_BACKLOG.md`](./NEXT_STEPS_BACKLOG.md)**.
 
 ## Maintenance
 
