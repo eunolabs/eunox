@@ -1,0 +1,29 @@
+{
+  "name": "@euno/posture-emitter",
+  "version": "1.0.0",
+  "description": "AI Posture Management inventory feed (Defender CSPM / Security Hub / SCC) for Euno agent governance",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@euno/common": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "@azure/arm-security": "^6.0.0",
+    "@azure/identity": "^4.0.0",
+    "@aws-sdk/client-securityhub": "^3.515.0",
+    "@google-cloud/security-center": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/jest": "^29.5.11",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3"
+  }
+}

@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@euno/common": "^1.0.0",
+    "@euno/posture-emitter": "^1.0.0",
     "@azure/identity": "^4.0.0",
     "@azure/keyvault-keys": "^4.8.0",
     "@aws-sdk/client-kms": "^3.515.0",
