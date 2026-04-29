@@ -55,9 +55,10 @@
 /packages/integration-tests/            @edgeobs/euno-dp @edgeobs/euno-dx
 
 # ---------------------------------------------------------------------------
-# Documentation — any code-owner from any team may approve doc-only
-# changes. Substantive changes to architecture or security docs should
-# loop in the pilot leads.
+# Documentation — owned by the pilot leads. Doc-only changes still
+# require lead approval; substantive changes to architecture or
+# security docs should additionally loop in the relevant team's
+# subject-matter reviewers on a per-PR basis.
 # ---------------------------------------------------------------------------
 /docs/                                  @edgeobs/euno-leads
 /docs/IMPLEMENTATION.md                 @edgeobs/euno-leads

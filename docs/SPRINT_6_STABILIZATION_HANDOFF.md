@@ -50,8 +50,8 @@ from [`CODEOWNERS`](../CODEOWNERS).
 | H5  | All   | Zero SEV-1 incidents in last 7 days                                                                           | Incident channel + on-call log                                           |
 | H6  | CP    | Token renewal flow exercised by ≥ 1 long-running session and works end-to-end                                 | Manual curl trace + audit log inspection                                 |
 | H7  | DP    | Kill-switch drill rerun successfully against current production deployment                                    | Repeat the drill in [`INCIDENT_RESPONSE_RUNBOOK.md` § 3](./INCIDENT_RESPONSE_RUNBOOK.md) |
-| H8  | OBS   | Audit evidence chain verifies for a sample from the last 24 h                                                 | `node scripts/verify-evidence.js <sample.json>`                          |
-| H9  | DX    | At least one pilot user has run `euno validate` and `euno plan` on a real manifest                            | Pilot user UAT log                                                       |
+| H8  | OBS   | Audit evidence chain verifies for a sample from the last 24 h                                                 | Manually verify one recent evidence sample using `AuditEvidenceSigner.verifyEvidence` from `packages/common/src/evidence.ts` (the issuer/gateway already use the same primitive); confirm chain-of-custody fields and signature against the public key. |
+| H9  | DX    | At least one pilot user has run `euno validate` and `euno schema-version check` against staging on a real manifest | Pilot user UAT log                                                       |
 
 When all nine pass, post the hypercare-exit announcement in the
 incident channel and switch to the steady-state on-call rotation in
@@ -92,7 +92,7 @@ Sprint 6 turns that backlog into shipped fixes following this loop:
 |--------------------------------------------|-------------------------------------------------------------|--------------------------------------------------------------------------------|
 | Legitimate denial classified as malicious  | Manifest scoped too narrowly                                | Update manifest using patterns in [`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md); re-issue tokens. |
 | Sentinel rule firing > once per hour       | Threshold too low for the workload                          | Raise threshold in `infra/sentinel/analytic-rules.json` per [§ 4](#4-finalized-alert-thresholds). |
-| Token expired mid-action                   | TTL too short for long-running tool                         | Either shorten the action or increase `tokenTTL` in the issuer manifest (max 60 min in pilot). |
+| Token expired mid-action                   | TTL too short for long-running tool                         | Either shorten the action or raise the issuer's `DEFAULT_TOKEN_TTL` env var (max 60 min in pilot); long-running sessions should call `POST /api/v1/renew` instead of holding a single long-lived token. |
 | Wildcard match too broad                   | `api://service/*` matched a sibling service                 | Tighten resource pattern; use scheme-equality + segment-aware rules already in `matchesResource`. |
 | Audit log volume spikes                    | Verbose tool returning per-row events                       | Add resource-side pagination; do not turn off audit logs.                       |
 
@@ -152,7 +152,7 @@ review automatically on every PR.
 | `packages/cli/**`                 | DX   |
 | `packages/common/**`              | CP + DP (any code-owner from either may approve) |
 | `infra/**`, `k8s/**`              | OBS  |
-| `docs/**`                         | All teams (any code-owner may approve)           |
+| `docs/**`                         | Pilot leads (substantive doc changes still go through the leads; per-team subject-matter reviewers are added on a per-PR basis when needed) |
 
 ### On-call rotation
 

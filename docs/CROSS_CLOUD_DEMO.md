@@ -78,11 +78,12 @@ ls infra/aws/api-gateway/
 ### 3.3 Configure the Capability Issuer for AWS KMS
 
 Set the issuer's environment to use the AWS KMS signer
-(`AWSKMSSigner` ships in `packages/capability-issuer`):
+(`AWSKMSSigner` ships in `packages/capability-issuer`). The env-var
+names below match `packages/capability-issuer/src/index.ts`:
 
 ```bash
-SIGNER_TYPE=aws-kms
-AWS_REGION=us-east-1
+SIGNING_PROVIDER=aws-kms
+AWS_KMS_REGION=us-east-1
 AWS_KMS_KEY_ID=<from terraform output kms_key_id>
 ISSUER_DID=did:web:agents-aws.example.com
 ```
@@ -203,10 +204,17 @@ ls infra/gcp/api-gateway/
 
 ### 4.3 Configure the Capability Issuer for Cloud KMS
 
+Env-var names below match `packages/capability-issuer/src/index.ts`:
+
 ```bash
-SIGNER_TYPE=gcp-cloud-kms
+SIGNING_PROVIDER=gcp-cloudkms
 GCP_PROJECT_ID=<from terraform output project_id>
-GCP_KMS_KEY_RESOURCE=<from terraform output kms_key_resource>
+GCP_LOCATION_ID=<from terraform output kms_location>      # e.g. us-central1
+GCP_KEYRING_ID=<from terraform output kms_keyring_id>
+GCP_CRYPTOKEY_ID=<from terraform output kms_crypto_key_id>
+# Optional:
+# GCP_CRYPTOKEY_VERSION=<crypto key version>
+# GCP_KEY_FILE_PATH=<path to service account json — omit to use ADC / Workload Identity>
 ISSUER_DID=did:web:agents-gcp.example.com
 ```
 

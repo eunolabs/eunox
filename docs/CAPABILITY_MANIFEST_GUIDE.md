@@ -15,22 +15,30 @@ mechanically.
 
 ## 1. Required structure
 
-Every manifest must include the following top-level fields. Anything
-missing is rejected by `euno validate`.
+Every manifest must match the `AgentCapabilityManifest` interface in
+`packages/common/src/types.ts`. The required top-level fields are
+`agentId`, `name`, `version`, and `requiredCapabilities`. The
+optional fields are `optionalCapabilities` and `metadata`. Anything
+missing or shaped differently is rejected by `euno validate`.
 
 ```yaml
-schemaVersion: "1.1"            # see docs/SCHEMA_VERSIONING.md
-agentId: "sales-research-bot"   # stable, kebab-case, globally unique
-name: "Sales Research Bot"      # human-readable
-description: "Synthesizes account-research briefings."
-owner:
-  team: "RevOps"
-  contact: "revops-oncall@example.com"
-issuer:
-  did: "did:web:agents.example.com"
-ttlSeconds: 900                 # 15 min default; max 3600 in pilot
-capabilities: []                # see § 2
+agentId: "sales-research-bot"          # stable, kebab-case, globally unique
+name: "Sales Research Bot"             # human-readable
+version: "1.0.0"                       # agent version (semver)
+requiredCapabilities: []               # see § 2 — every entry is a CapabilityConstraint
+optionalCapabilities: []               # optional; same shape as requiredCapabilities
+metadata:
+  description: "Synthesizes account-research briefings."
+  owner: "revops-oncall@example.com"   # free-form; surfaced into the posture inventory
+  tags: ["revops", "research"]
+  runtime: "node:20"                   # optional descriptor for AI posture inventory
 ```
+
+Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
+are **not** part of the manifest. They are configured on the
+**Capability Issuer** (`DEFAULT_TOKEN_TTL`, `ISSUER_DID`) and stamped
+onto the JWT at issuance time — see [`SCHEMA_VERSIONING.md`](./SCHEMA_VERSIONING.md)
+and the issuer environment template in `packages/capability-issuer/`.
 
 ## 2. The capability list — the four golden patterns
 
@@ -43,7 +51,7 @@ unless none of these fits.
 > *"This agent looks things up and reports. It never writes anywhere."*
 
 ```yaml
-capabilities:
+requiredCapabilities:
   - resource: "api://crm/customers/*"
     actions: ["read"]
   - resource: "api://reports/*"
@@ -62,7 +70,7 @@ capabilities:
 > *"This agent reads broadly but only writes back to one specific path."*
 
 ```yaml
-capabilities:
+requiredCapabilities:
   - resource: "api://crm/customers/*"
     actions: ["read"]
   - resource: "api://crm/customers/*/notes"
@@ -82,20 +90,24 @@ capabilities:
 > *"This agent calls a single internal tool a lot, with arguments."*
 
 ```yaml
-capabilities:
+requiredCapabilities:
   - resource: "api://forecasting/predict"
     actions: ["execute"]
     conditions:
-      maxRequestsPerMinute: 30
-      maxBodyBytes: 32768
+      - type: maxCalls            # MaxCallsCondition
+        count: 30
+        windowSeconds: 60
+      - type: allowedOperations   # AllowedOperationsCondition (narrows the verb)
+        operations: ["predict"]
 ```
 
 - Use `execute` for RPC-style endpoints.
-- Apply rate / payload conditions instead of relying on TTL.
-- The condition is enforced by the gateway via the typed
-  `CapabilityCondition` discriminated union in
-  `packages/common/src/capability-validators.ts` — no new validator
-  code needed.
+- Apply typed conditions instead of relying on TTL alone.
+- Each entry is one of the typed shapes in
+  `packages/common/src/types.ts` (`CapabilityCondition` discriminated
+  union); the gateway enforces them through the
+  `ConditionRegistry` — no new validator code is needed if the type
+  already exists.
 
 ### Pattern D — Delegated / attenuated child
 
@@ -103,11 +115,13 @@ capabilities:
 > smaller capability set."*
 
 ```yaml
-# Issued via POST /api/v1/attenuate using the parent token
-capabilities:
+# Body of POST /api/v1/attenuate using the parent token (the
+# request payload uses the same CapabilityConstraint shape, just
+# called requestedCapabilities at the wire layer).
+requestedCapabilities:
   - resource: "api://crm/customers/12345"   # exact ID, not wildcard
     actions: ["read"]
-ttlSeconds: 120                              # short — task is small
+ttl: 120                                     # seconds; must be ≤ parent TTL
 ```
 
 - Resource must be a **strict subset** of a parent capability (the
@@ -140,45 +154,76 @@ Rules:
 
 ## 4. Conditions cookbook
 
-Conditions live next to a capability and are typed (see
-`packages/common/src/capability-validators.ts`). Common shapes:
+`conditions` is an array of typed shapes from the
+`CapabilityCondition` discriminated union in
+`packages/common/src/types.ts`. Every entry has a `type` discriminator
+and is enforced by the shared `ConditionRegistry`. Unknown types are
+denied at both issuance and at the gateway, so spelling matters.
 
 ```yaml
 - resource: "api://billing/invoices/*"
   actions: ["read"]
   conditions:
-    maxRequestsPerMinute: 60          # rate limit at the gateway
-    allowedMethods: ["GET"]           # ignored for non-HTTP, harmless
+    - type: maxCalls                     # rate-limit
+      count: 60
+      windowSeconds: 60
+    - type: timeWindow                   # restrict to a window
+      notBefore: "2026-04-01T00:00:00Z"
+      notAfter:  "2026-12-31T23:59:59Z"
+    - type: ipRange                      # source-IP allowlist
+      cidrs: ["10.0.0.0/8"]
 
 - resource: "storage://exports/team-a/*"
   actions: ["write"]
   conditions:
-    maxBodyBytes: 5242880             # 5 MiB cap
-    allowedContentTypes: ["text/csv", "application/json"]
+    - type: allowedExtensions            # restrict file types
+      extensions: [".csv", ".json"]
 
 - resource: "db://warehouse/sales"
   actions: ["read"]
   conditions:
-    allowedColumns: ["customer_id", "amount", "ts"]
-    deniedColumns: ["ssn", "dob"]
+    - type: allowedTables                # restrict tables (and optionally columns)
+      tables: ["sales"]
+      columns:
+        sales: ["customer_id", "amount", "ts"]
+    - type: redactFields                 # gateway records the redaction obligation
+      fields: ["sales.customer_email"]
+
+- resource: "smtp://outbound/*"
+  actions: ["execute"]
+  conditions:
+    - type: recipientDomain              # outbound email allowlist
+      domains: ["example.com"]
 ```
 
-> If a condition you need is not in the registry, **add it to
-> `packages/common/src/condition-registry.ts` first**, ship a typed
-> validator with tests, and only then reference it from a manifest.
-> Free-form conditions are silently ignored at the gateway, which is
-> a policy regression.
+The full list of shipped condition types is `timeWindow`, `ipRange`,
+`allowedOperations`, `allowedExtensions`, `allowedTables`, `maxCalls`,
+`recipientDomain`, `redactFields`, and the `custom` escape hatch
+(which requires the named handler to be registered in the
+`ConditionRegistry`).
+
+> If a condition you need is not in the union, **add a new typed
+> shape to `packages/common/src/types.ts` first**, register its
+> handler in `packages/common/src/condition-registry.ts`, and ship a
+> validator with tests under `packages/common/src/capability-validators.ts`.
+> Free-form conditions are denied at the gateway, which is the correct
+> behaviour but a policy regression for the manifest author.
 
 ## 5. TTL guidance
 
-| Scenario                                              | Recommended `ttlSeconds` |
-|-------------------------------------------------------|--------------------------|
+Token TTL is set on the **issuer** (via `DEFAULT_TOKEN_TTL` env var on
+the Capability Issuer), not in the manifest. For attenuated child
+tokens the caller passes `ttl` in the `/api/v1/attenuate` request
+body and the issuer caps it at the parent's remaining TTL.
+
+| Scenario                                              | Recommended TTL (seconds) |
+|-------------------------------------------------------|---------------------------|
 | Interactive chat / tool call                          | 900 (15 min — the default) |
 | Long-running batch (ETL, embedding job)               | 1800–3600 (use `/renew` if you need more) |
-| Delegated child for one sub-task                      | 60–300                   |
+| Delegated child for one sub-task                      | 60–300                    |
 | Anything that touches money or PII                    | 300 with mandatory `/renew` per action |
 
-Never set TTL to 0 or > 3600 in the pilot; the issuer will reject it.
+Keep the issuer's `DEFAULT_TOKEN_TTL` ≤ 3600 in the pilot.
 
 ## 6. Anti-patterns we caught during the pilot
 
@@ -205,19 +250,21 @@ the security posture and triggered tuning churn during hypercare.
 
 ## 7. Tooling
 
-| Step                                | CLI command                           |
-|-------------------------------------|---------------------------------------|
-| Scaffold a new manifest              | `euno init --agent <name> --output ./manifest.yaml` |
-| Add a framework scaffold to it       | `euno init --framework langchain` (or `maf` / `crewai`) |
-| Add a cloud-deployment scaffold      | `euno init --cloud aws` (or `azure` / `gcp`) |
-| Validate the file                    | `euno validate ./manifest.yaml`       |
-| Show what the issuer would mint      | `euno plan --manifest ./manifest.yaml` |
-| Lint a token's actual claims         | `euno validate-token <jwt>`           |
-| Show schema version compatibility    | `euno schema-version`                 |
-| Run all manifest checks before PR    | `euno check ./manifest.yaml`          |
+| Step                                                  | CLI command                                              |
+|-------------------------------------------------------|----------------------------------------------------------|
+| Scaffold a new manifest                                | `euno init --agent <name> --output ./manifest.yaml`      |
+| Add a framework scaffold to it                         | `euno init --framework langchain` (or `maf` / `crewai`)  |
+| Add a cloud-deployment scaffold                        | `euno init --cloud aws` (or `azure` / `gcp`)             |
+| Validate the file                                      | `euno validate ./manifest.yaml`                          |
+| Show the current and supported schema versions on an issuer | `euno schema-version check --issuer <url>`          |
+| Plan a schema-version migration                        | `euno schema-version plan <from> <to>`                   |
+| Inspect a token's `schemaVersion` claim                | `euno schema-version validate-token <jwt>`               |
+| Show CLI configuration / env                           | `euno config`                                            |
+| Request a token (documentation helper)                 | `euno request --agent <id> --token $AAD_ACCESS_TOKEN`    |
 
-`euno check` is the one to wire into your CI — it runs `validate`,
-`plan`, and a dry-run against your staging issuer.
+Wire `euno validate` into your CI for every manifest PR; combine with
+`euno schema-version check` against your staging issuer if you want to
+fail builds on schema-version drift before they reach production.
 
 ## 8. Where this guide lives in the rest of the docs
 
