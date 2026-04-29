@@ -480,9 +480,22 @@ export const GatewayConfigSchema = z
     }),
 
     // Issuer + backend wiring -----------------------------------------------
-    ISSUER_PUBLIC_KEY_URL: optionalString.describe(
-      'URL the gateway calls to fetch the issuer public key. Defaults to http://localhost:3001/api/v1/public-key.',
+    ISSUER_JWKS_URL: optionalString.describe(
+      'URL of the issuer JWKS endpoint. Defaults to http://localhost:3001/.well-known/jwks.json. Use this instead of ISSUER_PUBLIC_KEY_URL for R-6 JWKS key rotation.',
     ),
+    ISSUER_PUBLIC_KEY_URL: optionalString.describe(
+      '[Deprecated — use ISSUER_JWKS_URL] URL the gateway calls to fetch the issuer SPKI public key. Kept for one deprecation cycle; will be removed in a future release.',
+    ),
+    EUNO_JWKS_CACHE_TTL_SECONDS: envPositiveInt({
+      default: 300,
+      description:
+        'JWKS cache TTL in seconds. The gateway re-fetches /.well-known/jwks.json after this interval. Default 300 (5 min). Reduce for faster key-rotation propagation.',
+    }),
+    EUNO_REQUIRE_KID: envBoolean({
+      default: true,
+      description:
+        'Require a kid (key ID) in the JWT protected header. Default true (strict). Set to false only during the deprecation window when old tokens without kid are still in flight.',
+    }),
     BACKEND_SERVICE_URL: optionalString.describe(
       'URL of the backend service the gateway proxies authorised requests to. Defaults to http://localhost:4000.',
     ),

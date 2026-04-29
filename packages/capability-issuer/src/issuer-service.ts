@@ -21,6 +21,7 @@ import {
   IdentityProvider,
   IssueCapabilityRequest,
   IssueCapabilityResponse,
+  JwkSet,
   Logger,
   PostureEmitterLike,
   RoleCapabilityPolicy,
@@ -35,6 +36,7 @@ import {
   mapRolesToCapabilitiesForPolicy,
   matchesResource,
 } from '@euno/common';
+import * as crypto from 'crypto';
 import { DbTokenService } from './db-token';
 import { StorageGrantService } from './storage-grant';
 import {
@@ -61,6 +63,39 @@ import {
 // "Promote `PostureEmitterLike` into `@euno/common`" item) but
 // older callers and tests import it from this file.
 export type { PostureEmitterLike } from '@euno/common';
+
+/**
+ * Infer a JWS algorithm from exported JWK key material when the signer
+ * does not expose `getAlgorithm()`.
+ *
+ * Returns `undefined` when the algorithm cannot be determined with confidence
+ * (e.g. RSA keys, which support several algorithm families) so that callers
+ * can omit `alg` rather than advertising an incorrect value.
+ */
+function inferAlgFromJwk(jwkData: Record<string, unknown>): string | undefined {
+  const kty = String(jwkData['kty'] ?? '');
+  const crv = typeof jwkData['crv'] === 'string' ? jwkData['crv'] : undefined;
+
+  switch (kty) {
+    case 'EC':
+      // Elliptic-curve: algorithm is unambiguous from the curve name.
+      switch (crv) {
+        case 'P-256': return 'ES256';
+        case 'P-384': return 'ES384';
+        case 'P-521': return 'ES512';
+        default: return undefined;
+      }
+    case 'OKP':
+      // Octet-key-pair (Ed25519 / Ed448) always uses EdDSA.
+      return 'EdDSA';
+    case 'RSA':
+      // RSA is used with multiple algorithm families (RS256/384/512,
+      // PS256/384/512) — the key material alone is insufficient to choose.
+      return undefined;
+    default:
+      return undefined;
+  }
+}
 
 export interface CapabilityIssuerServiceOptions {
   /**
@@ -787,6 +822,66 @@ export class CapabilityIssuerService {
    */
   async getPublicKey(): Promise<string> {
     return this.signer.getPublicKey();
+  }
+
+  /**
+   * Get the JWKS (JSON Web Key Set) for this issuer.
+   *
+   * Derives the JWK from the active signer's public key (SPKI).  The
+   * `kid` field in the returned JWK matches the `kid` placed in every
+   * JWT protected header by this signer — callers can therefore use it
+   * to verify tokens by key ID without a synchronized restart.
+   *
+   * **Single-key limitation**: this method publishes only the *active*
+   * signer's key.  It does **not** publish old and new keys simultaneously.
+   * During a signer rotation, tokens minted by the previous signer will be
+   * rejected by gateways once they refresh their JWKS cache.  To achieve
+   * zero-downtime rotation, wait for outstanding tokens signed with the
+   * old key to expire before switching the signer (see the production
+   * deployment checklist).  Future work: inject a "previous-key" buffer so
+   * overlapping keys can be published during the rotation window.
+   */
+  async getJwks(): Promise<JwkSet> {
+    const spki = await this.signer.getPublicKey();
+    const kid = await this.signer.getKeyId();
+
+    // Export the SPKI public key as a JWK using Node.js crypto so that we
+    // don't need to pass the algorithm when importing (no chicken-and-egg).
+    let jwkData: Record<string, unknown>;
+    try {
+      const keyObject = crypto.createPublicKey(spki);
+      jwkData = keyObject.export({ format: 'jwk' }) as Record<string, unknown>;
+    } catch {
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        'Failed to export public key as JWK',
+        500,
+      );
+    }
+
+    // Determine algorithm: prefer the signer's own getAlgorithm() when
+    // available (all SigningAdapter subclasses implement it), then try to
+    // infer from the exported JWK key material, and omit `alg` only when
+    // the algorithm genuinely cannot be determined (prevents advertising an
+    // incorrect `alg` which would cause interoperability failures).
+    const signerAlg: string | undefined =
+      typeof this.signer.getAlgorithm === 'function'
+        ? this.signer.getAlgorithm()
+        : inferAlgFromJwk(jwkData);
+
+    const keyEntry: Record<string, unknown> = {
+      kty: String(jwkData['kty'] ?? 'RSA'),
+      ...jwkData,
+      kid,
+      use: 'sig',
+    };
+    if (signerAlg) {
+      keyEntry['alg'] = signerAlg;
+    }
+
+    return {
+      keys: [keyEntry as import('@euno/common').JwkKey],
+    };
   }
 
   /**

@@ -211,6 +211,13 @@ the `.env.template` vs `.env.example` duplication.
 
 ### R-6 — JWKS + `kid` instead of single SPKI  (addresses I-6, I-20)
 
+> **STATUS: IMPLEMENTED** (PR: R-6 JWKS key rotation)
+>
+> **Deprecation notice**: `GET /api/v1/public-key` is deprecated. Migrate to
+> `GET /.well-known/jwks.json`. The legacy endpoint continues to work for one
+> deprecation cycle (it now returns a `Deprecation` response header and emits
+> a `warn` log line on every call). It will be removed in a future release.
+
 Replace `/api/v1/public-key` (single SPKI) with `/.well-known/jwks.json`
 (JWK set with `kid`). Gateway:
 

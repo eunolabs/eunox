@@ -277,6 +277,14 @@ export interface TokenSigner {
    * Get the key ID used for signing
    */
   getKeyId(): Promise<string>;
+
+  /**
+   * Get the signing algorithm (e.g. 'RS256', 'ES256').
+   * Optional: implementations backed by `SigningAdapter` always provide this;
+   * custom implementations may omit it, in which case callers fall back to
+   * inferring the algorithm from the key type.
+   */
+  getAlgorithm?(): string;
 }
 
 /**

@@ -12,3 +12,4 @@ export * from './log-transports';
 export * from './condition-registry';
 export * from './call-counter-store';
 export * from './config';
+export * from './jwks';

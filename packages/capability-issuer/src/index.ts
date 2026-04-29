@@ -502,12 +502,37 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
 });
 
 /**
- * Get public key endpoint
+ * Get JWKS endpoint (R-6)
+ * GET /.well-known/jwks.json
+ *
+ * Returns the issuer's JSON Web Key Set.  The gateway (and any other
+ * consumer) should call this endpoint instead of /api/v1/public-key to
+ * support key rotation without a synchronised restart.
+ */
+app.get('/.well-known/jwks.json', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const jwks = await getIssuerService().getJwks();
+    res.json(jwks);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Get public key endpoint (deprecated — use /.well-known/jwks.json)
  * GET /api/v1/public-key
  */
 app.get('/api/v1/public-key', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const publicKey = await getIssuerService().getPublicKey();
+    // Emit deprecation log and response header so operators know to migrate.
+    logger.warn(
+      'GET /api/v1/public-key is deprecated. ' +
+        'Migrate consumers to GET /.well-known/jwks.json (R-6). ' +
+        'This endpoint will be removed in a future release.',
+    );
+    res.setHeader('Deprecation', 'Wed, 01 Jan 2025 00:00:00 GMT');
+    res.setHeader('Link', '</.well-known/jwks.json>; rel="successor-version"');
     res.json({ publicKey });
   } catch (error) {
     next(error);
@@ -567,7 +592,8 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
     },
     signingAlgorithms: SIGNING_ALGORITHMS,
     endpoints: {
-      publicKey: '/api/v1/public-key',
+      jwks: '/.well-known/jwks.json',
+      publicKey: '/api/v1/public-key (deprecated — use jwks)',
       didDocument: '/.well-known/did.json',
     },
   });

@@ -24,10 +24,47 @@ For deeper background see:
 - [ ] Signing-key permissions follow least privilege:
       - Capability Issuer service principal: `sign` only (no export, no delete)
       - Operators: `rotate` via change-management process
-- [ ] **Key rotation procedure** documented and tested at least once in staging.
+- [ ] **Key rotation procedure** documented and tested at least once in staging
+      (see runbook below).
 - [ ] `ISSUER_DID` set to the production DID (`did:web:<your-domain>`).
 - [ ] `/.well-known/did.json` is publicly served from `<your-domain>` so other
       parties can resolve your DID.
+- [ ] **`ISSUER_JWKS_URL`** set on every gateway instance to the issuer's JWKS
+      endpoint (e.g. `https://issuer.example.com/.well-known/jwks.json`).
+      The gateway pre-warms the JWKS cache on startup; if this URL is
+      unreachable the gateway will refuse to start (fail-closed).
+- [ ] **`EUNO_JWKS_CACHE_TTL_SECONDS`** tuned to balance JWKS refresh
+      frequency and cache stability (default: `300` = 5 min).  Note: the
+      current issuer publishes only the active signing key in JWKS, so TTL
+      controls how quickly gateways stop trusting the previous key after a
+      signer rotation.
+- [ ] **`EUNO_REQUIRE_KID=true`** (default) on all gateways once all tokens
+      include a `kid`.  Leave as `false` only during a rolling-deploy
+      transition window.
+
+#### Key-rotation runbook (current behavior: single active JWKS key)
+
+1. **Plan the rotation window** — the issuer currently publishes only the
+   active signer in `GET /.well-known/jwks.json`; it does **not** publish
+   old and new keys simultaneously.  After gateways refresh their JWKS cache,
+   tokens signed by the previous key will no longer verify.
+2. **Wait for old tokens to drain** — before switching the signer, ensure
+   the maximum lifetime of tokens signed with the current key has elapsed
+   (default token TTL is 15 min), or perform the change during a coordinated
+   maintenance window where temporary authentication failures are acceptable.
+3. **Switch active signer** — change `SIGNING_PROVIDER`/`AZURE_KEYVAULT_KEY_VERSION`
+   (or equivalent KMS pointer) on the issuer so new tokens are signed
+   with the new key.  Confirm `GET /.well-known/jwks.json` now returns the
+   new active key.
+4. **Wait one JWKS cache TTL** (default 5 min) — every gateway replica
+   will have refreshed its cache and now trusts only the new key.
+5. **Verify** — check gateway logs for any `INVALID_TOKEN` errors with
+   `kid=<old-kid>`.  If errors appear after the TTL expires, some clients
+   are still presenting tokens signed by the retired key.
+6. **Note the limitation** — until the issuer supports publishing overlapping
+   keys in JWKS, this procedure cannot guarantee zero-downtime for in-flight
+   tokens.  Future work: add a "previous key" retention window to the issuer
+   so old and new keys are published simultaneously during rotation.
 
 ### 1.2 Tool Gateway – Origin & Transport Security
 

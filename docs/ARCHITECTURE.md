@@ -209,6 +209,14 @@ Notable design choices visible in the code:
 - **Schema version is mandatory** — `CAPABILITY_TOKEN_SCHEMA_VERSION =
   '1.0'`; gateways reject anything not in `SUPPORTED_SCHEMA_VERSIONS`
   (fail-closed evolution).
+- **JWKS endpoint (R-6)** — `GET /.well-known/jwks.json` exposes the
+  active signing key(s) as a standards-compliant JWK Set. Every minted
+  token carries a `kid` in its JWS protected header that matches one of
+  the published keys, enabling **key rotation without a synchronised
+  restart**: add key 2 → wait one cache TTL → switch signing to key 2
+  → wait one TTL → remove key 1. The legacy `GET /api/v1/public-key`
+  endpoint remains operational (returns the active key's SPKI PEM with
+  a `Deprecation` response header) for one deprecation cycle.
 
 ### 4.2 Tool Gateway (`packages/tool-gateway/src/`)
 
@@ -607,6 +615,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | AuthN (services)    | Cloud-managed identity (workload identity / managed identity) | Issuer→KMS, gateway→Redis, etc.                                      |
 | AuthZ (capabilities)| `enforcement.ts` + `condition-registry.ts`                    | Single PDP+PEP at the gateway                                        |
 | Crypto signing      | `signer.ts` adapter; `azure-signer.ts`, `aws-kms-signer.ts`, etc. | KMS never sees the message body — digest only                    |
+| Key rotation (R-6)  | `GET /.well-known/jwks.json` (issuer); `JwksClient` (gateway) | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default). |
 | Audit               | `evidence.ts` + `createAuditLogger` + `EvidenceSigner`        | Fail-closed: cannot enable crypto-audit without a signer             |
 | Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry **not yet wired** (see `IMPROVEMENTS_AND_REFACTORING.md` § R-3) |
 | Rate limiting       | `express-rate-limit` per-IP at issuer and gateway             | Limits are env-configurable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`; defaults are issuer `100/min` and gateway `1000/min`. No per-user / per-token limit yet |

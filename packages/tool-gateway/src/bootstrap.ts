@@ -22,8 +22,8 @@ import {
   loadConfig,
   GatewayConfig,
 } from '@euno/common';
-import axios from 'axios';
-import { JWTTokenVerifier } from './verifier';
+import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
+import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
 import { createRevocationStoreFromEnv, RevocationStore } from './revocation-store';
 import { createPartnerIssuerResolverFromEnv } from './partner-issuer-resolver';
@@ -112,6 +112,24 @@ export function resolveAllowedOrigins(
 }
 
 /**
+ * Derive the JWKS URL from a legacy ISSUER_PUBLIC_KEY_URL.
+ *
+ * The old endpoint is `<base>/api/v1/public-key`; the new one is
+ * `<base>/.well-known/jwks.json`.  If the URL ends with the legacy
+ * suffix, strip it and append the JWKS path.  Otherwise return null
+ * (caller will fall back to the default JWKS URL).
+ */
+function deriveJwksUrl(publicKeyUrl: string | undefined): string | undefined {
+  if (!publicKeyUrl) return undefined;
+  const suffix = '/api/v1/public-key';
+  if (publicKeyUrl.endsWith(suffix)) {
+    return `${publicKeyUrl.slice(0, -suffix.length)}/.well-known/jwks.json`;
+  }
+  // URL doesn't match the expected pattern — can't derive safely.
+  return undefined;
+}
+
+/**
  * Fetch the issuer public key, build verifier + enforcement engine and all
  * supporting stores. Throws on misconfiguration so the gateway fails closed.
  *
@@ -129,19 +147,36 @@ export async function initializeServices(
 
   const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
   const logger = createLogger(config.name, config.environment);
-  const issuerPublicKeyUrl =
-    validated.ISSUER_PUBLIC_KEY_URL || 'http://localhost:3001/api/v1/public-key';
-  const adminApiKey = validated.ADMIN_API_KEY;
 
-  logger.info('Fetching public key from Capability Issuer', { url: issuerPublicKeyUrl });
-  const response = await axios.get(issuerPublicKeyUrl);
-  const publicKey = response?.data?.publicKey;
-  if (typeof publicKey !== 'string' || publicKey.length === 0) {
-    throw new Error(
-      `Invalid public key response from Capability Issuer at ${issuerPublicKeyUrl}: ` +
-        `expected non-empty string at \`publicKey\`, got ${typeof publicKey}`,
+  // Build the JWKS client (R-6).  Prefers ISSUER_JWKS_URL; falls back to
+  // deriving the JWKS URL from the deprecated ISSUER_PUBLIC_KEY_URL base.
+  const jwksCacheTtlMs = (validated.EUNO_JWKS_CACHE_TTL_SECONDS ?? 300) * 1000;
+  const issuerJwksUrl = validated.ISSUER_JWKS_URL
+    ?? deriveJwksUrl(validated.ISSUER_PUBLIC_KEY_URL)
+    ?? 'http://localhost:3001/.well-known/jwks.json';
+
+  if (!validated.ISSUER_JWKS_URL && validated.ISSUER_PUBLIC_KEY_URL) {
+    logger.warn(
+      'ISSUER_PUBLIC_KEY_URL is deprecated for gateway key bootstrap. ' +
+        'Set ISSUER_JWKS_URL to the issuer\'s JWKS endpoint ' +
+        '(e.g. https://issuer.example.com/.well-known/jwks.json) instead.',
+      { derivedJwksUrl: issuerJwksUrl },
     );
   }
+
+  const jwksClient = new JwksClient({
+    jwksUrl: issuerJwksUrl,
+    cacheTtlMs: jwksCacheTtlMs,
+    logger,
+  });
+
+  logger.info('Fetching initial JWKS from Capability Issuer', { url: issuerJwksUrl });
+  // Pre-warm the JWKS cache so the first token verification is synchronous.
+  await jwksClient.getJwks();
+  logger.info('JWKS fetched and cached successfully');
+
+  const adminApiKey = validated.ADMIN_API_KEY;
+  const requireKid = validated.EUNO_REQUIRE_KID !== undefined ? validated.EUNO_REQUIRE_KID : true;
 
   // Build the revocation store from environment.  Defaults to in-memory; if
   // REDIS_URL is set we connect to Redis so revocations are shared across
@@ -176,13 +211,12 @@ export async function initializeServices(
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const verifier = new JWTTokenVerifier(
-    publicKey,
-    undefined,
+  const verifier = new JwksTokenVerifier(jwksClient, {
     revocationStore,
-    partnerResolver,
-    localIssuers.length > 0 ? localIssuers : undefined,
-  );
+    partnerResolver: partnerResolver ?? undefined,
+    localIssuers: localIssuers.length > 0 ? localIssuers : undefined,
+    requireKid,
+  });
 
   // Build the cryptographic evidence signer when audit signing is enabled.
   // Missing-signer is treated as a startup error so misconfiguration cannot
