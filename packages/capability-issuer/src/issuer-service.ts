@@ -1,97 +1,66 @@
 /**
- * Capability Issuer Service
- * Implements the /issue endpoint for capability token issuance
+ * Capability Issuer Service — orchestrator.
+ *
+ * Thin coordinator: it owns the externally injected dependencies
+ * ({@link TokenSigner}, {@link IdentityProvider}, optional credential
+ * pipelines, optional posture emitter) and the issuer configuration,
+ * but delegates all the actual issuance / attenuation / renewal
+ * mechanics to the cohesive modules under `./issuance/`.
+ *
+ * See `docs/IMPROVEMENTS_AND_REFACTORING.md` § R-1.
  */
 
 import {
-  CapabilityTokenPayload,
+  AuditLogEntry,
   CapabilityConstraint,
+  CapabilityError,
+  CapabilityTokenPayload,
+  DEFAULT_ROLE_CAPABILITY_MAP,
+  DbCredential,
+  ErrorCode,
+  IdentityProvider,
   IssueCapabilityRequest,
   IssueCapabilityResponse,
+  Logger,
+  PostureEmitterLike,
+  RoleCapabilityPolicy,
+  StorageGrant,
   TokenSigner,
-  IdentityProvider,
-  CapabilityError,
-  ErrorCode,
+  UserConsent,
+  UserContext,
+  createAuditLogger,
   generateId,
   getCurrentTimestamp,
   getExpirationTimestamp,
-  matchesResource,
-  Logger,
-  createAuditLogger,
-  AuditLogEntry,
-  AgentInventoryRecord,
-  SIGNING_ALGORITHMS,
   mapRolesToCapabilitiesForPolicy,
-  RoleCapabilityPolicy,
-  DEFAULT_ROLE_CAPABILITY_MAP,
-  UserConsent,
-  AgentCapabilityManifest,
-  canonicalSha256,
-  validateConditions,
-  ConditionValidationError,
-  CAPABILITY_TOKEN_SCHEMA_VERSION,
-  StorageGrant,
-  DbCredential,
-  CaActionTier,
-  CaEvaluation,
-  ResolvedRole,
-  UserContext,
+  matchesResource,
 } from '@euno/common';
-
-/**
- * Minimal structural interface the issuer needs from a posture-emitter.
- * The full implementation lives in `@euno/posture-emitter`; this
- * declaration keeps capability-issuer free of a hard dependency on
- * that package and makes the contract explicit at the integration
- * point. See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
- */
-export interface PostureEmitterLike {
-  isEnabled(): boolean;
-  emitObserved(record: AgentInventoryRecord): Promise<void>;
-  emitRevoked?(agentId: string, revokedAt: string): Promise<void>;
-}
-import * as jose from 'jose';
-import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
+import { StorageGrantService } from './storage-grant';
+import {
+  buildAttenuatedPayload,
+  buildIssuancePayload,
+  buildRenewedPayload,
+  computePimCappedExpiry,
+  emitPostureRecord,
+  enforceConditionalAccess,
+  enforcePimRequiredRoles,
+  filterRolesContributingToCapabilities,
+  mapVerifyError,
+  requestedCapabilitiesIncludeSensitive,
+  signPayload,
+  validateAgainstManifest,
+  validateCapabilitySubset,
+  validateConditionsForCapabilities,
+  validateConsent,
+  verifyParentToken,
+} from './issuance';
 
-/** Actions which always require an explicit, validated user consent record. */
-const SENSITIVE_ACTIONS: ReadonlySet<string> = new Set(['write', 'delete', 'admin']);
-
-/**
- * Map a capability action to its Conditional Access tier. Unknown
- * verbs (e.g. resource-specific actions like `db:select`) fall back
- * to the closest legacy category they imply: any verb containing
- * `delete` maps to `delete`, anything containing `admin` to `admin`,
- * anything containing `write`/`put`/`update`/`create` to `write`,
- * everything else to `read`. This keeps CA enforcement meaningful
- * for the resource-specific verbs that {@link Action} now permits
- * without requiring operators to enumerate every possible verb.
- */
-function actionToCaTier(action: string): CaActionTier {
-  const a = action.toLowerCase();
-  if (a === 'delete' || a.includes('delete') || a.includes('drop') || a.includes('remove')) {
-    return 'delete';
-  }
-  if (a === 'admin' || a.includes('admin')) return 'admin';
-  if (
-    a === 'write' ||
-    a.includes('write') ||
-    a.includes('put') ||
-    a.includes('update') ||
-    a.includes('create') ||
-    a.includes('insert') ||
-    a === 'execute' ||
-    a.includes('publish')
-  ) {
-    return 'write';
-  }
-  return 'read';
-}
-
-/** Margin (seconds) subtracted from a PIM `endDateTime` when capping
- *  capability TTL, to account for clock skew between the issuer and
- *  Azure AD. */
-const PIM_TTL_SAFETY_MARGIN_SECONDS = 30;
+// Re-export PostureEmitterLike from this module for backwards
+// compatibility — it now lives in `@euno/common` (per R-1's
+// "Promote `PostureEmitterLike` into `@euno/common`" item) but
+// older callers and tests import it from this file.
+export type { PostureEmitterLike } from '@euno/common';
 
 export interface CapabilityIssuerServiceOptions {
   /**
@@ -178,83 +147,13 @@ export class CapabilityIssuerService {
   private postureEmitter?: PostureEmitterLike;
   private postureRegion: string;
 
-  /** Algorithms permitted for capability token signatures. Sourced from the
-   *  shared {@link SIGNING_ALGORITHMS} tuple so this allow-list cannot drift
-   *  from the {@link SigningAlgorithm} type. */
-  private static readonly ALLOWED_ALGORITHMS = SIGNING_ALGORITHMS;
-
-  /**
-   * W3C Verifiable Credentials Data Model `@context`.  Per
-   * `docs/execution-plan.md` Sprint 4 (Team CP, "Verifiable Credential
-   * Issuance"), capability tokens carry a W3C VC envelope so that
-   * verifiers built around standard VC libraries (e.g. `@digitalbazaar/vc`,
-   * Microsoft Entra Verified ID) can consume them without bespoke code.
-   *
-   * The base context (`https://www.w3.org/2018/credentials/v1`) is
-   * required by the spec; the second URI namespaces our
-   * `CapabilityCredential` type and its `capabilities` /
-   * `parentCapabilityId` fields so they are unambiguous when the token
-   * is presented to a third party.
-   */
-  private static readonly VC_CONTEXT: readonly string[] = [
-    'https://www.w3.org/2018/credentials/v1',
-    'https://schemas.euno.dev/capability-credential/v1',
-  ];
-
-  /** W3C VC `type` array used by every capability token. */
-  private static readonly VC_TYPE: readonly string[] = [
-    'VerifiableCredential',
-    'CapabilityCredential',
-  ];
-
-  /**
-   * Build the W3C Verifiable Credential envelope embedded in a
-   * capability token.  The envelope mirrors the JWT claims so that a
-   * verifier inspecting only the `vc` object (e.g. a `@digitalbazaar/vc`
-   * presentation pipeline) sees the same authoritative subject,
-   * issuer, validity window, and capability constraints as a verifier
-   * inspecting only the JWT claims.  Both views MUST stay in sync —
-   * any change to the JWT claim set on issuance / attenuation /
-   * renewal must be reflected here.
-   *
-   * The `id` field is the JWT id (`jti`) prefixed with `urn:uuid:` so
-   * the resulting credential identifier is a valid URI per the VC
-   * Data Model § 4.2.
-   */
-  private buildVerifiableCredential(
-    payload: Omit<CapabilityTokenPayload, 'vc'>
-  ): NonNullable<CapabilityTokenPayload['vc']> {
-    const credentialSubject: Record<string, unknown> = {
-      id: payload.sub,
-      capabilities: payload.capabilities,
-    };
-    if (payload.parentCapabilityId !== undefined) {
-      credentialSubject.parentCapabilityId = payload.parentCapabilityId;
-    }
-    if (payload.authorizedBy !== undefined) {
-      credentialSubject.authorizedBy = payload.authorizedBy;
-    }
-    return {
-      '@context': [...CapabilityIssuerService.VC_CONTEXT],
-      // W3C VC Data Model § 4.2: `id` MUST be a single URI.  Use the
-      // RFC-4122 `urn:uuid:` namespace so a VC-only verifier sees the
-      // same authoritative credential id as a JWT-only verifier reading
-      // `jti`.  Keeping `jti` itself as a bare UUID preserves
-      // compatibility with verifiers that index revocations by the raw
-      // JWT id.
-      id: `urn:uuid:${payload.jti}`,
-      type: [...CapabilityIssuerService.VC_TYPE],
-      credentialSubject,
-    };
-  }
-
   constructor(
     signer: TokenSigner,
     identityProvider: IdentityProvider,
     issuerDid: string,
     defaultTTL: number = 900, // 15 minutes default
     logger: Logger,
-    options: CapabilityIssuerServiceOptions = {}
+    options: CapabilityIssuerServiceOptions = {},
   ) {
     this.signer = signer;
     this.identityProvider = identityProvider;
@@ -274,119 +173,60 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Issue a capability token
+   * Issue a capability token. Coordinates the issuance pipeline:
+   * authenticate → role-derive → enforce manifest/consent/CA/conditions
+   * → cap TTL to PIM → build payload → sign → mint side-credentials →
+   * audit → emit posture.
    */
   async issueCapability(request: IssueCapabilityRequest): Promise<IssueCapabilityResponse> {
     try {
-      // Step 1: Validate the user's authentication token
+      // Step 1: Validate the user's authentication token.
       this.logger.info('Validating user authentication token', { agentId: request.agentId });
       const userContext = await this.identityProvider.validateToken(request.authToken);
 
-      // Step 1b: Enforce PIM-required roles. If the operator has declared
-      // that a given directory role MUST be PIM-activated (e.g.
-      // "Global Administrator", "Privileged Role Administrator"), and the
-      // user holds that role but it is not in `pim-active` state in
-      // `userContext.roleSources`, deny issuance. This is defense-in-depth
-      // against a misconfigured permanent assignment to a highly
-      // privileged role. See `docs/sprint-3-4-gaps/04-pim-activation.md`.
-      this.enforcePimRequiredRoles(userContext, request.agentId);
+      // Step 1b: Enforce PIM-required roles.
+      enforcePimRequiredRoles(
+        userContext,
+        request.agentId,
+        this.pimRequiredRoles,
+        this.auditLogger,
+      );
 
-      // Step 2: Determine capabilities based on user roles
+      // Step 2: Determine capabilities based on user roles.
       this.logger.info('Determining capabilities based on user roles', {
         userId: userContext.userId,
         roles: userContext.roles,
         agentId: request.agentId,
       });
 
-      let capabilities;
-      // Map roles to capabilities using the externalised policy (with
-      // optional per-tenant overrides). Every built-in identity provider
-      // (Azure AD, AWS Cognito / IAM Identity Center, GCP Cloud Identity /
-      // Identity Platform) populates `userContext.roles` from its native
-      // group/role claim, and `userContext.tenantId` from the tenant claim
-      // (Azure `tid`, Cognito `cognito:groups`-derived tenant, GCP project
-      // ID), so the same policy applies uniformly across clouds while still
-      // honouring per-tenant overrides when configured.
-      capabilities = mapRolesToCapabilitiesForPolicy(
+      let capabilities = mapRolesToCapabilitiesForPolicy(
         userContext.roles,
         this.policy,
         userContext.tenantId,
       );
 
-      // Step 3: If specific capabilities were requested, validate they're allowed
+      // Step 3: If specific capabilities were requested, validate them.
       if (request.requestedCapabilities) {
-        // Validate that requested capabilities are a subset of what the user's
-        // roles allow. Resource matching uses the same wildcard-aware
-        // `matchesResource` semantics as the gateway enforcement engine, so
-        // role mappings that grant wildcard resources (e.g. `api://**`,
-        // `storage://sales-data/**`) correctly authorize requests for
-        // concrete resources beneath them.
-        for (const requested of request.requestedCapabilities) {
-          const matchingCaps = capabilities.filter((cap) =>
-            // matchesResource(concreteResource, wildcardPattern) — the first
-            // arg is the concrete resource being requested, the second is the
-            // (potentially wildcarded) pattern from the role mapping.
-            matchesResource(requested.resource, cap.resource),
-          );
-          if (matchingCaps.length === 0) {
-            throw new CapabilityError(
-              ErrorCode.INSUFFICIENT_PERMISSIONS,
-              `User does not have permission for resource: ${requested.resource}`,
-              403,
-            );
-          }
-
-          const allowedActions = new Set<string>();
-          for (const cap of matchingCaps) {
-            for (const action of cap.actions) {
-              allowedActions.add(action);
-            }
-          }
-
-          for (const action of requested.actions) {
-            if (!allowedActions.has(action)) {
-              throw new CapabilityError(
-                ErrorCode.INSUFFICIENT_PERMISSIONS,
-                `User does not have permission for action '${action}' on resource: ${requested.resource}`,
-                403,
-              );
-            }
-          }
-        }
+        this.assertRequestedWithinRoleScope(capabilities, request.requestedCapabilities);
 
         // Step 3b: enforce per-agent manifest constraint at issuance time.
-        // The manifest is the developer-declared upper bound of what an agent
-        // is permitted to ever request — even if the user's roles would allow
-        // more, the issuer must not exceed it.
         if (request.manifest) {
-          this.validateAgainstManifest(
+          validateAgainstManifest(
             request.manifest,
             request.agentId,
             request.requestedCapabilities,
           );
         }
 
-        // Step 3c: enforce explicit user consent. Requested capabilities that
-        // include sensitive actions (write/delete/admin) require a consent
-        // record regardless of `requireConsent`; in `requireConsent` mode the
-        // check is mandatory for *every* issuance.
+        // Step 3c: enforce explicit user consent. Sensitive actions or
+        // strict mode require it; even when not required, supplied
+        // consent is still validated so a stale record is rejected.
         const requiresConsent =
           this.requireConsent ||
-          request.requestedCapabilities.some((cap) =>
-            cap.actions.some((action) => SENSITIVE_ACTIONS.has(action)),
-          );
+          requestedCapabilitiesIncludeSensitive(request.requestedCapabilities);
 
-        if (requiresConsent) {
-          this.validateConsent(
-            request.consent,
-            userContext.userId,
-            request.agentId,
-            request.requestedCapabilities,
-          );
-        } else if (request.consent) {
-          // Even when not required, validate any supplied consent so a stale
-          // or mismatched record is rejected rather than silently accepted.
-          this.validateConsent(
+        if (requiresConsent || request.consent) {
+          validateConsent(
             request.consent,
             userContext.userId,
             request.agentId,
@@ -396,7 +236,6 @@ export class CapabilityIssuerService {
 
         capabilities = request.requestedCapabilities;
       } else if (this.requireConsent) {
-        // Strict mode: even role-derived issuance must be explicitly consented to.
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
           'Explicit user consent (requestedCapabilities + consent) is required by this issuer',
@@ -404,76 +243,36 @@ export class CapabilityIssuerService {
         );
       }
 
-      // Step 3d: Conditional Access enforcement. When the identity
-      // provider has populated `userContext.caEvaluation`, every
-      // requested capability's action must fall within
-      // `caEvaluation.satisfiedTiers`. A token issued under a CA
-      // policy that should have required step-up MFA, a compliant
-      // device, etc. is rejected here with
-      // `CONDITIONAL_ACCESS_REQUIRED` so the caller can re-authenticate
-      // and retry. See `docs/sprint-3-4-gaps/03-conditional-access.md`.
-      await this.enforceConditionalAccess(userContext, capabilities, request.agentId);
+      // Step 3d: Conditional Access enforcement.
+      enforceConditionalAccess(
+        userContext,
+        capabilities,
+        request.agentId,
+        this.auditLogger,
+      );
 
-      // Step 3e: Validate every condition on every capability before
-      // signing. This closes the loop on the typed-condition contract:
-      // an unrecognized or malformed condition (typo, wrong value
-      // type, unknown discriminator) is rejected at mint time rather
-      // than silently round-tripping into a token where the gateway
-      // would deny it after issuance — or worse, ignore it entirely.
-      this.validateConditionsForCapabilities(capabilities);
+      // Step 3e: Validate every typed condition before signing.
+      validateConditionsForCapabilities(capabilities);
 
-      // Step 4: Create the capability token payload
+      // Step 4: Compute the payload validity window.
       const now = getCurrentTimestamp();
       let expiresAt = getExpirationTimestamp(this.defaultTTL);
 
       // Step 4b: Cap TTL to the smallest remaining `pim-active` window
-      // across only the roles that actually contributed to the granted
-      // capability set. Capping based on every active role would let
-      // an unrelated short-lived activation (e.g. a 5-minute "Privileged
-      // Role Administrator" elevation a user kept open for an admin
-      // task) shorten tokens whose granted capabilities came entirely
-      // from permanent group-assigned roles. See
-      // `docs/sprint-3-4-gaps/04-pim-activation.md` § 4.
-      const contributingRoleSources = this.filterRolesContributingToCapabilities(
+      // across only the roles that contributed to the capability set.
+      const contributingRoleSources = filterRolesContributingToCapabilities(
         userContext,
         capabilities,
+        this.policy,
       );
-      const pimCappedExpiry = this.computePimCappedExpiry(
+      const pimCappedExpiry = computePimCappedExpiry(
         contributingRoleSources,
-        now,
+        this.capTtlToPimActivation,
         expiresAt,
       );
       if (pimCappedExpiry !== undefined) {
         if (pimCappedExpiry <= now) {
-          // The smallest contributing PIM activation has already
-          // expired (or is within the safety margin). Minting a
-          // capability with `exp` <= `iat` would produce an
-          // immediately-unusable token; deny instead so the caller can
-          // re-activate. Audit reason mirrors the
-          // `pim_required_role_not_activated` denial so the agent UI
-          // can surface a consistent re-activation prompt.
-          const auditEntry: AuditLogEntry = {
-            id: generateId(),
-            timestamp: new Date(),
-            eventType: 'issuance',
-            agentId: request.agentId,
-            userId: userContext.userId,
-            decision: 'deny',
-            metadata: {
-              reason: 'pim_activation_expired',
-              cappedExp: pimCappedExpiry,
-              now,
-            },
-          };
-          this.auditLogger.warn(
-            'Capability issuance denied: contributing PIM activation has expired',
-            auditEntry,
-          );
-          throw new CapabilityError(
-            ErrorCode.AUTHORIZATION_FAILED,
-            'Contributing PIM activation has expired; re-activate and retry',
-            403,
-          );
+          this.denyExpiredPimActivation(request.agentId, userContext.userId, now, pimCappedExpiry);
         }
         if (pimCappedExpiry < expiresAt) {
           this.logger.info('Capping capability TTL to remaining PIM activation window', {
@@ -485,61 +284,31 @@ export class CapabilityIssuerService {
           expiresAt = pimCappedExpiry;
         }
       }
-      const tokenId = generateId();
 
-      const payload: CapabilityTokenPayload = {
-        iss: this.issuerDid,
-        sub: request.agentId,
-        aud: 'tool-gateway', // Target audience is the Tool Gateway
+      // Step 5: Build and sign the token.
+      const tokenId = generateId();
+      const payload = buildIssuancePayload({
+        issuerDid: this.issuerDid,
+        agentId: request.agentId,
         iat: now,
         exp: expiresAt,
         jti: tokenId,
-        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
         capabilities,
-        authorizedBy: {
-          userId: userContext.userId,
-          roles: userContext.roles,
-          tenantId: userContext.tenantId,
-        },
-      };
-      // Embed the W3C Verifiable Credential envelope so verifiers built
-      // around standard VC libraries can consume the same token (Sprint
-      // 4 exit criterion: "Credentials conform to open standards and
-      // can be verified using only the DID Document and standard
-      // JWT/VC libraries, without proprietary code").
-      payload.vc = this.buildVerifiableCredential(payload);
+        userContext,
+      });
 
-      // Step 5: Sign the token
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
-      const token = await this.signer.sign(payload);
+      const token = await signPayload(this.signer, payload);
 
-      // Step 5b: Mint short-lived cloud-storage and DB credentials for any
-      // capability whose resource matches the canonical storage:// or db://
-      // form. These pipelines are no-ops when their feature flags are off,
-      // preserving the behavior of every existing deployment. A mint
-      // failure aborts the entire issuance — partial grants give the
-      // agent a misleading view of what it can access (see design § 6 of
-      // both 07-storage-grants.md and 08-db-token-issuance.md).
-      let storageGrants: StorageGrant[] | undefined;
-      let dbCredentials: DbCredential[] | undefined;
-      if (this.storageGrantService?.isEnabled()) {
-        storageGrants = await this.storageGrantService.mintForCapabilities(capabilities, {
-          agentId: request.agentId,
-          authorizedBy: userContext.userId,
-          capabilityTtlSeconds: expiresAt - now,
-        });
-      }
-      if (this.dbTokenService?.isEnabled()) {
-        dbCredentials = await this.dbTokenService.mintForCapabilities(capabilities, {
-          agentId: request.agentId,
-          authorizedBy: userContext.userId,
-          capabilityTtlSeconds: expiresAt - now,
-          userRoles: userContext.roles,
-          policy: this.policy,
-        });
-      }
+      // Step 5b: Mint short-lived cloud-storage and DB credentials.
+      const { storageGrants, dbCredentials } = await this.mintSideCredentials(
+        request,
+        userContext,
+        capabilities,
+        expiresAt - now,
+      );
 
-      // Step 6: Audit log the issuance
+      // Step 6: Audit log the issuance.
       await this.logIssuance(
         userContext.userId,
         request.agentId,
@@ -550,13 +319,13 @@ export class CapabilityIssuerService {
         dbCredentials,
       );
 
-      // Step 6b: Push an inventory record to the configured AI
-      // posture-management surfaces (Defender CSPM / Security Hub /
-      // SCC). Fire-and-forget: posture is best-effort observability,
-      // not a control-plane gate. Emitter failures are logged and
-      // dropped — they MUST NOT fail the originating issuance.
-      // See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
-      this.emitPostureRecord(request, capabilities);
+      // Step 6b: Push an inventory record (fire-and-forget).
+      emitPostureRecord(this.postureEmitter, this.logger, {
+        agentId: request.agentId,
+        manifest: request.manifest,
+        capabilities,
+        region: this.postureRegion,
+      });
 
       this.logger.info('Capability token issued successfully', {
         tokenId,
@@ -587,64 +356,121 @@ export class CapabilityIssuerService {
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
         `Failed to issue capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        500
+        500,
       );
     }
   }
 
   /**
-   * Build and dispatch an {@link AgentInventoryRecord} to the
-   * configured posture emitter, if any. Fire-and-forget — caller
-   * MUST NOT await; emitter failures are logged at warn-level.
-   *
-   * The five required parity fields (`agentId`, `owningTeam`,
-   * `capabilityManifestHash`, `runtime`, `region`) flow through to
-   * each downstream cloud surface under their canonical names; see
-   * `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 1.
-   *
-   * Manifest hashing reuses the shared `canonicalSha256` helper so
-   * the posture record's `capabilityManifestHash` matches the value
-   * recorded in audit-log evidence for the same manifest.
+   * Validate that every requested capability is a subset of what the
+   * user's roles allow. Resource matching uses the same wildcard-aware
+   * `matchesResource` semantics as the gateway enforcement engine, so
+   * role mappings that grant wildcard resources correctly authorize
+   * requests for concrete resources beneath them.
    */
-  private emitPostureRecord(
-    request: IssueCapabilityRequest,
-    capabilities: CapabilityConstraint[],
+  private assertRequestedWithinRoleScope(
+    roleDerived: CapabilityConstraint[],
+    requested: CapabilityConstraint[],
   ): void {
-    if (!this.postureEmitter || !this.postureEmitter.isEnabled()) return;
-    let record: AgentInventoryRecord;
-    try {
-      const nowIso = new Date().toISOString();
-      const manifest = request.manifest;
-      const owningTeam = manifest?.metadata?.owner ?? 'unknown';
-      const runtime = manifest?.metadata?.runtime ?? 'unknown';
-      const capabilityManifestHash = manifest
-        ? canonicalSha256(manifest)
-        : canonicalSha256({ agentId: request.agentId });
-      record = {
-        schemaVersion: '1.0',
-        agentId: request.agentId,
-        owningTeam,
-        capabilityManifestHash,
-        runtime,
-        region: this.postureRegion,
-        capabilities,
-        firstSeen: nowIso,
-        lastSeen: nowIso,
-      };
-    } catch (err) {
-      this.logger.warn('posture record build failed', {
-        agentId: request.agentId,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
-      return;
+    for (const req of requested) {
+      const matchingCaps = roleDerived.filter((cap) =>
+        matchesResource(req.resource, cap.resource),
+      );
+      if (matchingCaps.length === 0) {
+        throw new CapabilityError(
+          ErrorCode.INSUFFICIENT_PERMISSIONS,
+          `User does not have permission for resource: ${req.resource}`,
+          403,
+        );
+      }
+
+      const allowedActions = new Set<string>();
+      for (const cap of matchingCaps) {
+        for (const action of cap.actions) {
+          allowedActions.add(action);
+        }
+      }
+
+      for (const action of req.actions) {
+        if (!allowedActions.has(action)) {
+          throw new CapabilityError(
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+            `User does not have permission for action '${action}' on resource: ${req.resource}`,
+            403,
+          );
+        }
+      }
     }
-    // Intentionally not awaited — best-effort.
-    this.postureEmitter.emitObserved(record).catch((err) => {
-      this.logger.warn('posture emit failed', {
+  }
+
+  /**
+   * Audit and throw when a contributing PIM activation has already
+   * expired (or is within the safety margin). Minting a capability
+   * with `exp` ≤ `iat` would produce an immediately-unusable token,
+   * so deny instead so the caller can re-activate.
+   */
+  private denyExpiredPimActivation(
+    agentId: string,
+    userId: string,
+    now: number,
+    cappedExp: number,
+  ): never {
+    const auditEntry: AuditLogEntry = {
+      id: generateId(),
+      timestamp: new Date(),
+      eventType: 'issuance',
+      agentId,
+      userId,
+      decision: 'deny',
+      metadata: {
+        reason: 'pim_activation_expired',
+        cappedExp,
+        now,
+      },
+    };
+    this.auditLogger.warn(
+      'Capability issuance denied: contributing PIM activation has expired',
+      auditEntry,
+    );
+    throw new CapabilityError(
+      ErrorCode.AUTHORIZATION_FAILED,
+      'Contributing PIM activation has expired; re-activate and retry',
+      403,
+    );
+  }
+
+  /**
+   * Mint short-lived storage and DB credentials when their respective
+   * services are configured and enabled. A mint failure aborts the
+   * entire issuance — partial grants give the agent a misleading view
+   * of what it can access (see design § 6 of both
+   * `07-storage-grants.md` and `08-db-token-issuance.md`).
+   */
+  private async mintSideCredentials(
+    request: IssueCapabilityRequest,
+    userContext: UserContext,
+    capabilities: CapabilityConstraint[],
+    capabilityTtlSeconds: number,
+  ): Promise<{ storageGrants?: StorageGrant[]; dbCredentials?: DbCredential[] }> {
+    let storageGrants: StorageGrant[] | undefined;
+    let dbCredentials: DbCredential[] | undefined;
+    if (this.storageGrantService?.isEnabled()) {
+      storageGrants = await this.storageGrantService.mintForCapabilities(capabilities, {
         agentId: request.agentId,
-        error: err instanceof Error ? err.message : 'Unknown error',
+        authorizedBy: userContext.userId,
+        capabilityTtlSeconds,
       });
-    });
+    }
+    if (this.dbTokenService?.isEnabled()) {
+      dbCredentials = await this.dbTokenService.mintForCapabilities(capabilities, {
+        agentId: request.agentId,
+        authorizedBy: userContext.userId,
+        capabilityTtlSeconds,
+        userRoles: userContext.roles,
+        policy: this.policy,
+      });
+    }
+    return { storageGrants, dbCredentials };
   }
 
   /**
@@ -674,7 +500,7 @@ export class CapabilityIssuerService {
       capabilityId: tokenId,
       decision: 'allow',
       metadata: {
-        capabilities: capabilities.map(c => ({
+        capabilities: capabilities.map((c) => ({
           resource: c.resource,
           actions: c.actions,
         })),
@@ -718,495 +544,70 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Validate that every requested capability falls within the agent's
-   * declared manifest (the union of `requiredCapabilities` and
-   * `optionalCapabilities`).
-   *
-   * The manifest is the developer-published upper bound on what an agent may
-   * ever ask for. Even if the user's roles permit a broader scope, the
-   * issuer must refuse to mint a token that exceeds the manifest, otherwise
-   * a compromised agent could request capabilities its declaration never
-   * advertised.
-   */
-  private validateAgainstManifest(
-    manifest: AgentCapabilityManifest,
-    agentId: string,
-    requested: CapabilityConstraint[],
-  ): void {
-    if (manifest.agentId && manifest.agentId !== agentId) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_REQUEST,
-        `Manifest agentId '${manifest.agentId}' does not match request agentId '${agentId}'`,
-        400,
-      );
-    }
-
-    const allowed: CapabilityConstraint[] = [
-      ...(manifest.requiredCapabilities ?? []),
-      ...(manifest.optionalCapabilities ?? []),
-    ];
-
-    if (allowed.length === 0) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_REQUEST,
-        'Agent manifest declares no capabilities; cannot issue a token against it',
-        400,
-      );
-    }
-
-    for (const req of requested) {
-      const matching = allowed.filter((cap) =>
-        matchesResource(req.resource, cap.resource),
-      );
-      if (matching.length === 0) {
-        throw new CapabilityError(
-          ErrorCode.INSUFFICIENT_PERMISSIONS,
-          `Requested resource '${req.resource}' is outside the agent manifest`,
-          403,
-        );
-      }
-
-      const allowedActions = new Set<string>();
-      for (const cap of matching) {
-        for (const action of cap.actions) {
-          allowedActions.add(action);
-        }
-      }
-
-      for (const action of req.actions) {
-        if (!allowedActions.has(action)) {
-          throw new CapabilityError(
-            ErrorCode.INSUFFICIENT_PERMISSIONS,
-            `Action '${action}' on '${req.resource}' is not declared in the agent manifest`,
-            403,
-          );
-        }
-      }
-    }
-  }
-
-  /**
-   * Validate an explicit user consent record against the requested capabilities.
-   *
-   * Consent must be:
-   *   - present (when required),
-   *   - bound to the same `userId` as the authenticated user,
-   *   - bound to the same `agentId` as the request,
-   *   - not expired,
-   *   - covering every requested capability (resource + every requested action).
-   */
-  private validateConsent(
-    consent: UserConsent | undefined,
-    userId: string,
-    agentId: string,
-    requested: CapabilityConstraint[],
-  ): void {
-    if (!consent) {
-      throw new CapabilityError(
-        ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'Explicit user consent is required for the requested capabilities',
-        403,
-      );
-    }
-
-    if (consent.userId !== userId) {
-      throw new CapabilityError(
-        ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'User consent does not match the authenticated user',
-        403,
-      );
-    }
-
-    if (consent.agentId !== agentId) {
-      throw new CapabilityError(
-        ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'User consent was not granted to this agent',
-        403,
-      );
-    }
-
-    // Validate `grantedAt` is a finite unix-seconds number that isn't in the
-    // future.  Without this check a missing/invalid `grantedAt` would be
-    // silently accepted from the untyped HTTP body and then written into the
-    // audit log as-is, undermining its evidentiary value.
-    const now = getCurrentTimestamp();
-    if (typeof consent.grantedAt !== 'number' || !Number.isFinite(consent.grantedAt)) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_REQUEST,
-        'User consent grantedAt must be a finite unix-seconds number',
-        400,
-      );
-    }
-    // Allow a small skew window for clock drift between the consent UI and
-    // the issuer (60 seconds), but reject obviously fabricated future dates.
-    if (consent.grantedAt > now + 60) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_REQUEST,
-        'User consent grantedAt is in the future',
-        400,
-      );
-    }
-
-    // `expiresAt` is optional, but when present it must be a finite number.
-    // Reject non-undefined non-number values so callers can't bypass the
-    // expiry check by sending e.g. a string or boolean.
-    if (consent.expiresAt !== undefined) {
-      if (typeof consent.expiresAt !== 'number' || !Number.isFinite(consent.expiresAt)) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_REQUEST,
-          'User consent expiresAt must be a finite unix-seconds number when provided',
-          400,
-        );
-      }
-      if (consent.expiresAt <= now) {
-        throw new CapabilityError(
-          ErrorCode.INSUFFICIENT_PERMISSIONS,
-          'User consent has expired',
-          403,
-        );
-      }
-    }
-
-    if (!Array.isArray(consent.grantedCapabilities) || consent.grantedCapabilities.length === 0) {
-      throw new CapabilityError(
-        ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'User consent does not list any granted capabilities',
-        403,
-      );
-    }
-
-    for (const req of requested) {
-      const matching = consent.grantedCapabilities.filter((cap) =>
-        matchesResource(req.resource, cap.resource),
-      );
-      if (matching.length === 0) {
-        throw new CapabilityError(
-          ErrorCode.INSUFFICIENT_PERMISSIONS,
-          `User did not consent to resource: ${req.resource}`,
-          403,
-        );
-      }
-
-      const grantedActions = new Set<string>();
-      for (const cap of matching) {
-        for (const action of cap.actions) {
-          grantedActions.add(action);
-        }
-      }
-
-      for (const action of req.actions) {
-        if (!grantedActions.has(action)) {
-          throw new CapabilityError(
-            ErrorCode.INSUFFICIENT_PERMISSIONS,
-            `User did not consent to action '${action}' on resource: ${req.resource}`,
-            403,
-          );
-        }
-      }
-    }
-  }
-
-  /**
-   * Enforce operator-declared `pimRequiredRoles`. When the user holds
-   * a role on the list but its source is not `pim-active`, deny
-   * issuance with `AUTHORIZATION_FAILED` (HTTP 403). The list is
-   * ignored if the identity provider does not populate `roleSources`,
-   * preserving back-compat with non-Azure providers.
-   *
-   * Also surfaces "you have role X eligible but not activated" via the
-   * audit log so the agent UI can prompt the user to activate.
-   */
-  private enforcePimRequiredRoles(userContext: UserContext, agentId: string): void {
-    if (this.pimRequiredRoles.length === 0) return;
-    if (!userContext.roleSources) return; // Provider doesn't support PIM.
-
-    const sourceByRole = new Map<string, ResolvedRole['source']>();
-    for (const r of userContext.roleSources) sourceByRole.set(r.name, r.source);
-
-    const requiredButInactive: string[] = [];
-    const eligibleButInactive: string[] = [];
-    for (const roleName of this.pimRequiredRoles) {
-      const src = sourceByRole.get(roleName);
-      if (!src) continue; // User does not hold this role at all — fine.
-      if (src.kind !== 'pim-active') {
-        requiredButInactive.push(roleName);
-        if (src.kind === 'pim-eligible-not-active') eligibleButInactive.push(roleName);
-      }
-    }
-
-    if (requiredButInactive.length === 0) return;
-
-    const auditEntry: AuditLogEntry = {
-      id: generateId(),
-      timestamp: new Date(),
-      eventType: 'issuance',
-      agentId,
-      userId: userContext.userId,
-      decision: 'deny',
-      metadata: {
-        reason: 'pim_required_role_not_activated',
-        pimRequiredRoles: requiredButInactive,
-        eligibleButInactive,
-      },
-    };
-    this.auditLogger.warn('Capability issuance denied: PIM activation required', auditEntry);
-
-    throw new CapabilityError(
-      ErrorCode.AUTHORIZATION_FAILED,
-      `PIM activation required for role(s): ${requiredButInactive.join(', ')}`,
-      403,
-    );
-  }
-
-  /**
-   * Enforce Conditional Access against the final capability set. The
-   * union of action tiers across every granted capability is computed
-   * (read < write < delete < admin); each tier in that union must be
-   * present in `userContext.caEvaluation.satisfiedTiers`. If any
-   * required tier is unsatisfied, issuance is denied with
-   * `CONDITIONAL_ACCESS_REQUIRED` and an audit entry recording the
-   * full set of unsatisfied tiers, the required acrs values, and the
-   * acrs values actually presented in the token. When the provider
-   * has not populated `caEvaluation` (non-Azure providers, or Azure
-   * deployments without the `conditionalAccess` block), this method
-   * is a no-op — preserving back-compat.
-   */
-  private async enforceConditionalAccess(
-    userContext: UserContext,
-    capabilities: CapabilityConstraint[],
-    agentId: string,
-  ): Promise<void> {
-    const ca: CaEvaluation | undefined = userContext.caEvaluation;
-    if (!ca) return; // Provider doesn't participate in CA enforcement.
-
-    const satisfied = new Set<CaActionTier>(ca.satisfiedTiers);
-
-    // Compute the unique set of required tiers actually being requested.
-    const requiredTiers = new Set<CaActionTier>();
-    for (const cap of capabilities) {
-      for (const action of cap.actions) {
-        requiredTiers.add(actionToCaTier(action));
-      }
-    }
-
-    const unsatisfied: CaActionTier[] = [];
-    for (const tier of requiredTiers) {
-      if (!satisfied.has(tier)) unsatisfied.push(tier);
-    }
-
-    if (unsatisfied.length === 0) return;
-
-    const auditEntry: AuditLogEntry = {
-      id: generateId(),
-      timestamp: new Date(),
-      eventType: 'issuance',
-      agentId,
-      userId: userContext.userId,
-      decision: 'deny',
-      metadata: {
-        reason: 'conditional_access_unsatisfied',
-        unsatisfiedTiers: unsatisfied,
-        requiredAcrs: unsatisfied
-          .map((tier) => ca.requiredAcrsByTier?.[tier] ?? [])
-          .reduce<string[]>((acc, list) => {
-            for (const v of list) if (!acc.includes(v)) acc.push(v);
-            return acc;
-          }, []),
-        presentedAcrs: ca.presentedAcrs,
-        satisfiedTiers: ca.satisfiedTiers,
-      },
-    };
-    this.auditLogger.warn('Capability issuance denied: Conditional Access not satisfied', auditEntry);
-
-    throw new CapabilityError(
-      ErrorCode.CONDITIONAL_ACCESS_REQUIRED,
-      `Conditional Access policy not satisfied for tier(s): ${unsatisfied.join(', ')}`,
-      403,
-    );
-  }
-
-  /**
-   * Compute an upper-bound expiry timestamp based on the smallest
-   * remaining `pim-active` window across the supplied roles. Returns
-   * `undefined` when capping is disabled, the list is empty, or none
-   * of the supplied roles is `pim-active`.
-   *
-   * Subtracts a 30-second safety margin to account for clock skew
-   * between the issuer and Azure AD. The returned value MAY be in the
-   * past — the caller is responsible for treating that as an
-   * already-expired activation and denying issuance rather than
-   * minting an immediately-unusable token.
-   */
-  private computePimCappedExpiry(
-    roleSources: ResolvedRole[] | undefined,
-    _nowSeconds: number,
-    requestedExpiry: number,
-  ): number | undefined {
-    if (!this.capTtlToPimActivation) return undefined;
-    if (!roleSources || roleSources.length === 0) return undefined;
-
-    let minEndSeconds: number | undefined;
-    for (const r of roleSources) {
-      if (r.source.kind !== 'pim-active') continue;
-      const endMs = Date.parse(r.source.endDateTime);
-      if (Number.isNaN(endMs)) continue;
-      const endSec = Math.floor(endMs / 1000) - PIM_TTL_SAFETY_MARGIN_SECONDS;
-      if (minEndSeconds === undefined || endSec < minEndSeconds) {
-        minEndSeconds = endSec;
-      }
-    }
-
-    if (minEndSeconds === undefined) return undefined;
-    return Math.min(minEndSeconds, requestedExpiry);
-  }
-
-  /**
-   * Return the subset of `userContext.roleSources` whose role names
-   * actually contribute to at least one of the granted capabilities
-   * under the configured role→capability policy. A role contributes
-   * when mapping it through the policy yields any capability whose
-   * resource pattern covers a granted capability's resource AND whose
-   * action set intersects that granted capability's actions.
-   *
-   * Returns `undefined` (not `[]`) when `roleSources` is itself
-   * undefined, so the caller can distinguish "no PIM data from
-   * provider" from "no contributing PIM-active role".
-   */
-  private filterRolesContributingToCapabilities(
-    userContext: UserContext,
-    capabilities: CapabilityConstraint[],
-  ): ResolvedRole[] | undefined {
-    if (!userContext.roleSources) return undefined;
-    if (capabilities.length === 0) return [];
-
-    const contributing: ResolvedRole[] = [];
-    for (const r of userContext.roleSources) {
-      const mapped = mapRolesToCapabilitiesForPolicy(
-        [r.name],
-        this.policy,
-        userContext.tenantId,
-      );
-      if (mapped.length === 0) continue;
-      const overlaps = capabilities.some((granted) =>
-        mapped.some((m) => {
-          if (!matchesResource(granted.resource, m.resource)) return false;
-          const grantedActions = new Set(granted.actions);
-          for (const a of m.actions) {
-            if (grantedActions.has(a)) return true;
-          }
-          return false;
-        }),
-      );
-      if (overlaps) contributing.push(r);
-    }
-    return contributing;
-  }
-
-
-  /**
-   * Attenuate (reduce scope of) an existing capability token
-   * The child token will have equal or fewer privileges than the parent
+   * Attenuate (reduce scope of) an existing capability token. The
+   * child token will have equal or fewer privileges than the parent.
    */
   async attenuateCapability(
     parentToken: string,
     requestedCapabilities: CapabilityConstraint[],
-    ttl?: number
+    ttl?: number,
   ): Promise<IssueCapabilityResponse> {
     try {
-      // Step 1: Verify and decode the parent token using jose
       this.logger.info('Attenuating capability token');
 
-      // Decode the token header first (fails fast for malformed tokens)
-      let algorithm: string;
-      try {
-        const header = jose.decodeProtectedHeader(parentToken);
-        algorithm = header.alg ?? 'RS256';
-      } catch {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          'Invalid parent capability token format',
-          401
-        );
-      }
+      const parentPayload = await verifyParentToken(
+        this.signer,
+        parentToken,
+        { issuer: this.issuerDid, audience: 'tool-gateway' },
+        'Invalid parent capability token format',
+      );
 
-      // Validate algorithm against allow-list to prevent algorithm confusion attacks
-      if (!CapabilityIssuerService.ALLOWED_ALGORITHMS.includes(algorithm as any)) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Token uses disallowed algorithm: ${algorithm}`,
-          401
-        );
-      }
-
-      const publicKey = await this.signer.getPublicKey();
-      const publicKeyObj = await jose.importSPKI(publicKey, algorithm);
-
-      const { payload } = await jose.jwtVerify(parentToken, publicKeyObj, {
-        issuer: this.issuerDid,
-        audience: 'tool-gateway',
-        algorithms: [algorithm],
-      });
-
-      const parentPayload = payload as unknown as CapabilityTokenPayload;
-
-      // Step 2: Validate parent token is not expired
+      // Step 2: Validate parent token is not expired.
       const now = getCurrentTimestamp();
       if (parentPayload.exp < now) {
         throw new CapabilityError(
           ErrorCode.EXPIRED_TOKEN,
           'Parent capability token has expired',
-          401
+          401,
         );
       }
 
-      // Step 3: Validate requested capabilities are a subset of parent capabilities
-      this.validateCapabilitySubset(parentPayload.capabilities, requestedCapabilities);
+      // Step 3: Validate requested capabilities are a subset of parent's.
+      validateCapabilitySubset(parentPayload.capabilities, requestedCapabilities);
 
       // Step 3b: Validate the typed conditions on the attenuated set.
-      // Even though the parent's conditions were validated when the
-      // parent was minted, the child may carry a *narrower* condition
-      // set (e.g. a tighter `maxCalls`) that must itself be well-formed.
-      this.validateConditionsForCapabilities(requestedCapabilities);
+      // The child may carry a *narrower* condition set (e.g. a tighter
+      // `maxCalls`) that must itself be well-formed.
+      validateConditionsForCapabilities(requestedCapabilities);
 
-      // Step 4: Calculate expiration (cannot exceed parent's expiration)
+      // Step 4: Calculate expiration (cannot exceed parent's expiration).
       const requestedTTL = ttl || this.defaultTTL;
-      const maxExpiration = parentPayload.exp;
-      const requestedExpiration = now + requestedTTL;
-      const expiresAt = Math.min(requestedExpiration, maxExpiration);
+      const expiresAt = Math.min(now + requestedTTL, parentPayload.exp);
 
-      // Step 5: Create child token payload
+      // Step 5: Build and sign the child token.
       const tokenId = generateId();
-      const childPayload: CapabilityTokenPayload = {
-        iss: this.issuerDid,
-        sub: parentPayload.sub, // Same agent
-        aud: parentPayload.aud,
+      const childPayload = buildAttenuatedPayload({
+        issuerDid: this.issuerDid,
+        parent: parentPayload,
         iat: now,
         exp: expiresAt,
         jti: tokenId,
-        schemaVersion: parentPayload.schemaVersion,
         capabilities: requestedCapabilities,
-        parentCapabilityId: parentPayload.jti, // Link to parent
-        authorizedBy: parentPayload.authorizedBy,
-      };
-      // Re-build the VC envelope from the *attenuated* claim set so the
-      // VC view of the token reflects the narrowed capabilities, not
-      // the parent's broader set.
-      childPayload.vc = this.buildVerifiableCredential(childPayload);
+      });
 
-      // Step 6: Sign the child token
       this.logger.info('Signing attenuated capability token', {
         tokenId,
         parentTokenId: parentPayload.jti,
         agentId: parentPayload.sub,
       });
-      const token = await this.signer.sign(childPayload);
+      const token = await signPayload(this.signer, childPayload);
 
-      // Step 7: Audit log the attenuation
+      // Step 6: Audit log the attenuation.
       await this.logAttenuation(
         parentPayload.sub,
         tokenId,
         parentPayload.jti,
-        requestedCapabilities
+        requestedCapabilities,
       );
 
       this.logger.info('Capability token attenuated successfully', {
@@ -1226,138 +627,32 @@ export class CapabilityIssuerService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
 
-      if (error instanceof CapabilityError) {
-        throw error;
-      }
-
-      // Map jose JWT errors to appropriate capability errors
-      if (error instanceof Error && (error as any).code === 'ERR_JWT_EXPIRED') {
-        throw new CapabilityError(
-          ErrorCode.EXPIRED_TOKEN,
+      try {
+        mapVerifyError(
+          error,
           'Parent capability token has expired',
-          401
+          'Invalid parent capability token',
         );
-      }
-
-      if (error instanceof Error && (
-        (error as any).code === 'ERR_JWS_INVALID' ||
-        (error as any).code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' ||
-        (error as any).code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED'
-      )) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Invalid parent capability token: ${error.message}`,
-          401
-        );
+      } catch (mapped) {
+        if (mapped instanceof CapabilityError) throw mapped;
       }
 
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
         `Failed to attenuate capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        500
+        500,
       );
     }
   }
 
   /**
-   * Validate every typed condition on every capability in the list,
-   * raising a structured `CapabilityError(INVALID_REQUEST)` on the first
-   * failure. Replaces the old fail-open posture where unknown or
-   * malformed conditions were silently signed into tokens.
-   */
-  private validateConditionsForCapabilities(capabilities: CapabilityConstraint[]): void {
-    for (let i = 0; i < capabilities.length; i++) {
-      const cap = capabilities[i]!;
-      if (!cap.conditions) continue;
-      try {
-        validateConditions(cap.conditions);
-      } catch (err) {
-        const detail =
-          err instanceof ConditionValidationError || err instanceof Error
-            ? err.message
-            : String(err);
-        throw new CapabilityError(
-          ErrorCode.INVALID_REQUEST,
-          `Invalid condition on capability[${i}] (resource '${cap.resource}'): ${detail}`,
-          400,
-        );
-      }
-    }
-  }
-
-  /**
-   * Validate that requested capabilities are a subset of allowed capabilities
-   * Throws CapabilityError if validation fails
-   */
-  private validateCapabilitySubset(
-    parentCapabilities: CapabilityConstraint[],
-    requestedCapabilities: CapabilityConstraint[]
-  ): void {
-    // Validate each requested capability against parent capabilities,
-    // supporting wildcard patterns (e.g. storage://datasets/**) via matchesResource()
-    for (const requested of requestedCapabilities) {
-      // Find all parent capabilities whose pattern matches the requested resource
-      const matchingParents = parentCapabilities.filter(cap =>
-        matchesResource(requested.resource, cap.resource)
-      );
-
-      if (matchingParents.length === 0) {
-        throw new CapabilityError(
-          ErrorCode.INSUFFICIENT_PERMISSIONS,
-          `Cannot attenuate: resource '${requested.resource}' not in parent capability`,
-          403
-        );
-      }
-
-      // Union all allowed actions from matching parent capabilities
-      const allowedActions = new Set<string>();
-      for (const cap of matchingParents) {
-        for (const action of cap.actions) {
-          allowedActions.add(action);
-        }
-      }
-
-      for (const action of requested.actions) {
-        if (!allowedActions.has(action)) {
-          throw new CapabilityError(
-            ErrorCode.INSUFFICIENT_PERMISSIONS,
-            `Cannot attenuate: action '${action}' on resource '${requested.resource}' not in parent capability`,
-            403
-          );
-        }
-      }
-
-      // Attenuation must not LOOSEN argument-level constraints declared on
-      // the parent. If any matching parent capability has an
-      // `argumentSchema`, the child must carry the same schema (deep
-      // equal). The child is allowed to introduce a new schema only when
-      // no matching parent has one (introducing a constraint is a
-      // tightening, which is always sound).
-      const parentsWithSchema = matchingParents.filter(p => p.argumentSchema);
-      if (parentsWithSchema.length > 0) {
-        const requestedSchemaSerialized = stableStringify(requested.argumentSchema);
-        const matchesAnyParent = parentsWithSchema.some(
-          p => stableStringify(p.argumentSchema) === requestedSchemaSerialized
-        );
-        if (!matchesAnyParent) {
-          throw new CapabilityError(
-            ErrorCode.INSUFFICIENT_PERMISSIONS,
-            `Cannot attenuate: argumentSchema on resource '${requested.resource}' must match the parent capability's argumentSchema`,
-            403
-          );
-        }
-      }
-    }
-  }
-
-  /**
-   * Log capability attenuation for audit trail
+   * Log capability attenuation for audit trail.
    */
   private async logAttenuation(
     agentId: string,
     tokenId: string,
     parentTokenId: string,
-    capabilities: CapabilityConstraint[]
+    capabilities: CapabilityConstraint[],
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
@@ -1368,7 +663,7 @@ export class CapabilityIssuerService {
       decision: 'allow',
       metadata: {
         parentCapabilityId: parentTokenId,
-        capabilities: capabilities.map(c => ({
+        capabilities: capabilities.map((c) => ({
           resource: c.resource,
           actions: c.actions,
         })),
@@ -1379,86 +674,49 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Renew an existing capability token with a fresh expiration
-   * Token keeps same capabilities but gets new TTL
+   * Renew an existing capability token with a fresh expiration. Token
+   * keeps the same capabilities but gets a new TTL.
    */
   async renewCapability(
     currentToken: string,
-    ttl?: number
+    ttl?: number,
   ): Promise<IssueCapabilityResponse> {
     try {
-      // Step 1: Verify and decode the current token
       this.logger.info('Renewing capability token');
 
-      // Decode the token header first (fails fast for malformed tokens)
-      let algorithm: string;
-      try {
-        const header = jose.decodeProtectedHeader(currentToken);
-        algorithm = header.alg ?? 'RS256';
-      } catch {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          'Invalid capability token format',
-          401
-        );
-      }
+      const currentPayload = await verifyParentToken(
+        this.signer,
+        currentToken,
+        { issuer: this.issuerDid, audience: 'tool-gateway' },
+        'Invalid capability token format',
+      );
 
-      // Validate algorithm against allow-list to prevent algorithm confusion attacks
-      if (!CapabilityIssuerService.ALLOWED_ALGORITHMS.includes(algorithm as any)) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Token uses disallowed algorithm: ${algorithm}`,
-          401
-        );
-      }
-
-      const publicKey = await this.signer.getPublicKey();
-      const publicKeyObj = await jose.importSPKI(publicKey, algorithm);
-
-      const { payload } = await jose.jwtVerify(currentToken, publicKeyObj, {
-        issuer: this.issuerDid,
-        audience: 'tool-gateway',
-        algorithms: [algorithm],
-      });
-
-      const currentPayload = payload as unknown as CapabilityTokenPayload;
-
-      // Step 2: Create renewed token with same capabilities but fresh expiration
+      // Step 2: Build the renewed token.
       const now = getCurrentTimestamp();
       const expiresAt = getExpirationTimestamp(ttl || this.defaultTTL);
       const tokenId = generateId();
-
-      const renewedPayload: CapabilityTokenPayload = {
-        iss: this.issuerDid,
-        sub: currentPayload.sub, // Same agent
-        aud: currentPayload.aud,
+      const renewedPayload: CapabilityTokenPayload = buildRenewedPayload({
+        issuerDid: this.issuerDid,
+        current: currentPayload,
         iat: now,
         exp: expiresAt,
         jti: tokenId,
-        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
-        capabilities: currentPayload.capabilities, // Same capabilities
-        parentCapabilityId: currentPayload.jti, // Link to previous token for audit trail
-        authorizedBy: currentPayload.authorizedBy,
-      };
-      // Re-build the VC envelope so its `id` (urn:uuid:<jti>) and
-      // `parentCapabilityId` reference the new token, not the previous
-      // one.
-      renewedPayload.vc = this.buildVerifiableCredential(renewedPayload);
+      });
 
-      // Step 3: Sign the renewed token
+      // Step 3: Sign the renewed token.
       this.logger.info('Signing renewed capability token', {
         tokenId,
         previousTokenId: currentPayload.jti,
         agentId: currentPayload.sub,
       });
-      const token = await this.signer.sign(renewedPayload);
+      const token = await signPayload(this.signer, renewedPayload);
 
-      // Step 4: Audit log the renewal
+      // Step 4: Audit log the renewal.
       await this.logRenewal(
         currentPayload.sub,
         tokenId,
         currentPayload.jti,
-        currentPayload.capabilities
+        currentPayload.capabilities,
       );
 
       this.logger.info('Capability token renewed successfully', {
@@ -1478,47 +736,32 @@ export class CapabilityIssuerService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
 
-      if (error instanceof CapabilityError) {
-        throw error;
-      }
-
-      // Map jose JWT errors to appropriate capability errors
-      if (error instanceof Error && (error as any).code === 'ERR_JWT_EXPIRED') {
-        throw new CapabilityError(
-          ErrorCode.EXPIRED_TOKEN,
+      try {
+        mapVerifyError(
+          error,
           'Capability token has expired; re-authentication is required',
-          401
+          'Invalid capability token',
         );
-      }
-
-      if (error instanceof Error && (
-        (error as any).code === 'ERR_JWS_INVALID' ||
-        (error as any).code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' ||
-        (error as any).code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED'
-      )) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Invalid capability token: ${error.message}`,
-          401
-        );
+      } catch (mapped) {
+        if (mapped instanceof CapabilityError) throw mapped;
       }
 
       throw new CapabilityError(
         ErrorCode.INTERNAL_ERROR,
         `Failed to renew capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        500
+        500,
       );
     }
   }
 
   /**
-   * Log capability renewal for audit trail
+   * Log capability renewal for audit trail.
    */
   private async logRenewal(
     agentId: string,
     tokenId: string,
     previousTokenId: string,
-    capabilities: CapabilityConstraint[]
+    capabilities: CapabilityConstraint[],
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
@@ -1529,7 +772,7 @@ export class CapabilityIssuerService {
       decision: 'allow',
       metadata: {
         previousCapabilityId: previousTokenId,
-        capabilities: capabilities.map(c => ({
+        capabilities: capabilities.map((c) => ({
           resource: c.resource,
           actions: c.actions,
         })),
@@ -1540,30 +783,9 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Get public key for token verification
+   * Get public key for token verification.
    */
   async getPublicKey(): Promise<string> {
-    return await this.signer.getPublicKey();
+    return this.signer.getPublicKey();
   }
-}
-
-/**
- * Deterministic JSON serialiser used to compare `argumentSchema` objects
- * across capability boundaries. Object keys are sorted recursively so that
- * the comparison is independent of property order.
- */
-function stableStringify(value: unknown): string {
-  if (value === undefined) {
-    return 'undefined';
-  }
-  return JSON.stringify(value, (_key, v) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      const sorted: Record<string, unknown> = {};
-      for (const k of Object.keys(v).sort()) {
-        sorted[k] = (v as Record<string, unknown>)[k];
-      }
-      return sorted;
-    }
-    return v;
-  });
 }
