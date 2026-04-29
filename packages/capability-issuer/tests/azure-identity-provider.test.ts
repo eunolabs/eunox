@@ -380,5 +380,79 @@ describe('AzureADIdentityProvider', () => {
       const ctx = await provider.validateToken(token);
       expect(ctx.roleSources).toBeUndefined();
     });
+
+    it('merges directory roles obtained via group membership as permanent', async () => {
+      // The memberOf endpoint surfaces directoryRole entries the user
+      // holds transitively through group membership. These do NOT
+      // appear in the PIM schedule endpoints, so without merging they
+      // would be silently dropped when `pim` is enabled.
+      const provider = makeProvider({
+        clientSecret: 'unused-in-test',
+        pim: {},
+      });
+      const fakeGraph = buildFakeGraph({
+        '/roleManagement/directory/roleAssignmentScheduleInstances': { value: [] },
+        '/roleManagement/directory/roleEligibilityScheduleInstances': { value: [] },
+        [`/users/${USER_OID}/memberOf`]: {
+          value: [
+            { '@odata.type': '#microsoft.graph.directoryRole', displayName: 'Directory Readers' },
+            // group membership — must be filtered out
+            { '@odata.type': '#microsoft.graph.group', displayName: 'Marketing Team' },
+          ],
+        },
+      });
+      provider.__setGraphClientForTests(fakeGraph);
+
+      const token = await signAzureToken({ oid: USER_OID, tid: TENANT_ID });
+      const ctx = await provider.validateToken(token);
+
+      expect(ctx.roles).toEqual(['Directory Readers']);
+      expect(ctx.roleSources).toEqual([
+        { name: 'Directory Readers', source: { kind: 'permanent' } },
+      ]);
+    });
+
+    it('prefers schedule-instance metadata over memberOf for the same role', async () => {
+      // If a user holds the same role both directly (PIM-Activated)
+      // and via group membership, the schedule-instance entry must
+      // win because it carries the activation metadata required for
+      // TTL capping.
+      const endDateTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const provider = makeProvider({
+        clientSecret: 'unused-in-test',
+        pim: {},
+      });
+      const fakeGraph = buildFakeGraph({
+        '/roleManagement/directory/roleAssignmentScheduleInstances': {
+          value: [
+            {
+              id: 'a-active',
+              roleDefinitionId: 'def-globaladmin',
+              assignmentType: 'Activated',
+              endDateTime,
+            },
+          ],
+        },
+        '/roleManagement/directory/roleEligibilityScheduleInstances': { value: [] },
+        [`/users/${USER_OID}/memberOf`]: {
+          value: [
+            { '@odata.type': '#microsoft.graph.directoryRole', displayName: 'Global Administrator' },
+          ],
+        },
+      });
+      provider.__setGraphClientForTests(fakeGraph, {
+        'def-globaladmin': 'Global Administrator',
+      });
+
+      const token = await signAzureToken({ oid: USER_OID, tid: TENANT_ID });
+      const ctx = await provider.validateToken(token);
+
+      expect(ctx.roleSources).toEqual([
+        {
+          name: 'Global Administrator',
+          source: { kind: 'pim-active', assignmentId: 'a-active', endDateTime },
+        },
+      ]);
+    });
   });
 });

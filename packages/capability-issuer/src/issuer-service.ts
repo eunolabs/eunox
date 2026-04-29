@@ -392,18 +392,63 @@ export class CapabilityIssuerService {
       let expiresAt = getExpirationTimestamp(this.defaultTTL);
 
       // Step 4b: Cap TTL to the smallest remaining `pim-active` window
-      // across all roles in `userContext.roleSources`. A 60-minute
-      // capability cannot outlive a 10-minute PIM activation. See
+      // across only the roles that actually contributed to the granted
+      // capability set. Capping based on every active role would let
+      // an unrelated short-lived activation (e.g. a 5-minute "Privileged
+      // Role Administrator" elevation a user kept open for an admin
+      // task) shorten tokens whose granted capabilities came entirely
+      // from permanent group-assigned roles. See
       // `docs/sprint-3-4-gaps/04-pim-activation.md` § 4.
-      const pimCappedExpiry = this.computePimCappedExpiry(userContext, now, expiresAt);
-      if (pimCappedExpiry !== undefined && pimCappedExpiry < expiresAt) {
-        this.logger.info('Capping capability TTL to remaining PIM activation window', {
-          agentId: request.agentId,
-          userId: userContext.userId,
-          requestedExp: expiresAt,
-          cappedExp: pimCappedExpiry,
-        });
-        expiresAt = pimCappedExpiry;
+      const contributingRoleSources = this.filterRolesContributingToCapabilities(
+        userContext,
+        capabilities,
+      );
+      const pimCappedExpiry = this.computePimCappedExpiry(
+        contributingRoleSources,
+        now,
+        expiresAt,
+      );
+      if (pimCappedExpiry !== undefined) {
+        if (pimCappedExpiry <= now) {
+          // The smallest contributing PIM activation has already
+          // expired (or is within the safety margin). Minting a
+          // capability with `exp` <= `iat` would produce an
+          // immediately-unusable token; deny instead so the caller can
+          // re-activate. Audit reason mirrors the
+          // `pim_required_role_not_activated` denial so the agent UI
+          // can surface a consistent re-activation prompt.
+          const auditEntry: AuditLogEntry = {
+            id: generateId(),
+            timestamp: new Date(),
+            eventType: 'issuance',
+            agentId: request.agentId,
+            userId: userContext.userId,
+            decision: 'deny',
+            metadata: {
+              reason: 'pim_activation_expired',
+              cappedExp: pimCappedExpiry,
+              now,
+            },
+          };
+          this.auditLogger.warn(
+            'Capability issuance denied: contributing PIM activation has expired',
+            auditEntry,
+          );
+          throw new CapabilityError(
+            ErrorCode.AUTHORIZATION_FAILED,
+            'Contributing PIM activation has expired; re-activate and retry',
+            403,
+          );
+        }
+        if (pimCappedExpiry < expiresAt) {
+          this.logger.info('Capping capability TTL to remaining PIM activation window', {
+            agentId: request.agentId,
+            userId: userContext.userId,
+            requestedExp: expiresAt,
+            cappedExp: pimCappedExpiry,
+          });
+          expiresAt = pimCappedExpiry;
+        }
       }
       const tokenId = generateId();
 
@@ -816,11 +861,15 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Enforce Conditional Access against the final capability set. For
-   * each requested capability, the highest-tier action (read < write <
-   * delete < admin) must be present in
-   * `userContext.caEvaluation.satisfiedTiers`. When the provider has
-   * not populated `caEvaluation` (non-Azure providers, or Azure
+   * Enforce Conditional Access against the final capability set. The
+   * union of action tiers across every granted capability is computed
+   * (read < write < delete < admin); each tier in that union must be
+   * present in `userContext.caEvaluation.satisfiedTiers`. If any
+   * required tier is unsatisfied, issuance is denied with
+   * `CONDITIONAL_ACCESS_REQUIRED` and an audit entry recording the
+   * full set of unsatisfied tiers, the required acrs values, and the
+   * acrs values actually presented in the token. When the provider
+   * has not populated `caEvaluation` (non-Azure providers, or Azure
    * deployments without the `conditionalAccess` block), this method
    * is a no-op — preserving back-compat.
    */
@@ -880,24 +929,26 @@ export class CapabilityIssuerService {
 
   /**
    * Compute an upper-bound expiry timestamp based on the smallest
-   * remaining `pim-active` window across all roles in
-   * `userContext.roleSources`. Returns `undefined` when capping is
-   * disabled, the provider doesn't expose `roleSources`, or the user
-   * has no `pim-active` roles.
+   * remaining `pim-active` window across the supplied roles. Returns
+   * `undefined` when capping is disabled, the list is empty, or none
+   * of the supplied roles is `pim-active`.
    *
    * Subtracts a 30-second safety margin to account for clock skew
-   * between the issuer and Azure AD.
+   * between the issuer and Azure AD. The returned value MAY be in the
+   * past — the caller is responsible for treating that as an
+   * already-expired activation and denying issuance rather than
+   * minting an immediately-unusable token.
    */
   private computePimCappedExpiry(
-    userContext: UserContext,
-    nowSeconds: number,
+    roleSources: ResolvedRole[] | undefined,
+    _nowSeconds: number,
     requestedExpiry: number,
   ): number | undefined {
     if (!this.capTtlToPimActivation) return undefined;
-    if (!userContext.roleSources || userContext.roleSources.length === 0) return undefined;
+    if (!roleSources || roleSources.length === 0) return undefined;
 
     let minEndSeconds: number | undefined;
-    for (const r of userContext.roleSources) {
+    for (const r of roleSources) {
       if (r.source.kind !== 'pim-active') continue;
       const endMs = Date.parse(r.source.endDateTime);
       if (Number.isNaN(endMs)) continue;
@@ -908,12 +959,51 @@ export class CapabilityIssuerService {
     }
 
     if (minEndSeconds === undefined) return undefined;
-    // Don't return an expiry that's already past — the caller will
-    // compare against `requestedExpiry` and use the smaller of the two,
-    // but a zero/negative TTL would be meaningless. Clamp at `now`.
-    if (minEndSeconds < nowSeconds) return nowSeconds;
     return Math.min(minEndSeconds, requestedExpiry);
   }
+
+  /**
+   * Return the subset of `userContext.roleSources` whose role names
+   * actually contribute to at least one of the granted capabilities
+   * under the configured role→capability policy. A role contributes
+   * when mapping it through the policy yields any capability whose
+   * resource pattern covers a granted capability's resource AND whose
+   * action set intersects that granted capability's actions.
+   *
+   * Returns `undefined` (not `[]`) when `roleSources` is itself
+   * undefined, so the caller can distinguish "no PIM data from
+   * provider" from "no contributing PIM-active role".
+   */
+  private filterRolesContributingToCapabilities(
+    userContext: UserContext,
+    capabilities: CapabilityConstraint[],
+  ): ResolvedRole[] | undefined {
+    if (!userContext.roleSources) return undefined;
+    if (capabilities.length === 0) return [];
+
+    const contributing: ResolvedRole[] = [];
+    for (const r of userContext.roleSources) {
+      const mapped = mapRolesToCapabilitiesForPolicy(
+        [r.name],
+        this.policy,
+        userContext.tenantId,
+      );
+      if (mapped.length === 0) continue;
+      const overlaps = capabilities.some((granted) =>
+        mapped.some((m) => {
+          if (!matchesResource(granted.resource, m.resource)) return false;
+          const grantedActions = new Set(granted.actions);
+          for (const a of m.actions) {
+            if (grantedActions.has(a)) return true;
+          }
+          return false;
+        }),
+      );
+      if (overlaps) contributing.push(r);
+    }
+    return contributing;
+  }
+
 
   /**
    * Attenuate (reduce scope of) an existing capability token

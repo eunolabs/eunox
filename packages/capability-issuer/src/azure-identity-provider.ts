@@ -224,11 +224,11 @@ export class AzureADIdentityProvider extends IdentityAdapter {
           userContext.roles = resolved.map((r) => r.name);
         }
       } catch (error) {
-        // Fail closed for PIM-required roles: if we can't determine PIM
-        // state, treat all roles as `pim-eligible-not-active` so that
-        // any role on the operator's `pimRequiredRoles` list is denied
-        // by the issuer. Other roles fall through unchanged so a
-        // transient Graph outage doesn't take down read-only issuance.
+        // Fail closed: if we can't determine PIM state from Graph, abort
+        // validation and deny issuance rather than guessing which roles
+        // are active. This protects against a transient Graph outage
+        // silently downgrading enforcement of `pimRequiredRoles` and
+        // TTL capping.
         const message = error instanceof Error ? error.message : 'Unknown error';
         throw new CapabilityError(
           ErrorCode.AUTHORIZATION_FAILED,
@@ -364,6 +364,20 @@ export class AzureADIdentityProvider extends IdentityAdapter {
    * Resolve the user's directory roles from Microsoft Graph PIM
    * endpoints, returning per-role source metadata. Cached per user for
    * 30 seconds.
+   *
+   * Sources merged into the result:
+   *   * `roleAssignmentScheduleInstances` — direct PIM assignments
+   *     (`Assigned` → `permanent`, `Activated` → `pim-active`).
+   *   * `roleEligibilityScheduleInstances` — eligible-but-not-active
+   *     assignments awaiting JIT activation.
+   *   * `/users/{id}/memberOf` — directory roles obtained transitively
+   *     via group membership. These do not appear in the PIM schedule
+   *     endpoints (Graph returns the *group's* assignment there, not
+   *     the user's), so they must be queried separately and treated as
+   *     `permanent`. Without this merge, enabling the `pim` config
+   *     would silently drop group-assigned roles and reduce a user's
+   *     effective capabilities. See
+   *     `docs/sprint-3-4-gaps/04-pim-activation.md`.
    */
   private async resolveActivePimRoles(userId: string): Promise<ResolvedRole[]> {
     const cached = this.pimResolutionCache.get(userId);
@@ -371,9 +385,10 @@ export class AzureADIdentityProvider extends IdentityAdapter {
 
     const graphClient = await this.getGraphClient();
 
-    const [assignments, eligibilities] = await Promise.all([
+    const [assignments, eligibilities, memberOfRoles] = await Promise.all([
       this.fetchAssignmentScheduleInstances(graphClient, userId),
       this.fetchEligibilityScheduleInstances(graphClient, userId),
+      this.fetchDirectoryRolesViaMemberOf(graphClient, userId),
     ]);
 
     // Resolve display names — definitions are static so the cache lives
@@ -401,6 +416,16 @@ export class AzureADIdentityProvider extends IdentityAdapter {
       resolved.push({ name, source });
     }
 
+    // Group-derived directory roles fold in as `permanent`. A user can
+    // hold the same role both directly (PIM-assigned) and via a group;
+    // the schedule-instance entry wins because it carries activation
+    // metadata.
+    for (const name of memberOfRoles) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      resolved.push({ name, source: { kind: 'permanent' } });
+    }
+
     // Eligibility entries that don't already appear as active are
     // eligible-but-not-active.
     for (const e of eligibilities) {
@@ -412,6 +437,42 @@ export class AzureADIdentityProvider extends IdentityAdapter {
 
     this.pimResolutionCache.set(userId, resolved, PIM_CACHE_TTL_MS);
     return resolved;
+  }
+
+  /**
+   * Fetch the user's transitive directory-role membership via
+   * `/users/{id}/memberOf` filtered to `microsoft.graph.directoryRole`
+   * entries. Roles obtained this way are always permanent — group
+   * membership has no notion of JIT activation.
+   *
+   * Failures here are swallowed: a missing memberOf result must not
+   * break PIM resolution for users whose roles are exclusively
+   * direct-assigned. The schedule-endpoint failures in the parent
+   * Promise.all() already drive the fail-closed behavior.
+   */
+  private async fetchDirectoryRolesViaMemberOf(
+    graphClient: Client,
+    userId: string,
+  ): Promise<string[]> {
+    try {
+      const items = await this.fetchPaginated<{ '@odata.type'?: string; displayName?: string }>(
+        graphClient,
+        `/users/${userId}/memberOf?$select=displayName`,
+      );
+      const out: string[] = [];
+      for (const item of items) {
+        // Only directory roles count — group memberships are filtered out
+        // because they do not, by themselves, grant directory-role
+        // privileges. (Groups *can* be PIM-assigned to a role, but those
+        // assignments surface as the user's direct roleAssignmentScheduleInstance.)
+        const odataType = item['@odata.type'] ?? '';
+        if (!odataType.endsWith('directoryRole')) continue;
+        if (item.displayName) out.push(item.displayName);
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /**

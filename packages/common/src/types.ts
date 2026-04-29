@@ -519,11 +519,17 @@ export type CaActionTier = 'read' | 'write' | 'delete' | 'admin';
 export interface CaEvaluation {
   /**
    * The set of capability action tiers that were satisfied by this token.
-   * A tier is included iff every `acrs` value declared for that tier in
+   *
+   * A tier is included when every `acrs` value declared for that tier in
    * the provider's `requiredAcrsByTier` configuration was present in the
-   * token's `acrs` claim, the token's `auth_time` is within
-   * `maxSignInAgeSeconds`, and any optional Graph fresh-check did not
-   * mark the user/session as risky.
+   * token's `acrs` claim, plus any additional provider-specific checks for
+   * that tier passed.
+   *
+   * For example, the current Azure AD evaluation only applies
+   * `maxSignInAgeSeconds` to the `admin` and `delete` tiers; `read` and
+   * `write` may remain satisfied even when the sign-in is older. Optional
+   * user/session risk or freshness checks are provider-specific and may be
+   * omitted entirely.
    *
    * Providers without CA configuration MUST populate this with all four
    * tiers so unconfigured deployments behave exactly as before.

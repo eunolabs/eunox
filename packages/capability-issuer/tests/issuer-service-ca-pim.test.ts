@@ -253,11 +253,11 @@ describe('CapabilityIssuerService — PIM enforcement', () => {
     const tenMinutesEnd = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const sources: ResolvedRole[] = [
       {
-        name: 'Reader',
+        name: 'Viewer',
         source: { kind: 'pim-active', assignmentId: 'a1', endDateTime: tenMinutesEnd },
       },
     ];
-    const ctx = makeContext({ roles: ['Reader'], roleSources: sources });
+    const ctx = makeContext({ roles: ['Viewer'], roleSources: sources });
     // defaultTTL is 900s (15 min) — should be capped to ~570s (10min - 30s margin).
     const service = makeService(ctx);
     const before = Math.floor(Date.now() / 1000);
@@ -275,11 +275,11 @@ describe('CapabilityIssuerService — PIM enforcement', () => {
     const tenMinutesEnd = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const sources: ResolvedRole[] = [
       {
-        name: 'Reader',
+        name: 'Viewer',
         source: { kind: 'pim-active', assignmentId: 'a1', endDateTime: tenMinutesEnd },
       },
     ];
-    const ctx = makeContext({ roles: ['Reader'], roleSources: sources });
+    const ctx = makeContext({ roles: ['Viewer'], roleSources: sources });
     const service = makeService(ctx, { capTtlToPimActivation: false });
     const before = Math.floor(Date.now() / 1000);
     const result = await service.issueCapability({
@@ -294,9 +294,9 @@ describe('CapabilityIssuerService — PIM enforcement', () => {
 
   it('does not cap TTL when there are no pim-active roles (only permanent)', async () => {
     const sources: ResolvedRole[] = [
-      { name: 'Reader', source: { kind: 'permanent' } },
+      { name: 'Viewer', source: { kind: 'permanent' } },
     ];
-    const ctx = makeContext({ roles: ['Reader'], roleSources: sources });
+    const ctx = makeContext({ roles: ['Viewer'], roleSources: sources });
     const service = makeService(ctx);
     const before = Math.floor(Date.now() / 1000);
     const result = await service.issueCapability({
@@ -308,20 +308,20 @@ describe('CapabilityIssuerService — PIM enforcement', () => {
     expect(elapsedTtl).toBeLessThanOrEqual(900);
   });
 
-  it('uses the smallest endDateTime when multiple pim-active roles are present', async () => {
+  it('uses the smallest endDateTime when multiple pim-active roles contribute', async () => {
     const fiveMinutesEnd = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     const thirtyMinutesEnd = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const sources: ResolvedRole[] = [
       {
-        name: 'Reader',
+        name: 'Viewer',
         source: { kind: 'pim-active', assignmentId: 'a1', endDateTime: thirtyMinutesEnd },
       },
       {
-        name: 'Editor',
+        name: 'SalesManager',
         source: { kind: 'pim-active', assignmentId: 'a2', endDateTime: fiveMinutesEnd },
       },
     ];
-    const ctx = makeContext({ roles: ['Reader', 'Editor'], roleSources: sources });
+    const ctx = makeContext({ roles: ['Viewer', 'SalesManager'], roleSources: sources });
     const service = makeService(ctx);
     const before = Math.floor(Date.now() / 1000);
     const result = await service.issueCapability({
@@ -332,5 +332,55 @@ describe('CapabilityIssuerService — PIM enforcement', () => {
     // Capped at 5 minutes - 30s safety margin = 270s, with slack.
     expect(elapsedTtl).toBeLessThanOrEqual(300);
     expect(elapsedTtl).toBeGreaterThan(200);
+  });
+
+  it('does not cap TTL using a pim-active role that does not contribute to any granted capability', async () => {
+    // SalesManager maps to api://crm/* and storage://sales-data/**.
+    // DataScientist maps to api://analytics/**, storage://datasets/**,
+    // and api://ml-models/**. Granting only a SalesManager-scope
+    // capability means a short DataScientist activation must NOT
+    // shorten the resulting token because DataScientist did not
+    // contribute to the granted capability set.
+    const fiveMinutesEnd = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const sources: ResolvedRole[] = [
+      { name: 'SalesManager', source: { kind: 'permanent' } },
+      {
+        name: 'DataScientist',
+        source: { kind: 'pim-active', assignmentId: 'a-ds', endDateTime: fiveMinutesEnd },
+      },
+    ];
+    const ctx = makeContext({
+      roles: ['SalesManager', 'DataScientist'],
+      roleSources: sources,
+    });
+    const service = makeService(ctx);
+    const before = Math.floor(Date.now() / 1000);
+    const result = await service.issueCapability({
+      authToken: 'tok',
+      agentId: 'agent-1',
+      requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
+    });
+    const elapsedTtl = result.expiresAt - before;
+    // No contributing pim-active role → defaultTTL of 900s applies.
+    expect(elapsedTtl).toBeGreaterThan(800);
+    expect(elapsedTtl).toBeLessThanOrEqual(900);
+  });
+
+  it('denies issuance with AUTHORIZATION_FAILED when the contributing PIM activation has already expired', async () => {
+    const past = new Date(Date.now() - 60 * 1000).toISOString();
+    const sources: ResolvedRole[] = [
+      {
+        name: 'Viewer',
+        source: { kind: 'pim-active', assignmentId: 'a1', endDateTime: past },
+      },
+    ];
+    const ctx = makeContext({ roles: ['Viewer'], roleSources: sources });
+    const service = makeService(ctx);
+    await expect(
+      service.issueCapability({ authToken: 'tok', agentId: 'agent-1' }),
+    ).rejects.toMatchObject({
+      code: 'AUTHORIZATION_FAILED',
+      statusCode: 403,
+    });
   });
 });
