@@ -1,0 +1,112 @@
+# Cross-organization trust harness — docker-compose
+#
+# Stands up the three services that exercise the cross-org VC flow described
+# in `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`:
+#
+#   - our-issuer        : the gateway operator's own capability issuer.
+#   - our-gateway       : the tool gateway, configured to trust the partner DID.
+#   - partner-issuer-sim: a separate "organization" minting VCs with a
+#                         different DID and signing key.
+#
+# Usage:
+#
+#   # Build images and start the harness:
+#   docker compose -f infra/docker-compose.cross-org.yml up --build
+#
+#   # In another shell, mint a partner VC and verify it through our gateway:
+#   curl -s -X POST http://localhost:4001/issue \
+#     -H 'content-type: application/json' \
+#     -d '{"partnerAgentId":"partner-agent","capabilities":[{"resource":"storage://shared/**","actions":["read"]}]}'
+#
+#   curl -s http://localhost:4001/.well-known/did.json | jq .
+#
+# Production note: TLS termination is mandatory for did:web in real
+# deployments.  This harness uses the test-mode HTTP exception
+# (`DID_WEB_ALLOW_HTTP_FOR_HOSTS`) so docker-compose can run without a
+# certificate authority.  The exception is gated by env var, off by
+# default, and unit-tested in
+# `packages/capability-issuer/tests/did-resolver.test.ts`.
+
+version: "3.9"
+
+services:
+  partner-issuer-sim:
+    build:
+      context: ..
+      dockerfile: packages/partner-issuer-sim/Dockerfile
+    image: euno/partner-issuer-sim:dev
+    container_name: euno-partner-sim
+    environment:
+      PORT: "4001"
+      # Stable DID across container restarts (deterministic key derivation).
+      PARTNER_ISSUER_DID: "did:web:partner-issuer-sim%3A4001"
+      PARTNER_AUDIENCE: "tool-gateway"
+      PARTNER_TOKEN_TTL: "900"
+      # 32-byte hex seed.  Replace in your own harness — leaking this seed
+      # would let anyone forge tokens from this DID.  Generate a fresh value
+      # with `openssl rand -hex 32` and override via a `.env` file or shell
+      # export rather than checking the value into source control.
+      PARTNER_SEED: "${PARTNER_SEED:-7b9f2c41a8d6e35710f4c8b29ad57e63bc0a4e8f1d2935a76c4810b5f2e9ad3c}"
+      # The partner trusts our issuer's DID for its outbound /validate call.
+      PARTNER_TRUSTED_ISSUER_DIDS: "did:web:our-issuer%3A3000"
+      # Allow our gateway to be resolved over HTTP from inside the partner
+      # container (mirrors the gateway-side allow-list below).
+      DID_WEB_ALLOW_HTTP_FOR_HOSTS: "our-issuer:3000,partner-issuer-sim:4001"
+    ports:
+      - "4001:4001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  our-issuer:
+    build:
+      context: ..
+      dockerfile: packages/capability-issuer/Dockerfile
+    image: euno/capability-issuer:dev
+    container_name: euno-our-issuer
+    environment:
+      PORT: "3000"
+      ISSUER_DID: "did:web:our-issuer%3A3000"
+      AUDIENCE: "tool-gateway"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  our-gateway:
+    build:
+      context: ..
+      dockerfile: packages/tool-gateway/Dockerfile
+    image: euno/tool-gateway:dev
+    container_name: euno-our-gateway
+    depends_on:
+      partner-issuer-sim:
+        condition: service_healthy
+      our-issuer:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      ISSUER_PUBLIC_KEY_URL: "http://our-issuer:3000/.well-known/jwks.json"
+      # The crux of this harness: the gateway is told to additionally trust
+      # the partner sim's DID.  Tokens issued by the partner with this `iss`
+      # claim are verified against the partner's DID document keys.
+      TRUSTED_PARTNER_DIDS: "did:web:partner-issuer-sim%3A4001"
+      # Restrict which `iss` values the local SPKI key may sign for, so a
+      # token signed locally cannot impersonate the partner DID.
+      LOCAL_ISSUER_IDS: "did:web:our-issuer%3A3000"
+      # Test-mode HTTP exception for did:web resolution inside the compose
+      # network (no TLS terminator).  Production deployments MUST leave this
+      # unset and serve DID documents over HTTPS.
+      DID_WEB_ALLOW_HTTP_FOR_HOSTS: "partner-issuer-sim:4001,our-issuer:3000"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

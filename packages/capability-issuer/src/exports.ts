@@ -8,3 +8,4 @@ export * from './signer';
 export * from './default-registries';
 export * from './storage-grant';
 export * from './db-token';
+export * from './did-resolver';

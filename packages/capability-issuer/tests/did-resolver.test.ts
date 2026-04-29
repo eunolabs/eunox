@@ -15,6 +15,8 @@ import {
   resolveDID,
   resolveDidKey,
   resolveDidIon,
+  resolveDidWeb,
+  parseDidWebHttpAllowList,
   extractPublicKeyPem,
   findVerificationMethod,
   determineSigningAlgorithm,
@@ -636,5 +638,151 @@ describe('determineSigningAlgorithm', () => {
       controller: 'did:example:abc',
     };
     expect(() => determineSigningAlgorithm(vm)).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// did:web — URL construction, custom ports, and HTTP test-mode allow-list
+// (Sprint 3-4 gap #5: cross-org trust harness)
+// ---------------------------------------------------------------------------
+
+describe('parseDidWebHttpAllowList', () => {
+  it('returns an empty set when env var is unset', () => {
+    expect(parseDidWebHttpAllowList(undefined).size).toBe(0);
+  });
+
+  it('returns an empty set when env var is empty', () => {
+    expect(parseDidWebHttpAllowList('').size).toBe(0);
+    expect(parseDidWebHttpAllowList('   ').size).toBe(0);
+  });
+
+  it('parses a comma-separated list, trims whitespace and lowercases entries', () => {
+    const set = parseDidWebHttpAllowList('Partner-Sim.Local:4001, OTHER.example.com ,foo');
+    expect(Array.from(set).sort()).toEqual(['foo', 'other.example.com', 'partner-sim.local:4001']);
+  });
+});
+
+describe('resolveDidWeb', () => {
+  let originalFetch: typeof global.fetch;
+  let originalAllow: string | undefined;
+  let lastUrl: string | undefined;
+
+  const buildFetchMock = (didDoc: DIDDocument) =>
+    jest.fn().mockImplementation(async (url: string) => {
+      lastUrl = url;
+      return {
+        ok: true,
+        json: async () => didDoc,
+      } as unknown as Response;
+    });
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    originalAllow = process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    lastUrl = undefined;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalAllow === undefined) {
+      delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    } else {
+      process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = originalAllow;
+    }
+  });
+
+  it('rejects identifiers that are not did:web', async () => {
+    await expect(resolveDidWeb('did:key:zfoo')).rejects.toMatchObject({
+      code: ErrorCode.INVALID_REQUEST,
+    });
+  });
+
+  it('fetches the .well-known/did.json over HTTPS by default', async () => {
+    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    const did = 'did:web:example.com';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    const result = await resolveDidWeb(did);
+    expect(result.id).toBe(did);
+    expect(lastUrl).toBe('https://example.com/.well-known/did.json');
+  });
+
+  it('appends path segments for nested did:web identifiers', async () => {
+    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    const did = 'did:web:example.com:user:alice';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    await resolveDidWeb(did);
+    expect(lastUrl).toBe('https://example.com/user/alice/did.json');
+  });
+
+  it('supports custom ports encoded as %3A in the host label', async () => {
+    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    const did = 'did:web:partner-sim.local%3A4001';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    await resolveDidWeb(did);
+    // The %3A must decode back to ':' so the port is preserved in the URL.
+    expect(lastUrl).toBe('https://partner-sim.local:4001/.well-known/did.json');
+  });
+
+  it('switches to HTTP only for hosts in DID_WEB_ALLOW_HTTP_FOR_HOSTS', async () => {
+    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'partner-sim.local:4001';
+    const did = 'did:web:partner-sim.local%3A4001';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    await resolveDidWeb(did);
+    expect(lastUrl).toBe('http://partner-sim.local:4001/.well-known/did.json');
+  });
+
+  it('keeps using HTTPS for hosts NOT in the allow-list (fail-closed)', async () => {
+    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'partner-sim.local:4001';
+    const did = 'did:web:example.com';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    await resolveDidWeb(did);
+    expect(lastUrl?.startsWith('https://')).toBe(true);
+  });
+
+  it('matches the allow-list case-insensitively', async () => {
+    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'Partner-Sim.Local:4001';
+    const did = 'did:web:partner-sim.local%3A4001';
+    const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
+    global.fetch = buildFetchMock(doc);
+
+    await resolveDidWeb(did);
+    expect(lastUrl?.startsWith('http://')).toBe(true);
+  });
+
+  it('rejects the document when its id does not match the requested DID', async () => {
+    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    const did = 'did:web:example.com';
+    global.fetch = buildFetchMock({
+      '@context': 'https://www.w3.org/ns/did/v1',
+      id: 'did:web:other.com',
+    });
+
+    await expect(resolveDidWeb(did)).rejects.toMatchObject({
+      code: ErrorCode.INVALID_TOKEN,
+      statusCode: 400,
+    });
+  });
+
+  it('surfaces non-2xx responses as AUTHENTICATION_FAILED', async () => {
+    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+    } as unknown as Response);
+
+    await expect(resolveDidWeb('did:web:example.com')).rejects.toMatchObject({
+      code: ErrorCode.AUTHENTICATION_FAILED,
+      statusCode: 502,
+    });
   });
 });

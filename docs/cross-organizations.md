@@ -248,3 +248,102 @@ For organizations beginning cross-org agent interactions:
 5.  **Monitor and log** every cross-org capability exchange. As the Zylos analysis notes, *"audit logs must be cross-referenceable — each org keeps its own logs, but they must reconstruct the full interaction chain for regulatory investigations"*【4†L13】.
 
 The current state of cross-org agent federation is early: only **23% of organizations have a formal strategy for agent identity management** as of early 2026【1†L27】. Hub-and-spoke federation is winning short-term, with fully decentralized mesh federation remaining aspirational for most enterprises【1†L17】. Early movers who invest in standardized capability semantics and cryptographic delegation chains will have a structural advantage as the ecosystem matures.
+
+---
+
+## 8. Running the Cross-Org Trust Harness Locally
+
+Implements [Sprint 3-4 gap #5: Cross-Organizational Trust Harness](sprint-3-4-gaps/05-cross-org-trust-harness.md).
+
+The harness lets you exercise the inbound and outbound legs of cross-org
+delegation end-to-end, without standing up a real partner organization.
+It consists of three services:
+
+| Service | Role | Source |
+| --- | --- | --- |
+| `our-issuer` | The gateway operator's own capability issuer. | `packages/capability-issuer` |
+| `our-gateway` | The tool gateway, configured to trust the partner DID via `TRUSTED_PARTNER_DIDS`. | `packages/tool-gateway` |
+| `partner-issuer-sim` | A second "organization" that mints VCs with a different DID and signing key, and exposes a `/validate` endpoint that resolves *our* DID to verify VCs we send it. | `packages/partner-issuer-sim` |
+
+### docker-compose
+
+```bash
+docker compose -f infra/docker-compose.cross-org.yml up --build
+```
+
+The compose file wires:
+
+- `partner-issuer-sim` on `:4001` with DID `did:web:partner-issuer-sim%3A4001`
+  and a deterministic `PARTNER_SEED` (so the published DID document is
+  stable across container restarts).
+- `our-issuer` on `:3000` with DID `did:web:our-issuer%3A3000`.
+- `our-gateway` on `:8080` with `TRUSTED_PARTNER_DIDS` pointing at the
+  partner DID and `LOCAL_ISSUER_IDS` restricting which issuers the local
+  signing key may sign for.
+
+#### TLS exception for did:web
+
+`did:web` resolution defaults to HTTPS. For the compose harness to work
+without a certificate authority, both the gateway and the partner sim are
+launched with `DID_WEB_ALLOW_HTTP_FOR_HOSTS` listing the loopback hosts
+they need to reach over plain HTTP (`partner-issuer-sim:4001` and
+`our-issuer:3000`). Hosts that are not in this allow-list still resolve
+over HTTPS — the exception is gated, opt-in, and unit-tested in
+`packages/capability-issuer/tests/did-resolver.test.ts`. **Production
+deployments must leave `DID_WEB_ALLOW_HTTP_FOR_HOSTS` unset and serve DID
+documents over HTTPS.**
+
+### Try the flow
+
+```bash
+# 1. Mint a partner VC
+TOKEN=$(curl -s -X POST http://localhost:4001/issue \
+  -H 'content-type: application/json' \
+  -d '{"partnerAgentId":"partner-agent","capabilities":[{"resource":"storage://shared/**","actions":["read"]}]}' \
+  | jq -r .token)
+
+# 2. Inspect the partner DID document
+curl -s http://localhost:4001/.well-known/did.json | jq .
+
+# 3. Send the VC through the gateway — verification routes through the
+#    partner DID resolver (DID document fetched, key extracted, signature
+#    verified) because the partner DID is in TRUSTED_PARTNER_DIDS.
+curl -s -X POST http://localhost:8080/v1/validate \
+  -H 'content-type: application/json' \
+  -d "{\"token\":\"$TOKEN\",\"action\":\"read\",\"resource\":\"storage://shared/x\"}"
+```
+
+### Kubernetes
+
+The same harness is also expressed as Kubernetes manifests in
+`k8s/partner-sim/`:
+
+```bash
+kubectl apply -k k8s/partner-sim
+```
+
+The partner sim runs in its own `euno-partner-sim` namespace with a
+restrictive `NetworkPolicy` that only allows ingress from the gateway
+namespace. **It is a test harness — do not install in a production
+cluster.**
+
+### Integration tests
+
+The end-to-end tests live in
+`packages/integration-tests/tests/cross-org.test.ts`. They run in-process
+(no Docker dependency) by mounting the partner sim and a tiny did:web
+document host on ephemeral loopback ports:
+
+```bash
+npm test --workspace=@euno/integration-tests -- cross-org
+```
+
+The suite covers:
+
+1.  **Inbound** — partner mints a VC, our gateway resolves the partner
+    DID and accepts the VC.
+2.  **Outbound** — we mint a VC for the partner, the partner resolves
+    our DID and its `/validate` endpoint accepts the VC.
+3.  **Untrusted issuer** — a third issuer DID (not in
+    `TRUSTED_PARTNER_DIDS`) is rejected even when its DID document is
+    reachable.

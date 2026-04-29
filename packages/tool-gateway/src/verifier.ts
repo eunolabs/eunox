@@ -13,6 +13,7 @@ import {
   SUPPORTED_SCHEMA_VERSIONS,
 } from '@euno/common';
 import { InMemoryRevocationStore, RevocationStore } from './revocation-store';
+import { PartnerIssuerResolver } from './partner-issuer-resolver';
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
@@ -23,6 +24,25 @@ export class JWTTokenVerifier implements TokenVerifier {
   // See `docs/DISTRIBUTED_REVOCATION.md` for the operational architecture.
   private revocationStore: RevocationStore;
   private algorithms: SigningAlgorithm[];
+  /**
+   * Optional cross-org partner-issuer trust resolver.  When configured,
+   * tokens whose `iss` claim matches a trusted partner DID are verified
+   * against the public key advertised in the partner's DID document
+   * instead of the gateway's local SPKI key.  Tokens from untrusted
+   * issuers continue to be rejected by the local-key path.
+   *
+   * See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
+   */
+  private partnerResolver?: PartnerIssuerResolver;
+  /**
+   * Optional list of issuer DIDs/strings the local SPKI key is allowed
+   * to sign for.  When the partner resolver is configured AND the token's
+   * `iss` claim is a trusted partner DID, verification routes through the
+   * partner resolver; otherwise it falls back to the local SPKI path.
+   * Empty / undefined means the local-key path accepts any `iss`
+   * (preserves Sprint-1/2 behaviour).
+   */
+  private localIssuers?: Set<string>;
 
   /** Default revocation TTL used when the caller does not supply an expiry. */
   private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
@@ -30,13 +50,19 @@ export class JWTTokenVerifier implements TokenVerifier {
   constructor(
     publicKey: string,
     algorithms?: SigningAlgorithm[],
-    revocationStore?: RevocationStore
+    revocationStore?: RevocationStore,
+    partnerResolver?: PartnerIssuerResolver,
+    localIssuers?: string[]
   ) {
     this.publicKey = publicKey;
     // Default to RS256 for backward compatibility, but allow multiple algorithms.
     // Normalize so that an explicitly passed empty array also falls back to RS256.
     this.algorithms = algorithms?.length ? algorithms : ['RS256'];
     this.revocationStore = revocationStore ?? new InMemoryRevocationStore();
+    this.partnerResolver = partnerResolver;
+    if (localIssuers && localIssuers.length > 0) {
+      this.localIssuers = new Set(localIssuers);
+    }
   }
 
   /**
@@ -46,30 +72,88 @@ export class JWTTokenVerifier implements TokenVerifier {
     try {
       // Read the algorithm from the token header so we import the key with the
       // correct alg parameter (jose constrains key usage to the import alg).
-      const { alg } = jose.decodeProtectedHeader(token);
+      const header = jose.decodeProtectedHeader(token);
+      const alg = header.alg;
       const algorithm = alg ?? this.algorithms[0] ?? 'RS256';
 
       // Reject tokens whose algorithm is not in the configured allow-list before
       // importing the key, so we fail fast rather than letting jose handle it.
-      if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Token uses disallowed algorithm: ${algorithm}`,
-          401
-        );
+      // Partner DIDs may legitimately use algorithms (e.g. EdDSA) the local
+      // signer does not, so when the token's `iss` is a trusted partner DID
+      // we defer the algorithm check to the algorithm declared in the
+      // partner's DID document instead of `this.algorithms`.
+      let payload: CapabilityTokenPayload;
+      let iss: string | undefined;
+      try {
+        const decoded = jose.decodeJwt(token);
+        iss = typeof decoded.iss === 'string' ? decoded.iss : undefined;
+      } catch {
+        // The signature step below will produce a clearer error.
       }
 
-      // Import the public key per algorithm (cached for performance; invalidated on key rotation)
-      if (!this.cachedKeyObjects.has(algorithm)) {
-        const keyObject = await jose.importSPKI(this.publicKey, algorithm);
-        this.cachedKeyObjects.set(algorithm, keyObject);
-      }
-      const keyObject = this.cachedKeyObjects.get(algorithm)!;
+      const useResolver = this.partnerResolver && iss && this.partnerResolver.trusts(iss);
 
-      // Verify the token signature and decode
-      const { payload } = await jose.jwtVerify(token, keyObject, {
-        algorithms: this.algorithms,
-      });
+      if (useResolver) {
+        // Cross-org path: resolve the partner DID's verification key and use
+        // the algorithm declared in its DID document.  The local algorithm
+        // allow-list is intentionally bypassed because partner DIDs commonly
+        // use EdDSA / ES256 even when the local signer is RS256.
+        const kid = typeof header.kid === 'string' ? header.kid : undefined;
+        const { key: partnerKey, alg: partnerAlg } = await this.partnerResolver!.getKey(iss!, kid);
+        try {
+          const result = await jose.jwtVerify(token, partnerKey, {
+            algorithms: [partnerAlg],
+            issuer: iss!,
+          });
+          payload = result.payload as unknown as CapabilityTokenPayload;
+        } catch (err) {
+          // Only drop the cached key on actual signature verification
+          // failures.  Other jose errors (expiration, claim validation,
+          // malformed JWT) do not indicate stale resolver data — invalidating
+          // for them would (a) cause repeated DID fetches for benign cases
+          // like expired tokens and (b) become a DoS amplifier where any
+          // attacker holding a single partner DID could force unbounded
+          // network resolution by replaying invalid tokens.
+          if (err instanceof jose.errors.JWSSignatureVerificationFailed) {
+            this.partnerResolver!.invalidate(iss!, kid);
+          }
+          throw err;
+        }
+      } else {
+        // Local path: verify against the gateway's bootstrapped SPKI key.
+        if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Token uses disallowed algorithm: ${algorithm}`,
+            401
+          );
+        }
+
+        // If a partner resolver is configured AND a local-issuer allow-list
+        // exists, reject tokens whose issuer is neither a trusted partner
+        // nor a recognised local issuer (defence in depth: stops a token
+        // signed by the local key from impersonating a partner DID).
+        if (this.partnerResolver && this.localIssuers && iss && !this.localIssuers.has(iss)) {
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Token issuer ${iss} is neither a trusted partner DID nor a known local issuer`,
+            401
+          );
+        }
+
+        // Import the public key per algorithm (cached for performance; invalidated on key rotation)
+        if (!this.cachedKeyObjects.has(algorithm)) {
+          const keyObject = await jose.importSPKI(this.publicKey, algorithm);
+          this.cachedKeyObjects.set(algorithm, keyObject);
+        }
+        const keyObject = this.cachedKeyObjects.get(algorithm)!;
+
+        // Verify the token signature and decode
+        const result = await jose.jwtVerify(token, keyObject, {
+          algorithms: this.algorithms,
+        });
+        payload = result.payload as unknown as CapabilityTokenPayload;
+      }
 
       // Check if token is revoked
       const tokenId = payload.jti as string;
@@ -81,11 +165,8 @@ export class JWTTokenVerifier implements TokenVerifier {
         );
       }
 
-      // Cast payload to CapabilityTokenPayload
-      const capabilityPayload = payload as unknown as CapabilityTokenPayload;
-
       // Validate schema version (fail-closed on unknown versions)
-      const schemaVersion = capabilityPayload.schemaVersion;
+      const schemaVersion = payload.schemaVersion;
       if (!schemaVersion) {
         throw new CapabilityError(
           ErrorCode.INVALID_TOKEN,
@@ -101,7 +182,7 @@ export class JWTTokenVerifier implements TokenVerifier {
         );
       }
 
-      return capabilityPayload;
+      return payload;
     } catch (error) {
       if (error instanceof CapabilityError) {
         throw error;

@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cross-org trust harness — partner issuer simulator.
+# See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
+#
+# This kustomization bundles all manifests for the partner-issuer-sim test
+# harness.  Apply with:
+#   kubectl apply -k k8s/partner-sim
+#
+# WARNING: Test harness only.  Do not deploy to production clusters.
+
+resources:
+  - partner-issuer-sim.yaml
+
+namespace: euno-partner-sim
+
+commonLabels:
+  app.kubernetes.io/component: partner-issuer-sim
+  app.kubernetes.io/part-of: euno-cross-org-harness
+  app.kubernetes.io/managed-by: kustomize

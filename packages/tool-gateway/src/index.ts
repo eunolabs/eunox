@@ -29,6 +29,7 @@ import { JWTTokenVerifier } from './verifier';
 import { EnforcementEngine } from './enforcement';
 import { createAdminRouter } from './admin-api';
 import { createRevocationStoreFromEnv, RevocationStore } from './revocation-store';
+import { createPartnerIssuerResolverFromEnv } from './partner-issuer-resolver';
 import axios from 'axios';
 
 // Load environment variables
@@ -85,7 +86,43 @@ async function initializeServices() {
     // call budgets are shared across every gateway replica.
     callCounterStore = await createCallCounterStoreFromEnv(process.env, logger);
 
-    verifier = new JWTTokenVerifier(publicKey, undefined, revocationStore);
+    // Build the cross-org partner-issuer trust resolver.  When
+    // TRUSTED_PARTNER_DIDS is set, the verifier additionally accepts
+    // capability tokens whose `iss` claim is one of the listed partner
+    // DIDs and verifies their signatures against keys advertised in the
+    // partner's DID document.  When unset, the gateway behaves exactly
+    // as in Sprint-1/2 (single shared issuer key only).
+    // See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
+    const partnerResolver = createPartnerIssuerResolverFromEnv(process.env);
+    if (partnerResolver) {
+      // Log only the count of configured partner DIDs; the DID strings
+      // themselves are technically public but not worth emitting on every
+      // boot to logs that may be aggregated.
+      const partnerDidCount = (process.env.TRUSTED_PARTNER_DIDS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean).length;
+      logger.info('Cross-org partner-issuer trust resolver enabled', {
+        partnerDidCount,
+      });
+    }
+
+    // Optional allow-list of issuers (DIDs or simple identifiers) that
+    // the local SPKI key is authorised to sign for.  Only enforced when a
+    // partner resolver is also configured — without partners there is
+    // nothing to confuse the local key with.
+    const localIssuers = (process.env.LOCAL_ISSUER_IDS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    verifier = new JWTTokenVerifier(
+      publicKey,
+      undefined,
+      revocationStore,
+      partnerResolver,
+      localIssuers.length > 0 ? localIssuers : undefined
+    );
 
     // Build the cryptographic evidence signer when audit signing is enabled.
     // Historically the gateway emitted a warning and silently continued

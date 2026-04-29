@@ -10,6 +10,7 @@ module.exports = {
     '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
     '^@euno/tool-gateway$': '<rootDir>/../tool-gateway/src',
     '^@euno/agent-runtime$': '<rootDir>/../agent-runtime/src',
+    '^@euno/partner-issuer-sim$': '<rootDir>/../partner-issuer-sim/src',
   },
   testTimeout: 30000,
   verbose: true,

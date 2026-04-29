@@ -3,7 +3,11 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./tests",
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@euno/capability-issuer/adapters": ["../capability-issuer/src/exports"]
+    }
   },
   "include": ["tests/**/*"],
   "exclude": ["node_modules", "dist"]
