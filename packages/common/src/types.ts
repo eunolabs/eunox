@@ -434,6 +434,29 @@ export interface AgentInventoryRecord {
 }
 
 /**
+ * Minimal structural interface the capability issuer (and any other
+ * producer of {@link AgentInventoryRecord}s) needs from a posture-emitter.
+ *
+ * The full implementation lives in `@euno/posture-emitter`; declaring the
+ * contract here keeps producers free of a hard dependency on that package
+ * and makes the integration point explicit. See
+ * `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
+ */
+export interface PostureEmitterLike {
+  /** Returns true when the emitter is configured and active. Producers
+   *  MUST short-circuit when this is false to avoid building inventory
+   *  records that will be dropped. */
+  isEnabled(): boolean;
+  /** Fire-and-forget observation of an agent. Implementations SHOULD
+   *  not throw; producers treat rejected promises as best-effort
+   *  failures and never fail the originating operation. */
+  emitObserved(record: AgentInventoryRecord): Promise<void>;
+  /** Optional revocation hook. Producers call this when an agent is
+   *  decommissioned so posture surfaces can soft-delete the record. */
+  emitRevoked?(agentId: string, revokedAt: string): Promise<void>;
+}
+
+/**
  * Audit log entry for capability operations
  */
 export interface AuditLogEntry {
