@@ -3,16 +3,19 @@
 ## Current Status (April 2026)
 
 This file is the historical multi-sprint plan. The current codebase has
-completed the core MVP and production-pilot readiness work:
+completed the core MVP, production-pilot readiness work, and the
+Sprint 6 stabilization & hand-off:
 
 - ✅ **Sprints 1-2:** Azure-first foundation, sandbox baseline, gateway enforcement, audit logging
 - ✅ **Sprints 3-4:** DID support, delegation/attenuation, renewal, distributed revocation, distributed kill switch, framework adapters
 - ✅ **Sprint 5:** Pilot launch materials, Azure Bicep deployment assets, Sentinel analytics, HA policy manifests
-- 🔄 **Sprints 6-8:** Cross-cloud demos, federation depth, and additional advanced controls remain roadmap scope
+- ✅ **Sprint 6:** Pilot stabilization & handoff — tuned Sentinel thresholds, `CODEOWNERS` and on-call rotation, capability manifest cookbook, cross-cloud (AWS/GCP) demo runbook, Sprint 7+ backlog
+- 🔄 **Sprints 7-8:** Self-service UI, dynamic policy engine, federation depth, and additional advanced controls remain roadmap scope (see `docs/NEXT_STEPS_BACKLOG.md`)
 
 For implementation evidence and status reconciliation, start with
-`docs/README.md`, `docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`, and
-`docs/SPRINT_5_PILOT_LAUNCH.md`.
+`docs/README.md`, `docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`,
+`docs/SPRINT_5_PILOT_LAUNCH.md`, and
+`docs/SPRINT_6_STABILIZATION_HANDOFF.md`.
 
 ## Milestone 1 – Foundation (Multi-Cloud Integration & Core Architecture)
 

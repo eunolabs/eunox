@@ -1,0 +1,76 @@
+# CODEOWNERS — Sprint 6 ownership formalization
+#
+# This file is the canonical source of code ownership for Euno after
+# the Sprint 6 hand-off. GitHub will request reviews from the matching
+# team(s) automatically on every PR. See
+# `docs/SPRINT_6_STABILIZATION_HANDOFF.md` § 5 for the full ownership
+# model and on-call rotation.
+#
+# Team handles below are placeholders — replace `@edgeobs/<team>` with
+# the actual GitHub team slugs in your organization before merging.
+
+# ---------------------------------------------------------------------------
+# Default owners — any path not matched below requires a review from the
+# pilot leads.
+# ---------------------------------------------------------------------------
+*                                       @edgeobs/euno-leads
+
+# ---------------------------------------------------------------------------
+# Control Plane (CP) — capability issuance, signing, identity adapters
+# ---------------------------------------------------------------------------
+/packages/capability-issuer/            @edgeobs/euno-cp
+/packages/partner-issuer-sim/           @edgeobs/euno-cp
+
+# ---------------------------------------------------------------------------
+# Data Plane (DP) — gateway enforcement, agent runtime, kill switch,
+# revocation
+# ---------------------------------------------------------------------------
+/packages/tool-gateway/                 @edgeobs/euno-dp
+/packages/agent-runtime/                @edgeobs/euno-dp
+
+# ---------------------------------------------------------------------------
+# Observability & Compliance (OBS) — posture, audit, infra, k8s
+# ---------------------------------------------------------------------------
+/packages/posture-emitter/              @edgeobs/euno-obs
+/infra/                                 @edgeobs/euno-obs
+/k8s/                                   @edgeobs/euno-obs
+
+# ---------------------------------------------------------------------------
+# Developer Experience (DX) — CLI, framework adapters, web UI
+# ---------------------------------------------------------------------------
+/packages/cli/                          @edgeobs/euno-dx
+/packages/framework-adapters/           @edgeobs/euno-dx
+/web/                                   @edgeobs/euno-dx
+
+# ---------------------------------------------------------------------------
+# Shared code — both CP and DP must approve because behaviour changes
+# can affect either side of the trust boundary.
+# ---------------------------------------------------------------------------
+/packages/common/                       @edgeobs/euno-cp @edgeobs/euno-dp
+
+# ---------------------------------------------------------------------------
+# Integration tests — owned by both DP and DX (DX writes them, DP runs
+# them in CI).
+# ---------------------------------------------------------------------------
+/packages/integration-tests/            @edgeobs/euno-dp @edgeobs/euno-dx
+
+# ---------------------------------------------------------------------------
+# Documentation — any code-owner from any team may approve doc-only
+# changes. Substantive changes to architecture or security docs should
+# loop in the pilot leads.
+# ---------------------------------------------------------------------------
+/docs/                                  @edgeobs/euno-leads
+/docs/IMPLEMENTATION.md                 @edgeobs/euno-leads
+/docs/capability-model.md               @edgeobs/euno-leads
+/docs/enforcement.md                    @edgeobs/euno-leads
+/docs/sandboxing.md                     @edgeobs/euno-leads
+/docs/SPRINT_*.md                       @edgeobs/euno-leads
+/README.md                              @edgeobs/euno-leads
+
+# ---------------------------------------------------------------------------
+# Repository-wide configuration — pilot leads only.
+# ---------------------------------------------------------------------------
+/CODEOWNERS                             @edgeobs/euno-leads
+/package.json                           @edgeobs/euno-leads
+/tsconfig.json                          @edgeobs/euno-leads
+/.eslintrc.json                         @edgeobs/euno-leads
