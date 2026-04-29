@@ -8,7 +8,6 @@ module.exports = {
     '^@euno/common$': '<rootDir>/../common/src',
     '^@euno/capability-issuer$': '<rootDir>/../capability-issuer/src',
     '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
-    '^@euno/capability-issuer/dist/exports$': '<rootDir>/../capability-issuer/src/exports',
     '^@euno/tool-gateway$': '<rootDir>/../tool-gateway/src',
     '^@euno/agent-runtime$': '<rootDir>/../agent-runtime/src',
     '^@euno/partner-issuer-sim$': '<rootDir>/../partner-issuer-sim/src',

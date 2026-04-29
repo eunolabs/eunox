@@ -8,7 +8,7 @@ module.exports = {
       tsconfig: {
         paths: {
           '@euno/common': ['../common/src'],
-          '@euno/capability-issuer/dist/exports': ['../capability-issuer/src/exports'],
+          '@euno/capability-issuer/adapters': ['../capability-issuer/src/exports'],
         },
       },
     }],
@@ -21,6 +21,6 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^@euno/common$': '<rootDir>/../common/src',
-    '^@euno/capability-issuer/dist/exports$': '<rootDir>/../capability-issuer/src/exports',
+    '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
   },
 };

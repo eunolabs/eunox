@@ -41,7 +41,7 @@ import {
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
-} from '@euno/capability-issuer/dist/exports';
+} from '@euno/capability-issuer/adapters';
 import { PartnerKeyMaterial } from './keys';
 
 export interface PartnerAppConfig {

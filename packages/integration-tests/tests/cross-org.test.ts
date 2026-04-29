@@ -100,14 +100,15 @@ describe('cross-org trust harness', () => {
     let verifier: JWTTokenVerifier;
 
     beforeAll(async () => {
-      // Bind a placeholder server first to discover the OS-assigned port, so
-      // we can build the partner sim with the matching `issuerDid` (the
-      // sim's DID is `did:web:127.0.0.1%3A<port>` and must agree with the
-      // port it actually listens on).  We then close the placeholder and
-      // mount the real partner sim on the same port.
-      const probe = await listenOnEphemeralPort(express());
-      const port = probe.port;
-      await close(probe.server);
+      // Reserve an ephemeral port WITHOUT releasing it: create the bare
+      // http.Server, listen on port 0, then attach the partner Express app
+      // as the request handler once we know which port the OS assigned.
+      // This avoids the close/re-bind race the reviewer flagged
+      // (https://github.com/edgeobs/euno/pull/36) where another process
+      // could grab the freed port between calls.
+      const server = http.createServer();
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
 
       partnerDid = `did:web:127.0.0.1%3A${port}`;
       const key = loadOrCreateKey({ seed: PARTNER_SEED_HEX });
@@ -117,10 +118,8 @@ describe('cross-org trust harness', () => {
         defaultTtlSeconds: 600,
         key,
       });
-
-      partnerServer = await new Promise<http.Server>((resolve) => {
-        const s = app.listen(port, '127.0.0.1', () => resolve(s));
-      });
+      server.on('request', app);
+      partnerServer = server;
 
       // Allow HTTP did:web resolution for the partner's loopback host.
       process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = `127.0.0.1:${port}`;

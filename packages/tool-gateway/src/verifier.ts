@@ -107,9 +107,16 @@ export class JWTTokenVerifier implements TokenVerifier {
           });
           payload = result.payload as unknown as CapabilityTokenPayload;
         } catch (err) {
-          // Drop the cached key on failure so the next attempt re-resolves
-          // the DID document (handles out-of-band key rotation cleanly).
-          this.partnerResolver!.invalidate(iss!, kid);
+          // Only drop the cached key on actual signature verification
+          // failures.  Other jose errors (expiration, claim validation,
+          // malformed JWT) do not indicate stale resolver data — invalidating
+          // for them would (a) cause repeated DID fetches for benign cases
+          // like expired tokens and (b) become a DoS amplifier where any
+          // attacker holding a single partner DID could force unbounded
+          // network resolution by replaying invalid tokens.
+          if (err instanceof jose.errors.JWSSignatureVerificationFailed) {
+            this.partnerResolver!.invalidate(iss!, kid);
+          }
           throw err;
         }
       } else {

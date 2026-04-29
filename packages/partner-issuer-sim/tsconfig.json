@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "baseUrl": ".",
+    "paths": {
+      "@euno/capability-issuer/adapters": ["../capability-issuer/dist/exports"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

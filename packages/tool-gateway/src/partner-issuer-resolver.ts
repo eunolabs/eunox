@@ -30,7 +30,7 @@ import {
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
-} from '@euno/capability-issuer/dist/exports';
+} from '@euno/capability-issuer/adapters';
 
 /** Cached entry for one (DID, kid?) pair. */
 interface CachedKey {

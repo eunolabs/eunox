@@ -18,6 +18,5 @@ module.exports = {
     '^@euno/common$': '<rootDir>/../common/src',
     '^@euno/capability-issuer$': '<rootDir>/../capability-issuer/src',
     '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
-    '^@euno/capability-issuer/dist/exports$': '<rootDir>/../capability-issuer/src/exports',
   },
 };
