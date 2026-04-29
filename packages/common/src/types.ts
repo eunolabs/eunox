@@ -492,6 +492,97 @@ export interface IdentityProvider {
 }
 
 /**
+ * Capability action tier used by Conditional Access policy enforcement.
+ *
+ * The tier set intentionally matches the most sensitive actions named by
+ * `SENSITIVE_ACTIONS` in the issuer service plus `read`. CA configuration
+ * may declare separate `acrs` requirements per tier (see
+ * {@link AzureADConfig.conditionalAccess.requiredAcrsByTier}); the issuer
+ * compares each requested capability's actions against this set when
+ * evaluating whether {@link CaEvaluation.satisfiedTiers} permits issuance.
+ */
+export type CaActionTier = 'read' | 'write' | 'delete' | 'admin';
+
+/**
+ * Result of evaluating Conditional Access (CA) signals during token
+ * validation. Populated by identity providers that participate in CA
+ * enforcement (today, Azure AD); other providers leave it undefined and
+ * the issuer treats the request as if no CA policy applies.
+ *
+ * The provider records *what was checked* (`requiredAcrsByTier`) and
+ * *which tiers were satisfied* (`satisfiedTiers`); the issuer service is
+ * responsible for comparing the requested capability's action set against
+ * `satisfiedTiers` and denying the issuance with
+ * `CONDITIONAL_ACCESS_REQUIRED` when a required tier is missing. See
+ * `docs/sprint-3-4-gaps/03-conditional-access.md`.
+ */
+export interface CaEvaluation {
+  /**
+   * The set of capability action tiers that were satisfied by this token.
+   *
+   * A tier is included when every `acrs` value declared for that tier in
+   * the provider's `requiredAcrsByTier` configuration was present in the
+   * token's `acrs` claim, plus any additional provider-specific checks for
+   * that tier passed.
+   *
+   * For example, the current Azure AD evaluation only applies
+   * `maxSignInAgeSeconds` to the `admin` and `delete` tiers; `read` and
+   * `write` may remain satisfied even when the sign-in is older. Optional
+   * user/session risk or freshness checks are provider-specific and may be
+   * omitted entirely.
+   *
+   * Providers without CA configuration MUST populate this with all four
+   * tiers so unconfigured deployments behave exactly as before.
+   */
+  satisfiedTiers: CaActionTier[];
+  /**
+   * The acrs values that the provider's configuration required, keyed by
+   * tier. Recorded so the audit log can surface exactly what policy was
+   * checked when an issuance is denied.
+   */
+  requiredAcrsByTier?: Partial<Record<CaActionTier, string[]>>;
+  /**
+   * The acrs values present in the validated token. Recorded for audit.
+   * Empty array when the token had no `acrs`/`acr` claim.
+   */
+  presentedAcrs: string[];
+}
+
+/**
+ * Source of a directory role surfaced by an identity provider that
+ * supports just-in-time elevation (today, Azure AD via Privileged
+ * Identity Management). See `docs/sprint-3-4-gaps/04-pim-activation.md`.
+ *
+ *   * `permanent` — assigned directly or via a group; the user holds the
+ *     role indefinitely.
+ *   * `pim-active` — currently activated PIM assignment, valid until
+ *     `endDateTime` (ISO-8601). The issuer caps any granted capability's
+ *     TTL to the remaining window when {@link AzureADConfig.pim.capTtlToActivation}
+ *     is true.
+ *   * `pim-eligible-not-active` — the user is eligible for the role but
+ *     has not activated it. Roles in this state are stripped before
+ *     capability mapping when {@link AzureADConfig.pim.enforceActivation}
+ *     is true.
+ */
+export type RoleSource =
+  | { kind: 'permanent' }
+  | { kind: 'pim-active'; assignmentId: string; endDateTime: string }
+  | { kind: 'pim-eligible-not-active' };
+
+/**
+ * A role with metadata about how the user came to hold it. Identity
+ * providers that distinguish elevation state (Azure AD with PIM) populate
+ * {@link UserContext.roleSources}; providers that don't may omit it and
+ * the issuer treats every role as `permanent` for back-compat.
+ */
+export interface ResolvedRole {
+  /** Display name of the role (matches entries in `UserContext.roles`). */
+  name: string;
+  /** How the user holds this role — see {@link RoleSource}. */
+  source: RoleSource;
+}
+
+/**
  * User context extracted from authentication
  */
 export interface UserContext {
@@ -505,6 +596,23 @@ export interface UserContext {
   tenantId?: string;
   /** Additional claims from the identity provider */
   claims?: Record<string, unknown>;
+  /**
+   * Optional Conditional Access evaluation result. When populated, the
+   * issuer compares each requested capability's action tier against
+   * {@link CaEvaluation.satisfiedTiers} and denies with
+   * `CONDITIONAL_ACCESS_REQUIRED` when a required tier is missing.
+   * Providers that do not implement CA leave this undefined and the
+   * issuer skips the check (back-compat).
+   */
+  caEvaluation?: CaEvaluation;
+  /**
+   * Optional per-role source metadata. When populated, the issuer
+   * strips `pim-eligible-not-active` roles before mapping (when
+   * configured) and caps capability TTL to the smallest remaining
+   * `pim-active` window. Providers that do not implement PIM leave this
+   * undefined; every role is then treated as `permanent`.
+   */
+  roleSources?: ResolvedRole[];
 }
 
 /**
@@ -864,6 +972,74 @@ export interface AzureADConfig {
   authority?: string;
   /** Scopes to request */
   scopes?: string[];
+  /**
+   * Conditional Access policy enforcement configuration.
+   *
+   * When omitted, the provider populates `caEvaluation.satisfiedTiers`
+   * with all four tiers and the issuer behaves exactly as before
+   * (back-compat). When supplied, `validateToken()` requires every
+   * `acrs` value listed for a tier to be present in the token's `acrs`
+   * claim before that tier is included in `satisfiedTiers`. The issuer
+   * service then denies issuance with `CONDITIONAL_ACCESS_REQUIRED`
+   * when a requested capability's action tier is not satisfied.
+   *
+   * See `docs/sprint-3-4-gaps/03-conditional-access.md`.
+   */
+  conditionalAccess?: {
+    /**
+     * Per-tier required `acrs` references. A tier is considered
+     * satisfied iff every listed value is present in the token's
+     * `acrs` claim. Omitted tiers are unconditionally satisfied.
+     */
+    requiredAcrsByTier?: Partial<Record<CaActionTier, string[]>>;
+    /**
+     * When true, after claim-based checks pass, call Microsoft Graph
+     * to confirm the user/session has not been flagged as risky.
+     * Defaults to false. Requires `IdentityRiskyUser.Read.All`.
+     */
+    requireFreshGraphCheck?: boolean;
+    /**
+     * Maximum age (seconds) of the underlying sign-in (`auth_time`
+     * claim) beyond which the `admin` and `delete` tiers are rejected
+     * regardless of `acrs`. Defaults to 3600 (1 hour).
+     */
+    maxSignInAgeSeconds?: number;
+  };
+  /**
+   * Privileged Identity Management (PIM) activation enforcement.
+   *
+   * When omitted, every role returned by Graph is treated as permanent
+   * (back-compat with deployments that do not use PIM). When supplied,
+   * `getUserRoles()` queries `roleAssignmentScheduleInstances` and
+   * `roleEligibilityScheduleInstances` and returns
+   * {@link ResolvedRole}s alongside the bare role names so the issuer
+   * can strip eligible-but-not-active roles and cap capability TTL to
+   * the remaining activation window.
+   *
+   * See `docs/sprint-3-4-gaps/04-pim-activation.md`.
+   */
+  pim?: {
+    /**
+     * When true, roles in `pim-eligible-not-active` state are stripped
+     * before being mapped to capabilities. Defaults to true when this
+     * block is present.
+     */
+    enforceActivation?: boolean;
+    /**
+     * Operator-declared list of role display names that MUST be
+     * PIM-activated (defense in depth: deny even if the role somehow
+     * appears as permanent). Example:
+     * `["Global Administrator", "Privileged Role Administrator"]`.
+     */
+    pimRequiredRoles?: string[];
+    /**
+     * When true, capability TTL is capped at the smallest remaining
+     * `pim-active` window across all roles that contributed to the
+     * granted capabilities (with a 30-second clock-skew safety margin).
+     * Defaults to true.
+     */
+    capTtlToActivation?: boolean;
+  };
 }
 
 /**

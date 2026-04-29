@@ -467,6 +467,15 @@ export enum ErrorCode {
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
   NOT_IMPLEMENTED = 'NOT_IMPLEMENTED',
+  /**
+   * The presented authentication token did not satisfy a Conditional
+   * Access policy required for the requested capability tier (for
+   * example MFA, compliant device, or a fresh sign-in). The caller
+   * should re-authenticate to satisfy the policy and retry. Surfaced as
+   * HTTP 403; audit reason `"conditional_access_unsatisfied"`. See
+   * `docs/sprint-3-4-gaps/03-conditional-access.md`.
+   */
+  CONDITIONAL_ACCESS_REQUIRED = 'CONDITIONAL_ACCESS_REQUIRED',
 }
 
 /**
