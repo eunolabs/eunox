@@ -79,6 +79,20 @@ export function parseStorageUri(resource: ResourceId): ParsedStorageUri | null {
   if (remainder.some((seg) => seg.includes('*'))) {
     return null;
   }
+  // A bucket-only URI (no key, no wildcard) is ambiguous: callers don't
+  // know whether the intent was the bucket root, a single object named
+  // empty string, or "all objects". Require either at least one path
+  // segment beyond the bucket, or a trailing /* / /** wildcard. This
+  // also prevents downstream minters from being asked to presign an
+  // empty key.
+  if (remainder.length === 0 && !isWildcard) {
+    return null;
+  }
+  // Reject empty path segments (e.g. `storage://aws/bucket//key`) which
+  // would otherwise reach the SDK as a malformed key.
+  if (remainder.some((seg) => seg.length === 0)) {
+    return null;
+  }
 
   const keyOrPrefix = remainder.join('/');
   const result: ParsedStorageUri = {

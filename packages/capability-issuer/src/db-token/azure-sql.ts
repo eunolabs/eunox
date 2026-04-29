@@ -37,11 +37,33 @@ export class AzureSqlTokenMinter implements DbTokenMinter {
         502,
       );
     }
+    // The Azure SQL AAD token lifetime is set by AAD (typically 1 hour)
+    // and cannot be shortened at request time. We can't *narrow* the
+    // bearer token, but we MUST refuse to hand out a credential that
+    // outlives the operator-configured `DB_TOKEN_MAX_TTL_SECONDS` cap
+    // (or the per-issuance `input.ttlSeconds`). Fail closed when the
+    // SDK-reported expiry exceeds the cap so deployments don't silently
+    // emit longer-lived DB tokens than configured.
+    const now = Date.now();
+    const maxAllowedExpiry = now + input.ttlSeconds * 1000;
+    if (tok.expiresOnTimestamp > maxAllowedExpiry + AZURE_SQL_EXPIRY_SLACK_MS) {
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        `Azure SQL AAD token lifetime exceeds the configured DB-token cap ` +
+          `(token expires at ${new Date(tok.expiresOnTimestamp).toISOString()}, ` +
+          `cap is ${new Date(maxAllowedExpiry).toISOString()}). ` +
+          `Lower DB_TOKEN_MAX_TTL_SECONDS only when AAD can issue a token of that lifetime, ` +
+          `or refuse the request.`,
+        500,
+      );
+    }
     return {
       provider: 'azure-sql',
       resource: input.resource,
       actions: [...input.actions],
-      // Trust the SDK's expiry — never recompute as `now + ttl`.
+      // Trust the SDK's expiry — never recompute as `now + ttl` —
+      // because the bearer token itself is bound to the AAD-reported
+      // exp claim and the database server validates that.
       expiresAt: new Date(tok.expiresOnTimestamp).toISOString(),
       host: input.instance.host,
       port: input.instance.port,
@@ -51,6 +73,15 @@ export class AzureSqlTokenMinter implements DbTokenMinter {
     };
   }
 }
+
+/**
+ * Tolerance applied when comparing the AAD-reported token expiry to the
+ * operator-configured cap. AAD expiries land on second boundaries while
+ * `Date.now()` is millisecond-resolution and small clock differences are
+ * not security-relevant; treating ≤5 s of overshoot as "within cap"
+ * avoids spurious failures on a normal AAD response.
+ */
+const AZURE_SQL_EXPIRY_SLACK_MS = 5_000;
 
 async function loadDefaultSource(): Promise<AzureSqlTokenSource> {
   const sdk: any = await dynamicImport('@azure/identity');

@@ -111,8 +111,8 @@ describe('validateInstancesDocument', () => {
 });
 
 describe('AzureSqlTokenMinter', () => {
-  it('returns a DbCredential with SDK-reported expiry', async () => {
-    const expires = Date.UTC(2030, 0, 1, 0, 0, 0);
+  it('returns a DbCredential with SDK-reported expiry when within the cap', async () => {
+    const expires = Date.now() + 5 * 60_000; // 5 minutes from now → within 10-minute cap
     const minter = new AzureSqlTokenMinter({
       tokenSource: { getToken: async () => ({ token: 'JWT', expiresOnTimestamp: expires }) },
     });
@@ -138,6 +138,32 @@ describe('AzureSqlTokenMinter', () => {
     expect(cred.host).toBe('salesserver.database.windows.net');
     expect(cred.port).toBe(1433);
     expect(cred.database).toBe('salesdb');
+  });
+
+  it('fails closed when the AAD-reported token expiry exceeds the operator cap', async () => {
+    // AAD might issue a 60-minute token; the operator cap is 10 minutes.
+    const expires = Date.now() + 60 * 60_000;
+    const minter = new AzureSqlTokenMinter({
+      tokenSource: { getToken: async () => ({ token: 'JWT', expiresOnTimestamp: expires }) },
+    });
+    await expect(
+      minter.mint({
+        resource: 'db://azure-sql/salesserver/salesdb/orders.read',
+        actions: ['read'],
+        ttlSeconds: 600,
+        agentId: 'a',
+        authorizedBy: 'u',
+        dbUsername: 'agent-app@tenant.onmicrosoft.com',
+        instance: {
+          id: 'salesserver',
+          provider: 'azure-sql',
+          host: 'salesserver.database.windows.net',
+          port: 1433,
+          databases: ['salesdb'],
+        },
+        database: 'salesdb',
+      }),
+    ).rejects.toThrow(/exceeds the configured DB-token cap/);
   });
 });
 
@@ -206,7 +232,8 @@ describe('CloudSqlTokenMinter', () => {
     const minter = new CloudSqlTokenMinter({
       now: () => 1_700_000_000_000,
       authClientFactory: () => ({
-        getAccessToken: async () => ({ token: 'oauth-tok', res: { data: { expires_in: 1800 } } }),
+        // Provider says expires_in=400 (< the 600s cap) → use provider lifetime.
+        getAccessToken: async () => ({ token: 'oauth-tok', res: { data: { expires_in: 400 } } }),
       }),
     });
     const cred = await minter.mint({
@@ -227,7 +254,37 @@ describe('CloudSqlTokenMinter', () => {
     });
     expect(cred.token).toBe('oauth-tok');
     expect(cred.username).toBe('analyst-sa@proj.iam');
-    expect(cred.expiresAt).toBe(new Date(1_700_000_000_000 + 1_800_000).toISOString());
+    expect(cred.expiresAt).toBe(new Date(1_700_000_000_000 + 400_000).toISOString());
+  });
+
+  it('caps the credential expiry to the operator-configured ttl', async () => {
+    // Provider returns a 1800-second OAuth token; capability ttl is 600s.
+    // The credential's reported expiry must reflect the 600s cap, not
+    // the longer provider lifetime — DB_TOKEN_MAX_TTL_SECONDS would be
+    // ineffective otherwise.
+    const minter = new CloudSqlTokenMinter({
+      now: () => 1_700_000_000_000,
+      authClientFactory: () => ({
+        getAccessToken: async () => ({ token: 'oauth-tok', res: { data: { expires_in: 1800 } } }),
+      }),
+    });
+    const cred = await minter.mint({
+      resource: 'db://cloudsql/analytics-pg/events/raw_events.read',
+      actions: ['read'],
+      ttlSeconds: 600,
+      agentId: 'a',
+      authorizedBy: 'u',
+      dbUsername: 'analyst-sa@proj.iam',
+      instance: {
+        id: 'analytics-pg',
+        provider: 'cloudsql-iam',
+        host: '10.0.0.1',
+        port: 5432,
+        databases: ['events'],
+      },
+      database: 'events',
+    });
+    expect(cred.expiresAt).toBe(new Date(1_700_000_000_000 + 600_000).toISOString());
   });
 });
 

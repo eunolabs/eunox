@@ -53,7 +53,13 @@ export class CloudSqlTokenMinter implements DbTokenMinter {
       );
     }
     const now = this.opts.now ? this.opts.now() : Date.now();
-    const lifetime = expiresInSec ?? CLOUD_SQL_DEFAULT_TOKEN_LIFETIME_SECONDS;
+    const providerLifetime = expiresInSec ?? CLOUD_SQL_DEFAULT_TOKEN_LIFETIME_SECONDS;
+    // Cap to the operator-configured `input.ttlSeconds` so
+    // `DB_TOKEN_MAX_TTL_SECONDS` is actually enforced. We can't
+    // actually shorten the OAuth token's lifetime at Google's end, but
+    // the credential we hand out is annotated with the capped
+    // `expiresAt` so downstream gateways/agents reject reuse beyond it.
+    const lifetime = Math.min(providerLifetime, input.ttlSeconds);
     return {
       provider: 'cloudsql-iam',
       resource: input.resource,

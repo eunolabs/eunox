@@ -15,6 +15,7 @@
  */
 
 import { CapabilityError, ErrorCode, StorageGrant } from '@euno/common';
+import { createHash } from 'crypto';
 import { ParsedStorageUri } from './types';
 import {
   StorageGrantMinter,
@@ -140,6 +141,32 @@ export class AwsStorageGrantMinter implements StorageGrantMinter {
         500,
       );
     }
+    // STS AssumeRole has a hard 900-second minimum session duration.
+    // A capability with a shorter TTL would otherwise produce a runtime
+    // error from STS — fail closed at request time with a clear message.
+    if (input.ttlSeconds < STS_MIN_SESSION_DURATION_SECONDS) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        `AWS STS AssumeRole requires a minimum session duration of ${STS_MIN_SESSION_DURATION_SECONDS}s; ` +
+          `requested ttl is ${input.ttlSeconds}s. Use a single-object capability or raise the TTL.`,
+        400,
+      );
+    }
+
+    // Build the scope-down policy from the capability's actual actions
+    // so a read-only capability cannot mint write/delete-capable
+    // credentials. Falling back to "all of GetObject/PutObject/DeleteObject"
+    // here would silently broaden the grant beyond the capability.
+    const objectActions = mapActionsToS3PolicyActions(input.actions);
+    const includeListBucket = input.actions.includes('list');
+    if (objectActions.length === 0 && !includeListBucket) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        `No S3 IAM actions map to capability actions: ${input.actions.join(',')}`,
+        400,
+      );
+    }
+
     const sts = this.opts.stsClientFactory
       ? await this.opts.stsClientFactory()
       : await this.loadStsClient();
@@ -150,28 +177,32 @@ export class AwsStorageGrantMinter implements StorageGrantMinter {
       ? `arn:aws:s3:::${parsed.bucket}/${prefix}/*`
       : `arn:aws:s3:::${parsed.bucket}/*`;
     const bucketArn = `arn:aws:s3:::${parsed.bucket}`;
+    const statements: Record<string, unknown>[] = [];
+    if (objectActions.length > 0) {
+      statements.push({
+        Sid: 'EunoScopedAccess',
+        Effect: 'Allow',
+        Action: objectActions,
+        Resource: resourceArn,
+      });
+    }
+    if (includeListBucket) {
+      statements.push({
+        Sid: 'EunoListBucket',
+        Effect: 'Allow',
+        Action: 's3:ListBucket',
+        Resource: bucketArn,
+        ...(prefix ? { Condition: { StringLike: { 's3:prefix': [`${prefix}/*`] } } } : {}),
+      });
+    }
     const policyDoc = JSON.stringify({
       Version: '2012-10-17',
-      Statement: [
-        {
-          Sid: 'EunoScopedAccess',
-          Effect: 'Allow',
-          Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
-          Resource: resourceArn,
-        },
-        {
-          Sid: 'EunoListBucket',
-          Effect: 'Allow',
-          Action: 's3:ListBucket',
-          Resource: bucketArn,
-          ...(prefix ? { Condition: { StringLike: { 's3:prefix': [`${prefix}/*`] } } } : {}),
-        },
-      ],
+      Statement: statements,
     });
 
     const cmdInput: Record<string, unknown> = {
       RoleArn: this.opts.assumeRoleArn,
-      RoleSessionName: `euno-${input.agentId}-${Date.now()}`,
+      RoleSessionName: buildRoleSessionName(input.agentId),
       DurationSeconds: input.ttlSeconds,
       Policy: policyDoc,
     };
@@ -243,6 +274,63 @@ function mapActionsToS3Methods(actions: string[]): ('GET' | 'PUT' | 'DELETE')[] 
     // single-object presigned URLs cannot express it.
   }
   return methods;
+}
+
+/**
+ * Map capability actions to the IAM Action strings used in the
+ * scope-down policy attached to STS AssumeRole. Each capability action
+ * produces at most one IAM action; unrecognized actions are ignored so
+ * a future action name doesn't accidentally broaden the policy.
+ */
+function mapActionsToS3PolicyActions(actions: string[]): string[] {
+  const out: string[] = [];
+  for (const a of actions) {
+    const iam =
+      a === 'read' ? 's3:GetObject'
+        : a === 'write' ? 's3:PutObject'
+          : a === 'delete' ? 's3:DeleteObject'
+            : undefined;
+    if (iam && !out.includes(iam)) out.push(iam);
+  }
+  return out;
+}
+
+/** STS AssumeRole hard minimum session duration (seconds). */
+export const STS_MIN_SESSION_DURATION_SECONDS = 900;
+/** STS RoleSessionName max length (AWS-imposed). */
+const STS_ROLE_SESSION_NAME_MAX_LEN = 64;
+
+/**
+ * Produce a deterministic, STS-legal `RoleSessionName` from an
+ * agent identifier. STS allows `[a-zA-Z0-9_=,.@-]{2,64}`. Agent IDs in
+ * euno can be DIDs (which contain `:`), email-style strings, or
+ * arbitrary opaque tokens — sanitize disallowed characters and
+ * truncate. When the sanitized agent ID would exceed the length
+ * budget after the `euno-` prefix and the timestamp suffix, the
+ * agent ID is replaced with a short hash so the session name remains
+ * deterministic-per-agent and traceable in CloudTrail without
+ * exposing the raw ID.
+ */
+export function buildRoleSessionName(agentId: string, now: number = Date.now()): string {
+  const ts = String(now);
+  // STS RoleSessionName allowed character class.
+  const sanitized = String(agentId ?? '').replace(/[^a-zA-Z0-9_=,.@-]/g, '_');
+  const prefix = 'euno-';
+  const headroom = STS_ROLE_SESSION_NAME_MAX_LEN - prefix.length - 1 /* '-' */ - ts.length;
+  let agentPart: string;
+  if (sanitized.length === 0) {
+    agentPart = createHash('sha256').update(agentId ?? '').digest('hex').slice(0, 16);
+  } else if (sanitized.length <= headroom) {
+    agentPart = sanitized;
+  } else {
+    // Stable hash so the same agent yields the same session-name shape
+    // across calls (still differentiated by the timestamp suffix).
+    agentPart = createHash('sha256').update(agentId).digest('hex').slice(0, Math.max(8, headroom));
+  }
+  const name = `${prefix}${agentPart}-${ts}`;
+  return name.length > STS_ROLE_SESSION_NAME_MAX_LEN
+    ? name.slice(0, STS_ROLE_SESSION_NAME_MAX_LEN)
+    : name;
 }
 
 async function dynamicImport(name: string): Promise<any> {

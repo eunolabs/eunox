@@ -40,6 +40,8 @@ export interface GcsDownscopedTokenSource {
     bucket: string;
     prefix: string;
     ttlSeconds: number;
+    /** Capability actions — drives `availablePermissions` in the CAB. */
+    actions: string[];
   }): Promise<{ token: string; expiresAt: Date; availabilityCondition?: string }>;
 }
 
@@ -118,6 +120,7 @@ export class GcpStorageGrantMinter implements StorageGrantMinter {
       bucket: parsed.bucket,
       prefix: parsed.keyOrPrefix,
       ttlSeconds: input.ttlSeconds,
+      actions: input.actions,
     });
     const grant: StorageGrant = {
       provider: 'gcs',
@@ -157,26 +160,37 @@ async function loadGcsClient(): Promise<GcsClientLike> {
 async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> {
   const auth: any = await dynamicImport('google-auth-library');
   return {
-    mint: async ({ bucket, prefix, ttlSeconds }) => {
+    mint: async ({ bucket, prefix, ttlSeconds, actions }) => {
       const client = new auth.GoogleAuth({
         scopes: ['https://www.googleapis.com/auth/devstorage.read_write'],
       }).getClient();
       const source = await client;
-      const tokenResp = await source.getAccessToken();
       // Single source of truth for the CEL expression so the policy and
-      // the response stay in lockstep.
+      // the response stay in lockstep. The prefix is escaped because it
+      // can legally contain `'` or `\` — unescaped interpolation would
+      // either break the expression or, worse, allow a crafted resource
+      // URI to broaden the access boundary via CEL injection.
       const availabilityCondition = prefix
-        ? `resource.name.startsWith('projects/_/buckets/${bucket}/objects/${prefix}/')`
+        ? `resource.name.startsWith('projects/_/buckets/${bucket}/objects/${escapeCelStringLiteral(prefix)}/')`
         : undefined;
+      // Derive `availablePermissions` from the capability's actions so a
+      // read-only capability cannot mint a token authorized to write.
+      // Falling back to the legacy "viewer + creator" pair would silently
+      // broaden the grant beyond what the capability allowed.
+      const availablePermissions = mapActionsToGcsRoles(actions);
+      if (availablePermissions.length === 0) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `No GCS roles map to capability actions: ${actions.join(',')}`,
+          400,
+        );
+      }
       // Build a Credential Access Boundary policy and mint a downscoped token.
       const cab = {
         accessBoundary: {
           accessBoundaryRules: [
             {
-              availablePermissions: [
-                'inRole:roles/storage.objectViewer',
-                'inRole:roles/storage.objectCreator',
-              ],
+              availablePermissions,
               availableResource: `//storage.googleapis.com/projects/_/buckets/${bucket}`,
               availabilityCondition: availabilityCondition
                 ? { title: 'PrefixScope', expression: availabilityCondition }
@@ -187,14 +201,65 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
       };
       const downscopedClient = new auth.DownscopedClient(source, cab);
       const downTok = await downscopedClient.getAccessToken();
+      // Never fall back to the source (un-downscoped) token — that would
+      // hand out a credential broader than the capability authorized.
+      const token = typeof downTok?.token === 'string' ? downTok.token : '';
+      if (!token) {
+        throw new CapabilityError(
+          ErrorCode.INTERNAL_ERROR,
+          'GCS DownscopedClient returned no token; refusing to fall back to source credentials',
+          502,
+        );
+      }
       const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
       return {
-        token: downTok.token ?? tokenResp.token ?? '',
+        token,
         expiresAt,
         availabilityCondition,
       };
     },
   };
+}
+
+/**
+ * Map capability actions to GCS IAM roles for use in a Credential
+ * Access Boundary's `availablePermissions` list. Read maps to
+ * objectViewer; write/delete map to objectAdmin (the smallest standard
+ * role that includes object create/delete; objectCreator alone cannot
+ * delete). list is included in objectViewer so it does not add a role.
+ *
+ * Exported for unit testing — production callers reach this via
+ * {@link loadDefaultDownscopedSource} only.
+ */
+export function mapActionsToGcsRoles(actions: string[]): string[] {
+  const roles: string[] = [];
+  const has = (a: string) => actions.includes(a);
+  if (has('read') || has('list')) {
+    roles.push('inRole:roles/storage.objectViewer');
+  }
+  if (has('write') || has('delete')) {
+    // objectAdmin = create + delete + list + read on objects in the bucket.
+    // The CAB's availabilityCondition still scopes this to the prefix.
+    roles.push('inRole:roles/storage.objectAdmin');
+  }
+  return roles;
+}
+
+/**
+ * Escape a string for safe embedding inside a single-quoted CEL string
+ * literal. CEL string literals follow the same escape rules as Python:
+ * `\` and `'` MUST be escaped; `\n`, `\r`, `\t` are escaped to keep the
+ * one-line condition readable. Anything else passes through unchanged.
+ *
+ * Exported for unit testing.
+ */
+export function escapeCelStringLiteral(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
 }
 
 async function dynamicImport(name: string): Promise<any> {

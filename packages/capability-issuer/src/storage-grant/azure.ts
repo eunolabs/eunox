@@ -84,15 +84,28 @@ export class AzureStorageGrantMinter implements StorageGrantMinter {
     const expiresOn = new Date(Date.now() + input.ttlSeconds * 1000);
     const userDelegationKey = await client.getUserDelegationKey(startsOn, expiresOn);
 
-    // Container == first segment of keyOrPrefix; blob == the rest, but
-    // only for single-object grants. Wildcard grants get a container-
-    // scoped SAS (signedResource=c) with a signed prefix.
+    // Container == first segment of keyOrPrefix; blob == the rest.
+    // Single-object grants → blob-scoped SAS. Wildcards are only safe
+    // when the prefix is exactly the container root, because a
+    // user-delegation SAS cannot bind to a sub-prefix without using a
+    // blob directory SAS (signedResource=d) which requires hierarchical-
+    // namespace storage accounts. Wildcards with a sub-prefix would
+    // silently issue a container-wide SAS that grants access outside
+    // the requested prefix — fail closed instead.
     const segments = parsed.keyOrPrefix.split('/').filter((s) => s.length > 0);
     const containerName = segments[0] ?? '';
     if (!containerName) {
       throw new CapabilityError(
         ErrorCode.INVALID_REQUEST,
         `Azure storage URI must include a container: ${input.resource}`,
+        400,
+      );
+    }
+    if (parsed.isWildcard && segments.length > 1) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        `Azure user-delegation SAS cannot scope a wildcard to a sub-prefix; ` +
+          `use a single-object capability or restructure the wildcard to target the container root: ${input.resource}`,
         400,
       );
     }

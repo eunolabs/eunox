@@ -76,4 +76,16 @@ describe('parseStorageUri', () => {
     expect(p?.isWildcard).toBe(true);
     expect(p?.keyOrPrefix).toBe('');
   });
+
+  it('rejects bucket-only URI without key or wildcard', () => {
+    // Ambiguous between "bucket root", "single object named empty", and
+    // "all objects" — must be expressed explicitly with /* or /**.
+    expect(parseStorageUri('storage://aws/euno-uploads')).toBeNull();
+    expect(parseStorageUri('storage://aws/euno-uploads/')).toBeNull();
+  });
+
+  it('rejects empty path segments (double slashes)', () => {
+    expect(parseStorageUri('storage://aws/euno-uploads//key')).toBeNull();
+    expect(parseStorageUri('storage://aws/euno-uploads/dir//k')).toBeNull();
+  });
 });

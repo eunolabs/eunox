@@ -642,29 +642,58 @@ export type StorageProvider = 'azure-blob' | 's3' | 'gcs';
 
 /**
  * A short-lived, narrowly-scoped cloud storage credential issued alongside
- * a capability VC. The shape is a discriminated union over the cloud
- * provider — exactly one of the provider-specific credential objects is
- * populated. Single-object capabilities use the signed-URL variants
- * (`s3Presigned`, `gcsSigned`); wildcard / prefix capabilities use the
- * downscoped session variants (`s3Session`, `gcsDownscoped`); Azure uses
- * `azureSas` for both since SAS tokens scope to either a blob or a
- * container.
+ * a capability VC. Modeled as a discriminated union over the cloud
+ * provider so the compiler enforces "exactly one provider-specific
+ * credential is populated":
+ *
+ *  - `provider: 'azure-blob'` → `azureSas` is required (single
+ *    user-delegation SAS works for both blob- and container-scoped grants).
+ *  - `provider: 's3'` → either `s3Presigned` (single-object grants) **or**
+ *    `s3Session` (prefix grants) is populated, never both.
+ *  - `provider: 'gcs'` → either `gcsSigned` (single-object) **or**
+ *    `gcsDownscoped` (prefix) is populated, never both.
  */
-export interface StorageGrant {
-  /** Which cloud's storage service this credential targets. */
-  provider: StorageProvider;
+export type StorageGrant =
+  | StorageGrantAzureBlob
+  | StorageGrantS3Presigned
+  | StorageGrantS3Session
+  | StorageGrantGcsSigned
+  | StorageGrantGcsDownscoped;
+
+/** Common fields shared by every {@link StorageGrant} variant. */
+interface StorageGrantBase {
   /** The capability resource this grant is scoped to (echoes the capability). */
   resource: ResourceId;
   /** Subset of the capability's actions this grant authorizes. */
   actions: Action[];
   /** ISO-8601 expiry of the cloud credential itself (≤ capability exp). */
   expiresAt: string;
+}
+
+export interface StorageGrantAzureBlob extends StorageGrantBase {
+  provider: 'azure-blob';
   /** Azure Blob SAS (user-delegation SAS preferred). */
-  azureSas?: { url: string; sasToken: string };
+  azureSas: { url: string; sasToken: string };
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantS3Presigned extends StorageGrantBase {
+  provider: 's3';
   /** S3 single-object presigned URLs (one per permitted method). */
-  s3Presigned?: { method: 'GET' | 'PUT' | 'DELETE'; url: string; headers?: Record<string, string> }[];
+  s3Presigned: { method: 'GET' | 'PUT' | 'DELETE'; url: string; headers?: Record<string, string> }[];
+  azureSas?: never;
+  s3Session?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantS3Session extends StorageGrantBase {
+  provider: 's3';
   /** S3 prefix-scoped session credentials (STS AssumeRole + scope-down policy). */
-  s3Session?: {
+  s3Session: {
     accessKeyId: string;
     secretAccessKey: string;
     sessionToken: string;
@@ -672,15 +701,35 @@ export interface StorageGrant {
     bucket: string;
     prefix?: string;
   };
+  azureSas?: never;
+  s3Presigned?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantGcsSigned extends StorageGrantBase {
+  provider: 'gcs';
   /** GCS single-object signed URLs (one per permitted method). */
-  gcsSigned?: { method: 'GET' | 'PUT' | 'DELETE'; url: string }[];
+  gcsSigned: { method: 'GET' | 'PUT' | 'DELETE'; url: string }[];
+  azureSas?: never;
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantGcsDownscoped extends StorageGrantBase {
+  provider: 'gcs';
   /** GCS prefix-scoped downscoped credentials (Credential Access Boundaries). */
-  gcsDownscoped?: {
+  gcsDownscoped: {
     accessToken: string;
     bucket: string;
     prefix?: string;
     availabilityCondition?: string;
   };
+  azureSas?: never;
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsSigned?: never;
 }
 
 /** Cloud-managed database services with IAM-based short-lived auth. */
@@ -700,7 +749,14 @@ export interface DbCredential {
   provider: DbProvider;
   resource: ResourceId;
   actions: Action[];
-  /** ISO-8601 expiry reported by the cloud SDK (never recomputed locally). */
+  /**
+   * ISO-8601 expiry of the credential. Reported by the cloud SDK when
+   * available (Azure SQL AAD tokens echo their expiry in the JWT and
+   * via `expiresOnTimestamp`); otherwise computed locally from the
+   * provider-documented lifetime (RDS IAM tokens are always 15 min;
+   * Cloud SQL OAuth uses the response's `expires_in`, capped by the
+   * operator-configured `DB_TOKEN_MAX_TTL_SECONDS`).
+   */
   expiresAt: string;
   /** Database server hostname (from operator-side instance config). */
   host: string;
