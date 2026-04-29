@@ -6,10 +6,7 @@
  *
  *  - the algorithm allow-list ({@link ALLOWED_SIGNING_ALGORITHMS}),
  *  - parent-token decode + signature verification with mapped errors,
- *  - delegation to the configured signer for the JWS,
- *  - {@link canonicalSha256} digest helper re-export for callers that
- *    want to fingerprint a payload (currently unused inside the
- *    pipeline but kept centralised for future use, per R-1).
+ *  - delegation to the configured signer for the JWS.
  *
  * Extracted from `issuer-service.ts` per refactor R-1 in
  * `docs/IMPROVEMENTS_AND_REFACTORING.md`.

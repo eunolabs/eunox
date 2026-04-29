@@ -74,11 +74,23 @@ export function emitPostureRecord(
     return;
   }
 
-  // Intentionally not awaited — best-effort.
-  emitter.emitObserved(record).catch((err) => {
+  // Intentionally not awaited — best-effort. Guard against both
+  // synchronous throws (some emitter impls may throw before returning
+  // a Promise) and async rejections so issuance is never affected.
+  try {
+    const maybePromise = emitter.emitObserved(record);
+    if (maybePromise && typeof maybePromise.catch === 'function') {
+      maybePromise.catch((err) => {
+        logger.warn('posture emit failed', {
+          agentId: args.agentId,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+    }
+  } catch (err) {
     logger.warn('posture emit failed', {
       agentId: args.agentId,
       error: err instanceof Error ? err.message : 'Unknown error',
     });
-  });
+  }
 }
