@@ -128,20 +128,34 @@ export class PostureEmitter {
     return () => clearInterval(timer);
   }
 
-  /** Re-emit every active record exactly once. Exposed for tests. */
+  /**
+   * Re-emit every active record exactly once. Exposed for tests.
+   *
+   * Records are refreshed in parallel — refresh duration scales with
+   * the slowest plugin rather than `O(records × plugins)`, so a
+   * single refresh tick cannot silently overrun the configured
+   * interval as the agent fleet grows.
+   */
   async refreshOnce(): Promise<void> {
     if (!this.isEnabled()) return;
     const active = this.store.listActive();
     const nowIso = new Date().toISOString();
-    for (const record of active) {
-      const refreshed: AgentInventoryRecord = { ...record, lastSeen: nowIso };
-      this.store.upsert(refreshed, 0); // bypass dedupe by using nowMs=0
-      await this.fanOut(
-        'emitObserved (refresh)',
-        (p) => p.emitObserved(refreshed),
-        { agentId: refreshed.agentId },
-      );
-    }
+    await Promise.all(
+      active.map(async (record) => {
+        const refreshed: AgentInventoryRecord = { ...record, lastSeen: nowIso };
+        // Refresh the cached record's lastSeen before re-emitting it.
+        // Dedupe-window checks intentionally do not apply on refresh:
+        // the periodic refresh is the very thing keeping cloud
+        // surfaces from aging records out, so we always want it to
+        // hit the network.
+        this.store.upsert(refreshed);
+        await this.fanOut(
+          'emitObserved (refresh)',
+          (p) => p.emitObserved(refreshed),
+          { agentId: refreshed.agentId },
+        );
+      }),
+    );
   }
 
   /** Snapshot of the local store. Exposed for tests / introspection. */

@@ -56,10 +56,11 @@ export class RecordStore {
       // change when the agent was first observed.
       firstSeen: existing.firstSeen,
     };
-    // Once revoked, do not silently un-revoke on a subsequent observe;
-    // callers must call `markRevoked(false)` (not implemented here) or
-    // explicitly clear the record. This protects against a stale
-    // periodic refresh racing a revocation.
+    // Once revoked, do not silently un-revoke on a subsequent observe.
+    // Revocations are sticky in this store unless the record is
+    // explicitly cleared/reset (no un-revoke API is exposed on
+    // purpose). This protects against a stale periodic refresh
+    // racing a revocation.
     if (existing.revokedAt && !record.revokedAt) {
       merged.revokedAt = existing.revokedAt;
     }

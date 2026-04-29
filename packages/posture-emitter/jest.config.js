@@ -16,7 +16,6 @@ module.exports = {
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
-    '!src/**/index.ts',
   ],
   moduleNameMapper: {
     '^@euno/common$': '<rootDir>/../common/src',
