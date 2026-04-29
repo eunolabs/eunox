@@ -173,6 +173,22 @@ in-process without HTTP — substantial test-speed improvement.
 
 ### R-3 — Wire OpenTelemetry context propagation  (addresses I-15)
 
+> **STATUS: IMPLEMENTED**
+>
+> `@opentelemetry/api` (with W3C trace-context + baggage propagators and
+> an async-hooks context manager registered by default) lives in
+> `packages/common/src/tracing.ts`. `tracingMiddleware('<service>')` is
+> mounted as the first middleware in both the issuer and the gateway,
+> the agent runtime injects `traceparent` on every outbound axios call
+> and wraps `invokeTool` / `makeRequest` / `acquireCapabilityToken` in
+> CLIENT spans, and every span carries the documented `euno.*`
+> attributes (`agent_id`, `jti`, `action`, `resource`, `outcome`). The
+> audit-logger format reads the active span context and stamps
+> `trace_id` / `span_id` / `trace_flags` on every record, which are
+> covered by the tamper-evident chain hash. Behaviour is a no-op until
+> a deployment registers an SDK exporter — flipping on tracing is then
+> a config-only change.
+
 Adopt `@opentelemetry/api` in `@euno/common` and propagate a single
 `traceparent` header from the agent runtime through the gateway to the
 backend. Each of issuer / gateway / runtime emits one span per request

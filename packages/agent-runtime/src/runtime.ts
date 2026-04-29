@@ -14,6 +14,11 @@ import {
   CapabilityConstraint,
   AgentCapabilityManifest,
   UserConsent,
+  getTracer,
+  withSpan,
+  injectTraceContext,
+  EUNO_ATTR,
+  SpanKind,
 } from '@euno/common';
 
 /**
@@ -179,6 +184,13 @@ export class AgentRuntime {
    */
   private terminated: boolean = false;
 
+  /**
+   * Tracer used for client spans around outbound issuer / gateway / proxy
+   * calls (R-3 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). Always set;
+   * resolves to a no-op tracer when no SDK has been registered.
+   */
+  private tracer = getTracer('agent-runtime');
+
   constructor(config: AgentRuntimeConfig) {
     if (!config.authToken && !config.authTokenProvider) {
       throw new CapabilityError(
@@ -198,6 +210,18 @@ export class AgentRuntime {
       baseURL: this.config.gatewayUrl,
       timeout: 30000,
       validateStatus: () => true, // Handle all status codes manually
+    });
+
+    // R-3: inject the active trace context (W3C `traceparent` / `tracestate`)
+    // on every outbound gateway request so the gateway's tracingMiddleware
+    // joins the same trace as the agent-side client span. No-op when no
+    // SDK is registered (the inject call sees an invalid context and
+    // writes nothing).
+    this.httpClient.interceptors.request.use((req) => {
+      const headers = (req.headers ?? {}) as Record<string, string>;
+      injectTraceContext(headers);
+      req.headers = headers as typeof req.headers;
+      return req;
     });
   }
 
@@ -327,6 +351,14 @@ export class AgentRuntime {
         validateStatus: () => true, // Handle all status codes manually
       });
 
+      // R-3: also propagate trace context onto issuer requests.
+      issuerClient.interceptors.request.use((req) => {
+        const headers = (req.headers ?? {}) as Record<string, string>;
+        injectTraceContext(headers);
+        req.headers = headers as typeof req.headers;
+        return req;
+      });
+
       const userAuthToken = await this.resolveAuthToken();
       const hints = await this.resolveIssuanceHints();
 
@@ -396,7 +428,23 @@ export class AgentRuntime {
       this.capabilityToken = response.data.token;
     };
 
-    const acquirePromise = run();
+    const acquirePromise = withSpan(
+      this.tracer,
+      'agent-runtime.acquireCapabilityToken',
+      {
+        [EUNO_ATTR.AGENT_ID]: this.config.agentId,
+        [EUNO_ATTR.SERVICE]: 'agent-runtime',
+      },
+      async (span) => {
+        // `withSpan` already records exceptions and stamps
+        // `euno.outcome = "error"` on a thrown error before re-throwing,
+        // so the success-path attribute is the only thing we need to
+        // add ourselves here.
+        await run();
+        span.setAttribute(EUNO_ATTR.OUTCOME, 'success');
+      },
+      SpanKind.CLIENT,
+    );
     // Capture the wrapped promise so the .finally() callback can compare by
     // reference against the *same* object stored in this.pendingAcquire.
     // Previously the callback compared against `acquirePromise` (the unwrapped
@@ -517,6 +565,34 @@ export class AgentRuntime {
    * 3. Logged and audited by the gateway
    */
   async invokeTool(request: ToolCallRequest): Promise<ToolCallResponse> {
+    return withSpan(
+      this.tracer,
+      'agent-runtime.invokeTool',
+      {
+        [EUNO_ATTR.AGENT_ID]: this.config.agentId,
+        [EUNO_ATTR.SERVICE]: 'agent-runtime',
+        [EUNO_ATTR.RESOURCE]: request.resource ?? `tool://${request.tool}`,
+        'euno.tool': request.tool,
+      },
+      async (span) => {
+        const result = await this._invokeToolImpl(request);
+        span.setAttribute(
+          EUNO_ATTR.OUTCOME,
+          result.success ? 'success' : 'failure',
+        );
+        if (result.statusCode !== undefined) {
+          span.setAttribute('http.status_code', result.statusCode);
+        }
+        if (result.errorCode) {
+          span.setAttribute('euno.error_code', result.errorCode);
+        }
+        return result;
+      },
+      SpanKind.CLIENT,
+    );
+  }
+
+  private async _invokeToolImpl(request: ToolCallRequest): Promise<ToolCallResponse> {
     if (this.terminated) {
       return {
         success: false,
@@ -637,6 +713,40 @@ export class AgentRuntime {
    * `/proxy/<path>` as before.
    */
   async makeRequest(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    url: string,
+    data?: unknown
+  ): Promise<ToolCallResponse> {
+    return withSpan(
+      this.tracer,
+      'agent-runtime.makeRequest',
+      {
+        [EUNO_ATTR.AGENT_ID]: this.config.agentId,
+        [EUNO_ATTR.SERVICE]: 'agent-runtime',
+        [EUNO_ATTR.ACTION]:
+          method === 'GET' ? 'read' : method === 'DELETE' ? 'delete' : 'write',
+        [EUNO_ATTR.RESOURCE]: url,
+        'http.method': method,
+      },
+      async (span) => {
+        const result = await this._makeRequestImpl(method, url, data);
+        span.setAttribute(
+          EUNO_ATTR.OUTCOME,
+          result.success ? 'success' : 'failure',
+        );
+        if (result.statusCode !== undefined) {
+          span.setAttribute('http.status_code', result.statusCode);
+        }
+        if (result.errorCode) {
+          span.setAttribute('euno.error_code', result.errorCode);
+        }
+        return result;
+      },
+      SpanKind.CLIENT,
+    );
+  }
+
+  private async _makeRequestImpl(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     url: string,
     data?: unknown

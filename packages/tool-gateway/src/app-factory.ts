@@ -19,7 +19,7 @@ import express, {
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { CapabilityError } from '@euno/common';
+import { CapabilityError, tracingMiddleware } from '@euno/common';
 
 import { createAdminRouter } from './admin-api';
 import { createHealthRouter } from './routes/health';
@@ -48,6 +48,11 @@ export function createApp(deps: GatewayDependencies): Express {
   const isReady = deps.isReady ?? (() => true);
 
   const app = express();
+
+  // OpenTelemetry context propagation (R-3). Mounted as the very first
+  // middleware so every downstream handler — including audit logging —
+  // runs inside the request's span context.
+  app.use(tracingMiddleware('tool-gateway'));
 
   // Security headers
   app.use(helmet());

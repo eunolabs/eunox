@@ -21,6 +21,7 @@
 import * as crypto from 'crypto';
 import winston from 'winston';
 import { buildCloudTransportsFromEnv } from './log-transports';
+import { getCurrentTraceContext } from './tracing';
 
 /**
  * Create a logger instance with consistent formatting
@@ -144,6 +145,35 @@ function tamperEvidentChainFormat(serviceName: string) {
 }
 
 /**
+ * Winston format that stamps the active OpenTelemetry trace context
+ * (R-3 in `docs/IMPROVEMENTS_AND_REFACTORING.md`) onto every audit
+ * record as `trace_id` / `span_id` / `trace_flags`. When no SDK is
+ * registered or no span is currently active, the function is a no-op
+ * and the record is emitted unmodified — keeping audit logs valid for
+ * deployments that have not yet wired in a tracing backend.
+ *
+ * Runs *before* {@link tamperEvidentChainFormat} so the hash chain
+ * covers the trace IDs: a verifier replaying the chain re-derives the
+ * same digest as long as the original record (including trace IDs) is
+ * preserved.
+ */
+function traceContextEnrichmentFormat() {
+  return winston.format((info) => {
+    const tc = getCurrentTraceContext();
+    if (tc) {
+      const record = info as Record<string, unknown>;
+      // Don't overwrite trace IDs an operator deliberately set on the
+      // log call itself — useful for stitching in IDs from upstream
+      // systems that don't speak OTel.
+      if (record.trace_id === undefined) record.trace_id = tc.trace_id;
+      if (record.span_id === undefined) record.span_id = tc.span_id;
+      if (record.trace_flags === undefined) record.trace_flags = tc.trace_flags;
+    }
+    return info;
+  })();
+}
+
+/**
  * Audit logger for compliance and security events.
  *
  * Audit records are emitted as a tamper-evident hash chain: every entry
@@ -152,12 +182,18 @@ function tamperEvidentChainFormat(serviceName: string) {
  * by replaying the digests. This applies regardless of transport, giving
  * a baseline append-only guarantee even when the configured log sink
  * itself is mutable.
+ *
+ * When OpenTelemetry is wired in (R-3), each record additionally carries
+ * `trace_id` / `span_id` / `trace_flags` from the active span context so
+ * audit events join the same distributed trace as the request that
+ * caused them.
  */
 export function createAuditLogger(serviceName: string) {
   return winston.createLogger({
     level: 'info',
     format: winston.format.combine(
       winston.format.timestamp(),
+      traceContextEnrichmentFormat(),
       tamperEvidentChainFormat(serviceName),
       winston.format.json()
     ),

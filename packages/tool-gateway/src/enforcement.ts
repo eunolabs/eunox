@@ -23,6 +23,8 @@ import {
   ConditionContext,
   enforceConditions,
   CapabilityTokenPayload,
+  setActiveSpanEunoAttributes,
+  EUNO_ATTR,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -442,6 +444,17 @@ export class EnforcementEngine {
       metadata: sessionId ? { sessionId } : undefined,
     };
 
+    // R-3: stamp the documented `euno.*` attributes onto the active
+    // request span so traces carry the same identifiers as the audit
+    // log. No-op when no SDK is wired in.
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.AGENT_ID]: agentId,
+      [EUNO_ATTR.ACTION]: action,
+      [EUNO_ATTR.RESOURCE]: resource,
+      [EUNO_ATTR.JTI]: capabilityId,
+      [EUNO_ATTR.OUTCOME]: 'allow',
+    });
+
     this.auditLogger.info('Action allowed', auditEntry);
   }
 
@@ -466,6 +479,15 @@ export class EnforcementEngine {
       reason,
       metadata: sessionId ? { sessionId } : undefined,
     };
+
+    // R-3: mirror the audit decision onto the active span.
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.AGENT_ID]: agentId,
+      [EUNO_ATTR.ACTION]: action,
+      [EUNO_ATTR.RESOURCE]: resource,
+      [EUNO_ATTR.OUTCOME]: 'deny',
+      [EUNO_ATTR.REASON]: reason,
+    });
 
     this.auditLogger.info('Action denied', auditEntry);
   }

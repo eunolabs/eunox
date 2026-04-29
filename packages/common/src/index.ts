@@ -13,3 +13,4 @@ export * from './condition-registry';
 export * from './call-counter-store';
 export * from './config';
 export * from './jwks';
+export * from './tracing';

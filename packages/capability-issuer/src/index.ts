@@ -24,6 +24,9 @@ import {
   SUPPORTED_SCHEMA_VERSIONS,
   SIGNING_ALGORITHMS,
   loadConfigOrExit,
+  tracingMiddleware,
+  setActiveSpanEunoAttributes,
+  EUNO_ATTR,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -278,6 +281,10 @@ function getIssuerService(): CapabilityIssuerService {
 // Create Express app
 const app = express();
 
+// OpenTelemetry context propagation (R-3). First middleware so every
+// handler — including audit logging — runs inside the request span.
+app.use(tracingMiddleware('capability-issuer'));
+
 // Middleware
 app.use(helmet());
 
@@ -384,6 +391,14 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     // Issue the capability
     const response = await getIssuerService().issueCapability(issueRequest);
 
+    // R-3: stamp the documented `euno.*` attributes on the request
+    // span so the trace carries the same identifiers as the audit log.
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.AGENT_ID]: issueRequest.agentId,
+      [EUNO_ATTR.JTI]: response.tokenId,
+      [EUNO_ATTR.OUTCOME]: 'success',
+    });
+
     res.json(response);
   } catch (error) {
     next(error);
@@ -445,6 +460,12 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
       ttl
     );
 
+    // R-3: stamp `euno.*` attributes on the request span.
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.JTI]: response.tokenId,
+      [EUNO_ATTR.OUTCOME]: 'success',
+    });
+
     res.json(response);
   } catch (error) {
     next(error);
@@ -494,6 +515,12 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
       currentToken,
       renewTtl
     );
+
+    // R-3: stamp `euno.*` attributes on the request span.
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.JTI]: response.tokenId,
+      [EUNO_ATTR.OUTCOME]: 'success',
+    });
 
     res.json(response);
   } catch (error) {
