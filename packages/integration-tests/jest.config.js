@@ -6,6 +6,8 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js'],
   moduleNameMapper: {
     '^@euno/common$': '<rootDir>/../common/src',
+    '^@euno/common/wire$': '<rootDir>/../common/src/wire',
+    '^@euno/common/runtime$': '<rootDir>/../common/src/runtime',
     '^@euno/capability-issuer$': '<rootDir>/../capability-issuer/src',
     '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
     '^@euno/tool-gateway$': '<rootDir>/../tool-gateway/src',

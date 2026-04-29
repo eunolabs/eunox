@@ -8,6 +8,8 @@ module.exports = {
       tsconfig: {
         paths: {
           '@euno/common': ['../common/src'],
+          '@euno/common/wire': ['../common/src/wire'],
+          '@euno/common/runtime': ['../common/src/runtime'],
         },
       },
     }],
@@ -19,5 +21,7 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^@euno/common$': '<rootDir>/../common/src',
+    '^@euno/common/wire$': '<rootDir>/../common/src/wire',
+    '^@euno/common/runtime$': '<rootDir>/../common/src/runtime',
   },
 };
