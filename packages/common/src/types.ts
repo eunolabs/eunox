@@ -606,6 +606,168 @@ export interface IssueCapabilityResponse {
   tokenId: string;
   /** Capabilities granted */
   capabilities: CapabilityConstraint[];
+  /**
+   * Optional short-lived cloud storage credentials minted alongside the VC
+   * for any capability whose resource matches the canonical
+   * `storage://{cloud}/{bucket}/{key-or-prefix}` form.
+   *
+   * Each entry is scoped to exactly one capability's `resource` and is a
+   * **subset** of that capability's actions. The credential's lifetime is
+   * `min(capabilityTtl, configured storage-grant max TTL)` and the cloud's
+   * own control plane enforces the scope independently of our gateway
+   * (defense in depth). Field is undefined when no storage capabilities
+   * are present or when the storage-grant pipeline is disabled.
+   *
+   * See `docs/sprint-3-4-gaps/07-storage-grants.md`.
+   */
+  storageGrants?: StorageGrant[];
+  /**
+   * Optional short-lived database credentials minted alongside the VC for
+   * any capability whose resource matches the canonical
+   * `db://{cloud}/{instance}/{database}/{schema-or-table}.{action}` form.
+   *
+   * The credential carries an IAM-bound bearer token (Azure AD JWT for
+   * Azure SQL, RDS IAM auth token for AWS, OAuth2 token for Cloud SQL)
+   * plus connection hints. The database's IAM, not our gateway, enforces
+   * scope. Field is undefined when no database capabilities are present
+   * or when the DB-token pipeline is disabled.
+   *
+   * See `docs/sprint-3-4-gaps/08-db-token-issuance.md`.
+   */
+  dbCredentials?: DbCredential[];
+}
+
+/** Cloud storage providers that can mint short-lived data-plane credentials. */
+export type StorageProvider = 'azure-blob' | 's3' | 'gcs';
+
+/**
+ * A short-lived, narrowly-scoped cloud storage credential issued alongside
+ * a capability VC. Modeled as a discriminated union over the cloud
+ * provider so the compiler enforces "exactly one provider-specific
+ * credential is populated":
+ *
+ *  - `provider: 'azure-blob'` → `azureSas` is required (single
+ *    user-delegation SAS works for both blob- and container-scoped grants).
+ *  - `provider: 's3'` → either `s3Presigned` (single-object grants) **or**
+ *    `s3Session` (prefix grants) is populated, never both.
+ *  - `provider: 'gcs'` → either `gcsSigned` (single-object) **or**
+ *    `gcsDownscoped` (prefix) is populated, never both.
+ */
+export type StorageGrant =
+  | StorageGrantAzureBlob
+  | StorageGrantS3Presigned
+  | StorageGrantS3Session
+  | StorageGrantGcsSigned
+  | StorageGrantGcsDownscoped;
+
+/** Common fields shared by every {@link StorageGrant} variant. */
+interface StorageGrantBase {
+  /** The capability resource this grant is scoped to (echoes the capability). */
+  resource: ResourceId;
+  /** Subset of the capability's actions this grant authorizes. */
+  actions: Action[];
+  /** ISO-8601 expiry of the cloud credential itself (≤ capability exp). */
+  expiresAt: string;
+}
+
+export interface StorageGrantAzureBlob extends StorageGrantBase {
+  provider: 'azure-blob';
+  /** Azure Blob SAS (user-delegation SAS preferred). */
+  azureSas: { url: string; sasToken: string };
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantS3Presigned extends StorageGrantBase {
+  provider: 's3';
+  /** S3 single-object presigned URLs (one per permitted method). */
+  s3Presigned: { method: 'GET' | 'PUT' | 'DELETE'; url: string; headers?: Record<string, string> }[];
+  azureSas?: never;
+  s3Session?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantS3Session extends StorageGrantBase {
+  provider: 's3';
+  /** S3 prefix-scoped session credentials (STS AssumeRole + scope-down policy). */
+  s3Session: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken: string;
+    region: string;
+    bucket: string;
+    prefix?: string;
+  };
+  azureSas?: never;
+  s3Presigned?: never;
+  gcsSigned?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantGcsSigned extends StorageGrantBase {
+  provider: 'gcs';
+  /** GCS single-object signed URLs (one per permitted method). */
+  gcsSigned: { method: 'GET' | 'PUT' | 'DELETE'; url: string }[];
+  azureSas?: never;
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsDownscoped?: never;
+}
+
+export interface StorageGrantGcsDownscoped extends StorageGrantBase {
+  provider: 'gcs';
+  /** GCS prefix-scoped downscoped credentials (Credential Access Boundaries). */
+  gcsDownscoped: {
+    accessToken: string;
+    bucket: string;
+    prefix?: string;
+    availabilityCondition?: string;
+  };
+  azureSas?: never;
+  s3Presigned?: never;
+  s3Session?: never;
+  gcsSigned?: never;
+}
+
+/** Cloud-managed database services with IAM-based short-lived auth. */
+export type DbProvider = 'azure-sql' | 'rds-iam' | 'cloudsql-iam';
+
+/**
+ * A short-lived database access credential bound to an IAM-mapped DB
+ * principal. The bearer token is consumed by the database itself (Azure
+ * SQL via AAD, RDS via IAM auth, Cloud SQL via OAuth) — our gateway is
+ * not in the data path.
+ *
+ * The `username` field is the **IAM-mapped DB principal** resolved from
+ * issuer-side role-mapping config. It is NEVER taken from agent input;
+ * see `docs/sprint-3-4-gaps/08-db-token-issuance.md` § Risks.
+ */
+export interface DbCredential {
+  provider: DbProvider;
+  resource: ResourceId;
+  actions: Action[];
+  /**
+   * ISO-8601 expiry of the credential. Reported by the cloud SDK when
+   * available (Azure SQL AAD tokens echo their expiry in the JWT and
+   * via `expiresOnTimestamp`); otherwise computed locally from the
+   * provider-documented lifetime (RDS IAM tokens are always 15 min;
+   * Cloud SQL OAuth uses the response's `expires_in`, capped by the
+   * operator-configured `DB_TOKEN_MAX_TTL_SECONDS`).
+   */
+  expiresAt: string;
+  /** Database server hostname (from operator-side instance config). */
+  host: string;
+  /** Database server port (from operator-side instance config). */
+  port: number;
+  /** Database name (from the parsed resource URI). */
+  database: string;
+  /** IAM-mapped DB principal (resolved from role mapping; never from agent input). */
+  username: string;
+  /** Bearer token: AAD JWT (Azure SQL), IAM auth token (RDS), OAuth2 token (Cloud SQL). */
+  token: string;
 }
 
 /**

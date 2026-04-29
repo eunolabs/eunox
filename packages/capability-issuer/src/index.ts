@@ -26,6 +26,8 @@ import {
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
+import { StorageGrantService } from './storage-grant';
+import { DbTokenService } from './db-token';
 
 // Load environment variables
 dotenv.config();
@@ -224,6 +226,14 @@ async function initializeServices() {
         // issuance.  Recommended for multi-tenant production deployments.
         requireConsent: process.env.REQUIRE_USER_CONSENT === 'true',
         policy: rolePolicy,
+        // Cloud storage / DB credential pipelines (sprint 3-4 gap items
+        // #7 and #8). Both are disabled by default — `fromEnv` returns
+        // an inactive service unless `STORAGE_GRANTS_ENABLED=true` /
+        // `DB_TOKENS_ENABLED=true`. `DbTokenService.fromEnv` throws
+        // when enabled without `DB_INSTANCES_FILE` (fail fast at
+        // startup rather than serve with an empty allow-list).
+        storageGrantService: StorageGrantService.fromEnv(process.env, logger),
+        dbTokenService: DbTokenService.fromEnv(process.env, logger),
       }
     );
 

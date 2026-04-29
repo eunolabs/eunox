@@ -28,8 +28,12 @@ import {
   validateConditions,
   ConditionValidationError,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
+  StorageGrant,
+  DbCredential,
 } from '@euno/common';
 import * as jose from 'jose';
+import { StorageGrantService } from './storage-grant';
+import { DbTokenService } from './db-token';
 
 /** Actions which always require an explicit, validated user consent record. */
 const SENSITIVE_ACTIONS: ReadonlySet<string> = new Set(['write', 'delete', 'admin']);
@@ -50,6 +54,22 @@ export interface CapabilityIssuerServiceOptions {
    * service, or per-tenant override map) rather than hard-coded.
    */
   policy?: RoleCapabilityPolicy;
+  /**
+   * Optional storage-grant service. When supplied and enabled, the
+   * issuer mints short-lived cloud storage credentials alongside the
+   * VC for every capability whose resource matches the canonical
+   * `storage://{cloud}/{bucket}/...` form. See
+   * `docs/sprint-3-4-gaps/07-storage-grants.md`.
+   */
+  storageGrantService?: StorageGrantService;
+  /**
+   * Optional DB-token service. When supplied and enabled, the issuer
+   * mints short-lived IAM-bound database credentials alongside the VC
+   * for every capability whose resource matches the canonical
+   * `db://{cloud}/{instance}/...` form. See
+   * `docs/sprint-3-4-gaps/08-db-token-issuance.md`.
+   */
+  dbTokenService?: DbTokenService;
 }
 
 export class CapabilityIssuerService {
@@ -61,6 +81,8 @@ export class CapabilityIssuerService {
   private auditLogger: Logger;
   private requireConsent: boolean;
   private policy: RoleCapabilityPolicy;
+  private storageGrantService?: StorageGrantService;
+  private dbTokenService?: DbTokenService;
 
   /** Algorithms permitted for capability token signatures. Sourced from the
    *  shared {@link SIGNING_ALGORITHMS} tuple so this allow-list cannot drift
@@ -148,6 +170,8 @@ export class CapabilityIssuerService {
     this.auditLogger = createAuditLogger('capability-issuer');
     this.requireConsent = options.requireConsent === true;
     this.policy = options.policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
+    if (options.storageGrantService) this.storageGrantService = options.storageGrantService;
+    if (options.dbTokenService) this.dbTokenService = options.dbTokenService;
   }
 
   /**
@@ -311,8 +335,42 @@ export class CapabilityIssuerService {
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
       const token = await this.signer.sign(payload);
 
+      // Step 5b: Mint short-lived cloud-storage and DB credentials for any
+      // capability whose resource matches the canonical storage:// or db://
+      // form. These pipelines are no-ops when their feature flags are off,
+      // preserving the behavior of every existing deployment. A mint
+      // failure aborts the entire issuance — partial grants give the
+      // agent a misleading view of what it can access (see design § 6 of
+      // both 07-storage-grants.md and 08-db-token-issuance.md).
+      let storageGrants: StorageGrant[] | undefined;
+      let dbCredentials: DbCredential[] | undefined;
+      if (this.storageGrantService?.isEnabled()) {
+        storageGrants = await this.storageGrantService.mintForCapabilities(capabilities, {
+          agentId: request.agentId,
+          authorizedBy: userContext.userId,
+          capabilityTtlSeconds: expiresAt - now,
+        });
+      }
+      if (this.dbTokenService?.isEnabled()) {
+        dbCredentials = await this.dbTokenService.mintForCapabilities(capabilities, {
+          agentId: request.agentId,
+          authorizedBy: userContext.userId,
+          capabilityTtlSeconds: expiresAt - now,
+          userRoles: userContext.roles,
+          policy: this.policy,
+        });
+      }
+
       // Step 6: Audit log the issuance
-      await this.logIssuance(userContext.userId, request.agentId, tokenId, capabilities, request.consent);
+      await this.logIssuance(
+        userContext.userId,
+        request.agentId,
+        tokenId,
+        capabilities,
+        request.consent,
+        storageGrants,
+        dbCredentials,
+      );
 
       this.logger.info('Capability token issued successfully', {
         tokenId,
@@ -321,12 +379,15 @@ export class CapabilityIssuerService {
         expiresAt,
       });
 
-      return {
+      const response: IssueCapabilityResponse = {
         token,
         expiresAt,
         tokenId,
         capabilities,
       };
+      if (storageGrants && storageGrants.length > 0) response.storageGrants = storageGrants;
+      if (dbCredentials && dbCredentials.length > 0) response.dbCredentials = dbCredentials;
+      return response;
     } catch (error) {
       this.logger.error('Failed to issue capability token', {
         agentId: request.agentId,
@@ -346,7 +407,13 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Log capability issuance for audit trail
+   * Log capability issuance for audit trail.
+   *
+   * Storage grants and DB credentials are summarized at the metadata
+   * level (provider / resource / actions / expiresAt) — the credential
+   * payload itself (SAS tokens, presigned URLs, AAD JWTs, RDS auth
+   * tokens, OAuth access tokens) is **never** written to the audit log.
+   * See `docs/sprint-3-4-gaps/07-storage-grants.md` § Risks.
    */
   private async logIssuance(
     userId: string,
@@ -354,6 +421,8 @@ export class CapabilityIssuerService {
     tokenId: string,
     capabilities: Array<{ resource: string; actions: string[] }>,
     consent?: UserConsent,
+    storageGrants?: StorageGrant[],
+    dbCredentials?: DbCredential[],
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
@@ -375,6 +444,30 @@ export class CapabilityIssuerService {
                 grantedAt: consent.grantedAt,
                 expiresAt: consent.expiresAt,
               },
+            }
+          : {}),
+        ...(storageGrants && storageGrants.length > 0
+          ? {
+              storageGrants: storageGrants.map((g) => ({
+                provider: g.provider,
+                resource: g.resource,
+                actions: g.actions,
+                expiresAt: g.expiresAt,
+              })),
+            }
+          : {}),
+        ...(dbCredentials && dbCredentials.length > 0
+          ? {
+              dbCredentials: dbCredentials.map((c) => ({
+                provider: c.provider,
+                resource: c.resource,
+                actions: c.actions,
+                expiresAt: c.expiresAt,
+                host: c.host,
+                port: c.port,
+                database: c.database,
+                username: c.username,
+              })),
             }
           : {}),
       },
