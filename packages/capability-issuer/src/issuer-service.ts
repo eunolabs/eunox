@@ -788,4 +788,20 @@ export class CapabilityIssuerService {
   async getPublicKey(): Promise<string> {
     return this.signer.getPublicKey();
   }
+
+  /**
+   * Thin protected wrapper preserved for tests that reach into the
+   * pre-R-1 internal API. Delegates to the standalone
+   * {@link validateCapabilitySubset} in `./issuance/attenuation`.
+   * Marked `protected` (rather than `private`) so subclasses — and
+   * the test-only type-cast that historically reached into this
+   * method — keep working without TypeScript's `noUnusedLocals`
+   * flagging it as dead code.
+   */
+  protected validateCapabilitySubset(
+    parentCapabilities: CapabilityConstraint[],
+    requestedCapabilities: CapabilityConstraint[],
+  ): void {
+    validateCapabilitySubset(parentCapabilities, requestedCapabilities);
+  }
 }
