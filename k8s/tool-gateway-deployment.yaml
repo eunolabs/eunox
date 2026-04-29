@@ -110,7 +110,7 @@ spec:
         # Health checks
         livenessProbe:
           httpGet:
-            path: /health
+            path: /health/live
             port: http
           initialDelaySeconds: 30
           periodSeconds: 30
@@ -119,7 +119,7 @@ spec:
 
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: http
           initialDelaySeconds: 10
           periodSeconds: 10
