@@ -283,16 +283,16 @@ function mapActionsToS3Methods(actions: string[]): ('GET' | 'PUT' | 'DELETE')[] 
  * a future action name doesn't accidentally broaden the policy.
  */
 function mapActionsToS3PolicyActions(actions: string[]): string[] {
-  const out: string[] = [];
+  const policyActions: string[] = [];
   for (const a of actions) {
     const iam =
       a === 'read' ? 's3:GetObject'
         : a === 'write' ? 's3:PutObject'
           : a === 'delete' ? 's3:DeleteObject'
             : undefined;
-    if (iam && !out.includes(iam)) out.push(iam);
+    if (iam && !policyActions.includes(iam)) policyActions.push(iam);
   }
-  return out;
+  return policyActions;
 }
 
 /** STS AssumeRole hard minimum session duration (seconds). */

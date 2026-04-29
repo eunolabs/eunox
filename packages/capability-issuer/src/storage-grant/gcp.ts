@@ -164,7 +164,7 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
       const client = new auth.GoogleAuth({
         scopes: ['https://www.googleapis.com/auth/devstorage.read_write'],
       }).getClient();
-      const source = await client;
+      const sourceClient = await client;
       // Single source of truth for the CEL expression so the policy and
       // the response stay in lockstep. The prefix is escaped because it
       // can legally contain `'` or `\` — unescaped interpolation would
@@ -199,7 +199,7 @@ async function loadDefaultDownscopedSource(): Promise<GcsDownscopedTokenSource> 
           ],
         },
       };
-      const downscopedClient = new auth.DownscopedClient(source, cab);
+      const downscopedClient = new auth.DownscopedClient(sourceClient, cab);
       const downTok = await downscopedClient.getAccessToken();
       // Never fall back to the source (un-downscoped) token — that would
       // hand out a credential broader than the capability authorized.
