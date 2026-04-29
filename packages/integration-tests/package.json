@@ -12,6 +12,7 @@
     "@euno/agent-runtime": "^1.0.0",
     "@euno/capability-issuer": "^1.0.0",
     "@euno/common": "^1.0.0",
+    "@euno/partner-issuer-sim": "^1.0.0",
     "@euno/tool-gateway": "^1.0.0",
     "@types/jest": "^29.5.11",
     "@types/node": "^20.11.0",
