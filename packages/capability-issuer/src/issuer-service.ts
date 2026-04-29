@@ -19,12 +19,14 @@ import {
   Logger,
   createAuditLogger,
   AuditLogEntry,
+  AgentInventoryRecord,
   SIGNING_ALGORITHMS,
   mapRolesToCapabilitiesForPolicy,
   RoleCapabilityPolicy,
   DEFAULT_ROLE_CAPABILITY_MAP,
   UserConsent,
   AgentCapabilityManifest,
+  canonicalSha256,
   validateConditions,
   ConditionValidationError,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
@@ -35,6 +37,19 @@ import {
   ResolvedRole,
   UserContext,
 } from '@euno/common';
+
+/**
+ * Minimal structural interface the issuer needs from a posture-emitter.
+ * The full implementation lives in `@euno/posture-emitter`; this
+ * declaration keeps capability-issuer free of a hard dependency on
+ * that package and makes the contract explicit at the integration
+ * point. See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
+ */
+export interface PostureEmitterLike {
+  isEnabled(): boolean;
+  emitObserved(record: AgentInventoryRecord): Promise<void>;
+  emitRevoked?(agentId: string, revokedAt: string): Promise<void>;
+}
 import * as jose from 'jose';
 import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
@@ -130,6 +145,21 @@ export interface CapabilityIssuerServiceOptions {
    * the user has no `pim-active` roles.
    */
   capTtlToPimActivation?: boolean;
+  /**
+   * Optional AI posture-management emitter. When supplied, the
+   * issuer fires a fire-and-forget {@link PostureEmitterLike.emitObserved}
+   * after every successful issuance so cloud posture-management
+   * surfaces (Defender CSPM / Security Hub / SCC) keep an accurate
+   * inventory of the agent estate. Failures never affect issuance.
+   * See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md`.
+   */
+  postureEmitter?: PostureEmitterLike;
+  /**
+   * Cloud region to record on inventory records. Surfaces alongside
+   * the agent in posture dashboards. Falls back to
+   * `process.env.EUNO_DEPLOYMENT_REGION` and finally `'unknown'`.
+   */
+  postureRegion?: string;
 }
 
 export class CapabilityIssuerService {
@@ -145,6 +175,8 @@ export class CapabilityIssuerService {
   private dbTokenService?: DbTokenService;
   private pimRequiredRoles: string[];
   private capTtlToPimActivation: boolean;
+  private postureEmitter?: PostureEmitterLike;
+  private postureRegion: string;
 
   /** Algorithms permitted for capability token signatures. Sourced from the
    *  shared {@link SIGNING_ALGORITHMS} tuple so this allow-list cannot drift
@@ -236,6 +268,9 @@ export class CapabilityIssuerService {
     if (options.dbTokenService) this.dbTokenService = options.dbTokenService;
     this.pimRequiredRoles = options.pimRequiredRoles ?? [];
     this.capTtlToPimActivation = options.capTtlToPimActivation !== false;
+    if (options.postureEmitter) this.postureEmitter = options.postureEmitter;
+    this.postureRegion =
+      options.postureRegion ?? process.env.EUNO_DEPLOYMENT_REGION ?? 'unknown';
   }
 
   /**
@@ -515,6 +550,14 @@ export class CapabilityIssuerService {
         dbCredentials,
       );
 
+      // Step 6b: Push an inventory record to the configured AI
+      // posture-management surfaces (Defender CSPM / Security Hub /
+      // SCC). Fire-and-forget: posture is best-effort observability,
+      // not a control-plane gate. Emitter failures are logged and
+      // dropped — they MUST NOT fail the originating issuance.
+      // See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
+      this.emitPostureRecord(request, capabilities);
+
       this.logger.info('Capability token issued successfully', {
         tokenId,
         agentId: request.agentId,
@@ -547,6 +590,61 @@ export class CapabilityIssuerService {
         500
       );
     }
+  }
+
+  /**
+   * Build and dispatch an {@link AgentInventoryRecord} to the
+   * configured posture emitter, if any. Fire-and-forget — caller
+   * MUST NOT await; emitter failures are logged at warn-level.
+   *
+   * The five required parity fields (`agentId`, `owningTeam`,
+   * `capabilityManifestHash`, `runtime`, `region`) flow through to
+   * each downstream cloud surface under their canonical names; see
+   * `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 1.
+   *
+   * Manifest hashing reuses the shared `canonicalSha256` helper so
+   * the posture record's `capabilityManifestHash` matches the value
+   * recorded in audit-log evidence for the same manifest.
+   */
+  private emitPostureRecord(
+    request: IssueCapabilityRequest,
+    capabilities: CapabilityConstraint[],
+  ): void {
+    if (!this.postureEmitter || !this.postureEmitter.isEnabled()) return;
+    let record: AgentInventoryRecord;
+    try {
+      const nowIso = new Date().toISOString();
+      const manifest = request.manifest;
+      const owningTeam = manifest?.metadata?.owner ?? 'unknown';
+      const runtime = manifest?.metadata?.runtime ?? 'unknown';
+      const capabilityManifestHash = manifest
+        ? canonicalSha256(manifest)
+        : canonicalSha256({ agentId: request.agentId });
+      record = {
+        schemaVersion: '1.0',
+        agentId: request.agentId,
+        owningTeam,
+        capabilityManifestHash,
+        runtime,
+        region: this.postureRegion,
+        capabilities,
+        firstSeen: nowIso,
+        lastSeen: nowIso,
+      };
+    } catch (err) {
+      this.logger.warn('posture record build failed', {
+        agentId: request.agentId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+      return;
+    }
+    // Intentionally not awaited — best-effort.
+    this.postureEmitter.emitObserved(record).catch((err) => {
+      this.logger.warn('posture emit failed', {
+        agentId: request.agentId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    });
   }
 
   /**

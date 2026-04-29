@@ -8,7 +8,6 @@ module.exports = {
       tsconfig: {
         paths: {
           '@euno/common': ['../common/src'],
-          '@euno/posture-emitter': ['../posture-emitter/src'],
         },
       },
     }],
@@ -21,10 +20,5 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^@euno/common$': '<rootDir>/../common/src',
-    '^@euno/posture-emitter$': '<rootDir>/../posture-emitter/src',
-    // The `@nodable/entities` package (a transitive dependency of the AWS SDK's
-    // XML parser) ships as pure ESM and cannot be loaded by Jest's CommonJS
-    // runtime. Tests mock all AWS KMS interactions, so we substitute a CJS stub.
-    '^@nodable/entities$': '<rootDir>/tests/__mocks__/nodable-entities-stub.cjs',
   },
 };

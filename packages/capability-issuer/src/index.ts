@@ -28,6 +28,7 @@ import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
 import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
+import { PostureEmitter } from '@euno/posture-emitter';
 
 // Load environment variables
 dotenv.config();
@@ -234,6 +235,11 @@ async function initializeServices() {
         // startup rather than serve with an empty allow-list).
         storageGrantService: StorageGrantService.fromEnv(process.env, logger),
         dbTokenService: DbTokenService.fromEnv(process.env, logger),
+        // AI posture-management inventory feed (sprint 3-4 gap item
+        // #9). Disabled by default — `fromEnv` returns an inactive
+        // emitter unless `POSTURE_EMITTER_ENABLED=true`. Failures
+        // never fail issuance.
+        postureEmitter: PostureEmitter.fromEnv(process.env, logger),
       }
     );
 

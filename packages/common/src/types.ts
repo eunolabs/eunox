@@ -372,7 +372,65 @@ export interface AgentCapabilityManifest {
     description?: string;
     owner?: string;
     tags?: string[];
+    /**
+     * Free-form runtime descriptor (e.g. `node:20`, `python:3.12`,
+     * `aks:1.29`). Surfaced to AI posture-management inventory feeds
+     * so operators can see where each agent runs. Optional — when
+     * absent the posture emitter records `'unknown'`.
+     * See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md`.
+     */
+    runtime?: string;
   };
+}
+
+/**
+ * Canonical inventory record for AI posture-management surfaces
+ * (Azure Defender CSPM, AWS Security Hub, GCP Security Command Center).
+ *
+ * Per `docs/sprint-3-4-gaps/09-ai-posture-inventory.md`, the five
+ * required fields (`agentId`, `owningTeam`, `capabilityManifestHash`,
+ * `runtime`, `region`) are emitted to all three surfaces under the
+ * **same** field names so a single dashboard view is possible without
+ * per-cloud aliasing. Plugins MUST NOT rename these keys when mapping
+ * the record into per-surface payloads.
+ */
+export interface AgentInventoryRecord {
+  /** Schema version of the record envelope. */
+  schemaVersion: '1.0';
+  /** Agent identifier. Matches `CapabilityToken.sub`. */
+  agentId: string;
+  /** Owning team / business unit, taken from `manifest.metadata.owner`. */
+  owningTeam: string;
+  /**
+   * SHA-256 (hex) of the canonical-JSON form of the agent's
+   * {@link AgentCapabilityManifest}. Computed via the shared
+   * `canonicalSha256` helper so it matches the manifest hash
+   * recorded in the audit log.
+   */
+  capabilityManifestHash: string;
+  /** Runtime descriptor — e.g. `node:20`, `python:3.12`, `aks:1.29`. */
+  runtime: string;
+  /** Cloud region the agent runs in — e.g. `eastus2`, `us-east-1`. */
+  region: string;
+  /**
+   * Cloud account / tenant / project the issuer pod runs in.
+   * Optional, but recommended for multi-account deployments.
+   */
+  cloudAccount?: string;
+  /** Pointer (URI) to the manifest in storage, when one exists. */
+  manifestUri?: string;
+  /**
+   * Capability constraints granted to the agent. Optional — opt in
+   * via `POSTURE_EMITTER_INCLUDE_CAPABILITIES=true` because some
+   * surfaces have payload-size limits.
+   */
+  capabilities?: CapabilityConstraint[];
+  /** ISO-8601 timestamp when this agent was first observed. */
+  firstSeen: string;
+  /** ISO-8601 timestamp when this agent was last observed. */
+  lastSeen: string;
+  /** ISO-8601 timestamp when the record was revoked (soft delete). */
+  revokedAt?: string;
 }
 
 /**
