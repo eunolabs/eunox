@@ -402,8 +402,8 @@ export interface AgentCapabilityManifest {
 export interface AuditLogEntry {
   /** Unique log entry ID */
   id: string;
-  /** Timestamp of the event */
-  timestamp: Date;
+  /** Timestamp of the event (ISO 8601 string) */
+  timestamp: string;
   /** Event type */
   eventType: 'issuance' | 'validation' | 'denial' | 'revocation' | 'renewal';
   /** Agent or session identifier */

@@ -417,7 +417,7 @@ export class CapabilityIssuerService {
   ): never {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'issuance',
       agentId,
       userId,
@@ -493,7 +493,7 @@ export class CapabilityIssuerService {
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'issuance',
       agentId,
       userId,
@@ -656,7 +656,7 @@ export class CapabilityIssuerService {
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'issuance', // Using issuance for now, could add 'attenuation' type
       agentId,
       capabilityId: tokenId,
@@ -765,7 +765,7 @@ export class CapabilityIssuerService {
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'renewal',
       agentId,
       capabilityId: tokenId,

@@ -356,7 +356,7 @@ export class EnforcementEngine {
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'validation',
       agentId,
       action,
@@ -381,7 +381,7 @@ export class EnforcementEngine {
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       eventType: 'denial',
       agentId,
       action,

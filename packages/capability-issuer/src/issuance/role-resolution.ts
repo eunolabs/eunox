@@ -109,7 +109,7 @@ export function enforcePimRequiredRoles(
 
   const auditEntry: AuditLogEntry = {
     id: generateId(),
-    timestamp: new Date(),
+    timestamp: new Date().toISOString(),
     eventType: 'issuance',
     agentId,
     userId: userContext.userId,
@@ -170,7 +170,7 @@ export function enforceConditionalAccess(
 
   const auditEntry: AuditLogEntry = {
     id: generateId(),
-    timestamp: new Date(),
+    timestamp: new Date().toISOString(),
     eventType: 'issuance',
     agentId,
     userId: userContext.userId,
