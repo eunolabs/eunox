@@ -1,0 +1,641 @@
+/**
+ * Typed `EunoConfig` Zod schemas — R-5 in
+ * `docs/IMPROVEMENTS_AND_REFACTORING.md` (addresses I-13 and I-24).
+ *
+ * Every environment variable consumed by the issuer or gateway is
+ * declared here as a single source of truth. The schemas are used at
+ * three distinct sites:
+ *
+ *   1. {@link ./loader.ts} — `loadConfig(env, service)` validates
+ *      `process.env` at boot and produces a single, structured
+ *      "what's wrong" report on misconfig (no partial defaults, no
+ *      late `undefined`s leaking into business code).
+ *   2. {@link ./dump-template.ts} — generates the `.env.example` file
+ *      content for each service, replacing the per-service
+ *      hand-curated `.env.example` and `.env.template` duplicates.
+ *   3. The CLI: `euno config dump-template --service <name>` re-emits
+ *      the templates so they stay in lock-step with the schema.
+ *
+ * Each field carries a `.describe(...)` doc string so the dump-template
+ * generator can emit human-meaningful comments in the `.env.example`
+ * output.  When you add a new env var, add it here — the template,
+ * the loader, and the docs all update from the same edit.
+ */
+
+import { z } from 'zod';
+
+// ---------------------------------------------------------------------------
+// Field-level helpers.
+// ---------------------------------------------------------------------------
+//
+// Env vars are always strings in `process.env`.  Treat the *empty
+// string* the same as "unset" so that defaults apply uniformly whether
+// the operator left the variable absent from `.env` or wrote
+// `FOO=` explicitly.  Zod's `z.optional()` does not coerce empty
+// strings, so wrap everything that goes into a schema with
+// `optionalString` first.
+
+const optionalString = z
+  .string()
+  .transform((value) => (value === '' ? undefined : value))
+  .optional();
+
+/**
+ * Coerce a string env var into a boolean using the `'true'` / `'false'`
+ * convention used throughout the existing codebase.  Anything else is
+ * a hard validation error so misconfig is loud, not silent.
+ *
+ * Overloaded so that callers who pass a `default` get a non-nullable
+ * `boolean` in the inferred output type — eliminating the `!` /
+ * `?? false` workarounds that downstream wiring would otherwise need.
+ */
+function envBoolean(opts: { default: boolean; description: string }): z.ZodType<boolean, z.ZodTypeDef, unknown>;
+function envBoolean(opts: { description: string }): z.ZodType<boolean | undefined, z.ZodTypeDef, unknown>;
+function envBoolean(opts: { default?: boolean; description: string }): z.ZodType<boolean | undefined, z.ZodTypeDef, unknown> {
+  return optionalString
+    .pipe(
+      z
+        .union([z.literal('true'), z.literal('false'), z.undefined()])
+        .transform((v) => (v === undefined ? opts.default : v === 'true')),
+    )
+    .describe(opts.description);
+}
+
+/**
+ * Coerce a string env var into a positive integer, with a default and
+ * a meaningful error message.  Used for ports, TTLs, intervals, etc.
+ *
+ * Overloaded so that callers who pass a `default` get a non-nullable
+ * `number` in the inferred output type.
+ */
+function envPositiveInt(opts: {
+  default: number;
+  description: string;
+  min?: number;
+  max?: number;
+}): z.ZodType<number, z.ZodTypeDef, unknown>;
+function envPositiveInt(opts: {
+  description: string;
+  min?: number;
+  max?: number;
+}): z.ZodType<number | undefined, z.ZodTypeDef, unknown>;
+function envPositiveInt(opts: {
+  default?: number;
+  description: string;
+  min?: number;
+  max?: number;
+}): z.ZodType<number | undefined, z.ZodTypeDef, unknown> {
+  const min = opts.min ?? 1;
+  const max = opts.max ?? Number.MAX_SAFE_INTEGER;
+  return optionalString
+    .pipe(
+      z
+        .string()
+        .optional()
+        .transform((v, ctx) => {
+          if (v === undefined) return opts.default;
+          // Reject partially-numeric strings like "10abc" outright. Without
+          // this guard `Number.parseInt('10abc', 10)` silently returns 10
+          // and a misconfig slips through — defeating the "loud failure"
+          // goal of R-5. A leading '+' is allowed for symmetry with the
+          // shell convention; '-' falls through to the range check.
+          if (!/^[+-]?\d+$/.test(v)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `must be an integer (got "${v}")`,
+            });
+            return z.NEVER;
+          }
+          const parsed = Number.parseInt(v, 10);
+          if (!Number.isFinite(parsed)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `must be an integer (got "${v}")`,
+            });
+            return z.NEVER;
+          }
+          if (parsed < min || parsed > max) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `must be between ${min} and ${max} (got ${parsed})`,
+            });
+            return z.NEVER;
+          }
+          return parsed;
+        }),
+    )
+    .describe(opts.description);
+}
+
+/**
+ * Treat an env var as a comma-separated list of trimmed, non-empty
+ * strings.  Returns `undefined` when unset so callers can distinguish
+ * "no value" from "empty list".
+ */
+function envCsv(opts: { description: string }) {
+  return optionalString
+    .pipe(
+      z
+        .string()
+        .optional()
+        .transform((v) => {
+          if (v === undefined) return undefined;
+          const parts = v
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          return parts;
+        }),
+    )
+    .describe(opts.description);
+}
+
+function envEnum<T extends [string, ...string[]], D extends T[number]>(opts: {
+  values: T;
+  default: D;
+  description: string;
+}): z.ZodType<T[number], z.ZodTypeDef, unknown>;
+function envEnum<T extends [string, ...string[]]>(opts: {
+  values: T;
+  description: string;
+}): z.ZodType<T[number] | undefined, z.ZodTypeDef, unknown>;
+function envEnum<T extends [string, ...string[]]>(opts: {
+  values: T;
+  default?: T[number];
+  description: string;
+}): z.ZodType<T[number] | undefined, z.ZodTypeDef, unknown> {
+  return optionalString
+    .pipe(
+      z
+        .enum(opts.values)
+        .optional()
+        .transform((v) => v ?? opts.default),
+    )
+    .describe(opts.description);
+}
+
+const NODE_ENV = envEnum({
+  values: ['development', 'staging', 'production'] as const,
+  default: 'development',
+  description:
+    'Deployment environment. Used by logging and CORS to pick safe defaults.',
+});
+
+// ---------------------------------------------------------------------------
+// Issuer schema — `capability-issuer`
+// ---------------------------------------------------------------------------
+
+export const IssuerConfigSchema = z
+  .object({
+    NODE_ENV,
+    PORT: envPositiveInt({
+      default: 3001,
+      description: 'TCP port the issuer HTTP server binds to.',
+      min: 1,
+      max: 65535,
+    }),
+
+    // Provider selection ----------------------------------------------------
+    SIGNING_PROVIDER: envEnum({
+      values: ['azure-keyvault', 'aws-kms', 'gcp-cloudkms'] as const,
+      default: 'azure-keyvault',
+      description:
+        'Token signing provider. One of: azure-keyvault, aws-kms, gcp-cloudkms.',
+    }),
+    IDENTITY_PROVIDER: envEnum({
+      values: ['azure-ad', 'aws-cognito', 'gcp-identity', 'did'] as const,
+      default: 'azure-ad',
+      description:
+        'Identity provider used to authenticate /issue callers. One of: azure-ad, aws-cognito, gcp-identity, did.',
+    }),
+
+    // Azure Key Vault -------------------------------------------------------
+    AZURE_KEYVAULT_URL: optionalString.describe(
+      'Azure Key Vault URL (required when SIGNING_PROVIDER=azure-keyvault). Example: https://your-vault.vault.azure.net/',
+    ),
+    AZURE_KEYVAULT_KEY_NAME: optionalString.describe(
+      'Azure Key Vault key name. Defaults to "capability-signing-key".',
+    ),
+    AZURE_KEYVAULT_KEY_VERSION: optionalString.describe(
+      'Optional specific Key Vault key version. Defaults to latest.',
+    ),
+    AZURE_CREDENTIAL_TYPE: envEnum({
+      values: ['default', 'managed-identity', 'client-secret'] as const,
+      default: 'default',
+      description:
+        'Azure credential type used to authenticate to Key Vault and Graph. One of: default, managed-identity, client-secret.',
+    }),
+    AZURE_CLIENT_ID: optionalString.describe(
+      'Azure service principal client ID (required when AZURE_CREDENTIAL_TYPE=client-secret).',
+    ),
+    AZURE_CLIENT_SECRET: optionalString.describe(
+      'Azure service principal client secret (required when AZURE_CREDENTIAL_TYPE=client-secret).',
+    ),
+    AZURE_TENANT_ID: optionalString.describe(
+      'Azure tenant ID (required when AZURE_CREDENTIAL_TYPE=client-secret).',
+    ),
+
+    // AWS KMS ---------------------------------------------------------------
+    AWS_KMS_REGION: optionalString.describe(
+      'AWS region of the KMS key. Defaults to us-east-1 when SIGNING_PROVIDER=aws-kms.',
+    ),
+    AWS_KMS_KEY_ID: optionalString.describe(
+      'AWS KMS key ARN or ID (required when SIGNING_PROVIDER=aws-kms).',
+    ),
+    AWS_ACCESS_KEY_ID: optionalString.describe(
+      'AWS access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SECRET_ACCESS_KEY: optionalString.describe(
+      'AWS secret access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SESSION_TOKEN: optionalString.describe(
+      'AWS session token, for temporary credentials. Optional.',
+    ),
+
+    // GCP Cloud KMS ---------------------------------------------------------
+    GCP_PROJECT_ID: optionalString.describe(
+      'GCP project ID (required when SIGNING_PROVIDER=gcp-cloudkms).',
+    ),
+    GCP_LOCATION_ID: optionalString.describe(
+      'GCP KMS location. Defaults to us-central1.',
+    ),
+    GCP_KEYRING_ID: optionalString.describe(
+      'GCP KMS key ring ID (required when SIGNING_PROVIDER=gcp-cloudkms).',
+    ),
+    GCP_CRYPTOKEY_ID: optionalString.describe(
+      'GCP KMS crypto key ID (required when SIGNING_PROVIDER=gcp-cloudkms).',
+    ),
+    GCP_CRYPTOKEY_VERSION: optionalString.describe(
+      'Optional GCP KMS crypto key version. Defaults to the primary version.',
+    ),
+    GCP_KEY_FILE_PATH: optionalString.describe(
+      'Optional path to a GCP service account key file. Falls back to ADC when unset.',
+    ),
+
+    // Azure AD --------------------------------------------------------------
+    AZURE_AD_TENANT_ID: optionalString.describe(
+      'Azure AD tenant ID (required when IDENTITY_PROVIDER=azure-ad).',
+    ),
+    AZURE_AD_CLIENT_ID: optionalString.describe(
+      'Azure AD application client ID (required when IDENTITY_PROVIDER=azure-ad).',
+    ),
+    AZURE_AD_CLIENT_SECRET: optionalString.describe(
+      'Azure AD client secret. Optional; required only when the issuer needs Microsoft Graph access.',
+    ),
+    AZURE_AD_AUTHORITY: optionalString.describe(
+      'Azure AD authority URL. Example: https://login.microsoftonline.com/<tenant-id>',
+    ),
+
+    // AWS Cognito / IAM Identity Center -------------------------------------
+    AWS_COGNITO_REGION: optionalString.describe(
+      'Cognito / IAM Identity Center region (e.g. us-east-1).',
+    ),
+    AWS_COGNITO_USER_POOL_ID: optionalString.describe(
+      'Cognito user pool ID. Provide this OR AWS_COGNITO_ISSUER plus AWS_COGNITO_CLIENT_ID.',
+    ),
+    AWS_COGNITO_CLIENT_ID: optionalString.describe(
+      'Cognito / OIDC client ID (required when IDENTITY_PROVIDER=aws-cognito).',
+    ),
+    AWS_COGNITO_ISSUER: optionalString.describe(
+      'OIDC issuer URL for IAM Identity Center or generic OIDC. Provide this OR AWS_COGNITO_USER_POOL_ID.',
+    ),
+    AWS_COGNITO_JWKS_URI: optionalString.describe(
+      'Optional explicit JWKS URI. Derived from issuer when unset.',
+    ),
+    AWS_COGNITO_TOKEN_USE: envEnum({
+      values: ['id', 'access'] as const,
+      description:
+        'Which Cognito token kind to validate. One of: id, access. Optional.',
+    }),
+
+    // GCP Identity ----------------------------------------------------------
+    GCP_IDENTITY_AUDIENCE: optionalString.describe(
+      'OAuth client ID / audience for GCP identity tokens (required when IDENTITY_PROVIDER=gcp-identity).',
+    ),
+    GCP_IDENTITY_ISSUER: optionalString.describe(
+      'GCP identity token issuer. Defaults to https://accounts.google.com.',
+    ),
+    GCP_IDENTITY_JWKS_URI: optionalString.describe(
+      'GCP identity token JWKS URI. Defaults to https://www.googleapis.com/oauth2/v3/certs.',
+    ),
+    GCP_IDENTITY_PROJECT_ID: optionalString.describe(
+      'Optional GCP project ID for identity validation.',
+    ),
+    GCP_IDENTITY_ROLES_CLAIM: optionalString.describe(
+      'Optional claim name carrying user roles. Defaults to "roles".',
+    ),
+
+    // DID identity ----------------------------------------------------------
+    ION_RESOLVER_URL: optionalString.describe(
+      'did:ion resolver URL. Defaults to the public Microsoft resolver. Override for self-hosted ION.',
+    ),
+
+    // Token issuance --------------------------------------------------------
+    ISSUER_DID: optionalString.describe(
+      'Issuer DID. Defaults to did:web:example.com if unset (development only — set explicitly in production).',
+    ),
+    DEFAULT_TOKEN_TTL: envPositiveInt({
+      default: 900,
+      description:
+        'Default capability-token TTL in seconds (default 900 = 15 minutes).',
+    }),
+    REQUIRE_USER_CONSENT: envBoolean({
+      default: false,
+      description:
+        'Require explicit user consent before issuing high-privilege tokens. Boolean: true | false.',
+    }),
+    ROLE_POLICY_FILE: optionalString.describe(
+      'Optional path to a JSON file describing the externalised role policy. Falls back to the in-code default mapping.',
+    ),
+    ENABLE_DETAILED_LOGGING: envBoolean({
+      default: false,
+      description: 'Enable verbose request / decision logs. Boolean: true | false.',
+    }),
+
+    // Cloud storage grants (Sprint 3-4 gap #7) ------------------------------
+    STORAGE_GRANTS_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Mint cloud-storage credentials alongside capability tokens. See docs/sprint-3-4-gaps/07-storage-grants.md.',
+    }),
+    STORAGE_GRANT_MAX_TTL_SECONDS: envPositiveInt({
+      default: 900,
+      description:
+        'Cap on storage grant TTL in seconds. Default 900; hard ceiling 3600.',
+      max: 3600,
+    }),
+    AWS_STORAGE_GRANT_ROLE_ARN: optionalString.describe(
+      'IAM role ARN the issuer assumes to mint AWS storage grants.',
+    ),
+    AWS_REGION: optionalString.describe(
+      'Default AWS region used by storage / DB token issuance.',
+    ),
+
+    // DB token issuance (Sprint 3-4 gap #8) ---------------------------------
+    DB_TOKENS_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Mint short-lived database credentials alongside capability tokens. See docs/sprint-3-4-gaps/08-db-token-issuance.md.',
+    }),
+    DB_TOKEN_MAX_TTL_SECONDS: envPositiveInt({
+      default: 900,
+      description: 'Cap on DB token TTL in seconds. Default 900; hard ceiling 900.',
+      max: 900,
+    }),
+    DB_INSTANCES_FILE: optionalString.describe(
+      'REQUIRED when DB_TOKENS_ENABLED=true. Path to the operator-declared allow-list of permitted DB instances.',
+    ),
+
+    // CORS ------------------------------------------------------------------
+    ALLOWED_ORIGINS: envCsv({
+      description:
+        'Comma-separated list of browser origins allowed to call the issuer. In production the issuer disables CORS entirely when this is unset.',
+    }),
+  })
+  // Cross-field validation: catch the pre-existing fail-closed cases at boot
+  // rather than at first request, per the R-5 exit criterion.
+  .superRefine((cfg, ctx) => {
+    if (cfg.SIGNING_PROVIDER === 'azure-keyvault' && !cfg.AZURE_KEYVAULT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AZURE_KEYVAULT_URL'],
+        message:
+          'AZURE_KEYVAULT_URL is required when SIGNING_PROVIDER=azure-keyvault.',
+      });
+    }
+    if (cfg.SIGNING_PROVIDER === 'aws-kms' && !cfg.AWS_KMS_KEY_ID) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AWS_KMS_KEY_ID'],
+        message: 'AWS_KMS_KEY_ID is required when SIGNING_PROVIDER=aws-kms.',
+      });
+    }
+    if (cfg.SIGNING_PROVIDER === 'gcp-cloudkms') {
+      const missing = (
+        ['GCP_PROJECT_ID', 'GCP_KEYRING_ID', 'GCP_CRYPTOKEY_ID'] as const
+      ).filter((k) => !cfg[k]);
+      for (const k of missing) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [k],
+          message: `${k} is required when SIGNING_PROVIDER=gcp-cloudkms.`,
+        });
+      }
+    }
+    if (
+      cfg.AZURE_CREDENTIAL_TYPE === 'client-secret' &&
+      (!cfg.AZURE_CLIENT_ID || !cfg.AZURE_CLIENT_SECRET || !cfg.AZURE_TENANT_ID)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AZURE_CREDENTIAL_TYPE'],
+        message:
+          'AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and AZURE_TENANT_ID are required when AZURE_CREDENTIAL_TYPE=client-secret.',
+      });
+    }
+    if (
+      cfg.IDENTITY_PROVIDER === 'aws-cognito' &&
+      (!cfg.AWS_COGNITO_CLIENT_ID ||
+        (!cfg.AWS_COGNITO_USER_POOL_ID && !cfg.AWS_COGNITO_ISSUER))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AWS_COGNITO_CLIENT_ID'],
+        message:
+          'AWS_COGNITO_CLIENT_ID and either AWS_COGNITO_USER_POOL_ID or AWS_COGNITO_ISSUER are required when IDENTITY_PROVIDER=aws-cognito.',
+      });
+    }
+    if (cfg.IDENTITY_PROVIDER === 'gcp-identity' && !cfg.GCP_IDENTITY_AUDIENCE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['GCP_IDENTITY_AUDIENCE'],
+        message:
+          'GCP_IDENTITY_AUDIENCE is required when IDENTITY_PROVIDER=gcp-identity.',
+      });
+    }
+    if (cfg.DB_TOKENS_ENABLED && !cfg.DB_INSTANCES_FILE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DB_INSTANCES_FILE'],
+        message:
+          'DB_INSTANCES_FILE is required when DB_TOKENS_ENABLED=true (operator-declared instance allow-list).',
+      });
+    }
+  });
+
+export type IssuerConfig = z.infer<typeof IssuerConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Gateway schema — `tool-gateway`
+// ---------------------------------------------------------------------------
+
+export const GatewayConfigSchema = z
+  .object({
+    NODE_ENV,
+    PORT: envPositiveInt({
+      default: 3002,
+      description: 'TCP port the gateway HTTP server binds to.',
+      min: 1,
+      max: 65535,
+    }),
+
+    // Issuer + backend wiring -----------------------------------------------
+    ISSUER_PUBLIC_KEY_URL: optionalString.describe(
+      'URL the gateway calls to fetch the issuer public key. Defaults to http://localhost:3001/api/v1/public-key.',
+    ),
+    BACKEND_SERVICE_URL: optionalString.describe(
+      'URL of the backend service the gateway proxies authorised requests to. Defaults to http://localhost:4000.',
+    ),
+
+    // Admin API -------------------------------------------------------------
+    ADMIN_API_KEY: optionalString.describe(
+      'Optional API key required to call /admin endpoints. When unset, the admin API is publicly reachable (NOT recommended for production).',
+    ),
+
+    // Cryptographic audit ---------------------------------------------------
+    ENABLE_CRYPTOGRAPHIC_AUDIT: envBoolean({
+      default: false,
+      description:
+        'Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits.',
+    }),
+    EVIDENCE_SIGNING_KEY_PEM: optionalString.describe(
+      'Inline PEM-encoded private key for evidence signing. Provide this OR EVIDENCE_SIGNING_KEY_FILE.',
+    ),
+    EVIDENCE_SIGNING_KEY_FILE: optionalString.describe(
+      'Path to a PEM file containing the evidence signing private key. Provide this OR EVIDENCE_SIGNING_KEY_PEM.',
+    ),
+    EVIDENCE_SIGNING_PUBLIC_KEY_PEM: optionalString.describe(
+      'Optional inline PEM public key. Derived from the private key when unset.',
+    ),
+    EVIDENCE_SIGNING_PUBLIC_KEY_FILE: optionalString.describe(
+      'Optional path to a PEM file containing the evidence public key.',
+    ),
+    EVIDENCE_SIGNING_ALGORITHM: optionalString.describe(
+      'Evidence signing algorithm. Defaults to RS256. Supported: RS256/384/512, PS256/384/512, ES256/384/512, EdDSA.',
+    ),
+    EVIDENCE_SIGNING_KEY_ID: optionalString.describe(
+      'Evidence signing key id. Defaults to "software-key".',
+    ),
+
+    // Audit chain seed (per-service env var name pattern is documented; we
+    // accept the gateway's well-known one explicitly).
+    EUNO_AUDIT_CHAIN_SEED_TOOL_GATEWAY: optionalString.describe(
+      `Seed the gateway audit chain with the previous run's terminal hash to maintain tamper-evidence continuity across restarts.`,
+    ),
+
+    // Policy ----------------------------------------------------------------
+    POLICY_VERSION: optionalString.describe(
+      'Version identifier for the active policy (string, default "1.0.0").',
+    ),
+    ENABLE_DETAILED_LOGGING: envBoolean({
+      default: false,
+      description: 'Enable verbose request / decision logs. Boolean: true | false.',
+    }),
+
+    // CORS ------------------------------------------------------------------
+    ALLOWED_ORIGINS: envCsv({
+      description:
+        'Comma-separated list of browser origins allowed to call the gateway. In production the gateway disables CORS entirely when this is unset (fail-safe).',
+    }),
+
+    // Rate limiting ---------------------------------------------------------
+    RATE_LIMIT_WINDOW_MS: envPositiveInt({
+      default: 60000,
+      description:
+        'Rate-limit window in milliseconds. Default 60000 (60 s). See README for tuning guidance.',
+    }),
+    RATE_LIMIT_MAX_REQUESTS: envPositiveInt({
+      default: 1000,
+      description:
+        'Max requests per IP per RATE_LIMIT_WINDOW_MS. Default 1000 (development); tighten in production.',
+    }),
+
+    // Cross-org partner trust -----------------------------------------------
+    TRUSTED_PARTNER_DIDS: envCsv({
+      description:
+        'Comma-separated list of partner issuer DIDs whose capability tokens this gateway will accept. Empty / unset = local issuer only.',
+    }),
+    LOCAL_ISSUER_IDS: envCsv({
+      description:
+        'Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_PUBLIC_KEY_URL).',
+    }),
+
+    // Distributed coordination (Redis) --------------------------------------
+    REDIS_URL: optionalString.describe(
+      'Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments.',
+    ),
+    REVOCATION_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for revoked-token entries. Default "revoked:".',
+    ),
+    REVOCATION_FAIL_OPEN: envBoolean({
+      default: false,
+      description:
+        'When Redis is unreachable, treat lookups as "not revoked" instead of "revoked". Use ONLY if availability matters more than revocation freshness. Boolean: true | false.',
+    }),
+    KILL_SWITCH_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for kill-switch entries. Default "killswitch:".',
+    ),
+    KILL_SWITCH_REFRESH_INTERVAL_MS: envPositiveInt({
+      default: 5000,
+      description:
+        'Background refresh interval in ms for the kill-switch state. Smaller = faster propagation, more Redis traffic. Default 5000.',
+    }),
+    KILL_SWITCH_FAIL_OPEN_ON_WRITE: envBoolean({
+      default: false,
+      description:
+        'When true, kill-switch writes that fail against Redis still update the local cache. Default false. Boolean: true | false.',
+    }),
+    CALL_COUNTER_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',
+    ),
+  })
+  .superRefine((cfg, ctx) => {
+    if (
+      cfg.ENABLE_CRYPTOGRAPHIC_AUDIT &&
+      !cfg.EVIDENCE_SIGNING_KEY_PEM &&
+      !cfg.EVIDENCE_SIGNING_KEY_FILE
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['EVIDENCE_SIGNING_KEY_PEM'],
+        message:
+          'When ENABLE_CRYPTOGRAPHIC_AUDIT=true, either EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE must be set.',
+      });
+    }
+  });
+
+export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Service registry — drives the loader and the dump-template generator.
+// ---------------------------------------------------------------------------
+
+/**
+ * Names of services that participate in the typed-config contract.
+ * Adding a new service is a four-step change:
+ *
+ *   1. Define a `<Service>ConfigSchema` above.
+ *   2. Add it to {@link EUNO_CONFIG_SCHEMAS} below.
+ *   3. Wire `loadConfig(process.env, '<service>')` into the service
+ *      boot path.
+ *   4. Run `euno config dump-template --service <service> > .env.example`
+ *      to materialise the template.
+ */
+export const EUNO_SERVICE_NAMES = ['issuer', 'gateway'] as const;
+export type EunoServiceName = (typeof EUNO_SERVICE_NAMES)[number];
+
+export const EUNO_CONFIG_SCHEMAS = {
+  issuer: IssuerConfigSchema,
+  gateway: GatewayConfigSchema,
+} as const;
+
+export type EunoConfigFor<S extends EunoServiceName> = S extends 'issuer'
+  ? IssuerConfig
+  : S extends 'gateway'
+    ? GatewayConfig
+    : never;
+
+/**
+ * The shape of a `EunoConfig` for any of the registered services.
+ */
+export type EunoConfig = IssuerConfig | GatewayConfig;

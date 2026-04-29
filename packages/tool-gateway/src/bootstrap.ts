@@ -18,6 +18,9 @@ import {
   CallCounterStore,
   createCallCounterStoreFromEnv,
   createLogger,
+  loadConfigOrExit,
+  loadConfig,
+  GatewayConfig,
 } from '@euno/common';
 import axios from 'axios';
 import { JWTTokenVerifier } from './verifier';
@@ -59,32 +62,35 @@ export interface GatewayDependencies {
   isReady?: () => boolean;
 }
 
-/** Read a positive integer env var with a default and a warning on garbage. */
-function readPositiveInt(
-  raw: string | undefined,
-  defaultValue: number,
-  envName: string,
-  logger: Logger,
-): number {
-  const parsed = parseInt(raw || '', 10);
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return parsed;
-  }
-  if (raw) {
-    logger.warn(`${envName} value is invalid, using default ${defaultValue}`);
-  }
-  return defaultValue;
-}
-
-/** Build the `ServiceConfig` from `process.env`. */
-export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+/**
+ * Map a validated `GatewayConfig` to the runtime `ServiceConfig` shape
+ * consumed by the rest of the gateway.  Single source of truth so
+ * `loadConfigFromEnv()` and `initializeServices()` cannot drift.
+ */
+function gatewayConfigToServiceConfig(cfg: GatewayConfig): ServiceConfig {
   return {
     name: 'tool-gateway',
-    port: parseInt(env.PORT || '3002', 10),
-    environment: (env.NODE_ENV as ServiceConfig['environment']) || 'development',
-    enableCryptographicAudit: env.ENABLE_CRYPTOGRAPHIC_AUDIT === 'true',
-    policyVersion: env.POLICY_VERSION || '1.0.0',
+    port: cfg.PORT,
+    environment: cfg.NODE_ENV,
+    enableCryptographicAudit: cfg.ENABLE_CRYPTOGRAPHIC_AUDIT,
+    policyVersion: cfg.POLICY_VERSION || '1.0.0',
   };
+}
+
+/** Build the `ServiceConfig` from a validated `GatewayConfig`. */
+export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  // Use the non-exiting form here so callers (notably tests) never see
+  // the loader call `process.exit`. `initializeServices()` runs the
+  // exit-on-failure variant before reaching this code path.
+  const result = loadConfig(env, 'gateway');
+  if (!result.ok) {
+    throw new Error(
+      `Invalid gateway configuration: ${result.errors
+        .map((e) => `${e.field}: ${e.message}`)
+        .join('; ')}`,
+    );
+  }
+  return gatewayConfigToServiceConfig(result.config);
 }
 
 /** Compute the CORS allow-list with the same semantics as the legacy server. */
@@ -92,10 +98,12 @@ export function resolveAllowedOrigins(
   env: NodeJS.ProcessEnv,
   environment: ServiceConfig['environment'],
 ): string[] {
-  if (env.ALLOWED_ORIGINS) {
-    return env.ALLOWED_ORIGINS.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean);
+  // Re-validate so callers can pass a raw env without first running the
+  // loader. Falls back to the same defaults the loader applies.
+  const result = loadConfig(env, 'gateway');
+  const origins = result.ok ? result.config.ALLOWED_ORIGINS : undefined;
+  if (origins && origins.length > 0) {
+    return origins;
   }
   if (environment === 'production') {
     return []; // No CORS in production unless explicitly configured
@@ -113,11 +121,17 @@ export function resolveAllowedOrigins(
 export async function initializeServices(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ deps: GatewayDependencies; setReady: (ready: boolean) => void }> {
-  const config = loadConfigFromEnv(env);
+  // Validate the environment against the typed `EunoConfig` Zod schema
+  // (R-5 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). This produces a
+  // single, structured "what's wrong" report on misconfig and exits
+  // before any service is constructed.
+  const validated: GatewayConfig = loadConfigOrExit(env, 'gateway');
+
+  const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
   const logger = createLogger(config.name, config.environment);
   const issuerPublicKeyUrl =
-    env.ISSUER_PUBLIC_KEY_URL || 'http://localhost:3001/api/v1/public-key';
-  const adminApiKey = env.ADMIN_API_KEY;
+    validated.ISSUER_PUBLIC_KEY_URL || 'http://localhost:3001/api/v1/public-key';
+  const adminApiKey = validated.ADMIN_API_KEY;
 
   logger.info('Fetching public key from Capability Issuer', { url: issuerPublicKeyUrl });
   const response = await axios.get(issuerPublicKeyUrl);
@@ -211,18 +225,8 @@ export async function initializeServices(
     ready = value;
   };
 
-  const rateLimitWindowMs = readPositiveInt(
-    env.RATE_LIMIT_WINDOW_MS,
-    60_000,
-    'RATE_LIMIT_WINDOW_MS',
-    logger,
-  );
-  const rateLimitMax = readPositiveInt(
-    env.RATE_LIMIT_MAX_REQUESTS,
-    1000, // Higher limit for gateway
-    'RATE_LIMIT_MAX_REQUESTS',
-    logger,
-  );
+  const rateLimitWindowMs = validated.RATE_LIMIT_WINDOW_MS;
+  const rateLimitMax = validated.RATE_LIMIT_MAX_REQUESTS;
 
   const deps: GatewayDependencies = {
     config,
@@ -234,7 +238,7 @@ export async function initializeServices(
     revocationStore,
     evidenceSigner,
     adminApiKey,
-    backendServiceUrl: env.BACKEND_SERVICE_URL || 'http://localhost:4000',
+    backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
     rateLimitWindowMs,
     rateLimitMax,

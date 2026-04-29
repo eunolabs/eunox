@@ -9,6 +9,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import axios from 'axios';
+import {
+  dumpEnvTemplate,
+  EUNO_SERVICE_NAMES,
+  EunoServiceName,
+} from '@euno/common';
 
 const program = new Command();
 
@@ -583,10 +588,21 @@ program
   });
 
 /**
- * Show current configuration
+ * Configuration commands.
+ *
+ * `euno config` (no subcommand) preserves the long-standing UX of
+ * printing the CLI's current environment variables. The new
+ * `dump-template` subcommand emits a `.env.example` for one of the
+ * services from the typed `EunoConfig` Zod schema in
+ * `@euno/common` — see R-5 in
+ * `docs/IMPROVEMENTS_AND_REFACTORING.md`.
  */
-program
+const configCmd = program
   .command('config')
+  .description('Show CLI configuration or generate service `.env.example` files');
+
+configCmd
+  .command('show', { isDefault: true })
   .description('Show current CLI configuration')
   .action(() => {
     console.log('Euno CLI Configuration:');
@@ -596,6 +612,26 @@ program
     console.log('Environment variables:');
     console.log(`  EUNO_ISSUER_URL: ${process.env.EUNO_ISSUER_URL || '(not set)'}`);
     console.log(`  EUNO_GATEWAY_URL: ${process.env.EUNO_GATEWAY_URL || '(not set)'}`);
+  });
+
+configCmd
+  .command('dump-template')
+  .description(
+    'Print a `.env.example` for the named service, generated from the EunoConfig Zod schema in @euno/common. The output is the canonical replacement for the per-service hand-curated .env.example / .env.template files.',
+  )
+  .requiredOption(
+    '-s, --service <name>',
+    `Service name (one of: ${EUNO_SERVICE_NAMES.join(', ')})`,
+  )
+  .action((opts: { service: string }) => {
+    const service = opts.service as EunoServiceName;
+    if (!(EUNO_SERVICE_NAMES as readonly string[]).includes(service)) {
+      console.error(
+        `✗ Unknown service "${opts.service}". Expected one of: ${EUNO_SERVICE_NAMES.join(', ')}`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(dumpEnvTemplate(service));
   });
 
 /**

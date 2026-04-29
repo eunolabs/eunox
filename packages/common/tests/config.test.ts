@@ -1,0 +1,306 @@
+/**
+ * Tests for the typed `EunoConfig` loader and `.env.example`
+ * generator (R-5 in `docs/IMPROVEMENTS_AND_REFACTORING.md`).
+ */
+
+import {
+  loadConfig,
+  formatConfigErrors,
+  dumpEnvTemplate,
+  EUNO_SERVICE_NAMES,
+} from '../src/config';
+
+describe('loadConfig (issuer)', () => {
+  it('rejects an empty environment with the canonical fail-closed errors', () => {
+    const result = loadConfig({}, 'issuer');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // Default SIGNING_PROVIDER is azure-keyvault, so AZURE_KEYVAULT_URL must be set.
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'AZURE_KEYVAULT_URL',
+          message: expect.stringMatching(/AZURE_KEYVAULT_URL/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts a minimal happy path and applies declared defaults', () => {
+    const result = loadConfig(
+      { AZURE_KEYVAULT_URL: 'https://vault.example/' },
+      'issuer',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.PORT).toBe(3001);
+    expect(result.config.NODE_ENV).toBe('development');
+    expect(result.config.SIGNING_PROVIDER).toBe('azure-keyvault');
+    expect(result.config.IDENTITY_PROVIDER).toBe('azure-ad');
+    expect(result.config.DEFAULT_TOKEN_TTL).toBe(900);
+    expect(result.config.ENABLE_DETAILED_LOGGING).toBe(false);
+  });
+
+  it('rejects a non-numeric PORT with a structured error', () => {
+    const result = loadConfig(
+      { AZURE_KEYVAULT_URL: 'https://vault.example/', PORT: 'not-a-port' },
+      'issuer',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'PORT',
+          message: expect.stringContaining('not-a-port'),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects partially-numeric values like "10abc" (strict integer parse)', () => {
+    const result = loadConfig(
+      { AZURE_KEYVAULT_URL: 'https://vault.example/', PORT: '10abc' },
+      'issuer',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'PORT',
+          message: expect.stringContaining('10abc'),
+        }),
+      ]),
+    );
+  });
+
+  it('treats empty strings as unset and applies defaults', () => {
+    const result = loadConfig(
+      {
+        AZURE_KEYVAULT_URL: 'https://vault.example/',
+        PORT: '',
+        DEFAULT_TOKEN_TTL: '',
+      },
+      'issuer',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.PORT).toBe(3001);
+    expect(result.config.DEFAULT_TOKEN_TTL).toBe(900);
+  });
+
+  it('parses ALLOWED_ORIGINS as a trimmed CSV list', () => {
+    const result = loadConfig(
+      {
+        AZURE_KEYVAULT_URL: 'https://vault.example/',
+        ALLOWED_ORIGINS: 'https://a.example, https://b.example , ',
+      },
+      'issuer',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ALLOWED_ORIGINS).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+
+  it.each([
+    ['SIGNING_PROVIDER=aws-kms requires AWS_KMS_KEY_ID', { SIGNING_PROVIDER: 'aws-kms' }, 'AWS_KMS_KEY_ID'],
+    [
+      'SIGNING_PROVIDER=gcp-cloudkms requires the three GCP keys',
+      { SIGNING_PROVIDER: 'gcp-cloudkms' },
+      'GCP_PROJECT_ID',
+    ],
+    [
+      'IDENTITY_PROVIDER=gcp-identity requires GCP_IDENTITY_AUDIENCE',
+      { AZURE_KEYVAULT_URL: 'https://v/', IDENTITY_PROVIDER: 'gcp-identity' },
+      'GCP_IDENTITY_AUDIENCE',
+    ],
+    [
+      'DB_TOKENS_ENABLED=true requires DB_INSTANCES_FILE',
+      {
+        AZURE_KEYVAULT_URL: 'https://v/',
+        DB_TOKENS_ENABLED: 'true',
+      },
+      'DB_INSTANCES_FILE',
+    ],
+  ])('cross-field check: %s', (_label, env, expectedField) => {
+    const result = loadConfig(env as NodeJS.ProcessEnv, 'issuer');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === expectedField)).toBe(true);
+  });
+
+  it('rejects an out-of-range storage grant TTL with a single, structured error', () => {
+    const result = loadConfig(
+      {
+        AZURE_KEYVAULT_URL: 'https://v/',
+        STORAGE_GRANT_MAX_TTL_SECONDS: '999999',
+      },
+      'issuer',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.field).toBe('STORAGE_GRANT_MAX_TTL_SECONDS');
+  });
+});
+
+describe('loadConfig (gateway)', () => {
+  it('accepts an empty environment and applies sane defaults', () => {
+    const result = loadConfig({}, 'gateway');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.PORT).toBe(3002);
+    expect(result.config.RATE_LIMIT_WINDOW_MS).toBe(60000);
+    expect(result.config.RATE_LIMIT_MAX_REQUESTS).toBe(1000);
+    expect(result.config.ENABLE_CRYPTOGRAPHIC_AUDIT).toBe(false);
+  });
+
+  it('rejects ENABLE_CRYPTOGRAPHIC_AUDIT=true without an evidence key', () => {
+    const result = loadConfig(
+      { ENABLE_CRYPTOGRAPHIC_AUDIT: 'true' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'EVIDENCE_SIGNING_KEY_PEM',
+          message: expect.stringMatching(/EVIDENCE_SIGNING_KEY_PEM|EVIDENCE_SIGNING_KEY_FILE/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts ENABLE_CRYPTOGRAPHIC_AUDIT=true with EVIDENCE_SIGNING_KEY_FILE', () => {
+    const result = loadConfig(
+      {
+        ENABLE_CRYPTOGRAPHIC_AUDIT: 'true',
+        EVIDENCE_SIGNING_KEY_FILE: '/etc/euno/key.pem',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a non-boolean ENABLE_DETAILED_LOGGING with a structured error', () => {
+    const result = loadConfig(
+      { ENABLE_DETAILED_LOGGING: 'yes' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.field).toBe('ENABLE_DETAILED_LOGGING');
+  });
+
+  it('aggregates multiple unrelated errors into one report (no early exit)', () => {
+    const result = loadConfig(
+      {
+        PORT: 'oops',
+        ENABLE_DETAILED_LOGGING: 'sometimes',
+        RATE_LIMIT_WINDOW_MS: '-7',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const fields = result.errors.map((e) => e.field).sort();
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        'ENABLE_DETAILED_LOGGING',
+        'PORT',
+        'RATE_LIMIT_WINDOW_MS',
+      ]),
+    );
+  });
+});
+
+describe('formatConfigErrors', () => {
+  it('produces a multi-line, operator-friendly block', () => {
+    const text = formatConfigErrors('issuer', [
+      { field: 'PORT', message: 'must be an integer (got "x")' },
+      { field: 'AZURE_KEYVAULT_URL', message: 'is required.' },
+    ]);
+    expect(text).toContain('Invalid issuer configuration — 2 problems');
+    expect(text).toContain('• PORT: must be an integer');
+    expect(text).toContain('• AZURE_KEYVAULT_URL: is required.');
+  });
+
+  it('uses singular "problem" for a single error', () => {
+    const text = formatConfigErrors('gateway', [
+      { field: 'X', message: 'bad' },
+    ]);
+    expect(text).toContain('1 problem:');
+  });
+});
+
+describe('dumpEnvTemplate', () => {
+  it.each(EUNO_SERVICE_NAMES)(
+    '%s template parses cleanly back through loadConfig',
+    (service) => {
+      const text = dumpEnvTemplate(service);
+      expect(text).toMatch(/^# /); // starts with a comment header
+      expect(text.endsWith('\n')).toBe(true);
+
+      // Reconstruct a process.env from the *uncommented* assignments in
+      // the template; the loader should accept that environment without
+      // errors. This pins down the contract that dump-template only
+      // emits values that the loader accepts.
+      const env: NodeJS.ProcessEnv = {};
+      for (const line of text.split('\n')) {
+        if (!line || line.startsWith('#')) continue;
+        const eq = line.indexOf('=');
+        if (eq < 0) continue;
+        env[line.slice(0, eq)] = line.slice(eq + 1);
+      }
+      // The template must be self-validating: copying it and only
+      // filling in the *uncommented* placeholders should produce an
+      // env that the loader accepts. The dump-template generator
+      // emits conditionally-required fields (e.g. AZURE_KEYVAULT_URL
+      // when SIGNING_PROVIDER defaults to azure-keyvault) uncommented
+      // for exactly this reason.
+      const result = loadConfig(env, service);
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it('emits conditionally-required fields uncommented under defaults', () => {
+    // Default SIGNING_PROVIDER=azure-keyvault makes AZURE_KEYVAULT_URL
+    // required via superRefine even though the field itself is optional.
+    // The template should surface that as an uncommented placeholder
+    // rather than a commented-out hint, so a copy-paste flow fails
+    // closed at boot with a meaningful message instead of silently
+    // skipping the var.
+    const issuer = dumpEnvTemplate('issuer');
+    expect(issuer).toMatch(/^AZURE_KEYVAULT_URL=/m);
+    expect(issuer).not.toMatch(/^# AZURE_KEYVAULT_URL=/m);
+  });
+
+  it('emits both required (uncommented) and optional (commented) vars', () => {
+    const issuer = dumpEnvTemplate('issuer');
+    // SIGNING_PROVIDER has a default => should appear uncommented.
+    expect(issuer).toMatch(/^SIGNING_PROVIDER=azure-keyvault$/m);
+    // AZURE_KEYVAULT_KEY_NAME is purely optional with no default and
+    // no cross-field requirement => commented out.
+    expect(issuer).toMatch(/^# AZURE_KEYVAULT_KEY_NAME=/m);
+  });
+
+  it('surfaces enum allowed values in the placeholder hint', () => {
+    const gateway = dumpEnvTemplate('gateway');
+    // ENABLE_CRYPTOGRAPHIC_AUDIT defaults to false, so it appears as
+    // an explicit assignment; AWS_COGNITO_TOKEN_USE is enum-typed and
+    // optional, so its placeholder shows the allowed values.
+    expect(gateway).toMatch(/^ENABLE_CRYPTOGRAPHIC_AUDIT=false$/m);
+    const issuer = dumpEnvTemplate('issuer');
+    expect(issuer).toMatch(/^# AWS_COGNITO_TOKEN_USE=id \| access$/m);
+  });
+
+  it('marks the file as auto-generated to discourage hand-editing', () => {
+    for (const service of EUNO_SERVICE_NAMES) {
+      expect(dumpEnvTemplate(service)).toMatch(/AUTO-GENERATED/);
+    }
+  });
+});

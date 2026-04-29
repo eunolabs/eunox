@@ -407,6 +407,43 @@ describe('euno config', () => {
     expect(r.stdout).toContain('https://issuer.example');
     expect(r.stdout).toContain('https://gateway.example');
   });
+
+  describe('dump-template subcommand', () => {
+    it('emits an issuer .env template with declared defaults', () => {
+      const r = runCli(['config', 'dump-template', '--service', 'issuer']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/AUTO-GENERATED/);
+      expect(r.stdout).toMatch(/^SIGNING_PROVIDER=azure-keyvault$/m);
+      // PORT has a default => should appear uncommented.
+      expect(r.stdout).toMatch(/^PORT=3001$/m);
+      // AZURE_KEYVAULT_URL is optional in isolation but conditionally
+      // required by the default SIGNING_PROVIDER=azure-keyvault, so the
+      // template emits it uncommented as a placeholder.
+      expect(r.stdout).toMatch(/^AZURE_KEYVAULT_URL=/m);
+      // AZURE_KEYVAULT_KEY_NAME is purely optional => commented out.
+      expect(r.stdout).toMatch(/^# AZURE_KEYVAULT_KEY_NAME=/m);
+    });
+
+    it('emits a gateway .env template', () => {
+      const r = runCli(['config', 'dump-template', '--service', 'gateway']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/AUTO-GENERATED/);
+      expect(r.stdout).toMatch(/^PORT=3002$/m);
+      expect(r.stdout).toMatch(/^ENABLE_CRYPTOGRAPHIC_AUDIT=false$/m);
+    });
+
+    it('rejects an unknown service name', () => {
+      const r = runCli(['config', 'dump-template', '--service', 'bogus']);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/Unknown service/);
+    });
+
+    it('requires the --service flag', () => {
+      const r = runCli(['config', 'dump-template']);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/--service/);
+    });
+  });
 });
 
 describe('euno schema-version', () => {

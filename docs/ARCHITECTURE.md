@@ -611,7 +611,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry **not yet wired** (see `IMPROVEMENTS_AND_REFACTORING.md` § R-3) |
 | Rate limiting       | `express-rate-limit` per-IP at issuer and gateway             | Limits are env-configurable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`; defaults are issuer `100/min` and gateway `1000/min`. No per-user / per-token limit yet |
 | Schema evolution    | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`| Fail-closed on unknown versions                                      |
-| Configuration       | `dotenv` + per-service `.env.example`                         | Adapter selection by env var (`SIGNING_PROVIDER`, `IDENTITY_PROVIDER`) |
+| Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`); see `IMPROVEMENTS_AND_REFACTORING.md` § R-5 |
 | Tests               | Per-package `tests/` + `packages/integration-tests`           | ≈0.7 test:src LOC ratio                                              |
 
 ---

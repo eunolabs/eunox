@@ -23,6 +23,7 @@ import {
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   SUPPORTED_SCHEMA_VERSIONS,
   SIGNING_ALGORITHMS,
+  loadConfigOrExit,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -33,70 +34,78 @@ import { PostureEmitter } from '@euno/posture-emitter';
 // Load environment variables
 dotenv.config();
 
-// Configuration
+// Validate the environment against the typed `EunoConfig` Zod schema
+// (R-5 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). This produces a
+// single, structured "what's wrong" report on misconfig and exits
+// before any service is constructed, replacing the previous pattern
+// of inline `process.env.FOO || 'default'` reads sprinkled across the
+// boot path.
+const env = loadConfigOrExit(process.env, 'issuer');
+
+// Map the validated `EunoConfig` onto the existing in-memory
+// `ServiceConfig` shape.  The structured nested groups (`keyVault`,
+// `awsKMS`, etc.) are still constructed conditionally because the
+// downstream `createSigner` / `createIdentityProvider` flow uses their
+// presence as a discriminator.
 const config: ServiceConfig = {
   name: 'capability-issuer',
-  port: parseInt(process.env.PORT || '3001', 10),
-  environment: (process.env.NODE_ENV as any) || 'development',
-  signingProvider: (process.env.SIGNING_PROVIDER as any) || 'azure-keyvault',
-  identityProvider: (process.env.IDENTITY_PROVIDER as any) || 'azure-ad',
-  // Azure Key Vault configuration
-  keyVault: process.env.AZURE_KEYVAULT_URL ? {
-    vaultUrl: process.env.AZURE_KEYVAULT_URL,
-    keyName: process.env.AZURE_KEYVAULT_KEY_NAME || 'capability-signing-key',
-    keyVersion: process.env.AZURE_KEYVAULT_KEY_VERSION,
-    credentialType: (process.env.AZURE_CREDENTIAL_TYPE as any) || 'default',
-    clientId: process.env.AZURE_CLIENT_ID,
-    clientSecret: process.env.AZURE_CLIENT_SECRET,
-    tenantId: process.env.AZURE_TENANT_ID,
+  port: env.PORT,
+  environment: env.NODE_ENV,
+  signingProvider: env.SIGNING_PROVIDER,
+  identityProvider: env.IDENTITY_PROVIDER,
+  keyVault: env.AZURE_KEYVAULT_URL ? {
+    vaultUrl: env.AZURE_KEYVAULT_URL,
+    keyName: env.AZURE_KEYVAULT_KEY_NAME || 'capability-signing-key',
+    keyVersion: env.AZURE_KEYVAULT_KEY_VERSION,
+    credentialType: env.AZURE_CREDENTIAL_TYPE,
+    clientId: env.AZURE_CLIENT_ID,
+    clientSecret: env.AZURE_CLIENT_SECRET,
+    tenantId: env.AZURE_TENANT_ID,
   } : undefined,
-  // AWS KMS configuration
-  awsKMS: process.env.AWS_KMS_KEY_ID ? {
-    region: process.env.AWS_KMS_REGION || 'us-east-1',
-    keyId: process.env.AWS_KMS_KEY_ID,
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    sessionToken: process.env.AWS_SESSION_TOKEN,
+  awsKMS: env.AWS_KMS_KEY_ID ? {
+    region: env.AWS_KMS_REGION || 'us-east-1',
+    keyId: env.AWS_KMS_KEY_ID,
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: env.AWS_SESSION_TOKEN,
   } : undefined,
-  // GCP Cloud KMS configuration
-  gcpCloudKMS: (process.env.GCP_PROJECT_ID && process.env.GCP_KEYRING_ID && process.env.GCP_CRYPTOKEY_ID) ? {
-    projectId: process.env.GCP_PROJECT_ID,
-    locationId: process.env.GCP_LOCATION_ID || 'us-central1',
-    keyRingId: process.env.GCP_KEYRING_ID,
-    cryptoKeyId: process.env.GCP_CRYPTOKEY_ID,
-    cryptoKeyVersion: process.env.GCP_CRYPTOKEY_VERSION,
-    keyFilePath: process.env.GCP_KEY_FILE_PATH,
+  gcpCloudKMS: (env.GCP_PROJECT_ID && env.GCP_KEYRING_ID && env.GCP_CRYPTOKEY_ID) ? {
+    projectId: env.GCP_PROJECT_ID,
+    locationId: env.GCP_LOCATION_ID || 'us-central1',
+    keyRingId: env.GCP_KEYRING_ID,
+    cryptoKeyId: env.GCP_CRYPTOKEY_ID,
+    cryptoKeyVersion: env.GCP_CRYPTOKEY_VERSION,
+    keyFilePath: env.GCP_KEY_FILE_PATH,
   } : undefined,
-  // Azure AD configuration
-  azureAD: process.env.AZURE_AD_TENANT_ID ? {
-    tenantId: process.env.AZURE_AD_TENANT_ID,
-    clientId: process.env.AZURE_AD_CLIENT_ID || '',
-    clientSecret: process.env.AZURE_AD_CLIENT_SECRET,
-    authority: process.env.AZURE_AD_AUTHORITY,
+  azureAD: env.AZURE_AD_TENANT_ID ? {
+    tenantId: env.AZURE_AD_TENANT_ID,
+    clientId: env.AZURE_AD_CLIENT_ID || '',
+    clientSecret: env.AZURE_AD_CLIENT_SECRET,
+    authority: env.AZURE_AD_AUTHORITY,
   } : undefined,
-  // AWS Cognito / IAM Identity Center configuration.
-  // Accept either:
-  //   * a Cognito user pool: AWS_COGNITO_USER_POOL_ID + AWS_COGNITO_CLIENT_ID
-  //   * an IAM Identity Center / generic OIDC source: AWS_COGNITO_ISSUER + AWS_COGNITO_CLIENT_ID
-  awsCognito: (process.env.AWS_COGNITO_CLIENT_ID && (process.env.AWS_COGNITO_USER_POOL_ID || process.env.AWS_COGNITO_ISSUER)) ? {
-    region: process.env.AWS_COGNITO_REGION,
-    userPoolId: process.env.AWS_COGNITO_USER_POOL_ID,
-    clientId: process.env.AWS_COGNITO_CLIENT_ID,
-    issuer: process.env.AWS_COGNITO_ISSUER,
-    jwksUri: process.env.AWS_COGNITO_JWKS_URI,
-    tokenUse: (process.env.AWS_COGNITO_TOKEN_USE as 'id' | 'access' | undefined),
+  // AWS Cognito / IAM Identity Center configuration.  The
+  // EunoConfig schema's superRefine already enforced that
+  // AWS_COGNITO_CLIENT_ID + (AWS_COGNITO_USER_POOL_ID OR AWS_COGNITO_ISSUER)
+  // are present when IDENTITY_PROVIDER=aws-cognito, so this branch
+  // reaches the downstream factory only with a complete config.
+  awsCognito: (env.AWS_COGNITO_CLIENT_ID && (env.AWS_COGNITO_USER_POOL_ID || env.AWS_COGNITO_ISSUER)) ? {
+    region: env.AWS_COGNITO_REGION,
+    userPoolId: env.AWS_COGNITO_USER_POOL_ID,
+    clientId: env.AWS_COGNITO_CLIENT_ID,
+    issuer: env.AWS_COGNITO_ISSUER,
+    jwksUri: env.AWS_COGNITO_JWKS_URI,
+    tokenUse: env.AWS_COGNITO_TOKEN_USE,
   } : undefined,
-  // Google Cloud identity configuration
-  gcpIdentity: process.env.GCP_IDENTITY_AUDIENCE ? {
-    audience: process.env.GCP_IDENTITY_AUDIENCE,
-    issuer: process.env.GCP_IDENTITY_ISSUER,
-    jwksUri: process.env.GCP_IDENTITY_JWKS_URI,
-    projectId: process.env.GCP_IDENTITY_PROJECT_ID,
-    rolesClaim: process.env.GCP_IDENTITY_ROLES_CLAIM,
+  gcpIdentity: env.GCP_IDENTITY_AUDIENCE ? {
+    audience: env.GCP_IDENTITY_AUDIENCE,
+    issuer: env.GCP_IDENTITY_ISSUER,
+    jwksUri: env.GCP_IDENTITY_JWKS_URI,
+    projectId: env.GCP_IDENTITY_PROJECT_ID,
+    rolesClaim: env.GCP_IDENTITY_ROLES_CLAIM,
   } : undefined,
-  issuerDid: process.env.ISSUER_DID || 'did:web:example.com',
-  defaultTokenTTL: parseInt(process.env.DEFAULT_TOKEN_TTL || '900', 10),
-  enableDetailedLogging: process.env.ENABLE_DETAILED_LOGGING === 'true',
+  issuerDid: env.ISSUER_DID || 'did:web:example.com',
+  defaultTokenTTL: env.DEFAULT_TOKEN_TTL,
+  enableDetailedLogging: env.ENABLE_DETAILED_LOGGING,
 };
 
 // Create logger
@@ -206,7 +215,7 @@ async function initializeServices() {
     // `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md` for the recommended
     // production configuration.
     let rolePolicy: RoleCapabilityPolicy | undefined;
-    const policyFile = process.env.ROLE_POLICY_FILE;
+    const policyFile = env.ROLE_POLICY_FILE;
     if (policyFile && policyFile.trim().length > 0) {
       logger.info('Loading role → capability policy from file', { path: policyFile });
       rolePolicy = loadRoleCapabilityPolicyFromFile(policyFile);
@@ -225,7 +234,7 @@ async function initializeServices() {
       {
         // Strict mode: require an explicit user-consent record for every
         // issuance.  Recommended for multi-tenant production deployments.
-        requireConsent: process.env.REQUIRE_USER_CONSENT === 'true',
+        requireConsent: env.REQUIRE_USER_CONSENT,
         policy: rolePolicy,
         // Cloud storage / DB credential pipelines (sprint 3-4 gap items
         // #7 and #8). Both are disabled by default — `fromEnv` returns
@@ -273,8 +282,8 @@ const app = express();
 app.use(helmet());
 
 // CORS configuration with environment-based origins
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+const allowedOrigins = env.ALLOWED_ORIGINS && env.ALLOWED_ORIGINS.length > 0
+  ? env.ALLOWED_ORIGINS
   : config.environment === 'production'
   ? []  // No CORS in production unless explicitly configured
   : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'];

@@ -92,7 +92,7 @@ npm run test
 1. Copy the environment template:
    ```bash
    cd packages/capability-issuer
-   cp .env.template .env
+   cp .env.example .env
    ```
 
 2. Configure your Azure resources in `.env`:
@@ -110,7 +110,7 @@ npm run test
 1. Copy the environment template:
    ```bash
    cd packages/tool-gateway
-   cp .env.template .env
+   cp .env.example .env
    ```
 
 2. Set `ISSUER_PUBLIC_KEY_URL` to point to your Capability Issuer instance

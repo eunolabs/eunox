@@ -11,7 +11,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
