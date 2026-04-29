@@ -1,6 +1,6 @@
 # Euno - Capability-Native Agent Governance System
 
-A production-quality capability-based agent governance system with Azure integration, implementing Milestone 1 Sprints 1-3 of the execution plan.
+A production-quality capability-based agent governance system with Azure integration, implementing Milestone 1 Sprints 1-2, Milestone 2 Sprints 3-4, and Milestone 3 Sprints 5-6 of the execution plan.
 
 ## Overview
 
@@ -481,16 +481,29 @@ Required environment variables for production:
 - Configure appropriate logging destinations
 - Set secure `ISSUER_DID` (e.g., `did:web:your-domain.com`)
 
-## Future Enhancements (Sprint 4+)
+## Future Enhancements (Sprint 7+)
 
-- [ ] Full W3C Verifiable Credentials support
-- [ ] DID:ION integration for decentralized identifiers
-- [ ] Advanced constraints (rate limiting, data redaction)
-- [ ] Microsoft Sentinel integration
-- [ ] Cross-organization trust
-- [ ] File system enforcement with Azure SAS tokens
-- [ ] Database query enforcement with token-based auth
-- [ ] External HTTP request monitoring
+The Sprint 6 hand-off backlog lives in
+[`docs/NEXT_STEPS_BACKLOG.md`](docs/NEXT_STEPS_BACKLOG.md). Highlights:
+
+- [ ] Self-service web UI for capability requests and pilot dashboards (`web/`)
+- [ ] Dynamic policy engine (OPA / Cedar) plugged in via the existing condition registry
+- [ ] Productionize the AWS / GCP cross-cloud profile from the [Sprint 6 demo runbook](docs/CROSS_CLOUD_DEMO.md)
+- [ ] Multi-region active/active issuer
+- [ ] Federated trust to a partner organization (already designed in [`docs/cross-organizations.md`](docs/cross-organizations.md))
+- [ ] Continuous evidence-chain verification job
+- [ ] OpenTelemetry tracing across issuer → gateway → backend
+- [ ] Submit the capability JWT profile as an IETF Internet-Draft
+
+## Sprint Status
+
+| Sprint | Theme                                                    | Status | Reference                                                      |
+|--------|----------------------------------------------------------|--------|----------------------------------------------------------------|
+| 1-2    | Foundation, sandbox baseline, gateway enforcement, audit | ✅     | [`docs/SPRINT_1_2_SUMMARY.md`](docs/SPRINT_1_2_SUMMARY.md)     |
+| 3-4    | DID, delegation, renewal, distributed kill switch & revocation, framework adapters | ✅ | [`docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`](docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md) |
+| 5      | Production pilot launch (Bicep IaC, Sentinel, HA, hypercare) | ✅ | [`docs/SPRINT_5_PILOT_LAUNCH.md`](docs/SPRINT_5_PILOT_LAUNCH.md) |
+| 6      | Pilot stabilization & hand-off (tuned thresholds, ownership, manifest cookbook, cross-cloud demo runbook, next-steps backlog) | ✅ | [`docs/SPRINT_6_STABILIZATION_HANDOFF.md`](docs/SPRINT_6_STABILIZATION_HANDOFF.md) |
+| 7-8    | Self-service UI, dynamic policy engine, federation depth, standards contributions | 🔄 (planning) | [`docs/NEXT_STEPS_BACKLOG.md`](docs/NEXT_STEPS_BACKLOG.md) |
 
 ## Sprint 3 Implementation Status
 
@@ -686,7 +699,9 @@ Before deploying Euno to production, ensure all items below are completed:
 
 ## Contributing
 
-This project follows the Azure-Integrated Hybrid Execution Plan for Capability-Native Agent Governance. See `execution-plan.md` for the full roadmap.
+This project follows the Azure-Integrated Hybrid Execution Plan for Capability-Native Agent Governance. See `docs/execution-plan.md` for the full roadmap and the per-sprint summaries under `docs/SPRINT_*.md` for what landed in each sprint.
+
+Code ownership and review responsibilities are formalized in [`CODEOWNERS`](CODEOWNERS) (Sprint 6 hand-off). On-call rotation and the bug-fix / tuning playbook live in [`docs/SPRINT_6_STABILIZATION_HANDOFF.md`](docs/SPRINT_6_STABILIZATION_HANDOFF.md).
 
 ## License
 

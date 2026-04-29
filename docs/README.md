@@ -68,6 +68,10 @@ Detailed design for specific subsystems.
 | [`SPRINT_1_2_SUMMARY.md`](./SPRINT_1_2_SUMMARY.md) | What landed in Sprints 1 & 2 (foundation, hardening). | ✅ |
 | [`SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`](./SPRINT_3_4_IMPLEMENTATION_SUMMARY.md) | What landed in Sprints 3 & 4 (delegation, renewal, sandbox hardening, kill switch, revocation, operational docs). Includes a status-reconciliation table at the top showing every "partial" item that has since shipped. | ✅ |
 | [`SPRINT_5_PILOT_LAUNCH.md`](./SPRINT_5_PILOT_LAUNCH.md) | Operational readiness for production pilot (Bicep IaC, Sentinel rules, HA/HPA, Go/No-Go checklist, hypercare plan). | ✅ |
+| [`SPRINT_6_STABILIZATION_HANDOFF.md`](./SPRINT_6_STABILIZATION_HANDOFF.md) | Pilot stabilization & hand-off: hypercare exit gate, bug-fix/tuning playbook, finalized Sentinel thresholds, ownership/on-call, final-pilot-report template. | ✅ |
+| [`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md) | Sprint 6 cookbook: required structure, four golden manifest patterns, wildcard rules, conditions, TTL guidance, anti-patterns, CLI tooling. | ✅ |
+| [`CROSS_CLOUD_DEMO.md`](./CROSS_CLOUD_DEMO.md) | Sprint 6 cross-cloud demonstration runbook (AWS / GCP) using `infra/terraform/aws` and `infra/terraform/gcp`; proves Milestone 3 cross-cloud exit criterion. | ✅ |
+| [`NEXT_STEPS_BACKLOG.md`](./NEXT_STEPS_BACKLOG.md) | Sprint 6 hand-off backlog for Sprints 7+ (self-service UI, dynamic policy engine, federation depth, standards contributions). | ✅ |
 
 ## 5. Operations and deployment
 
