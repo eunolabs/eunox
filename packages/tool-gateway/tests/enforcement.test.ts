@@ -935,4 +935,117 @@ describe('EnforcementEngine', () => {
       expect(result.reason).toMatch(/futureCondition/);
     });
   });
+
+  // F-5 (I-16): the bootstrap wires a decision recorder that feeds the
+  // Prometheus `euno_gateway_decisions_total` counter. These tests pin the
+  // recorder contract — invoked exactly once per call with the right label,
+  // including for thrown CapabilityErrors, and recorder exceptions must not
+  // destabilise validateAction.
+  describe('decision recorder (F-5)', () => {
+    let recorderEngine: EnforcementEngine;
+    let recorded: Array<'allow' | 'deny'>;
+
+    beforeEach(() => {
+      recorderEngine = new EnforcementEngine({ verifier, logger });
+      recorded = [];
+      recorderEngine.setDecisionRecorder((decision) => {
+        recorded.push(decision);
+      });
+    });
+
+    it('invokes the recorder with "allow" for a permitted action', async () => {
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+
+      await recorderEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+
+      expect(recorded).toEqual(['allow']);
+    });
+
+    it('invokes the recorder with "deny" when the action is not permitted', async () => {
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+
+      await recorderEngine.validateAction({
+        token,
+        action: 'write',
+        resource: 'api://service/endpoint',
+      });
+
+      expect(recorded).toEqual(['deny']);
+    });
+
+    it('records "deny" when validateAction throws (e.g. invalid audience)', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { aud: 'wrong-audience' },
+      );
+
+      await expect(
+        recorderEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        }),
+      ).rejects.toThrow();
+
+      expect(recorded).toEqual(['deny']);
+    });
+
+    it('does not destabilise validateAction when the recorder throws', async () => {
+      const noisyEngine = new EnforcementEngine({ verifier, logger });
+      noisyEngine.setDecisionRecorder(() => {
+        throw new Error('metrics sink exploded');
+      });
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+
+      const result = await noisyEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+
+    it('detaches the recorder when set to undefined', async () => {
+      recorderEngine.setDecisionRecorder(undefined);
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+
+      await recorderEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+
+      expect(recorded).toEqual([]);
+    });
+
+    it('invokes the recorder exactly once per call (including on throw)', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { aud: 'wrong-audience' },
+      );
+
+      await expect(
+        recorderEngine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        }),
+      ).rejects.toThrow();
+
+      expect(recorded).toHaveLength(1);
+    });
+  });
 });

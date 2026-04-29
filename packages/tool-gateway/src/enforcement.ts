@@ -82,6 +82,15 @@ export class EnforcementEngine {
   private signedDecisions: Set<'allow' | 'deny'>;
   private argumentSchemaRequired: boolean;
   private callCounterStore?: CallCounterStore;
+  /**
+   * Optional sink invoked once per `validateAction` call with the final
+   * decision (`allow` | `deny`). Wired by `bootstrap.ts` to a Prometheus
+   * counter so operators can chart deny-rate without scraping logs
+   * (F-5, addresses I-16). Failures throwing out of validateAction —
+   * e.g. token-format errors that map to 401 — count as `deny` because
+   * from the caller's perspective the action did not go through.
+   */
+  private decisionRecorder?: (decision: 'allow' | 'deny') => void;
 
   constructor(options: EnforcementEngineOptions) {
     this.verifier = options.verifier;
@@ -114,9 +123,39 @@ export class EnforcementEngine {
   }
 
   /**
+   * Register a sink that observes every `allow` / `deny` decision made
+   * by this engine. Used by `bootstrap.ts` to feed the Prometheus
+   * `euno_gateway_decisions_total` counter (F-5, addresses I-16).
+   * Replaces any previously-registered recorder; pass `undefined` to
+   * detach.
+   */
+  setDecisionRecorder(recorder: ((decision: 'allow' | 'deny') => void) | undefined): void {
+    this.decisionRecorder = recorder;
+  }
+
+  /**
    * Validate an action request
    */
   async validateAction(request: ValidateActionRequest): Promise<ValidateActionResponse> {
+    // Default to `deny` so any control path that fails to assign — including
+    // a future edit that adds a new branch — records as a denial. From the
+    // operator's perspective, anything that isn't an explicit allow is a
+    // denied action, so this is also the correct fail-safe value.
+    let outcome: 'allow' | 'deny' = 'deny';
+    try {
+      const result = await this.validateActionInner(request);
+      outcome = result.allowed ? 'allow' : 'deny';
+      return result;
+    } finally {
+      try {
+        this.decisionRecorder?.(outcome);
+      } catch {
+        // Metric sinks must never destabilise the request path.
+      }
+    }
+  }
+
+  private async validateActionInner(request: ValidateActionRequest): Promise<ValidateActionResponse> {
     try {
       // Step 1: Verify the token signature and decode
       this.logger.debug('Verifying capability token');

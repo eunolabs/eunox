@@ -19,7 +19,12 @@ import express, {
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { CapabilityError, tracingMiddleware } from '@euno/common';
+import {
+  CapabilityError,
+  createHttpMetricsMiddleware,
+  createMetricsHandler,
+  tracingMiddleware,
+} from '@euno/common';
 
 import { createAdminRouter } from './admin-api';
 import { createHealthRouter } from './routes/health';
@@ -44,6 +49,7 @@ export function createApp(deps: GatewayDependencies): Express {
     allowedOrigins,
     rateLimitWindowMs,
     rateLimitMax,
+    metricsRegistry,
   } = deps;
   const isReady = deps.isReady ?? (() => true);
 
@@ -64,6 +70,16 @@ export function createApp(deps: GatewayDependencies): Express {
       credentials: true,
     }),
   );
+
+  // F-5 (I-16): record HTTP duration + count for every non-/metrics request.
+  // Mounted before the rate limiter so 429s are still observed in the
+  // latency histogram (operators want to see throttled traffic too).
+  app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
+
+  // Prometheus scrape endpoint. Plain GET handler so it bypasses the JSON
+  // body parser and the rate limiter — Prometheus servers scrape on a tight
+  // schedule and must not be throttled.
+  app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
 
   // Rate limiting
   const limiter = rateLimit({

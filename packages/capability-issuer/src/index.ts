@@ -24,6 +24,10 @@ import {
   SUPPORTED_SCHEMA_VERSIONS,
   SIGNING_ALGORITHMS,
   loadConfigOrExit,
+  createMetricsRegistry,
+  createHttpMetricsMiddleware,
+  createMetricsHandler,
+  Counter,
   tracingMiddleware,
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
@@ -300,6 +304,27 @@ app.use(cors({
   credentials: true,
 }));
 
+// F-5 (I-16): Prometheus / OpenMetrics surface. Build a per-process registry
+// tagged with the service name and a counter for issuance outcomes so
+// operators can chart issuance volume / failure rate from `/metrics`
+// instead of grepping logs. The HTTP middleware records latency + count
+// for every non-/metrics request.
+const metricsRegistry = createMetricsRegistry({ serviceName: 'capability-issuer' });
+const issuanceCounter = new Counter({
+  name: 'euno_issuer_issuance_total',
+  help: 'Capability issuance attempts at the issuer, labelled by operation (issue|attenuate|renew) and outcome (success|error).',
+  labelNames: ['operation', 'outcome'],
+  registers: [metricsRegistry],
+});
+// Pre-initialise series so `rate()` queries succeed before first traffic.
+for (const operation of ['issue', 'attenuate', 'renew'] as const) {
+  for (const outcome of ['success', 'error'] as const) {
+    issuanceCounter.inc({ operation, outcome }, 0);
+  }
+}
+app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
+app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
+
 // Rate limiting - protect against brute force attacks
 const rateLimitWindowRaw = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '', 10);
 const rateLimitMaxRaw = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '', 10);
@@ -391,6 +416,8 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     // Issue the capability
     const response = await getIssuerService().issueCapability(issueRequest);
 
+    issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
+
     // R-3: stamp the documented `euno.*` attributes on the request
     // span so the trace carries the same identifiers as the audit log.
     setActiveSpanEunoAttributes({
@@ -401,6 +428,7 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
 
     res.json(response);
   } catch (error) {
+    issuanceCounter.inc({ operation: 'issue', outcome: 'error' });
     next(error);
   }
 });
@@ -460,6 +488,8 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
       ttl
     );
 
+    issuanceCounter.inc({ operation: 'attenuate', outcome: 'success' });
+
     // R-3: stamp `euno.*` attributes on the request span.
     setActiveSpanEunoAttributes({
       [EUNO_ATTR.JTI]: response.tokenId,
@@ -468,6 +498,7 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
 
     res.json(response);
   } catch (error) {
+    issuanceCounter.inc({ operation: 'attenuate', outcome: 'error' });
     next(error);
   }
 });
@@ -516,6 +547,8 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
       renewTtl
     );
 
+    issuanceCounter.inc({ operation: 'renew', outcome: 'success' });
+
     // R-3: stamp `euno.*` attributes on the request span.
     setActiveSpanEunoAttributes({
       [EUNO_ATTR.JTI]: response.tokenId,
@@ -524,6 +557,7 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
 
     res.json(response);
   } catch (error) {
+    issuanceCounter.inc({ operation: 'renew', outcome: 'error' });
     next(error);
   }
 });

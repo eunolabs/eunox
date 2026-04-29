@@ -16,6 +16,8 @@ import {
   DefaultKillSwitchManager,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   ServiceConfig,
+  createMetricsRegistry,
+  Counter,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -46,6 +48,11 @@ async function buildDeps(opts?: {
     policyVersion: '1.0.0',
   };
 
+  const metricsRegistry = createMetricsRegistry({
+    serviceName: 'tool-gateway-test',
+    collectDefaults: false,
+  });
+
   const deps: GatewayDependencies = {
     config,
     logger,
@@ -56,6 +63,13 @@ async function buildDeps(opts?: {
     allowedOrigins: [],
     rateLimitWindowMs: 60_000,
     rateLimitMax: 10_000,
+    metricsRegistry,
+    decisionsCounter: new Counter({
+      name: 'euno_gateway_decisions_total',
+      help: 'test decisions counter',
+      labelNames: ['decision'],
+      registers: [metricsRegistry],
+    }),
     isReady: opts?.isReady ?? (() => true),
   };
 
@@ -304,6 +318,51 @@ describe('createApp(deps) — R-2 in-process factory', () => {
       expect(res.body.error).toBeDefined();
       expect(res.body.error.code).toBeDefined();
       expect(res.body.error.message).toBeDefined();
+    });
+  });
+
+  describe('/metrics (F-5, addresses I-16)', () => {
+    it('exposes Prometheus metrics with the correct content-type', async () => {
+      const { deps } = await buildDeps();
+      const app = createApp(deps);
+
+      const res = await request(app).get('/metrics');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/text\/plain/);
+      // Standard HTTP middleware series should be registered, even with zero
+      // observed traffic (HELP/TYPE lines emitted by prom-client).
+      expect(res.text).toContain('euno_http_request_duration_seconds');
+      expect(res.text).toContain('euno_http_requests_total');
+    });
+
+    it('records a sample after handling a request', async () => {
+      const { deps } = await buildDeps();
+      const app = createApp(deps);
+
+      await request(app).get('/health');
+      const res = await request(app).get('/metrics');
+
+      expect(res.status).toBe(200);
+      // The /health request should have produced at least one observation
+      // labelled with status_code="200".
+      expect(res.text).toMatch(
+        /euno_http_requests_total\{[^}]*status_code="200"[^}]*\}\s+\d+/,
+      );
+    });
+
+    it('does not record observations for the /metrics endpoint itself', async () => {
+      const { deps } = await buildDeps();
+      const app = createApp(deps);
+
+      await request(app).get('/metrics');
+      await request(app).get('/metrics');
+      const res = await request(app).get('/metrics');
+
+      // No counter sample with route="/metrics" should appear.
+      expect(res.text).not.toMatch(
+        /euno_http_requests_total\{[^}]*route="\/metrics"/,
+      );
     });
   });
 });

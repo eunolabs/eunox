@@ -21,6 +21,10 @@ import {
   loadConfigOrExit,
   loadConfig,
   GatewayConfig,
+  createMetricsRegistry,
+  Counter,
+  Gauge,
+  Registry,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { JwksClient } from './jwks-client';
@@ -55,6 +59,19 @@ export interface GatewayDependencies {
   rateLimitWindowMs: number;
   /** Rate-limit max requests per window. */
   rateLimitMax: number;
+  /**
+   * Prometheus registry exposed on `/metrics` (F-5, addresses I-16).
+   * The factory installs an HTTP latency / count middleware that writes
+   * to this registry, and bootstrap pre-registers gateway-specific
+   * series (revocation-list size, decision counter).
+   */
+  metricsRegistry: Registry;
+  /**
+   * Counter incremented by the enforcement engine on every authorization
+   * decision, labelled `decision="allow"|"deny"`. Surfaced by F-5 so
+   * operators can chart a deny-rate without scraping logs.
+   */
+  decisionsCounter: Counter<string>;
   /**
    * Returns true once `initializeServices()` has completed successfully.
    * Drives `/health/ready`. Defaults to always-true when omitted.
@@ -292,6 +309,44 @@ export async function initializeServices(
   const rateLimitWindowMs = validated.RATE_LIMIT_WINDOW_MS;
   const rateLimitMax = validated.RATE_LIMIT_MAX_REQUESTS;
 
+  // F-5 (I-16): Prometheus surface. Build a per-process registry tagged with
+  // the service name and pre-register gateway-specific series:
+  //   - `euno_gateway_revocation_list_size` is collected on each scrape from
+  //     the active revocation store (when the implementation exposes a
+  //     `size()` accessor — currently the in-memory store; Redis-backed
+  //     deployments can add their own collector later without changing the
+  //     metric name). Operators use this to detect runaway revocation-list
+  //     growth that signals abuse or a stuck pruner.
+  //   - `euno_gateway_decisions_total{decision}` is incremented by the
+  //     EnforcementEngine on every allow / deny so a deny-rate panel does
+  //     not have to parse logs.
+  const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
+  new Gauge({
+    name: 'euno_gateway_revocation_list_size',
+    help: 'Number of revocation entries currently tracked by the in-process revocation store. ' +
+      'May include expired entries that have not yet been pruned (the in-memory store ' +
+      'prunes lazily on lookup/insert). Always 0 when a non-introspectable backend ' +
+      '(e.g. Redis) is in use.',
+    registers: [metricsRegistry],
+    collect() {
+      const store = revocationStore as { size?: () => number } | undefined;
+      this.set(typeof store?.size === 'function' ? store.size() : 0);
+    },
+  });
+  const decisionsCounter = new Counter({
+    name: 'euno_gateway_decisions_total',
+    help: 'Authorization decisions made by the gateway, labelled allow|deny.',
+    labelNames: ['decision'],
+    registers: [metricsRegistry],
+  });
+  // Pre-initialise the time-series so `rate()` queries succeed before the
+  // first request flows through the gateway.
+  decisionsCounter.inc({ decision: 'allow' }, 0);
+  decisionsCounter.inc({ decision: 'deny' }, 0);
+  enforcementEngine.setDecisionRecorder((decision) => {
+    decisionsCounter.inc({ decision });
+  });
+
   const deps: GatewayDependencies = {
     config,
     logger,
@@ -306,6 +361,8 @@ export async function initializeServices(
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
     rateLimitWindowMs,
     rateLimitMax,
+    metricsRegistry,
+    decisionsCounter,
     isReady: () => ready,
   };
 
