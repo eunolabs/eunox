@@ -139,7 +139,7 @@ flowchart TB
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
 | `packages/common`                    | shared       | Types (`CapabilityTokenPayload`, `CapabilityCondition` discriminated union), `ConditionRegistry`, `KillSwitchManager` (in-mem + Redis), `EvidenceSigner`, `CallCounterStore`, role mapping, validators |
-| `packages/capability-issuer`         | ~1.6k (service) | HTTP service: `/api/v1/issue`, `/attenuate`, `/renew`, `/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services |
+| `packages/capability-issuer`         | ~1.6k (service) | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services |
 | `packages/tool-gateway`              | ~0.7k (service) | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store |
 | `packages/agent-runtime`             | small        | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway |
 | `packages/framework-adapters`        | small        | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape |
@@ -319,7 +319,7 @@ flowchart TB
     B1["Agent: tool call<br/>(framework adapter)"]
     B2["Runtime → Gateway: HTTPS<br/>Authorization: Bearer + body + X-Target-Host"]
     B3["Gateway: parse + canonicalise resource"]
-    B4["Verifier: JWS verify<br/>(local SPKI or partner DID JWKS)"]
+    B4["Verifier: JWS verify<br/>(local SPKI or partner DID document key)"]
     B5["Verifier: schemaVersion ∈ supported?"]
     B6["Verifier: revocationStore.has(jti)?"]
     B7["Engine: KillSwitch.check(global, agent, session)"]
@@ -512,10 +512,10 @@ sequenceDiagram
 
     Admin->>Adm: POST /admin/kill-switch/agent/{id}/kill (X-Admin-API-Key)
     Adm->>KS: killAgent(id)
-    KS->>Rev: (no-op for kill; rev for /revoke/jti)
-    Note over KS: writes Redis key, fires pub/sub
-    KS-->>GW1: subscriber update
-    KS-->>GW2: subscriber update
+    KS->>KS: write-through to shared Redis (agent-id added to set)
+    Note over KS,GW2: Other replicas pick up the change on the next<br/>periodic refresh tick (default 5 s, configurable via<br/>KILL_SWITCH_REFRESH_INTERVAL_MS)
+    KS-->>GW1: local cache updated (originating replica, immediate)
+    KS-->>GW2: cache updated on next refresh tick
     Agent->>GW1: tool call (any token for that agent)
     GW1->>KS: check(agentId)
     KS-->>GW1: KILLED
@@ -523,9 +523,13 @@ sequenceDiagram
 ```
 
 Targeted token revocation (`POST /admin/revoke/{jti}`) follows the
-same shape but writes to `RevocationStore`; the verifier checks `jti`
-on every request, so propagation is bounded by the Redis pub/sub
-latency (single-digit ms in practice).
+same shape but writes to `RevocationStore`; the revocation is
+immediate in the shared Redis store and is enforced on the next
+request, when the verifier checks `jti` during token verification.
+Kill-switch propagation across replicas is a separate concern,
+bounded by the kill-switch refresh interval (default 5 s,
+`KILL_SWITCH_REFRESH_INTERVAL_MS`); the originating replica observes
+the change immediately via write-through.
 
 ### 6.6 Posture inventory emission
 
@@ -541,10 +545,13 @@ sequenceDiagram
     Post->>SIEM: write (HTTP / log transport)
 ```
 
-The issuer treats the emitter as `PostureEmitterLike` (structural
-interface) so the `capability-issuer` package has no hard dependency
-on `posture-emitter` at compile time — see `issuer-service.ts` ll.
-41–52.
+The issuer service treats the emitter as `PostureEmitterLike`
+(structural interface), so `issuer-service.ts` is interface-based and
+can be wired with any compatible emitter implementation — see
+`issuer-service.ts` ll. 41–52. (The service entry point
+`capability-issuer/src/index.ts` does import the concrete
+`@euno/posture-emitter` to wire the default; the structural-interface
+boundary is at the service class, not the package.)
 
 ---
 
@@ -602,7 +609,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Crypto signing      | `signer.ts` adapter; `azure-signer.ts`, `aws-kms-signer.ts`, etc. | KMS never sees the message body — digest only                    |
 | Audit               | `evidence.ts` + `createAuditLogger` + `EvidenceSigner`        | Fail-closed: cannot enable crypto-audit without a signer             |
 | Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry **not yet wired** (see `IMPROVEMENTS_AND_REFACTORING.md` § R-3) |
-| Rate limiting       | `express-rate-limit` per-IP at issuer (60/min) and gateway (1000/min) | No per-user / per-token limit yet                          |
+| Rate limiting       | `express-rate-limit` per-IP at issuer and gateway             | Limits are env-configurable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`; defaults are issuer `100/min` and gateway `1000/min`. No per-user / per-token limit yet |
 | Schema evolution    | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`| Fail-closed on unknown versions                                      |
 | Configuration       | `dotenv` + per-service `.env.example`                         | Adapter selection by env var (`SIGNING_PROVIDER`, `IDENTITY_PROVIDER`) |
 | Tests               | Per-package `tests/` + `packages/integration-tests`           | ≈0.7 test:src LOC ratio                                              |
