@@ -447,3 +447,202 @@ export function createSoftwareEvidenceSignerFromEnv(
     algorithm: env.EVIDENCE_SIGNING_ALGORITHM,
   });
 }
+
+/**
+ * Configuration for {@link createSoftwareEvidenceVerifier}.
+ *
+ * A verifier holds only the public key so it can be deployed to a
+ * verification job (for example, the F-9 continuous evidence-chain
+ * verification cron) without granting that job the ability to mint new
+ * signatures. Exactly one of `publicKeyPem` / `publicKeyPath` must be
+ * supplied.
+ */
+export interface SoftwareEvidenceVerifierConfig {
+  publicKeyPem?: string;
+  publicKeyPath?: string;
+  /**
+   * Logical key identifier the verifier will accept. When supplied, the
+   * verifier rejects records whose `keyId` does not match — this lets a
+   * scheduled job pin verification to a specific signing key and detect
+   * unexpected key rotations as failures rather than silently accepting
+   * them. When omitted, the verifier accepts any `keyId` that the bound
+   * public key successfully verifies.
+   */
+  keyId?: string;
+  /**
+   * JWS-style algorithm name. Defaults to `RS256`. Must be one of
+   * `RS256`, `PS256`, `ES256`, `EdDSA` — matching {@link createSoftwareEvidenceSigner}.
+   */
+  algorithm?: string;
+}
+
+/**
+ * Build an {@link AuditEvidenceSigner} that can ONLY verify, never sign.
+ *
+ * This is the primitive used by the F-9 continuous evidence-chain
+ * verification job: the job holds only the public key, walks a batch of
+ * `SignedAuditEvidence` records emitted by issuer/gateway, and calls
+ * `verifyEvidence` on each one. Calling `signEvidence` on the returned
+ * instance throws — preventing a misconfigured verification host from
+ * accidentally minting new evidence.
+ */
+export function createSoftwareEvidenceVerifier(
+  config: SoftwareEvidenceVerifierConfig,
+): AuditEvidenceSigner {
+  const rawAlgorithm = config.algorithm ?? 'RS256';
+  const algorithmUpper = rawAlgorithm.toUpperCase();
+  const CANONICAL_ALGORITHMS: Record<string, string> = {
+    RS256: 'RS256',
+    PS256: 'PS256',
+    ES256: 'ES256',
+    EDDSA: 'EdDSA',
+  };
+  const canonicalAlgorithm = CANONICAL_ALGORITHMS[algorithmUpper];
+  if (!canonicalAlgorithm || !SUPPORTED_ALGORITHMS.has(algorithmUpper)) {
+    throw new Error(
+      `createSoftwareEvidenceVerifier: unsupported algorithm '${rawAlgorithm}'. ` +
+        'Supported: RS256, PS256, ES256, EdDSA.',
+    );
+  }
+
+  if (config.publicKeyPem !== undefined && config.publicKeyPath !== undefined) {
+    throw new Error(
+      'createSoftwareEvidenceVerifier: publicKeyPem and publicKeyPath are mutually exclusive — supply exactly one',
+    );
+  }
+  const publicPem = config.publicKeyPem
+    ?? (config.publicKeyPath ? require('fs').readFileSync(config.publicKeyPath, 'utf8') : undefined);
+  if (!publicPem || publicPem.trim().length === 0) {
+    throw new Error(
+      'createSoftwareEvidenceVerifier: publicKeyPem or publicKeyPath must be supplied with PEM-encoded key material',
+    );
+  }
+
+  let publicKey: crypto.KeyObject;
+  try {
+    publicKey = crypto.createPublicKey(publicPem);
+  } catch (err) {
+    throw new Error(
+      'createSoftwareEvidenceVerifier: failed to parse public key PEM: ' +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+
+  const isEdDsa = algorithmUpper === 'EDDSA';
+  const isPss = algorithmUpper === 'PS256';
+  const isEcdsa = algorithmUpper === 'ES256';
+  const isRsa = algorithmUpper === 'RS256' || isPss;
+
+  const keyType = publicKey.asymmetricKeyType;
+  if (isRsa && keyType !== 'rsa') {
+    throw new Error(
+      `createSoftwareEvidenceVerifier: algorithm '${canonicalAlgorithm}' requires an RSA public key, got '${keyType}'`,
+    );
+  }
+  if (isEcdsa && keyType !== 'ec') {
+    throw new Error(
+      `createSoftwareEvidenceVerifier: algorithm '${canonicalAlgorithm}' requires an EC public key, got '${keyType}'`,
+    );
+  }
+  if (isEdDsa && keyType !== 'ed25519' && keyType !== 'ed448') {
+    throw new Error(
+      `createSoftwareEvidenceVerifier: algorithm 'EdDSA' requires an Ed25519/Ed448 public key, got '${keyType}'`,
+    );
+  }
+
+  const expectedKeyId = config.keyId;
+
+  const cryptoSigner: CryptoSigner = {
+    async signDigest(): Promise<Buffer> {
+      throw new Error(
+        'createSoftwareEvidenceVerifier: this signer is verify-only and cannot mint signatures. ' +
+          'Use createSoftwareEvidenceSigner for signing.',
+      );
+    },
+    async verifyDigest(digest: Buffer, signature: Buffer, keyId: string, alg: string): Promise<boolean> {
+      // Reject algorithm mismatches: a record signed under one algorithm
+      // must not be verifiable under another, even with the same key.
+      if (alg.toUpperCase() !== algorithmUpper) {
+        return false;
+      }
+      // When the verifier was pinned to a specific keyId, a record
+      // claiming a different keyId is a signal of unexpected rotation
+      // (or tampering) and must fail closed rather than falling through
+      // to the cryptographic check.
+      if (expectedKeyId !== undefined && keyId !== expectedKeyId) {
+        return false;
+      }
+      if (isEdDsa) {
+        return crypto.verify(null, digest, publicKey, signature);
+      }
+      const verifyOptions: crypto.VerifyKeyObjectInput = { key: publicKey };
+      if (isPss) {
+        verifyOptions.padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+        verifyOptions.saltLength = crypto.constants.RSA_PSS_SALTLEN_DIGEST;
+      }
+      if (isEcdsa) {
+        (verifyOptions as crypto.VerifyKeyObjectInput & { dsaEncoding?: 'ieee-p1363' | 'der' }).dsaEncoding = 'ieee-p1363';
+      }
+      return crypto.verify(null, digest, verifyOptions, signature);
+    },
+    async getKeyId(): Promise<string> {
+      // The verifier never signs, but `getKeyId` is part of the contract.
+      // Return the pinned keyId when configured, else a sentinel that
+      // makes accidental signing attempts identifiable in logs.
+      return expectedKeyId ?? 'verify-only';
+    },
+    getAlgorithm(): string {
+      return canonicalAlgorithm;
+    },
+  };
+
+  return new AuditEvidenceSigner(cryptoSigner);
+}
+
+/**
+ * Build a software evidence verifier from environment variables. Returns
+ * `undefined` when no relevant env vars are present so callers can decide
+ * whether to fail fast or continue.
+ *
+ * Recognised variables (in priority order — first match wins, later
+ * vars are ignored entirely so adding a `VERIFY` var to a host that
+ * already exports `SIGNING` fallbacks is always safe):
+ *   1. `EVIDENCE_VERIFY_PUBLIC_KEY_PEM`  — inline PEM string for the
+ *      verification job. Preferred when the job runs in an environment
+ *      where the signing key MUST NOT be present.
+ *   2. `EVIDENCE_VERIFY_PUBLIC_KEY_FILE` — path to a PEM file on disk.
+ *   3. `EVIDENCE_SIGNING_PUBLIC_KEY_PEM` — fallback for hosts that already
+ *      configure the signing-side public key.
+ *   4. `EVIDENCE_SIGNING_PUBLIC_KEY_FILE` — same, file form.
+ *
+ * `EVIDENCE_VERIFY_ALGORITHM` (or `EVIDENCE_SIGNING_ALGORITHM`) defaults to `RS256`.
+ * `EVIDENCE_VERIFY_KEY_ID` (or `EVIDENCE_SIGNING_KEY_ID`), when set, pins
+ * verification to that key id.
+ */
+export function createSoftwareEvidenceVerifierFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): AuditEvidenceSigner | undefined {
+  // Strict precedence: pick exactly one of (PEM, PATH) so mixing
+  // VERIFY-* with SIGNING-* fallbacks during a migration cannot trip
+  // the mutually-exclusive guard in createSoftwareEvidenceVerifier.
+  let publicKeyPem: string | undefined;
+  let publicKeyPath: string | undefined;
+  if (env.EVIDENCE_VERIFY_PUBLIC_KEY_PEM) {
+    publicKeyPem = env.EVIDENCE_VERIFY_PUBLIC_KEY_PEM;
+  } else if (env.EVIDENCE_VERIFY_PUBLIC_KEY_FILE) {
+    publicKeyPath = env.EVIDENCE_VERIFY_PUBLIC_KEY_FILE;
+  } else if (env.EVIDENCE_SIGNING_PUBLIC_KEY_PEM) {
+    publicKeyPem = env.EVIDENCE_SIGNING_PUBLIC_KEY_PEM;
+  } else if (env.EVIDENCE_SIGNING_PUBLIC_KEY_FILE) {
+    publicKeyPath = env.EVIDENCE_SIGNING_PUBLIC_KEY_FILE;
+  }
+  if (!publicKeyPem && !publicKeyPath) {
+    return undefined;
+  }
+  return createSoftwareEvidenceVerifier({
+    publicKeyPem,
+    publicKeyPath,
+    keyId: env.EVIDENCE_VERIFY_KEY_ID ?? env.EVIDENCE_SIGNING_KEY_ID,
+    algorithm: env.EVIDENCE_VERIFY_ALGORITHM ?? env.EVIDENCE_SIGNING_ALGORITHM,
+  });
+}

@@ -21,6 +21,10 @@
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
     },
+    "./verify-evidence-job": {
+      "types": "./dist/verify-evidence-job.d.ts",
+      "default": "./dist/verify-evidence-job.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -33,6 +37,9 @@
       ],
       "types": [
         "dist/types.d.ts"
+      ],
+      "verify-evidence-job": [
+        "dist/verify-evidence-job.d.ts"
       ]
     }
   },

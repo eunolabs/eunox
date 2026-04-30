@@ -314,7 +314,7 @@ above. They overlap with `NEXT_STEPS_BACKLOG.md` where flagged.
 | F-6   | OCSF-formatted audit transport (I-17)                              | Already foreshadowed in `NEXT_STEPS_BACKLOG.md` § 4.                                        |
 | F-7   | Multi-region active/active issuer (backlog § 3)                    | Requires F-1 to be tenant-aware to avoid cross-region double-spend on issuance limits.       |
 | F-8   | Self-service manifest UI (backlog § 1)                             | Replaces `web/index.html`; pre-requisite is an issuer admin API for manifest CRUD.          |
-| F-9   | Continuous evidence-chain verification job (backlog § 4)           | Wraps `AuditEvidenceSigner.verifyEvidence`.                                                 |
+| F-9   | Continuous evidence-chain verification job (backlog § 4) — **IMPLEMENTED** (`scripts/verify-evidence.js` + verify-only software signer factory) | Wraps `AuditEvidenceSigner.verifyEvidence`.                                                 |
 | F-10  | OPA / Cedar policy backend (backlog § 2, R-4 step 2) — **IMPLEMENTED** (OPA HTTP backend; Cedar follow-up) | `'policy'` condition type with handler.                                                     |
 
 ---

@@ -16,3 +16,4 @@ export * from './config';
 export * from './jwks';
 export * from './metrics';
 export * from './tracing';
+export * from './verify-evidence-job';
