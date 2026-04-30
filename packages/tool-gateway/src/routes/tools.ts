@@ -141,14 +141,25 @@ export function createToolsRouter(opts: ToolsRouterOptions): Router {
           agentId: req.headers['x-agent-id'],
         });
 
-        res.json({
+        const responseBody: unknown = {
           success: true,
           tool,
           result: {
             message: 'Tool executed successfully (mock implementation)',
             data: args,
           },
-        });
+        };
+
+        // R-4 step 1: apply the matched capability's response-time
+        // obligations (e.g. `redactFields`) before sending. The
+        // enforcement engine builds this lobe only when the matched
+        // capability declared at least one redact-capable condition,
+        // so the cost is paid only by capabilities that asked for it.
+        const redacted = result.applyResponseRedactions
+          ? result.applyResponseRedactions(responseBody)
+          : responseBody;
+
+        res.json(redacted);
       } catch (error) {
         next(error);
       }

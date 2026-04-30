@@ -98,6 +98,7 @@ export type CapabilityCondition =
   | MaxCallsCondition
   | RecipientDomainCondition
   | RedactFieldsCondition
+  | PolicyCondition
   | CustomCondition;
 
 /**
@@ -193,6 +194,35 @@ export interface RedactFieldsCondition {
   type: 'redactFields';
   /** Non-empty list of dotted field paths to redact. */
   fields: string[];
+}
+
+/**
+ * Delegate the authorization decision to a pluggable policy backend
+ * (R-4 step 2 / F-10). The `backend` discriminator selects a backend
+ * registered via {@link registerPolicyBackend}; backends receive
+ * `config` (a backend-specific configuration object, validated at mint
+ * time) and `input` (a payload merged with the per-request
+ * {@link ConditionContext} at enforcement time). Unknown backend names
+ * are rejected at both issuance and enforcement (deny-by-default).
+ *
+ * The discriminator stays on `type` — the existing discriminated union
+ * is the load-bearing contract; adding a separate `kind:` field would
+ * be redundant and would silently break readers that already key off
+ * `type`.
+ */
+export interface PolicyCondition {
+  type: 'policy';
+  /** Name of the registered policy backend (e.g. `'opa-http'`). */
+  backend: string;
+  /** Backend-specific configuration validated at mint time. */
+  config?: unknown;
+  /**
+   * Backend-specific input payload merged into whatever per-request
+   * input the backend builds from the {@link ConditionContext}. Useful
+   * for static facts the issuer wants the policy to see (e.g. tenant
+   * id, classification level).
+   */
+  input?: unknown;
 }
 
 /**

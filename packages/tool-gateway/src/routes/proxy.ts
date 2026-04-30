@@ -11,7 +11,7 @@
  */
 
 import { Request, Response, NextFunction, Router } from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import {
   ValidateActionRequest,
   CapabilityError,
@@ -19,7 +19,7 @@ import {
   parseBearerToken,
   createLogger,
 } from '@euno/common';
-import { EnforcementEngine } from '../enforcement';
+import { EnforcementEngine, EnforcementResult } from '../enforcement';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -159,18 +159,51 @@ export function createProxyRouter(opts: ProxyRouterOptions): Router {
       pathRewrite: {
         '^/proxy': '', // Remove /proxy prefix
       },
+      // R-4 step 1: buffer the response so we can apply the matched
+      // capability's response-time obligations (e.g. `redactFields`)
+      // before it leaves the gateway. `responseInterceptor` swaps the
+      // streaming pipe for a buffered one, so this only kicks in on
+      // proxied responses (the JSON-only branch keeps the cost bounded).
+      selfHandleResponse: true,
       onProxyReq: (proxyReq, req, _res) => {
         logger.info('Proxying request', {
           path: req.path,
           target: proxyReq.path,
         });
       },
-      onProxyRes: (proxyRes, req, _res) => {
+      onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, _res) => {
         logger.info('Proxy response', {
-          path: req.path,
+          path: (req as Request).path,
           statusCode: proxyRes.statusCode,
         });
-      },
+        const validation = (req as unknown as { capabilityValidation?: EnforcementResult })
+          .capabilityValidation;
+        const redactor = validation?.applyResponseRedactions;
+        if (!redactor) {
+          return responseBuffer;
+        }
+        // Only attempt redaction on JSON responses — silently passing
+        // non-JSON bodies through preserves the existing contract for
+        // streaming, binary, or text responses while letting the
+        // common JSON path honour the obligation. A failed parse falls
+        // back to the original buffer (we never want a malformed
+        // upstream body to take the proxy down).
+        const contentType = String(proxyRes.headers['content-type'] ?? '').toLowerCase();
+        if (!contentType.includes('application/json')) {
+          return responseBuffer;
+        }
+        try {
+          const parsed = JSON.parse(responseBuffer.toString('utf8'));
+          const redacted = redactor(parsed);
+          return Buffer.from(JSON.stringify(redacted), 'utf8');
+        } catch (err) {
+          logger.warn('Skipping response redaction (body not parseable as JSON)', {
+            path: (req as Request).path,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return responseBuffer;
+        }
+      }),
       onError: (err, req, res) => {
         logger.error('Proxy error', {
           path: req.path,

@@ -200,6 +200,8 @@ level; it should not break existing callers.
 
 ### R-4 — Promote conditions registry into a policy-engine boundary  (addresses I-3, and supports the Sprint 7+ OPA/Cedar item)
 
+> **STATUS: IMPLEMENTED** (PR: R-4 + F-10 — `{ validate, enforce, redact? }` lobes + `'policy'` condition with built-in OPA HTTP backend)
+
 Today, the registry conflates **validation** (mint-time) and
 **enforcement** (request-time) per condition type. Refactor in two
 steps:
@@ -313,7 +315,7 @@ above. They overlap with `NEXT_STEPS_BACKLOG.md` where flagged.
 | F-7   | Multi-region active/active issuer (backlog § 3)                    | Requires F-1 to be tenant-aware to avoid cross-region double-spend on issuance limits.       |
 | F-8   | Self-service manifest UI (backlog § 1)                             | Replaces `web/index.html`; pre-requisite is an issuer admin API for manifest CRUD.          |
 | F-9   | Continuous evidence-chain verification job (backlog § 4)           | Wraps `AuditEvidenceSigner.verifyEvidence`.                                                 |
-| F-10  | OPA / Cedar policy backend (backlog § 2, R-4 step 2)               | `'policy'` condition type with handler.                                                     |
+| F-10  | OPA / Cedar policy backend (backlog § 2, R-4 step 2) — **IMPLEMENTED** (OPA HTTP backend; Cedar follow-up) | `'policy'` condition type with handler.                                                     |
 
 ---
 

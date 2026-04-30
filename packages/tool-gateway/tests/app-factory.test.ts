@@ -303,6 +303,36 @@ describe('createApp(deps) — R-2 in-process factory', () => {
 
       expect(res.status).toBe(403);
     });
+
+    it('strips fields named in a `redactFields` condition before sending the response (R-4 step 1)', async () => {
+      const { deps, privateKey } = await buildDeps();
+      const app = createApp(deps);
+      const token = await signToken(privateKey, [
+        {
+          resource: 'tool://read_file',
+          actions: ['read'],
+          conditions: [
+            { type: 'redactFields', fields: ['result.data.ssn', 'result.data.address'] },
+          ],
+        },
+      ]);
+
+      const res = await request(app)
+        .post('/api/v1/tools/invoke')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          tool: 'read_file',
+          args: { name: 'Alice', ssn: '111-22-3333', address: '1 Main St' },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      // The mock tool echoes args under result.data; the obligation
+      // strips ssn and address but leaves the rest intact.
+      expect(res.body.result.data).toEqual({ name: 'Alice' });
+      expect(res.body.result.data).not.toHaveProperty('ssn');
+      expect(res.body.result.data).not.toHaveProperty('address');
+    });
   });
 
   describe('CapabilityError mapping', () => {

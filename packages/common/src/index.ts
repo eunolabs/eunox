@@ -10,6 +10,7 @@ export * from './argument-validator';
 export * from './role-mapping';
 export * from './log-transports';
 export * from './condition-registry';
+export * from './policy-backends';
 export * from './call-counter-store';
 export * from './config';
 export * from './jwks';

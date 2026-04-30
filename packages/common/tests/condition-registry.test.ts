@@ -540,3 +540,325 @@ describe('counter store interface plumbing', () => {
     expect(new Set(seen).size).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R-4 step 1 — redact lobe + redactConditions response post-processor
+// ---------------------------------------------------------------------------
+
+describe('redactConditions (R-4 step 1)', () => {
+  const { redactConditions } = require('../src') as typeof import('../src');
+
+  it('returns the body unchanged when no conditions declare redact', () => {
+    const body = { id: 1, ssn: 'x' };
+    expect(redactConditions(undefined, body)).toBe(body);
+    expect(redactConditions([], body)).toBe(body);
+    expect(
+      redactConditions([{ type: 'timeWindow', notAfter: '2999-01-01T00:00:00Z' }], body),
+    ).toBe(body);
+  });
+
+  it('strips top-level fields named in redactFields', () => {
+    const body = { id: 1, ssn: '111-22-3333', name: 'Alice' };
+    const out = redactConditions(
+      [{ type: 'redactFields', fields: ['ssn'] }],
+      body,
+    ) as Record<string, unknown>;
+    expect(out).toEqual({ id: 1, name: 'Alice' });
+    // never mutates input
+    expect(body).toEqual({ id: 1, ssn: '111-22-3333', name: 'Alice' });
+  });
+
+  it('strips dotted paths and descends into arrays element-wise', () => {
+    const body = {
+      users: [
+        { id: 1, profile: { ssn: 'a', name: 'A' } },
+        { id: 2, profile: { ssn: 'b', name: 'B' } },
+      ],
+    };
+    const out = redactConditions(
+      [{ type: 'redactFields', fields: ['users.profile.ssn'] }],
+      body,
+    );
+    expect(out).toEqual({
+      users: [
+        { id: 1, profile: { name: 'A' } },
+        { id: 2, profile: { name: 'B' } },
+      ],
+    });
+  });
+
+  it('tolerates missing path segments as no-ops', () => {
+    const body = { a: 1 };
+    const out = redactConditions(
+      [{ type: 'redactFields', fields: ['x.y.z'] }],
+      body,
+    );
+    expect(out).toEqual({ a: 1 });
+  });
+
+  it('applies multiple redactFields conditions in declaration order', () => {
+    const body = { ssn: 1, dob: 2, name: 'A' };
+    const out = redactConditions(
+      [
+        { type: 'redactFields', fields: ['ssn'] },
+        { type: 'redactFields', fields: ['dob'] },
+      ],
+      body,
+    );
+    expect(out).toEqual({ name: 'A' });
+  });
+
+  it('applies a custom condition handler that declares a redact lobe', () => {
+    const { registerCustomCondition, _resetCustomConditionRegistry } =
+      require('../src') as typeof import('../src');
+    _resetCustomConditionRegistry();
+    registerCustomCondition('upper-name', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, body) => {
+        if (
+          body &&
+          typeof body === 'object' &&
+          'name' in (body as Record<string, unknown>)
+        ) {
+          const out = { ...(body as Record<string, unknown>) };
+          out.name = String(out.name).toUpperCase();
+          return out;
+        }
+        return body;
+      },
+    });
+    const out = redactConditions(
+      [{ type: 'custom', name: 'upper-name', config: {} }],
+      { name: 'alice' },
+    );
+    expect(out).toEqual({ name: 'ALICE' });
+  });
+
+  it('honours a per-context customHandlers override for redaction', () => {
+    const reg = require('../src') as typeof import('../src');
+    reg._resetCustomConditionRegistry();
+    // Register a global handler that should NOT be consulted when an
+    // override map is supplied.
+    reg.registerCustomCondition('mark', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, body) => ({ ...(body as object), source: 'global' }),
+    });
+    const overrides = new Map<string, import('../src').CustomConditionHandler>();
+    overrides.set('mark', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, body) => ({ ...(body as object), source: 'override' }),
+    });
+    const out = reg.redactConditions(
+      [{ type: 'custom', name: 'mark', config: {} }],
+      { x: 1 },
+      { customHandlers: overrides },
+    );
+    expect(out).toEqual({ x: 1, source: 'override' });
+  });
+
+  it('honours a per-context policyBackends override for redaction', () => {
+    const reg = require('../src') as typeof import('../src');
+    reg._resetPolicyBackendRegistry();
+    reg.registerPolicyBackend('p', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, _input, body) => ({ ...(body as object), source: 'global' }),
+    });
+    const overrides = new Map<string, import('../src').PolicyBackend>();
+    overrides.set('p', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, _input, body) => ({ ...(body as object), source: 'override' }),
+    });
+    const out = reg.redactConditions(
+      [{ type: 'policy', backend: 'p' }],
+      { x: 1 },
+      { policyBackends: overrides },
+    );
+    expect(out).toEqual({ x: 1, source: 'override' });
+  });
+});
+
+describe('hasRedactObligation', () => {
+  const reg = require('../src') as typeof import('../src');
+
+  beforeEach(() => {
+    reg._resetCustomConditionRegistry();
+    reg._resetPolicyBackendRegistry();
+  });
+
+  it('returns false for empty / undefined / pure-authorization conditions', () => {
+    expect(reg.hasRedactObligation(undefined)).toBe(false);
+    expect(reg.hasRedactObligation([])).toBe(false);
+    expect(
+      reg.hasRedactObligation([
+        { type: 'timeWindow', notAfter: '2999-01-01T00:00:00Z' },
+        { type: 'allowedOperations', operations: ['read'] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('returns true when at least one redactFields condition is present', () => {
+    expect(
+      reg.hasRedactObligation([
+        { type: 'timeWindow', notAfter: '2999-01-01T00:00:00Z' },
+        { type: 'redactFields', fields: ['ssn'] },
+      ]),
+    ).toBe(true);
+  });
+
+  it('reflects per-context custom-handler overrides', () => {
+    // Global has no redact lobe; override does.
+    reg.registerCustomCondition('plain', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+    });
+    expect(
+      reg.hasRedactObligation([{ type: 'custom', name: 'plain', config: {} }]),
+    ).toBe(false);
+    const overrides = new Map<string, import('../src').CustomConditionHandler>();
+    overrides.set('plain', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_cfg, body) => body,
+    });
+    expect(
+      reg.hasRedactObligation(
+        [{ type: 'custom', name: 'plain', config: {} }],
+        { customHandlers: overrides },
+      ),
+    ).toBe(true);
+  });
+
+  it('reflects per-context policy-backend overrides', () => {
+    reg.registerPolicyBackend('p', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+    });
+    expect(reg.hasRedactObligation([{ type: 'policy', backend: 'p' }])).toBe(false);
+    const overrides = new Map<string, import('../src').PolicyBackend>();
+    overrides.set('p', {
+      validate: () => undefined,
+      enforce: () => ({ allow: true }),
+      redact: (_c, _i, body) => body,
+    });
+    expect(
+      reg.hasRedactObligation([{ type: 'policy', backend: 'p' }], {
+        policyBackends: overrides,
+      }),
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-4 step 2 / F-10 — policy condition + pluggable PolicyBackend
+// ---------------------------------------------------------------------------
+
+describe("policy condition + pluggable backend (R-4 step 2 / F-10)", () => {
+  const reg = require('../src') as typeof import('../src');
+
+  beforeEach(() => reg._resetPolicyBackendRegistry());
+
+  it('rejects validation when no backend is registered', () => {
+    expect(() =>
+      reg.validateCondition({
+        type: 'policy',
+        backend: 'absent',
+        config: {},
+      } as unknown as CapabilityCondition),
+    ).toThrow(/no registered handler/);
+  });
+
+  it('rejects validation when backend is missing or empty', () => {
+    expect(() =>
+      reg.validateCondition({ type: 'policy', backend: '' } as unknown as CapabilityCondition),
+    ).toThrow(/backend must be a non-empty string/);
+  });
+
+  it('delegates validate, enforce, and redact to the registered backend', async () => {
+    const calls: string[] = [];
+    reg.registerPolicyBackend('demo', {
+      validate(config) {
+        calls.push('validate');
+        if (typeof config !== 'object' || config === null) {
+          throw new reg.ConditionValidationError('bad config');
+        }
+      },
+      enforce(config, input, _ctx) {
+        calls.push(`enforce:${JSON.stringify({ config, input })}`);
+        return { allow: true };
+      },
+      redact(_config, _input, body) {
+        calls.push('redact');
+        return { ...(body as object), redacted: true };
+      },
+    });
+
+    expect(() =>
+      reg.validateCondition({
+        type: 'policy',
+        backend: 'demo',
+        config: { x: 1 },
+      } as unknown as CapabilityCondition),
+    ).not.toThrow();
+
+    const r = await reg.enforceCondition(
+      { type: 'policy', backend: 'demo', config: { x: 1 }, input: { y: 2 } },
+      {},
+    );
+    expect(r.allow).toBe(true);
+
+    const out = reg.redactConditions(
+      [{ type: 'policy', backend: 'demo', config: { x: 1 } }],
+      { foo: 'bar' },
+    );
+    expect(out).toEqual({ foo: 'bar', redacted: true });
+
+    expect(calls).toContain('validate');
+    expect(calls).toContain('redact');
+    expect(calls.some((c) => c.startsWith('enforce:'))).toBe(true);
+  });
+
+  it('denies at enforcement when the named backend is not registered', async () => {
+    const r = await reg.enforceCondition(
+      { type: 'policy', backend: 'never-registered' },
+      {},
+    );
+    expect(r.allow).toBe(false);
+    expect((r as { reason: string }).reason).toMatch(/never-registered/);
+  });
+
+  it('honours a per-context policy-backend override map', async () => {
+    const map = new Map<string, import('../src').PolicyBackend>();
+    map.set('scoped', {
+      validate: () => undefined,
+      enforce: () => ({ allow: false, reason: 'scoped-deny' }),
+    });
+    const r = await reg.enforceCondition(
+      { type: 'policy', backend: 'scoped' },
+      { policyBackends: map },
+    );
+    expect(r).toEqual({ allow: false, reason: 'scoped-deny' });
+  });
+
+  it('rejects validation if the backend itself rejects the config', () => {
+    reg.registerPolicyBackend('strict', {
+      validate(config) {
+        if (!(config as { url?: string })?.url) {
+          throw new reg.ConditionValidationError('strict.url required');
+        }
+      },
+      enforce: () => ({ allow: true }),
+    });
+    expect(() =>
+      reg.validateCondition({
+        type: 'policy',
+        backend: 'strict',
+        config: {},
+      } as unknown as CapabilityCondition),
+    ).toThrow(/strict.url required/);
+  });
+});

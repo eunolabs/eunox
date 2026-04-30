@@ -22,6 +22,8 @@ import {
   CallCounterStore,
   ConditionContext,
   enforceConditions,
+  redactConditions,
+  hasRedactObligation,
   CapabilityTokenPayload,
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
@@ -64,6 +66,20 @@ export interface EnforcementEngineOptions {
    * {@link createCallCounterStoreFromEnv} at startup to enable it.
    */
   callCounterStore?: CallCounterStore;
+}
+
+/**
+ * Result of {@link EnforcementEngine.validateAction}. Extends
+ * {@link ValidateActionResponse} with an in-process redaction lobe
+ * built from the matched capability's response-time obligations
+ * (R-4 step 1, supports F-3). Callers on the response path (the
+ * `/proxy` and `/api/v1/tools/invoke` routes) MUST pipe their JSON
+ * response body through `applyResponseRedactions` when present so
+ * `redactFields` and any policy-backend-supplied redaction actually
+ * strip fields before the body leaves the gateway.
+ */
+export interface EnforcementResult extends ValidateActionResponse {
+  applyResponseRedactions?: (body: unknown) => unknown;
 }
 
 export class EnforcementEngine {
@@ -136,7 +152,7 @@ export class EnforcementEngine {
   /**
    * Validate an action request
    */
-  async validateAction(request: ValidateActionRequest): Promise<ValidateActionResponse> {
+  async validateAction(request: ValidateActionRequest): Promise<EnforcementResult> {
     // Default to `deny` so any control path that fails to assign — including
     // a future edit that adds a new branch — records as a denial. From the
     // operator's perspective, anything that isn't an explicit allow is a
@@ -155,7 +171,7 @@ export class EnforcementEngine {
     }
   }
 
-  private async validateActionInner(request: ValidateActionRequest): Promise<ValidateActionResponse> {
+  private async validateActionInner(request: ValidateActionRequest): Promise<EnforcementResult> {
     try {
       // Step 1: Verify the token signature and decode
       this.logger.debug('Verifying capability token');
@@ -363,9 +379,22 @@ export class EnforcementEngine {
         resource: request.resource,
       });
 
+      // R-4 step 1: build the response-time redaction lobe from the
+      // matched capability's conditions, but only when at least one
+      // condition actually declares a `redact` lobe under the current
+      // registry. This keeps the per-call cost zero for capabilities
+      // whose only conditions are pure authorization checks (e.g.
+      // `timeWindow`, `ipRange`, `maxCalls`).
+      const conditions = matchedCapability?.conditions;
+      const applyResponseRedactions: ((body: unknown) => unknown) | undefined =
+        conditions && hasRedactObligation(conditions)
+          ? (body) => redactConditions(conditions, body)
+          : undefined;
+
       return {
         allowed: true,
         matchedCapability,
+        ...(applyResponseRedactions ? { applyResponseRedactions } : {}),
       };
     } catch (error) {
       if (error instanceof CapabilityError) {

@@ -36,6 +36,7 @@ import {
   MaxCallsCondition,
   RecipientDomainCondition,
   RedactFieldsCondition,
+  PolicyCondition,
   CustomCondition,
 } from './types';
 
@@ -82,6 +83,14 @@ export interface ConditionContext {
    * `CustomCondition.name` they implement.
    */
   customHandlers?: Map<string, CustomConditionHandler>;
+  /**
+   * Per-context override of the global policy-backend registry (R-4
+   * step 2 / F-10). Used by tests to inject a deterministic backend
+   * without mutating the process-wide registry. When omitted the
+   * handler falls back to the registry populated by
+   * {@link registerPolicyBackend}.
+   */
+  policyBackends?: Map<string, PolicyBackend>;
 }
 
 /** Outcome of evaluating a single condition. */
@@ -90,20 +99,55 @@ export type ConditionResult =
   | { allow: false; reason: string };
 
 /**
- * A condition handler implements both halves of the
- * validate-then-enforce contract. `validate` runs at issuance time and
- * MUST throw a `ConditionValidationError` on bad data. `enforce` runs
- * at request time and returns a {@link ConditionResult}.
+ * A condition handler implements the validate/enforce/redact lobes of
+ * the typed-condition contract (R-4 step 1):
+ *
+ *  - `validate` runs at issuance time and MUST throw a
+ *    {@link ConditionValidationError} on bad data.
+ *  - `enforce` runs at request time and returns a
+ *    {@link ConditionResult}.
+ *  - `redact` (optional) runs on the response path and returns a new
+ *    body with the obligation applied. Handlers without this lobe
+ *    impose no response-time obligation; the gateway leaves the body
+ *    untouched.
  */
 export interface ConditionHandler<C extends CapabilityCondition = CapabilityCondition> {
   validate(condition: C): void;
   enforce(condition: C, ctx: ConditionContext): ConditionResult | Promise<ConditionResult>;
+  /**
+   * Optional response post-processor. Receives the parsed response
+   * body (typically JSON-shaped) and MUST return a new value with the
+   * obligation applied. MUST NOT mutate `body`. Returning `body`
+   * unchanged is a valid no-op.
+   */
+  redact?(condition: C, body: unknown): unknown;
 }
 
 /** Custom condition handlers don't see the discriminator-only `type`/`name`. */
 export interface CustomConditionHandler {
   validate(config: unknown): void;
   enforce(config: unknown, ctx: ConditionContext): ConditionResult | Promise<ConditionResult>;
+  /** Optional response post-processor — see {@link ConditionHandler.redact}. */
+  redact?(config: unknown, body: unknown): unknown;
+}
+
+/**
+ * Pluggable backend behind a `'policy'`-typed condition (R-4 step 2 /
+ * F-10). Backends register the same `{ validate, enforce, redact? }`
+ * shape as built-in handlers but receive the deserialised
+ * `PolicyCondition.config` and `PolicyCondition.input` rather than the
+ * full discriminated condition. This lets OPA / Cedar / future engines
+ * plug into the gateway without touching the gateway middleware.
+ */
+export interface PolicyBackend {
+  validate(config: unknown): void;
+  enforce(
+    config: unknown,
+    input: unknown,
+    ctx: ConditionContext,
+  ): ConditionResult | Promise<ConditionResult>;
+  /** Optional response post-processor — see {@link ConditionHandler.redact}. */
+  redact?(config: unknown, input: unknown, body: unknown): unknown;
 }
 
 /** Storage for {@link MaxCallsCondition} counters. */
@@ -130,6 +174,7 @@ export class ConditionValidationError extends Error {
 // ---------------------------------------------------------------------------
 
 const customHandlers = new Map<string, CustomConditionHandler>();
+const policyBackends = new Map<string, PolicyBackend>();
 
 /**
  * Register (or replace) a handler for the named custom condition. New
@@ -158,6 +203,29 @@ export function getCustomConditionHandlers(): Map<string, CustomConditionHandler
   return new Map(customHandlers);
 }
 
+/**
+ * Register (or replace) a backend for the `'policy'` condition type
+ * (R-4 step 2 / F-10). Without an explicit registration, a `policy`
+ * condition naming this backend is denied at both issuance and
+ * enforcement.
+ */
+export function registerPolicyBackend(name: string, backend: PolicyBackend): void {
+  if (!name || typeof name !== 'string') {
+    throw new Error('registerPolicyBackend: name must be a non-empty string');
+  }
+  policyBackends.set(name, backend);
+}
+
+/** Test helper — clears every registered policy backend. */
+export function _resetPolicyBackendRegistry(): void {
+  policyBackends.clear();
+}
+
+/** Shallow snapshot of the current policy backend map. */
+export function getPolicyBackends(): Map<string, PolicyBackend> {
+  return new Map(policyBackends);
+}
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -184,6 +252,7 @@ export function validateCondition(condition: unknown): asserts condition is Capa
     validateCustomCondition(condition as CustomCondition);
     return;
   }
+  // Note: 'policy' is handled by BUILTIN_HANDLERS above (policyHandler).
   throw new ConditionValidationError(`unrecognized condition type '${c.type}'`);
 }
 
@@ -241,6 +310,8 @@ export async function enforceCondition(
     }
     return ch.enforce(cc.config, ctx);
   }
+  // Note: 'policy' is dispatched via BUILTIN_HANDLERS above (policyHandler),
+  // which honours `ctx.policyBackends`.
   return {
     allow: false,
     reason: `unrecognized condition type '${(condition as { type: string }).type}'`,
@@ -544,13 +615,47 @@ const redactFieldsHandler: ConditionHandler<RedactFieldsCondition> = {
   validate(c) {
     expectStringArray('redactFields.fields', c.fields);
   },
-  // The redaction itself is performed by the response post-processor;
-  // at the authorization layer we only certify that the obligation is
-  // structurally valid. Returning `allow` here means "the request may
-  // proceed; the gateway must apply the redaction to the response".
+  // The authorization decision is unconditional: this obligation never
+  // denies a request — it only mutates the response. The actual field
+  // stripping happens via {@link redact} below, invoked by the gateway
+  // on the response path (R-4 step 1, closes I-3 / supports F-3).
   enforce() {
     return { allow: true };
   },
+  redact(c, body) {
+    let out = body;
+    for (const path of c.fields) {
+      out = deleteDottedPath(out, path);
+    }
+    return out;
+  },
+};
+
+const policyHandler: ConditionHandler<PolicyCondition> = {
+  validate(c) {
+    if (typeof c.backend !== 'string' || c.backend.length === 0) {
+      throw new ConditionValidationError("policy.backend must be a non-empty string");
+    }
+    const backend = policyBackends.get(c.backend);
+    if (!backend) {
+      throw new ConditionValidationError(
+        `policy backend '${c.backend}' has no registered handler`,
+      );
+    }
+    backend.validate(c.config);
+  },
+  async enforce(c, ctx) {
+    const map = ctx.policyBackends ?? policyBackends;
+    const backend = map.get(c.backend);
+    if (!backend) {
+      return { allow: false, reason: `unrecognized policy backend '${c.backend}'` };
+    }
+    return backend.enforce(c.config, c.input, ctx);
+  },
+  // Note: redactConditions handles `'policy'` directly so it can honour
+  // `ctx.policyBackends` overrides (which the lobe signature can't see).
+  // No `redact` lobe is exposed here to avoid a global-only path that
+  // silently disagrees with the per-context one.
 };
 
 /** Built-in handler table keyed by `type`. */
@@ -563,6 +668,7 @@ export const BUILTIN_HANDLERS: {
   maxCalls: ConditionHandler<MaxCallsCondition>;
   recipientDomain: ConditionHandler<RecipientDomainCondition>;
   redactFields: ConditionHandler<RedactFieldsCondition>;
+  policy: ConditionHandler<PolicyCondition>;
 } = {
   timeWindow: timeWindowHandler,
   ipRange: ipRangeHandler,
@@ -572,7 +678,158 @@ export const BUILTIN_HANDLERS: {
   maxCalls: maxCallsHandler,
   recipientDomain: recipientDomainHandler,
   redactFields: redactFieldsHandler,
+  policy: policyHandler,
 };
+
+// ---------------------------------------------------------------------------
+// Response-time obligations (redaction)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-call overrides for the redaction pipeline. Mirrors the
+ * equivalent fields on {@link ConditionContext} so a request whose
+ * authorization decision used a per-context custom-handler /
+ * policy-backend map can apply the matching response-time obligations
+ * with the *same* maps. Without this, enforcement and redaction would
+ * silently disagree (e.g. enforcement uses a stub backend, redaction
+ * falls back to the global one — or finds none and no-ops).
+ */
+export interface RedactContext {
+  customHandlers?: Map<string, CustomConditionHandler>;
+  policyBackends?: Map<string, PolicyBackend>;
+}
+
+/**
+ * Apply every condition's `redact` lobe to `body` in declaration order
+ * and return the resulting value. Conditions whose handler does not
+ * declare a `redact` lobe are no-ops; the function is therefore safe
+ * to call unconditionally on the response path.
+ *
+ * The implementation never mutates `body` — each `redact` call
+ * structurally clones any object it touches before deleting the
+ * targeted path. Callers that still want belt-and-braces isolation
+ * should JSON-roundtrip the result themselves.
+ *
+ * Used by `EnforcementEngine.validateAction` to build the
+ * `applyResponseRedactions` lobe of its result, which the tool gateway
+ * then runs against the proxied response body (R-4 step 1, closes
+ * I-3 / supports F-3). Pass the same `customHandlers` / `policyBackends`
+ * maps used at enforcement time so both lanes consult the same
+ * implementations.
+ */
+export function redactConditions(
+  conditions: readonly CapabilityCondition[] | undefined,
+  body: unknown,
+  ctx: RedactContext = {},
+): unknown {
+  if (!conditions || conditions.length === 0) return body;
+  let out = body;
+  for (const cond of conditions) {
+    if (!cond) continue;
+    if (cond.type === 'custom') {
+      const cc = cond as CustomCondition;
+      const map = ctx.customHandlers ?? customHandlers;
+      const ch = map.get(cc.name);
+      if (ch?.redact) {
+        out = ch.redact(cc.config, out);
+      }
+      continue;
+    }
+    if (cond.type === 'policy') {
+      const pc = cond as PolicyCondition;
+      const map = ctx.policyBackends ?? policyBackends;
+      const backend = map.get(pc.backend);
+      if (backend?.redact) {
+        out = backend.redact(pc.config, pc.input, out);
+      }
+      continue;
+    }
+    const handler =
+      (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[cond.type];
+    if (handler?.redact) {
+      out = handler.redact(cond, out);
+    }
+    // Unknown / unredact-capable types: leave body unchanged. We
+    // intentionally do NOT deny here — the request was already
+    // authorized by `enforceConditions`; redaction is a separate,
+    // additive obligation lane.
+  }
+  return out;
+}
+
+/**
+ * Return true when at least one condition in `conditions` resolves to
+ * a handler / backend that declares a `redact` lobe under the supplied
+ * context. Lets callers skip the redaction post-processor entirely
+ * when no obligation actually wants to mutate the response (the common
+ * case for capabilities whose only conditions are `timeWindow`,
+ * `ipRange`, etc.).
+ */
+export function hasRedactObligation(
+  conditions: readonly CapabilityCondition[] | undefined,
+  ctx: RedactContext = {},
+): boolean {
+  if (!conditions || conditions.length === 0) return false;
+  for (const cond of conditions) {
+    if (!cond) continue;
+    if (cond.type === 'custom') {
+      const map = ctx.customHandlers ?? customHandlers;
+      const ch = map.get((cond as CustomCondition).name);
+      if (ch?.redact) return true;
+      continue;
+    }
+    if (cond.type === 'policy') {
+      const map = ctx.policyBackends ?? policyBackends;
+      const backend = map.get((cond as PolicyCondition).backend);
+      if (backend?.redact) return true;
+      continue;
+    }
+    const handler =
+      (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[cond.type];
+    if (handler?.redact) return true;
+  }
+  return false;
+}
+
+/**
+ * Return a structural clone of `obj` with the dotted `path` removed.
+ * Arrays encountered on the way are descended into element-wise so
+ * `users.ssn` against `{ users: [{ssn: ...}, {ssn: ...}] }` strips
+ * `ssn` from both elements. Missing path segments are tolerated as
+ * no-ops; the input is returned unchanged in that case (no clone).
+ */
+function deleteDottedPath(obj: unknown, path: string): unknown {
+  const parts = path.split('.').filter((p) => p.length > 0);
+  if (parts.length === 0) return obj;
+  return cloneAndDelete(obj, parts);
+}
+
+function cloneAndDelete(node: unknown, parts: string[]): unknown {
+  if (Array.isArray(node)) {
+    let mutated = false;
+    const out: unknown[] = node.map((el) => {
+      const next = cloneAndDelete(el, parts);
+      if (next !== el) mutated = true;
+      return next;
+    });
+    return mutated ? out : node;
+  }
+  if (node === null || typeof node !== 'object') return node;
+  const obj = node as Record<string, unknown>;
+  const head = parts[0]!;
+  if (!Object.prototype.hasOwnProperty.call(obj, head)) return node;
+  const out: Record<string, unknown> = { ...obj };
+  if (parts.length === 1) {
+    delete out[head];
+    return out;
+  }
+  const rest = parts.slice(1);
+  const child = obj[head];
+  const newChild = cloneAndDelete(child, rest);
+  if (newChild === child) return node;
+  out[head] = newChild;
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // CIDR helpers
