@@ -6,6 +6,9 @@
  * setup, env reads, or Redis. These tests exercise that contract.
  */
 
+import * as http from 'http';
+import { AddressInfo } from 'net';
+
 import request from 'supertest';
 import {
   CapabilityTokenPayload,
@@ -28,6 +31,7 @@ import type { GatewayDependencies } from '../src/bootstrap';
 
 async function buildDeps(opts?: {
   isReady?: () => boolean;
+  backendServiceUrl?: string;
 }): Promise<{
   deps: GatewayDependencies;
   privateKey: jose.KeyLike;
@@ -59,7 +63,7 @@ async function buildDeps(opts?: {
     verifier,
     enforcementEngine,
     killSwitchManager,
-    backendServiceUrl: 'http://localhost:65535', // never reached in these tests
+    backendServiceUrl: opts?.backendServiceUrl ?? 'http://localhost:65535', // never reached in these tests by default
     allowedOrigins: [],
     rateLimitWindowMs: 60_000,
     rateLimitMax: 10_000,
@@ -332,6 +336,110 @@ describe('createApp(deps) — R-2 in-process factory', () => {
       expect(res.body.result.data).toEqual({ name: 'Alice' });
       expect(res.body.result.data).not.toHaveProperty('ssn');
       expect(res.body.result.data).not.toHaveProperty('address');
+    });
+  });
+
+  describe('/proxy/* response redaction (F-3, addresses I-3)', () => {
+    /**
+     * Spin up a tiny HTTP backend on an ephemeral port that echoes a JSON
+     * payload containing fields the capability declares as redactable. The
+     * gateway's `responseInterceptor` should strip those fields before the
+     * body reaches the caller, exercising the full chain:
+     *
+     *   validateCapabilityMiddleware → enforcement.applyResponseRedactions
+     *   → http-proxy-middleware → responseInterceptor.
+     */
+    function startBackend(payload: unknown): Promise<{
+      url: string;
+      close: () => Promise<void>;
+    }> {
+      return new Promise((resolve) => {
+        const server = http.createServer((_req, res) => {
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(payload));
+        });
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address() as AddressInfo;
+          resolve({
+            url: `http://127.0.0.1:${addr.port}`,
+            close: () => new Promise<void>((r) => server.close(() => r())),
+          });
+        });
+      });
+    }
+
+    it('strips fields named in a `redactFields` condition from JSON responses on /proxy', async () => {
+      // Backend returns a payload with sensitive fields; the obligation
+      // strips `user.ssn` and `user.address` but leaves the rest intact.
+      const backend = await startBackend({
+        user: {
+          name: 'Alice',
+          ssn: '111-22-3333',
+          address: '1 Main St',
+        },
+        meta: { version: 1 },
+      });
+
+      try {
+        const { deps, privateKey } = await buildDeps({
+          backendServiceUrl: backend.url,
+        });
+        const app = createApp(deps);
+
+        // The proxy derives `api://api.example.com/things` from the path
+        // segment, so the capability resource is a glob that matches it.
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [
+              { type: 'redactFields', fields: ['user.ssn', 'user.address'] },
+            ],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          user: { name: 'Alice' },
+          meta: { version: 1 },
+        });
+        expect(res.body.user).not.toHaveProperty('ssn');
+        expect(res.body.user).not.toHaveProperty('address');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('passes the upstream JSON body through unchanged when no redact obligation is attached', async () => {
+      // Sanity: without a `redactFields` condition the proxy must not
+      // mutate the body. Guards against accidental over-redaction.
+      const payload = { user: { name: 'Alice', ssn: '111-22-3333' } };
+      const backend = await startBackend(payload);
+
+      try {
+        const { deps, privateKey } = await buildDeps({
+          backendServiceUrl: backend.url,
+        });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          { resource: 'api://api.example.com/**', actions: ['read'] },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual(payload);
+      } finally {
+        await backend.close();
+      }
     });
   });
 
