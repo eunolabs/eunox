@@ -20,3 +20,5 @@ export * from './tracing';
 export * from './verify-evidence-job';
 export * from './audit-pipeline';
 export * from './action-resolver';
+export * from './dpop';
+export * from './ocsf';

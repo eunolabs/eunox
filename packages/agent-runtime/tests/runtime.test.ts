@@ -615,3 +615,158 @@ describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () 
     expect(gatewayInstance.request).not.toHaveBeenCalled();
   });
 });
+
+// ── DPoP / sender-constrained tokens (F-2) ──────────────────────────────────
+
+describe('AgentRuntime – DPoP (F-2)', () => {
+  // jose.SignJWT relies on a real clock for `iat`; the global
+  // `useFakeTimers` in this file's beforeEach would freeze it at
+  // epoch 0, which the gateway-side verifier rejects as too-old.
+  let dpopFixture: { privateKey: any; publicJwk: any };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const jose = require('jose') as typeof import('jose');
+
+  beforeAll(async () => {
+    const { privateKey, publicKey } = await jose.generateKeyPair('ES256', { extractable: true });
+    const publicJwk = await jose.exportJWK(publicKey);
+    dpopFixture = { privateKey, publicJwk };
+  });
+
+  // Track runtimes so we can shut them down after each test — without
+  // this the token-refresh setTimeout keeps the Node event loop alive
+  // and Jest hangs on exit (the file-wide fake-timer afterEach
+  // doesn't help here because we deliberately use real timers in this
+  // describe block).
+  const runtimes: AgentRuntime[] = [];
+  beforeEach(() => {
+    jest.useRealTimers();
+    runtimes.length = 0;
+  });
+  afterEach(async () => {
+    for (const rt of runtimes) {
+      await rt.shutdown().catch(() => undefined);
+    }
+    runtimes.length = 0;
+    // Restore fake timers so the file-wide `afterEach` (`useRealTimers`)
+    // and the next `beforeEach` (`useFakeTimers`) do not see any
+    // residual real-timer handles that would keep the Jest worker
+    // alive after the suite finishes.
+    jest.useFakeTimers();
+    jest.clearAllTimers();
+  });
+
+  function dpopRuntime(): AgentRuntime {
+    const rt = buildRuntime({
+      dpop: {
+        privateKey: dpopFixture.privateKey,
+        publicJwk: dpopFixture.publicJwk,
+        algorithm: 'ES256',
+      },
+    });
+    runtimes.push(rt);
+    return rt;
+  }
+
+  it('sends dpopJkt on issuance so the issuer can stamp cnf.jkt', async () => {
+    issuerInstance.post.mockResolvedValueOnce({
+      status: 200,
+      data: { token: 'cap-token-dpop' },
+    });
+
+    const rt = dpopRuntime();
+    await rt.initialize();
+
+    const issueBody = issuerInstance.post.mock.calls[0]![1] as Record<string, unknown>;
+    expect(issueBody['dpopJkt']).toEqual(expect.any(String));
+    // RFC 7638 SHA-256 thumbprints are 43 base64url chars.
+    expect(issueBody['dpopJkt'] as string).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // The thumbprint sent must equal the one derived locally from the public JWK.
+    expect(issueBody['dpopJkt']).toBe(
+      await jose.calculateJwkThumbprint(dpopFixture.publicJwk, 'sha256'),
+    );
+  });
+
+  it('attaches a DPoP proof header on every tool invocation', async () => {
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-dpop' } });
+    const rt = dpopRuntime();
+    await rt.initialize();
+    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    await rt.invokeTool({ tool: 'read_file', args: {} });
+
+    const headers = gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>;
+    expect(headers).toHaveProperty('DPoP');
+    expect(typeof headers['DPoP']).toBe('string');
+    // DPoP proofs are JWS Compact: three base64url segments.
+    expect(headers['DPoP']!.split('.')).toHaveLength(3);
+
+    // The proof binds to method + URL; decode the payload and check.
+    const decoded = jose.decodeJwt(headers['DPoP']!);
+    expect(decoded['htm']).toBe('POST');
+    expect(decoded['htu']).toBe('http://gateway:3002/api/v1/tools/invoke');
+    // Header carries the public JWK so the verifier can match cnf.jkt.
+    const protectedHeader = jose.decodeProtectedHeader(headers['DPoP']!);
+    expect(protectedHeader.typ).toBe('dpop+jwt');
+    expect(protectedHeader.jwk).toBeDefined();
+  });
+
+  it('issues a FRESH DPoP proof on the 401 retry (no replay) — PR review #10', async () => {
+    // First call 401 → token refresh → second call. The retry MUST
+    // sign a new proof with a new `jti`, otherwise the gateway's
+    // replay store would refuse it as a duplicate of the original.
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-1' } });
+    const rt = dpopRuntime();
+    await rt.initialize();
+
+    gatewayInstance.post.mockResolvedValueOnce({ status: 401, data: {} });
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-2' } });
+    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    const result = await rt.invokeTool({ tool: 'read_file', args: {} });
+    expect(result.success).toBe(true);
+    expect(gatewayInstance.post).toHaveBeenCalledTimes(2);
+
+    const proof1 = (gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>)['DPoP'];
+    const proof2 = (gatewayInstance.post.mock.calls[1]![2].headers as Record<string, string>)['DPoP'];
+    expect(proof1).toBeDefined();
+    expect(proof2).toBeDefined();
+    expect(proof1).not.toBe(proof2);
+    const jti1 = jose.decodeJwt(proof1!)['jti'];
+    const jti2 = jose.decodeJwt(proof2!)['jti'];
+    expect(jti1).toBeDefined();
+    expect(jti2).toBeDefined();
+    expect(jti1).not.toBe(jti2);
+  });
+
+  it('attaches a DPoP proof on /proxy requests too', async () => {
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-dpop' } });
+    const rt = dpopRuntime();
+    await rt.initialize();
+    gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    await rt.makeRequest('GET', 'https://api.example.com/data');
+
+    const opts = gatewayInstance.request.mock.calls[0]![0];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers).toHaveProperty('DPoP');
+    const decoded = jose.decodeJwt(headers['DPoP']!);
+    expect(decoded['htm']).toBe('GET');
+    // Proof URL points at the gateway path the runtime actually dialled.
+    expect(typeof decoded['htu']).toBe('string');
+    expect(decoded['htu']).toContain('http://gateway:3002');
+  });
+
+  it('omits DPoP headers when no dpop config is supplied (back-compat)', async () => {
+    issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-plain' } });
+    const rt = buildRuntime(); // no dpop
+    runtimes.push(rt);
+    await rt.initialize();
+    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    await rt.invokeTool({ tool: 'read_file', args: {} });
+    const headers = gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>;
+    expect(headers).not.toHaveProperty('DPoP');
+    // Issuance body must not include dpopJkt either.
+    const body = issuerInstance.post.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body['dpopJkt']).toBeUndefined();
+  });
+});

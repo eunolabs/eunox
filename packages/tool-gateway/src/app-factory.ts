@@ -55,6 +55,23 @@ export function createApp(deps: GatewayDependencies): Express {
 
   const app = express();
 
+  // Trust proxy boundary (security-critical for F-2 DPoP `htu`
+  // reconstruction). Operators who deploy the gateway behind a
+  // TLS-terminating reverse proxy / load balancer MUST set
+  // `TRUST_PROXY` so `req.protocol` / `req.hostname` reflect the
+  // client-facing scheme + host the agent dialled (the one its DPoP
+  // proof was signed against). Without this, Express would return
+  // the proxy-internal scheme/host and DPoP verification would fail
+  // legitimate requests; routes that previously read raw
+  // `X-Forwarded-*` headers without this gate could be tricked by a
+  // direct caller into verifying the proof against an attacker-chosen
+  // URL. Default `false` (no proxy trust) is the safe stance for
+  // direct deployments — see `parseTrustProxy` in bootstrap.ts and
+  // the `TRUST_PROXY` env var docs.
+  if (deps.trustProxy !== undefined && deps.trustProxy !== false) {
+    app.set('trust proxy', deps.trustProxy);
+  }
+
   // OpenTelemetry context propagation (R-3). Mounted as the very first
   // middleware so every downstream handler — including audit logging —
   // runs inside the request's span context.

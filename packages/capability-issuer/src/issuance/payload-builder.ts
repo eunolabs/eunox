@@ -103,6 +103,14 @@ export interface IssuancePayloadInputs {
    * token to its originating region (F-7 multi-region active/active).
    */
   region?: string;
+  /**
+   * Optional base64url SHA-256 JWK thumbprint (RFC 7638) of the
+   * holder's DPoP public key. When supplied, the issuer stamps the
+   * `cnf.jkt` confirmation claim (F-2 / RFC 9449) so the resulting
+   * token is sender-constrained: the gateway then requires every
+   * request to carry a DPoP proof signed by the matching private key.
+   */
+  dpopJkt?: string;
 }
 
 /**
@@ -130,6 +138,7 @@ export function buildIssuancePayload(
     },
   };
   if (inputs.region) payload.region = inputs.region;
+  if (inputs.dpopJkt) payload.cnf = { jkt: inputs.dpopJkt };
   payload.vc = buildVerifiableCredential(payload);
   return payload;
 }
@@ -168,6 +177,11 @@ export function buildAttenuatedPayload(
   // a different region does not retroactively change the originating
   // region of the chain.
   if (inputs.parent.region) childPayload.region = inputs.parent.region;
+  // F-2: a sender-constrained parent yields a sender-constrained
+  // child. Attenuation MUST NOT be a path to drop the `cnf.jkt`
+  // binding — otherwise the holder of a DPoP-bound token could mint
+  // a plain bearer child and bypass the proof-of-possession check.
+  if (inputs.parent.cnf) childPayload.cnf = { ...inputs.parent.cnf };
   // Re-build the VC envelope from the *attenuated* claim set so the
   // VC view of the token reflects the narrowed capabilities, not
   // the parent's broader set.
@@ -209,6 +223,10 @@ export function buildRenewedPayload(
   // Preserve the originating `region` claim across renewal (F-7) so
   // the audit chain can attribute every link to its source region.
   if (inputs.current.region) renewedPayload.region = inputs.current.region;
+  // F-2: renewal preserves the `cnf.jkt` binding for the same reason
+  // as attenuation — a sender-constrained credential MUST stay
+  // sender-constrained for its entire lineage.
+  if (inputs.current.cnf) renewedPayload.cnf = { ...inputs.current.cnf };
   // Re-build the VC envelope so its `id` (urn:uuid:<jti>) and
   // `parentCapabilityId` reference the new token, not the previous
   // one.

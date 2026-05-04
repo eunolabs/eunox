@@ -19,7 +19,10 @@ import {
   injectTraceContext,
   EUNO_ATTR,
   SpanKind,
+  computeJwkThumbprint,
+  createDpopProof,
 } from '@euno/common';
+import type { JWK, KeyLike } from 'jose';
 
 /**
  * Async provider for short-lived user authentication tokens.
@@ -113,6 +116,45 @@ export interface AgentRuntimeConfig {
 
   /** Token refresh interval in seconds (default: 600s = 10 minutes) */
   tokenRefreshInterval?: number;
+
+  /**
+   * Optional DPoP (RFC 9449 / F-2) configuration. When supplied the
+   * runtime asks the issuer to mint a sender-constrained capability
+   * token bound to {@link DpopConfig.publicJwk}, and signs a fresh
+   * proof with {@link DpopConfig.privateKey} on every call to the
+   * gateway.
+   *
+   * When omitted, the runtime falls back to plain bearer-token usage
+   * (current behaviour, kept for back-compat).
+   *
+   * Holding the private key inside the runtime process is the entire
+   * point: an attacker who exfiltrates only the bearer token cannot
+   * use it without also stealing the key.
+   */
+  dpop?: DpopConfig;
+}
+
+/**
+ * DPoP keypair material the runtime uses to (a) request a
+ * sender-constrained capability token from the issuer and (b) sign a
+ * proof on every outbound gateway / proxy call.
+ *
+ * Production deployments should generate the keypair locally at
+ * process start (`jose.generateKeyPair`) and never persist the
+ * private key to disk. The public JWK is sent to the issuer once
+ * per token-acquisition cycle.
+ */
+export interface DpopConfig {
+  /** Private key handle used to sign proofs (e.g. `crypto.KeyObject`). */
+  privateKey: KeyLike | Uint8Array;
+  /** Public JWK whose SHA-256 thumbprint will become the token's `cnf.jkt`. */
+  publicJwk: JWK;
+  /**
+   * JWS algorithm — must agree with the key type. Defaults to
+   * `'ES256'` (P-256 ECDSA), which the gateway and most cloud KMS
+   * providers all accept out of the box.
+   */
+  algorithm?: string;
 }
 
 export interface ToolCallRequest {
@@ -185,6 +227,14 @@ export class AgentRuntime {
   private terminated: boolean = false;
 
   /**
+   * Cached SHA-256 JWK thumbprint of the agent's DPoP public key
+   * (RFC 7638 / F-2). Computed once in {@link initialize} so we don't
+   * pay the hashing cost on every issuance refresh. Undefined when
+   * DPoP is not configured.
+   */
+  private dpopJkt?: string;
+
+  /**
    * Tracer used for client spans around outbound issuer / gateway / proxy
    * calls (R-3 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). Always set;
    * resolves to a no-op tracer when no SDK has been registered.
@@ -229,6 +279,11 @@ export class AgentRuntime {
    * Initialize the runtime - acquire capability token
    */
   async initialize(): Promise<void> {
+    // F-2: precompute the DPoP key thumbprint so the issuer can bind
+    // `cnf.jkt` on every refresh without re-hashing.
+    if (this.config.dpop) {
+      this.dpopJkt = await computeJwkThumbprint(this.config.dpop.publicJwk);
+    }
     await this.acquireCapabilityToken();
     this.startTokenRefresh();
   }
@@ -374,6 +429,14 @@ export class AgentRuntime {
       }
       if (hints.consent !== undefined) {
         body.consent = hints.consent;
+      }
+      // F-2: ask the issuer to bind the token to our DPoP key. We
+      // send the precomputed thumbprint to keep the issuer fast (and
+      // because some issuer deployments may not import the same `jose`
+      // version we did locally). The thumbprint is computed once at
+      // construction time and reused for every refresh.
+      if (this.dpopJkt !== undefined) {
+        body.dpopJkt = this.dpopJkt;
       }
 
       let response;
@@ -539,6 +602,42 @@ export class AgentRuntime {
   }
 
   /**
+   * Build the per-request `DPoP` header (F-2). Returns `{}` when DPoP
+   * is not configured so the call sites can spread the result
+   * unconditionally.
+   *
+   * The proof binds the request to (`method`, `<gatewayUrl><path>`)
+   * — the gateway reconstructs the same canonical URL on its side
+   * (honouring `X-Forwarded-*` for TLS-terminating reverse proxies)
+   * before comparing.
+   */
+  private async buildDpopHeader(
+    method: string,
+    path: string,
+  ): Promise<Record<string, string>> {
+    if (!this.config.dpop) return {};
+    const proof = await createDpopProof({
+      privateKey: this.config.dpop.privateKey,
+      publicJwk: this.config.dpop.publicJwk,
+      algorithm: this.config.dpop.algorithm ?? 'ES256',
+      httpMethod: method,
+      httpUrl: this.absoluteGatewayUrl(path),
+    });
+    return { DPoP: proof };
+  }
+
+  /**
+   * Compose `gatewayUrl` + `path` without double slashes, mirroring how
+   * axios's `baseURL` joins them. Used to build the canonical `htu`
+   * for DPoP proofs.
+   */
+  private absoluteGatewayUrl(path: string): string {
+    const base = this.config.gatewayUrl.replace(/\/+$/, '');
+    const tail = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${tail}`;
+  }
+
+  /**
    * Build a {@link ToolCallResponse} from a raw axios response, capturing the
    * structured error code when the gateway returned one.
    */
@@ -616,7 +715,9 @@ export class AgentRuntime {
     }
 
     try {
-      const response = await this.httpClient.post('/api/v1/tools/invoke', {
+      const toolsPath = '/api/v1/tools/invoke';
+      const dpopHeaders = await this.buildDpopHeader('POST', toolsPath);
+      const response = await this.httpClient.post(toolsPath, {
         tool: request.tool,
         args: request.args,
         resource: request.resource,
@@ -624,6 +725,7 @@ export class AgentRuntime {
         headers: {
           'Authorization': `Bearer ${this.capabilityToken}`,
           'X-Agent-ID': this.config.agentId,
+          ...dpopHeaders,
         },
       });
 
@@ -653,7 +755,11 @@ export class AgentRuntime {
           return this.buildResponse(response);
         }
 
-        const retryResponse = await this.httpClient.post('/api/v1/tools/invoke', {
+        // F-2: every request — including the retry — needs a fresh
+        // DPoP proof; reusing the original would be flagged as a
+        // replay by the gateway's jti store.
+        const retryDpopHeaders = await this.buildDpopHeader('POST', toolsPath);
+        const retryResponse = await this.httpClient.post(toolsPath, {
           tool: request.tool,
           args: request.args,
           resource: request.resource,
@@ -661,6 +767,7 @@ export class AgentRuntime {
           headers: {
             'Authorization': `Bearer ${this.capabilityToken}`,
             'X-Agent-ID': this.config.agentId,
+            ...retryDpopHeaders,
           },
         });
 
@@ -784,14 +891,18 @@ export class AgentRuntime {
         proxyPath = url.startsWith('/') ? url : `/${url}`;
       }
 
+      const proxyUrl = `/proxy${proxyPath}`;
+      // F-2: bind the proof to the proxy URL the gateway will see.
+      const dpopHeaders = await this.buildDpopHeader(method, proxyUrl);
       const response = await this.httpClient.request({
         method,
-        url: `/proxy${proxyPath}`,
+        url: proxyUrl,
         data,
         headers: {
           'Authorization': `Bearer ${this.capabilityToken}`,
           'X-Agent-ID': this.config.agentId,
           ...extraHeaders,
+          ...dpopHeaders,
         },
       });
 

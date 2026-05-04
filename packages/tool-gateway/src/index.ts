@@ -40,7 +40,7 @@ export async function startServer(): Promise<void> {
 
   const app = createApp(deps);
 
-  const { config, logger, revocationStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs } = deps;
+  const { config, logger, revocationStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs, ocsfTransport, dpopReplayStore } = deps;
 
   const server = app.listen(config.port, () => {
     setReady(true);
@@ -101,6 +101,33 @@ export async function startServer(): Promise<void> {
         }
       } catch (err) {
         logger.warn('Error while draining audit pipeline', {
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+      // F-6: close the OCSF transport so any buffered HTTP / file
+      // handles are released before exit. `close()` waits for any
+      // in-flight `send()` calls so the tail of the audit stream is
+      // not lost when the process exits.
+      try {
+        if (ocsfTransport) {
+          await ocsfTransport.close();
+        }
+      } catch (err) {
+        logger.warn('Error while closing OCSF transport', {
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+      // F-2: close the DPoP replay store. Only the Redis-backed
+      // implementation owns external resources (`close()` is its
+      // own method); the in-memory default omits it, so we
+      // structurally check before calling.
+      try {
+        const closableReplay = dpopReplayStore as { close?: () => Promise<void> | void } | undefined;
+        if (closableReplay && typeof closableReplay.close === 'function') {
+          await closableReplay.close();
+        }
+      } catch (err) {
+        logger.warn('Error while closing DPoP replay store', {
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       }

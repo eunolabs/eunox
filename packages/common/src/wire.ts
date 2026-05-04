@@ -405,6 +405,29 @@ export interface CapabilityTokenPayload {
    * who want region affinity should layer it on top).
    */
   region?: string;
+  /**
+   * Optional confirmation claim binding this token to a specific key
+   * the holder MUST prove possession of on every use (RFC 7800 / RFC
+   * 9449). When present with a `jkt` member, the token is
+   * sender-constrained: the gateway requires every request to carry a
+   * DPoP proof signed by the key whose JWK SHA-256 thumbprint matches
+   * `cnf.jkt`, so that a leaked / replayed bearer token alone is not
+   * sufficient for the attacker to call protected endpoints. F-2 in
+   * `docs/IMPROVEMENTS_AND_REFACTORING.md`.
+   *
+   * Tokens minted without `cnf` continue to be accepted as plain
+   * bearer tokens (back-compat). Once `DPOP_REQUIRED=true` is
+   * enabled on the gateway, the gateway will reject any token without
+   * `cnf.jkt`.
+   */
+  cnf?: {
+    /**
+     * Base64url-encoded SHA-256 JWK thumbprint (RFC 7638) of the
+     * holder's public key. Computed by the issuer from the
+     * `dpopJwk` / `dpopJkt` supplied at issuance time.
+     */
+    jkt: string;
+  };
 }
 
 /**
@@ -549,6 +572,25 @@ export interface IssueCapabilityRequest {
    * sensitive actions (`write`, `delete`, `admin`).
    */
   consent?: UserConsent;
+  /**
+   * Optional: base64url-encoded SHA-256 JWK thumbprint (RFC 7638) of
+   * the agent's DPoP public key. When supplied, the issuer stamps the
+   * resulting capability token with `cnf.jkt = <thumbprint>` so the
+   * token is sender-constrained per RFC 9449 (F-2): the gateway then
+   * requires every request to carry a DPoP proof signed by the
+   * matching private key. Either supply `dpopJkt` or `dpopJwk` (the
+   * issuer prefers `dpopJkt` because it does not require recomputing
+   * the thumbprint).
+   */
+  dpopJkt?: string;
+  /**
+   * Optional: agent's DPoP public JWK. The issuer computes its
+   * canonical SHA-256 thumbprint (RFC 7638) and binds the token via
+   * `cnf.jkt`. Equivalent in effect to {@link dpopJkt}; provided so
+   * agent runtimes can hand the issuer the public key without
+   * computing thumbprints client-side. Ignored when `dpopJkt` is set.
+   */
+  dpopJwk?: Record<string, unknown>;
 }
 
 /**
@@ -765,6 +807,27 @@ export interface ValidateActionRequest {
   resource: ResourceId;
   /** Optional: additional context for validation */
   context?: Record<string, unknown>;
+  /**
+   * Optional DPoP proof binding the request to the holder of the
+   * key referenced by the access token's `cnf.jkt` (RFC 9449 / F-2).
+   *
+   * When the verified token carries `cnf.jkt`, the gateway requires
+   * this field; the proof's `htm`/`htu` MUST agree with
+   * {@link dpop.httpMethod} / {@link dpop.httpUrl} and the embedded
+   * JWK's SHA-256 thumbprint MUST equal the token's `cnf.jkt`. When
+   * the token has no `cnf` claim, this field is ignored (back-compat).
+   *
+   * Routes wire this from the `DPoP` request header (`proof`) and the
+   * full request URL the proof was supposed to bind to.
+   */
+  dpop?: {
+    /** Compact-JWS DPoP proof from the `DPoP` header. */
+    proof: string;
+    /** HTTP method of the originating request, e.g. `'POST'`. */
+    httpMethod: string;
+    /** Full target URL the proof binds to (query/fragment stripped by verifier). */
+    httpUrl: string;
+  };
 }
 
 /**

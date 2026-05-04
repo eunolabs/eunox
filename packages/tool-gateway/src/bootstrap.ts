@@ -32,6 +32,12 @@ import {
   AuditPipeline,
   BackpressurePolicy,
   createAuditPipeline,
+  createDpopReplayStoreFromEnv,
+  DpopReplayStore,
+  createOcsfTransportFromEnv,
+  createOcsfWinstonTransport,
+  signedEvidenceToOcsf,
+  OcsfAuditTransport,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { JwksClient } from './jwks-client';
@@ -72,6 +78,23 @@ export interface GatewayDependencies {
    * into `AuditPipeline.drain()`.
    */
   auditPipelineDrainTimeoutMs: number;
+  /**
+   * Optional OCSF (F-6) audit transport. When configured via
+   * `OCSF_TRANSPORT`, every signed evidence record and every
+   * `AuditLogEntry`-shaped winston log line is also delivered as an
+   * OCSF v1.1 event to a SIEM-friendly sink. The gateway entrypoint
+   * is responsible for calling `close()` during shutdown.
+   */
+  ocsfTransport?: OcsfAuditTransport;
+  /**
+   * Optional shared DPoP replay store (F-2). When `REDIS_URL` is set
+   * a `RedisDpopReplayStore` is wired so a captured proof cannot be
+   * replayed once per replica inside its acceptance window;
+   * otherwise an `InMemoryDpopReplayStore` is used (single-replica
+   * / dev). The entrypoint is responsible for calling `close()` on
+   * shutdown when the implementation owns external resources.
+   */
+  dpopReplayStore?: DpopReplayStore;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
   /** Backend service URL for the proxy route. */
@@ -108,6 +131,22 @@ export interface GatewayDependencies {
    * region deployments.
    */
   region?: string;
+  /**
+   * Express `trust proxy` setting (security-critical for F-2 DPoP
+   * `htu` reconstruction). When the gateway is deployed behind a
+   * TLS-terminating reverse proxy / load balancer, this MUST be
+   * configured so `req.protocol` / `req.hostname` reflect the
+   * client-facing scheme and host the agent actually dialled (the
+   * one its DPoP proof was signed against). Plumbed from the
+   * `TRUST_PROXY` env var. Unset means Express's default of `false`
+   * — safe for direct deployments.
+   *
+   * Accepts the full Express vocabulary: a boolean, a hop count, a
+   * comma-separated list of CIDRs / IPs, or "loopback" /
+   * "linklocal" / "uniquelocal". See:
+   * https://expressjs.com/en/guide/behind-proxies.html
+   */
+  trustProxy?: string | boolean | number;
   /**
    * Pluggable {@link ActionResolver} (R-7, addresses I-4 and I-5).
    * Used by the proxy route to derive a capability action from the
@@ -190,6 +229,32 @@ function deriveJwksUrl(publicKeyUrl: string | undefined): string | undefined {
 }
 
 /**
+ * Parse the `TRUST_PROXY` env var into the value Express's
+ * `app.set('trust proxy', …)` accepts. Mirrors the Express docs:
+ *
+ *   - `undefined`  → `false` (Express's default, ignore X-Forwarded-*)
+ *   - `"true"`     → `true`  (trust every hop — UNSAFE if the gateway
+ *                              is also reachable directly by clients)
+ *   - `"false"`    → `false`
+ *   - a non-negative integer string → numeric hop count (e.g. `"1"`
+ *                                     trusts only the immediate proxy)
+ *   - anything else → returned as-is so Express can interpret CIDR /
+ *                     keyword forms like `"loopback"` or
+ *                     `"10.0.0.0/8,172.16.0.0/12"`.
+ */
+function parseTrustProxy(value: string | undefined): string | boolean | number {
+  if (value === undefined || value === '') return false;
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase() === 'true') return true;
+  if (trimmed.toLowerCase() === 'false') return false;
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isFinite(n)) return n;
+  }
+  return trimmed;
+}
+
+/**
  * Fetch the issuer public key, build verifier + enforcement engine and all
  * supporting stores. Throws on misconfiguration so the gateway fails closed.
  *
@@ -207,6 +272,30 @@ export async function initializeServices(
 
   const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
   const logger = createLogger(config.name, config.environment);
+
+  // F-6: optional OCSF audit transport. Constructed early so it can
+  // be attached to (a) the audit logger (used by the synchronous
+  // enforcement path) and (b) the audit pipeline's `onSigned` sink
+  // (used when R-9 async signing is enabled). When `OCSF_TRANSPORT`
+  // is unset the factory returns `undefined` and OCSF stays off —
+  // existing deployments get no behavioural change.
+  const ocsfProduct = {
+    name: 'euno-tool-gateway',
+    vendor: 'Euno',
+  };
+  const ocsfTransport = createOcsfTransportFromEnv(env, logger);
+  if (ocsfTransport) {
+    logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
+  }
+
+  // F-2: shared DPoP replay store. Wires Redis when `REDIS_URL` is
+  // set so a captured proof can't be replayed once per replica
+  // inside its acceptance window — the failure mode flagged by the
+  // PR review of F-2. Falls back to per-process in-memory when no
+  // Redis is configured (single-replica / dev). See
+  // `RedisDpopReplayStore` for the SET NX semantics that make this
+  // race-free.
+  const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(env, logger);
 
   // Build the JWKS client (R-6).  Prefers ISSUER_JWKS_URL; falls back to
   // deriving the JWKS URL from the deprecated ISSUER_PUBLIC_KEY_URL base.
@@ -428,6 +517,10 @@ export async function initializeServices(
     const pipelineAuditLogger = createAuditLogger('tool-gateway', {
       region: validated.GATEWAY_REGION,
     });
+    // F-6: bridge AuditLogEntry-shaped log records into OCSF.
+    if (ocsfTransport) {
+      pipelineAuditLogger.add(createOcsfWinstonTransport(ocsfTransport, ocsfProduct));
+    }
 
     const backpressure: BackpressurePolicy =
       (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
@@ -457,6 +550,12 @@ export async function initializeServices(
           });
         } catch {
           // Audit-log emission is best-effort; never break signing on it.
+        }
+        // F-6: forward the signed evidence to the OCSF sink. Errors
+        // from the transport are swallowed inside `send` itself, so
+        // we never need to wrap this in a try/catch.
+        if (ocsfTransport) {
+          void ocsfTransport.send(signedEvidenceToOcsf(signed, ocsfProduct));
         }
       },
       onSignError: (err) => {
@@ -495,6 +594,25 @@ export async function initializeServices(
     // F-7: stamp region on every enforcement audit record (deny logs,
     // signed evidence). Symmetrical to ISSUER_REGION.
     region: validated.GATEWAY_REGION,
+    // F-6: bridge AuditLogEntry-shaped log records the enforcement
+    // engine emits on the request hot path (`Action allowed` /
+    // `Action denied`) into OCSF. Without this hook OCSF would only
+    // see `pipelineAuditLogger`'s "Cryptographic evidence generated"
+    // line and miss every synchronous deny.
+    ...(ocsfTransport
+      ? { auditTransports: [createOcsfWinstonTransport(ocsfTransport, ocsfProduct)] }
+      : {}),
+    // F-2: DPoP / RFC 9449 sender-constrained tokens. `required=true`
+    // refuses any token without `cnf.jkt`; default is permissive
+    // (back-compat). The replay store is per-instance unless wired
+    // to a shared backend below — multi-replica deployments using
+    // `REDIS_URL` get a Redis-backed store automatically.
+    dpop: {
+      required: validated.DPOP_REQUIRED,
+      clockSkewSeconds: validated.DPOP_CLOCK_SKEW_SECONDS,
+      maxAgeSeconds: validated.DPOP_MAX_AGE_SECONDS,
+      replayStore: dpopReplayStore,
+    },
   });
 
   let ready = false;
@@ -520,6 +638,8 @@ export async function initializeServices(
     evidenceSigner,
     auditPipeline,
     auditPipelineDrainTimeoutMs,
+    ...(ocsfTransport ? { ocsfTransport } : {}),
+    dpopReplayStore,
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
@@ -529,6 +649,7 @@ export async function initializeServices(
     decisionsCounter,
     isReady: () => ready,
     region: validated.GATEWAY_REGION,
+    trustProxy: parseTrustProxy(validated.TRUST_PROXY),
     actionResolver,
   };
 

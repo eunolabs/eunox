@@ -436,6 +436,20 @@ export const IssuerConfigSchema = z
     ISSUER_REGION: optionalString.describe(
       'Logical region tag for this issuer instance (e.g. "eastus2", "westeurope"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
     ),
+
+    // OCSF audit transport (F-6) --------------------------------------------
+    OCSF_TRANSPORT: optionalString.describe(
+      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event to stderr), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
+    ),
+    OCSF_FILE_PATH: optionalString.describe(
+      'Path the file OCSF transport appends events to. Required when OCSF_TRANSPORT=file. Rotation is delegated to the operating system (logrotate / journald).',
+    ),
+    OCSF_HTTP_URL: optionalString.describe(
+      'Collector URL the http OCSF transport POSTs events to. Required when OCSF_TRANSPORT=http. Failures are logged and swallowed — operators who need guaranteed delivery should layer a queueing collector (Vector, Fluent Bit) in front of this transport.',
+    ),
+    OCSF_HTTP_HEADERS: optionalString.describe(
+      'Optional JSON object of additional HTTP headers for the http OCSF transport (e.g. \'{"x-api-key":"..."}\'). Ignored if OCSF_TRANSPORT≠http.',
+    ),
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -702,6 +716,42 @@ export const GatewayConfigSchema = z
     // Multi-region active/active (F-7) ---------------------------------------
     GATEWAY_REGION: optionalString.describe(
       'Logical region tag for this gateway instance (e.g. "eastus2", "westeurope"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
+    ),
+
+    // DPoP / sender-constrained tokens (F-2, RFC 9449) -----------------------
+    DPOP_REQUIRED: envBoolean({
+      default: false,
+      description:
+        'When true, the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449 / F-2). Default false preserves back-compat with plain bearer tokens. Enable once every issuer that mints for this gateway has been rolled out with DPoP support so the holder of a leaked token cannot use it without the matching DPoP private key.',
+    }),
+    DPOP_CLOCK_SKEW_SECONDS: envPositiveInt({
+      default: 60,
+      description:
+        'Maximum number of seconds the DPoP proof `iat` claim may be ahead of the gateway clock before the proof is rejected as future-dated. Default 60. Lower values demand tighter NTP sync; higher values widen the replay window slightly.',
+    }),
+    DPOP_MAX_AGE_SECONDS: envPositiveInt({
+      default: 300,
+      description:
+        'Maximum age (in seconds) of an accepted DPoP proof. Anything older is refused as expired. Default 300 (5 minutes). The proof `jti` is remembered for this period to defeat replays.',
+    }),
+
+    // Reverse-proxy trust (security boundary for DPoP htu, client-IP, …) -----
+    TRUST_PROXY: optionalString.describe(
+      'Express `trust proxy` setting. Controls whether `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-For` are honoured when reconstructing the request URL — required for DPoP `htu` verification (F-2) when the gateway sits behind a TLS-terminating reverse proxy. Accepts: "true" (trust all proxies — UNSAFE if the gateway is also reachable directly by clients), "false"/unset (ignore X-Forwarded-* — safe default for direct deployment), an integer hop count ("1" = trust the immediate upstream proxy, recommended), or a comma-separated list of trusted CIDRs ("10.0.0.0/8,172.16.0.0/12"). MUST be configured when running behind a load balancer; without it, a direct caller can spoof X-Forwarded-* to make the DPoP proof verify against an attacker-chosen URL.',
+    ),
+
+    // OCSF audit transport (F-6) --------------------------------------------
+    OCSF_TRANSPORT: optionalString.describe(
+      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event to stderr), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
+    ),
+    OCSF_FILE_PATH: optionalString.describe(
+      'Path the file OCSF transport appends events to. Required when OCSF_TRANSPORT=file. Rotation is delegated to the operating system (logrotate / journald).',
+    ),
+    OCSF_HTTP_URL: optionalString.describe(
+      'Collector URL the http OCSF transport POSTs events to. Required when OCSF_TRANSPORT=http. Failures are logged and swallowed — operators who need guaranteed delivery should layer a queueing collector (Vector, Fluent Bit) in front of this transport.',
+    ),
+    OCSF_HTTP_HEADERS: optionalString.describe(
+      'Optional JSON object of additional HTTP headers for the http OCSF transport (e.g. \'{"x-api-key":"..."}\'). Ignored if OCSF_TRANSPORT≠http.',
     ),
   })
   .superRefine((cfg, ctx) => {

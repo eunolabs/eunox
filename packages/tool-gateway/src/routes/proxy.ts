@@ -25,6 +25,32 @@ import { EnforcementEngine, EnforcementResult } from '../enforcement';
 
 type Logger = ReturnType<typeof createLogger>;
 
+/**
+ * Reconstruct the full URL the *agent runtime* called when it sent
+ * this request. Used as the canonical `htu` for DPoP proof
+ * verification (F-2): the agent signed a proof bound to the URL it
+ * dialled, which (after Express route mounting) is `<scheme>://<host>
+ * /proxy<req.originalUrl-without-/proxy-prefix>`.
+ *
+ * Security boundary: we deliberately use Express's `req.protocol` and
+ * `req.hostname`, which only honour `X-Forwarded-Proto` /
+ * `X-Forwarded-Host` when `app.set('trust proxy', …)` has been
+ * configured by the operator (see `TRUST_PROXY` in the gateway
+ * config and `app-factory.ts`). Reading those headers
+ * unconditionally would let any caller who can reach the gateway
+ * directly spoof the proof's `htu` to whatever URL they chose to
+ * sign — defeating the sender-constrained URL binding instead of
+ * verifying the actual request target.
+ *
+ * Query string and fragment are preserved here — the verifier strips
+ * them via `extractHtu` so both sides agree.
+ */
+function reconstructRequestUrl(req: Request): string {
+  const proto = req.protocol || 'http';
+  const host = req.hostname || 'localhost';
+  return `${proto}://${host}${req.originalUrl}`;
+}
+
 export interface ProxyRouterOptions {
   enforcementEngine: EnforcementEngine;
   logger: Logger;
@@ -122,6 +148,13 @@ export function createValidateCapabilityMiddleware(
       // `argumentSchema` (if any) — argument-level enforcement is a
       // first-class part of the gateway, not something callers have to
       // remember to invoke.
+      // F-2: forward the DPoP proof + bound URL/method when the
+      // client supplied a `DPoP` header. The full URL is reconstructed
+      // from the inbound request because the proof's `htu` is
+      // expected to bind to the URL the agent runtime called, not the
+      // upstream backend URL the gateway proxies to.
+      const dpopHeader = req.headers['dpop'];
+      const dpopProof = Array.isArray(dpopHeader) ? dpopHeader[0] : dpopHeader;
       const validationRequest: ValidateActionRequest = {
         token,
         action: action as ValidateActionRequest['action'],
@@ -132,6 +165,15 @@ export function createValidateCapabilityMiddleware(
           body: req.body,
           query: req.query,
         },
+        ...(typeof dpopProof === 'string' && dpopProof.length > 0
+          ? {
+              dpop: {
+                proof: dpopProof,
+                httpMethod: req.method,
+                httpUrl: reconstructRequestUrl(req),
+              },
+            }
+          : {}),
       };
 
       const result = await enforcementEngine.validateAction(validationRequest);

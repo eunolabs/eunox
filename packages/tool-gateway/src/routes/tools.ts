@@ -31,6 +31,34 @@ import { EnforcementEngine } from '../enforcement';
 type Logger = ReturnType<typeof createLogger>;
 
 /**
+ * Reconstruct the URL the agent runtime dialled when posting to
+ * `/api/v1/tools/invoke`, used as the canonical `htu` for DPoP proof
+ * verification (F-2).
+ *
+ * Security boundary: we deliberately use Express's `req.protocol` and
+ * `req.hostname`, which only honour `X-Forwarded-Proto` /
+ * `X-Forwarded-Host` when `app.set('trust proxy', …)` has been
+ * configured by the operator (see `TRUST_PROXY` in the gateway
+ * config and `app-factory.ts`). Reading those headers
+ * unconditionally would let any caller who can reach the gateway
+ * directly spoof the proof's `htu` to whatever URL they chose to
+ * sign — defeating the sender-constrained URL binding instead of
+ * verifying the actual request target.
+ *
+ * `req.hostname` strips any port from the host header. Production
+ * deployments behind a load balancer terminate TLS on a standard
+ * port (443 / 80) which is implicit in the URL the agent signed,
+ * so omitting the port is correct. For non-standard ports the
+ * agent's `gatewayUrl` and the gateway's incoming `Host` need to
+ * agree (they do by construction — see `agent-runtime` config).
+ */
+function reconstructToolsRequestUrl(req: Request): string {
+  const proto = req.protocol || 'http';
+  const host = req.hostname || 'localhost';
+  return `${proto}://${host}${req.originalUrl}`;
+}
+
+/**
  * Server-side tool registry: maps known tool names to their required action.
  * Re-exported from `@euno/common` so existing imports keep working but the
  * canonical source is now the {@link ActionResolver} configuration loaded
@@ -111,6 +139,12 @@ export function createToolsRouter(opts: ToolsRouterOptions): Router {
         // Never trust a client-supplied resource value.
         const canonicalResource = `tool://${tool}`;
 
+        // F-2: forward the DPoP proof if present. The agent runtime
+        // sends one alongside the bearer token whenever the token is
+        // sender-constrained (cnf.jkt). The bound URL is the URL the
+        // agent called — reconstructed from the inbound request.
+        const dpopHeader = req.headers['dpop'];
+        const dpopProof = Array.isArray(dpopHeader) ? dpopHeader[0] : dpopHeader;
         const validationRequest: ValidateActionRequest = {
           token,
           action: action as ValidateActionRequest['action'],
@@ -120,6 +154,15 @@ export function createToolsRouter(opts: ToolsRouterOptions): Router {
             args,
             agentId: req.headers['x-agent-id'],
           },
+          ...(typeof dpopProof === 'string' && dpopProof.length > 0
+            ? {
+                dpop: {
+                  proof: dpopProof,
+                  httpMethod: req.method,
+                  httpUrl: reconstructToolsRequestUrl(req),
+                },
+              }
+            : {}),
         };
 
         const result = await enforcementEngine.validateAction(validationRequest);

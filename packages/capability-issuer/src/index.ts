@@ -35,6 +35,8 @@ import {
   EUNO_ATTR,
   IssuanceRateLimiter,
   createIssuanceRateLimiterFromEnv,
+  createOcsfTransportFromEnv,
+  createOcsfWinstonTransport,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -279,6 +281,21 @@ async function initializeServices() {
       );
     }
 
+    // F-6: optional OCSF audit transport. When `OCSF_TRANSPORT` is
+    // unset the factory returns `undefined` and we attach nothing —
+    // existing deployments are unaffected.
+    const ocsfTransport = createOcsfTransportFromEnv(process.env, logger);
+    const issuerOcsfProduct = {
+      name: 'euno-capability-issuer',
+      vendor: 'Euno',
+    };
+    const auditTransports = ocsfTransport
+      ? [createOcsfWinstonTransport(ocsfTransport, issuerOcsfProduct)]
+      : undefined;
+    if (ocsfTransport) {
+      logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
+    }
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
@@ -316,6 +333,7 @@ async function initializeServices() {
         // the legacy substring-matching CA tier coercion. When unset
         // the issuer uses the BUILTIN_ACTION_RESOLVER fallback.
         actionResolver,
+        ...(auditTransports ? { auditTransports } : {}),
         onIssuanceRateLimited: (subject, reason) => {
           // Forward the limiter's classification verbatim so dashboards
           // can distinguish a real rate-limit hit from a Redis outage —
@@ -489,6 +507,14 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
       requestedCapabilities: req.body.requestedCapabilities,
       manifest: req.body.manifest,
       consent: req.body.consent,
+      // F-2: opt-in DPoP holder-key binding. Either a precomputed
+      // thumbprint or the public JWK; the issuer-service prefers the
+      // thumbprint and validates the JWK shape when present.
+      dpopJkt: typeof req.body.dpopJkt === 'string' ? req.body.dpopJkt : undefined,
+      dpopJwk:
+        req.body.dpopJwk && typeof req.body.dpopJwk === 'object' && !Array.isArray(req.body.dpopJwk)
+          ? (req.body.dpopJwk as Record<string, unknown>)
+          : undefined,
     };
 
     // Validate required fields

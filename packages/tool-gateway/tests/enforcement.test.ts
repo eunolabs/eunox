@@ -1146,4 +1146,158 @@ describe('EnforcementEngine', () => {
       expect(recorded).toHaveLength(1);
     });
   });
+
+  describe('DPoP enforcement (F-2)', () => {
+    let dpopPrivateKey: jose.KeyLike;
+    let dpopPublicJwk: jose.JWK;
+    let dpopJkt: string;
+
+    beforeAll(async () => {
+      const kp = await jose.generateKeyPair('ES256', { extractable: true });
+      dpopPrivateKey = kp.privateKey as jose.KeyLike;
+      dpopPublicJwk = await jose.exportJWK(kp.publicKey);
+      // Reuse the runtime's jose to compute the thumbprint so the test
+      // does not depend on @euno/common internals beyond what the
+      // engine itself uses.
+      dpopJkt = await jose.calculateJwkThumbprint(dpopPublicJwk, 'sha256');
+    });
+
+    async function createDpopProof(method: string, url: string, opts?: { iat?: number; jti?: string }) {
+      const builder = new jose.SignJWT({
+        htm: method.toUpperCase(),
+        htu: url,
+        jti: opts?.jti ?? `proof-${Math.random().toString(36).slice(2)}`,
+      }).setProtectedHeader({ alg: 'ES256', typ: 'dpop+jwt', jwk: dpopPublicJwk });
+      builder.setIssuedAt(opts?.iat);
+      return builder.sign(dpopPrivateKey);
+    }
+
+    it('rejects a sender-constrained token with no DPoP proof', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { cnf: { jkt: dpopJkt } },
+      );
+      await expect(
+        engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        }),
+      ).rejects.toThrow(/DPoP proof required/);
+    });
+
+    it('accepts a sender-constrained token with a valid DPoP proof', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { cnf: { jkt: dpopJkt } },
+      );
+      const proof = await createDpopProof('GET', 'https://gw.example.com/proxy/api');
+      const res = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        dpop: {
+          proof,
+          httpMethod: 'GET',
+          httpUrl: 'https://gw.example.com/proxy/api',
+        },
+      });
+      expect(res.allowed).toBe(true);
+    });
+
+    it('rejects a replayed DPoP proof', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { cnf: { jkt: dpopJkt } },
+      );
+      const proof = await createDpopProof('GET', 'https://gw.example.com/proxy/api', {
+        jti: 'fixed-jti',
+      });
+      await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+      });
+      await expect(
+        engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+        }),
+      ).rejects.toThrow(/already been used/);
+    });
+
+    it('rejects a proof for the wrong URL', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { cnf: { jkt: dpopJkt } },
+      );
+      const proof = await createDpopProof('GET', 'https://gw.example.com/other');
+      await expect(
+        engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+        }),
+      ).rejects.toThrow(/htu mismatch/);
+    });
+
+    it('rejects a proof signed by a different key', async () => {
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { cnf: { jkt: dpopJkt } },
+      );
+      const otherKp = await jose.generateKeyPair('ES256', { extractable: true });
+      const otherJwk = await jose.exportJWK(otherKp.publicKey);
+      const proof = await new jose.SignJWT({
+        htm: 'GET',
+        htu: 'https://gw.example.com/proxy/api',
+        jti: 'wrong-key',
+      })
+        .setProtectedHeader({ alg: 'ES256', typ: 'dpop+jwt', jwk: otherJwk })
+        .setIssuedAt()
+        .sign(otherKp.privateKey as jose.KeyLike);
+      await expect(
+        engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+        }),
+      ).rejects.toThrow(/does not match/);
+    });
+
+    it('with dpop.required=true, rejects a plain token without cnf.jkt', async () => {
+      const strict = new EnforcementEngine({
+        verifier,
+        logger,
+        dpop: { required: true },
+      });
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+      await expect(
+        strict.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+        }),
+      ).rejects.toThrow(/requires DPoP/);
+    });
+
+    it('with dpop.required=false (default), still accepts plain bearer tokens', async () => {
+      const token = await createTestToken([
+        { resource: 'api://service/endpoint', actions: ['read'] },
+      ]);
+      const res = await engine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+      });
+      expect(res.allowed).toBe(true);
+    });
+  });
 });

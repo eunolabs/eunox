@@ -29,7 +29,11 @@ import {
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
   AuditPipeline,
+  DpopReplayStore,
+  InMemoryDpopReplayStore,
+  verifyDpopProof,
 } from '@euno/common';
+import type TransportStream from 'winston-transport';
 
 export interface EnforcementEngineOptions {
   verifier: TokenVerifier;
@@ -86,6 +90,40 @@ export interface EnforcementEngineOptions {
    * means "not configured" and the field is omitted (back-compat).
    */
   region?: string;
+  /**
+   * Optional list of additional winston transports to attach to this
+   * engine's audit logger. Used by `bootstrap.ts` to wire the F-6
+   * OCSF bridge so every `AuditLogEntry` the engine emits on the
+   * request hot path (`Action allowed` / `Action denied`) is also
+   * mirrored to the configured SIEM. Without this hook OCSF would
+   * only see the signed-evidence sink, missing every synchronous
+   * deny on the validation path.
+   *
+   * Failures attaching a transport are not the engine's concern —
+   * the caller chose to add it, the caller owns its health.
+   */
+  auditTransports?: TransportStream[];
+  /**
+   * DPoP (RFC 9449 / F-2) configuration.
+   *
+   * - `replayStore` is the per-instance (or shared) store used to
+   *   reject replays of a previously-seen proof. When omitted the
+   *   engine creates an {@link InMemoryDpopReplayStore} sized for a
+   *   single gateway process. Multi-instance deployments should plug
+   *   in a shared backend so a replay sent to a different replica is
+   *   still detected.
+   * - `required` (default `false`) makes DPoP mandatory: any token
+   *   without a `cnf.jkt` claim is rejected. Recommended for
+   *   production once all issuers are minting bound tokens.
+   * - `clockSkewSeconds` and `maxAgeSeconds` are forwarded to
+   *   {@link verifyDpopProof}.
+   */
+  dpop?: {
+    replayStore?: DpopReplayStore;
+    required?: boolean;
+    clockSkewSeconds?: number;
+    maxAgeSeconds?: number;
+  };
 }
 
 /**
@@ -133,10 +171,26 @@ export class EnforcementEngine {
    */
   private decisionRecorder?: (decision: 'allow' | 'deny') => void;
 
+  /**
+   * DPoP (RFC 9449 / F-2) verification surface. `required=true`
+   * rejects any token lacking `cnf.jkt`. The replay store is shared
+   * across `validateAction` calls so duplicate proofs are detected
+   * within their TTL.
+   */
+  private dpopRequired: boolean;
+  private dpopReplayStore: DpopReplayStore;
+  private dpopClockSkewSeconds: number;
+  private dpopMaxAgeSeconds: number;
+
   constructor(options: EnforcementEngineOptions) {
     this.verifier = options.verifier;
     this.logger = options.logger;
     this.auditLogger = createAuditLogger('tool-gateway', { region: options.region });
+    if (options.auditTransports) {
+      for (const t of options.auditTransports) {
+        this.auditLogger.add(t);
+      }
+    }
     this.killSwitchManager = options.killSwitchManager;
     this.evidenceSigner = options.evidenceSigner;
     this.auditPipeline = options.auditPipeline;
@@ -150,6 +204,10 @@ export class EnforcementEngine {
     }
     this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
+    this.dpopRequired = options.dpop?.required === true;
+    this.dpopReplayStore = options.dpop?.replayStore ?? new InMemoryDpopReplayStore();
+    this.dpopClockSkewSeconds = options.dpop?.clockSkewSeconds ?? 60;
+    this.dpopMaxAgeSeconds = options.dpop?.maxAgeSeconds ?? 300;
   }
 
   /**
@@ -206,6 +264,64 @@ export class EnforcementEngine {
       // Step 1: Verify the token signature and decode
       this.logger.debug('Verifying capability token');
       const payload = await this.verifier.verify(request.token);
+
+      // Step 1b (F-2): If the token is sender-constrained (carries
+      // `cnf.jkt`) we MUST verify the request also carries a valid
+      // DPoP proof signed by the matching key. When the operator has
+      // enabled `dpop.required`, we additionally reject any token
+      // *without* `cnf.jkt` so a downgrade attack — strip the
+      // confirmation claim, present a plain bearer token — cannot
+      // bypass the proof-of-possession check.
+      const tokenJkt = payload.cnf?.jkt;
+      if (tokenJkt) {
+        if (!request.dpop) {
+          await this.logDenial(
+            payload.sub,
+            request.action,
+            request.resource,
+            'DPoP proof required but missing',
+            typeof request.context?.sessionId === 'string' ? request.context.sessionId : undefined,
+          );
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            'DPoP proof required (token is sender-constrained) but request did not carry a DPoP header',
+            401,
+          );
+        }
+        try {
+          await verifyDpopProof({
+            proof: request.dpop.proof,
+            httpMethod: request.dpop.httpMethod,
+            httpUrl: request.dpop.httpUrl,
+            replayStore: this.dpopReplayStore,
+            clockSkewSeconds: this.dpopClockSkewSeconds,
+            maxAgeSeconds: this.dpopMaxAgeSeconds,
+            expectedJkt: tokenJkt,
+          });
+        } catch (err) {
+          await this.logDenial(
+            payload.sub,
+            request.action,
+            request.resource,
+            err instanceof Error ? `DPoP verification failed: ${err.message}` : 'DPoP verification failed',
+            typeof request.context?.sessionId === 'string' ? request.context.sessionId : undefined,
+          );
+          throw err;
+        }
+      } else if (this.dpopRequired) {
+        await this.logDenial(
+          payload.sub,
+          request.action,
+          request.resource,
+          'Token is not sender-constrained (cnf.jkt missing) but gateway requires DPoP',
+          typeof request.context?.sessionId === 'string' ? request.context.sessionId : undefined,
+        );
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          'Token is not sender-constrained (cnf.jkt missing) but this gateway requires DPoP',
+          401,
+        );
+      }
 
       // Step 2: Check kill switch
       const rawSessionId = request.context?.sessionId;

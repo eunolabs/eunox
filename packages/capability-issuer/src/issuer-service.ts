@@ -38,10 +38,12 @@ import {
   generateId,
   getCurrentTimestamp,
   getExpirationTimestamp,
+  jwkToJkt,
   mapRolesToCapabilitiesForPolicy,
   matchesResource,
 } from '@euno/common';
 import * as crypto from 'crypto';
+import type TransportStream from 'winston-transport';
 import { DbTokenService } from './db-token';
 import { StorageGrantService } from './storage-grant';
 import {
@@ -77,6 +79,20 @@ export type { PostureEmitterLike } from '@euno/common';
  * (e.g. RSA keys, which support several algorithm families) so that callers
  * can omit `alg` rather than advertising an incorrect value.
  */
+/**
+ * RFC 7638 SHA-256 JWK thumbprint validator. A correct value is the
+ * raw 32-byte SHA-256 digest base64url-encoded *without* padding —
+ * exactly 43 characters drawn from the URL-safe alphabet. Anything
+ * else (a hex digest, a SHA-1 thumbprint, a typo, …) cannot ever
+ * match a verifier's recomputed thumbprint, so we refuse the request
+ * at issuance time instead of minting a token that is guaranteed to
+ * fail at verification.
+ */
+const JWK_THUMBPRINT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+function isValidJwkThumbprint(value: string): boolean {
+  return JWK_THUMBPRINT_PATTERN.test(value);
+}
+
 function inferAlgFromJwk(jwkData: Record<string, unknown>): string | undefined {
   const kty = String(jwkData['kty'] ?? '');
   const crv = typeof jwkData['crv'] === 'string' ? jwkData['crv'] : undefined;
@@ -232,6 +248,17 @@ export interface CapabilityIssuerServiceOptions {
    * policy.
    */
   actionResolver?: ActionResolver;
+  /**
+   * Optional list of additional winston transports to attach to this
+   * issuer's audit logger (in addition to whatever
+   * {@link createAuditLogger} attaches by default). Used by the
+   * service entrypoint to plug in the F-6 OCSF bridge so every
+   * AuditLogEntry the issuer emits is mirrored to the configured SIEM.
+   *
+   * Failures attaching a transport are not the service's concern —
+   * the caller chose to add it, the caller owns its health.
+   */
+  auditTransports?: TransportStream[];
 }
 
 export class CapabilityIssuerService {
@@ -293,6 +320,11 @@ export class CapabilityIssuerService {
     this.region = options.region ?? options.postureRegion ?? process.env.EUNO_DEPLOYMENT_REGION ?? '';
     this.postureRegion = this.region.length > 0 ? this.region : 'unknown';
     this.auditLogger = createAuditLogger('capability-issuer', { region: this.region });
+    if (options.auditTransports) {
+      for (const t of options.auditTransports) {
+        this.auditLogger.add(t);
+      }
+    }
     this.requireConsent = options.requireConsent === true;
     this.policy = options.policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
     if (options.storageGrantService) this.storageGrantService = options.storageGrantService;
@@ -444,6 +476,13 @@ export class CapabilityIssuerService {
 
       // Step 5: Build and sign the token.
       const tokenId = generateId();
+      // F-2: resolve the DPoP key binding (if the agent supplied one).
+      // We prefer the explicit thumbprint to avoid recomputing it; if
+      // the agent only sent the JWK, derive the canonical SHA-256
+      // thumbprint here. Failures parsing the JWK are reported as
+      // INVALID_REQUEST so the operator can see what's wrong rather
+      // than have the token silently mint without a binding.
+      const dpopJkt = await this.resolveDpopJkt(request);
       const payload = buildIssuancePayload({
         issuerDid: this.issuerDid,
         agentId: request.agentId,
@@ -456,6 +495,8 @@ export class CapabilityIssuerService {
         // attribute the token after a regional failover. Falls back to
         // `undefined` (claim omitted) when no region is configured.
         region: this.region.length > 0 ? this.region : undefined,
+        // F-2: stamp the holder-key binding when supplied.
+        ...(dpopJkt ? { dpopJkt } : {}),
       });
 
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
@@ -705,6 +746,54 @@ export class CapabilityIssuerService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  /**
+   * Resolve the holder-key thumbprint to stamp on a freshly-issued
+   * capability token's `cnf.jkt` claim (RFC 9449 / F-2). The agent
+   * runtime supplies *either* a precomputed thumbprint (`dpopJkt`)
+   * *or* the public JWK (`dpopJwk`); when both are absent the token
+   * is minted as a plain bearer token (back-compat). When both are
+   * supplied, `dpopJkt` wins and `dpopJwk` is ignored — matches the
+   * documented contract in {@link IssueCapabilityRequest}.
+   *
+   * Throws {@link CapabilityError}({@link ErrorCode.INVALID_REQUEST})
+   * when `dpopJwk` is supplied but is not a structurally valid JWK
+   * we can hash, so the operator sees a clear 400 instead of a token
+   * that silently mints without the binding it requested.
+   */
+  private async resolveDpopJkt(
+    request: IssueCapabilityRequest,
+  ): Promise<string | undefined> {
+    if (typeof request.dpopJkt === 'string' && request.dpopJkt.length > 0) {
+      // RFC 7638 SHA-256 thumbprints are exactly 32 raw bytes encoded
+      // as 43 unpadded base64url characters. Reject anything else
+      // here so a typo / wrong-algorithm value is caught at issuance
+      // time — minting a token whose `cnf.jkt` no DPoP proof can
+      // ever match would otherwise return a credential the gateway
+      // is guaranteed to reject on first use, and the operator
+      // would have to debug it from a 401 hours later.
+      if (!isValidJwkThumbprint(request.dpopJkt)) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          'dpopJkt must be a base64url-encoded SHA-256 JWK thumbprint (RFC 7638): 43 unpadded base64url characters.',
+          400,
+        );
+      }
+      return request.dpopJkt;
+    }
+    if (request.dpopJwk && typeof request.dpopJwk === 'object') {
+      try {
+        return await jwkToJkt(request.dpopJwk);
+      } catch (err) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          `dpopJwk is not a valid JWK: ${err instanceof Error ? err.message : 'unknown error'}`,
+          400,
+        );
+      }
+    }
+    return undefined;
   }
 
   /**

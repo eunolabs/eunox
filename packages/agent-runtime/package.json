@@ -19,7 +19,8 @@
   "license": "MIT",
   "dependencies": {
     "@euno/common": "^1.0.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "jose": "^5.2.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
