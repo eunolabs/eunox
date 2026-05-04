@@ -1,0 +1,151 @@
+# Redis for distributed coordination across multi-replica gateway and issuer
+# pods.  Without a shared Redis the per-replica in-memory fallbacks split
+# brain on:
+#   - token revocation              (RedisRevocationStore)
+#   - kill-switch propagation       (RedisKillSwitchManager)
+#   - per-token maxCalls counters   (RedisCallCounterStore)
+#   - DPoP proof replay defense     (RedisDpopReplayStore)
+#   - per-subject issuance rate limiting (issuance-rate-limiter)
+#
+# This file ships a small in-cluster Redis suitable for development clusters
+# and the production pilot.  For real production deployments prefer a managed
+# Redis (Azure Cache for Redis Standard+, AWS ElastiCache, GCP Memorystore)
+# and override the `redis-url` ConfigMap key in `namespace-and-config.yaml`,
+# `tool-gateway-deployment.yaml`, and `capability-issuer-deployment.yaml`
+# to point at it (the Deployments below can then be removed).
+#
+# References:
+#   - docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md ("Redis instance provisioned")
+#   - docs/MULTI_REGION_ISSUER.md             (REDIS_URL per-region)
+#   - docs/DISTRIBUTED_REVOCATION.md
+#   - docs/DISTRIBUTED_KILL_SWITCH.md
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis
+  namespace: euno-system
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: euno-system
+  labels:
+    app: redis
+    component: coordination
+spec:
+  # Single replica: the in-memory Redis store is not horizontally replicated;
+  # for HA Redis use a managed offering (see header comment).
+  replicas: 1
+  strategy:
+    # Avoid two Redis pods racing for the same data during rollouts.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: coordination
+    spec:
+      serviceAccountName: redis
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          imagePullPolicy: IfNotPresent
+          args:
+            # Disable on-disk persistence: every key Euno writes to Redis is
+            # short-lived (revocation TTLs, kill-switch entries, replay
+            # nonces, rate-limit windows) and a fresh start is acceptable.
+            - "redis-server"
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+            - "--maxmemory"
+            - "200mb"
+            - "--maxmemory-policy"
+            - "allkeys-lru"
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            privileged: false
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: euno-system
+  labels:
+    app: redis
+    component: coordination
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    app: redis

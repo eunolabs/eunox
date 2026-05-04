@@ -71,6 +71,26 @@ spec:
           value: "1.0.0"
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
+
+        # Distributed coordination (Redis) — REQUIRED for multi-replica HA.
+        # Without REDIS_URL, revocation entries, kill-switch state, maxCalls
+        # counters, and DPoP replay nonces fall back to per-pod in-memory
+        # stores, so a token revoked / killed on one replica is still
+        # accepted by the others (split-brain authorization).  Defaults to
+        # the in-cluster Redis shipped in `redis.yaml`; override the
+        # `redis-url` ConfigMap key for managed Redis in production.
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: gateway-config
+              key: redis-url
+        # Fail-closed on Redis unavailability for revocation lookups: a
+        # network blip must NOT silently re-enable revoked tokens.  Set to
+        # "true" only if availability is more important than revocation
+        # freshness in your environment.
+        - name: REVOCATION_FAIL_OPEN
+          value: "false"
+
         # Sprint 3: Secrets via Kubernetes secrets, not environment variables
         - name: ADMIN_API_KEY
           valueFrom:
@@ -199,3 +219,8 @@ metadata:
   namespace: euno-system
 data:
   backend-service-url: "https://your-backend-service.com"
+  # Distributed coordination (Redis) — REQUIRED so revocation, kill-switch,
+  # maxCalls counters, and DPoP replay defense propagate across all
+  # tool-gateway replicas.  Defaults to the in-cluster Redis from
+  # `redis.yaml`; override with a managed Redis URL for production.
+  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"

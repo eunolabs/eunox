@@ -24,6 +24,15 @@ data:
 
   # Policy version
   policy-version: "1.0.0"
+
+  # Distributed coordination (Redis) — REQUIRED for multi-replica gateway
+  # and issuer deployments.  Without it, revocation, kill-switch, maxCalls
+  # counters, DPoP replay defense, and per-subject issuance rate-limit
+  # state fall back to per-pod in-memory stores and split-brain across
+  # replicas.  Defaults to the in-cluster Redis shipped in `redis.yaml`;
+  # override with a managed Redis URL (e.g. Azure Cache for Redis,
+  # ElastiCache, Memorystore) for production.
+  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"
 ---
 # Secret placeholders (create these separately with actual values)
 # kubectl create secret generic issuer-secrets \

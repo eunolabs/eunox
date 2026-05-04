@@ -56,6 +56,19 @@ spec:
               key: issuer-did
         - name: DEFAULT_TOKEN_TTL
           value: "900"
+        # Distributed coordination — REQUIRED for the multi-replica issuer
+        # so the per-subject issuance rate limiter (F-1) shares state
+        # across pods (otherwise the effective budget is multiplied by
+        # the replica count).
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: redis-url
+        - name: ISSUANCE_RATE_LIMIT_ENABLED
+          value: "true"
+        - name: ISSUANCE_RATE_LIMIT_FAIL_CLOSED
+          value: "true"
         - name: AZURE_CLIENT_SECRET
           valueFrom:
             secretKeyRef:

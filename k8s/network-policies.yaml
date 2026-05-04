@@ -95,6 +95,36 @@ spec:
     - protocol: TCP
       port: 3001
 
+  # Allow to in-cluster Redis (distributed revocation, kill-switch,
+  # maxCalls, DPoP replay store).  Required for HA correctness across
+  # replicas.
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+  # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
+  # ElastiCache, GCP Memorystore) when operators override `redis-url` in
+  # the `gateway-config` ConfigMap to point at an external service.
+  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.  In production,
+  # narrow this rule to the specific managed Redis CIDR / private
+  # endpoint instead of 0.0.0.0/0.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        # Exclude in-cluster pod / service CIDRs is recommended in
+        # production; left unset here because cluster CIDRs vary.
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380
+
   # Allow to in-cluster backend services on HTTP/HTTPS
   - to:
     - podSelector: {}
@@ -170,6 +200,33 @@ spec:
     - protocol: TCP
       port: 443
 
+  # Allow to in-cluster Redis (distributed per-subject issuance rate
+  # limiter).  Required so multi-replica issuers share rate-limit state.
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+  # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
+  # ElastiCache, GCP Memorystore) when operators override `redis-url`
+  # in the `issuer-config` ConfigMap to point at an external service.
+  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.  In production,
+  # narrow this rule to the specific managed Redis CIDR / private
+  # endpoint instead of 0.0.0.0/0.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380
+
   ingress:
   # Allow from agents (for token requests)
   - from:
@@ -195,3 +252,43 @@ spec:
     ports:
     - protocol: TCP
       port: 3001
+---
+# Network Policy for Redis (distributed coordination backend).
+# Only the gateway and issuer pods may connect; no other pod (and in
+# particular not agent pods) may reach Redis.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-network-policy
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  - Egress
+
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: tool-gateway
+    - podSelector:
+        matchLabels:
+          app: capability-issuer
+    ports:
+    - protocol: TCP
+      port: 6379
+
+  egress:
+  # Allow DNS only; Redis itself does not need outbound traffic.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

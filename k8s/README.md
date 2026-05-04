@@ -78,6 +78,11 @@ kubectl apply -f namespace-and-config.yaml
 ### 3. Deploy Services
 
 ```bash
+# Deploy Redis (distributed coordination backend — REQUIRED for HA)
+# Skip this step if you point `redis-url` at a managed Redis instance
+# (Azure Cache for Redis, ElastiCache, Memorystore) in the ConfigMaps.
+kubectl apply -f redis.yaml
+
 # Deploy Capability Issuer
 kubectl apply -f capability-issuer.yaml
 
@@ -90,6 +95,15 @@ kubectl apply -f agent-runtime.yaml
 # Apply Network Policies (Sprint 1 requirement)
 kubectl apply -f network-policies.yaml
 ```
+
+> **HA correctness:** the gateway and issuer run multiple replicas. Redis
+> is required so that revocation, kill-switch propagation, per-token
+> `maxCalls` counters, DPoP proof replay defense, and per-subject
+> issuance rate limiting share state across pods. Without `REDIS_URL`
+> each replica falls back to its own in-memory store and authorization
+> decisions split-brain across the cluster. Override `redis-url` in the
+> `euno-config`, `gateway-config`, and `issuer-config` ConfigMaps to
+> point at a managed Redis in production.
 
 ### 4. Verify Deployment
 

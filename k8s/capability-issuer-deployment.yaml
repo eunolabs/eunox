@@ -147,6 +147,25 @@ spec:
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
 
+        # Distributed coordination (Redis) — REQUIRED for multi-replica HA.
+        # Without REDIS_URL, the per-subject issuance rate limiter falls
+        # back to per-pod in-memory counters and the effective budget is
+        # multiplied by the issuer replica count.  Defaults to the
+        # in-cluster Redis shipped in `redis.yaml`; override the
+        # `redis-url` ConfigMap key for managed Redis in production.
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: issuer-config
+              key: redis-url
+        # Issuance rate limiter (F-1) — enabled by default in production so
+        # a single compromised principal cannot mint capabilities at line
+        # rate.  Tune via the ConfigMap below.
+        - name: ISSUANCE_RATE_LIMIT_ENABLED
+          value: "true"
+        - name: ISSUANCE_RATE_LIMIT_FAIL_CLOSED
+          value: "true"
+
         # Sprint 3: Secrets via Kubernetes secrets, not environment variables
         # Azure credentials (if using Azure)
         - name: AZURE_CLIENT_SECRET
@@ -295,3 +314,10 @@ data:
 
   # Issuer DID
   issuer-did: "did:web:your-domain.com"
+
+  # Distributed coordination (Redis) — REQUIRED so the per-subject
+  # issuance rate limiter (F-1) shares state across all issuer replicas.
+  # Defaults to the in-cluster Redis from `redis.yaml`; override with a
+  # managed Redis URL for production / multi-region (see
+  # docs/MULTI_REGION_ISSUER.md).
+  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"

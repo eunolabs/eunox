@@ -41,6 +41,17 @@ spec:
               key: backend-service-url
         - name: POLICY_VERSION
           value: "1.0.0"
+        # Distributed coordination — REQUIRED for the multi-replica
+        # gateway so revocation, kill-switch, maxCalls, and DPoP replay
+        # state propagate across pods (otherwise each pod has its own
+        # in-memory store and authorization decisions split-brain).
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: euno-config
+              key: redis-url
+        - name: REVOCATION_FAIL_OPEN
+          value: "false"
         - name: ADMIN_API_KEY
           valueFrom:
             secretKeyRef:
