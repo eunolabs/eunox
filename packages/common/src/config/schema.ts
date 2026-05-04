@@ -537,6 +537,15 @@ export const GatewayConfigSchema = z
       min: 1,
       max: 65535,
     }),
+    ADMIN_PORT: envPositiveInt({
+      default: 3003,
+      description:
+        'TCP port the gateway admin HTTP server binds to. Admin routes (/admin/*) are served ' +
+        'exclusively on this port so they are unreachable from the public-facing load-balancer. ' +
+        'Must differ from PORT. Default 3003.',
+      min: 1,
+      max: 65535,
+    }),
 
     // Issuer + backend wiring -----------------------------------------------
     ISSUER_JWKS_URL: optionalString.describe(
@@ -824,6 +833,20 @@ export const GatewayConfigSchema = z
             `(got '${cfg.AUDIT_PIPELINE_BACKPRESSURE}').`,
         });
       }
+    }
+
+    // PORT and ADMIN_PORT must be different; an operator who mistakenly sets
+    // them to the same value would get a cryptic OS-level EADDRINUSE crash at
+    // runtime rather than a clear startup error.
+    if (cfg.PORT === cfg.ADMIN_PORT) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ADMIN_PORT'],
+        message:
+          `ADMIN_PORT and PORT cannot be the same value. ` +
+          `Current values: ADMIN_PORT=${cfg.ADMIN_PORT}, PORT=${cfg.PORT}. ` +
+          `Please set ADMIN_PORT to a different port (default: 3003).`,
+      });
     }
   });
 

@@ -170,7 +170,7 @@ export function buildScenarios(h: PerfHarness): ScenarioDefinition[] {
       description:
         'GET /admin/kill-switch/status — admin-API auth + KillSwitchManager lookup. ' +
         'Operators poll this dashboard during incidents, so it has its own SLO.',
-      target: 'gateway',
+      target: 'gateway-admin',
       request: {
         path: '/admin/kill-switch/status',
         method: 'GET',

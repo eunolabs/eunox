@@ -83,6 +83,7 @@ async function buildDeps(opts?: {
     auditPipelineDrainTimeoutMs: 5_000,
     isReady: opts?.isReady ?? (() => true),
     actionResolver: BUILTIN_ACTION_RESOLVER,
+    adminPort: 0,
   };
 
   return { deps, privateKey };

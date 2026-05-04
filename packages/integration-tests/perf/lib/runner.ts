@@ -31,7 +31,7 @@ export interface ScenarioDefinition {
   /** One-line description for the report. */
   description: string;
   /** Which harness URL the request hits — affects metric attribution. */
-  target: 'gateway' | 'issuer';
+  target: 'gateway' | 'gateway-admin' | 'issuer';
   /** Shape of the request to repeat. */
   request: ScenarioRequest;
   /**
@@ -52,8 +52,7 @@ export interface ScenarioDefinition {
 export interface ScenarioResult {
   name: string;
   description: string;
-  target: 'gateway' | 'issuer';
-  /** Total requests autocannon issued. */
+  target: 'gateway' | 'gateway-admin' | 'issuer';
   requests: number;
   /** Mean throughput (req/s). */
   requestsPerSecond: number;
@@ -75,7 +74,7 @@ export interface ScenarioResult {
 
 export interface RunScenarioOptions {
   /** Resolves the absolute URL for the request. */
-  baseUrlFor: (target: 'gateway' | 'issuer') => string;
+  baseUrlFor: (target: 'gateway' | 'gateway-admin' | 'issuer') => string;
   /** Override default duration; useful for `--quick` smoke runs. */
   durationSeconds?: number;
   /** Override default connection count. */

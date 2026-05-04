@@ -42,9 +42,6 @@ export function createApp(deps: GatewayDependencies): Express {
   const {
     logger,
     enforcementEngine,
-    killSwitchManager,
-    verifier,
-    adminApiKey,
     backendServiceUrl,
     allowedOrigins,
     rateLimitWindowMs,
@@ -136,17 +133,6 @@ export function createApp(deps: GatewayDependencies): Express {
   // Health checks (liveness + readiness; resolves I-19)
   app.use(createHealthRouter({ isReady }));
 
-  // Admin API
-  app.use(
-    '/admin',
-    createAdminRouter({
-      killSwitchManager,
-      logger,
-      adminApiKey,
-      tokenVerifier: verifier,
-    }),
-  );
-
   // Validation testing endpoint
   app.use(createValidateRouter({ enforcementEngine }));
 
@@ -202,4 +188,66 @@ export function createApp(deps: GatewayDependencies): Express {
   });
 
   return app;
+}
+
+/**
+ * Build a minimal Express application that serves only admin routes.
+ *
+ * This app is intended to listen on a **separate** port (ADMIN_PORT, default
+ * 3003) so it is never reachable through the public-facing load-balancer or
+ * the Kubernetes Service that routes external traffic to the gateway. Only
+ * the internal ClusterIP admin Service should target this port.
+ *
+ * Deliberately omits CORS, public rate limiting, and all public routes.
+ */
+export function createAdminApp(deps: GatewayDependencies): Express {
+  const { logger, killSwitchManager, adminApiKey, verifier } = deps;
+
+  const adminApp = express();
+
+  // Mirror the trust-proxy boundary from the public app so req.ip (logged on
+  // every admin request and on admin-API auth failures) reflects the real
+  // client address rather than the proxy's internal IP.
+  if (deps.trustProxy !== undefined && deps.trustProxy !== false) {
+    adminApp.set('trust proxy', deps.trustProxy);
+  }
+
+  // Security headers (still worthwhile on an internal interface).
+  adminApp.use(helmet());
+
+  adminApp.use(express.json());
+
+  // Minimal request logging so admin operations are auditable.
+  adminApp.use((req: Request, _res: Response, next: NextFunction) => {
+    logger.info('Admin request', {
+      method: req.method,
+      path: req.path,
+      ip: req.ip,
+    });
+    next();
+  });
+
+  adminApp.use(
+    '/admin',
+    createAdminRouter({
+      killSwitchManager,
+      logger,
+      adminApiKey,
+      tokenVerifier: verifier,
+    }),
+  );
+
+  // Error handler — all four parameters are required for Express to recognise
+  // this as an error-handling middleware (as opposed to a regular middleware).
+  adminApp.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
+    if (error instanceof CapabilityError) {
+      logger.warn('Admin request failed', { code: error.code, path: req.path });
+      res.status(error.statusCode).json({ error: { code: error.code, message: error.message } });
+      return;
+    }
+    logger.error('Unexpected admin error', { error: error.message, path: req.path });
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } });
+  });
+
+  return adminApp;
 }

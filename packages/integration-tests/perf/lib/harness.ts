@@ -39,7 +39,7 @@ import {
   createMetricsRegistry,
 } from '@euno/common';
 import { CapabilityIssuerService } from '../../../capability-issuer/src/issuer-service';
-import { createApp as createGatewayApp } from '../../../tool-gateway/src/app-factory';
+import { createApp as createGatewayApp, createAdminApp } from '../../../tool-gateway/src/app-factory';
 import type { GatewayDependencies } from '../../../tool-gateway/src/bootstrap';
 import { EnforcementEngine } from '../../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../../tool-gateway/src/verifier';
@@ -329,6 +329,8 @@ async function startStubBackend(): Promise<RunningServer> {
 export interface PerfHarness {
   /** Real Tool Gateway HTTP base URL (e.g. http://127.0.0.1:1234). */
   gatewayUrl: string;
+  /** Admin-only Tool Gateway HTTP base URL (separate port, ClusterIP-equivalent). */
+  adminUrl: string;
   /** Issuer HTTP base URL. */
   issuerUrl: string;
   /** Backend echo HTTP base URL. */
@@ -537,13 +539,17 @@ export async function buildHarness(): Promise<PerfHarness> {
     actionResolver: BUILTIN_ACTION_RESOLVER,
     isReady: () => true,
     adminApiKey,
+    adminPort: 0, // the perf harness starts the admin server on an ephemeral port via listenExpress
   };
 
   const app = createGatewayApp(gatewayDeps);
   const gatewayServer = await listenExpress(app);
+  const adminApp = createAdminApp(gatewayDeps);
+  const adminServer = await listenExpress(adminApp);
 
   return {
     gatewayUrl: gatewayServer.baseUrl,
+    adminUrl: adminServer.baseUrl,
     issuerUrl: issuerServer.baseUrl,
     backendUrl: backendServer.baseUrl,
     capabilityTokenAdmin: adminCap.token,
@@ -554,6 +560,7 @@ export async function buildHarness(): Promise<PerfHarness> {
     shutdown: async () => {
       await Promise.all([
         gatewayServer.close(),
+        adminServer.close(),
         issuerServer.close(),
         backendServer.close(),
       ]);

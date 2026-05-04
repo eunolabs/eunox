@@ -10,8 +10,9 @@
  */
 
 import dotenv from 'dotenv';
+import * as http from 'http';
 
-import { createApp } from './app-factory';
+import { createApp, createAdminApp } from './app-factory';
 import { initializeServices, type GatewayDependencies } from './bootstrap';
 import { EnforcementEngine } from './enforcement';
 
@@ -39,6 +40,7 @@ export async function startServer(): Promise<void> {
   bootstrappedDeps = deps;
 
   const app = createApp(deps);
+  const adminApp = createAdminApp(deps);
 
   const { config, logger, revocationStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs, ocsfTransport, dpopReplayStore } = deps;
 
@@ -49,91 +51,118 @@ export async function startServer(): Promise<void> {
     });
   });
 
+  const adminServer = adminApp.listen(deps.adminPort, () => {
+    logger.info(`Tool Gateway admin server listening on port ${deps.adminPort}`, {
+      environment: config.environment,
+    });
+  });
+
+  let isShuttingDown = false;
   const shutdown = (signal: string) => {
+    // Guard against double invocation (e.g. SIGINT followed by SIGTERM or
+    // a second SIGINT from an impatient operator). Node's server.close() is
+    // not idempotent on an already-closing server, so we check here.
+    if (isShuttingDown) {
+      logger.warn(`${signal} received during shutdown — ignoring`);
+      return;
+    }
+    isShuttingDown = true;
     logger.info(`${signal} received, closing server gracefully`);
     setReady(false);
-    server.close(async () => {
-      try {
-        if (revocationStore) {
-          await revocationStore.close();
-        }
-      } catch (err) {
-        logger.warn('Error while closing revocation store', {
+    // Close both servers concurrently then clean up shared resources.
+    // Errors from close() are surfaced so shutdown never silently stalls.
+    const closeServer = (srv: http.Server) =>
+      new Promise<void>((resolve, reject) =>
+        srv.close((err) => (err ? reject(err) : resolve())),
+      );
+    void Promise.all([closeServer(server), closeServer(adminServer)])
+      .catch((err) => {
+        logger.warn('Error while closing HTTP server(s)', {
           error: err instanceof Error ? err.message : 'Unknown error',
         });
-      }
-      try {
-        // Use a structural check rather than `instanceof` so any
-        // KillSwitchManager implementation that holds external resources
-        // (timers, network connections, …) gets cleaned up – not just the
-        // bundled RedisKillSwitchManager. The in-process default omits
-        // `close()` entirely.
-        if (typeof killSwitchManager.close === 'function') {
-          await killSwitchManager.close();
+      })
+      .then(async () => {
+        try {
+          if (revocationStore) {
+            await revocationStore.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing revocation store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         }
-      } catch (err) {
-        logger.warn('Error while closing kill-switch manager', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      }
-      try {
-        // Same structural check used for `killSwitchManager`: only
-        // implementations that own external resources (e.g. the Redis-backed
-        // store) expose `close()`. The in-memory default omits it.
-        const closable = callCounterStore as { close?: () => Promise<void> | void };
-        if (typeof closable.close === 'function') {
-          await closable.close();
+        try {
+          // Use a structural check rather than `instanceof` so any
+          // KillSwitchManager implementation that holds external resources
+          // (timers, network connections, …) gets cleaned up – not just the
+          // bundled RedisKillSwitchManager. The in-process default omits
+          // `close()` entirely.
+          if (typeof killSwitchManager.close === 'function') {
+            await killSwitchManager.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing kill-switch manager', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         }
-      } catch (err) {
-        logger.warn('Error while closing call-counter store', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      }
-      // R-9: drain the async audit pipeline before exit so any
-      // evidence still buffered in the ring is flushed to the signer.
-      // The drain timeout is bounded so SIGTERM cannot hang
-      // indefinitely on a misbehaving signer; items still buffered
-      // when the deadline expires are counted as drops on the
-      // pipeline's metric so the loss is observable.
-      try {
-        if (auditPipeline) {
-          await auditPipeline.drain(auditPipelineDrainTimeoutMs);
+        try {
+          // Same structural check used for `killSwitchManager`: only
+          // implementations that own external resources (e.g. the Redis-backed
+          // store) expose `close()`. The in-memory default omits it.
+          const closable = callCounterStore as { close?: () => Promise<void> | void };
+          if (typeof closable.close === 'function') {
+            await closable.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing call-counter store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         }
-      } catch (err) {
-        logger.warn('Error while draining audit pipeline', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      }
-      // F-6: close the OCSF transport so any buffered HTTP / file
-      // handles are released before exit. `close()` waits for any
-      // in-flight `send()` calls so the tail of the audit stream is
-      // not lost when the process exits.
-      try {
-        if (ocsfTransport) {
-          await ocsfTransport.close();
+        // R-9: drain the async audit pipeline before exit so any
+        // evidence still buffered in the ring is flushed to the signer.
+        // The drain timeout is bounded so SIGTERM cannot hang
+        // indefinitely on a misbehaving signer; items still buffered
+        // when the deadline expires are counted as drops on the
+        // pipeline's metric so the loss is observable.
+        try {
+          if (auditPipeline) {
+            await auditPipeline.drain(auditPipelineDrainTimeoutMs);
+          }
+        } catch (err) {
+          logger.warn('Error while draining audit pipeline', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         }
-      } catch (err) {
-        logger.warn('Error while closing OCSF transport', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      }
-      // F-2: close the DPoP replay store. Only the Redis-backed
-      // implementation owns external resources (`close()` is its
-      // own method); the in-memory default omits it, so we
-      // structurally check before calling.
-      try {
-        const closableReplay = dpopReplayStore as { close?: () => Promise<void> | void } | undefined;
-        if (closableReplay && typeof closableReplay.close === 'function') {
-          await closableReplay.close();
+        // F-6: close the OCSF transport so any buffered HTTP / file
+        // handles are released before exit. `close()` waits for any
+        // in-flight `send()` calls so the tail of the audit stream is
+        // not lost when the process exits.
+        try {
+          if (ocsfTransport) {
+            await ocsfTransport.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing OCSF transport', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         }
-      } catch (err) {
-        logger.warn('Error while closing DPoP replay store', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      }
-      logger.info('Server closed');
-      process.exit(0);
-    });
+        // F-2: close the DPoP replay store. Only the Redis-backed
+        // implementation owns external resources (`close()` is its
+        // own method); the in-memory default omits it, so we
+        // structurally check before calling.
+        try {
+          const closableReplay = dpopReplayStore as { close?: () => Promise<void> | void } | undefined;
+          if (closableReplay && typeof closableReplay.close === 'function') {
+            await closableReplay.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing DPoP replay store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        logger.info('Server closed');
+        process.exit(0);
+      });
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -152,5 +181,5 @@ if (require.main === module) {
 
 // Re-export the factory + bootstrap so callers (tests, embedders) can build
 // an in-process gateway without going through the singleton entrypoint.
-export { createApp } from './app-factory';
+export { createApp, createAdminApp } from './app-factory';
 export { initializeServices, type GatewayDependencies } from './bootstrap';

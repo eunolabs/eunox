@@ -111,8 +111,11 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const baseUrlFor = (target: 'gateway' | 'issuer') =>
-    target === 'gateway' ? harness.gatewayUrl : harness.issuerUrl;
+  const baseUrlFor = (target: 'gateway' | 'gateway-admin' | 'issuer') => {
+    if (target === 'gateway') return harness.gatewayUrl;
+    if (target === 'gateway-admin') return harness.adminUrl;
+    return harness.issuerUrl;
+  };
 
   const results: ScenarioResult[] = [];
   process.stdout.write(`running ${selected.length} scenario(s)...\n\n`);

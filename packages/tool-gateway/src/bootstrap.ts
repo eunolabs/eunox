@@ -99,6 +99,8 @@ export interface GatewayDependencies {
   adminApiKey?: string;
   /** Backend service URL for the proxy route. */
   backendServiceUrl: string;
+  /** Port the admin HTTP server listens on (separate from the public `config.port`). */
+  adminPort: number;
   /** CORS origins; empty array disables CORS. */
   allowedOrigins: string[];
   /** Rate-limit window in ms (sliding). */
@@ -644,6 +646,7 @@ export async function initializeServices(
     dpopReplayStore,
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
+    adminPort: validated.ADMIN_PORT,
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
     rateLimitWindowMs,
     rateLimitMax,
