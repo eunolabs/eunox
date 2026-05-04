@@ -564,7 +564,7 @@ export const GatewayConfigSchema = z
 
     // Admin API -------------------------------------------------------------
     ADMIN_API_KEY: optionalString.describe(
-      'Optional API key required to call /admin endpoints. When unset, the admin API is publicly reachable (NOT recommended for production).',
+      'API key required to call /admin endpoints. MUST be set in production — the gateway refuses to start when NODE_ENV=production and this is unset. When unset in non-production environments the admin API is publicly reachable (not recommended).',
     ),
 
     // Cryptographic audit ---------------------------------------------------
@@ -755,6 +755,20 @@ export const GatewayConfigSchema = z
     ),
   })
   .superRefine((cfg, ctx) => {
+    // Admin API protection is a hard requirement in production: an
+    // unprotected /admin/* surface controls revocation and kill-switch
+    // state and must never be reachable without authentication.
+    if (cfg.NODE_ENV === 'production' && !cfg.ADMIN_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ADMIN_API_KEY'],
+        message:
+          'ADMIN_API_KEY must be set when NODE_ENV=production. ' +
+          'The /admin endpoints control token revocation and kill-switch state ' +
+          'and must not be publicly reachable.',
+      });
+    }
+
     const signedDecisions = cfg.EVIDENCE_SIGNED_DECISIONS;
     if (signedDecisions !== undefined) {
       const allowed = new Set(['allow', 'deny']);

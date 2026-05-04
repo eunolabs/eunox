@@ -308,6 +308,41 @@ describe('loadConfig (gateway)', () => {
       ]),
     );
   });
+
+  // Admin API protection: ADMIN_API_KEY is required in production
+  it('rejects NODE_ENV=production without ADMIN_API_KEY', () => {
+    const result = loadConfig({ NODE_ENV: 'production' }, 'gateway');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'ADMIN_API_KEY',
+          message: expect.stringMatching(/ADMIN_API_KEY.*NODE_ENV=production|NODE_ENV=production.*ADMIN_API_KEY/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts NODE_ENV=production when ADMIN_API_KEY is set', () => {
+    const result = loadConfig(
+      { NODE_ENV: 'production', ADMIN_API_KEY: 'super-secret-key' },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts NODE_ENV=staging without ADMIN_API_KEY (non-production is not rejected)', () => {
+    const result = loadConfig({ NODE_ENV: 'staging' }, 'gateway');
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts NODE_ENV=development without ADMIN_API_KEY', () => {
+    const result = loadConfig({}, 'gateway');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ADMIN_API_KEY).toBeUndefined();
+  });
 });
 
 describe('formatConfigErrors', () => {
