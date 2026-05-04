@@ -32,6 +32,13 @@ spec:
           value: "production"
         - name: PORT
           value: "3001"
+        # Declare the deployment availability tier so the issuer's
+        # config schema enforces the matching infrastructure (REDIS_URL
+        # is required for multi-replica). Switch to
+        # "multi-region-active-active" and set ISSUER_REGION when adding
+        # a second region — see docs/MULTI_REGION_ISSUER.md.
+        - name: EUNO_DEPLOYMENT_TIER
+          value: "multi-replica"
         - name: AZURE_KEYVAULT_URL
           valueFrom:
             configMapKeyRef:
@@ -83,13 +90,13 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /health
+            path: /health/live
             port: 3001
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: 3001
           initialDelaySeconds: 5
           periodSeconds: 10

@@ -6,6 +6,12 @@ before the system handles real agent traffic.  The **Recommended** and
 **Optional** sections improve resilience, observability, or developer ergonomics
 but do not block go-live.
 
+> **Executable invariants.** Several items in this checklist are also enforced
+> at boot by the typed `EunoConfig` schema (`packages/common/src/config/schema.ts`).
+> Items marked **(schema)** below cannot be skipped — the gateway / issuer
+> refuses to start with a structured error report rather than serve an unsafe
+> configuration.  See § 5 ("Schema-enforced invariants") for the full list.
+
 For deeper background see:
 
 - [`DEPLOYMENT.md`](./DEPLOYMENT.md) – step-by-step Azure deployment
@@ -33,6 +39,10 @@ For deeper background see:
       endpoint (e.g. `https://issuer.example.com/.well-known/jwks.json`).
       The gateway pre-warms the JWKS cache on startup; if this URL is
       unreachable the gateway will refuse to start (fail-closed).
+      **(schema)** When `NODE_ENV=production`, the gateway refuses to start
+      unless `ISSUER_JWKS_URL` is set; the deprecated `ISSUER_PUBLIC_KEY_URL`
+      is rejected as the sole key source because it freezes key material at
+      the value cached on boot and breaks R-6 JWKS rotation.
 - [ ] **`EUNO_JWKS_CACHE_TTL_SECONDS`** tuned to balance JWKS refresh
       frequency and cache stability (default: `300` = 5 min).  Note: the
       current issuer publishes only the active signing key in JWKS, so TTL
@@ -166,6 +176,9 @@ For deeper background see:
 - [ ] Redis instance provisioned (`Standard` or higher in Azure Cache /
       ElastiCache; never `Basic` for production).
 - [ ] **`REDIS_URL`** set on every gateway instance to the shared endpoint.
+      **(schema)** When `NODE_ENV=production` and `EUNO_DEPLOYMENT_TIER` is
+      `multi-replica` or `multi-region-active-active`, the gateway refuses to
+      start without `REDIS_URL`. See § 5.1 below for the tier matrix.
 - [ ] Network policy: only gateway pods can reach Redis.
 - [ ] Redis AUTH (or managed-identity equivalent) enabled; credentials stored
       in the platform secrets manager.
@@ -181,9 +194,16 @@ For deeper background see:
 
 - [ ] **`ADMIN_API_KEY`** set to a cryptographically random value (≥ 32 bytes
       base64) on every gateway instance.  Without it `/admin/*` is publicly
-      callable.
+      callable. **(schema)** The gateway refuses to start when
+      `NODE_ENV=production` and this is unset.
 - [ ] Admin endpoints are not exposed on the public internet (separate
-      ingress / network policy / VPN-only).
+      ingress / network policy / VPN-only). **(schema)** The gateway also
+      refuses to start unless `ADMIN_HOST` is set to a non-wildcard
+      interface — bind to `127.0.0.1` for sidecar-only access or to the
+      pod's IP (`status.podIP` via the downward API) for a ClusterIP-only
+      admin Service. This is defence in depth on top of `ADMIN_PORT` so a
+      misconfigured ingress / route cannot expose `/admin/*` on the public
+      load-balancer even by accident.
 - [ ] Kill-switch test executed: activate global kill, confirm all traffic
       returns 503/403, deactivate, confirm traffic resumes.
 
@@ -199,7 +219,12 @@ For deeper background see:
       `EVIDENCE_SIGNING_ALGORITHM` (default `RS256`) and
       `EVIDENCE_SIGNING_KEY_ID`. KMS-backed signers may be supplied
       programmatically by importing the `EnforcementEngine` and passing a
-      custom `evidenceSigner`.
+      custom `evidenceSigner`. **(schema)** When `NODE_ENV=production`, the
+      gateway refuses to start unless evidence signing is active — either
+      `ENABLE_CRYPTOGRAPHIC_AUDIT=true` (legacy on/off shorthand) or a
+      non-empty `EVIDENCE_SIGNED_DECISIONS` (e.g. `deny` for refusals only,
+      or `allow,deny` for full coverage); both forms additionally require an
+      evidence signing key.
 - [ ] Audit logs verified to carry the tamper-evident `auditChain` field
       (`seq`, `prevHash`, `hash`). For cross-replica continuity, seed the
       previous run's terminal hash via
@@ -224,7 +249,14 @@ For deeper background see:
 
 - [ ] Containers run as non-root with read-only root filesystem.
 - [ ] Resource requests/limits set on every pod.
-- [ ] Liveness / readiness probes pointed at `/health`.
+- [ ] Liveness / readiness probes pointed at the split health surface:
+      `/health/live` for liveness, `/health/ready` for readiness. Both the
+      gateway and the issuer expose this split — readiness fails (503
+      `not_ready`) until `initializeServices()` has wired the signer,
+      identity provider, policy, rate limiter, storage / DB credential
+      services, and any optional posture / audit transports. The legacy
+      `/health` route remains as a liveness alias for back-compat with
+      existing manifests / dashboards.
 - [ ] PodDisruptionBudget so rolling updates never reduce capacity below
       `minAvailable=1` (issuer) / `minAvailable=2` (gateway).
 - [ ] HorizontalPodAutoscaler configured for the gateway based on CPU and/or
@@ -279,3 +311,98 @@ For deeper background see:
 | Container / cluster hardening   |       |      |          |
 | Incident response runbook read  |       |      |          |
 | Kill-switch drill executed      |       |      |          |
+
+---
+
+## 5. Schema-enforced invariants
+
+Several items in §1 above are also encoded as cross-field rules in the
+typed `EunoConfig` Zod schema (`packages/common/src/config/schema.ts`).
+A misconfigured production rollout therefore fails at boot with a
+single, structured error report rather than at first request.  This
+section lists the executable rules and the env vars that satisfy them.
+
+### 5.1 Redis availability tiers
+
+`EUNO_DEPLOYMENT_TIER` is the operator's stated availability target;
+the schema uses it to demand the matching infrastructure.  Set the
+same value on every replica of every service.
+
+| Tier                          | When to use                                                                 | `REDIS_URL`                                              | `ISSUER_REGION` / `GATEWAY_REGION` | Operational consequences                                                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `single-replica` (default)    | Local development, single-pod test deployments.                             | optional (in-memory fallback)                            | not required                       | Revocation, kill-switch, maxCalls counters and DPoP-replay nonces are per-process and lost on restart.  Acceptable for dev; **not** acceptable for HA.  |
+| `multi-replica`               | Production HA in a single region (the default Kubernetes layout).           | **required** (schema rejects production without it)      | not required                       | Redis becomes a runtime dependency.  Choose `REVOCATION_FAIL_OPEN`, `KILL_SWITCH_FAIL_OPEN_ON_WRITE`, `ISSUANCE_RATE_LIMIT_FAIL_CLOSED` deliberately.   |
+| `multi-region-active-active`  | Two or more regions serving live traffic concurrently.                      | **required**, must be globally-replicated (CRDB / GeoR)  | **required** on every replica      | Cross-region Redis replication latency bounds the convergence of revocation / kill-switch / rate-limit state — quantified in `MULTI_REGION_ISSUER.md`.  |
+
+Operational consequences of the fail-open / fail-closed knobs:
+
+- `REVOCATION_FAIL_OPEN=false` (default, recommended) — a partitioned
+  gateway treats every token as revoked; clients see 401/403 spikes
+  during a Redis outage.  `=true` accepts that revocation is bypassed
+  for the duration of the incident.
+- `KILL_SWITCH_FAIL_OPEN_ON_WRITE=false` (default) — a kill-switch
+  write that cannot reach Redis returns an error to the operator
+  instead of updating only the local cache, so a globally-intended
+  kill is not silently downgraded to per-pod scope.
+- `ISSUANCE_RATE_LIMIT_FAIL_CLOSED=true` (default) — the issuer
+  refuses to mint when the limiter cannot consult Redis, preventing
+  a Redis outage from also being a rate-limit-bypass window.
+- DPoP replay defence (`F-2`) — under `single-replica` the in-memory
+  store still defends within a single pod; under `multi-replica` the
+  Redis-backed store defends across the fleet.  A captured proof can
+  always be replayed *outside* its `DPOP_MAX_AGE_SECONDS` window
+  regardless of tier.
+
+### 5.2 Production safety invariants (executable)
+
+The following rules are checked in `GatewayConfigSchema.superRefine` and
+`IssuerConfigSchema.superRefine`.  Each one corresponds to a checklist
+item above; the schema ensures the rule cannot be skipped silently.
+
+| Invariant                                                                      | Failed env var path           | Service           |
+| ------------------------------------------------------------------------------ | ----------------------------- | ----------------- |
+| `NODE_ENV=production` requires `ADMIN_API_KEY`                                 | `ADMIN_API_KEY`               | gateway           |
+| `NODE_ENV=production` requires `ADMIN_HOST` (non-wildcard)                     | `ADMIN_HOST`                  | gateway           |
+| `NODE_ENV=production` + `EUNO_DEPLOYMENT_TIER!=single-replica` requires `REDIS_URL` | `REDIS_URL`              | gateway + issuer  |
+| `NODE_ENV=production` + tier `multi-region-active-active` requires region tag  | `GATEWAY_REGION` / `ISSUER_REGION` | gateway / issuer |
+| `NODE_ENV=production` requires `DPOP_REQUIRED=true` (post-migration default)   | `DPOP_REQUIRED`               | gateway           |
+| `NODE_ENV=production` requires `ISSUER_JWKS_URL` (deprecated `ISSUER_PUBLIC_KEY_URL` rejected) | `ISSUER_JWKS_URL` | gateway           |
+| `NODE_ENV=production` requires evidence signing (`ENABLE_CRYPTOGRAPHIC_AUDIT=true` or non-empty `EVIDENCE_SIGNED_DECISIONS`) plus a signing key | `EVIDENCE_SIGNED_DECISIONS` / `EVIDENCE_SIGNING_KEY_PEM` | gateway           |
+
+### 5.3 Data persistence model
+
+The Euno control / data plane is stateless by design: there is no
+durable database schema for issuance or audit state in the main
+request path.  The persistence properties are:
+
+| Surface                        | Where it lives                                                                  | Recoverable after process restart? | Recoverable after Redis loss?  | Recoverable after SIEM loss?  |
+| ------------------------------ | ------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------ | ----------------------------- |
+| Capability tokens              | JWT claims, signed by KMS-held key                                              | yes (clients hold them)            | yes (Redis is not the source)  | yes (independent)             |
+| Revocation list                | Redis (`REVOCATION_KEY_PREFIX`), TTL = token TTL                                | yes (read from Redis)              | **no** — re-revoke as needed   | yes (independent)             |
+| Kill-switch state              | Redis (`KILL_SWITCH_KEY_PREFIX`)                                                | yes (read from Redis)              | **no** — re-activate           | yes (independent)             |
+| `maxCalls` counters            | Redis (`CALL_COUNTER_KEY_PREFIX`), TTL = token TTL                              | yes                                | **no** — counters reset to 0   | yes                           |
+| DPoP replay-prevention nonces  | Redis (`dpop:`), TTL = `DPOP_MAX_AGE_SECONDS`                                   | yes                                | **no** — replay window opens until TTL elapses | yes      |
+| Per-subject issuance budget    | Redis (`F-1` rate limiter), TTL = `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS`          | yes                                | **no** — budget resets         | yes                           |
+| Audit-log entries              | structured logs → log aggregator + (optional) signed evidence + (optional) OCSF | n/a (write-once, write-through)    | n/a                            | **no recovery** (logs are the system of record) |
+| Audit-chain hash continuity    | terminal hash seeded back via `EUNO_AUDIT_CHAIN_SEED_<SERVICE>`                 | yes if seed is captured            | n/a                            | yes if seed is captured       |
+
+**What is not recoverable after Redis loss:** every Redis-backed safety
+primitive (revocation, kill-switch, maxCalls, DPoP replay, F-1 budget)
+returns to its empty state.  Tokens that *should* be denied because
+they were revoked or counted-out start being accepted again until the
+operator re-asserts state.  This is why production multi-replica
+deployments **must** point at a managed Redis with a documented
+durability tier (Standard / cluster / Geo-replicated) — a `Basic` tier
+without persistence is not acceptable.
+
+**What is not recoverable after SIEM loss:** audit logs, signed
+evidence, and OCSF events are write-through, not buffered.  A
+SIEM outage during the outage window means those events are gone.
+Layer a queueing collector (Vector, Fluent Bit) in front of the
+`http` OCSF transport when guaranteed delivery is required.
+
+**What is recoverable after process restart:** all token claims (held
+by clients), all Redis-backed state (read-through on first request),
+and the audit-chain continuity (provided the operator captures the
+terminal hash from the previous run and seeds it via
+`EUNO_AUDIT_CHAIN_SEED_<SERVICE>`).

@@ -27,13 +27,39 @@ spec:
         - name: http
           containerPort: 3002
           protocol: TCP
+        - name: admin
+          containerPort: 3003
+          protocol: TCP
         env:
         - name: NODE_ENV
           value: "production"
         - name: PORT
           value: "3002"
-        - name: ISSUER_PUBLIC_KEY_URL
-          value: "http://capability-issuer:3001/api/v1/public-key"
+        - name: ADMIN_PORT
+          value: "3003"
+        # Bind the admin server to the pod's IP (downward API) instead
+        # of the wildcard interface. The admin Service below targets
+        # port 3003 and reaches this pod via its endpoints, but the
+        # listener itself rejects connections that didn't arrive on
+        # the pod's own IP — defence in depth on top of ClusterIP-only
+        # so a misconfigured ingress or hostNetwork sidecar cannot
+        # expose /admin/* on a public path. Schema rejects production
+        # rollouts that leave this empty or set it to 0.0.0.0 / ::.
+        - name: ADMIN_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        # Declare the deployment availability tier so the gateway's
+        # config schema enforces the matching infrastructure (REDIS_URL
+        # is required for multi-replica). See
+        # docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md § "Redis availability tiers".
+        - name: EUNO_DEPLOYMENT_TIER
+          value: "multi-replica"
+        # R-6: gateway must read keys from the issuer JWKS endpoint, not
+        # the deprecated single-key endpoint. Schema rejects production
+        # rollouts that point at ISSUER_PUBLIC_KEY_URL alone.
+        - name: ISSUER_JWKS_URL
+          value: "http://capability-issuer:3001/.well-known/jwks.json"
         - name: BACKEND_SERVICE_URL
           valueFrom:
             configMapKeyRef:
@@ -41,6 +67,11 @@ spec:
               key: backend-service-url
         - name: POLICY_VERSION
           value: "1.0.0"
+        # F-2: DPoP / RFC 9449 sender-constrained tokens. After the
+        # documented DPoP migration `true` is the production default and
+        # the schema rejects production rollouts that disable it.
+        - name: DPOP_REQUIRED
+          value: "true"
         # Distributed coordination — REQUIRED for the multi-replica
         # gateway so revocation, kill-switch, maxCalls, and DPoP replay
         # state propagate across pods (otherwise each pod has its own
@@ -52,6 +83,15 @@ spec:
               key: redis-url
         - name: REVOCATION_FAIL_OPEN
           value: "false"
+        # Evidence signing: production must record a tamper-evident
+        # trail of authorization refusals (allow signing is optional;
+        # `deny` alone meets the production checklist requirement).
+        - name: EVIDENCE_SIGNED_DECISIONS
+          value: "deny"
+        - name: EVIDENCE_SIGNING_KEY_FILE
+          value: "/var/run/secrets/euno/evidence-signing-key.pem"
+        - name: EVIDENCE_SIGNING_ALGORITHM
+          value: "RS256"
         - name: ADMIN_API_KEY
           valueFrom:
             secretKeyRef:
@@ -87,9 +127,27 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        # Evidence-signing private key, mounted read-only from a
+        # Kubernetes Secret so the path at EVIDENCE_SIGNING_KEY_FILE
+        # resolves at boot. The Secret must contain key
+        # `evidence-signing-key.pem`. Without this mount the gateway
+        # fails to start because the production schema requires
+        # evidence signing to be active.
+        - name: evidence-signing-key
+          mountPath: /var/run/secrets/euno
+          readOnly: true
       volumes:
       - name: tmp
         emptyDir: {}
+      # Evidence-signing key projected from gateway-secrets so the
+      # file at EVIDENCE_SIGNING_KEY_FILE resolves at boot.
+      - name: evidence-signing-key
+        secret:
+          secretName: gateway-secrets
+          items:
+          - key: evidence-signing-key.pem
+            path: evidence-signing-key.pem
+          defaultMode: 0400
 ---
 apiVersion: v1
 kind: Service
@@ -105,6 +163,28 @@ spec:
     targetPort: 3002
     protocol: TCP
     name: http
+  selector:
+    app: tool-gateway
+---
+# Admin API Service — internal ClusterIP only. Combined with
+# `ADMIN_HOST=status.podIP` on the Deployment this gives two layers of
+# isolation for the /admin/* surface (ClusterIP scoping + listener
+# binding), so a misconfigured public ingress or LoadBalancer can never
+# accidentally expose token-revocation / kill-switch endpoints.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway-admin
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3003
+    targetPort: 3003
+    protocol: TCP
+    name: admin
   selector:
     app: tool-gateway
 ---

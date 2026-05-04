@@ -56,6 +56,14 @@ spec:
         - name: PORT
           value: "3001"
 
+        # Declare the deployment availability tier so the issuer's
+        # config schema enforces the matching infrastructure (REDIS_URL
+        # is required for multi-replica). Switch to
+        # "multi-region-active-active" and set ISSUER_REGION when adding
+        # a second region — see docs/MULTI_REGION_ISSUER.md.
+        - name: EUNO_DEPLOYMENT_TIER
+          value: "multi-replica"
+
         # Signing Provider Selection
         # Options: azure-keyvault, aws-kms, gcp-cloudkms
         - name: SIGNING_PROVIDER
@@ -220,7 +228,7 @@ spec:
         # Health checks
         livenessProbe:
           httpGet:
-            path: /health
+            path: /health/live
             port: http
           initialDelaySeconds: 30
           periodSeconds: 30
@@ -229,7 +237,7 @@ spec:
 
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: http
           initialDelaySeconds: 10
           periodSeconds: 10

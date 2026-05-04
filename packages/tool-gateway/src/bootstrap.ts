@@ -101,6 +101,18 @@ export interface GatewayDependencies {
   backendServiceUrl: string;
   /** Port the admin HTTP server listens on (separate from the public `config.port`). */
   adminPort: number;
+  /**
+   * Network interface the admin HTTP server binds to. When set, the
+   * entrypoint passes this as the `host` argument to `adminApp.listen()`
+   * so the admin surface is reachable only on the named interface
+   * (e.g. `127.0.0.1` or the pod's internal cluster IP) — defence in
+   * depth against an ingress / route misconfiguration that would
+   * otherwise expose `/admin/*` on the public load-balancer. The
+   * gateway schema requires this to be a non-wildcard value when
+   * NODE_ENV=production. Undefined falls back to Express's default
+   * (bind all interfaces) for non-production / dev convenience.
+   */
+  adminHost?: string;
   /** CORS origins; empty array disables CORS. */
   allowedOrigins: string[];
   /** Rate-limit window in ms (sliding). */
@@ -647,6 +659,12 @@ export async function initializeServices(
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,
+    // Trim `ADMIN_HOST` so values like " 127.0.0.1 " (whitespace from
+    // a templated env var or downward-API source) bind correctly. The
+    // schema's production-tier check already trims before validating,
+    // so storing the raw string here would let a config that passed
+    // validation still fail at `listen()` time with EADDRNOTAVAIL.
+    adminHost: validated.ADMIN_HOST?.trim() || undefined,
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
     rateLimitWindowMs,
     rateLimitMax,

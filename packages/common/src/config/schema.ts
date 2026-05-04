@@ -183,12 +183,40 @@ const NODE_ENV = envEnum({
 });
 
 // ---------------------------------------------------------------------------
+// Deployment-tier opt-in.
+// ---------------------------------------------------------------------------
+//
+// Captures the operator's stated availability target so the cross-field
+// rules below can demand the matching infrastructure (Redis, region tag,
+// …). Without an explicit tier the schema applies the safest defaults
+// (single-replica), preserving existing dev / single-pod deployments.
+// See `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md` § "Redis availability
+// tiers" for the full matrix.
+const EUNO_DEPLOYMENT_TIER = envEnum({
+  values: [
+    'single-replica',
+    'multi-replica',
+    'multi-region-active-active',
+  ] as const,
+  default: 'single-replica',
+  description:
+    'Deployment availability tier. Drives cross-field validation: ' +
+    '`single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; ' +
+    '`multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) ' +
+    'and the per-subject issuance rate limiter (issuer) share state across pods; ' +
+    '`multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) ' +
+    'is REQUIRED on every replica so audit trails can be reconstructed after a regional failover. ' +
+    'See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md and docs/MULTI_REGION_ISSUER.md.',
+});
+
+// ---------------------------------------------------------------------------
 // Issuer schema — `capability-issuer`
 // ---------------------------------------------------------------------------
 
 export const IssuerConfigSchema = z
   .object({
     NODE_ENV,
+    EUNO_DEPLOYMENT_TIER,
     PORT: envPositiveInt({
       default: 3001,
       description: 'TCP port the issuer HTTP server binds to.',
@@ -520,6 +548,33 @@ export const IssuerConfigSchema = z
           'DB_INSTANCES_FILE is required when DB_TOKENS_ENABLED=true (operator-declared instance allow-list).',
       });
     }
+
+    // Production-tier safety invariants (R-5 extension). The deployment
+    // checklist's hard requirements are encoded here so a misconfigured
+    // production rollout fails at boot rather than at first request.
+    if (cfg.NODE_ENV === 'production' && cfg.EUNO_DEPLOYMENT_TIER !== 'single-replica' && !cfg.REDIS_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_URL'],
+        message:
+          `REDIS_URL is required when NODE_ENV=production and EUNO_DEPLOYMENT_TIER=${cfg.EUNO_DEPLOYMENT_TIER}. ` +
+          'Without it, the per-subject issuance rate limiter (F-1) falls back to per-pod ' +
+          'in-memory counters and the effective budget is multiplied by the replica count. ' +
+          'Set EUNO_DEPLOYMENT_TIER=single-replica only if you are deliberately running a ' +
+          'single issuer pod and have accepted that operational consequence.',
+      });
+    }
+    if (cfg.NODE_ENV === 'production' && cfg.EUNO_DEPLOYMENT_TIER === 'multi-region-active-active' && !cfg.ISSUER_REGION) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ISSUER_REGION'],
+        message:
+          'ISSUER_REGION is required when NODE_ENV=production and ' +
+          'EUNO_DEPLOYMENT_TIER=multi-region-active-active. The region tag is surfaced on ' +
+          'tokens, audit events, posture records, and trace spans so audit trails can be ' +
+          'reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
+      });
+    }
   });
 
 export type IssuerConfig = z.infer<typeof IssuerConfigSchema>;
@@ -531,6 +586,7 @@ export type IssuerConfig = z.infer<typeof IssuerConfigSchema>;
 export const GatewayConfigSchema = z
   .object({
     NODE_ENV,
+    EUNO_DEPLOYMENT_TIER,
     PORT: envPositiveInt({
       default: 3002,
       description: 'TCP port the gateway HTTP server binds to.',
@@ -546,6 +602,15 @@ export const GatewayConfigSchema = z
       min: 1,
       max: 65535,
     }),
+    ADMIN_HOST: optionalString.describe(
+      'Network interface the admin HTTP server binds to. The admin surface controls ' +
+      'token revocation and kill-switch state and must not be reachable from the public ' +
+      'load-balancer. In production the gateway refuses to start unless ADMIN_HOST is set ' +
+      'to a non-wildcard address (anything other than "" / "0.0.0.0" / "::"), so a ' +
+      'misconfigured ingress / route cannot expose /admin/* even by accident. Recommended ' +
+      'values: "127.0.0.1" for sidecar-only access, or the pod\'s internal cluster IP. ' +
+      'When unset (non-production only) the admin server binds to all interfaces (Express default).',
+    ),
 
     // Issuer + backend wiring -----------------------------------------------
     ISSUER_JWKS_URL: optionalString.describe(
@@ -847,6 +912,132 @@ export const GatewayConfigSchema = z
           `Current values: ADMIN_PORT=${cfg.ADMIN_PORT}, PORT=${cfg.PORT}. ` +
           `Please set ADMIN_PORT to a different port (default: 3003).`,
       });
+    }
+
+    // ----------------------------------------------------------------------
+    // Production-tier safety invariants (R-5 extension).
+    // The deployment checklist's hard requirements are encoded here so a
+    // misconfigured production rollout fails at boot rather than at first
+    // request. Each rule maps 1:1 to an item in
+    // `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md`.
+    // ----------------------------------------------------------------------
+    if (cfg.NODE_ENV === 'production') {
+      // Multi-replica / multi-region deployments need REDIS_URL so
+      // revocation, kill-switch, maxCalls counters and DPoP-replay state
+      // propagate across pods (otherwise authorization decisions
+      // split-brain and a token revoked on one replica is still accepted
+      // by the others).
+      if (cfg.EUNO_DEPLOYMENT_TIER !== 'single-replica' && !cfg.REDIS_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['REDIS_URL'],
+          message:
+            `REDIS_URL is required when NODE_ENV=production and ` +
+            `EUNO_DEPLOYMENT_TIER=${cfg.EUNO_DEPLOYMENT_TIER}. ` +
+            'Without it, revocation entries, kill-switch state, maxCalls counters and ' +
+            'DPoP replay nonces fall back to per-pod in-memory stores, so a token revoked / ' +
+            'killed on one replica is still accepted by the others (split-brain authorization). ' +
+            'Set EUNO_DEPLOYMENT_TIER=single-replica only if you are deliberately running a ' +
+            'single gateway pod and have accepted that operational consequence.',
+        });
+      }
+
+      // Multi-region active/active also needs a region tag on every
+      // replica so audit trails can be reconstructed across the fleet.
+      if (cfg.EUNO_DEPLOYMENT_TIER === 'multi-region-active-active' && !cfg.GATEWAY_REGION) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['GATEWAY_REGION'],
+          message:
+            'GATEWAY_REGION is required when NODE_ENV=production and ' +
+            'EUNO_DEPLOYMENT_TIER=multi-region-active-active. The region tag is stamped on ' +
+            'audit events and trace spans so failovers can be reconstructed from the audit ' +
+            'timeline. See docs/MULTI_REGION_ISSUER.md.',
+        });
+      }
+
+      // DPoP enforcement is the F-2 defence against bearer-token theft.
+      // After the documented DPoP migration the production default is
+      // `true`; an operator can only get here by explicitly setting
+      // `DPOP_REQUIRED=false`, which we treat as a hard error.
+      if (cfg.DPOP_REQUIRED === false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DPOP_REQUIRED'],
+          message:
+            'DPOP_REQUIRED=false is not permitted when NODE_ENV=production. ' +
+            'After the DPoP migration the gateway must reject any capability token without ' +
+            'a `cnf.jkt` confirmation claim (RFC 9449 / F-2); otherwise a leaked token ' +
+            'remains usable as a plain bearer until it expires or is revoked. Remove the ' +
+            'override (DPOP_REQUIRED defaults to true) before promoting to production.',
+        });
+      }
+
+      // R-6 JWKS rotation requires the gateway to read keys from the
+      // issuer's JWKS endpoint, not the deprecated single-key endpoint.
+      // Production must point at ISSUER_JWKS_URL — accepting only the
+      // deprecated ISSUER_PUBLIC_KEY_URL silently freezes key material
+      // at the value cached when the gateway booted.
+      if (!cfg.ISSUER_JWKS_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_JWKS_URL'],
+          message:
+            'ISSUER_JWKS_URL is required when NODE_ENV=production. ' +
+            (cfg.ISSUER_PUBLIC_KEY_URL
+              ? 'ISSUER_PUBLIC_KEY_URL is deprecated and must not be used as the sole key ' +
+                'source in production — it freezes key material at the value cached on boot ' +
+                'and breaks R-6 JWKS rotation. '
+              : '') +
+            'Set ISSUER_JWKS_URL to the issuer\'s JWKS endpoint, e.g. ' +
+            'https://issuer.example.com/.well-known/jwks.json',
+        });
+      }
+
+      // Evidence signing must be active so denials (and optionally
+      // allows) carry a tamper-evident signature for SIEM ingestion.
+      // Either the legacy single-toggle (ENABLE_CRYPTOGRAPHIC_AUDIT)
+      // or the per-decision selector (EVIDENCE_SIGNED_DECISIONS) must
+      // resolve to "we will sign at least one decision class".
+      const signedDecisionsForProd = cfg.EVIDENCE_SIGNED_DECISIONS;
+      const willSignSomething =
+        signedDecisionsForProd !== undefined
+          ? signedDecisionsForProd.length > 0
+          : !!cfg.ENABLE_CRYPTOGRAPHIC_AUDIT;
+      if (!willSignSomething) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['EVIDENCE_SIGNED_DECISIONS'],
+          message:
+            'Evidence signing must be enabled when NODE_ENV=production. ' +
+            'Set EVIDENCE_SIGNED_DECISIONS=deny (or "allow,deny" for full coverage) and ' +
+            'configure EVIDENCE_SIGNING_KEY_PEM/EVIDENCE_SIGNING_KEY_FILE, or — for the ' +
+            'legacy on/off shorthand — set ENABLE_CRYPTOGRAPHIC_AUDIT=true. Without one of ' +
+            'these the audit trail of authorization refusals is not tamper-evident.',
+        });
+      }
+
+      // Separate public and administrative serving surfaces (defence in
+      // depth on top of the existing ADMIN_PORT split). ADMIN_HOST must
+      // be set to a non-wildcard interface so a misconfigured ingress /
+      // service route cannot expose /admin/* on the public LB. The
+      // admin Service in `k8s/tool-gateway-deployment.yaml` is already
+      // ClusterIP-only; this rule extends the same guarantee to the
+      // app itself.
+      const adminHost = cfg.ADMIN_HOST?.trim();
+      if (!adminHost || adminHost === '0.0.0.0' || adminHost === '::') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ADMIN_HOST'],
+          message:
+            'ADMIN_HOST must be set to a non-wildcard interface when NODE_ENV=production. ' +
+            `Got ${adminHost === undefined ? '<unset>' : `"${adminHost}"`}. ` +
+            'The admin surface controls revocation and kill-switch state; binding it to ' +
+            '0.0.0.0 / :: makes a misconfigured ingress capable of exposing /admin/* on the ' +
+            'public load-balancer. Recommended values: "127.0.0.1" for sidecar-only access, ' +
+            'or the pod\'s internal cluster IP.',
+        });
+      }
     }
   });
 

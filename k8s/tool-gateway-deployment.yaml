@@ -60,8 +60,28 @@ spec:
           value: "3002"
         - name: ADMIN_PORT
           value: "3003"
-        - name: ISSUER_PUBLIC_KEY_URL
-          value: "http://capability-issuer:3001/api/v1/public-key"
+        # Bind the admin server to the pod's IP (downward API) so it is
+        # only reachable via the ClusterIP `tool-gateway-admin` Service
+        # below, not via the public LoadBalancer. The gateway config
+        # schema rejects production rollouts that leave ADMIN_HOST as a
+        # wildcard (0.0.0.0 / ::) — defence in depth on top of the
+        # ClusterIP-only Service. See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md
+        # § 1.5 "Admin Surface".
+        - name: ADMIN_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        # Declare the deployment availability tier so the gateway's
+        # config schema enforces the matching infrastructure (REDIS_URL
+        # is required for multi-replica). See
+        # docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md § "Redis availability tiers".
+        - name: EUNO_DEPLOYMENT_TIER
+          value: "multi-replica"
+        # R-6: read keys from the issuer JWKS endpoint, not the
+        # deprecated single-key endpoint. Schema rejects production
+        # rollouts that point at ISSUER_PUBLIC_KEY_URL alone.
+        - name: ISSUER_JWKS_URL
+          value: "http://capability-issuer:3001/.well-known/jwks.json"
         - name: BACKEND_SERVICE_URL
           valueFrom:
             configMapKeyRef:
@@ -71,6 +91,12 @@ spec:
           value: "1.0.0"
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
+
+        # F-2: DPoP / RFC 9449 sender-constrained tokens. After the
+        # documented DPoP migration `true` is the production default and
+        # the schema rejects production rollouts that disable it.
+        - name: DPOP_REQUIRED
+          value: "true"
 
         # Distributed coordination (Redis) — REQUIRED for multi-replica HA.
         # Without REDIS_URL, revocation entries, kill-switch state, maxCalls
@@ -97,6 +123,18 @@ spec:
             secretKeyRef:
               name: gateway-secrets
               key: admin-api-key
+
+        # Evidence signing — production must record a tamper-evident
+        # trail of authorization refusals. `deny` alone meets the
+        # production checklist requirement; switch to "allow,deny" for
+        # full coverage. The signing key is mounted from a Kubernetes
+        # secret, never baked into the image.
+        - name: EVIDENCE_SIGNED_DECISIONS
+          value: "deny"
+        - name: EVIDENCE_SIGNING_KEY_FILE
+          value: "/var/run/secrets/euno/evidence-signing-key.pem"
+        - name: EVIDENCE_SIGNING_ALGORITHM
+          value: "RS256"
 
         # Sprint 3: Resource limits (CPU and memory via cgroups)
         resources:
@@ -126,6 +164,11 @@ spec:
           mountPath: /tmp
         - name: cache
           mountPath: /app/.npm
+        # Evidence-signing private key, mounted read-only from a
+        # Kubernetes Secret so it never sits on the image filesystem.
+        - name: evidence-signing-key
+          mountPath: /var/run/secrets/euno
+          readOnly: true
 
         # Health checks
         livenessProbe:
@@ -156,6 +199,16 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 50Mi
+      # Evidence-signing key — projected from the gateway-secrets Secret
+      # so the file at EVIDENCE_SIGNING_KEY_FILE resolves at boot. The
+      # Secret must contain key `evidence-signing-key.pem`.
+      - name: evidence-signing-key
+        secret:
+          secretName: gateway-secrets
+          items:
+          - key: evidence-signing-key.pem
+            path: evidence-signing-key.pem
+          defaultMode: 0400
 
       # Sprint 3: Additional pod-level restrictions
       enableServiceLinks: false

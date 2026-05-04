@@ -145,6 +145,70 @@ describe('loadConfig (issuer)', () => {
     if (result.ok) return;
     expect(result.errors[0]?.field).toBe('STORAGE_GRANT_MAX_TTL_SECONDS');
   });
+
+  // Production-tier safety invariants for the issuer (mirror of the
+  // gateway's superRefine extensions). The issuer's only tier-driven
+  // hard requirements are REDIS_URL (for multi-replica / multi-region)
+  // and ISSUER_REGION (for multi-region active/active); everything else
+  // is enforced on the gateway side.
+  describe('production safety invariants', () => {
+    const baseProd = {
+      NODE_ENV: 'production',
+      AZURE_KEYVAULT_URL: 'https://vault.example/',
+    };
+
+    it('rejects production + multi-replica without REDIS_URL', () => {
+      const result = loadConfig(
+        { ...baseProd, EUNO_DEPLOYMENT_TIER: 'multi-replica' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'REDIS_URL' }),
+        ]),
+      );
+    });
+
+    it('accepts production + multi-replica when REDIS_URL is set', () => {
+      const result = loadConfig(
+        {
+          ...baseProd,
+          EUNO_DEPLOYMENT_TIER: 'multi-replica',
+          REDIS_URL: 'redis://redis:6379',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects production + multi-region-active-active without ISSUER_REGION', () => {
+      const result = loadConfig(
+        {
+          ...baseProd,
+          EUNO_DEPLOYMENT_TIER: 'multi-region-active-active',
+          REDIS_URL: 'redis://redis:6379',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'ISSUER_REGION' }),
+        ]),
+      );
+    });
+
+    it('accepts production + single-replica without REDIS_URL', () => {
+      const result = loadConfig(
+        { ...baseProd, EUNO_DEPLOYMENT_TIER: 'single-replica' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+  });
 });
 
 describe('loadConfig (gateway)', () => {
@@ -324,24 +388,194 @@ describe('loadConfig (gateway)', () => {
     );
   });
 
-  it('accepts NODE_ENV=production when ADMIN_API_KEY is set', () => {
+  it('accepts NODE_ENV=production when the full set of production safety invariants are satisfied', () => {
+    // After the production-safety-invariant work this is the minimum
+    // viable production env: admin API key, JWKS URL, an explicit admin
+    // bind interface, and at least one signed-decision class with an
+    // evidence key. EUNO_DEPLOYMENT_TIER defaults to single-replica so
+    // REDIS_URL is not required here (covered by separate tests).
     const result = loadConfig(
-      { NODE_ENV: 'production', ADMIN_API_KEY: 'super-secret-key' },
+      {
+        NODE_ENV: 'production',
+        ADMIN_API_KEY: 'super-secret-key',
+        ADMIN_HOST: '127.0.0.1',
+        ISSUER_JWKS_URL: 'https://issuer.example.com/.well-known/jwks.json',
+        EVIDENCE_SIGNED_DECISIONS: 'deny',
+        EVIDENCE_SIGNING_KEY_FILE: '/etc/euno/evidence-key.pem',
+      },
       'gateway',
     );
     expect(result.ok).toBe(true);
   });
 
-  it('accepts NODE_ENV=staging without ADMIN_API_KEY (non-production is not rejected)', () => {
-    const result = loadConfig({ NODE_ENV: 'staging' }, 'gateway');
-    expect(result.ok).toBe(true);
-  });
+  // ---------------------------------------------------------------------
+  // Production-tier safety invariants. These are derived from
+  // docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md and rejected by the schema
+  // so a misconfigured rollout fails at boot rather than at first
+  // request. See `superRefine` in `GatewayConfigSchema`.
+  // ---------------------------------------------------------------------
+  describe('production safety invariants', () => {
+    const baseProd = {
+      NODE_ENV: 'production',
+      ADMIN_API_KEY: 'super-secret-key',
+      ADMIN_HOST: '127.0.0.1',
+      ISSUER_JWKS_URL: 'https://issuer.example.com/.well-known/jwks.json',
+      EVIDENCE_SIGNED_DECISIONS: 'deny',
+      EVIDENCE_SIGNING_KEY_FILE: '/etc/euno/evidence-key.pem',
+    };
 
-  it('accepts NODE_ENV=development without ADMIN_API_KEY', () => {
-    const result = loadConfig({}, 'gateway');
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.ADMIN_API_KEY).toBeUndefined();
+    it('rejects production + EUNO_DEPLOYMENT_TIER=multi-replica without REDIS_URL', () => {
+      const result = loadConfig(
+        { ...baseProd, EUNO_DEPLOYMENT_TIER: 'multi-replica' },
+        'gateway',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'REDIS_URL',
+            message: expect.stringMatching(/EUNO_DEPLOYMENT_TIER=multi-replica/),
+          }),
+        ]),
+      );
+    });
+
+    it('accepts production + multi-replica when REDIS_URL is set', () => {
+      const result = loadConfig(
+        {
+          ...baseProd,
+          EUNO_DEPLOYMENT_TIER: 'multi-replica',
+          REDIS_URL: 'redis://redis:6379',
+        },
+        'gateway',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects production + multi-region-active-active without GATEWAY_REGION', () => {
+      const result = loadConfig(
+        {
+          ...baseProd,
+          EUNO_DEPLOYMENT_TIER: 'multi-region-active-active',
+          REDIS_URL: 'redis://redis:6379',
+        },
+        'gateway',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'GATEWAY_REGION' }),
+        ]),
+      );
+    });
+
+    it('rejects production with DPOP_REQUIRED=false (post-migration default is true)', () => {
+      const result = loadConfig(
+        { ...baseProd, DPOP_REQUIRED: 'false' },
+        'gateway',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'DPOP_REQUIRED',
+            message: expect.stringMatching(/DPOP_REQUIRED=false/),
+          }),
+        ]),
+      );
+    });
+
+    it('rejects production without ISSUER_JWKS_URL even if deprecated ISSUER_PUBLIC_KEY_URL is set', () => {
+      const { ISSUER_JWKS_URL: _strip, ...rest } = baseProd;
+      void _strip;
+      const result = loadConfig(
+        {
+          ...rest,
+          ISSUER_PUBLIC_KEY_URL: 'http://issuer:3001/api/v1/public-key',
+        },
+        'gateway',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'ISSUER_JWKS_URL',
+            message: expect.stringMatching(/deprecated/),
+          }),
+        ]),
+      );
+    });
+
+    it('rejects production with no evidence signing configured', () => {
+      const { EVIDENCE_SIGNED_DECISIONS: _a, EVIDENCE_SIGNING_KEY_FILE: _b, ...rest } = baseProd;
+      void _a; void _b;
+      const result = loadConfig(rest, 'gateway');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'EVIDENCE_SIGNED_DECISIONS',
+            message: expect.stringMatching(/Evidence signing/),
+          }),
+        ]),
+      );
+    });
+
+    it('accepts production when ENABLE_CRYPTOGRAPHIC_AUDIT=true is used as the legacy shorthand', () => {
+      const { EVIDENCE_SIGNED_DECISIONS: _a, ...rest } = baseProd;
+      void _a;
+      const result = loadConfig(
+        { ...rest, ENABLE_CRYPTOGRAPHIC_AUDIT: 'true' },
+        'gateway',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects production with ADMIN_HOST unset', () => {
+      const { ADMIN_HOST: _a, ...rest } = baseProd;
+      void _a;
+      const result = loadConfig(rest, 'gateway');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'ADMIN_HOST',
+            message: expect.stringMatching(/non-wildcard/),
+          }),
+        ]),
+      );
+    });
+
+    it('rejects production with ADMIN_HOST=0.0.0.0 (wildcard)', () => {
+      const result = loadConfig(
+        { ...baseProd, ADMIN_HOST: '0.0.0.0' },
+        'gateway',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'ADMIN_HOST' }),
+        ]),
+      );
+    });
+
+    it('does not apply production rules to NODE_ENV=staging', () => {
+      // Staging is exempt from the production safety invariants so
+      // pre-prod environments can iterate without the full hardening
+      // suite. Single-replica staging without Redis must validate.
+      const result = loadConfig(
+        { NODE_ENV: 'staging', EUNO_DEPLOYMENT_TIER: 'multi-replica' },
+        'gateway',
+      );
+      expect(result.ok).toBe(true);
+    });
   });
 });
 

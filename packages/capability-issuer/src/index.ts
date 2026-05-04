@@ -228,6 +228,7 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
 
 // Initialize services
 let issuerService: CapabilityIssuerService | undefined;
+let isInitialized = false;
 
 async function initializeServices() {
   try {
@@ -348,6 +349,7 @@ async function initializeServices() {
     );
 
     logger.info('Services initialized successfully');
+    isInitialized = true;
   } catch (error) {
     logger.error('Failed to initialize services', { error: error instanceof Error ? error.message : 'Unknown error' });
     throw error;
@@ -478,10 +480,34 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 /**
- * Health check endpoint
+ * Health check endpoints — split liveness and readiness so Kubernetes
+ * (and any L7 load balancer) can distinguish "process alive" from
+ * "process ready to serve traffic":
+ *
+ *   - GET /health        — back-compat liveness alias (always 200 once
+ *                          the HTTP server is up).
+ *   - GET /health/live   — liveness, always 200.
+ *   - GET /health/ready  — readiness, 200 only after `initializeServices()`
+ *                          has completed (signer, identity provider,
+ *                          policy, rate limiter, storage / DB credential
+ *                          services, and any optional posture / audit
+ *                          transports are wired). Returns 503
+ *                          `{status:'not_ready'}` otherwise so the
+ *                          kubelet keeps the pod out of the Service
+ *                          endpoints until first traffic is safe to
+ *                          accept.
  */
-app.get('/health', (_req: Request, res: Response) => {
+const liveness = (_req: Request, res: Response) => {
   res.json({ status: 'healthy', service: 'capability-issuer' });
+};
+app.get('/health', liveness);
+app.get('/health/live', liveness);
+app.get('/health/ready', (_req: Request, res: Response) => {
+  if (isInitialized && issuerService) {
+    res.json({ status: 'ready', service: 'capability-issuer' });
+    return;
+  }
+  res.status(503).json({ status: 'not_ready', service: 'capability-issuer' });
 });
 
 /**
@@ -821,31 +847,46 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
 });
 
 if (require.main === module) {
-  // Initialize services and start server
-  initializeServices()
-    .then(() => {
-      const server = app.listen(config.port, () => {
-        logger.info(`Capability Issuer listening on port ${config.port}`, {
-          environment: config.environment,
-          issuerDid: config.issuerDid,
-          signingProvider: config.signingProvider,
-          identityProvider: config.identityProvider,
-        });
-      });
-
-      // Graceful shutdown
-      process.on('SIGTERM', () => {
-        logger.info('SIGTERM received, closing server gracefully');
-        server.close(() => {
-          logger.info('Server closed');
-          process.exit(0);
-        });
-      });
-    })
-    .catch((error) => {
-      logger.error('Failed to start server', { error: error instanceof Error ? error.message : 'Unknown error' });
-      process.exit(1);
+  // Start listening *before* initializing services so Kubernetes can
+  // observe `/health/ready` returning 503 `not_ready` during startup
+  // — without this, the kubelet has to wait on a closed socket
+  // instead of a real readiness response, which prevents accurate
+  // startup-time observability and complicates rolling updates.
+  // The `isInitialized` flag flips inside `initializeServices()` so
+  // readiness only goes 200 once the signer, identity provider,
+  // policy, rate limiter, storage / DB credential services, and
+  // optional posture / audit transports are wired.
+  const server = app.listen(config.port, () => {
+    logger.info(`Capability Issuer listening on port ${config.port}`, {
+      environment: config.environment,
+      issuerDid: config.issuerDid,
+      signingProvider: config.signingProvider,
+      identityProvider: config.identityProvider,
     });
+  });
+
+  // Graceful shutdown — registered before initializeServices() so a
+  // SIGTERM during a slow signer / IdP bootstrap still closes the
+  // listening socket cleanly.
+  process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, closing server gracefully');
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
+  });
+
+  initializeServices().catch((error) => {
+    logger.error('Failed to initialize services', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    // Close the listener so the pod exits and Kubernetes restarts it
+    // rather than serving 503 `not_ready` indefinitely.
+    server.close(() => process.exit(1));
+    // Belt and braces: if `close()` hangs (e.g. a stuck connection),
+    // exit anyway after a short grace period.
+    setTimeout(() => process.exit(1), 5_000).unref();
+  });
 }
 
 export { app, initializeServices, issuerService };

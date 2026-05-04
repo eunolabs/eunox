@@ -21,6 +21,31 @@ describe('Capability Issuer API', () => {
         service: 'capability-issuer',
       });
     });
+
+    // Liveness alias is unconditional — survives even before
+    // initializeServices() runs so the kubelet does not restart a
+    // pod that is still loading signers / identity providers.
+    it('GET /health/live always returns 200', async () => {
+      const response = await request(app).get('/health/live');
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('healthy');
+    });
+
+    // Readiness must fail until the signer, identity provider, policy,
+    // rate limiter, storage / DB credential services, and any optional
+    // posture / audit transports have all initialised. The test suite
+    // imports `app` directly without calling `initializeServices`, so
+    // the readiness probe should report not_ready here — which is
+    // exactly the contract Kubernetes uses to keep the pod out of the
+    // Service endpoints until first traffic is safe to accept.
+    it('GET /health/ready returns 503 not_ready before initializeServices completes', async () => {
+      const response = await request(app).get('/health/ready');
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({
+        status: 'not_ready',
+        service: 'capability-issuer',
+      });
+    });
   });
 
   describe('POST /api/v1/issue', () => {

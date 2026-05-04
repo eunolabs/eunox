@@ -51,11 +51,18 @@ export async function startServer(): Promise<void> {
     });
   });
 
-  const adminServer = adminApp.listen(deps.adminPort, () => {
-    logger.info(`Tool Gateway admin server listening on port ${deps.adminPort}`, {
-      environment: config.environment,
-    });
-  });
+  const adminServer = deps.adminHost
+    ? adminApp.listen(deps.adminPort, deps.adminHost, () => {
+        logger.info(
+          `Tool Gateway admin server listening on ${deps.adminHost}:${deps.adminPort}`,
+          { environment: config.environment },
+        );
+      })
+    : adminApp.listen(deps.adminPort, () => {
+        logger.info(`Tool Gateway admin server listening on port ${deps.adminPort}`, {
+          environment: config.environment,
+        });
+      });
 
   let isShuttingDown = false;
   const shutdown = (signal: string) => {
