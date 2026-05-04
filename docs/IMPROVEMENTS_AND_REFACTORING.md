@@ -283,19 +283,28 @@ namespace from `docs/openapi/` (or vice-versa). Pick one direction —
 spec-first is recommended because the OpenAPI document is already the
 contract for clients.
 
-### R-9 — Async batched audit pipeline  (addresses I-21)
+### R-9 — Async batched audit pipeline  (addresses I-21) — **IMPLEMENTED**
 
-Introduce `AuditPipeline` in `@euno/common`:
+`AuditPipeline` lives in `@euno/common` (`packages/common/src/audit-pipeline.ts`):
 
-- Bounded ring buffer (size + age limits).
-- N background workers calling `EvidenceSigner.sign(batch)`.
-- Backpressure policy: `drop_oldest_with_metric` (default) or `block`
-  (strict-mode operators). Always emits a counter so dropped events
-  are visible.
+- Bounded ring buffer (`AUDIT_PIPELINE_MAX_SIZE`, default 1024) with optional
+  per-item `AUDIT_PIPELINE_MAX_AGE_MS`.
+- `AUDIT_PIPELINE_WORKERS` (default 2) background loops, each pulling up to
+  `AUDIT_PIPELINE_MAX_BATCH` (default 16) records per wake-up and calling
+  `EvidenceSigner.signEvidence` per record (batching is wake-up amortisation;
+  the underlying single-record signer interface is unchanged).
+- Backpressure policy: `AUDIT_PIPELINE_BACKPRESSURE=drop_oldest_with_metric`
+  (default) or `block`. Drops are surfaced via the
+  `euno_gateway_audit_pipeline_dropped_total{reason}` Prometheus counter
+  (labels: `queue_full` | `aged_out`). `signed_total`,
+  `sign_errors_total`, and `queue_depth` gauges are also exported.
 
-The `EnforcementEngine` enqueues on the request critical path and
-returns immediately; signing latency no longer adds to the agent's
-p99.
+The Tool Gateway `EnforcementEngine` enqueues on the request critical path and
+returns immediately; signing latency no longer adds to the agent's p99. The
+gateway entrypoint drains the pipeline on `SIGTERM`/`SIGINT` (bounded by
+`AUDIT_PIPELINE_DRAIN_TIMEOUT_MS`, default 5000) so buffered evidence is
+flushed before exit. Set `AUDIT_PIPELINE_ENABLED=false` to revert to the
+legacy synchronous signing path for A/B comparison.
 
 ---
 

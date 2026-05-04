@@ -74,6 +74,11 @@ async function buildDeps(opts?: {
       labelNames: ['decision'],
       registers: [metricsRegistry],
     }),
+    // Required by GatewayDependencies even when no auditPipeline is
+    // wired in — bootstrap always populates it from the validated
+    // config (default 5000ms) so the entrypoint never passes
+    // `undefined` into `AuditPipeline.drain()`.
+    auditPipelineDrainTimeoutMs: 5_000,
     isReady: opts?.isReady ?? (() => true),
   };
 

@@ -16,6 +16,7 @@ import {
   generateId,
   KillSwitchManager,
   EvidenceSigner,
+  AuditEvidence,
   SignedAuditEvidence,
   createAuditEvidence,
   validateArguments,
@@ -27,6 +28,7 @@ import {
   CapabilityTokenPayload,
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
+  AuditPipeline,
 } from '@euno/common';
 
 export interface EnforcementEngineOptions {
@@ -34,6 +36,16 @@ export interface EnforcementEngineOptions {
   logger: Logger;
   killSwitchManager?: KillSwitchManager;
   evidenceSigner?: EvidenceSigner;
+  /**
+   * Optional async audit pipeline (R-9, addresses I-21). When supplied,
+   * the engine enqueues unsigned `AuditEvidence` onto the pipeline
+   * instead of awaiting `EvidenceSigner.signEvidence` on the request
+   * critical path — signing latency no longer adds to the agent's p99.
+   * The pipeline owns the call to the signer; `evidenceSigner` need
+   * not be set on the engine when a pipeline is wired in. When BOTH
+   * are supplied the pipeline wins (it already wraps a signer).
+   */
+  auditPipeline?: AuditPipeline;
   policyVersion?: string;
   /**
    * Legacy single-toggle for evidence signing. When `true`, both `allow`
@@ -88,6 +100,11 @@ export class EnforcementEngine {
   private auditLogger: Logger;
   private killSwitchManager?: KillSwitchManager;
   private evidenceSigner?: EvidenceSigner;
+  /**
+   * Async audit pipeline (R-9). When set, evidence is enqueued
+   * fire-and-forget so signing latency stays off the request path.
+   */
+  private auditPipeline?: AuditPipeline;
   private policyVersion: string;
   /**
    * Resolved per-decision signing set (I-8). Built once in the
@@ -114,6 +131,7 @@ export class EnforcementEngine {
     this.auditLogger = createAuditLogger('tool-gateway');
     this.killSwitchManager = options.killSwitchManager;
     this.evidenceSigner = options.evidenceSigner;
+    this.auditPipeline = options.auditPipeline;
     this.policyVersion = options.policyVersion || '1.0.0';
     if (options.signedDecisions !== undefined) {
       this.signedDecisions = new Set(options.signedDecisions);
@@ -130,11 +148,15 @@ export class EnforcementEngine {
    * Returns true when audit evidence for the given decision should be
    * cryptographically signed under the current configuration. Used at
    * every signing site so the policy lives in one place.
+   *
+   * Either a direct `evidenceSigner` or an async `auditPipeline` (R-9)
+   * satisfies the "signer attached" half of this check — the engine
+   * does not care which mechanism actually signs.
    */
   private shouldSignDecision(decision: 'allow' | 'deny'): boolean {
     return (
       this.signedDecisions.has(decision) &&
-      this.evidenceSigner !== undefined
+      (this.evidenceSigner !== undefined || this.auditPipeline !== undefined)
     );
   }
 
@@ -461,17 +483,56 @@ export class EnforcementEngine {
     capabilityId: string;
     decision: 'allow' | 'deny';
   }): Promise<SignedAuditEvidence | null> {
-    if (!this.evidenceSigner) {
+    if (!this.evidenceSigner && !this.auditPipeline) {
+      return null;
+    }
+
+    let evidence: AuditEvidence;
+    try {
+      evidence = createAuditEvidence({
+        ...params,
+        policyVersion: this.policyVersion,
+      });
+    } catch (error) {
+      this.logger.error('Failed to build audit evidence', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return null;
+    }
+
+    // R-9: prefer the async pipeline. Enqueue is fire-and-forget under
+    // the default backpressure policy, so the request critical path
+    // does not pay signing latency. The pipeline owns the call to
+    // `signEvidence` and the "evidence generated" log line (wired in
+    // bootstrap via `onSigned`); we therefore return `null` here so
+    // callers don't depend on a synchronously-signed value that no
+    // longer exists on the hot path.
+    //
+    // Under the `block` backpressure policy we MUST await the enqueue:
+    // the caller chose `block` precisely so the producer pays
+    // backpressure when the buffer is full. Fire-and-forget there
+    // would let promise-resolver objects pile up unboundedly while
+    // the buffer stayed pinned. The pipeline still caps parked
+    // waiters at `maxWaiters` (and drops with a metric beyond that)
+    // as a defence-in-depth bound, but the await is what actually
+    // delivers the documented backpressure semantics.
+    if (this.auditPipeline) {
+      const enqueued = this.auditPipeline.enqueue(evidence);
+      if (this.auditPipeline.backpressurePolicy === 'block') {
+        await enqueued;
+      } else {
+        // `void` is intentional: under the drop policy `enqueue` is
+        // microtask-resolved and awaiting would re-add the latency
+        // R-9 just removed. Errors thrown synchronously (none under
+        // the current implementation) are swallowed by the
+        // surrounding try/catch in `validateAction`'s callers.
+        void enqueued;
+      }
       return null;
     }
 
     try {
-      const evidence = createAuditEvidence({
-        ...params,
-        policyVersion: this.policyVersion,
-      });
-
-      const signedEvidence = await this.evidenceSigner.signEvidence(evidence);
+      const signedEvidence = await this.evidenceSigner!.signEvidence(evidence);
 
       // Log the signed evidence
       this.auditLogger.info('Cryptographic evidence generated', {

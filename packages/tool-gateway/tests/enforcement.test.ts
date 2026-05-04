@@ -623,6 +623,104 @@ describe('EnforcementEngine', () => {
     });
   });
 
+  // R-9 (addresses I-21): when an `auditPipeline` is wired into the
+  // engine, the request critical path must enqueue evidence and return
+  // immediately rather than awaiting `signEvidence` directly. These
+  // tests pin that contract.
+  describe('async audit pipeline (R-9)', () => {
+    it('enqueues to the pipeline instead of awaiting signEvidence on the request path', async () => {
+      // A signer that takes 100ms — if the engine awaited it on the
+      // critical path, validateAction would inherit that latency.
+      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
+        async (ev) => {
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' };
+        }
+      );
+      const verifyEvidence = jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false);
+      const slowSigner: EvidenceSigner = { signEvidence, verifyEvidence };
+
+      const { AuditPipeline } = await import('@euno/common');
+      const pipeline = new AuditPipeline({ signer: slowSigner, workers: 1 });
+      pipeline.start();
+
+      const auditEngine = new EnforcementEngine({
+        verifier,
+        logger,
+        auditPipeline: pipeline,
+        signedDecisions: ['allow'],
+        policyVersion: '1.0.0',
+      });
+
+      const token = await createTestToken(
+        [{ resource: 'api://service/endpoint', actions: ['read'] }],
+        { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+      );
+
+      const start = Date.now();
+      const result = await auditEngine.validateAction({
+        token,
+        action: 'read',
+        resource: 'api://service/endpoint',
+        context: { sessionId: 'sess-1' },
+      });
+      const elapsed = Date.now() - start;
+
+      expect(result.allowed).toBe(true);
+      // Critical-path budget: well under the 100ms signer delay.
+      expect(elapsed).toBeLessThan(50);
+
+      // Drain so the worker has a chance to call the signer before we
+      // assert on the spy.
+      await pipeline.drain(1000);
+      expect(signEvidence).toHaveBeenCalledTimes(1);
+      expect(signEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: 'allow', sessionId: 'sess-1' })
+      );
+      expect(pipeline.signedCount()).toBe(1);
+      expect(pipeline.droppedCount()).toBe(0);
+    });
+
+    it('routes denial evidence through the pipeline as well', async () => {
+      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
+        async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
+      );
+      const verifyEvidence = jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false);
+      const fastSigner: EvidenceSigner = { signEvidence, verifyEvidence };
+
+      const { AuditPipeline } = await import('@euno/common');
+      const pipeline = new AuditPipeline({ signer: fastSigner, workers: 1 });
+      pipeline.start();
+
+      const auditEngine = new EnforcementEngine({
+        verifier,
+        logger,
+        auditPipeline: pipeline,
+        signedDecisions: ['deny'],
+        policyVersion: '1.0.0',
+      });
+
+      const token = await createTestToken(
+        [{ resource: 'api://service/other', actions: ['read'] }],
+        { authorizedBy: { userId: 'user-1', roles: ['reader'] } }
+      );
+
+      const result = await auditEngine.validateAction({
+        token,
+        action: 'write',
+        resource: 'api://service/other',
+        context: { sessionId: 'sess-1' },
+      });
+
+      expect(result.allowed).toBe(false);
+      await pipeline.drain(1000);
+      expect(signEvidence).toHaveBeenCalledTimes(1);
+      expect(signEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: 'deny' })
+      );
+    });
+  });
+
   // I-7: strict argument-schema mode. By default, capabilities without
   // an `argumentSchema` impose no argument-level constraint. Strict mode
   // flips that to deny-by-default for schema-less capabilities so an

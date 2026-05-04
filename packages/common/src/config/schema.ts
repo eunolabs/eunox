@@ -23,6 +23,7 @@
  */
 
 import { z } from 'zod';
+import { BACKPRESSURE_POLICIES } from '../audit-pipeline';
 
 // ---------------------------------------------------------------------------
 // Field-level helpers.
@@ -540,6 +541,46 @@ export const GatewayConfigSchema = z
       `Seed the gateway audit chain with the previous run's terminal hash to maintain tamper-evidence continuity across restarts.`,
     ),
 
+    // Async audit pipeline (R-9, addresses I-21) -----------------------------
+    // The pipeline lifts `EvidenceSigner.signEvidence` off the request
+    // critical path. All four knobs are optional; when unset the
+    // pipeline still runs with sensible defaults whenever evidence
+    // signing is enabled. Set AUDIT_PIPELINE_ENABLED=false to keep the
+    // legacy synchronous signing path (e.g. for benchmarks comparing
+    // before/after R-9).
+    AUDIT_PIPELINE_ENABLED: envBoolean({
+      default: true,
+      description:
+        'When true (default), the gateway routes audit evidence through the async batched pipeline (R-9): producers enqueue and return immediately while N background workers call the signer. Set false to revert to the legacy synchronous path that awaits signEvidence on every request — only useful for A/B comparison, the async path is the recommended configuration.',
+    }),
+    AUDIT_PIPELINE_MAX_SIZE: envPositiveInt({
+      default: 1024,
+      description:
+        'Maximum number of unsigned audit-evidence records buffered in memory before the AUDIT_PIPELINE_BACKPRESSURE policy kicks in. Sized for a small gateway under burst; raise for high-throughput deployments. Memory cost is O(maxSize * average evidence size).',
+    }),
+    AUDIT_PIPELINE_WORKERS: envPositiveInt({
+      default: 2,
+      description:
+        'Number of concurrent worker loops draining the audit pipeline. Each worker holds at most one in-flight signEvidence call, so this is also the maximum signer concurrency. Raise when the signer is high-latency (e.g. KMS) and the buffer keeps filling.',
+    }),
+    AUDIT_PIPELINE_MAX_BATCH: envPositiveInt({
+      default: 16,
+      description:
+        'Maximum records a single worker pulls per wake-up. Larger values amortise event-loop wake-ups under heavy load; smaller values keep the per-record latency between enqueue and sign tighter.',
+    }),
+    AUDIT_PIPELINE_MAX_AGE_MS: envPositiveInt({
+      description:
+        'Optional maximum age (ms) a record may sit in the queue before it is dropped as `aged_out`. Defends against unbounded queue residency when the signer is slow or down. Unset disables age-based eviction (records wait indefinitely).',
+    }),
+    AUDIT_PIPELINE_BACKPRESSURE: optionalString.describe(
+      'Backpressure policy when the pipeline is full. `drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks. `block` makes enqueue() await until a slot frees up — recommended only when the operator\'s compliance posture forbids audit-event loss.',
+    ),
+    AUDIT_PIPELINE_DRAIN_TIMEOUT_MS: envPositiveInt({
+      default: 5000,
+      description:
+        'Maximum time (ms) to wait for the pipeline to flush queued evidence on graceful shutdown (SIGTERM/SIGINT). Items still buffered when the deadline expires are counted as drops so the metric reflects the loss.',
+    }),
+
     // Policy ----------------------------------------------------------------
     POLICY_VERSION: optionalString.describe(
       'Version identifier for the active policy (string, default "1.0.0").',
@@ -652,6 +693,21 @@ export const GatewayConfigSchema = z
         message:
           'When evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS non-empty), either EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE must be set.',
       });
+    }
+
+    // R-9: validate the audit-pipeline backpressure policy at config
+    // load time so a typo in the env var produces a single structured
+    // failure instead of a runtime surprise on the first denied request.
+    if (cfg.AUDIT_PIPELINE_BACKPRESSURE !== undefined) {
+      if (!(BACKPRESSURE_POLICIES as readonly string[]).includes(cfg.AUDIT_PIPELINE_BACKPRESSURE)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AUDIT_PIPELINE_BACKPRESSURE'],
+          message:
+            `AUDIT_PIPELINE_BACKPRESSURE must be one of: ${BACKPRESSURE_POLICIES.join(', ')} ` +
+            `(got '${cfg.AUDIT_PIPELINE_BACKPRESSURE}').`,
+        });
+      }
     }
   });
 

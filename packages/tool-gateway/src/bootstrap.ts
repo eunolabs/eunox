@@ -18,6 +18,7 @@ import {
   CallCounterStore,
   createCallCounterStoreFromEnv,
   createLogger,
+  createAuditLogger,
   loadConfigOrExit,
   loadConfig,
   GatewayConfig,
@@ -25,6 +26,9 @@ import {
   Counter,
   Gauge,
   Registry,
+  AuditPipeline,
+  BackpressurePolicy,
+  createAuditPipeline,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { JwksClient } from './jwks-client';
@@ -49,6 +53,22 @@ export interface GatewayDependencies {
   callCounterStore?: CallCounterStore;
   revocationStore?: RevocationStore;
   evidenceSigner?: EvidenceSigner;
+  /**
+   * Async audit pipeline (R-9). Present when evidence signing is
+   * enabled and `AUDIT_PIPELINE_ENABLED=true` (the default). The
+   * gateway entrypoint is responsible for calling `drain()` on
+   * shutdown so buffered evidence is flushed before exit. When set,
+   * `auditPipelineDrainTimeoutMs` is always populated by
+   * `initializeServices` from `AUDIT_PIPELINE_DRAIN_TIMEOUT_MS`.
+   */
+  auditPipeline?: AuditPipeline;
+  /**
+   * Drain timeout (ms) used by the entrypoint on SIGTERM/SIGINT.
+   * Always populated alongside `auditPipeline` (the validated config
+   * supplies a default), so the entrypoint never passes `undefined`
+   * into `AuditPipeline.drain()`.
+   */
+  auditPipelineDrainTimeoutMs: number;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
   /** Backend service URL for the proxy route. */
@@ -289,37 +309,10 @@ export async function initializeServices(
     }
   }
 
-  const enforcementEngine = new EnforcementEngine({
-    verifier,
-    logger,
-    killSwitchManager,
-    evidenceSigner,
-    enableCryptographicAudit: config.enableCryptographicAudit,
-    signedDecisions,
-    argumentSchemaRequired: validated.ARGUMENT_SCHEMA_REQUIRED,
-    policyVersion: config.policyVersion,
-    callCounterStore,
-  });
-
-  let ready = false;
-  const setReady = (value: boolean) => {
-    ready = value;
-  };
-
-  const rateLimitWindowMs = validated.RATE_LIMIT_WINDOW_MS;
-  const rateLimitMax = validated.RATE_LIMIT_MAX_REQUESTS;
-
   // F-5 (I-16): Prometheus surface. Build a per-process registry tagged with
-  // the service name and pre-register gateway-specific series:
-  //   - `euno_gateway_revocation_list_size` is collected on each scrape from
-  //     the active revocation store (when the implementation exposes a
-  //     `size()` accessor — currently the in-memory store; Redis-backed
-  //     deployments can add their own collector later without changing the
-  //     metric name). Operators use this to detect runaway revocation-list
-  //     growth that signals abuse or a stuck pruner.
-  //   - `euno_gateway_decisions_total{decision}` is incremented by the
-  //     EnforcementEngine on every allow / deny so a deny-rate panel does
-  //     not have to parse logs.
+  // the service name and pre-register gateway-specific series. We build this
+  // before the audit pipeline so the pipeline's dropped/signed/error
+  // counters (R-9) can be registered on the same registry.
   const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
   new Gauge({
     name: 'euno_gateway_revocation_list_size',
@@ -343,6 +336,131 @@ export async function initializeServices(
   // first request flows through the gateway.
   decisionsCounter.inc({ decision: 'allow' }, 0);
   decisionsCounter.inc({ decision: 'deny' }, 0);
+
+  // R-9: build the async audit pipeline when evidence signing is on AND
+  // the operator hasn't opted out via AUDIT_PIPELINE_ENABLED=false. The
+  // pipeline lifts signEvidence off the request critical path; the
+  // legacy synchronous behaviour is reachable for A/B comparison by
+  // setting AUDIT_PIPELINE_ENABLED=false.
+  let auditPipeline: AuditPipeline | undefined;
+  const auditPipelineDrainTimeoutMs = validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS;
+  if (evidenceSigner && validated.AUDIT_PIPELINE_ENABLED) {
+    const droppedCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_dropped_total',
+      help: 'Audit-evidence records dropped by the async pipeline before they could be signed. ' +
+        'Labelled by reason: queue_full (backpressure under drop_oldest_with_metric) or aged_out ' +
+        '(record exceeded AUDIT_PIPELINE_MAX_AGE_MS while waiting). A non-zero rate is the ' +
+        'operator\'s signal to raise AUDIT_PIPELINE_MAX_SIZE / AUDIT_PIPELINE_WORKERS or to ' +
+        'investigate signer latency.',
+      labelNames: ['reason'],
+      registers: [metricsRegistry],
+    });
+    droppedCounter.inc({ reason: 'queue_full' }, 0);
+    droppedCounter.inc({ reason: 'aged_out' }, 0);
+
+    const signedCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_signed_total',
+      help: 'Audit-evidence records successfully signed by the async pipeline.',
+      registers: [metricsRegistry],
+    });
+    signedCounter.inc(0);
+
+    const signErrorsCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_sign_errors_total',
+      help: 'Audit-evidence records the async pipeline failed to sign (signer rejection). ' +
+        'A persistent non-zero rate indicates a broken signer key or KMS outage.',
+      registers: [metricsRegistry],
+    });
+    signErrorsCounter.inc(0);
+
+    new Gauge({
+      name: 'euno_gateway_audit_pipeline_queue_depth',
+      help: 'Current number of unsigned audit-evidence records buffered in the async pipeline ring.',
+      registers: [metricsRegistry],
+      collect() {
+        this.set(auditPipeline ? auditPipeline.queueDepth() : 0);
+      },
+    });
+
+    // Build the audit-log sink once, reuse it across every signed
+    // record. Matches the logger the synchronous path in
+    // `EnforcementEngine.generateEvidence` uses, so log routing is
+    // identical whether or not R-9 is enabled.
+    const pipelineAuditLogger = createAuditLogger('tool-gateway');
+
+    const backpressure: BackpressurePolicy =
+      (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
+      'drop_oldest_with_metric';
+
+    auditPipeline = createAuditPipeline({
+      signer: evidenceSigner,
+      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
+      workers: validated.AUDIT_PIPELINE_WORKERS,
+      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
+      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
+      backpressure,
+      onDropped: (count, reason) => {
+        droppedCounter.inc({ reason }, count);
+      },
+      onSigned: (signed) => {
+        signedCounter.inc();
+        // Mirror the per-record audit log line the synchronous path
+        // emits, so operators searching for a specific evidence id
+        // still find it once R-9 is enabled.
+        try {
+          pipelineAuditLogger.info('Cryptographic evidence generated', {
+            evidenceId: signed.id,
+            sessionId: signed.sessionId,
+            decision: signed.decision,
+            signature: signed.signature.substring(0, 20) + '...',
+          });
+        } catch {
+          // Audit-log emission is best-effort; never break signing on it.
+        }
+      },
+      onSignError: (err) => {
+        signErrorsCounter.inc();
+        logger.error('Audit pipeline failed to sign evidence', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    });
+
+    logger.info('Async audit pipeline enabled (R-9)', {
+      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
+      workers: validated.AUDIT_PIPELINE_WORKERS,
+      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
+      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
+      backpressure,
+    });
+  } else if (evidenceSigner && !validated.AUDIT_PIPELINE_ENABLED) {
+    logger.warn(
+      'Async audit pipeline disabled (AUDIT_PIPELINE_ENABLED=false); ' +
+        'evidence signing runs on the request critical path.',
+    );
+  }
+
+  const enforcementEngine = new EnforcementEngine({
+    verifier,
+    logger,
+    killSwitchManager,
+    evidenceSigner,
+    auditPipeline,
+    enableCryptographicAudit: config.enableCryptographicAudit,
+    signedDecisions,
+    argumentSchemaRequired: validated.ARGUMENT_SCHEMA_REQUIRED,
+    policyVersion: config.policyVersion,
+    callCounterStore,
+  });
+
+  let ready = false;
+  const setReady = (value: boolean) => {
+    ready = value;
+  };
+
+  const rateLimitWindowMs = validated.RATE_LIMIT_WINDOW_MS;
+  const rateLimitMax = validated.RATE_LIMIT_MAX_REQUESTS;
+
   enforcementEngine.setDecisionRecorder((decision) => {
     decisionsCounter.inc({ decision });
   });
@@ -356,6 +474,8 @@ export async function initializeServices(
     callCounterStore,
     revocationStore,
     evidenceSigner,
+    auditPipeline,
+    auditPipelineDrainTimeoutMs,
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     allowedOrigins: resolveAllowedOrigins(env, config.environment),

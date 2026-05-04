@@ -40,7 +40,7 @@ export async function startServer(): Promise<void> {
 
   const app = createApp(deps);
 
-  const { config, logger, revocationStore, killSwitchManager, callCounterStore } = deps;
+  const { config, logger, revocationStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs } = deps;
 
   const server = app.listen(config.port, () => {
     setReady(true);
@@ -86,6 +86,21 @@ export async function startServer(): Promise<void> {
         }
       } catch (err) {
         logger.warn('Error while closing call-counter store', {
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+      // R-9: drain the async audit pipeline before exit so any
+      // evidence still buffered in the ring is flushed to the signer.
+      // The drain timeout is bounded so SIGTERM cannot hang
+      // indefinitely on a misbehaving signer; items still buffered
+      // when the deadline expires are counted as drops on the
+      // pipeline's metric so the loss is observable.
+      try {
+        if (auditPipeline) {
+          await auditPipeline.drain(auditPipelineDrainTimeoutMs);
+        }
+      } catch (err) {
+        logger.warn('Error while draining audit pipeline', {
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       }
