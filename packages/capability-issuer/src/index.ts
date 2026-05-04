@@ -31,6 +31,8 @@ import {
   tracingMiddleware,
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
+  IssuanceRateLimiter,
+  createIssuanceRateLimiterFromEnv,
 } from '@euno/common';
 import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -48,6 +50,18 @@ dotenv.config();
 // of inline `process.env.FOO || 'default'` reads sprinkled across the
 // boot path.
 const env = loadConfigOrExit(process.env, 'issuer');
+
+// F-7: resolve the deployment's logical region exactly once at boot
+// so every region-aware surface sees the same value. The
+// `EUNO_DEPLOYMENT_REGION` fallback matches the legacy fallback
+// CapabilityIssuerService still honours (sprint 3-4 posture wiring),
+// otherwise tracing spans would silently omit `euno.region` in any
+// deployment that hasn't migrated to `ISSUER_REGION` yet — which is
+// exactly the inconsistency F-7 is supposed to eliminate.
+const issuerRegion: string | undefined =
+  (env.ISSUER_REGION && env.ISSUER_REGION.length > 0
+    ? env.ISSUER_REGION
+    : process.env.EUNO_DEPLOYMENT_REGION) || undefined;
 
 // Map the validated `EunoConfig` onto the existing in-memory
 // `ServiceConfig` shape.  The structured nested groups (`keyVault`,
@@ -232,6 +246,22 @@ async function initializeServices() {
       });
     }
 
+    // Per-(tenant, user, agent) issuance rate limiter (F-1, addresses
+    // I-1). Tenant-aware, distributed via Redis when REDIS_URL is set
+    // — required for multi-replica or multi-region active/active
+    // deployments (F-7). When ISSUANCE_RATE_LIMIT_ENABLED=false the
+    // service runs without a limiter, preserving pre-F-1 behaviour
+    // (the per-IP express-rate-limit middleware below still runs).
+    let issuanceRateLimiter: IssuanceRateLimiter | undefined;
+    if (env.ISSUANCE_RATE_LIMIT_ENABLED) {
+      issuanceRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, { logger });
+    } else {
+      logger.warn(
+        'ISSUANCE_RATE_LIMIT_ENABLED=false — per-subject issuance rate limit is DISABLED. ' +
+          'Only the legacy per-IP rate limit applies. NOT recommended for production.',
+      );
+    }
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
@@ -256,6 +286,25 @@ async function initializeServices() {
         // emitter unless `POSTURE_EMITTER_ENABLED=true`. Failures
         // never fail issuance.
         postureEmitter: PostureEmitter.fromEnv(process.env, logger),
+        // F-7: surface region tag on posture inventory so multi-region
+        // deployments can chart per-region issuance distribution.
+        // F-7: surface region tag on tokens, audit, posture inventory,
+        // and request span attributes — see docs/MULTI_REGION_ISSUER.md.
+        // `region` is the canonical option; the legacy `postureRegion`
+        // alias is omitted here so a future reader doesn't have to ask
+        // which one wins.
+        region: issuerRegion,
+        issuanceRateLimiter,
+        onIssuanceRateLimited: (subject, reason) => {
+          // Forward the limiter's classification verbatim so dashboards
+          // can distinguish a real rate-limit hit from a Redis outage —
+          // the metric contract documented in docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md
+          // §1.3.1 and the F-1 PR description depends on this label.
+          issuanceRateLimitDeniedCounter.inc({
+            tenant: subject.tenantId ?? '_no_tenant',
+            reason: reason === 'exceeded' ? 'issuance_rate_limit_exceeded' : 'issuance_rate_limiter_unavailable',
+          });
+        },
       }
     );
 
@@ -287,7 +336,7 @@ const app = express();
 
 // OpenTelemetry context propagation (R-3). First middleware so every
 // handler — including audit logging — runs inside the request span.
-app.use(tracingMiddleware('capability-issuer'));
+app.use(tracingMiddleware('capability-issuer', { region: issuerRegion }));
 
 // Middleware
 app.use(helmet());
@@ -322,6 +371,16 @@ for (const operation of ['issue', 'attenuate', 'renew'] as const) {
     issuanceCounter.inc({ operation, outcome }, 0);
   }
 }
+// F-1 (addresses I-1): per-(tenant, user, agent) rate-limit denials. A spike
+// in `tenant=*,reason=exceeded` is the signal an account is being abused;
+// `reason=unavailable` indicates the limiter (Redis) cannot be consulted.
+const issuanceRateLimitDeniedCounter = new Counter({
+  name: 'euno_issuer_issuance_rate_limit_denied_total',
+  help: 'Capability issuance attempts denied by the per-(tenant, user, agent) rate limiter, labelled by tenant and reason.',
+  labelNames: ['tenant', 'reason'],
+  registers: [metricsRegistry],
+});
+issuanceRateLimitDeniedCounter.inc({ tenant: '_no_tenant', reason: 'exceeded' }, 0);
 app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
 app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
 
@@ -352,9 +411,16 @@ const limiter = rateLimit({
       ip: req.ip,
       path: req.path,
     });
+    // Use the standard issuer error envelope (`{ error: { code, message } }`)
+    // so clients can rely on a single 429 contract on these routes — the
+    // F-1 limiter, the gateway, and this per-IP express limiter all share
+    // a shape. `standardHeaders: true` above already adds `Retry-After`
+    // (RFC 9110 §10.2.3), so the OpenAPI 429 response also holds here.
     res.status(429).json({
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Too many requests, please try again later',
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests, please try again later',
+      },
     });
   },
 });
@@ -645,7 +711,7 @@ app.get('/.well-known/did.json', async (_req: Request, res: Response, next: Next
  * - Link to public key and DID document
  */
 app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
-  res.json({
+  const body: Record<string, unknown> = {
     issuer: config.issuerDid,
     schemaVersions: {
       current: CAPABILITY_TOKEN_SCHEMA_VERSION,
@@ -657,7 +723,17 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
       publicKey: '/api/v1/public-key (deprecated — use jwks)',
       didDocument: '/.well-known/did.json',
     },
-  });
+  };
+  // F-7: surface the region tag so a multi-region active/active
+  // deployment can be inspected from the outside (e.g. an operator
+  // diagnosing why a token validated against region A's JWKS but the
+  // VC payload is stamped `region: "B"`). Omitted entirely when the
+  // operator has not configured a region — back-compat with single
+  // region deployments.
+  if (issuerRegion) {
+    body.region = issuerRegion;
+  }
+  res.json(body);
 });
 
 // Error handling middleware
@@ -668,6 +744,12 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
       message: error.message,
       path: req.path,
     });
+
+    if (error.responseHeaders) {
+      for (const [name, value] of Object.entries(error.responseHeaders)) {
+        res.setHeader(name, value);
+      }
+    }
 
     res.status(error.statusCode).json({
       error: {

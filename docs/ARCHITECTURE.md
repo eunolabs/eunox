@@ -648,13 +648,11 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 **Properties this architecture does *not* yet give you** (fully
 catalogued in [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md)):
 
-- Distributed tracing across issuer → gateway → backend.
-- A formal policy engine (OPA / Cedar) for non-typed conditional logic.
 - A self-service UI for non-engineers to author manifests.
-- True multi-region active/active issuance.
-- Per-user / per-token issuance rate limits.
-- Bounded-blast-radius response redaction (the `redactFields`
-  obligation is currently audit-only).
+- A pluggable `ActionResolver` so HTTP-method/path → action mapping
+  is data-driven instead of substring-matched (R-7).
+- DPoP sender-constrained tokens (F-2).
+- OCSF-formatted audit transport (F-6).
 
 ---
 

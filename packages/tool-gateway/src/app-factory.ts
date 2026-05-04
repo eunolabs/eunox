@@ -58,7 +58,10 @@ export function createApp(deps: GatewayDependencies): Express {
   // OpenTelemetry context propagation (R-3). Mounted as the very first
   // middleware so every downstream handler — including audit logging —
   // runs inside the request's span context.
-  app.use(tracingMiddleware('tool-gateway'));
+  // F-7: stamp `euno.region` on every span when GATEWAY_REGION is set,
+  // so traces from a multi-region deployment can be filtered/grouped
+  // by the region that actually served the request.
+  app.use(tracingMiddleware('tool-gateway', { region: deps.region }));
 
   // Security headers
   app.use(helmet());
@@ -144,6 +147,14 @@ export function createApp(deps: GatewayDependencies): Express {
         message: error.message,
         path: req.path,
       });
+      // Propagate any error-attached response headers (e.g. `Retry-After`
+      // for `RATE_LIMIT_EXCEEDED`). The mechanism is generic so a future
+      // error code can opt in without touching this middleware.
+      if (error.responseHeaders) {
+        for (const [name, value] of Object.entries(error.responseHeaders)) {
+          res.setHeader(name, value);
+        }
+      }
       res.status(error.statusCode).json({
         error: {
           code: error.code,

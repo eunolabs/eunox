@@ -394,6 +394,17 @@ export interface CapabilityTokenPayload {
     type: string[];
     credentialSubject: Record<string, unknown>;
   };
+  /**
+   * Optional logical region tag for the issuer instance that minted
+   * this token (F-7, multi-region active/active). Surfaced so a
+   * downstream gateway / audit consumer can attribute each token to
+   * its originating region — important for reconstructing behaviour
+   * across a regional failover. Tokens MUST remain accepted by every
+   * region's gateway regardless of the value of `region` (no
+   * region-pinning enforcement at the gateway by default; operators
+   * who want region affinity should layer it on top).
+   */
+  region?: string;
 }
 
 /**
@@ -452,6 +463,16 @@ export interface AuditLogEntry {
   reason?: string;
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+  /**
+   * Optional logical region tag for the issuer/gateway instance that
+   * produced this entry (F-7, multi-region active/active). When set,
+   * audit pipelines downstream can attribute each event to its
+   * originating region — important for reconstructing what happened
+   * during a regional failover. Plumbed by the issuer from the
+   * `ISSUER_REGION` env var; gateways MAY plumb the same way from
+   * their own region tag.
+   */
+  region?: string;
 }
 
 /**

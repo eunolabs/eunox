@@ -127,6 +127,15 @@ export const EUNO_ATTR = {
   OUTCOME: 'euno.outcome',
   SERVICE: 'euno.service',
   REASON: 'euno.reason',
+  /**
+   * Logical region tag for the issuer or gateway instance handling the
+   * request. Set by {@link tracingMiddleware} from its `region`
+   * option (operators thread it from `ISSUER_REGION` / `GATEWAY_REGION`).
+   * F-7 in `docs/IMPROVEMENTS_AND_REFACTORING.md` — required so a
+   * trace recorded during a regional failover can be attributed to the
+   * region that actually served it.
+   */
+  REGION: 'euno.region',
 } as const;
 
 /** Allowed values for the `euno.outcome` attribute. */
@@ -144,6 +153,7 @@ export interface EunoSpanAttributes {
   [EUNO_ATTR.OUTCOME]?: EunoOutcome;
   [EUNO_ATTR.SERVICE]?: string;
   [EUNO_ATTR.REASON]?: string;
+  [EUNO_ATTR.REGION]?: string;
   [key: string]: string | number | boolean | undefined;
 }
 
@@ -402,8 +412,33 @@ type NextFn = (err?: unknown) => void;
  * The middleware itself never throws; tracing failures must not break
  * the request path.
  */
-export function tracingMiddleware(serviceName: string) {
+/**
+ * Options for {@link tracingMiddleware}. Kept as a separate object so
+ * back-compat callers (`tracingMiddleware(serviceName)` with a single
+ * string argument) continue to work unchanged.
+ */
+export interface TracingMiddlewareOptions {
+  /**
+   * Logical region tag for the service instance handling the request
+   * (F-7). When supplied, every request span is stamped with
+   * `euno.region`. Plumbed by the issuer from `ISSUER_REGION` and by
+   * the gateway from `GATEWAY_REGION`. Empty string is treated as
+   * "not configured" and the attribute is omitted.
+   */
+  region?: string;
+}
+
+export function tracingMiddleware(
+  serviceName: string,
+  options: TracingMiddlewareOptions = {},
+) {
   const tracer = getTracer(serviceName);
+  // Match createAuditLogger's whitespace handling — region tags are
+  // user-supplied env vars (`ISSUER_REGION` / `GATEWAY_REGION`) and a
+  // stray newline from a templating tool would otherwise produce a
+  // surprisingly-formatted span attribute.
+  const trimmedRegion = options.region?.trim();
+  const region = trimmedRegion && trimmedRegion.length > 0 ? trimmedRegion : undefined;
 
   return function tracingMw(req: IncomingLike, res: OutgoingLike, next: NextFn): void {
     let parentCtx: Context;
@@ -417,15 +452,18 @@ export function tracingMiddleware(serviceName: string) {
     const routePath = req.route?.path || req.path || req.originalUrl || req.url || '/';
     const spanName = `${method} ${routePath}`;
 
+    const baseAttrs: Record<string, string> = {
+      [EUNO_ATTR.SERVICE]: serviceName,
+      'http.method': method,
+      'http.target': req.originalUrl || req.url || routePath,
+    };
+    if (region) baseAttrs[EUNO_ATTR.REGION] = region;
+
     const span = tracer.startSpan(
       spanName,
       {
         kind: SpanKind.SERVER,
-        attributes: {
-          [EUNO_ATTR.SERVICE]: serviceName,
-          'http.method': method,
-          'http.target': req.originalUrl || req.url || routePath,
-        },
+        attributes: baseAttrs,
       },
       parentCtx,
     );

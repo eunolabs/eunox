@@ -97,6 +97,12 @@ export interface IssuancePayloadInputs {
   jti: string;
   capabilities: CapabilityConstraint[];
   userContext: Pick<UserContext, 'userId' | 'roles' | 'tenantId'>;
+  /**
+   * Optional logical region of the issuer instance. When supplied,
+   * stamped into the `region` claim so consumers can attribute the
+   * token to its originating region (F-7 multi-region active/active).
+   */
+  region?: string;
 }
 
 /**
@@ -123,6 +129,7 @@ export function buildIssuancePayload(
       tenantId: inputs.userContext.tenantId,
     },
   };
+  if (inputs.region) payload.region = inputs.region;
   payload.vc = buildVerifiableCredential(payload);
   return payload;
 }
@@ -157,6 +164,10 @@ export function buildAttenuatedPayload(
     parentCapabilityId: inputs.parent.jti,
     authorizedBy: inputs.parent.authorizedBy,
   };
+  // Preserve the parent token's `region` claim (F-7) — attenuating in
+  // a different region does not retroactively change the originating
+  // region of the chain.
+  if (inputs.parent.region) childPayload.region = inputs.parent.region;
   // Re-build the VC envelope from the *attenuated* claim set so the
   // VC view of the token reflects the narrowed capabilities, not
   // the parent's broader set.
@@ -195,6 +206,9 @@ export function buildRenewedPayload(
     parentCapabilityId: inputs.current.jti,
     authorizedBy: inputs.current.authorizedBy,
   };
+  // Preserve the originating `region` claim across renewal (F-7) so
+  // the audit chain can attribute every link to its source region.
+  if (inputs.current.region) renewedPayload.region = inputs.current.region;
   // Re-build the VC envelope so its `id` (urn:uuid:<jti>) and
   // `parentCapabilityId` reference the new token, not the previous
   // one.

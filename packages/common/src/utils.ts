@@ -482,13 +482,25 @@ export enum ErrorCode {
  * Custom error class for capability system
  */
 export class CapabilityError extends Error {
+  /**
+   * Optional HTTP response headers the issuer/gateway error handler
+   * should set on the outgoing 4xx/5xx response. Used today to
+   * propagate `Retry-After` on `RATE_LIMIT_EXCEEDED` (F-1) so callers
+   * back off the right amount rather than hammering the issuer; the
+   * mechanism is intentionally generic so future error codes can
+   * piggy-back without touching the error-handler middleware.
+   */
+  public readonly responseHeaders?: Record<string, string>;
+
   constructor(
     public code: ErrorCode,
     message: string,
-    public statusCode: number = 500
+    public statusCode: number = 500,
+    responseHeaders?: Record<string, string>,
   ) {
     super(message);
     this.name = 'CapabilityError';
+    if (responseHeaders) this.responseHeaders = responseHeaders;
     Error.captureStackTrace(this, this.constructor);
   }
 }

@@ -92,6 +92,71 @@ For deeper background see:
 - [ ] Per-tenant or per-key rate limiting is added in front of the gateway
       (e.g. Azure API Management, AWS WAF) when serving multiple tenants.
 
+### 1.3.1 Capability Issuer – Per-subject Issuance Rate Limit (F-1)
+
+> Defends against a compromised account flooding the issuer to mint
+> tokens, attenuate to defeat per-token revocation, or renew to extend
+> lifetime indefinitely. Covers `/api/v1/issue`, `/api/v1/attenuate`,
+> and `/api/v1/renew` from a single shared bucket per
+> `(tenantId, userId, agentId)`.
+
+- [ ] **`ISSUANCE_RATE_LIMIT_ENABLED=true`** in production. This is the
+      default in `IssuerConfigSchema`, so this checkbox is satisfied as
+      long as the variable is not explicitly overridden to `false`. The
+      only legitimate reason to disable is local development; in
+      production it is the primary defence against a compromised
+      user/agent flooding `/api/v1/issue`.
+- [ ] **`ISSUANCE_RATE_LIMIT_MAX`** and
+      **`ISSUANCE_RATE_LIMIT_WINDOW_SECONDS`** tuned for your
+      workload. A typical starting point for a single agent is
+      `MAX=30, WINDOW=60` (30 mints/minute/subject); tune up for
+      heavy chained-attenuation pipelines.
+- [ ] **`REDIS_URL`** set on every issuer replica when running more
+      than one replica or more than one region — without it each
+      replica gets its own private bucket and the budget is
+      effectively multiplied by the replica count.
+- [ ] **`ISSUANCE_RATE_LIMIT_FAIL_CLOSED=true`** (the default) unless
+      you have an explicit operational reason to fail open during a
+      Redis outage. Failing open accepts that the F-1 protection is
+      bypassed for the duration of the incident.
+- [ ] Dashboards alert on a non-zero rate of
+      `euno_issuer_issuance_rate_limit_denied_total`. The metric is
+      labelled by `tenant` and `reason` (`issuance_rate_limit_exceeded`
+      vs `issuance_rate_limiter_unavailable`) so spikes can be
+      attributed quickly.
+- [ ] Clients on the agent runtime / SDK honour the `Retry-After`
+      header on the resulting `429` (RFC 9110 §10.2.3) — verify by
+      forcing a denial in staging and observing exponential-style
+      back-off rather than a tight retry loop.
+
+### 1.3.2 Multi-region Active/Active (F-7)
+
+> Only required if you run capability-issuer or tool-gateway replicas
+> in more than one region. Single-region deployments may skip this
+> section. Read [`MULTI_REGION_ISSUER.md`](./MULTI_REGION_ISSUER.md)
+> first — it documents the topology, replication contract, RTO/RPO
+> targets, and quarterly drill checklist.
+
+- [ ] **`ISSUER_REGION`** set on every issuer replica to a short,
+      stable region tag (e.g. `eastus2`, `westeurope`).
+- [ ] **`GATEWAY_REGION`** set on every gateway replica — use the
+      same tag as the co-located issuer.
+- [ ] **Globally-replicated Redis** in front of every region (Redis
+      Enterprise Active-Active CRDB, Azure Cache for Redis
+      Geo-replication, ElastiCache Global Datastore, or Memorystore
+      active-active). Without this you are running active/passive,
+      not active/active — see the doc.
+- [ ] **F-1 Redis budget verified to be shared** by triggering a
+      denial in one region and confirming the next attempt from a
+      different region also denies (drill step 2.4).
+- [ ] **JWKS strategy chosen** (shared key vs per-region keys, see
+      doc § 4) and documented in your runbook.
+- [ ] **Audit pipeline filter on `region`** added to your SIEM so
+      regional failovers can be reconstructed from the audit
+      timeline.
+- [ ] **Quarterly failover drill scheduled** following the checklist
+      in `MULTI_REGION_ISSUER.md` § 7.
+
 ### 1.4 Tool Gateway – Distributed Revocation
 
 > Required whenever the gateway runs with **more than one replica**.  In a
@@ -174,7 +239,9 @@ For deeper background see:
 - [ ] **Capacity test** the gateway at the chosen rate-limit ceilings to
       verify the tuned values produce acceptable p99 latency.
 - [ ] **DR plan** documented: KMS key backup/recovery, Redis snapshot policy,
-      cross-region failover for the issuer.
+      cross-region failover for the issuer (see
+      [`MULTI_REGION_ISSUER.md`](./MULTI_REGION_ISSUER.md) for the
+      active/active path).
 - [ ] **Quarterly key rotation** scheduled and dry-run executed.
 - [ ] **Penetration test** focused on capability bypass, replay, and
       revocation-window attacks.

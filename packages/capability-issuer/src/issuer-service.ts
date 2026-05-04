@@ -19,11 +19,14 @@ import {
   DbCredential,
   ErrorCode,
   IdentityProvider,
+  IssuanceRateLimitSubject,
+  IssuanceRateLimiter,
   IssueCapabilityRequest,
   IssueCapabilityResponse,
   JwkSet,
   Logger,
   PostureEmitterLike,
+  RateLimitDecision,
   RoleCapabilityPolicy,
   StorageGrant,
   TokenSigner,
@@ -159,11 +162,57 @@ export interface CapabilityIssuerServiceOptions {
    */
   postureEmitter?: PostureEmitterLike;
   /**
-   * Cloud region to record on inventory records. Surfaces alongside
-   * the agent in posture dashboards. Falls back to
-   * `process.env.EUNO_DEPLOYMENT_REGION` and finally `'unknown'`.
+   * Logical region tag for this issuer instance (F-7). When set,
+   * stamped on:
+   *  - the `region` claim of issued capability tokens (preserved
+   *    across attenuation and renewal),
+   *  - posture inventory records (replaces the legacy
+   *    {@link postureRegion} option),
+   *  - audit log entries via `AuditLogEntry.region`,
+   *  - request span attributes (`euno.region`) — set by the HTTP
+   *    layer, not this service.
+   *
+   * Falls back to `process.env.EUNO_DEPLOYMENT_REGION` (legacy) and
+   * finally undefined (the `region` claim is then omitted on tokens
+   * for back-compat with single-region deployments).
+   */
+  region?: string;
+  /**
+   * @deprecated Use {@link region}. Retained for back-compat with
+   * sprint 3-4 posture-emitter wiring; ignored when {@link region} is
+   * also set.
    */
   postureRegion?: string;
+  /**
+   * Optional per-(tenant, user, agent) issuance rate limiter (F-1,
+   * addresses I-1 from `docs/IMPROVEMENTS_AND_REFACTORING.md`). When
+   * supplied, every successful authentication on
+   * {@link CapabilityIssuerService.issueCapability} consumes one
+   * token from the bucket; exhaustion denies with
+   * {@link ErrorCode.RATE_LIMIT_EXCEEDED} (HTTP 429) BEFORE any
+   * signing or side-credential mint runs, so a compromised account
+   * cannot exhaust KMS budget either.
+   *
+   * The limiter is keyed on `(tenantId, userId, agentId)` — tenant
+   * first so the limit is **tenant-aware**, the load-bearing
+   * prerequisite called out by §6.1 #3 of
+   * `docs/IMPROVEMENTS_AND_REFACTORING.md` for F-7 (multi-region
+   * active/active issuer).
+   *
+   * Optional for back-compat: the existing per-IP express rate
+   * limiter on `/api/v1/issue` continues to run regardless.
+   */
+  issuanceRateLimiter?: IssuanceRateLimiter;
+  /**
+   * Optional callback fired whenever {@link issuanceRateLimiter}
+   * denies an issuance. Used by the HTTP entrypoint to increment a
+   * Prometheus counter. Failures inside the callback are logged and
+   * swallowed so observability never affects the request decision.
+   */
+  onIssuanceRateLimited?: (
+    subject: IssuanceRateLimitSubject,
+    reason: 'exceeded' | 'limiter_unavailable',
+  ) => void;
 }
 
 export class CapabilityIssuerService {
@@ -180,7 +229,26 @@ export class CapabilityIssuerService {
   private pimRequiredRoles: string[];
   private capTtlToPimActivation: boolean;
   private postureEmitter?: PostureEmitterLike;
+  /**
+   * Effective region tag (F-7). Empty string means "not configured" —
+   * audit/posture default to `'unknown'`, the token `region` claim is
+   * omitted entirely, and gateways behave exactly as before. See the
+   * `region` field on {@link CapabilityIssuerServiceOptions}.
+   */
+  private region: string;
+  /**
+   * Region label used by posture emission. Always non-empty (defaults
+   * to `'unknown'` so the inventory feed is never sparse). Distinct
+   * from {@link region} only because the token `region` claim must be
+   * omitted when not configured (back-compat) but posture records have
+   * always required a value.
+   */
   private postureRegion: string;
+  private issuanceRateLimiter?: IssuanceRateLimiter;
+  private onIssuanceRateLimited?: (
+    subject: IssuanceRateLimitSubject,
+    reason: 'exceeded' | 'limiter_unavailable',
+  ) => void;
 
   constructor(
     signer: TokenSigner,
@@ -195,7 +263,16 @@ export class CapabilityIssuerService {
     this.issuerDid = issuerDid;
     this.defaultTTL = defaultTTL;
     this.logger = logger;
-    this.auditLogger = createAuditLogger('capability-issuer');
+    // F-7: `region` is the canonical setting; `postureRegion` is the
+    // legacy fallback so existing wiring keeps working unchanged.
+    // `EUNO_DEPLOYMENT_REGION` is the very-legacy fallback (sprint
+    // 3-4 posture-only). Resolved BEFORE the audit logger so every
+    // audit record this service emits — including the synchronous
+    // deny entries from `enforceIssuanceRateLimit` — is stamped with
+    // `region`.
+    this.region = options.region ?? options.postureRegion ?? process.env.EUNO_DEPLOYMENT_REGION ?? '';
+    this.postureRegion = this.region.length > 0 ? this.region : 'unknown';
+    this.auditLogger = createAuditLogger('capability-issuer', { region: this.region });
     this.requireConsent = options.requireConsent === true;
     this.policy = options.policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
     if (options.storageGrantService) this.storageGrantService = options.storageGrantService;
@@ -203,8 +280,19 @@ export class CapabilityIssuerService {
     this.pimRequiredRoles = options.pimRequiredRoles ?? [];
     this.capTtlToPimActivation = options.capTtlToPimActivation !== false;
     if (options.postureEmitter) this.postureEmitter = options.postureEmitter;
-    this.postureRegion =
-      options.postureRegion ?? process.env.EUNO_DEPLOYMENT_REGION ?? 'unknown';
+    if (options.issuanceRateLimiter) this.issuanceRateLimiter = options.issuanceRateLimiter;
+    if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
+  }
+
+  /**
+   * Logical region tag for this issuer instance (F-7). Returns the
+   * empty string when no region is configured. Exposed read-only so
+   * the HTTP layer can surface it on the `/.well-known/capability-issuer`
+   * metadata endpoint and on tracing spans without having to re-read
+   * the env var.
+   */
+  getRegion(): string {
+    return this.region;
   }
 
   /**
@@ -218,6 +306,18 @@ export class CapabilityIssuerService {
       // Step 1: Validate the user's authentication token.
       this.logger.info('Validating user authentication token', { agentId: request.agentId });
       const userContext = await this.identityProvider.validateToken(request.authToken);
+
+      // Step 1a: Per-(tenant, user, agent) issuance rate limit (F-1,
+      // addresses I-1). Runs *after* authentication so the limit is
+      // keyed on the resolved subject rather than transport metadata,
+      // and *before* any signing or side-credential mint so a
+      // compromised account cannot exhaust KMS budget. Skipped when
+      // no limiter was configured (back-compat).
+      await this.enforceIssuanceRateLimit({
+        tenantId: userContext.tenantId,
+        userId: userContext.userId,
+        agentId: request.agentId,
+      });
 
       // Step 1b: Enforce PIM-required roles.
       enforcePimRequiredRoles(
@@ -330,6 +430,10 @@ export class CapabilityIssuerService {
         jti: tokenId,
         capabilities,
         userContext,
+        // F-7: stamp the originating region so audit consumers can
+        // attribute the token after a regional failover. Falls back to
+        // `undefined` (claim omitted) when no region is configured.
+        region: this.region.length > 0 ? this.region : undefined,
       });
 
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
@@ -475,6 +579,113 @@ export class CapabilityIssuerService {
   }
 
   /**
+   * Apply the configured per-(tenant, user, agent) issuance rate
+   * limit (F-1, addresses I-1). When no limiter is wired this is a
+   * no-op (back-compat). On exhaustion logs an audit-deny entry,
+   * fires the optional metric callback, and throws
+   * {@link CapabilityError} with {@link ErrorCode.RATE_LIMIT_EXCEEDED}
+   * (HTTP 429) — caller-side `next(error)` then surfaces the standard
+   * error envelope.
+   */
+  private async enforceIssuanceRateLimit(subject: IssuanceRateLimitSubject): Promise<void> {
+    if (!this.issuanceRateLimiter) return;
+    let decision: RateLimitDecision;
+    try {
+      decision = await this.issuanceRateLimiter.consume(subject);
+    } catch (error) {
+      // The limiter implementation already chose its failure mode
+      // (see RedisIssuanceRateLimiter.failClosedOnError). When it
+      // chose to propagate, treat the error as fail-closed here too:
+      // the issuer cannot mint without a working limiter when one is
+      // wired, otherwise the limit is bypassed silently.
+      this.logger.error(
+        'Issuance rate limiter threw; failing closed (denying issuance)',
+        {
+          tenantId: subject.tenantId,
+          userId: subject.userId,
+          agentId: subject.agentId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+      );
+      this.notifyRateLimited(subject, 'limiter_unavailable');
+      const auditEntry: AuditLogEntry = {
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        eventType: 'issuance',
+        agentId: subject.agentId,
+        userId: subject.userId,
+        decision: 'deny',
+        metadata: {
+          reason: 'issuance_rate_limiter_unavailable',
+          tenantId: subject.tenantId ?? null,
+        },
+      };
+      this.auditLogger.warn(
+        'Capability issuance denied: issuance rate limiter unavailable',
+        auditEntry,
+      );
+      throw new CapabilityError(
+        ErrorCode.RATE_LIMIT_EXCEEDED,
+        'Issuance rate limiter is unavailable; please retry shortly',
+        429,
+        // `Retry-After` mirrors the limiter's configured window: a
+        // stampeding herd that retries inside the same window will
+        // hit the same outage immediately, so the bound is the
+        // earliest reasonable retry horizon. Reading `windowSeconds`
+        // from the limiter (rather than the issuer's local config)
+        // keeps the value correct when operators change the window
+        // without restarting the issuer.
+        { 'Retry-After': String(this.issuanceRateLimiter.windowSeconds) },
+      );
+    }
+    if (decision.allowed) return;
+
+    this.notifyRateLimited(subject, 'exceeded');
+    const auditEntry: AuditLogEntry = {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      eventType: 'issuance',
+      agentId: subject.agentId,
+      userId: subject.userId,
+      decision: 'deny',
+      metadata: {
+        reason: 'issuance_rate_limit_exceeded',
+        tenantId: subject.tenantId ?? null,
+        limit: decision.limit,
+        windowSeconds: decision.windowSeconds,
+        retryAfterSeconds: decision.retryAfterSeconds,
+      },
+    };
+    this.auditLogger.warn(
+      'Capability issuance denied: per-subject issuance rate limit exceeded',
+      auditEntry,
+    );
+    throw new CapabilityError(
+      ErrorCode.RATE_LIMIT_EXCEEDED,
+      `Issuance rate limit exceeded for this user/agent. Retry after ${decision.retryAfterSeconds}s.`,
+      429,
+      // RFC 9110 §10.2.3: `Retry-After` is the standard way to tell a
+      // client to back off. Always populated for F-1 denials so the
+      // SDK / agent runtime does not retry-storm.
+      { 'Retry-After': String(decision.retryAfterSeconds) },
+    );
+  }
+
+  private notifyRateLimited(
+    subject: IssuanceRateLimitSubject,
+    reason: 'exceeded' | 'limiter_unavailable',
+  ): void {
+    if (!this.onIssuanceRateLimited) return;
+    try {
+      this.onIssuanceRateLimited(subject, reason);
+    } catch (error) {
+      this.logger.warn('onIssuanceRateLimited callback threw', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
    * Mint short-lived storage and DB credentials when their respective
    * services are configured and enabled. A mint failure aborts the
    * entire issuance — partial grants give the agent a misleading view
@@ -607,6 +818,19 @@ export class CapabilityIssuerService {
         );
       }
 
+      // Step 2a: Apply F-1 rate limit to attenuation. An attacker
+      // holding a single parent token can otherwise mint unlimited
+      // children with different capability subsets to evade per-token
+      // revocation; the limit must therefore cover this path. Keyed on
+      // the same (tenantId, userId, agentId) tuple as fresh issuance
+      // so a compromised account hits a single shared budget across
+      // issue/attenuate/renew.
+      await this.enforceIssuanceRateLimit({
+        tenantId: parentPayload.authorizedBy?.tenantId,
+        userId: parentPayload.authorizedBy?.userId ?? 'unknown',
+        agentId: parentPayload.sub,
+      });
+
       // Step 3: Validate requested capabilities are a subset of parent's.
       validateCapabilitySubset(parentPayload.capabilities, requestedCapabilities);
 
@@ -725,6 +949,18 @@ export class CapabilityIssuerService {
         { issuer: this.issuerDid, audience: 'tool-gateway' },
         'Invalid capability token format',
       );
+
+      // Step 1a: Apply F-1 rate limit to renewal too. Without this an
+      // attacker holding any non-expired token can keep its lineage
+      // alive forever by renewing in a tight loop, defeating short
+      // TTLs entirely. Same shared (tenantId, userId, agentId) bucket
+      // as fresh issuance and attenuation so the budget is meaningful
+      // regardless of which mint path is being abused.
+      await this.enforceIssuanceRateLimit({
+        tenantId: currentPayload.authorizedBy?.tenantId,
+        userId: currentPayload.authorizedBy?.userId ?? 'unknown',
+        agentId: currentPayload.sub,
+      });
 
       // Step 2: Build the renewed token.
       const now = getCurrentTimestamp();

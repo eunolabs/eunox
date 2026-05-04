@@ -97,6 +97,14 @@ export interface GatewayDependencies {
    * Drives `/health/ready`. Defaults to always-true when omitted.
    */
   isReady?: () => boolean;
+  /**
+   * Logical region tag for this gateway instance (F-7,
+   * `docs/MULTI_REGION_ISSUER.md`). Plumbed from `GATEWAY_REGION`.
+   * When set, every request span is stamped with `euno.region`.
+   * Empty/undefined means "not configured" — back-compat with single
+   * region deployments.
+   */
+  region?: string;
 }
 
 /**
@@ -386,7 +394,12 @@ export async function initializeServices(
     // record. Matches the logger the synchronous path in
     // `EnforcementEngine.generateEvidence` uses, so log routing is
     // identical whether or not R-9 is enabled.
-    const pipelineAuditLogger = createAuditLogger('tool-gateway');
+    // F-7: stamp `region` on every audit record so multi-region
+    // deployments can attribute events to a region after a regional
+    // failover. Omitted when GATEWAY_REGION is unset (back-compat).
+    const pipelineAuditLogger = createAuditLogger('tool-gateway', {
+      region: validated.GATEWAY_REGION,
+    });
 
     const backpressure: BackpressurePolicy =
       (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
@@ -451,6 +464,9 @@ export async function initializeServices(
     argumentSchemaRequired: validated.ARGUMENT_SCHEMA_REQUIRED,
     policyVersion: config.policyVersion,
     callCounterStore,
+    // F-7: stamp region on every enforcement audit record (deny logs,
+    // signed evidence). Symmetrical to ISSUER_REGION.
+    region: validated.GATEWAY_REGION,
   });
 
   let ready = false;
@@ -484,6 +500,7 @@ export async function initializeServices(
     metricsRegistry,
     decisionsCounter,
     isReady: () => ready,
+    region: validated.GATEWAY_REGION,
   };
 
   logger.info('Tool Gateway services initialized successfully');

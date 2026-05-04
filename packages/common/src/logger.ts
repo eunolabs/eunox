@@ -188,7 +188,32 @@ function traceContextEnrichmentFormat() {
  * audit events join the same distributed trace as the request that
  * caused them.
  */
-export function createAuditLogger(serviceName: string) {
+/**
+ * Optional construction-time settings for {@link createAuditLogger}.
+ * Kept as a separate object so the existing `createAuditLogger(name)`
+ * callers continue to work unchanged.
+ */
+export interface CreateAuditLoggerOptions {
+  /**
+   * Logical region tag for the service instance (F-7,
+   * `docs/MULTI_REGION_ISSUER.md`). When supplied, every audit record
+   * emitted by this logger carries `region: "<value>"` so downstream
+   * SIEMs can attribute events to a region after a regional
+   * failover. Plumbed by the issuer from `ISSUER_REGION` and by the
+   * gateway from `GATEWAY_REGION`. Empty/whitespace strings are
+   * treated as "not configured" and the field is omitted (back-compat).
+   */
+  region?: string;
+}
+
+export function createAuditLogger(
+  serviceName: string,
+  options: CreateAuditLoggerOptions = {},
+) {
+  const trimmedRegion = options.region?.trim();
+  const region = trimmedRegion && trimmedRegion.length > 0 ? trimmedRegion : undefined;
+  const defaultMeta: Record<string, string> = { service: serviceName, logType: 'audit' };
+  if (region) defaultMeta.region = region;
   return winston.createLogger({
     level: 'info',
     format: winston.format.combine(
@@ -197,7 +222,7 @@ export function createAuditLogger(serviceName: string) {
       tamperEvidentChainFormat(serviceName),
       winston.format.json()
     ),
-    defaultMeta: { service: serviceName, logType: 'audit' },
+    defaultMeta,
     transports: [
       new winston.transports.Console(),
       // In production, audit logs should also flow to the cloud-native

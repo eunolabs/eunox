@@ -140,6 +140,7 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
+                429: components["responses"]["TooManyRequests"];
             };
         };
         delete?: never;
@@ -186,6 +187,7 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                429: components["responses"]["TooManyRequests"];
             };
         };
         delete?: never;
@@ -239,6 +241,7 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                429: components["responses"]["TooManyRequests"];
             };
         };
         delete?: never;
@@ -412,6 +415,16 @@ export interface paths {
                                 /** @example /.well-known/did.json */
                                 didDocument?: string;
                             };
+                            /**
+                             * @description Optional logical region tag for this issuer
+                             *     instance (F-7, multi-region active/active). When
+                             *     present, capability tokens minted by this
+                             *     instance carry the same value in the `region`
+                             *     claim. Omitted entirely on single-region
+                             *     deployments. See `docs/MULTI_REGION_ISSUER.md`.
+                             * @example eastus2
+                             */
+                            region?: string;
                         };
                     };
                 };
@@ -510,6 +523,24 @@ export interface components {
         /** @description Caller is authenticated but not authorised for the action */
         Forbidden: {
             headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description The per-(tenant, user, agent) issuance rate limit was exceeded
+         *     (F-1, error code `RATE_LIMIT_EXCEEDED`). The shared bucket
+         *     covers `/api/v1/issue`, `/api/v1/attenuate`, and `/api/v1/renew`
+         *     so a compromised account cannot evade the limit by switching
+         *     mint paths. Clients SHOULD honour the `Retry-After` header
+         *     (RFC 9110 §10.2.3) before retrying.
+         */
+        TooManyRequests: {
+            headers: {
+                /** @description Number of seconds the client should wait before retrying. */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {

@@ -78,6 +78,14 @@ export interface EnforcementEngineOptions {
    * {@link createCallCounterStoreFromEnv} at startup to enable it.
    */
   callCounterStore?: CallCounterStore;
+  /**
+   * Logical region tag for this gateway instance (F-7,
+   * `docs/MULTI_REGION_ISSUER.md`). When supplied, every audit record
+   * the engine emits is stamped with `region`. Plumbed by
+   * `bootstrap.ts` from the `GATEWAY_REGION` env var. Empty/undefined
+   * means "not configured" and the field is omitted (back-compat).
+   */
+  region?: string;
 }
 
 /**
@@ -128,7 +136,7 @@ export class EnforcementEngine {
   constructor(options: EnforcementEngineOptions) {
     this.verifier = options.verifier;
     this.logger = options.logger;
-    this.auditLogger = createAuditLogger('tool-gateway');
+    this.auditLogger = createAuditLogger('tool-gateway', { region: options.region });
     this.killSwitchManager = options.killSwitchManager;
     this.evidenceSigner = options.evidenceSigner;
     this.auditPipeline = options.auditPipeline;

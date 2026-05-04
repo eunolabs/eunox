@@ -12,6 +12,7 @@ export * from './log-transports';
 export * from './condition-registry';
 export * from './policy-backends';
 export * from './call-counter-store';
+export * from './issuance-rate-limiter';
 export * from './config';
 export * from './jwks';
 export * from './metrics';

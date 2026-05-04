@@ -392,6 +392,47 @@ export const IssuerConfigSchema = z
       description:
         'Comma-separated list of browser origins allowed to call the issuer. In production the issuer disables CORS entirely when this is unset.',
     }),
+
+    // Per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1) -----
+    // Replaces the legacy per-IP express rate limit as the primary defence
+    // against a compromised user account / agent flooding /api/v1/issue.
+    // Tenant-aware so the same limiter is safe for a multi-region active/
+    // active issuer (F-7) — see docs/MULTI_REGION_ISSUER.md.
+    ISSUANCE_RATE_LIMIT_ENABLED: envBoolean({
+      default: true,
+      description:
+        'Enable the per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1). Default true. Disable only in development; in production this is the primary defence against a compromised user/agent flooding /api/v1/issue.',
+    }),
+    ISSUANCE_RATE_LIMIT_MAX: envPositiveInt({
+      default: 60,
+      description:
+        'Maximum capability-issuance requests permitted per ISSUANCE_RATE_LIMIT_WINDOW_SECONDS for the same (tenantId, userId, agentId) tuple. Default 60.',
+    }),
+    ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: envPositiveInt({
+      default: 60,
+      description:
+        'Length (seconds) of the tumbling window used by the issuance rate limiter. Default 60.',
+    }),
+    ISSUANCE_RATE_LIMIT_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for the issuance rate limiter. Default "issrl:".',
+    ),
+    ISSUANCE_RATE_LIMIT_FAIL_CLOSED: envBoolean({
+      default: true,
+      description:
+        'When true (default), Redis errors during issuance rate-limit lookup deny the request (fail closed). Set to false only when transient Redis loss should not block issuance — note this re-opens the window an attacker could exploit.',
+    }),
+
+    // Distributed coordination (Redis) — required for multi-replica issuer ----
+    // and for F-7 multi-region active/active deployments. When unset the
+    // F-1 limiter falls back to in-memory state (single-replica only).
+    REDIS_URL: optionalString.describe(
+      'Optional shared Redis URL. When set, issuance rate-limit counters propagate across issuer replicas / regions (required for multi-replica or multi-region active/active deployments — F-7).',
+    ),
+
+    // Multi-region active/active (F-7) ---------------------------------------
+    ISSUER_REGION: optionalString.describe(
+      'Logical region tag for this issuer instance (e.g. "eastus2", "westeurope"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
+    ),
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -650,6 +691,11 @@ export const GatewayConfigSchema = z
     }),
     CALL_COUNTER_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',
+    ),
+
+    // Multi-region active/active (F-7) ---------------------------------------
+    GATEWAY_REGION: optionalString.describe(
+      'Logical region tag for this gateway instance (e.g. "eastus2", "westeurope"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
     ),
   })
   .superRefine((cfg, ctx) => {
