@@ -25,6 +25,10 @@
       "types": "./dist/verify-evidence-job.d.ts",
       "default": "./dist/verify-evidence-job.js"
     },
+    "./action-resolver": {
+      "types": "./dist/action-resolver.d.ts",
+      "default": "./dist/action-resolver.js"
+    },
     "./openapi/capability-issuer": {
       "types": "./dist/generated/capability-issuer.d.ts",
       "default": "./dist/generated/capability-issuer.js"
@@ -48,6 +52,9 @@
       ],
       "verify-evidence-job": [
         "dist/verify-evidence-job.d.ts"
+      ],
+      "action-resolver": [
+        "dist/action-resolver.d.ts"
       ],
       "openapi/capability-issuer": [
         "dist/generated/capability-issuer.d.ts"

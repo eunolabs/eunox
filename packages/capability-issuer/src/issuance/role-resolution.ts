@@ -21,7 +21,9 @@
  */
 
 import {
+  ActionResolver,
   AuditLogEntry,
+  BUILTIN_ACTION_RESOLVER,
   CaActionTier,
   CaEvaluation,
   CapabilityConstraint,
@@ -42,34 +44,30 @@ import {
 export const PIM_TTL_SAFETY_MARGIN_SECONDS = 30;
 
 /**
- * Map a capability action to its Conditional Access tier. Unknown
- * verbs (e.g. resource-specific actions like `db:select`) fall back
- * to the closest legacy category they imply: any verb containing
- * `delete` maps to `delete`, anything containing `admin` to `admin`,
- * anything containing `write`/`put`/`update`/`create` to `write`,
- * everything else to `read`. This keeps CA enforcement meaningful
- * for the resource-specific verbs that {@link Action} now permits
- * without requiring operators to enumerate every possible verb.
+ * Map a capability action to its Conditional Access tier.
+ *
+ * Originally a substring-matching heuristic (`a.includes('write')`,
+ * `a.includes('delete')`, …) which misclassified custom verbs whose
+ * names happened to contain those substrings (e.g. a hypothetical
+ * `forward_delete_request` was tiered as `delete` even when it only
+ * read state). R-7 replaces that heuristic with a declarative,
+ * exact-match {@link ActionResolver} table so the mapping is data
+ * rather than pattern-matching.
+ *
+ * The resolver is injectable so deployments can ship their own
+ * action vocabulary; when omitted (back-compat) the
+ * {@link BUILTIN_ACTION_RESOLVER} default is used. Its built-in
+ * table covers the legacy generic verbs plus a curated set of
+ * resource-specific verbs (`db:select`, `s3:putObject`, …); operators
+ * that need a tier for a verb the default table does not cover should
+ * supply their own resolver via `ACTION_RESOLVER_FILE` (see
+ * `loadActionResolverFromFile`).
  */
-export function actionToCaTier(action: string): CaActionTier {
-  const a = action.toLowerCase();
-  if (a === 'delete' || a.includes('delete') || a.includes('drop') || a.includes('remove')) {
-    return 'delete';
-  }
-  if (a === 'admin' || a.includes('admin')) return 'admin';
-  if (
-    a === 'write' ||
-    a.includes('write') ||
-    a.includes('put') ||
-    a.includes('update') ||
-    a.includes('create') ||
-    a.includes('insert') ||
-    a === 'execute' ||
-    a.includes('publish')
-  ) {
-    return 'write';
-  }
-  return 'read';
+export function actionToCaTier(
+  action: string,
+  resolver: ActionResolver = BUILTIN_ACTION_RESOLVER,
+): CaActionTier {
+  return resolver.toCaTier(action);
 }
 
 /**
@@ -147,6 +145,7 @@ export function enforceConditionalAccess(
   capabilities: CapabilityConstraint[],
   agentId: string,
   auditLogger: Logger,
+  resolver: ActionResolver = BUILTIN_ACTION_RESOLVER,
 ): void {
   const ca: CaEvaluation | undefined = userContext.caEvaluation;
   if (!ca) return; // Provider doesn't participate in CA enforcement.
@@ -157,7 +156,7 @@ export function enforceConditionalAccess(
   const requiredTiers = new Set<CaActionTier>();
   for (const cap of capabilities) {
     for (const action of cap.actions) {
-      requiredTiers.add(actionToCaTier(action));
+      requiredTiers.add(actionToCaTier(action, resolver));
     }
   }
 

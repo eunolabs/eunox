@@ -7,10 +7,19 @@
  * always evaluated against the *actual* tool being invoked.
  *
  * Part of R-2 from `docs/IMPROVEMENTS_AND_REFACTORING.md`.
+ *
+ * R-7 update: the in-file `TOOL_ACTION_REGISTRY` has been lifted into the
+ * pluggable {@link ActionResolver} interface in `@euno/common` so the same
+ * tool → action vocabulary is shared between the gateway and any other
+ * caller (e.g. issuer-side tooling). The legacy registry remains
+ * accessible as `DEFAULT_TOOL_ACTIONS` in `@euno/common/action-resolver`.
  */
 
 import { Request, Response, NextFunction, Router } from 'express';
 import {
+  ActionResolver,
+  BUILTIN_ACTION_RESOLVER,
+  DEFAULT_TOOL_ACTIONS,
   ValidateActionRequest,
   CapabilityError,
   ErrorCode,
@@ -23,54 +32,42 @@ type Logger = ReturnType<typeof createLogger>;
 
 /**
  * Server-side tool registry: maps known tool names to their required action.
- * Using an explicit registry prevents misclassification from substring matching
- * and ensures authorisation decisions are based on the actual tool semantics.
- * Unknown tools default to 'execute' (most restrictive default).
+ * Re-exported from `@euno/common` so existing imports keep working but the
+ * canonical source is now the {@link ActionResolver} configuration loaded
+ * from `ACTION_RESOLVER_FILE`.
+ *
+ * @deprecated Configure tool actions on the {@link ActionResolver} instead.
  */
-export const TOOL_ACTION_REGISTRY: Record<string, string> = {
-  // File operations
-  read_file: 'read',
-  get_file: 'read',
-  list_files: 'read',
-  list_directory: 'read',
-  write_file: 'write',
-  create_file: 'write',
-  update_file: 'write',
-  append_file: 'write',
-  delete_file: 'delete',
-  remove_file: 'delete',
-  // HTTP/API operations
-  http_get: 'read',
-  http_post: 'write',
-  http_put: 'write',
-  http_delete: 'delete',
-  // Code execution
-  run_code: 'execute',
-  execute_command: 'execute',
-  run_shell: 'execute',
-};
+export const TOOL_ACTION_REGISTRY: Readonly<Record<string, string>> = DEFAULT_TOOL_ACTIONS;
 
 /**
- * Resolves the required action type for a given tool name using an explicit
- * server-side registry.  Using a registry instead of substring matching prevents
- * misclassification and ensures authorisation decisions reflect the tool's
- * actual semantics.  Unknown tools default to 'execute', the most restrictive
- * action.
+ * Resolves the required action type for a given tool name.
  *
- * @param tool - The tool name to look up (e.g. 'read_file').
- * @returns The action string ('read' | 'write' | 'delete' | 'execute').
+ * @deprecated Inject an {@link ActionResolver} and call its
+ * {@link ActionResolver.fromToolInvocation} instead. Retained as a thin
+ * wrapper for back-compat.
  */
-export function resolveToolAction(tool: string): string {
-  return TOOL_ACTION_REGISTRY[tool] ?? 'execute';
+export function resolveToolAction(
+  tool: string,
+  resolver: ActionResolver = BUILTIN_ACTION_RESOLVER,
+): string {
+  return resolver.fromToolInvocation({ tool });
 }
 
 export interface ToolsRouterOptions {
   enforcementEngine: EnforcementEngine;
   logger: Logger;
+  /**
+   * Pluggable resolver used to derive the capability action from the
+   * named tool (R-7). When omitted, the in-process
+   * {@link BUILTIN_ACTION_RESOLVER} preserves the legacy behaviour.
+   */
+  actionResolver?: ActionResolver;
 }
 
 export function createToolsRouter(opts: ToolsRouterOptions): Router {
   const { enforcementEngine, logger } = opts;
+  const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   const router = Router();
 
   router.post(
@@ -104,8 +101,11 @@ export function createToolsRouter(opts: ToolsRouterOptions): Router {
           );
         }
 
-        // Derive action from the server-side tool registry (not client-supplied).
-        const action = resolveToolAction(tool);
+        // Derive action from the injectable resolver (R-7). The
+        // default implementation reproduces the legacy in-process
+        // tool registry; deployments that ship `ACTION_RESOLVER_FILE`
+        // can extend or override the mapping for their own tools.
+        const action = actionResolver.fromToolInvocation({ tool, args });
 
         // Canonicalise resource server-side from the actual tool being invoked.
         // Never trust a client-supplied resource value.

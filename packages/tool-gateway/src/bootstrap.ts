@@ -10,6 +10,8 @@
  */
 
 import {
+  ActionResolver,
+  BUILTIN_ACTION_RESOLVER,
   ServiceConfig,
   EvidenceSigner,
   createSoftwareEvidenceSignerFromEnv,
@@ -19,6 +21,7 @@ import {
   createCallCounterStoreFromEnv,
   createLogger,
   createAuditLogger,
+  loadActionResolverFromFile,
   loadConfigOrExit,
   loadConfig,
   GatewayConfig,
@@ -105,6 +108,15 @@ export interface GatewayDependencies {
    * region deployments.
    */
   region?: string;
+  /**
+   * Pluggable {@link ActionResolver} (R-7, addresses I-4 and I-5).
+   * Used by the proxy route to derive a capability action from the
+   * inbound HTTP request, and by the tools route to derive an action
+   * from a tool invocation. Loaded from `ACTION_RESOLVER_FILE` when
+   * set; defaults to {@link BUILTIN_ACTION_RESOLVER} otherwise so
+   * existing deployments keep their pre-R-7 behaviour exactly.
+   */
+  actionResolver: ActionResolver;
 }
 
 /**
@@ -225,6 +237,22 @@ export async function initializeServices(
 
   const adminApiKey = validated.ADMIN_API_KEY;
   const requireKid = validated.EUNO_REQUIRE_KID !== undefined ? validated.EUNO_REQUIRE_KID : true;
+
+  // R-7: load operator-supplied ActionResolver from disk if
+  // ACTION_RESOLVER_FILE is set. The same file is consumed by the
+  // capability-issuer so mint-time CA tiering and gateway action
+  // derivation share a single vocabulary. Failure to load is a
+  // startup error so misconfiguration cannot survive into a running
+  // process. Falls back to the in-process BUILTIN_ACTION_RESOLVER
+  // (legacy behaviour) when the env var is unset.
+  let actionResolver: ActionResolver = BUILTIN_ACTION_RESOLVER;
+  if (validated.ACTION_RESOLVER_FILE && validated.ACTION_RESOLVER_FILE.trim().length > 0) {
+    logger.info('Loading action resolver config from file', {
+      path: validated.ACTION_RESOLVER_FILE,
+    });
+    actionResolver = loadActionResolverFromFile(validated.ACTION_RESOLVER_FILE);
+    logger.info('Action resolver config loaded');
+  }
 
   // Build the revocation store from environment.  Defaults to in-memory; if
   // REDIS_URL is set we connect to Redis so revocations are shared across
@@ -501,6 +529,7 @@ export async function initializeServices(
     decisionsCounter,
     isReady: () => ready,
     region: validated.GATEWAY_REGION,
+    actionResolver,
   };
 
   logger.info('Tool Gateway services initialized successfully');

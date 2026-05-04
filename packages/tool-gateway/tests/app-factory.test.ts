@@ -21,6 +21,8 @@ import {
   ServiceConfig,
   createMetricsRegistry,
   Counter,
+  BUILTIN_ACTION_RESOLVER,
+  DefaultActionResolver,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -80,6 +82,7 @@ async function buildDeps(opts?: {
     // `undefined` into `AuditPipeline.drain()`.
     auditPipelineDrainTimeoutMs: 5_000,
     isReady: opts?.isReady ?? (() => true),
+    actionResolver: BUILTIN_ACTION_RESOLVER,
   };
 
   return { deps, privateKey };
@@ -341,6 +344,28 @@ describe('createApp(deps) — R-2 in-process factory', () => {
       expect(res.body.result.data).toEqual({ name: 'Alice' });
       expect(res.body.result.data).not.toHaveProperty('ssn');
       expect(res.body.result.data).not.toHaveProperty('address');
+    });
+
+    it('honours an injected ActionResolver override on /api/v1/tools/invoke (R-7)', async () => {
+      // Wire a resolver that maps an unknown tool to `read` instead of
+      // the default `execute` — the request should now succeed against
+      // a token that only grants `read`.
+      const { deps, privateKey } = await buildDeps();
+      const customResolver = new DefaultActionResolver({
+        toolActions: { custom_search: 'read' },
+      });
+      const app = createApp({ ...deps, actionResolver: customResolver });
+      const token = await signToken(privateKey, [
+        { resource: 'tool://custom_search', actions: ['read'] },
+      ]);
+
+      const res = await request(app)
+        .post('/api/v1/tools/invoke')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ tool: 'custom_search', args: {} });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
   });
 

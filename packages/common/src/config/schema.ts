@@ -348,6 +348,9 @@ export const IssuerConfigSchema = z
     ROLE_POLICY_FILE: optionalString.describe(
       'Optional path to a JSON file describing the externalised role policy. Falls back to the in-code default mapping.',
     ),
+    ACTION_RESOLVER_FILE: optionalString.describe(
+      'Optional path to a JSON file describing the ActionResolver (R-7) used to (a) derive capability actions from incoming HTTP / tool invocations and (b) map actions to Conditional-Access tiers. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. `db:select`, `acknowledge_alert`). The same file should be configured on the capability-issuer AND the tool-gateway so mint-time CA tiering and enforcement-time action derivation share a single vocabulary.',
+    ),
     ENABLE_DETAILED_LOGGING: envBoolean({
       default: false,
       description: 'Enable verbose request / decision logs. Boolean: true | false.',
@@ -540,6 +543,9 @@ export const GatewayConfigSchema = z
     }),
     BACKEND_SERVICE_URL: optionalString.describe(
       'URL of the backend service the gateway proxies authorised requests to. Defaults to http://localhost:4000.',
+    ),
+    ACTION_RESOLVER_FILE: optionalString.describe(
+      'Optional path to a JSON file describing the ActionResolver (R-7) used to derive a capability action from incoming HTTP requests on /proxy and from tool invocations on /api/v1/tools/invoke. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. mapping `POST /graphql` queries to `read`). Should match the value configured on the capability-issuer so mint-time CA tiering and enforcement-time action derivation share a vocabulary.',
     ),
 
     // Admin API -------------------------------------------------------------

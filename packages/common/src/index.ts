@@ -19,3 +19,4 @@ export * from './metrics';
 export * from './tracing';
 export * from './verify-evidence-job';
 export * from './audit-pipeline';
+export * from './action-resolver';

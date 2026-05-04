@@ -11,7 +11,9 @@
  */
 
 import {
+  ActionResolver,
   AuditLogEntry,
+  BUILTIN_ACTION_RESOLVER,
   CapabilityConstraint,
   CapabilityError,
   CapabilityTokenPayload,
@@ -213,6 +215,23 @@ export interface CapabilityIssuerServiceOptions {
     subject: IssuanceRateLimitSubject,
     reason: 'exceeded' | 'limiter_unavailable',
   ) => void;
+  /**
+   * Optional pluggable {@link ActionResolver} (R-7, addresses I-4
+   * and I-5). When supplied, the issuer uses it to map every
+   * granted capability action to its CA tier during the
+   * {@link enforceConditionalAccess} check at issuance time, instead
+   * of the legacy substring-matching heuristic. Operators that need
+   * to tier deployment-specific verbs (e.g. `db:select`,
+   * `acknowledge_alert`) should ship a single resolver shared
+   * between the issuer and the gateway via the `ACTION_RESOLVER_FILE`
+   * env var so mint-time and enforcement-time tiering agree.
+   *
+   * Optional for back-compat: when omitted the
+   * {@link BUILTIN_ACTION_RESOLVER} is used, which reproduces the
+   * legacy CA-tier mapping for every action in the default role
+   * policy.
+   */
+  actionResolver?: ActionResolver;
 }
 
 export class CapabilityIssuerService {
@@ -249,6 +268,7 @@ export class CapabilityIssuerService {
     subject: IssuanceRateLimitSubject,
     reason: 'exceeded' | 'limiter_unavailable',
   ) => void;
+  private actionResolver: ActionResolver;
 
   constructor(
     signer: TokenSigner,
@@ -282,6 +302,7 @@ export class CapabilityIssuerService {
     if (options.postureEmitter) this.postureEmitter = options.postureEmitter;
     if (options.issuanceRateLimiter) this.issuanceRateLimiter = options.issuanceRateLimiter;
     if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
+    this.actionResolver = options.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   }
 
   /**
@@ -384,6 +405,7 @@ export class CapabilityIssuerService {
         capabilities,
         request.agentId,
         this.auditLogger,
+        this.actionResolver,
       );
 
       // Step 3e: Validate every typed condition before signing.

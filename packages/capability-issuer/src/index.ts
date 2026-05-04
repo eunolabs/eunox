@@ -10,6 +10,7 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import * as jose from 'jose';
 import {
+  ActionResolver,
   IssueCapabilityRequest,
   CapabilityError,
   ErrorCode,
@@ -19,6 +20,7 @@ import {
   TokenSigner,
   IdentityProvider,
   RoleCapabilityPolicy,
+  loadActionResolverFromFile,
   loadRoleCapabilityPolicyFromFile,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   SUPPORTED_SCHEMA_VERSIONS,
@@ -246,6 +248,21 @@ async function initializeServices() {
       });
     }
 
+    // R-7: load operator-supplied ActionResolver from disk if
+    // ACTION_RESOLVER_FILE is set. The same JSON file is consumed by
+    // the gateway so issuer-side CA tiering and gateway-side action
+    // derivation always agree on the deployment's verb vocabulary.
+    // When unset, the issuer falls back to the in-process
+    // BUILTIN_ACTION_RESOLVER which reproduces the legacy CA-tier
+    // mapping.
+    let actionResolver: ActionResolver | undefined;
+    const actionResolverFile = env.ACTION_RESOLVER_FILE;
+    if (actionResolverFile && actionResolverFile.trim().length > 0) {
+      logger.info('Loading action resolver config from file', { path: actionResolverFile });
+      actionResolver = loadActionResolverFromFile(actionResolverFile);
+      logger.info('Action resolver config loaded');
+    }
+
     // Per-(tenant, user, agent) issuance rate limiter (F-1, addresses
     // I-1). Tenant-aware, distributed via Redis when REDIS_URL is set
     // — required for multi-replica or multi-region active/active
@@ -295,6 +312,10 @@ async function initializeServices() {
         // which one wins.
         region: issuerRegion,
         issuanceRateLimiter,
+        // R-7: pluggable ActionResolver (addresses I-4, I-5). Replaces
+        // the legacy substring-matching CA tier coercion. When unset
+        // the issuer uses the BUILTIN_ACTION_RESOLVER fallback.
+        actionResolver,
         onIssuanceRateLimited: (subject, reason) => {
           // Forward the limiter's classification verbatim so dashboards
           // can distinguish a real rate-limit hit from a Redis outage —

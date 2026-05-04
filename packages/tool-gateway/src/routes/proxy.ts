@@ -13,6 +13,8 @@
 import { Request, Response, NextFunction, Router } from 'express';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import {
+  ActionResolver,
+  BUILTIN_ACTION_RESOLVER,
   ValidateActionRequest,
   CapabilityError,
   ErrorCode,
@@ -27,6 +29,13 @@ export interface ProxyRouterOptions {
   enforcementEngine: EnforcementEngine;
   logger: Logger;
   backendServiceUrl: string;
+  /**
+   * Pluggable resolver used to derive the capability action from the
+   * inbound HTTP request (R-7). When omitted, the in-process
+   * {@link BUILTIN_ACTION_RESOLVER} preserves the legacy
+   * `{ GET: read, POST: write, ... }` mapping.
+   */
+  actionResolver?: ActionResolver;
 }
 
 /**
@@ -35,6 +44,7 @@ export interface ProxyRouterOptions {
  */
 export function createValidateCapabilityMiddleware(
   enforcementEngine: EnforcementEngine,
+  actionResolver: ActionResolver = BUILTIN_ACTION_RESOLVER,
 ) {
   return async function validateCapabilityMiddleware(
     req: Request,
@@ -52,18 +62,20 @@ export function createValidateCapabilityMiddleware(
         );
       }
 
-      // Map HTTP method → action.
-      // - GET -> read
-      // - POST/PUT/PATCH -> write
-      // - DELETE -> delete
-      const actionMap: Record<string, string> = {
-        GET: 'read',
-        POST: 'write',
-        PUT: 'write',
-        PATCH: 'write',
-        DELETE: 'delete',
-      };
-      const action = actionMap[req.method] || 'read';
+      // R-7 (I-4): derive the capability action from the injectable
+      // ActionResolver instead of a fixed inline `actionMap`. The
+      // default resolver reproduces the previous HTTP method →
+      // action mapping (`GET → read`, `POST/PUT/PATCH → write`,
+      // `DELETE → delete`); deployments that need to override (e.g.
+      // a backend whose `POST /graphql` endpoint is read-style) ship
+      // a JSON file via `ACTION_RESOLVER_FILE` and the same vocabulary
+      // is honoured by the issuer at mint time.
+      const action = actionResolver.fromHttpRequest({
+        method: req.method,
+        path: req.path,
+        body: req.body,
+        headers: req.headers as Record<string, string | string[] | undefined>,
+      });
 
       // Extract resource from path, deriving canonical api:// URI.
       // req.path has the /proxy prefix already stripped by Express route mounting.
@@ -149,10 +161,15 @@ export function createValidateCapabilityMiddleware(
  */
 export function createProxyRouter(opts: ProxyRouterOptions): Router {
   const { enforcementEngine, logger, backendServiceUrl } = opts;
+  // Normalise the optional resolver to a concrete instance once so the
+  // middleware factory always receives a non-null `ActionResolver`
+  // (matches the factory's parameter type, and avoids relying on the
+  // default-parameter-on-undefined coercion at the call site).
+  const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   const router = Router();
 
   router.use(
-    createValidateCapabilityMiddleware(enforcementEngine),
+    createValidateCapabilityMiddleware(enforcementEngine, actionResolver),
     createProxyMiddleware({
       target: backendServiceUrl,
       changeOrigin: true,

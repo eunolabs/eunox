@@ -77,8 +77,8 @@ ladder; effort is `S` (≤ 1 sprint), `M` (1–2 sprints), `L` (>2 sprints).
 | I-1   | High     |   S    | **No per-user / per-token issuance rate limit at the issuer.** Express rate-limit at `/issue` is per-IP only. A compromised user account can mint unlimited tokens until detection. |
 | I-2   | High     |   M    | **No DPoP / sender-constrained tokens.** A captured JWT is a bearer secret usable by any caller until revoked. Adding DPoP (RFC 9449) ties tokens to the agent's keypair and aligns with the "Agent DID identity + keypair" claim already in `diagrams.md` § A1. |
 | I-3   | High     |   M    | **`redactFields` condition is audit-only.** The gateway records the obligation but does not mutate the response. A capability that *says* "redact PII" currently provides no enforcement. ✅ Resolved (R-4 step 1 + F-3) — gateway applies the `redact` lobe to JSON responses on `/api/v1/tools/invoke` and `/proxy/*`. |
-| I-4   | Medium   |   S    | **HTTP-method → action mapping is a fixed table** in `tool-gateway/src/index.ts` ll. 292–298. Any backend that uses `POST` for read-style RPC (very common for GraphQL, search, and SDKs that disable GETs with a body) is over-authorized as `write`. |
-| I-5   | Medium   |   S    | **Action coercion in `actionToCaTier` uses substring matching** (`a.includes('write')`, `a.includes('delete')`). A custom verb like `acknowledge` (`includes('know')` no, but `forward_delete_request` would tier as `delete`) can land in the wrong CA tier. Replace with a registered, declarative mapping per verb. |
+| I-4   | Medium   |   S    | **HTTP-method → action mapping is a fixed table** in `tool-gateway/src/routes/proxy.ts` (the legacy table previously inlined at `tool-gateway/src/index.ts` ll. 292–298 before R-2 split routes into `routes/`). Any backend that uses `POST` for read-style RPC (very common for GraphQL, search, and SDKs that disable GETs with a body) is over-authorized as `write`. ✅ Resolved (R-7) — replaced by the pluggable `ActionResolver` in `@euno/common`; operators ship per-deployment overrides via `ACTION_RESOLVER_FILE`. |
+| I-5   | Medium   |   S    | **Action coercion in `actionToCaTier` uses substring matching** (`a.includes('write')`, `a.includes('delete')`). A custom verb like `acknowledge` (`includes('know')` no, but `forward_delete_request` would tier as `delete`) can land in the wrong CA tier. Replace with a registered, declarative mapping per verb. ✅ Resolved (R-7) — `actionToCaTier` now delegates to `ActionResolver.toCaTier()` whose default table is an explicit per-verb map (no substring matching); operators extend it via `ACTION_RESOLVER_FILE`. |
 | I-6   | Medium   |   M    | **No JWKS-style key rotation contract for the local issuer.** `/api/v1/public-key` returns a single SPKI; rotating it requires every gateway to restart or reload at the same time. JWKS with `kid` selection plus a small TTL would let issuer and gateway rotate independently. |
 | I-7   | Medium   |   S    | **Argument validator runs only when `argumentSchema` is present** (`enforcement.ts`); there is no opt-in "schema required" mode at the gateway, so a missing schema silently relaxes input validation. ✅ Resolved — set `ARGUMENT_SCHEMA_REQUIRED=true` to deny matched capabilities that lack an `argumentSchema`. |
 | I-8   | Low      |   S    | **`enableCryptographicAudit` is a single boolean** at the gateway. The asymmetric case (sign critical events but not all events) is impossible to express today. ✅ Resolved — `EVIDENCE_SIGNED_DECISIONS` is a CSV of `allow,deny` that overrides the legacy boolean (e.g. `EVIDENCE_SIGNED_DECISIONS=deny` signs refusals only). |
@@ -249,24 +249,43 @@ This unifies the local-issuer and partner-DID code paths in `verifier.ts`
 (both end up with a JWKS-shaped key source), and lets the same caching
 strategy apply to both.
 
-### R-7 — Action mapping plug-in  (addresses I-4, I-5)
+### R-7 — Action mapping plug-in  (addresses I-4, I-5) — **IMPLEMENTED**
 
-Replace the fixed `actionMap` in `tool-gateway/src/index.ts` ll.
-292–298 and the heuristic `actionToCaTier` with a single
-`ActionResolver` interface in `@euno/common`:
+The fixed `actionMap` previously inlined in
+`tool-gateway/src/routes/proxy.ts` and the substring-matching
+`actionToCaTier` heuristic in
+`capability-issuer/src/issuance/role-resolution.ts` have both been
+replaced by a single pluggable `ActionResolver` interface in
+`@euno/common` (`packages/common/src/action-resolver.ts`):
 
 ```text
 ActionResolver {
-  fromHttpRequest(method, path, body, headers): Action
+  fromHttpRequest({ method, path, body, headers }): Action
+  fromToolInvocation({ tool, args }): Action
   toCaTier(action): CaActionTier
 }
 ```
 
-A default implementation reproduces the current behaviour. Operators
-inject a deployment-specific resolver (e.g. one that knows the
-backend's GraphQL operation map). The CA tiering becomes data-driven
-(`{ "db:select": "read", "db:insert": "write", ... }`), eliminating
-the substring-matching surprise.
+A `DefaultActionResolver` reproduces the legacy behaviour exactly
+(same HTTP method → action map, same tool registry, same CA-tier
+mapping for every action in the default role policy plus a curated
+set of resource-specific verbs `db:*`, `s3:*`, `kafka:*`,
+`pubsub:*`). The `BUILTIN_ACTION_RESOLVER` singleton is the
+back-compat fallback wherever an injected resolver is omitted, so
+existing deployments observe no behavioural change.
+
+CA tiering is now data-driven — operators ship a JSON config file and
+point both services at it via the new `ACTION_RESOLVER_FILE`
+environment variable (issuer + gateway). Recognised top-level keys:
+`httpMethodActions`, `defaultHttpAction`, `toolActions`,
+`defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries
+are merged on top of the built-in defaults so the file only needs to
+declare deployment-specific verbs (e.g. `{ "actionTiers": {
+"db:select": "read" } }`). Pointing the issuer and gateway at the
+same file guarantees that mint-time CA tiering and enforcement-time
+action derivation share a single vocabulary, eliminating the
+substring-matching surprise that misclassified verbs like
+`forward_delete_request` as `delete`.
 
 ### R-8 — Split wire types from runtime types in `@euno/common`  (addresses I-11, I-12)
 
@@ -368,7 +387,7 @@ at least the existing fail-closed error cases at boot.
 | Item       | Description                                                       |
 | ---------- | ----------------------------------------------------------------- |
 | F-1 (I-1)  | Per-user / per-token issuance rate limit                          |
-| R-7 (I-4, I-5) | `ActionResolver` plug-in; data-driven CA tiering              |
+| R-7 (I-4, I-5) | `ActionResolver` plug-in; data-driven CA tiering — **IMPLEMENTED** |
 | R-6 (I-6, I-20) | JWKS + `kid` for issuer; gateway hot-rotates keys            |
 | R-3 (I-15) | OpenTelemetry context propagation                                 |
 | F-5 (I-16) | `/metrics` Prometheus endpoint on issuer + gateway                |

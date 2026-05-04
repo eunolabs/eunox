@@ -134,10 +134,18 @@ export function createApp(deps: GatewayDependencies): Express {
   app.use(createValidateRouter({ enforcementEngine }));
 
   // Tool invocation endpoint
-  app.use(createToolsRouter({ enforcementEngine, logger }));
+  app.use(createToolsRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
 
   // Protected proxy: validate then forward
-  app.use('/proxy', createProxyRouter({ enforcementEngine, logger, backendServiceUrl }));
+  app.use(
+    '/proxy',
+    createProxyRouter({
+      enforcementEngine,
+      logger,
+      backendServiceUrl,
+      actionResolver: deps.actionResolver,
+    }),
+  );
 
   // Error handling middleware
   app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {

@@ -198,8 +198,12 @@ Notable design choices visible in the code:
 - **Action type widened to `string`** (`Action = string`) so tokens can
   carry resource-specific verbs (`db:select`, `s3:putObject`) while the
   `LEGACY_ACTIONS` tuple keeps the original five generic verbs
-  meaningful for role mapping and Conditional Access tiering
-  (`actionToCaTier`).
+  meaningful for role mapping. Conditional-Access tiering (the
+  former `actionToCaTier` heuristic) is now driven by the pluggable
+  **`ActionResolver`** in `@euno/common` (R-7); the default resolver
+  ships an explicit per-verb table and operators ship a JSON file via
+  `ACTION_RESOLVER_FILE` to extend it for deployment-specific verbs
+  without modifying source.
 - **Consent gate** (`requireConsent: boolean` + `SENSITIVE_ACTIONS` set
   for `write|delete|admin`) — in strict mode the issuer refuses to mint
   any sensitive capability without a validated `UserConsent` payload.
@@ -254,11 +258,13 @@ Notable design choices visible in the code:
   (`index.ts` ll. 287–342): the gateway deduces the protected resource
   as `api://{host}/{tail}` from `X-Target-Host` header **and**
   cross-checks the proxy path; mismatch ⇒ `400` (anti-tampering).
-- **HTTP-method → action mapping** is currently a fixed table
-  (`GET→read`, `POST/PUT/PATCH→write`, `DELETE→delete`). Anything more
-  granular relies on resource-specific verbs in the token + a custom
-  proxy convention. (**Refactor candidate** — see
-  `IMPROVEMENTS_AND_REFACTORING.md` § R-7.)
+- **HTTP-method → action mapping** is supplied by the pluggable
+  `ActionResolver` from `@euno/common` (R-7). The built-in default
+  preserves the legacy table (`GET→read`, `POST/PUT/PATCH→write`,
+  `DELETE→delete`); deployments override it by pointing the gateway
+  at an `ACTION_RESOLVER_FILE` JSON config — the same file the issuer
+  consumes for CA tiering, so mint-time and enforcement-time action
+  vocabularies stay aligned.
 - **Fail-closed cryptographic audit** — `ENABLE_CRYPTOGRAPHIC_AUDIT=true`
   refuses to start without a configured `EvidenceSigner` (`index.ts`
   ll. 135–156). No silent unsigned audit.
@@ -649,8 +655,6 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 catalogued in [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md)):
 
 - A self-service UI for non-engineers to author manifests.
-- A pluggable `ActionResolver` so HTTP-method/path → action mapping
-  is data-driven instead of substring-matched (R-7).
 - DPoP sender-constrained tokens (F-2).
 - OCSF-formatted audit transport (F-6).
 
