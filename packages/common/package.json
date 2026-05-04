@@ -25,6 +25,14 @@
       "types": "./dist/verify-evidence-job.d.ts",
       "default": "./dist/verify-evidence-job.js"
     },
+    "./openapi/capability-issuer": {
+      "types": "./dist/generated/capability-issuer.d.ts",
+      "default": "./dist/generated/capability-issuer.js"
+    },
+    "./openapi/tool-gateway": {
+      "types": "./dist/generated/tool-gateway.d.ts",
+      "default": "./dist/generated/tool-gateway.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -40,6 +48,12 @@
       ],
       "verify-evidence-job": [
         "dist/verify-evidence-job.d.ts"
+      ],
+      "openapi/capability-issuer": [
+        "dist/generated/capability-issuer.d.ts"
+      ],
+      "openapi/tool-gateway": [
+        "dist/generated/tool-gateway.d.ts"
       ]
     }
   },
@@ -65,6 +79,7 @@
     "@types/node": "^20.11.0",
     "@types/supertest": "^6.0.2",
     "express": "^4.18.2",
+    "openapi-typescript": "^7.13.0",
     "supertest": "^6.3.4",
     "typescript": "^5.3.3"
   }

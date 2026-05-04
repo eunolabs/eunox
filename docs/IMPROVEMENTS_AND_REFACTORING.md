@@ -90,7 +90,7 @@ ladder; effort is `S` (≤ 1 sprint), `M` (1–2 sprints), `L` (>2 sprints).
 | I-9   | High     |   M    | **`issuer-service.ts` is 1,569 LOC** in a single file. It conflates: IdP integration glue, role mapping, manifest enforcement, consent enforcement, PIM checks, payload assembly, signing, posture emission, storage-grant and DB-token side services, and policy loading. Splitting it is the single highest-leverage refactor for maintainability. |
 | I-10  | High     |   M    | **`tool-gateway/index.ts` is 679 LOC** of Express wiring + middleware + route handlers + admin mounting + initialization. Should be decomposed into `app-factory.ts` (composable, testable) + `bootstrap.ts` (env wiring) + per-route modules. The current shape is hard to unit-test without spinning the whole server. |
 | I-11  | Medium   |   M    | **`packages/common/src/types.ts` is 1,304 LOC** and exports both wire types (token shape) and runtime types (`UserContext`, `ResolvedRole`). A wire-type module (`types/token.ts`, etc.) cleanly separated from runtime types would let downstream consumers depend on the wire schema only. |
-| I-12  | Medium   |   S    | **No schema-derived TypeScript types for HTTP boundaries.** `openapi/` exists but is hand-curated against TypeScript types. A generator (e.g. `openapi-typescript`) would prevent drift. |
+| I-12  | Medium   |   S    | **No schema-derived TypeScript types for HTTP boundaries.** `openapi/` exists but is hand-curated against TypeScript types. A generator (e.g. `openapi-typescript`) would prevent drift. — **IMPLEMENTED** via `scripts/generate-openapi-types.mjs` (run with `npm run gen:openapi` / drift-checked with `npm run gen:openapi:check`). Generated wire types are committed under `packages/common/src/generated/` and re-exported as the `@euno/common/openapi/capability-issuer` and `@euno/common/openapi/tool-gateway` subpaths. |
 | I-13  | Medium   |   S    | **Two `.env` files per service** (`.env.example` *and* `.env.template`) with overlapping content. Pick one canonical name + a Zod-style validator for env vars at boot (issuer fails fast on misconfig today only for some flags, not all). |
 | I-14  | Low      |   S    | **`PostureEmitterLike` is declared inline in `issuer-service.ts`** (ll. 41–52) instead of in `@euno/common`. Promote it to a shared interface so other services can also emit. |
 
@@ -395,7 +395,7 @@ policy can be referenced from a manifest and is enforced end-to-end.
 | F-8        | Self-service manifest UI; archive `web/index.html` stub (I-18)    |
 | F-6        | OCSF audit transport                                              |
 | I-22       | Load-test artefacts in `packages/integration-tests/perf/`         |
-| I-12       | OpenAPI ↔ TypeScript generator wired into the build              |
+| I-12       | OpenAPI ↔ TypeScript generator wired into the build — **IMPLEMENTED** (`scripts/generate-openapi-types.mjs`, root `gen:openapi` / `gen:openapi:check` scripts) |
 
 **Exit criterion:** A regional Azure outage takes the active gateway
 offline; the second region serves issuance and enforcement within the
