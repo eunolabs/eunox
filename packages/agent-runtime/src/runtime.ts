@@ -295,6 +295,11 @@ export class AgentRuntime {
    * shutdown that races with a periodic refresh cannot leave a settled-after-
    * shutdown promise to clobber state) and refuses any further refresh or
    * retry attempts.
+   *
+   * After settling any in-flight acquisition, the cached capability token is
+   * explicitly cleared so that a V8 heap snapshot taken after shutdown (e.g.
+   * via `--heapdump` or a core dump handler) does not retain a live credential
+   * in the captured memory image.
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
@@ -314,6 +319,8 @@ export class AgentRuntime {
         // The aborted request will reject; that's expected during shutdown.
       }
     }
+    // Zero the cached token so it cannot appear in post-shutdown heap dumps.
+    this.capabilityToken = undefined;
   }
 
   /**
@@ -926,7 +933,13 @@ export class AgentRuntime {
   }
 
   /**
-   * Get current capability token (for debugging/monitoring)
+   * Get current capability token (for debugging/monitoring).
+   *
+   * **Security notice**: the returned value is a live bearer credential.
+   * Callers MUST NOT log, serialize, or persist it. Use this method
+   * only when attaching the token to an outbound HTTP request; prefer
+   * the runtime's own {@link invokeTool} / {@link makeRequest} methods
+   * which handle token attachment and refresh transparently.
    */
   getCapabilityToken(): string | undefined {
     return this.capabilityToken;

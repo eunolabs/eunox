@@ -258,7 +258,7 @@ describe('AgentRuntime – makeRequest', () => {
 // ── cleanup ───────────────────────────────────────────────────────────────────
 
 describe('AgentRuntime – cleanup', () => {
-  it('cleans up refresh timer on shutdown', async () => {
+  it('cleans up refresh timer on shutdown and zeroes the capability token', async () => {
     issuerInstance.post.mockResolvedValueOnce({
       status: 200,
       data: { token: 'cap-token-cleanup' },
@@ -266,10 +266,13 @@ describe('AgentRuntime – cleanup', () => {
 
     const rt = buildRuntime();
     await rt.initialize();
+    expect(rt.getCapabilityToken()).toBe('cap-token-cleanup');
+
     await rt.shutdown();
 
-    // After shutdown the token is still accessible (not cleared), but the timer is gone
-    expect(rt).toBeDefined();
+    // After shutdown the token MUST be cleared to prevent it from
+    // appearing in post-shutdown heap dumps or crash dumps.
+    expect(rt.getCapabilityToken()).toBeUndefined();
   });
 
   it('aborts an in-flight token acquisition triggered by shutdown', async () => {
@@ -307,8 +310,9 @@ describe('AgentRuntime – cleanup', () => {
     // Shutdown — this should abort the hanging refresh and resolve.
     await rt.shutdown();
 
-    // The acquisition should not have replaced the token.
-    expect(rt.getCapabilityToken()).toBe('cap-token-initial');
+    // After shutdown the token must be cleared to prevent it from
+    // appearing in post-shutdown heap dumps (even if it held a prior value).
+    expect(rt.getCapabilityToken()).toBeUndefined();
   });
 });
 

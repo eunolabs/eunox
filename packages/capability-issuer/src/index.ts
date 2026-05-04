@@ -282,6 +282,42 @@ async function initializeServices() {
       );
     }
 
+    // Dedicated, tighter rate limiters for storage-grant and DB-token
+    // issuance. Each mints a long-lived cloud credential (STS session /
+    // RDS IAM auth token) rather than a short-lived capability JWT, so
+    // a compromise in either path has a larger blast radius. The
+    // defaults (10 per window) are intentionally lower than the main
+    // issuance limit (60 per window).
+    let storageGrantRateLimiter: IssuanceRateLimiter | undefined;
+    if (env.STORAGE_GRANTS_ENABLED && env.STORAGE_GRANT_RATE_LIMIT_ENABLED) {
+      const sgEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ISSUANCE_RATE_LIMIT_MAX: String(env.STORAGE_GRANT_RATE_LIMIT_MAX),
+        ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: String(env.STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS),
+        ISSUANCE_RATE_LIMIT_KEY_PREFIX: env.STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX ?? 'sgrl:',
+      };
+      storageGrantRateLimiter = await createIssuanceRateLimiterFromEnv(sgEnv, { logger });
+      logger.info('Storage-grant rate limiter enabled', {
+        max: env.STORAGE_GRANT_RATE_LIMIT_MAX,
+        windowSeconds: env.STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS,
+      });
+    }
+
+    let dbTokenRateLimiter: IssuanceRateLimiter | undefined;
+    if (env.DB_TOKENS_ENABLED && env.DB_TOKEN_RATE_LIMIT_ENABLED) {
+      const dbEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ISSUANCE_RATE_LIMIT_MAX: String(env.DB_TOKEN_RATE_LIMIT_MAX),
+        ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: String(env.DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS),
+        ISSUANCE_RATE_LIMIT_KEY_PREFIX: env.DB_TOKEN_RATE_LIMIT_KEY_PREFIX ?? 'dbrl:',
+      };
+      dbTokenRateLimiter = await createIssuanceRateLimiterFromEnv(dbEnv, { logger });
+      logger.info('DB-token rate limiter enabled', {
+        max: env.DB_TOKEN_RATE_LIMIT_MAX,
+        windowSeconds: env.DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS,
+      });
+    }
+
     // F-6: optional OCSF audit transport. When `OCSF_TRANSPORT` is
     // unset the factory returns `undefined` and we attach nothing —
     // existing deployments are unaffected.
@@ -330,19 +366,23 @@ async function initializeServices() {
         // which one wins.
         region: issuerRegion,
         issuanceRateLimiter,
+        storageGrantRateLimiter,
+        dbTokenRateLimiter,
         // R-7: pluggable ActionResolver (addresses I-4, I-5). Replaces
         // the legacy substring-matching CA tier coercion. When unset
         // the issuer uses the BUILTIN_ACTION_RESOLVER fallback.
         actionResolver,
         ...(auditTransports ? { auditTransports } : {}),
-        onIssuanceRateLimited: (subject, reason) => {
+        onIssuanceRateLimited: (subject, reason, kind = 'issuance') => {
           // Forward the limiter's classification verbatim so dashboards
           // can distinguish a real rate-limit hit from a Redis outage —
           // the metric contract documented in docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md
           // §1.3.1 and the F-1 PR description depends on this label.
+          // `kind` distinguishes main issuance, storage-grant, and db-token
+          // limiters so per-type counters can be dashboarded separately.
           issuanceRateLimitDeniedCounter.inc({
             tenant: subject.tenantId ?? '_no_tenant',
-            reason: reason === 'exceeded' ? 'issuance_rate_limit_exceeded' : 'issuance_rate_limiter_unavailable',
+            reason: reason === 'exceeded' ? `${kind}_rate_limit_exceeded` : `${kind}_rate_limiter_unavailable`,
           });
         },
       }

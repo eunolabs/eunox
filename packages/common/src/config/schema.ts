@@ -397,10 +397,38 @@ export const IssuerConfigSchema = z
       max: 3600,
     }),
     AWS_STORAGE_GRANT_ROLE_ARN: optionalString.describe(
-      'IAM role ARN the issuer assumes to mint AWS storage grants.',
+      'IAM role ARN the issuer assumes to mint AWS storage grants. ' +
+      'MUST be a role distinct from the JWT-signing KMS role so that a storage-grant ' +
+      'code path cannot escalate to signing arbitrary JWTs.',
     ),
     AWS_REGION: optionalString.describe(
       'Default AWS region used by storage / DB token issuance.',
+    ),
+    // Per-(tenant, user, agent) rate limit for storage-grant minting.  Much
+    // tighter than the main issuance limit because each grant issues an STS
+    // session (long-lived AWS credentials) — a bug here can leak a broader
+    // AWS session than a capability JWT alone.
+    STORAGE_GRANT_RATE_LIMIT_ENABLED: envBoolean({
+      default: true,
+      description:
+        'Enable a dedicated per-(tenant, user, agent) rate limit for storage-grant issuance. Default true. ' +
+        'Applies in addition to the main ISSUANCE_RATE_LIMIT when STORAGE_GRANTS_ENABLED=true. ' +
+        'Set lower than ISSUANCE_RATE_LIMIT_MAX because each storage grant mints an STS session.',
+    }),
+    STORAGE_GRANT_RATE_LIMIT_MAX: envPositiveInt({
+      default: 10,
+      description:
+        'Maximum storage-grant issuances per STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS for the same ' +
+        '(tenantId, userId, agentId) tuple. Default 10 (tighter than main issuance limit).',
+    }),
+    STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS: envPositiveInt({
+      default: 60,
+      description:
+        'Length (seconds) of the tumbling window used by the storage-grant rate limiter. Default 60.',
+    }),
+    STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for the storage-grant rate limiter. Default "sgrl:". ' +
+      'Change only when multiple issuer clusters share a Redis instance and key namespacing is required.',
     ),
 
     // DB token issuance (Sprint 3-4 gap #8) ---------------------------------
@@ -416,6 +444,39 @@ export const IssuerConfigSchema = z
     }),
     DB_INSTANCES_FILE: optionalString.describe(
       'REQUIRED when DB_TOKENS_ENABLED=true. Path to the operator-declared allow-list of permitted DB instances.',
+    ),
+    AWS_DB_TOKEN_ROLE_ARN: optionalString.describe(
+      'IAM role ARN the issuer assumes before calling rds:GenerateDbAuthToken. ' +
+      'When set, RDS token minting uses a dedicated minimal role distinct from both ' +
+      'the JWT-signing KMS role and the storage-grant STS role, limiting the blast radius ' +
+      'of a compromise in the DB-token code path. Optional; when unset the issuer\'s ' +
+      'ambient IAM credentials are used (less isolated).',
+    ),
+    // Per-(tenant, user, agent) rate limit for DB-token minting.  Tighter than
+    // the main issuance limit because a bug in DB-token issuance can expose a
+    // 15-minute AWS RDS IAM auth token — a bigger blast radius than a short-lived
+    // capability JWT.
+    DB_TOKEN_RATE_LIMIT_ENABLED: envBoolean({
+      default: true,
+      description:
+        'Enable a dedicated per-(tenant, user, agent) rate limit for DB-token issuance. Default true. ' +
+        'Applies in addition to the main ISSUANCE_RATE_LIMIT when DB_TOKENS_ENABLED=true. ' +
+        'Set lower than ISSUANCE_RATE_LIMIT_MAX because each DB token mints an IAM DB auth token.',
+    }),
+    DB_TOKEN_RATE_LIMIT_MAX: envPositiveInt({
+      default: 10,
+      description:
+        'Maximum DB-token issuances per DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS for the same ' +
+        '(tenantId, userId, agentId) tuple. Default 10 (tighter than main issuance limit).',
+    }),
+    DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS: envPositiveInt({
+      default: 60,
+      description:
+        'Length (seconds) of the tumbling window used by the DB-token rate limiter. Default 60.',
+    }),
+    DB_TOKEN_RATE_LIMIT_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for the DB-token rate limiter. Default "dbrl:". ' +
+      'Change only when multiple issuer clusters share a Redis instance and key namespacing is required.',
     ),
 
     // CORS ------------------------------------------------------------------

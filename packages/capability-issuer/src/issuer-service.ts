@@ -118,6 +118,14 @@ function inferAlgFromJwk(jwkData: Record<string, unknown>): string | undefined {
   }
 }
 
+/**
+ * Identifies which rate limiter fired when the `onIssuanceRateLimited`
+ * callback is invoked. Using a typed union prevents unbounded label
+ * values from accidentally reaching Prometheus metric labels or audit
+ * log `reason` fields.
+ */
+export type IssuanceLimiterKind = 'issuance' | 'storage-grant' | 'db-token';
+
 export interface CapabilityIssuerServiceOptions {
   /**
    * When true, every call to {@link CapabilityIssuerService.issueCapability}
@@ -222,15 +230,43 @@ export interface CapabilityIssuerServiceOptions {
    */
   issuanceRateLimiter?: IssuanceRateLimiter;
   /**
-   * Optional callback fired whenever {@link issuanceRateLimiter}
-   * denies an issuance. Used by the HTTP entrypoint to increment a
-   * Prometheus counter. Failures inside the callback are logged and
-   * swallowed so observability never affects the request decision.
+   * Optional callback fired whenever any of the issuance rate limiters
+   * (main, storage-grant, or db-token) denies an issuance. Used by the
+   * HTTP entrypoint to increment Prometheus counters. Failures inside
+   * the callback are logged and swallowed so observability never affects
+   * the request decision.
+   *
+   * The `kind` parameter identifies which limiter fired:
+   * - `'issuance'` — the main per-(tenant,user,agent) limiter
+   * - `'storage-grant'` — the dedicated storage-grant limiter
+   * - `'db-token'` — the dedicated DB-token limiter
    */
   onIssuanceRateLimited?: (
     subject: IssuanceRateLimitSubject,
     reason: 'exceeded' | 'limiter_unavailable',
+    kind?: IssuanceLimiterKind,
   ) => void;
+  /**
+   * Optional dedicated per-(tenant, user, agent) rate limiter for
+   * storage-grant issuance. When supplied, every call to
+   * {@link mintSideCredentials} that reaches the storage-grant minter
+   * first consumes one token from this bucket; exhaustion denies with
+   * {@link ErrorCode.RATE_LIMIT_EXCEEDED} (HTTP 429). This limiter is
+   * intentionally tighter than {@link issuanceRateLimiter} because each
+   * storage grant issues an STS session (a long-lived AWS credential)
+   * rather than a short-lived capability JWT.
+   */
+  storageGrantRateLimiter?: IssuanceRateLimiter;
+  /**
+   * Optional dedicated per-(tenant, user, agent) rate limiter for
+   * DB-token issuance. When supplied, every call to
+   * {@link mintSideCredentials} that reaches the DB-token minter
+   * first consumes one token from this bucket. Intentionally tighter
+   * than {@link issuanceRateLimiter}: a bug in DB-token issuance can
+   * expose a 15-minute AWS RDS IAM auth token, which is a larger blast
+   * radius than a short-lived capability JWT.
+   */
+  dbTokenRateLimiter?: IssuanceRateLimiter;
   /**
    * Optional pluggable {@link ActionResolver} (R-7, addresses I-4
    * and I-5). When supplied, the issuer uses it to map every
@@ -291,9 +327,12 @@ export class CapabilityIssuerService {
    */
   private postureRegion: string;
   private issuanceRateLimiter?: IssuanceRateLimiter;
+  private storageGrantRateLimiter?: IssuanceRateLimiter;
+  private dbTokenRateLimiter?: IssuanceRateLimiter;
   private onIssuanceRateLimited?: (
     subject: IssuanceRateLimitSubject,
     reason: 'exceeded' | 'limiter_unavailable',
+    kind?: IssuanceLimiterKind,
   ) => void;
   private actionResolver: ActionResolver;
 
@@ -333,6 +372,8 @@ export class CapabilityIssuerService {
     this.capTtlToPimActivation = options.capTtlToPimActivation !== false;
     if (options.postureEmitter) this.postureEmitter = options.postureEmitter;
     if (options.issuanceRateLimiter) this.issuanceRateLimiter = options.issuanceRateLimiter;
+    if (options.storageGrantRateLimiter) this.storageGrantRateLimiter = options.storageGrantRateLimiter;
+    if (options.dbTokenRateLimiter) this.dbTokenRateLimiter = options.dbTokenRateLimiter;
     if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
     this.actionResolver = options.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   }
@@ -642,19 +683,26 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Apply the configured per-(tenant, user, agent) issuance rate
-   * limit (F-1, addresses I-1). When no limiter is wired this is a
-   * no-op (back-compat). On exhaustion logs an audit-deny entry,
-   * fires the optional metric callback, and throws
+   * Apply a per-(tenant, user, agent) rate limit. When no limiter is
+   * wired this is a no-op (back-compat). On exhaustion logs an
+   * audit-deny entry, fires the optional metric callback, and throws
    * {@link CapabilityError} with {@link ErrorCode.RATE_LIMIT_EXCEEDED}
-   * (HTTP 429) — caller-side `next(error)` then surfaces the standard
-   * error envelope.
+   * (HTTP 429).
+   *
+   * @param limiterKind - Human-readable label for the limiter, used in
+   *   audit and log messages (e.g. `'issuance'`, `'storage-grant'`,
+   *   `'db-token'`).
    */
-  private async enforceIssuanceRateLimit(subject: IssuanceRateLimitSubject): Promise<void> {
-    if (!this.issuanceRateLimiter) return;
+  private async enforceIssuanceRateLimit(
+    subject: IssuanceRateLimitSubject,
+    limiter?: IssuanceRateLimiter,
+    limiterKind: IssuanceLimiterKind = 'issuance',
+  ): Promise<void> {
+    const activeLimiter = limiter ?? this.issuanceRateLimiter;
+    if (!activeLimiter) return;
     let decision: RateLimitDecision;
     try {
-      decision = await this.issuanceRateLimiter.consume(subject);
+      decision = await activeLimiter.consume(subject);
     } catch (error) {
       // The limiter implementation already chose its failure mode
       // (see RedisIssuanceRateLimiter.failClosedOnError). When it
@@ -662,7 +710,7 @@ export class CapabilityIssuerService {
       // the issuer cannot mint without a working limiter when one is
       // wired, otherwise the limit is bypassed silently.
       this.logger.error(
-        'Issuance rate limiter threw; failing closed (denying issuance)',
+        `${limiterKind} rate limiter threw; failing closed (denying issuance)`,
         {
           tenantId: subject.tenantId,
           userId: subject.userId,
@@ -670,7 +718,7 @@ export class CapabilityIssuerService {
           error: error instanceof Error ? error.message : 'Unknown error',
         },
       );
-      this.notifyRateLimited(subject, 'limiter_unavailable');
+      this.notifyRateLimited(subject, 'limiter_unavailable', limiterKind);
       const auditEntry: AuditLogEntry = {
         id: generateId(),
         timestamp: new Date().toISOString(),
@@ -679,17 +727,17 @@ export class CapabilityIssuerService {
         userId: subject.userId,
         decision: 'deny',
         metadata: {
-          reason: 'issuance_rate_limiter_unavailable',
+          reason: `${limiterKind}_rate_limiter_unavailable`,
           tenantId: subject.tenantId ?? null,
         },
       };
       this.auditLogger.warn(
-        'Capability issuance denied: issuance rate limiter unavailable',
+        `Capability issuance denied: ${limiterKind} rate limiter unavailable`,
         auditEntry,
       );
       throw new CapabilityError(
         ErrorCode.RATE_LIMIT_EXCEEDED,
-        'Issuance rate limiter is unavailable; please retry shortly',
+        `${limiterKind} rate limiter is unavailable; please retry shortly`,
         429,
         // `Retry-After` mirrors the limiter's configured window: a
         // stampeding herd that retries inside the same window will
@@ -698,12 +746,12 @@ export class CapabilityIssuerService {
         // from the limiter (rather than the issuer's local config)
         // keeps the value correct when operators change the window
         // without restarting the issuer.
-        { 'Retry-After': String(this.issuanceRateLimiter.windowSeconds) },
+        { 'Retry-After': String(activeLimiter.windowSeconds) },
       );
     }
     if (decision.allowed) return;
 
-    this.notifyRateLimited(subject, 'exceeded');
+    this.notifyRateLimited(subject, 'exceeded', limiterKind);
     const auditEntry: AuditLogEntry = {
       id: generateId(),
       timestamp: new Date().toISOString(),
@@ -712,7 +760,7 @@ export class CapabilityIssuerService {
       userId: subject.userId,
       decision: 'deny',
       metadata: {
-        reason: 'issuance_rate_limit_exceeded',
+        reason: `${limiterKind}_rate_limit_exceeded`,
         tenantId: subject.tenantId ?? null,
         limit: decision.limit,
         windowSeconds: decision.windowSeconds,
@@ -720,12 +768,12 @@ export class CapabilityIssuerService {
       },
     };
     this.auditLogger.warn(
-      'Capability issuance denied: per-subject issuance rate limit exceeded',
+      `Capability issuance denied: per-subject ${limiterKind} rate limit exceeded`,
       auditEntry,
     );
     throw new CapabilityError(
       ErrorCode.RATE_LIMIT_EXCEEDED,
-      `Issuance rate limit exceeded for this user/agent. Retry after ${decision.retryAfterSeconds}s.`,
+      `${limiterKind} rate limit exceeded for this user/agent. Retry after ${decision.retryAfterSeconds}s.`,
       429,
       // RFC 9110 §10.2.3: `Retry-After` is the standard way to tell a
       // client to back off. Always populated for F-1 denials so the
@@ -737,10 +785,11 @@ export class CapabilityIssuerService {
   private notifyRateLimited(
     subject: IssuanceRateLimitSubject,
     reason: 'exceeded' | 'limiter_unavailable',
+    kind: IssuanceLimiterKind = 'issuance',
   ): void {
     if (!this.onIssuanceRateLimited) return;
     try {
-      this.onIssuanceRateLimited(subject, reason);
+      this.onIssuanceRateLimited(subject, reason, kind);
     } catch (error) {
       this.logger.warn('onIssuanceRateLimited callback threw', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -802,6 +851,19 @@ export class CapabilityIssuerService {
    * entire issuance — partial grants give the agent a misleading view
    * of what it can access (see design § 6 of both
    * `07-storage-grants.md` and `08-db-token-issuance.md`).
+   *
+   * Dedicated per-(tenant, user, agent) rate limiters ({@link storageGrantRateLimiter}
+   * and {@link dbTokenRateLimiter}) are enforced here — after identity
+   * resolution — before each cloud-credential mint. These are
+   * intentionally tighter than the main {@link issuanceRateLimiter}
+   * because each mint produces a long-lived cloud credential (STS
+   * session / RDS IAM token) rather than a short-lived capability JWT.
+   *
+   * The rate limiters are only consulted when at least one capability
+   * in the request matches the relevant scheme (`storage://`, `db://`).
+   * This avoids consuming quota on requests that would produce no
+   * cloud credentials — e.g. a request that only has `api://` resources
+   * would not be charged against the storage-grant limiter.
    */
   private async mintSideCredentials(
     request: IssueCapabilityRequest,
@@ -809,9 +871,22 @@ export class CapabilityIssuerService {
     capabilities: CapabilityConstraint[],
     capabilityTtlSeconds: number,
   ): Promise<{ storageGrants?: StorageGrant[]; dbCredentials?: DbCredential[] }> {
+    const rateLimitSubject: IssuanceRateLimitSubject = {
+      tenantId: userContext.tenantId,
+      userId: userContext.userId,
+      agentId: request.agentId,
+    };
     let storageGrants: StorageGrant[] | undefined;
     let dbCredentials: DbCredential[] | undefined;
     if (this.storageGrantService?.isEnabled()) {
+      // Only consume quota when the request actually contains storage://
+      // capabilities so a request with only api:// resources is not penalised.
+      const hasStorageCaps = capabilities.some(
+        (c) => typeof c.resource === 'string' && c.resource.startsWith('storage://'),
+      );
+      if (hasStorageCaps && this.storageGrantRateLimiter) {
+        await this.enforceIssuanceRateLimit(rateLimitSubject, this.storageGrantRateLimiter, 'storage-grant');
+      }
       storageGrants = await this.storageGrantService.mintForCapabilities(capabilities, {
         agentId: request.agentId,
         authorizedBy: userContext.userId,
@@ -819,6 +894,14 @@ export class CapabilityIssuerService {
       });
     }
     if (this.dbTokenService?.isEnabled()) {
+      // Only consume quota when the request actually contains db://
+      // capabilities.
+      const hasDbCaps = capabilities.some(
+        (c) => typeof c.resource === 'string' && c.resource.startsWith('db://'),
+      );
+      if (hasDbCaps && this.dbTokenRateLimiter) {
+        await this.enforceIssuanceRateLimit(rateLimitSubject, this.dbTokenRateLimiter, 'db-token');
+      }
       dbCredentials = await this.dbTokenService.mintForCapabilities(capabilities, {
         agentId: request.agentId,
         authorizedBy: userContext.userId,

@@ -752,7 +752,13 @@ versionCmd
   .command('validate-token')
   .description('Decode and validate the schema version of a capability token')
   .argument('<token>', 'JWT capability token to inspect')
-  .action((token: string) => {
+  .option(
+    '--against-jwks <url>',
+    'Fetch the JWKS from <url> and verify the token signature. ' +
+    'Reports the key ID used and whether the signature is valid. ' +
+    'Does NOT check expiry or audience — use for offline issuer verification.',
+  )
+  .action(async (token: string, options: { againstJwks?: string }) => {
     try {
       // Decode without verification (inspection only)
       const parts = token.split('.');
@@ -782,6 +788,47 @@ versionCmd
       console.log(`Issuer:  ${payload.iss ?? '(none)'}`);
       console.log(`Subject: ${payload.sub ?? '(none)'}`);
       console.log(`Expires: ${payload.exp ? new Date(payload.exp * 1000).toISOString() : '(none)'}`);
+
+      // If --against-jwks is supplied, verify the token's signature.
+      if (options.againstJwks) {
+        const jwksUrl = options.againstJwks;
+        // Decode the header to surface the kid.
+        const headerPart = parts[0];
+        let kid: string | undefined;
+        try {
+          const header = JSON.parse(Buffer.from(headerPart!, 'base64url').toString('utf8'));
+          kid = typeof header.kid === 'string' ? header.kid : undefined;
+        } catch {
+          // header decode failure is non-fatal for the JWKS check
+        }
+        console.log(`\nVerifying signature against JWKS: ${jwksUrl}`);
+        if (kid) {
+          console.log(`Key ID (kid): ${kid}`);
+        } else {
+          console.log('Key ID (kid): (none in token header)');
+        }
+
+        try {
+          // Dynamic import keeps the CLI startup fast when --against-jwks
+          // is not used, and avoids bundling jose into the base command.
+          const { createRemoteJWKSet, jwtVerify } = await import('jose');
+          const JWKS = createRemoteJWKSet(new URL(jwksUrl));
+          // We only verify the signature here — the caller is responsible
+          // for interpreting expiry / audience claims for their use-case.
+          // Pass clockTolerance=Infinity and skip audience check so this
+          // works on already-expired tokens during incident review.
+          await jwtVerify(token, JWKS, {
+            clockTolerance: Infinity,
+            // Skip audience: this is an offline inspection tool.
+          });
+          console.log('✓ Signature is VALID — token was signed by a key in the JWKS');
+        } catch (verifyError) {
+          console.error(
+            `✗ Signature verification FAILED: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`,
+          );
+          process.exit(1);
+        }
+      }
     } catch (error) {
       console.error(`✗ Failed to decode token: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);

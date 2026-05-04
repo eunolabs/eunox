@@ -225,6 +225,110 @@ describe('RdsTokenMinter', () => {
       }),
     ).rejects.toBeInstanceOf(CapabilityError);
   });
+
+  it('assumes the configured role via STS and passes credentials to the signer', async () => {
+    // When assumeRoleArn is set, the minter should call STS.AssumeRole first,
+    // then pass the resulting credentials to the signer factory.
+    const seenCredentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string }[] = [];
+    const minter = new RdsTokenMinter({
+      assumeRoleArn: 'arn:aws:iam::123456789012:role/EunoDbTokenRole',
+      stsClientFactory: async () => ({
+        send: async () => ({
+          Credentials: {
+            AccessKeyId: 'ASIATEST',
+            SecretAccessKey: 'secretTest',
+            SessionToken: 'sessionTest',
+          },
+        }),
+      }),
+      signerFactory: (input) => {
+        if (input.credentials) {
+          seenCredentials.push(input.credentials);
+        }
+        return { getAuthToken: async () => 'sts-scoped-tok' };
+      },
+      now: () => 1_700_000_000_000,
+    });
+    const cred = await minter.mint({
+      resource: 'db://rds/prod-postgres/billing/invoices.read',
+      actions: ['read'],
+      ttlSeconds: 600,
+      agentId: 'agent-1',
+      authorizedBy: 'user-1',
+      dbUsername: 'euno_readonly',
+      instance: {
+        id: 'prod-postgres',
+        provider: 'rds-iam',
+        host: 'prod.cluster.us-east-1.rds.amazonaws.com',
+        port: 5432,
+        databases: ['billing'],
+        region: 'us-east-1',
+      },
+      database: 'billing',
+    });
+    // The signer must have received the STS credentials.
+    expect(seenCredentials).toHaveLength(1);
+    expect(seenCredentials[0]?.accessKeyId).toBe('ASIATEST');
+    expect(seenCredentials[0]?.sessionToken).toBe('sessionTest');
+    expect(cred.token).toBe('sts-scoped-tok');
+  });
+
+  it('uses opts.now for the STS session-name timestamp so it is deterministic in tests', async () => {
+    const capturedInputs: Record<string, unknown>[] = [];
+    const FIXED_MS = 1_700_000_000_000;
+    const minter = new RdsTokenMinter({
+      assumeRoleArn: 'arn:aws:iam::123456789012:role/EunoDbTokenRole',
+      stsClientFactory: async () => ({
+        send: async (cmd: { input: Record<string, unknown> }) => {
+          capturedInputs.push(cmd.input);
+          return {
+            Credentials: {
+              AccessKeyId: 'ASIATEST2',
+              SecretAccessKey: 'secret2',
+              SessionToken: 'session2',
+            },
+          };
+        },
+      }),
+      signerFactory: () => ({ getAuthToken: async () => 'tok' }),
+      now: () => FIXED_MS,
+    });
+    await minter.mint({
+      resource: 'db://rds/p/b/i.read',
+      actions: ['read'],
+      ttlSeconds: 60,
+      agentId: 'agent-clock-test',
+      authorizedBy: 'u',
+      dbUsername: 'euno_readonly',
+      instance: { id: 'p', provider: 'rds-iam', host: 'h', port: 5432, databases: ['b'], region: 'us-east-1' },
+      database: 'b',
+    });
+    expect(capturedInputs).toHaveLength(1);
+    // Session name must contain the fixed timestamp — not the real wall clock.
+    expect(String(capturedInputs[0]?.RoleSessionName)).toContain(String(FIXED_MS));
+  });
+
+  it('fails closed when STS.AssumeRole returns no credentials', async () => {
+    const minter = new RdsTokenMinter({
+      assumeRoleArn: 'arn:aws:iam::123456789012:role/EunoDbTokenRole',
+      stsClientFactory: async () => ({
+        send: async () => ({ Credentials: undefined }),
+      }),
+      signerFactory: () => ({ getAuthToken: async () => 'tok' }),
+    });
+    await expect(
+      minter.mint({
+        resource: 'db://rds/p/b/i.read',
+        actions: ['read'],
+        ttlSeconds: 60,
+        agentId: 'a',
+        authorizedBy: 'u',
+        dbUsername: 'u',
+        instance: { id: 'p', provider: 'rds-iam', host: 'h', port: 5432, databases: ['b'], region: 'us-east-1' },
+        database: 'b',
+      }),
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+  });
 });
 
 describe('CloudSqlTokenMinter', () => {

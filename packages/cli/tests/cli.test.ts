@@ -523,5 +523,112 @@ describe('euno schema-version', () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('missing');
     });
+
+    it('--against-jwks appears in the help text', () => {
+      const r = runCli(['schema-version', 'validate-token', '--help']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('--against-jwks');
+    });
+
+    it('--against-jwks reports signature verification failure for a token with a bad signature', async () => {
+      // Sign a token with one key, but serve a JWKS that has a DIFFERENT key —
+      // this guarantees the signature check fails independently of the HTTP call.
+      const jose = await import('jose');
+
+      const { privateKey: wrongPrivateKey } = await jose.generateKeyPair('RS256');
+      const { publicKey: differentPublicKey } = await jose.generateKeyPair('RS256');
+      const differentPublicJwk = await jose.exportJWK(differentPublicKey);
+      differentPublicJwk.kid = 'different-key';
+      differentPublicJwk.use = 'sig';
+
+      // Sign token with wrongPrivateKey but serve the JWKS with differentPublicKey
+      const badToken = await new jose.SignJWT({
+        schemaVersion: '1.0',
+        iss: 'did:web:test.com',
+        sub: 'agent-1',
+        exp: Math.floor(Date.now() / 1000) + 900,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: 'different-key' })
+        .sign(wrongPrivateKey);
+
+      // The JWKS server must run in a separate process so it can respond
+      // while execFileSync blocks this process's event loop.
+      const { spawn } = await import('child_process');
+      const jwks = JSON.stringify({ keys: [differentPublicJwk] });
+      const serverProcess = spawn(process.execPath, ['-e', `
+        const http = require('http');
+        const server = http.createServer((_, res) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(${JSON.stringify(jwks)});
+        });
+        server.listen(0, '127.0.0.1', () => {
+          process.send(server.address().port);
+        });
+      `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      const port = await new Promise<number>((resolve) => {
+        serverProcess.once('message', (msg) => resolve(msg as number));
+      });
+
+      try {
+        const r = runCli([
+          'schema-version', 'validate-token', badToken,
+          '--against-jwks', `http://127.0.0.1:${port}/jwks.json`,
+        ]);
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain('FAILED');
+      } finally {
+        serverProcess.kill();
+      }
+    }, 30000);
+
+    it('--against-jwks verifies a correctly signed token', async () => {
+      // Generate a key pair, sign a real JWT, serve the JWKS, and verify.
+      // The JWKS server must run in a separate process so it can respond
+      // while execFileSync blocks this process's event loop.
+      const jose = await import('jose');
+
+      const { privateKey, publicKey } = await jose.generateKeyPair('RS256');
+      const publicJwk = await jose.exportJWK(publicKey);
+      const kid = 'test-key-2';
+      publicJwk.kid = kid;
+      publicJwk.use = 'sig';
+
+      const { spawn } = await import('child_process');
+      const jwks = JSON.stringify({ keys: [publicJwk] });
+      const serverProcess = spawn(process.execPath, ['-e', `
+        const http = require('http');
+        const server = http.createServer((_, res) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(${JSON.stringify(jwks)});
+        });
+        server.listen(0, '127.0.0.1', () => {
+          process.send(server.address().port);
+        });
+      `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      const port = await new Promise<number>((resolve) => {
+        serverProcess.once('message', (msg) => resolve(msg as number));
+      });
+
+      try {
+        const signedToken = await new jose.SignJWT({
+          schemaVersion: '1.0',
+          iss: 'did:web:test.com',
+          sub: 'agent-1',
+          exp: Math.floor(Date.now() / 1000) + 900,
+        })
+          .setProtectedHeader({ alg: 'RS256', kid })
+          .sign(privateKey);
+
+        const r = runCli([
+          'schema-version', 'validate-token', signedToken,
+          '--against-jwks', `http://127.0.0.1:${port}/jwks.json`,
+        ]);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('Token schema version: 1.0');
+        expect(r.stdout).toContain('Signature is VALID');
+      } finally {
+        serverProcess.kill();
+      }
+    }, 30000);
   });
 });

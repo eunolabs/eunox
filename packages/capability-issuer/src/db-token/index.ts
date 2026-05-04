@@ -94,9 +94,14 @@ export class DbTokenService {
       );
     }
     opts.instances = loadDbInstancesFromFile(instancesFile);
+    // When AWS_DB_TOKEN_ROLE_ARN is set, the RDS minter assumes that
+    // dedicated role before calling rds:GenerateDbAuthToken so the
+    // DB-token code path is isolated from the issuer's ambient IAM
+    // credentials (which may include broader KMS grants for JWT signing).
+    const rdsAssumeRoleArn = env.AWS_DB_TOKEN_ROLE_ARN || undefined;
     opts.minters = {
       'azure-sql': new AzureSqlTokenMinter(),
-      'rds-iam': new RdsTokenMinter(),
+      'rds-iam': new RdsTokenMinter(rdsAssumeRoleArn ? { assumeRoleArn: rdsAssumeRoleArn } : {}),
       'cloudsql-iam': new CloudSqlTokenMinter(),
     };
     return new DbTokenService(opts);
