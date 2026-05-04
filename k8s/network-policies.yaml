@@ -109,12 +109,16 @@ spec:
   # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
   # ElastiCache, GCP Memorystore) when operators override `redis-url` in
   # the `gateway-config` ConfigMap to point at an external service.
-  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.  In production,
-  # narrow this rule to the specific managed Redis CIDR / private
-  # endpoint instead of 0.0.0.0/0.
+  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.
+  #
+  # PRODUCTION HARDENING: replace 0.0.0.0/0 with the specific CIDR of
+  # your managed Redis endpoint or private endpoint IP range.  The
+  # broad allow is acceptable only during initial deployment; narrow
+  # it once the managed Redis CIDR is known.
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
+        # replace with managed Redis private endpoint CIDR in production
         # Exclude in-cluster pod / service CIDRs is recommended in
         # production; left unset here because cluster CIDRs vary.
     - ipBlock:
@@ -134,11 +138,41 @@ spec:
     - protocol: TCP
       port: 80
 
-  # Allow egress to internet for backend service calls
-  # (This is where the gateway proxies authorized requests)
+  # Allow egress to external backend services for authorized proxy requests.
+  #
+  # PRODUCTION HARDENING — choose ONE of these options:
+  #
+  # Option A (recommended): restrict to explicit backend CIDRs.
+  # Replace the broad 0.0.0.0/0 rules below with the specific CIDR block(s)
+  # of your backend services:
+  #
+  #   - to:
+  #     - ipBlock:
+  #         cidr: 10.20.30.0/24      # replace with actual backend CIDR
+  #     ports:
+  #     - protocol: TCP
+  #       port: 443
+  #
+  # Option B: use an egress gateway / service mesh.
+  # Remove these rules entirely and route all outbound traffic through
+  # an Istio egress gateway or equivalent so external destinations are
+  # allow-listed in mesh policy rather than in NetworkPolicy.
+  #
+  # Option C: service-selector-only (in-cluster backends only).
+  # If every backend the gateway proxies lives in the same namespace,
+  # the `podSelector: {}` rule above already covers them — remove
+  # these ipBlock rules.
+  #
+  # DEVELOPMENT / STAGING FALLBACK (not recommended for production):
+  # The broad rules below allow any internet destination on 80/443.
+  # Restrict these per environment using one of the options above
+  # (e.g. via Kustomize patches or Helm values that override this file
+  # per environment) rather than editing this shared base directly.
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
+        # exclude: []  # Add cluster pod/service CIDRs here to prevent
+        #               # bypassing internal policies via this rule.
     - ipBlock:
         cidr: ::/0
     ports:
@@ -213,12 +247,16 @@ spec:
   # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
   # ElastiCache, GCP Memorystore) when operators override `redis-url`
   # in the `issuer-config` ConfigMap to point at an external service.
-  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.  In production,
-  # narrow this rule to the specific managed Redis CIDR / private
-  # endpoint instead of 0.0.0.0/0.
+  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.
+  #
+  # PRODUCTION HARDENING: replace 0.0.0.0/0 with the specific CIDR of
+  # your managed Redis endpoint or private endpoint IP range.  The
+  # broad allow is acceptable only during initial deployment; narrow
+  # it once the managed Redis CIDR is known.
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
+        # replace with managed Redis private endpoint CIDR in production
     - ipBlock:
         cidr: ::/0
     ports:

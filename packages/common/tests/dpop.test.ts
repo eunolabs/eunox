@@ -381,4 +381,54 @@ describe('createDpopReplayStoreFromEnv', () => {
     const s = await createDpopReplayStoreFromEnv({});
     expect(s).toBeInstanceOf(InMemoryDpopReplayStore);
   });
+
+  it('throws when ioredis is missing and NODE_ENV=production', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const { createDpopReplayStoreFromEnv: factory } = require('../src/dpop');
+        await expect(
+          factory({ REDIS_URL: 'redis://localhost:6379', NODE_ENV: 'production' }),
+        ).rejects.toThrow(/Refusing to fall back/);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('throws when ioredis is missing and EUNO_DEPLOYMENT_TIER=multi-replica', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const { createDpopReplayStoreFromEnv: factory } = require('../src/dpop');
+        await expect(
+          factory({ REDIS_URL: 'redis://localhost:6379', EUNO_DEPLOYMENT_TIER: 'multi-replica' }),
+        ).rejects.toThrow(/Refusing to fall back/);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('falls back to in-memory (non-production) when ioredis is missing', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const { createDpopReplayStoreFromEnv: factory, InMemoryDpopReplayStore: InMem } = require('../src/dpop');
+        const store = await factory({ REDIS_URL: 'redis://localhost:6379' });
+        expect(store).toBeInstanceOf(InMem);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
 });

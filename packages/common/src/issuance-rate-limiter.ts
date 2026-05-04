@@ -403,11 +403,26 @@ export async function createIssuanceRateLimiterFromEnv(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {
+    const isProduction =
+      env.NODE_ENV === 'production' ||
+      (env.EUNO_DEPLOYMENT_TIER && env.EUNO_DEPLOYMENT_TIER !== 'single-replica');
+    if (isProduction) {
+      throw new Error(
+        'REDIS_URL is set but the "ioredis" package is not installed. ' +
+          'Install it (npm install ioredis) to enable distributed issuance ' +
+          'rate limiting. Refusing to fall back to the in-memory limiter in a ' +
+          'production / multi-replica deployment: per-subject issuance budgets ' +
+          'would be tracked per-pod rather than fleet-wide, multiplying the ' +
+          'effective limit by the replica count. ' +
+          `Original error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
     logger?.error(
       'REDIS_URL is set but the "ioredis" package is not installed. ' +
         'Install it (npm install ioredis) to enable distributed issuance ' +
         'rate limiting. Falling back to the in-memory limiter; counters ' +
-        'WILL NOT be shared across issuer instances.',
+        'WILL NOT be shared across issuer instances. This is only acceptable ' +
+        'in development / single-replica deployments.',
       { error: error instanceof Error ? error.message : 'Unknown error' },
     );
     return new InMemoryIssuanceRateLimiter({ max, windowSeconds });

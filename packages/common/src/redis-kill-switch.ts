@@ -437,12 +437,26 @@ export async function createKillSwitchManagerFromEnv(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {
+    const isProduction =
+      env.NODE_ENV === 'production' ||
+      (env.EUNO_DEPLOYMENT_TIER && env.EUNO_DEPLOYMENT_TIER !== 'single-replica');
+    if (isProduction) {
+      throw new Error(
+        'REDIS_URL is set but the "ioredis" package is not installed. ' +
+          'Install it (npm install ioredis) to enable distributed kill switches. ' +
+          'Refusing to fall back to the in-memory kill-switch manager in a production / ' +
+          'multi-replica deployment: kill operations issued on one instance would be ' +
+          'invisible to all others, creating a split-brain kill-switch state. ' +
+          `Original error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
     logger?.error(
       'REDIS_URL is set but the "ioredis" package is not installed. ' +
         'Install it (npm install ioredis) to enable distributed kill switches. ' +
         'Falling back to in-memory kill-switch manager; kills WILL NOT be ' +
-        'shared across gateway instances.',
-      { error: error instanceof Error ? error.message : 'Unknown error' }
+        'shared across gateway instances. This is only acceptable in development / ' +
+        'single-replica deployments.',
+      { error: error instanceof Error ? error.message : 'Unknown error' },
     );
     return new DefaultKillSwitchManager(logger);
   }

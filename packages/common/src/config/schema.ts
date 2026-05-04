@@ -424,6 +424,21 @@ export const IssuerConfigSchema = z
         'Comma-separated list of browser origins allowed to call the issuer. In production the issuer disables CORS entirely when this is unset.',
     }),
 
+    // Per-IP rate limit (express-rate-limit, secondary defence) ---------------
+    // Primary per-(tenant,user,agent) defence is ISSUANCE_RATE_LIMIT_* below.
+    // This coarser per-IP limit guards against unauthenticated flooding before
+    // the identity-provider round-trip completes.
+    RATE_LIMIT_WINDOW_MS: envPositiveInt({
+      default: 60000,
+      description:
+        'Rate-limit window in milliseconds for the per-IP express-rate-limit middleware. Default 60000 (60 s). Applies to all issuer routes before authentication.',
+    }),
+    RATE_LIMIT_MAX_REQUESTS: envPositiveInt({
+      default: 100,
+      description:
+        'Maximum requests per IP per RATE_LIMIT_WINDOW_MS. Default 100. The per-(tenant,user,agent) issuance rate limit (ISSUANCE_RATE_LIMIT_*) is the primary post-authentication defence; this coarser guard fires before identity resolution.',
+    }),
+
     // Per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1) -----
     // Replaces the legacy per-IP express rate limit as the primary defence
     // against a compromised user account / agent flooding /api/v1/issue.
@@ -708,8 +723,22 @@ export const GatewayConfigSchema = z
         'Optional maximum age (ms) a record may sit in the queue before it is dropped as `aged_out`. Defends against unbounded queue residency when the signer is slow or down. Unset disables age-based eviction (records wait indefinitely).',
     }),
     AUDIT_PIPELINE_BACKPRESSURE: optionalString.describe(
-      'Backpressure policy when the pipeline is full. `drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks and request-path p99 is preserved. `block` makes enqueue() await until a slot frees up — no evidence is dropped due to a full buffer, but during a signer stall requests will block until the signer recovers or a client/server timeout fires; records are still dropped once the maxWaiters cap is reached. Set to `block` only when your compliance posture requires audit completeness and you have a reliably low-latency signer and adequate capacity headroom.',
+      'Backpressure policy when the pipeline is full. ' +
+      '`drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks and request-path p99 is preserved. ' +
+      '`block` makes enqueue() await until a slot frees up — no evidence is dropped due to a full buffer, but during a signer stall requests will block until the signer recovers or a client/server timeout fires; records are still dropped once the AUDIT_PIPELINE_MAX_WAITERS cap is reached. ' +
+      'Set to `block` only when your compliance posture requires audit completeness and you have a reliably low-latency signer and adequate capacity headroom. ' +
+      'COMPLIANCE PROFILE: for regulated workloads that require a complete tamper-evident audit trail, set: ' +
+      'AUDIT_PIPELINE_BACKPRESSURE=block, AUDIT_PIPELINE_MAX_WAITERS (bounded), EVIDENCE_SIGNED_DECISIONS=allow,deny, ' +
+      'and OCSF_TRANSPORT=http with a durable SIEM collector. Pair with AUDIT_PIPELINE_MAX_AGE_MS to bound queue residency.',
     ),
+    AUDIT_PIPELINE_MAX_WAITERS: envPositiveInt({
+      description:
+        'Hard cap on the number of producers that may park awaiting a free slot under the `block` backpressure policy. ' +
+        'When this cap is reached, arriving records are dropped with reason=queue_full instead of growing the waiter list unboundedly. ' +
+        'Defaults to AUDIT_PIPELINE_MAX_SIZE (i.e. the parked-waiter list cannot exceed the buffer). ' +
+        'Tune downward to bound memory consumption and upstream latency when the signer is slower than the producer rate. ' +
+        'Ignored under the `drop_oldest_with_metric` policy.',
+    }),
     AUDIT_PIPELINE_DRAIN_TIMEOUT_MS: envPositiveInt({
       default: 5000,
       description:

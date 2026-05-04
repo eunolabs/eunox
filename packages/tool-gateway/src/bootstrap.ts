@@ -547,6 +547,7 @@ export async function initializeServices(
       maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
       maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
       backpressure,
+      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS,
       onDropped: (count, reason) => {
         droppedCounter.inc({ reason }, count);
       },
@@ -586,6 +587,7 @@ export async function initializeServices(
       maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
       maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
       backpressure,
+      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS ?? validated.AUDIT_PIPELINE_MAX_SIZE,
     });
   } else if (evidenceSigner && !validated.AUDIT_PIPELINE_ENABLED) {
     logger.warn(

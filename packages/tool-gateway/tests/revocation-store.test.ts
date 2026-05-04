@@ -180,4 +180,47 @@ describe('createRevocationStoreFromEnv', () => {
       jest.resetModules();
     }
   });
+
+  it('throws when ioredis is missing and NODE_ENV=production', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/revocation-store');
+        await expect(
+          mod.createRevocationStoreFromEnv(
+            { REDIS_URL: 'redis://localhost:6379', NODE_ENV: 'production' } as unknown as NodeJS.ProcessEnv,
+            logger,
+          ),
+        ).rejects.toThrow(/Refusing to fall back/);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('throws when ioredis is missing and EUNO_DEPLOYMENT_TIER=multi-replica', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/revocation-store');
+        await expect(
+          mod.createRevocationStoreFromEnv(
+            {
+              REDIS_URL: 'redis://localhost:6379',
+              EUNO_DEPLOYMENT_TIER: 'multi-replica',
+            } as unknown as NodeJS.ProcessEnv,
+            logger,
+          ),
+        ).rejects.toThrow(/Refusing to fall back/);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
 });

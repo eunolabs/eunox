@@ -426,20 +426,8 @@ app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
 app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
 
 // Rate limiting - protect against brute force attacks
-const rateLimitWindowRaw = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '', 10);
-const rateLimitMaxRaw = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '', 10);
-const rateLimitWindowMs = Number.isFinite(rateLimitWindowRaw) && rateLimitWindowRaw > 0
-  ? rateLimitWindowRaw
-  : 60000;
-const rateLimitMax = Number.isFinite(rateLimitMaxRaw) && rateLimitMaxRaw > 0
-  ? rateLimitMaxRaw
-  : 100;
-if (!Number.isFinite(rateLimitWindowRaw) && process.env.RATE_LIMIT_WINDOW_MS) {
-  logger.warn('RATE_LIMIT_WINDOW_MS value is invalid, using default 60000ms');
-}
-if (!Number.isFinite(rateLimitMaxRaw) && process.env.RATE_LIMIT_MAX_REQUESTS) {
-  logger.warn('RATE_LIMIT_MAX_REQUESTS value is invalid, using default 100');
-}
+const rateLimitWindowMs = env.RATE_LIMIT_WINDOW_MS;
+const rateLimitMax = env.RATE_LIMIT_MAX_REQUESTS;
 
 const limiter = rateLimit({
   windowMs: rateLimitWindowMs,
