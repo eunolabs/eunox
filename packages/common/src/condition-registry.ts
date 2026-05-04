@@ -321,8 +321,28 @@ export async function enforceCondition(
 /**
  * Enforce every condition. Returns the first denial encountered, or
  * `{ allow: true }` if every condition allowed (or the list is empty).
- * Conditions are evaluated sequentially so side-effecting handlers
- * (e.g. `maxCalls` increment) run in declaration order.
+ *
+ * Conditions are evaluated in two-tier order regardless of their
+ * declaration order in the token:
+ *
+ *  1. **Cheap / stateless** — `timeWindow`, `ipRange`,
+ *     `allowedOperations`, `allowedExtensions`, `allowedTables`,
+ *     `recipientDomain`, `redactFields`, `allowedValues` — no I/O,
+ *     fail-fast before any Redis round-trip.
+ *  2. **Stateful / expensive** — `maxCalls` (Redis `INCR`), `policy`
+ *     (remote OPA/Cedar call), `custom` (unknown cost).
+ *
+ * This ordering ensures that an IP-denied or time-window-expired
+ * request never increments a `maxCalls` counter, keeping rate-limit
+ * budgets accurate for legitimate callers and saving Redis round-trips
+ * on blocked requests.
+ *
+ * The original declaration index is preserved for `maxCalls`
+ * `counterKey` scoping so counter keys remain stable across
+ * re-deployments even when this function reorders the evaluation.
+ *
+ * Conditions are still evaluated sequentially (not in parallel) so
+ * side-effecting handlers see a well-defined ordering within each tier.
  */
 export async function enforceConditions(
   conditions: readonly CapabilityCondition[] | undefined,
@@ -331,12 +351,27 @@ export async function enforceConditions(
   if (!conditions || conditions.length === 0) {
     return { allow: true };
   }
-  for (let i = 0; i < conditions.length; i++) {
-    const cond = conditions[i];
+
+  // Assign each condition a stable (priority, originalIndex) tuple.
+  // Conditions in the same priority bucket retain their declaration order
+  // (stable sort) so relative ordering within a tier is predictable.
+  const indexed = conditions.map((cond, i) => ({
+    cond,
+    originalIndex: i,
+    priority: CONDITION_ENFORCEMENT_PRIORITY[cond.type] ?? CONDITION_PRIORITY_CUSTOM,
+  }));
+  indexed.sort((a, b) => a.priority - b.priority || a.originalIndex - b.originalIndex);
+
+  for (const { cond, originalIndex } of indexed) {
     if (!cond) continue;
+    // Use the *original* declaration index for maxCalls counter scoping
+    // so that counter Redis keys remain stable even when the evaluation
+    // order changes (e.g. after adding a new timeWindow condition before
+    // maxCalls in the token). Changing the index would silently reset the
+    // counter window for every deployed token on re-deployment.
     const scopedCtx: ConditionContext =
       cond.type === 'maxCalls' && ctx.counterKey
-        ? { ...ctx, counterKey: `${ctx.counterKey}:${i}` }
+        ? { ...ctx, counterKey: `${ctx.counterKey}:${originalIndex}` }
         : ctx;
     const result = await enforceCondition(cond, scopedCtx);
     if (!result.allow) {
@@ -345,6 +380,30 @@ export async function enforceConditions(
   }
   return { allow: true };
 }
+
+// ---------------------------------------------------------------------------
+// Condition enforcement priority
+// ---------------------------------------------------------------------------
+//
+// Lower number = evaluated first.
+// Stateless conditions run before stateful (Redis) ones so a blocked
+// request never increments a maxCalls counter or triggers a remote
+// policy call.
+
+/** Evaluation priority for known built-in condition types. */
+const CONDITION_ENFORCEMENT_PRIORITY: Record<string, number> = {
+  timeWindow: 0,          // pure clock comparison
+  ipRange: 1,             // CIDR match, no I/O
+  allowedOperations: 2,   // string comparison
+  allowedExtensions: 2,   // string comparison
+  allowedTables: 2,       // string comparison
+  recipientDomain: 2,     // string comparison
+  allowedValues: 2,       // string comparison
+  redactFields: 3,        // response-only obligation; always allows on request path
+  policy: 4,              // remote OPA/Cedar call
+  maxCalls: 5,            // Redis INCR — stateful, must run last among builtins
+};
+const CONDITION_PRIORITY_CUSTOM = 6; // custom handlers: cost unknown, after builtins
 
 // ---------------------------------------------------------------------------
 // Built-in handlers

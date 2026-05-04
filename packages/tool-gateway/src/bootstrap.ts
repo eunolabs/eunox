@@ -170,6 +170,21 @@ export interface GatewayDependencies {
    * existing deployments keep their pre-R-7 behaviour exactly.
    */
   actionResolver: ActionResolver;
+  /**
+   * Optional partner-issuer resolver (cross-org trust harness). When
+   * `TRUSTED_PARTNER_DIDS` is set, this is a configured
+   * {@link PartnerIssuerResolver}; otherwise `undefined`. Passed to
+   * `createAdminApp` so the admin router can expose the per-DID
+   * cache-refresh endpoint.
+   */
+  partnerResolver?: import('./partner-issuer-resolver').PartnerIssuerResolver;
+  /**
+   * Maximum upstream response body size (bytes) to buffer for field-level
+   * redaction. Responses larger than this limit AND carrying a redaction
+   * obligation are refused with HTTP 502 (`redaction_oversize`). Defaults
+   * to 1 MiB; plumbed from `RESPONSE_REDACTION_MAX_BYTES`.
+   */
+  responseRedactionMaxBytes: number;
 }
 
 /**
@@ -309,7 +324,17 @@ export async function initializeServices(
   // Redis is configured (single-replica / dev). See
   // `RedisDpopReplayStore` for the SET NX semantics that make this
   // race-free.
-  const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(env, logger);
+  //
+  // `onError` is late-bound via the closure below because the Prometheus
+  // counter is registered after the stores are created (the registry
+  // setup comes later). The callback is only invoked on live requests,
+  // by which point the counter is guaranteed to be non-null.
+  let redisErrorsCounter: Counter<string> | undefined;
+  const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(
+    env,
+    logger,
+    () => redisErrorsCounter?.inc({ store: 'dpop_replay' }),
+  );
 
   // Build the JWKS client (R-6).  Prefers ISSUER_JWKS_URL; falls back to
   // deriving the JWKS URL from the deprecated ISSUER_PUBLIC_KEY_URL base.
@@ -360,7 +385,11 @@ export async function initializeServices(
   // Build the revocation store from environment.  Defaults to in-memory; if
   // REDIS_URL is set we connect to Redis so revocations are shared across
   // gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
-  const revocationStore = await createRevocationStoreFromEnv(env, logger);
+  const revocationStore = await createRevocationStoreFromEnv(
+    env,
+    logger,
+    () => redisErrorsCounter?.inc({ store: 'revocation' }),
+  );
 
   // Build the kill-switch manager from environment.  Defaults to the
   // in-process implementation; if REDIS_URL is set we use the Redis-backed
@@ -371,10 +400,14 @@ export async function initializeServices(
   const killSwitchManager: KillSwitchManager = await createKillSwitchManagerFromEnv(env, logger);
 
   // Build the call-counter store used by `maxCalls` condition enforcement.
-  const callCounterStore = await createCallCounterStoreFromEnv(env, logger);
+  const callCounterStore = await createCallCounterStoreFromEnv(
+    env,
+    logger,
+    () => redisErrorsCounter?.inc({ store: 'call_counter' }),
+  );
 
   // Build the cross-org partner-issuer trust resolver.
-  const partnerResolver = createPartnerIssuerResolverFromEnv(env);
+  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger);
   if (partnerResolver) {
     const partnerDidCount = (env.TRUSTED_PARTNER_DIDS || '')
       .split(',')
@@ -475,6 +508,24 @@ export async function initializeServices(
   // first request flows through the gateway.
   decisionsCounter.inc({ decision: 'allow' }, 0);
   decisionsCounter.inc({ decision: 'deny' }, 0);
+
+  // Redis store health counter. Incremented by any of the three
+  // Redis-backed stores (DPoP replay, revocation, call-counter) on
+  // every operational error. A non-zero rate indicates that Redis is
+  // partially unavailable; a sustained high rate means the gateway is
+  // running in fail-closed mode (DPoP replay / revocation / maxCalls)
+  // and legitimate requests will be denied.
+  redisErrorsCounter = new Counter({
+    name: 'euno_gateway_redis_errors_total',
+    help: 'Redis errors encountered by gateway stores (dpop_replay, revocation, call_counter). ' +
+      'A non-zero rate indicates Redis instability; a sustained rate means the gateway is ' +
+      'failing closed on affected checks — monitor alongside denial rates.',
+    labelNames: ['store'],
+    registers: [metricsRegistry],
+  });
+  redisErrorsCounter.inc({ store: 'dpop_replay' }, 0);
+  redisErrorsCounter.inc({ store: 'revocation' }, 0);
+  redisErrorsCounter.inc({ store: 'call_counter' }, 0);
 
   // R-9: build the async audit pipeline when evidence signing is on AND
   // the operator hasn't opted out via AUDIT_PIPELINE_ENABLED=false. The
@@ -631,6 +682,10 @@ export async function initializeServices(
       maxAgeSeconds: validated.DPOP_MAX_AGE_SECONDS,
       replayStore: dpopReplayStore,
     },
+    // Cross-tenant audience defence: tokens are only accepted when
+    // their `aud` claim matches GATEWAY_AUDIENCE. Defaults to
+    // "tool-gateway" when not configured (back-compat).
+    ...(validated.GATEWAY_AUDIENCE ? { gatewayAudience: validated.GATEWAY_AUDIENCE } : {}),
   });
 
   let ready = false;
@@ -676,6 +731,8 @@ export async function initializeServices(
     region: validated.GATEWAY_REGION,
     trustProxy: parseTrustProxy(validated.TRUST_PROXY),
     actionResolver,
+    partnerResolver: partnerResolver ?? undefined,
+    responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
   };
 
   logger.info('Tool Gateway services initialized successfully');

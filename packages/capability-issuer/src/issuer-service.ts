@@ -295,6 +295,18 @@ export interface CapabilityIssuerServiceOptions {
    * the caller chose to add it, the caller owns its health.
    */
   auditTransports?: TransportStream[];
+  /**
+   * Audience string stamped into the `aud` JWT claim of every
+   * capability token this issuer mints (including attenuated and
+   * renewed tokens). Defaults to `"tool-gateway"`.
+   *
+   * In multi-tenant deployments set this to a unique value per
+   * gateway tenant (e.g. `"tool-gateway:acme-corp-prod"`) so a
+   * token minted by one tenant's issuer cannot be replayed at
+   * another tenant's gateway. MUST match the `GATEWAY_AUDIENCE`
+   * configured on the corresponding tool-gateway instance.
+   */
+  gatewayAudience?: string;
 }
 
 export class CapabilityIssuerService {
@@ -335,6 +347,8 @@ export class CapabilityIssuerService {
     kind?: IssuanceLimiterKind,
   ) => void;
   private actionResolver: ActionResolver;
+  /** Audience claim for minted tokens. Configurable per-tenant to prevent cross-tenant replay. */
+  private gatewayAudience: string;
 
   constructor(
     signer: TokenSigner,
@@ -376,6 +390,7 @@ export class CapabilityIssuerService {
     if (options.dbTokenRateLimiter) this.dbTokenRateLimiter = options.dbTokenRateLimiter;
     if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
     this.actionResolver = options.actionResolver ?? BUILTIN_ACTION_RESOLVER;
+    this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
   }
 
   /**
@@ -532,6 +547,9 @@ export class CapabilityIssuerService {
         jti: tokenId,
         capabilities,
         userContext,
+        // Stamp the configured audience so tokens are bound to this
+        // specific gateway (cross-tenant replay defence).
+        audience: this.gatewayAudience,
         // F-7: stamp the originating region so audit consumers can
         // attribute the token after a regional failover. Falls back to
         // `undefined` (claim omitted) when no region is configured.
@@ -998,7 +1016,7 @@ export class CapabilityIssuerService {
       const parentPayload = await verifyParentToken(
         this.signer,
         parentToken,
-        { issuer: this.issuerDid, audience: 'tool-gateway' },
+        { issuer: this.issuerDid, audience: this.gatewayAudience },
         'Invalid parent capability token format',
       );
 
@@ -1140,7 +1158,7 @@ export class CapabilityIssuerService {
       const currentPayload = await verifyParentToken(
         this.signer,
         currentToken,
-        { issuer: this.issuerDid, audience: 'tool-gateway' },
+        { issuer: this.issuerDid, audience: this.gatewayAudience },
         'Invalid capability token format',
       );
 

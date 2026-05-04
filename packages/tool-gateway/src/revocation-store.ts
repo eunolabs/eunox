@@ -117,16 +117,18 @@ export class RedisRevocationStore implements RevocationStore {
   private readonly logger: Logger;
   private readonly keyPrefix: string;
   private readonly failOpen: boolean;
+  private readonly onError?: () => void;
 
   constructor(
     client: RedisLikeClient,
     logger: Logger,
-    options: { keyPrefix?: string; failOpen?: boolean } = {}
+    options: { keyPrefix?: string; failOpen?: boolean; onError?: () => void } = {}
   ) {
     this.client = client;
     this.logger = logger;
     this.keyPrefix = options.keyPrefix ?? 'revoked:';
     this.failOpen = options.failOpen ?? false;
+    this.onError = options.onError;
 
     this.client.on('error', (err: unknown) => {
       this.logger.error('Redis revocation store connection error', {
@@ -145,6 +147,7 @@ export class RedisRevocationStore implements RevocationStore {
         error: error instanceof Error ? error.message : 'Unknown error',
         failMode: this.failOpen ? 'open' : 'closed',
       });
+      this.onError?.();
       // Default: fail closed.  An attacker (or split-brain network) cannot
       // bypass revocation by knocking out Redis.
       return !this.failOpen;
@@ -197,7 +200,9 @@ export class RedisRevocationStore implements RevocationStore {
  */
 export async function createRevocationStoreFromEnv(
   env: NodeJS.ProcessEnv,
-  logger: Logger
+  logger: Logger,
+  /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
+  onError?: () => void,
 ): Promise<RevocationStore> {
   const redisUrl = env.REDIS_URL;
   if (!redisUrl) {
@@ -253,7 +258,7 @@ export async function createRevocationStoreFromEnv(
     failMode: failOpen ? 'open' : 'closed',
   });
 
-  return new RedisRevocationStore(client, logger, { keyPrefix, failOpen });
+  return new RedisRevocationStore(client, logger, { keyPrefix, failOpen, onError });
 }
 
 function nowSeconds(): number {

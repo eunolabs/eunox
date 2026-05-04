@@ -541,6 +541,15 @@ export const IssuerConfigSchema = z
       'Logical region tag for this issuer instance (e.g. "eastus2", "westeurope"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
     ),
 
+    // Gateway audience (cross-tenant defence) --------------------------------
+    GATEWAY_AUDIENCE: optionalString.describe(
+      'Audience string stamped into the `aud` JWT claim of every capability token minted by this issuer. ' +
+      'Defaults to "tool-gateway". In multi-tenant deployments set this to a unique per-tenant value ' +
+      '(e.g. "tool-gateway:acme-corp-prod") so a token minted for one tenant\'s gateway cannot be ' +
+      'replayed at another tenant\'s gateway. MUST match the GATEWAY_AUDIENCE configured on the ' +
+      'corresponding tool-gateway instance.',
+    ),
+
     // OCSF audit transport (F-6) --------------------------------------------
     OCSF_TRANSPORT: optionalString.describe(
       'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
@@ -838,6 +847,24 @@ export const GatewayConfigSchema = z
         'Max requests per IP per RATE_LIMIT_WINDOW_MS. Default 1000 (development); tighten in production.',
     }),
 
+    // Gateway audience (cross-tenant defence) --------------------------------
+    GATEWAY_AUDIENCE: optionalString.describe(
+      'Expected `aud` claim for capability tokens this gateway will accept. Defaults to "tool-gateway". ' +
+      'In multi-tenant deployments set this to a unique per-tenant value (e.g. "tool-gateway:acme-corp-prod") ' +
+      'so a token minted for one tenant\'s gateway cannot be replayed at another tenant\'s gateway. ' +
+      'MUST match the GATEWAY_AUDIENCE configured on the corresponding capability-issuer instance.',
+    ),
+
+    // Response redaction safety limit ----------------------------------------
+    RESPONSE_REDACTION_MAX_BYTES: envPositiveInt({
+      default: 1048576,
+      description:
+        'Maximum upstream response body size (bytes) that the gateway will buffer for redaction. ' +
+        'Responses larger than this limit AND carrying a redaction obligation are refused with ' +
+        'HTTP 502 (redaction_oversize) rather than passed through unredacted. Default 1 MiB (1048576). ' +
+        'Raise only after confirming that large responses are expected and safe to buffer in memory.',
+    }),
+
     // Cross-org partner trust -----------------------------------------------
     TRUSTED_PARTNER_DIDS: envCsv({
       description:
@@ -846,6 +873,22 @@ export const GatewayConfigSchema = z
     LOCAL_ISSUER_IDS: envCsv({
       description:
         'Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_JWKS_URL).',
+    }),
+    PARTNER_DID_CACHE_TTL_SECONDS: envPositiveInt({
+      default: 300,
+      description:
+        'TTL (seconds) for cached partner-DID document entries. After expiry the resolver re-fetches the ' +
+        'DID document on the next use. Default 300 (5 min). Lower values propagate key rotations faster ' +
+        'at the cost of more resolver traffic.',
+    }),
+    PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS: envPositiveInt({
+      default: 30,
+      min: 0,
+      description:
+        'TTL (seconds) for negative (failed-resolution) partner-DID cache entries. A short window here ' +
+        'absorbs transient resolver outages without pinning a stale denial for as long as the positive TTL. ' +
+        'Default 30 s. Set to 0 to disable negative caching (every failed resolution re-tries immediately, ' +
+        'amplifying resolver traffic during outages).',
     }),
 
     // Distributed coordination (Redis) --------------------------------------

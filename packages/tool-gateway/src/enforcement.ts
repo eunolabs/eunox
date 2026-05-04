@@ -125,6 +125,14 @@ export interface EnforcementEngineOptions {
     clockSkewSeconds?: number;
     maxAgeSeconds?: number;
   };
+  /**
+   * Expected `aud` claim for capability tokens this gateway accepts.
+   * Defaults to `"tool-gateway"`. Configure a unique value per tenant
+   * (e.g. `"tool-gateway:acme-corp-prod"`) so tokens minted by one
+   * tenant's issuer cannot be replayed at another tenant's gateway.
+   * MUST match the GATEWAY_AUDIENCE configured on the issuer.
+   */
+  gatewayAudience?: string;
 }
 
 /**
@@ -183,6 +191,9 @@ export class EnforcementEngine {
   private dpopClockSkewSeconds: number;
   private dpopMaxAgeSeconds: number;
 
+  /** Expected audience string for capability tokens. */
+  private gatewayAudience: string;
+
   constructor(options: EnforcementEngineOptions) {
     this.verifier = options.verifier;
     this.logger = options.logger;
@@ -205,6 +216,7 @@ export class EnforcementEngine {
     }
     this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
+    this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
     this.dpopRequired = options.dpop?.required === true;
     this.dpopReplayStore = options.dpop?.replayStore ?? new InMemoryDpopReplayStore();
     this.dpopClockSkewSeconds = options.dpop?.clockSkewSeconds ?? 60;
@@ -341,7 +353,7 @@ export class EnforcementEngine {
       }
 
       // Step 3: Check if the token is intended for this gateway
-      if (payload.aud !== 'tool-gateway') {
+      if (payload.aud !== this.gatewayAudience) {
         await this.logDenial(payload.sub, request.action, request.resource, 'Invalid audience', sessionId);
         throw new CapabilityError(
           ErrorCode.INVALID_TOKEN,

@@ -372,6 +372,11 @@ async function initializeServices() {
         // the legacy substring-matching CA tier coercion. When unset
         // the issuer uses the BUILTIN_ACTION_RESOLVER fallback.
         actionResolver,
+        // Cross-tenant audience defence: tokens are stamped with
+        // GATEWAY_AUDIENCE so they are bound to the configured
+        // gateway and cannot be replayed at another tenant's gateway.
+        // Defaults to "tool-gateway" for back-compat when unset.
+        ...(env.GATEWAY_AUDIENCE ? { gatewayAudience: env.GATEWAY_AUDIENCE } : {}),
         ...(auditTransports ? { auditTransports } : {}),
         onIssuanceRateLimited: (subject, reason, kind = 'issuance') => {
           // Forward the limiter's classification verbatim so dashboards

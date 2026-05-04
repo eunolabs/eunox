@@ -257,6 +257,7 @@ export class RedisDpopReplayStore implements DpopReplayStore {
   private readonly keyPrefix: string;
   private readonly failClosedOnError: boolean;
   private readonly logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+  private readonly onError?: () => void;
 
   constructor(
     client: RedisDpopReplayClient,
@@ -264,12 +265,15 @@ export class RedisDpopReplayStore implements DpopReplayStore {
       keyPrefix?: string;
       failClosedOnError?: boolean;
       logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+      /** Optional callback invoked on every Redis error, e.g. to increment a Prometheus counter. */
+      onError?: () => void;
     } = {},
   ) {
     this.client = client;
     this.keyPrefix = opts.keyPrefix ?? DEFAULT_DPOP_REPLAY_KEY_PREFIX;
     this.failClosedOnError = opts.failClosedOnError !== false;
     this.logger = opts.logger;
+    this.onError = opts.onError;
   }
 
   async checkAndRemember(jti: string, expiresAtUnixSec: number): Promise<boolean> {
@@ -294,6 +298,7 @@ export class RedisDpopReplayStore implements DpopReplayStore {
       this.logger?.error('Redis DPoP replay store error', {
         error: err instanceof Error ? err.message : String(err),
       });
+      this.onError?.();
       // Fail closed: pretend the proof was a replay so the request
       // is denied. Operators who consciously prefer availability
       // over replay-protection freshness can pass
@@ -328,6 +333,8 @@ export class RedisDpopReplayStore implements DpopReplayStore {
 export async function createDpopReplayStoreFromEnv(
   env: NodeJS.ProcessEnv,
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+  /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
+  onError?: () => void,
 ): Promise<DpopReplayStore> {
   const redisUrl = env.REDIS_URL;
   if (!redisUrl) {
@@ -380,7 +387,7 @@ export async function createDpopReplayStoreFromEnv(
 
   const keyPrefix = env.DPOP_REPLAY_KEY_PREFIX || DEFAULT_DPOP_REPLAY_KEY_PREFIX;
   const failClosedOnError = env.DPOP_REPLAY_FAIL_CLOSED_ON_ERROR !== 'false';
-  return new RedisDpopReplayStore(client, { keyPrefix, failClosedOnError, logger });
+  return new RedisDpopReplayStore(client, { keyPrefix, failClosedOnError, logger, onError });
 }
 
 /**

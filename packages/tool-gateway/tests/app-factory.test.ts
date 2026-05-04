@@ -84,6 +84,7 @@ async function buildDeps(opts?: {
     isReady: opts?.isReady ?? (() => true),
     actionResolver: BUILTIN_ACTION_RESOLVER,
     adminPort: 0,
+    responseRedactionMaxBytes: 1048576,
   };
 
   return { deps, privateKey };
@@ -468,6 +469,123 @@ describe('createApp(deps) — R-2 in-process factory', () => {
 
         expect(res.status).toBe(200);
         expect(res.body).toEqual(payload);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_CONTENT_TYPE_UNSUPPORTED when backend returns a non-JSON content-type and redactFields is set', async () => {
+      // The backend returns `text/plain` — the gateway cannot redact it,
+      // so it must fail closed rather than pass unredacted data through.
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'text/plain');
+            res.end('raw sensitive data');
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_CONTENT_TYPE_UNSUPPORTED');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_OVERSIZE when backend body exceeds the configured size limit and redactFields is set', async () => {
+      // A 10-byte limit ensures any real response body exceeds it.
+      const backend = await startBackend({ big: 'payload' });
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        // Override the default 1 MiB cap with 10 bytes for this test.
+        const smallLimitDeps = { ...deps, responseRedactionMaxBytes: 10 };
+        const app = createApp(smallLimitDeps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_OVERSIZE');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_PARSE_ERROR when backend returns application/json with non-JSON body and redactFields is set', async () => {
+      // Backend claims JSON content-type but sends invalid JSON.
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json');
+            res.end('not-valid-json{{{');
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_PARSE_ERROR');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
       } finally {
         await backend.close();
       }

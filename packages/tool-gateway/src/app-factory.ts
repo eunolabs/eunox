@@ -147,6 +147,7 @@ export function createApp(deps: GatewayDependencies): Express {
       logger,
       backendServiceUrl,
       actionResolver: deps.actionResolver,
+      responseRedactionMaxBytes: deps.responseRedactionMaxBytes,
     }),
   );
 
@@ -202,7 +203,6 @@ export function createApp(deps: GatewayDependencies): Express {
  */
 export function createAdminApp(deps: GatewayDependencies): Express {
   const { logger, killSwitchManager, adminApiKey, verifier } = deps;
-
   const adminApp = express();
 
   // Mirror the trust-proxy boundary from the public app so req.ip (logged on
@@ -234,6 +234,7 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       logger,
       adminApiKey,
       tokenVerifier: verifier,
+      partnerResolver: deps.partnerResolver,
     }),
   );
 

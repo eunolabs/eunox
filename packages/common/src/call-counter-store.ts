@@ -76,6 +76,8 @@ export interface RedisCallCounterOptions {
    * is propagated to the caller.
    */
   failClosedOnError?: boolean;
+  /** Optional callback invoked on every Redis error, e.g. to increment a Prometheus counter. */
+  onError?: () => void;
 }
 
 const DEFAULT_COUNTER_KEY_PREFIX = 'capcall:';
@@ -97,6 +99,7 @@ export class RedisCallCounterStore implements CallCounterStore {
   private readonly logger?: Logger;
   private readonly keyPrefix: string;
   private readonly failClosedOnError: boolean;
+  private readonly onError?: () => void;
 
   constructor(
     client: RedisCallCounterClient,
@@ -107,6 +110,7 @@ export class RedisCallCounterStore implements CallCounterStore {
     this.logger = logger;
     this.keyPrefix = options.keyPrefix ?? DEFAULT_COUNTER_KEY_PREFIX;
     this.failClosedOnError = options.failClosedOnError ?? true;
+    this.onError = options.onError;
     this.client.on('error', (err: unknown) => {
       this.logger?.error('Redis call-counter connection error', {
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -131,6 +135,7 @@ export class RedisCallCounterStore implements CallCounterStore {
         error: error instanceof Error ? error.message : 'Unknown error',
         failClosedOnError: this.failClosedOnError,
       });
+      this.onError?.();
       if (this.failClosedOnError) {
         // Deny-by-default: report a count above any reasonable budget so
         // the `maxCalls` handler trips the limit. Using POSITIVE_INFINITY
@@ -177,6 +182,8 @@ export class RedisCallCounterStore implements CallCounterStore {
 export async function createCallCounterStoreFromEnv(
   env: NodeJS.ProcessEnv,
   logger?: Logger,
+  /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
+  onError?: () => void,
 ): Promise<CallCounterStore> {
   const redisUrl = env.REDIS_URL;
   if (!redisUrl) {
@@ -224,5 +231,5 @@ export async function createCallCounterStoreFromEnv(
   );
 
   const keyPrefix = env.CALL_COUNTER_KEY_PREFIX || DEFAULT_COUNTER_KEY_PREFIX;
-  return new RedisCallCounterStore(client, logger, { keyPrefix });
+  return new RedisCallCounterStore(client, logger, { keyPrefix, onError });
 }

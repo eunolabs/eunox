@@ -7,12 +7,23 @@ import * as crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { KillSwitchManager, Logger } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
+import { PartnerIssuerResolver } from './partner-issuer-resolver';
 
 export interface AdminApiOptions {
   killSwitchManager: KillSwitchManager;
   logger: Logger;
   adminApiKey?: string;
   tokenVerifier?: JWTTokenVerifier;
+  /**
+   * Optional partner-issuer resolver. When supplied the admin router
+   * exposes a `POST /admin/partner-did/refresh/:encodedDid` endpoint
+   * that drops all cached (positive and negative) entries for a DID
+   * so the next token from that partner forces a fresh resolution.
+   * Useful for incident response when a partner rotates its signing
+   * key out-of-band or when a transient resolver outage has pinned a
+   * stale negative-cache entry.
+   */
+  partnerResolver?: PartnerIssuerResolver;
 }
 
 /**
@@ -20,7 +31,7 @@ export interface AdminApiOptions {
  */
 export function createAdminRouter(options: AdminApiOptions): Router {
   const router = Router();
-  const { killSwitchManager, logger, adminApiKey, tokenVerifier } = options;
+  const { killSwitchManager, logger, adminApiKey, tokenVerifier, partnerResolver } = options;
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -331,6 +342,79 @@ export function createAdminRouter(options: AdminApiOptions): Router {
           code: 'INTERNAL_ERROR',
           message: 'Failed to revoke token',
         },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/partner-did/refresh/:encodedDid
+   *
+   * Drops all cached (positive and negative) DID-document entries for
+   * the given partner DID so the next token from that partner triggers
+   * a fresh resolution. Useful for:
+   *  - Incident response when a partner has rotated its signing key
+   *    out-of-band and the cache is serving the stale key.
+   *  - Clearing a negative-cache entry after a transient resolver
+   *    outage has been resolved.
+   *
+   * The DID must be URL-encoded in the path (e.g.
+   * `did%3Aweb%3Apartner.example.com`).
+   *
+   * Returns 404 when the resolver is not configured (no
+   * TRUSTED_PARTNER_DIDS) — a safe no-op signal.
+   */
+  router.post('/partner-did/refresh/:encodedDid', (req: Request, res: Response): void => {
+    try {
+      const encodedDid = req.params['encodedDid'];
+      if (!encodedDid) {
+        res.status(400).json({
+          error: { code: 'INVALID_REQUEST', message: 'encodedDid path parameter is required' },
+        });
+        return;
+      }
+
+      let did: string;
+      try {
+        did = decodeURIComponent(encodedDid);
+      } catch {
+        res.status(400).json({
+          error: { code: 'INVALID_REQUEST', message: 'encodedDid is not a valid URI-encoded string' },
+        });
+        return;
+      }
+
+      if (!partnerResolver) {
+        res.status(404).json({
+          error: {
+            code: 'NOT_CONFIGURED',
+            message: 'Partner-issuer resolver is not configured on this gateway (TRUSTED_PARTNER_DIDS is unset)',
+          },
+        });
+        return;
+      }
+
+      if (!partnerResolver.trusts(did)) {
+        res.status(404).json({
+          error: {
+            code: 'UNKNOWN_DID',
+            message: `DID is not in the trusted partner set: ${did}`,
+          },
+        });
+        return;
+      }
+
+      partnerResolver.invalidateAll(did);
+      logger.info('Partner DID cache refreshed via admin API', {
+        eventType: 'partner_did_cache_admin_refresh',
+        did,
+      });
+      res.json({ message: `Cache for partner DID ${did} has been cleared`, did });
+    } catch (error) {
+      logger.error('Failed to refresh partner DID cache', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      res.status(500).json({
+        error: { code: 'INTERNAL_ERROR', message: 'Failed to refresh partner DID cache' },
       });
     }
   });
