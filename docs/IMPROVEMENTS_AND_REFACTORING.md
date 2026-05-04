@@ -110,7 +110,7 @@ ladder; effort is `S` (≤ 1 sprint), `M` (1–2 sprints), `L` (>2 sprints).
 | ----- | :------: | :----: | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | I-20  | Medium   |   S    | **Issuer's public key is fetched once at gateway boot** (`tool-gateway/src/index.ts` ll. 66–70). Add a refresh loop (with backoff) so a hot rotation does not require a redeploy. |
 | I-21  | Medium   |   M    | **No batched / async audit pipeline.** `EvidenceSigner.sign()` is on the request critical path. A small ring-buffer with backpressure (drop with metric, never lose) would let crypto-audit scale to gateway p99 budgets. |
-| I-22  | Low      |   M    | **No load-test artefacts.** `packages/integration-tests` is functional only. A k6 / autocannon scenario per route would let the team set and defend SLOs. |
+| I-22  | Low      |   M    | **No load-test artefacts.** `packages/integration-tests` is functional only. A k6 / autocannon scenario per route would let the team set and defend SLOs. **Resolved** — `packages/integration-tests/perf/` ships an autocannon-based CI runner (`npm run perf`) and matching k6 scripts under `perf/k6/*.js`, both driven by the same `slo.ts` source-of-truth, with one scenario per externally observable gateway and issuer route. |
 | I-23  | Low      |   S    | **DID document resolution caching policy is not documented.** Code in `did-resolver.ts` caches; the TTL and invalidation contract should be a public knob with a stated default. |
 
 ### 3.5 API & developer experience
@@ -422,7 +422,7 @@ policy can be referenced from a manifest and is enforced end-to-end.
 | F-2        | DPoP sender-constrained tokens                                    |
 | F-8        | Self-service manifest UI; archive `web/index.html` stub (I-18)    |
 | F-6        | OCSF audit transport                                              |
-| I-22       | Load-test artefacts in `packages/integration-tests/perf/`         |
+| I-22       | Load-test artefacts in `packages/integration-tests/perf/` — **IMPLEMENTED** (autocannon CI runner + k6 scripts; one scenario per externally observable route) |
 | I-12       | OpenAPI ↔ TypeScript generator wired into the build — **IMPLEMENTED** (`scripts/generate-openapi-types.mjs`, root `gen:openapi` / `gen:openapi:check` scripts) |
 
 **Exit criterion:** A regional Azure outage takes the active gateway
