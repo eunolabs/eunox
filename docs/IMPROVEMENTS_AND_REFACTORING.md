@@ -312,11 +312,22 @@ contract for clients.
   `AUDIT_PIPELINE_MAX_BATCH` (default 16) records per wake-up and calling
   `EvidenceSigner.signEvidence` per record (batching is wake-up amortisation;
   the underlying single-record signer interface is unchanged).
-- Backpressure policy: `AUDIT_PIPELINE_BACKPRESSURE=drop_oldest_with_metric`
-  (default) or `block`. Drops are surfaced via the
+- Backpressure policy (`AUDIT_PIPELINE_BACKPRESSURE`):
+  - `drop_oldest_with_metric` **(default)** — evicts the oldest buffered record,
+    increments the dropped counter, and accepts the new one. Producers are never
+    blocked, preserving request-path p99. Operators must monitor
+    `euno_gateway_audit_pipeline_dropped_total{reason="queue_full"}` to detect
+    evidence loss and accept best-effort audit durability.
+  - `block` — `enqueue()` awaits until a slot frees up; no evidence is dropped
+    due to a full buffer. **Trade-off:** during a signer stall the request path
+    blocks until the signer recovers or a client/server timeout fires. Records
+    are still dropped once the `maxWaiters` cap is reached. Use only when your
+    compliance posture requires audit completeness and the signer is reliably
+    low-latency with adequate capacity headroom.
+- Drops are surfaced via the
   `euno_gateway_audit_pipeline_dropped_total{reason}` Prometheus counter
-  (labels: `queue_full` | `aged_out`). `signed_total`,
-  `sign_errors_total`, and `queue_depth` gauges are also exported.
+  (labels: `queue_full` | `aged_out`). `signed_total`, `sign_errors_total`,
+  and `queue_depth` gauges are also exported.
 
 The Tool Gateway `EnforcementEngine` enqueues on the request critical path and
 returns immediately; signing latency no longer adds to the agent's p99. The

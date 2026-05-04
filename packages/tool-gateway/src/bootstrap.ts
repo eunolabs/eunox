@@ -473,10 +473,10 @@ export async function initializeServices(
     const droppedCounter = new Counter({
       name: 'euno_gateway_audit_pipeline_dropped_total',
       help: 'Audit-evidence records dropped by the async pipeline before they could be signed. ' +
-        'Labelled by reason: queue_full (backpressure under drop_oldest_with_metric) or aged_out ' +
-        '(record exceeded AUDIT_PIPELINE_MAX_AGE_MS while waiting). A non-zero rate is the ' +
-        'operator\'s signal to raise AUDIT_PIPELINE_MAX_SIZE / AUDIT_PIPELINE_WORKERS or to ' +
-        'investigate signer latency.',
+        'Labelled by reason: queue_full (buffer full, waiter cap reached, or pipeline stopped) ' +
+        'or aged_out (record exceeded AUDIT_PIPELINE_MAX_AGE_MS while waiting). A non-zero rate ' +
+        'is the operator\'s signal to raise AUDIT_PIPELINE_MAX_SIZE / AUDIT_PIPELINE_WORKERS or ' +
+        'to investigate signer latency.',
       labelNames: ['reason'],
       registers: [metricsRegistry],
     });

@@ -634,7 +634,7 @@ export const GatewayConfigSchema = z
         'Optional maximum age (ms) a record may sit in the queue before it is dropped as `aged_out`. Defends against unbounded queue residency when the signer is slow or down. Unset disables age-based eviction (records wait indefinitely).',
     }),
     AUDIT_PIPELINE_BACKPRESSURE: optionalString.describe(
-      'Backpressure policy when the pipeline is full. `drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks. `block` makes enqueue() await until a slot frees up — recommended only when the operator\'s compliance posture forbids audit-event loss.',
+      'Backpressure policy when the pipeline is full. `drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks and request-path p99 is preserved. `block` makes enqueue() await until a slot frees up — no evidence is dropped due to a full buffer, but during a signer stall requests will block until the signer recovers or a client/server timeout fires; records are still dropped once the maxWaiters cap is reached. Set to `block` only when your compliance posture requires audit completeness and you have a reliably low-latency signer and adequate capacity headroom.',
     ),
     AUDIT_PIPELINE_DRAIN_TIMEOUT_MS: envPositiveInt({
       default: 5000,

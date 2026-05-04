@@ -17,11 +17,15 @@
  *   - Backpressure policy when the buffer is full:
  *       * `drop_oldest_with_metric` (default) — pop the oldest item, count
  *         it as dropped, then accept the new one. Producers are never
- *         blocked; the metric is the operator's contract that "no audit
- *         event was silently lost".
+ *         blocked. The `onDropped` callback and the Prometheus counter are
+ *         the operator's signal that evidence was shed; monitoring that
+ *         counter is the contract for best-effort audit durability.
  *       * `block`                              — `enqueue()` returns a
- *         promise that resolves once a slot opens. Suitable for strict-mode
- *         operators who would rather slow the request than drop evidence.
+ *         promise that resolves once a slot opens. Suitable for regulated
+ *         workloads that require audit completeness, but note that during
+ *         a signer stall the request path will block until the signer
+ *         recovers or a client/server timeout fires. Records are still
+ *         dropped once the `maxWaiters` cap is reached.
  *   - Always emits an `onDropped(count, reason)` callback so a Prometheus
  *     counter (or any other sink) can be wired in by the host service —
  *     the counter cannot live inside `@euno/common` itself because the
@@ -41,13 +45,17 @@ import { AuditEvidence, SignedAuditEvidence } from './types';
 /**
  * Backpressure policy applied when the ring buffer is full.
  *
- *   - `drop_oldest_with_metric` — drop the oldest queued item, increment a
- *     dropped counter, and accept the new one. Producers are never
- *     blocked; this is the default because it preserves request-path p99.
- *   - `block`                   — make `enqueue()` await until a slot is
- *     free. Producers pay the signing latency back-pressure but no
- *     evidence is ever dropped. Recommended only when the operator's
- *     compliance posture forbids audit-event loss.
+ *   - `drop_oldest_with_metric` (default) — drop the oldest queued item,
+ *     increment a dropped counter, and accept the new one. Producers are
+ *     never blocked; this is the default because it preserves request-path
+ *     p99 and avoids blocking the request during signer outages.
+ *   - `block`                              — make `enqueue()` await until a
+ *     slot is free. Producers pay backpressure but no evidence is dropped
+ *     due to a full buffer. **Note:** during a signer stall the request path
+ *     blocks until the signer recovers or a client/server timeout fires.
+ *     Records are still dropped once the `maxWaiters` cap is reached.
+ *     Recommended only when the operator's compliance posture requires
+ *     audit completeness and the signer is reliably low-latency.
  */
 export const BACKPRESSURE_POLICIES = ['drop_oldest_with_metric', 'block'] as const;
 export type BackpressurePolicy = (typeof BACKPRESSURE_POLICIES)[number];
@@ -240,13 +248,12 @@ export class AuditPipeline {
    *
    * Under the `block` policy, the returned promise resolves only once a
    * slot becomes free (i.e. a worker has dequeued enough items). This
-   * is the only mode that backpressures the producer. When the parked-
-   * waiter list reaches `maxWaiters` (default = `maxSize`) the new
-   * record is dropped with `reason='queue_full'` instead of growing
-   * the waiter list unboundedly — important when a producer never
-   * awaits the returned promise (e.g. an upstream that fire-and-
-   * forgets `enqueue` in `block` mode would otherwise pin promise
-   * memory indefinitely).
+   * backpressures the producer so evidence is not dropped due to a full
+   * buffer. **Caveat:** during a signer stall the request path blocks
+   * until the signer recovers or a client/server timeout fires. When
+   * the parked-waiter list reaches `maxWaiters` (default = `maxSize`)
+   * the new record is dropped with `reason='queue_full'` instead of
+   * growing the waiter list unboundedly.
    *
    * Callers should NOT `await` this on the critical path under the
    * drop policy unless they want a yield point — fire-and-forget is

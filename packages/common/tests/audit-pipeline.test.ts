@@ -86,7 +86,7 @@ describe('AuditPipeline', () => {
     expect(pipeline.droppedCount()).toBe(0);
   });
 
-  it('drops oldest with metric when buffer is full under default policy', async () => {
+  it('drops oldest with metric when buffer is full under drop_oldest_with_metric policy', async () => {
     const signer = new RecordingSigner();
     // Hold the worker hostage so the buffer can actually fill before
     // anything drains.
@@ -97,6 +97,7 @@ describe('AuditPipeline', () => {
       maxSize: 2,
       workers: 1,
       maxBatchSize: 1,
+      backpressure: 'drop_oldest_with_metric',
       onDropped: (count, reason) => drops.push({ count, reason }),
     });
     pipeline.start();
@@ -341,9 +342,11 @@ describe('AuditPipeline', () => {
 
   it('exposes the active backpressurePolicy', () => {
     const signer = new RecordingSigner();
-    const dropPipe = new AuditPipeline({ signer });
+    const defaultPipe = new AuditPipeline({ signer });
     const blockPipe = new AuditPipeline({ signer, backpressure: 'block' });
-    expect(dropPipe.backpressurePolicy).toBe('drop_oldest_with_metric');
+    const dropPipe = new AuditPipeline({ signer, backpressure: 'drop_oldest_with_metric' });
+    expect(defaultPipe.backpressurePolicy).toBe('drop_oldest_with_metric');
     expect(blockPipe.backpressurePolicy).toBe('block');
+    expect(dropPipe.backpressurePolicy).toBe('drop_oldest_with_metric');
   });
 });
