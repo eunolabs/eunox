@@ -439,7 +439,7 @@ export const IssuerConfigSchema = z
 
     // OCSF audit transport (F-6) --------------------------------------------
     OCSF_TRANSPORT: optionalString.describe(
-      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event to stderr), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
+      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
     ),
     OCSF_FILE_PATH: optionalString.describe(
       'Path the file OCSF transport appends events to. Required when OCSF_TRANSPORT=file. Rotation is delegated to the operating system (logrotate / journald).',
@@ -720,9 +720,9 @@ export const GatewayConfigSchema = z
 
     // DPoP / sender-constrained tokens (F-2, RFC 9449) -----------------------
     DPOP_REQUIRED: envBoolean({
-      default: false,
+      default: true,
       description:
-        'When true, the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449 / F-2). Default false preserves back-compat with plain bearer tokens. Enable once every issuer that mints for this gateway has been rolled out with DPoP support so the holder of a leaked token cannot use it without the matching DPoP private key.',
+        'When true (default), the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449 / F-2). Set to false only for backward-compatible deployments where issuers have not yet been rolled out with DPoP support; in that mode a leaked token remains usable as a plain bearer token until it expires or is revoked.',
     }),
     DPOP_CLOCK_SKEW_SECONDS: envPositiveInt({
       default: 60,
@@ -742,7 +742,7 @@ export const GatewayConfigSchema = z
 
     // OCSF audit transport (F-6) --------------------------------------------
     OCSF_TRANSPORT: optionalString.describe(
-      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event to stderr), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
+      'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',
     ),
     OCSF_FILE_PATH: optionalString.describe(
       'Path the file OCSF transport appends events to. Required when OCSF_TRANSPORT=file. Rotation is delegated to the operating system (logrotate / journald).',

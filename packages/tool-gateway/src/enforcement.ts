@@ -112,9 +112,10 @@ export interface EnforcementEngineOptions {
    *   single gateway process. Multi-instance deployments should plug
    *   in a shared backend so a replay sent to a different replica is
    *   still detected.
-   * - `required` (default `false`) makes DPoP mandatory: any token
-   *   without a `cnf.jkt` claim is rejected. Recommended for
-   *   production once all issuers are minting bound tokens.
+   * - `required` (default `false` when constructing directly; `true`
+   *   via the `DPOP_REQUIRED` env var which defaults to `true`) makes
+   *   DPoP mandatory: any token without a `cnf.jkt` claim is rejected.
+   *   Recommended for all production deployments.
    * - `clockSkewSeconds` and `maxAgeSeconds` are forwarded to
    *   {@link verifyDpopProof}.
    */

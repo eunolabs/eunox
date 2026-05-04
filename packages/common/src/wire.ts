@@ -415,10 +415,10 @@ export interface CapabilityTokenPayload {
    * sufficient for the attacker to call protected endpoints. F-2 in
    * `docs/IMPROVEMENTS_AND_REFACTORING.md`.
    *
-   * Tokens minted without `cnf` continue to be accepted as plain
-   * bearer tokens (back-compat). Once `DPOP_REQUIRED=true` is
-   * enabled on the gateway, the gateway will reject any token without
-   * `cnf.jkt`.
+   * Tokens minted without `cnf` are rejected by default
+   * (`DPOP_REQUIRED` defaults to `true`). Set `DPOP_REQUIRED=false`
+   * on the gateway only for back-compat deployments where issuers
+   * have not yet been rolled out with DPoP support.
    */
   cnf?: {
     /**

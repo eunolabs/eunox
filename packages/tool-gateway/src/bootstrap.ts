@@ -603,10 +603,12 @@ export async function initializeServices(
       ? { auditTransports: [createOcsfWinstonTransport(ocsfTransport, ocsfProduct)] }
       : {}),
     // F-2: DPoP / RFC 9449 sender-constrained tokens. `required=true`
-    // refuses any token without `cnf.jkt`; default is permissive
-    // (back-compat). The replay store is per-instance unless wired
-    // to a shared backend below — multi-replica deployments using
-    // `REDIS_URL` get a Redis-backed store automatically.
+    // (the default) refuses any token without `cnf.jkt`; set
+    // DPOP_REQUIRED=false only for back-compat deployments where
+    // issuers haven't been rolled out with DPoP support yet. The
+    // replay store is per-instance unless wired to a shared backend
+    // — multi-replica deployments using `REDIS_URL` get a
+    // Redis-backed store automatically.
     dpop: {
       required: validated.DPOP_REQUIRED,
       clockSkewSeconds: validated.DPOP_CLOCK_SKEW_SECONDS,

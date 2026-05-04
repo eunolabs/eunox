@@ -1288,11 +1288,16 @@ describe('EnforcementEngine', () => {
       ).rejects.toThrow(/requires DPoP/);
     });
 
-    it('with dpop.required=false (default), still accepts plain bearer tokens', async () => {
+    it('with dpop.required=false (explicit), still accepts plain bearer tokens', async () => {
+      const permissive = new EnforcementEngine({
+        verifier,
+        logger,
+        dpop: { required: false },
+      });
       const token = await createTestToken([
         { resource: 'api://service/endpoint', actions: ['read'] },
       ]);
-      const res = await engine.validateAction({
+      const res = await permissive.validateAction({
         token,
         action: 'read',
         resource: 'api://service/endpoint',
