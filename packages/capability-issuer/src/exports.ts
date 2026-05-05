@@ -9,3 +9,4 @@ export * from './default-registries';
 export * from './storage-grant';
 export * from './db-token';
 export * from './did-resolver';
+export * from './side-credential-broker';

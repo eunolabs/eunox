@@ -42,6 +42,7 @@ import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
 import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
+import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credential-broker';
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { PostureEmitter } from '@euno/posture-emitter';
 
@@ -342,6 +343,41 @@ async function initializeServices() {
     const cosigners = await loadCosignersFromEnv(env, logger);
     const transparencyLogs = await loadTransparencyLogsFromEnv(env, logger);
 
+    // R-1 / microservice decomposition: when STORAGE_GRANT_SERVICE_URL or
+    // DB_TOKEN_SERVICE_URL are set, delegate side-credential minting to the
+    // dedicated remote services via HttpSideCredentialBroker.  The remote
+    // services verify the JWT with the issuer's public JWKS and mint
+    // credentials independently — no KMS access is needed there.
+    //
+    // When neither URL is set, fall back to the in-process services
+    // (StorageGrantService + DbTokenService) wrapped in an
+    // InProcessSideCredentialBroker for backward compatibility.
+    let sideCredentialBroker: SideCredentialBroker | undefined;
+    const storageGrantServiceUrl = process.env.STORAGE_GRANT_SERVICE_URL;
+    const dbTokenServiceUrl = process.env.DB_TOKEN_SERVICE_URL;
+    if (storageGrantServiceUrl || dbTokenServiceUrl) {
+      sideCredentialBroker = new HttpSideCredentialBroker({
+        storageGrantServiceUrl,
+        dbTokenServiceUrl,
+        logger,
+      });
+      logger.info('Side-credential broker: HTTP (microservice) mode', {
+        storageGrantServiceUrl: storageGrantServiceUrl ?? '(not configured)',
+        dbTokenServiceUrl: dbTokenServiceUrl ?? '(not configured)',
+      });
+    }
+
+    // Prometheus counter for side-credential broker errors in best-effort mode.
+    const sideCredentialErrorCounter = new Counter({
+      name: 'euno_issuer_side_credential_errors_total',
+      help: 'Side-credential broker failures in best-effort mode, labelled by kind (storage-grant|db-token|unknown).',
+      labelNames: ['kind'],
+      registers: [metricsRegistry],
+    });
+    for (const kind of ['storage-grant', 'db-token', 'unknown'] as const) {
+      sideCredentialErrorCounter.inc({ kind }, 0);
+    }
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
@@ -353,14 +389,31 @@ async function initializeServices() {
         // issuance.  Recommended for multi-tenant production deployments.
         requireConsent: env.REQUIRE_USER_CONSENT,
         policy: rolePolicy,
-        // Cloud storage / DB credential pipelines (sprint 3-4 gap items
-        // #7 and #8). Both are disabled by default — `fromEnv` returns
-        // an inactive service unless `STORAGE_GRANTS_ENABLED=true` /
-        // `DB_TOKENS_ENABLED=true`. `DbTokenService.fromEnv` throws
-        // when enabled without `DB_INSTANCES_FILE` (fail fast at
-        // startup rather than serve with an empty allow-list).
-        storageGrantService: StorageGrantService.fromEnv(process.env, logger),
-        dbTokenService: DbTokenService.fromEnv(process.env, logger),
+        // Microservice broker (when URLs are configured) takes precedence
+        // over the legacy in-process services below. Both paths go through
+        // the same SideCredentialBroker interface so rate limiters and
+        // failure-mode handling are identical.
+        ...(sideCredentialBroker ? { sideCredentialBroker } : {
+          // Cloud storage / DB credential pipelines (sprint 3-4 gap items
+          // #7 and #8). Both are disabled by default — `fromEnv` returns
+          // an inactive service unless `STORAGE_GRANTS_ENABLED=true` /
+          // `DB_TOKENS_ENABLED=true`. `DbTokenService.fromEnv` throws
+          // when enabled without `DB_INSTANCES_FILE` (fail fast at
+          // startup rather than serve with an empty allow-list).
+          storageGrantService: StorageGrantService.fromEnv(process.env, logger),
+          dbTokenService: DbTokenService.fromEnv(process.env, logger),
+        }),
+        // When SIDE_CREDENTIAL_FAILURE_MODE=best-effort, broker errors are
+        // logged and metered but the signed JWT is still returned. Opt in
+        // for deployments that can tolerate missing side credentials (e.g.
+        // during STS maintenance windows).
+        sideCredentialFailureMode:
+          process.env.SIDE_CREDENTIAL_FAILURE_MODE === 'best-effort'
+            ? 'best-effort'
+            : 'fail-fast',
+        onSideCredentialError: (kind, _error) => {
+          sideCredentialErrorCounter.inc({ kind });
+        },
         // AI posture-management inventory feed (sprint 3-4 gap item
         // #9). Disabled by default — `fromEnv` returns an inactive
         // emitter unless `POSTURE_EMITTER_ENABLED=true`. Failures

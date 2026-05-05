@@ -51,6 +51,11 @@ import type TransportStream from 'winston-transport';
 import { DbTokenService } from './db-token';
 import { StorageGrantService } from './storage-grant';
 import {
+  BrokerCallError,
+  InProcessSideCredentialBroker,
+  SideCredentialBroker,
+} from './side-credential-broker';
+import {
   buildAttenuatedPayload,
   buildIssuancePayload,
   buildRenewedPayload,
@@ -272,6 +277,56 @@ export interface CapabilityIssuerServiceOptions {
    */
   dbTokenRateLimiter?: IssuanceRateLimiter;
   /**
+   * Optional side-credential broker.  When supplied, the issuer
+   * delegates all storage-grant and DB-token minting to this broker
+   * rather than calling `storageGrantService` / `dbTokenService`
+   * directly.  This is the recommended option for operators who have
+   * deployed the dedicated `storage-grant-service` and
+   * `db-token-service` microservices:
+   *
+   * ```ts
+   * sideCredentialBroker: new HttpSideCredentialBroker({
+   *   storageGrantServiceUrl: process.env.STORAGE_GRANT_SERVICE_URL,
+   *   dbTokenServiceUrl: process.env.DB_TOKEN_SERVICE_URL,
+   * })
+   * ```
+   *
+   * When both a broker **and** the legacy `storageGrantService` /
+   * `dbTokenService` options are provided, the broker takes
+   * precedence and the legacy options are ignored.
+   *
+   * When a broker is **not** supplied but the legacy service options
+   * are, an `InProcessSideCredentialBroker` is constructed automatically
+   * at startup for backward compatibility.
+   */
+  sideCredentialBroker?: SideCredentialBroker;
+  /**
+   * Controls what happens when the side-credential broker throws an
+   * unrecoverable error (network failure, STS outage, bad config, …).
+   *
+   * - `'fail-fast'` *(default, back-compat)*: the error propagates and
+   *   the caller receives a 502 / 500.  Matches the previous monolith
+   *   behaviour.
+   * - `'best-effort'`: the error is logged and the optional
+   *   {@link onSideCredentialError} callback is fired, but the
+   *   capability JWT is still returned without side credentials.
+   *   Opt in when the agent runtime is prepared to fall back to
+   *   calling the dedicated credential-service endpoints directly, or
+   *   when a temporary STS outage should not block all capability
+   *   issuance.
+   */
+  sideCredentialFailureMode?: 'fail-fast' | 'best-effort';
+  /**
+   * Optional callback fired when the side-credential broker fails in
+   * `'best-effort'` mode.  Callers (the HTTP entrypoint) use this to
+   * increment Prometheus counters without coupling the service to the
+   * metrics registry.  Failures inside the callback are swallowed.
+   */
+  onSideCredentialError?: (
+    kind: 'storage-grant' | 'db-token' | 'unknown',
+    error: Error,
+  ) => void;
+  /**
    * Optional pluggable {@link ActionResolver} (R-7, addresses I-4
    * and I-5). When supplied, the issuer uses it to map every
    * granted capability action to its CA tier during the
@@ -359,8 +414,26 @@ export class CapabilityIssuerService {
   private auditLogger: Logger;
   private requireConsent: boolean;
   private policy: RoleCapabilityPolicy;
+  /** @deprecated — kept for back-compat; underlying service is wrapped inside `sideCredentialBroker`. */
   private storageGrantService?: StorageGrantService;
+  /** @deprecated — kept for back-compat; underlying service is wrapped inside `sideCredentialBroker`. */
   private dbTokenService?: DbTokenService;
+  /**
+   * Broker that encapsulates all side-credential minting (storage grants
+   * + DB tokens).  Always set in the constructor — falls back to an
+   * `InProcessSideCredentialBroker` wrapping the legacy service options
+   * so existing callers need no changes.
+   */
+  private sideCredentialBroker: SideCredentialBroker;
+  /**
+   * Controls broker failure handling.  `'fail-fast'` (default) propagates
+   * errors; `'best-effort'` logs and continues without side credentials.
+   */
+  private sideCredentialFailureMode: 'fail-fast' | 'best-effort';
+  private onSideCredentialError?: (
+    kind: 'storage-grant' | 'db-token' | 'unknown',
+    error: Error,
+  ) => void;
   private pimRequiredRoles: string[];
   private capTtlToPimActivation: boolean;
   private postureEmitter?: PostureEmitterLike;
@@ -433,8 +506,23 @@ export class CapabilityIssuerService {
     }
     this.requireConsent = options.requireConsent === true;
     this.policy = options.policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
-    if (options.storageGrantService) this.storageGrantService = options.storageGrantService;
-    if (options.dbTokenService) this.dbTokenService = options.dbTokenService;
+    // Broker resolution order:
+    //   1. Explicit `sideCredentialBroker` (recommended for microservice deployments).
+    //   2. Legacy `storageGrantService` / `dbTokenService` wrapped in an
+    //      `InProcessSideCredentialBroker` (back-compat for existing configs).
+    //   3. An empty in-process broker (neither service configured — no-op).
+    if (options.sideCredentialBroker) {
+      this.sideCredentialBroker = options.sideCredentialBroker;
+    } else {
+      if (options.storageGrantService) this.storageGrantService = options.storageGrantService;
+      if (options.dbTokenService) this.dbTokenService = options.dbTokenService;
+      this.sideCredentialBroker = new InProcessSideCredentialBroker({
+        storageGrantService: this.storageGrantService,
+        dbTokenService: this.dbTokenService,
+      });
+    }
+    this.sideCredentialFailureMode = options.sideCredentialFailureMode ?? 'fail-fast';
+    if (options.onSideCredentialError) this.onSideCredentialError = options.onSideCredentialError;
     this.pimRequiredRoles = options.pimRequiredRoles ?? [];
     this.capTtlToPimActivation = options.capTtlToPimActivation !== false;
     if (options.postureEmitter) this.postureEmitter = options.postureEmitter;
@@ -656,7 +744,12 @@ export class CapabilityIssuerService {
       const token = await signPayload(this.signer, payload);
 
       // Step 5b: Mint short-lived cloud-storage and DB credentials.
+      // IMPORTANT: this runs AFTER the JWT is signed (step 5 above) so
+      // the KMS call completes before any broker code executes.  In
+      // 'best-effort' mode a broker failure returns `{}` and the signed
+      // JWT is still delivered — the KMS operation is never lost.
       const { storageGrants, dbCredentials } = await this.mintSideCredentials(
+        token,
         request,
         userContext,
         capabilities,
@@ -958,26 +1051,38 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Mint short-lived storage and DB credentials when their respective
-   * services are configured and enabled. A mint failure aborts the
-   * entire issuance — partial grants give the agent a misleading view
-   * of what it can access (see design § 6 of both
-   * `07-storage-grants.md` and `08-db-token-issuance.md`).
+   * Mint short-lived storage and DB credentials via the configured
+   * {@link SideCredentialBroker}.
    *
-   * Dedicated per-(tenant, user, agent) rate limiters ({@link storageGrantRateLimiter}
-   * and {@link dbTokenRateLimiter}) are enforced here — after identity
-   * resolution — before each cloud-credential mint. These are
+   * KMS isolation: this method is called AFTER the capability JWT has
+   * already been signed (see `issueCapability` step 5 → step 5b
+   * ordering).  The signing key is therefore never accessed while
+   * broker / cloud-credential code runs, so a crash or hang inside
+   * the broker cannot interfere with the KMS call and cannot lose an
+   * already-signed token when `sideCredentialFailureMode` is
+   * `'best-effort'`.
+   *
+   * Dedicated per-(tenant, user, agent) rate limiters
+   * ({@link storageGrantRateLimiter} and {@link dbTokenRateLimiter})
+   * are enforced here — after identity resolution and after JWT
+   * signing — before each cloud-credential mint.  These are
    * intentionally tighter than the main {@link issuanceRateLimiter}
    * because each mint produces a long-lived cloud credential (STS
    * session / RDS IAM token) rather than a short-lived capability JWT.
    *
-   * The rate limiters are only consulted when at least one capability
-   * in the request matches the relevant scheme (`storage://`, `db://`).
-   * This avoids consuming quota on requests that would produce no
-   * cloud credentials — e.g. a request that only has `api://` resources
-   * would not be charged against the storage-grant limiter.
+   * Rate limiters are only consulted when at least one capability
+   * in the request matches the relevant scheme (`storage://`, `db://`)
+   * AND the broker reports that path as enabled.  This avoids
+   * consuming quota on requests that would produce no cloud
+   * credentials.
+   *
+   * Failure handling respects {@link sideCredentialFailureMode}:
+   * `'fail-fast'` propagates errors (default / back-compat);
+   * `'best-effort'` logs, fires {@link onSideCredentialError}, and
+   * returns `{}` so the caller can return the JWT alone.
    */
   private async mintSideCredentials(
+    signedToken: string,
     request: IssueCapabilityRequest,
     userContext: UserContext,
     capabilities: CapabilityConstraint[],
@@ -988,41 +1093,61 @@ export class CapabilityIssuerService {
       userId: userContext.userId,
       agentId: request.agentId,
     };
-    let storageGrants: StorageGrant[] | undefined;
-    let dbCredentials: DbCredential[] | undefined;
-    if (this.storageGrantService?.isEnabled()) {
-      // Only consume quota when the request actually contains storage://
-      // capabilities so a request with only api:// resources is not penalised.
+
+    // Enforce per-capability-type rate limits before calling the broker.
+    // This keeps rate-limit policy in the issuer (a single audit/metrics
+    // surface) regardless of whether the broker is in-process or HTTP.
+    if (this.sideCredentialBroker.isStorageEnabled()) {
       const hasStorageCaps = capabilities.some(
         (c) => typeof c.resource === 'string' && c.resource.startsWith('storage://'),
       );
       if (hasStorageCaps && this.storageGrantRateLimiter) {
         await this.enforceIssuanceRateLimit(rateLimitSubject, this.storageGrantRateLimiter, 'storage-grant');
       }
-      storageGrants = await this.storageGrantService.mintForCapabilities(capabilities, {
-        agentId: request.agentId,
-        authorizedBy: userContext.userId,
-        capabilityTtlSeconds,
-      });
     }
-    if (this.dbTokenService?.isEnabled()) {
-      // Only consume quota when the request actually contains db://
-      // capabilities.
+    if (this.sideCredentialBroker.isDbEnabled()) {
       const hasDbCaps = capabilities.some(
         (c) => typeof c.resource === 'string' && c.resource.startsWith('db://'),
       );
       if (hasDbCaps && this.dbTokenRateLimiter) {
         await this.enforceIssuanceRateLimit(rateLimitSubject, this.dbTokenRateLimiter, 'db-token');
       }
-      dbCredentials = await this.dbTokenService.mintForCapabilities(capabilities, {
+    }
+
+    try {
+      return await this.sideCredentialBroker.mint(signedToken, capabilities, {
         agentId: request.agentId,
         authorizedBy: userContext.userId,
         capabilityTtlSeconds,
         userRoles: userContext.roles,
         policy: this.policy,
       });
+    } catch (err) {
+      if (this.sideCredentialFailureMode === 'best-effort') {
+        const error = err instanceof Error ? err : new Error(String(err));
+        // `BrokerCallError` (thrown by `HttpSideCredentialBroker`) carries
+        // an explicit `brokerKind` property — use it directly.  Any other
+        // error type (in-process service failure, unexpected throw) is
+        // classified as 'unknown' which is still useful for dashboarding.
+        const kind: 'storage-grant' | 'db-token' | 'unknown' =
+          err instanceof BrokerCallError ? err.brokerKind : 'unknown';
+        this.logger.warn(
+          `Side-credential broker failed (best-effort mode — JWT returned without side credentials)`,
+          {
+            kind,
+            agentId: request.agentId,
+            error: error.message,
+          },
+        );
+        try {
+          this.onSideCredentialError?.(kind, error);
+        } catch {
+          // swallow callback errors
+        }
+        return {};
+      }
+      throw err;
     }
-    return { storageGrants, dbCredentials };
   }
 
   /**
