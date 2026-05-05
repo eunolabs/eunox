@@ -209,6 +209,19 @@ export interface GatewayDependencies {
    */
   requirePin?: boolean;
   /**
+   * HMAC-SHA-256 secret for pin attestation signing / verification.
+   * Plumbed from `PARTNER_DID_PIN_SECRET`.  Passed to both the admin router
+   * (for signing at approval time) and the partner-issuer resolver (for
+   * verifying before trusting a cached pin).
+   */
+  pinAttestationSecret?: string;
+  /**
+   * When true, the approval endpoint auto-fetches the DID document and
+   * computes `pinnedDocSha256` when the proposal lacks a pin.
+   * Plumbed from `PARTNER_DID_AUTO_FETCH_PIN`.
+   */
+  partnerDidAutoFetchPin?: boolean;
+  /**
    * Maximum upstream response body size (bytes) to buffer for field-level
    * redaction. Responses larger than this limit AND carrying a redaction
    * obligation are refused with HTTP 502 (`redaction_oversize`). Defaults
@@ -487,23 +500,28 @@ export async function initializeServices(
   // Build the cross-org partner-issuer trust resolver.
   // The registry is constructed first so the resolver can consult it for trust
   // decisions and pin verification; the legacy TRUSTED_PARTNER_DIDS env-var path
-  // is preserved as a seed-and-warn fallback (deprecated).
+  // is preserved as a seed-and-warn fallback (deprecated in non-production,
+  // hard-error in production unless PARTNER_DID_REGISTRY_REQUIRED=false).
   //
   // When REDIS_URL is set the factory creates its own ioredis connection so
   // admin-API writes (propose/approve/revoke) propagate to all replicas.
-  // The onError callback increments euno_gateway_redis_errors_total{store="partner_did_registry"}.
   const partnerRegistry = await createPartnerDidRegistryFromEnv(
     env,
     logger,
     undefined, // let the factory auto-create from REDIS_URL when set
     {
       requirePin: env.PARTNER_DID_REQUIRE_PIN === 'true',
-      registryRequired: env.PARTNER_DID_REGISTRY_REQUIRED === 'true',
+      // registryRequired: intentionally omitted — factory derives from NODE_ENV
+      // (production → default true unless PARTNER_DID_REGISTRY_REQUIRED=false;
+      //  non-production → default false unless PARTNER_DID_REGISTRY_REQUIRED=true).
       keyPrefix: env.PARTNER_DID_REGISTRY_KEY_PREFIX,
       deploymentTier: env.EUNO_DEPLOYMENT_TIER,
       nodeEnv: env.NODE_ENV,
     },
   );
+
+  const pinAttestationSecret = env.PARTNER_DID_PIN_SECRET || undefined;
+  const partnerDidAutoFetchPin = env.PARTNER_DID_AUTO_FETCH_PIN === 'true';
 
   const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry);
   if (partnerResolver) {
@@ -511,7 +529,11 @@ export async function initializeServices(
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean).length;
-    logger.info('Cross-org partner-issuer trust resolver enabled', { partnerDidCount });
+    logger.info('Cross-org partner-issuer trust resolver enabled', {
+      partnerDidCount,
+      pinAttestationEnabled: !!pinAttestationSecret,
+      autoFetchPin: partnerDidAutoFetchPin,
+    });
   }
 
   // Optional allow-list of issuers (DIDs or simple identifiers) that the
@@ -1019,6 +1041,8 @@ export async function initializeServices(
     partnerResolver: partnerResolver ?? undefined,
     partnerRegistry,
     requirePin: validated.PARTNER_DID_REQUIRE_PIN === true,
+    pinAttestationSecret,
+    partnerDidAutoFetchPin,
     responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
   };
 

@@ -23,6 +23,9 @@ import {
   jcsSha256,
   TwoEyesViolationError,
   fetchJson,
+  createPinAttestation,
+  verifyPinAttestation,
+  createPartnerDidRegistryFromEnv,
 } from '../src/partner-did-registry';
 import { createAdminRouter } from '../src/admin-api';
 import { createLogger, DefaultKillSwitchManager } from '@euno/common';
@@ -589,5 +592,345 @@ describe('fetchJson', () => {
     } finally {
       await close();
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pin attestation — createPinAttestation / verifyPinAttestation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createPinAttestation / verifyPinAttestation', () => {
+  const SECRET = 'test-secret-32-bytes-padding!!';
+  const FIELDS = {
+    did: 'did:web:partner.example.com',
+    pinnedDocSha256: jcsSha256({ id: 'did:web:partner.example.com' }),
+    approver: 'bob',
+    activatedAt: 1_700_000_000_000,
+  };
+
+  it('creates an attestation with a valid HMAC', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    expect(att.hmac).toMatch(/^[0-9a-f]{64}$/);
+    expect(att.did).toBe(FIELDS.did);
+    expect(att.pinnedDocSha256).toBe(FIELDS.pinnedDocSha256);
+    expect(att.approver).toBe(FIELDS.approver);
+    expect(att.activatedAt).toBe(FIELDS.activatedAt);
+  });
+
+  it('verifies a valid attestation', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    expect(verifyPinAttestation(att, SECRET)).toBe(true);
+  });
+
+  it('rejects a tampered HMAC', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    const tampered = { ...att, hmac: att.hmac.replace(/^./, '0') };
+    expect(verifyPinAttestation(tampered, SECRET)).toBe(false);
+  });
+
+  it('rejects when the did field is changed', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    const tampered = { ...att, did: 'did:web:evil.example.com' };
+    expect(verifyPinAttestation(tampered, SECRET)).toBe(false);
+  });
+
+  it('rejects when the pinnedDocSha256 is changed', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    const tampered = { ...att, pinnedDocSha256: 'a'.repeat(64) };
+    expect(verifyPinAttestation(tampered, SECRET)).toBe(false);
+  });
+
+  it('rejects when a different secret is used', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    expect(verifyPinAttestation(att, 'different-secret')).toBe(false);
+  });
+
+  it('is deterministic: same inputs produce the same HMAC', () => {
+    const att1 = createPinAttestation(FIELDS, SECRET);
+    const att2 = createPinAttestation(FIELDS, SECRET);
+    expect(att1.hmac).toBe(att2.hmac);
+  });
+
+  it('returns false (not throws) when hmac contains non-hex characters', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    // Replace 2 chars with non-hex to produce a valid-length but invalid-hex string.
+    const badHmac = 'zz' + att.hmac.slice(2);
+    expect(badHmac).toHaveLength(64);
+    expect(() => verifyPinAttestation({ ...att, hmac: badHmac }, SECRET)).not.toThrow();
+    expect(verifyPinAttestation({ ...att, hmac: badHmac }, SECRET)).toBe(false);
+  });
+
+  it('returns false (not throws) when hmac is the empty string', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    expect(() => verifyPinAttestation({ ...att, hmac: '' }, SECRET)).not.toThrow();
+    expect(verifyPinAttestation({ ...att, hmac: '' }, SECRET)).toBe(false);
+  });
+
+  it('accepts a valid uppercase-hex hmac (Buffer.from hex is case-insensitive)', () => {
+    const att = createPinAttestation(FIELDS, SECRET);
+    // hex decoding is case-insensitive: uppercase HMAC decodes to the same bytes.
+    const upperHmac = att.hmac.toUpperCase();
+    expect(() => verifyPinAttestation({ ...att, hmac: upperHmac }, SECRET)).not.toThrow();
+    expect(verifyPinAttestation({ ...att, hmac: upperHmac }, SECRET)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PartnerDidRegistry.approve() with pinOverrides
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('InMemoryPartnerDidRegistry.approve() pinOverrides', () => {
+  const DID = 'did:web:partner.example.com';
+  const SECRET = 'test-secret-32-bytes-padding!!';
+
+  it('stores pinOverrides in the activated entry', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const pin = jcsSha256({ id: DID });
+    const att = createPinAttestation(
+      { did: DID, pinnedDocSha256: pin, approver: 'bob', activatedAt: Date.now() },
+      SECRET,
+    );
+    const entry = await reg.approve(DID, 'bob', { pinnedDocSha256: pin, pinAttestation: att });
+    expect(entry.status).toBe('active');
+    expect(entry.pinnedDocSha256).toBe(pin);
+    expect(entry.pinAttestation).toBeDefined();
+    expect(verifyPinAttestation(entry.pinAttestation!, SECRET)).toBe(true);
+  });
+
+  it('approval without pinOverrides still works (backwards compat)', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const entry = await reg.approve(DID, 'bob');
+    expect(entry.status).toBe('active');
+    expect(entry.pinAttestation).toBeUndefined();
+  });
+
+  it('normalizes pinnedDocSha256 to lowercase at proposal time', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    const upperPin = jcsSha256({ id: DID }).toUpperCase();
+    const entry = await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: upperPin });
+    expect(entry.pinnedDocSha256).toBe(upperPin.toLowerCase());
+  });
+
+  it('normalizes pinnedDocSha256 to lowercase at approval time via pinOverrides', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const upperPin = jcsSha256({ id: DID }).toUpperCase();
+    const entry = await reg.approve(DID, 'bob', { pinnedDocSha256: upperPin });
+    expect(entry.pinnedDocSha256).toBe(upperPin.toLowerCase());
+  });
+
+  it('normalizes a proposer-supplied uppercase pin when no pinOverrides passed to approve', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    const upperPin = jcsSha256({ id: DID }).toUpperCase();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: upperPin });
+    const entry = await reg.approve(DID, 'bob');
+    expect(entry.pinnedDocSha256).toBe(upperPin.toLowerCase());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin API: auto-fetch pin at approval time
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildAdminAppWithFetch(
+  registry: InMemoryPartnerDidRegistry,
+  opts: {
+    requirePin?: boolean;
+    pinAttestationSecret?: string;
+    resolveDidDocument?: (did: string) => Promise<unknown>;
+  } = {},
+) {
+  const logger = createLogger('test');
+  const killSwitchManager = new DefaultKillSwitchManager(logger);
+  const app = express();
+  app.use(express.json());
+  app.use(
+    '/admin',
+    createAdminRouter({
+      killSwitchManager,
+      logger,
+      partnerRegistry: registry,
+      requirePin: opts.requirePin,
+      pinAttestationSecret: opts.pinAttestationSecret,
+      resolveDidDocument: opts.resolveDidDocument,
+    }),
+  );
+  return app;
+}
+
+describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin attestation', () => {
+  const DID = 'did:web:partner.example.com';
+  const MOCK_DOC = { '@context': ['https://www.w3.org/ns/did/v1'], id: DID };
+  const MOCK_HASH = jcsSha256(MOCK_DOC);
+  const SECRET = 'test-secret-32-bytes-padding!!';
+
+  it('auto-computes pin from resolveDidDocument when proposal has no pin', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const resolveFn = jest.fn().mockResolvedValue(MOCK_DOC);
+    const app = buildAdminAppWithFetch(reg, { resolveDidDocument: resolveFn });
+
+    const res = await request(app)
+      .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-Operator', 'bob');
+
+    expect(res.status).toBe(200);
+    expect(res.body.entry.status).toBe('active');
+    expect(res.body.entry.pinnedDocSha256).toBe(MOCK_HASH);
+    expect(resolveFn).toHaveBeenCalledWith(DID);
+  });
+
+  it('creates a pin attestation when pinAttestationSecret and resolveDidDocument are set', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const resolveFn = jest.fn().mockResolvedValue(MOCK_DOC);
+    const app = buildAdminAppWithFetch(reg, {
+      resolveDidDocument: resolveFn,
+      pinAttestationSecret: SECRET,
+    });
+
+    const res = await request(app)
+      .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-Operator', 'bob');
+
+    expect(res.status).toBe(200);
+    const entry = res.body.entry;
+    expect(entry.pinnedDocSha256).toBe(MOCK_HASH);
+    expect(entry.pinAttestation).toBeDefined();
+    expect(verifyPinAttestation(entry.pinAttestation, SECRET)).toBe(true);
+    expect(entry.pinAttestation.did).toBe(DID);
+    expect(entry.pinAttestation.approver).toBe('bob');
+  });
+
+  it('returns 502 when resolveDidDocument throws', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice' });
+    const resolveFn = jest.fn().mockRejectedValue(new Error('network error'));
+    const app = buildAdminAppWithFetch(reg, { resolveDidDocument: resolveFn });
+
+    const res = await request(app)
+      .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-Operator', 'bob');
+
+    expect(res.status).toBe(502);
+    expect(res.body.error.code).toBe('DID_FETCH_FAILED');
+  });
+
+  it('does not override a proposer-supplied pin when resolveDidDocument is set', async () => {
+    const existingPin = 'a'.repeat(64);
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: existingPin });
+    // resolveDidDocument should not be called since a pin already exists
+    const resolveFn = jest.fn().mockResolvedValue(MOCK_DOC);
+    const app = buildAdminAppWithFetch(reg, {
+      resolveDidDocument: resolveFn,
+      pinAttestationSecret: SECRET,
+    });
+
+    const res = await request(app)
+      .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-Operator', 'bob');
+
+    // The proposer-supplied pin is kept; attestation is signed over it.
+    expect(res.status).toBe(200);
+    expect(res.body.entry.pinnedDocSha256).toBe(existingPin);
+    expect(verifyPinAttestation(res.body.entry.pinAttestation, SECRET)).toBe(true);
+    expect(resolveFn).not.toHaveBeenCalled();
+  });
+
+  it('signs attestation over proposer pin even without resolveDidDocument', async () => {
+    const existingPin = jcsSha256({ id: DID });
+    const reg = new InMemoryPartnerDidRegistry();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: existingPin });
+    const app = buildAdminAppWithFetch(reg, {
+      pinAttestationSecret: SECRET,
+      // No resolveDidDocument — only signs over existing pin
+    });
+
+    const res = await request(app)
+      .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-Operator', 'bob');
+
+    expect(res.status).toBe(200);
+    expect(res.body.entry.pinnedDocSha256).toBe(existingPin);
+    expect(verifyPinAttestation(res.body.entry.pinAttestation, SECRET)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// createPartnerDidRegistryFromEnv — production env-var hardening
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createPartnerDidRegistryFromEnv — production env-var hardening', () => {
+  const logger = createLogger('test');
+
+  it('throws when TRUSTED_PARTNER_DIDS is set in production (default behaviour)', async () => {
+    await expect(
+      createPartnerDidRegistryFromEnv(
+        { TRUSTED_PARTNER_DIDS: 'did:web:partner.example.com', NODE_ENV: 'production' },
+        logger,
+      ),
+    ).rejects.toThrow(/TRUSTED_PARTNER_DIDS is set but the partner-DID registry is required/);
+  });
+
+  it('warns (not throws) when PARTNER_DID_REGISTRY_REQUIRED=false in production', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn');
+    await createPartnerDidRegistryFromEnv(
+      {
+        TRUSTED_PARTNER_DIDS: 'did:web:partner.example.com',
+        NODE_ENV: 'production',
+        PARTNER_DID_REGISTRY_REQUIRED: 'false',
+      },
+      logger,
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('TRUSTED_PARTNER_DIDS is set'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('warns (not throws) when TRUSTED_PARTNER_DIDS is set in non-production (default)', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn');
+    await createPartnerDidRegistryFromEnv(
+      { TRUSTED_PARTNER_DIDS: 'did:web:partner.example.com', NODE_ENV: 'development' },
+      logger,
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('TRUSTED_PARTNER_DIDS is set'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('throws in non-production when PARTNER_DID_REGISTRY_REQUIRED=true', async () => {
+    await expect(
+      createPartnerDidRegistryFromEnv(
+        {
+          TRUSTED_PARTNER_DIDS: 'did:web:partner.example.com',
+          NODE_ENV: 'development',
+          PARTNER_DID_REGISTRY_REQUIRED: 'true',
+        },
+        logger,
+      ),
+    ).rejects.toThrow(/TRUSTED_PARTNER_DIDS is set but the partner-DID registry is required/);
+  });
+
+  it('seeds the registry in non-production with a warning', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn');
+    const registry = await createPartnerDidRegistryFromEnv(
+      { TRUSTED_PARTNER_DIDS: 'did:web:a.com,did:web:b.com', NODE_ENV: 'development' },
+      logger,
+    );
+    expect(await registry.trusts('did:web:a.com')).toBe(true);
+    expect(await registry.trusts('did:web:b.com')).toBe(true);
+    expect(await registry.trusts('did:web:c.com')).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('does not throw when TRUSTED_PARTNER_DIDS is unset in production', async () => {
+    await expect(
+      createPartnerDidRegistryFromEnv({ NODE_ENV: 'production' }, logger),
+    ).resolves.toBeDefined();
   });
 });

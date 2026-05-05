@@ -29,6 +29,92 @@ import * as http from 'http';
 import { Logger } from '@euno/common';
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Pin attestation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A gateway-signed attestation that binds a DID-document hash to the operator
+ * who approved the entry and the exact moment of activation.
+ *
+ * The HMAC-SHA-256 is computed over the canonical JSON serialisation of
+ * `{ did, pinnedDocSha256, approver, activatedAt }` using a shared secret
+ * stored in `PARTNER_DID_PIN_SECRET`.  This means:
+ *
+ *   - If the Redis store is tampered with (pin swapped), the HMAC breaks.
+ *   - If the secret is rotated, existing attestations become invalid.
+ *     The gateway **fails closed** when a present-but-invalid attestation is
+ *     detected — the entry must be re-approved via the admin API to generate
+ *     a fresh attestation under the new secret.
+ *   - Env-var-seeded entries (from `TRUSTED_PARTNER_DIDS`) never have
+ *     attestations; the resolver treats them as unpinned.
+ */
+export interface PinAttestation {
+  /** The DID this attestation covers — prevents cross-DID substitution. */
+  did: string;
+  /** The JCS-SHA-256 fingerprint that was pinned at activation. */
+  pinnedDocSha256: string;
+  /** Operator identity who performed the approval (from X-Admin-Operator). */
+  approver: string;
+  /** Unix ms timestamp of activation — prevents replay across activations. */
+  activatedAt: number;
+  /** HMAC-SHA-256(secret, canonicalJson) — hex lower-case. */
+  hmac: string;
+}
+
+/**
+ * Produce a {@link PinAttestation} over the supplied fields.
+ *
+ * The canonical payload is `jcsSerialize({ did, pinnedDocSha256, approver,
+ * activatedAt })`.  Callers MUST supply all four fields; the returned
+ * attestation includes the HMAC over that payload.
+ */
+export function createPinAttestation(
+  fields: Omit<PinAttestation, 'hmac'>,
+  secret: string,
+): PinAttestation {
+  const payload = jcsSerialize({
+    did: fields.did,
+    pinnedDocSha256: fields.pinnedDocSha256,
+    approver: fields.approver,
+    activatedAt: fields.activatedAt,
+  });
+  const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return { ...fields, hmac };
+}
+
+/**
+ * Verify a {@link PinAttestation} produced by {@link createPinAttestation}.
+ *
+ * Returns `true` when the HMAC matches, `false` otherwise.  Timing-safe
+ * comparison prevents timing oracles.  Malformed `hmac` values (non-hex,
+ * wrong length, non-string) are treated as invalid and return `false` rather
+ * than throwing, so this function is always safe to call in boolean context.
+ */
+export function verifyPinAttestation(attestation: PinAttestation, secret: string): boolean {
+  const payload = jcsSerialize({
+    did: attestation.did,
+    pinnedDocSha256: attestation.pinnedDocSha256,
+    approver: attestation.approver,
+    activatedAt: attestation.activatedAt,
+  });
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  // Guard: attestation.hmac must be a 64-char lowercase hex string.
+  // Buffer.from(..., 'hex') silently truncates non-hex characters, which would
+  // cause timingSafeEqual to throw on a buffer-length mismatch.
+  if (typeof attestation.hmac !== 'string' || !/^[0-9a-f]{64}$/i.test(attestation.hmac)) {
+    return false;
+  }
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(attestation.hmac, 'hex'),
+      Buffer.from(expected, 'hex'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Schema types
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -89,6 +175,14 @@ export interface PartnerDidEntry {
   notAfter?: number;
   /** Free-form operator note (incident-ticket reference, etc.). */
   notes?: string;
+  /**
+   * Gateway-signed attestation binding `pinnedDocSha256` to the approver and
+   * activation timestamp (see {@link PinAttestation}).  Produced automatically
+   * by the admin approval endpoint when `PARTNER_DID_PIN_SECRET` is configured.
+   * Absent for env-var-seeded entries and for proposals approved before the
+   * feature was enabled.
+   */
+  pinAttestation?: PinAttestation;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -117,8 +211,18 @@ export interface PartnerDidRegistry {
    *  - entry does not exist
    *  - entry is not in `proposed` state
    *  - `approver === entry.proposer` (two-eyes violation)
+   *
+   * @param pinOverrides  Optional fields to merge into the entry at activation:
+   *   `pinnedDocSha256`      — auto-computed hash (overwrites or supplies the pin).
+   *   `pinnedVerificationKeys` — auto-computed per-VM thumbprints.
+   *   `pinAttestation`       — gateway-signed attestation (see {@link PinAttestation}).
+   *   Passing these here keeps the approval as an atomic state transition.
    */
-  approve(did: string, approver: string): Promise<PartnerDidEntry>;
+  approve(
+    did: string,
+    approver: string,
+    pinOverrides?: Partial<Pick<PartnerDidEntry, 'pinnedDocSha256' | 'pinnedVerificationKeys' | 'pinAttestation'>>,
+  ): Promise<PartnerDidEntry>;
 
   /**
    * Mark an entry as `revoked`.  Single-operator (incident response is
@@ -214,6 +318,11 @@ export class InMemoryPartnerDidRegistry implements PartnerDidRegistry {
     }
     const newEntry: PartnerDidEntry = {
       ...entry,
+      // Always store pinnedDocSha256 in lowercase so hash comparisons are
+      // unambiguous regardless of the case the proposer supplied.
+      ...(entry.pinnedDocSha256 !== undefined
+        ? { pinnedDocSha256: entry.pinnedDocSha256.toLowerCase() }
+        : {}),
       status: 'proposed',
       proposedAt: Date.now(),
     };
@@ -221,7 +330,11 @@ export class InMemoryPartnerDidRegistry implements PartnerDidRegistry {
     return newEntry;
   }
 
-  async approve(did: string, approver: string): Promise<PartnerDidEntry> {
+  async approve(
+    did: string,
+    approver: string,
+    pinOverrides?: Partial<Pick<PartnerDidEntry, 'pinnedDocSha256' | 'pinnedVerificationKeys' | 'pinAttestation'>>,
+  ): Promise<PartnerDidEntry> {
     const entry = this.entries.get(did);
     if (!entry) {
       throw new Error(`Partner DID not found: ${did}`);
@@ -238,8 +351,14 @@ export class InMemoryPartnerDidRegistry implements PartnerDidRegistry {
         approver,
       );
     }
+    // Normalize pinnedDocSha256 to lowercase regardless of source (pinOverrides
+    // or carried over from the proposal) so attestation field comparisons are
+    // unambiguous.
+    const effectivePin = pinOverrides?.pinnedDocSha256 ?? entry.pinnedDocSha256;
     const updated: PartnerDidEntry = {
       ...entry,
+      ...(pinOverrides ?? {}),
+      ...(effectivePin !== undefined ? { pinnedDocSha256: effectivePin.toLowerCase() } : {}),
       status: 'active',
       approver,
       activatedAt: Date.now(),
@@ -397,6 +516,11 @@ export class RedisPartnerDidRegistry implements PartnerDidRegistry {
     }
     const newEntry: PartnerDidEntry = {
       ...entry,
+      // Always store pinnedDocSha256 in lowercase so hash comparisons are
+      // unambiguous regardless of the case the proposer supplied.
+      ...(entry.pinnedDocSha256 !== undefined
+        ? { pinnedDocSha256: entry.pinnedDocSha256.toLowerCase() }
+        : {}),
       status: 'proposed',
       proposedAt: Date.now(),
     };
@@ -404,7 +528,11 @@ export class RedisPartnerDidRegistry implements PartnerDidRegistry {
     return newEntry;
   }
 
-  async approve(did: string, approver: string): Promise<PartnerDidEntry> {
+  async approve(
+    did: string,
+    approver: string,
+    pinOverrides?: Partial<Pick<PartnerDidEntry, 'pinnedDocSha256' | 'pinnedVerificationKeys' | 'pinAttestation'>>,
+  ): Promise<PartnerDidEntry> {
     const entry = await this.readEntry(did);
     if (!entry) throw new Error(`Partner DID not found: ${did}`);
     if (entry.status !== 'proposed') {
@@ -419,8 +547,12 @@ export class RedisPartnerDidRegistry implements PartnerDidRegistry {
         approver,
       );
     }
+    // Normalize pinnedDocSha256 to lowercase regardless of source.
+    const effectivePin = pinOverrides?.pinnedDocSha256 ?? entry.pinnedDocSha256;
     const updated: PartnerDidEntry = {
       ...entry,
+      ...(pinOverrides ?? {}),
+      ...(effectivePin !== undefined ? { pinnedDocSha256: effectivePin.toLowerCase() } : {}),
       status: 'active',
       approver,
       activatedAt: Date.now(),
@@ -564,8 +696,14 @@ export interface RegistryFromEnvOptions {
    */
   requirePin?: boolean;
   /**
-   * When true, the `TRUSTED_PARTNER_DIDS` env-var fallback is a hard error
-   * (the operator has fully migrated and must not regress).
+   * Override the "is TRUSTED_PARTNER_DIDS allowed?" decision.
+   *
+   *   - `true`  — hard startup error when `TRUSTED_PARTNER_DIDS` is set.
+   *   - `false` — warn but continue (legacy / explicit opt-out in production).
+   *   - `undefined` (default) — auto-determined: production defaults to `true`
+   *     (read env `PARTNER_DID_REGISTRY_REQUIRED !== 'false'`); non-production
+   *     defaults to `false` (read env `PARTNER_DID_REGISTRY_REQUIRED === 'true'`).
+   *
    * Plumbed from `PARTNER_DID_REGISTRY_REQUIRED`.
    */
   registryRequired?: boolean;
@@ -573,9 +711,9 @@ export interface RegistryFromEnvOptions {
    * Redis key prefix override.  Plumbed from `PARTNER_DID_REGISTRY_KEY_PREFIX`.
    */
   keyPrefix?: string;
-  /** Deployment tier — used to escalate `TRUSTED_PARTNER_DIDS` warning to error. */
+  /** Deployment tier — used for Redis ioredis install error escalation. */
   deploymentTier?: string;
-  /** Node environment — used to escalate `TRUSTED_PARTNER_DIDS` warning to error. */
+  /** Node environment — controls production default for `registryRequired`. */
   nodeEnv?: string;
 }
 
@@ -584,8 +722,16 @@ export interface RegistryFromEnvOptions {
  * optional Redis client.  Mirrors the other `…FromEnv` factory functions.
  *
  * When `TRUSTED_PARTNER_DIDS` is set the factory seeds the registry with
- * those DIDs as `active`+unpinned entries and emits deprecation warnings
- * (escalated to errors in production non-single-replica deployments).
+ * those DIDs as `active`+unpinned entries.
+ *
+ * **Production behaviour (NODE_ENV=production):**  Any use of
+ * `TRUSTED_PARTNER_DIDS` is treated as a startup error _unless_
+ * `PARTNER_DID_REGISTRY_REQUIRED=false` is explicitly set (conscious opt-out).
+ * This prevents a config-map redeploy from silently bypassing the two-eyes
+ * approval workflow in production.
+ *
+ * **Non-production behaviour:** `TRUSTED_PARTNER_DIDS` emits a deprecation
+ * warning unless `PARTNER_DID_REGISTRY_REQUIRED=true` is set (hard error).
  *
  * The function is **async** so that Redis-backed seed entries can be
  * fully written before the gateway begins serving requests (avoiding the
@@ -603,11 +749,22 @@ export async function createPartnerDidRegistryFromEnv(
 ): Promise<InMemoryPartnerDidRegistry | RedisPartnerDidRegistry> {
   const {
     requirePin = env.PARTNER_DID_REQUIRE_PIN === 'true',
-    registryRequired = env.PARTNER_DID_REGISTRY_REQUIRED === 'true',
     keyPrefix = env.PARTNER_DID_REGISTRY_KEY_PREFIX,
     deploymentTier = env.EUNO_DEPLOYMENT_TIER,
     nodeEnv = env.NODE_ENV,
   } = opts;
+
+  // In production, default to requiring the registry (blocking TRUSTED_PARTNER_DIDS).
+  // An operator who consciously wants the env-var bypass in production must set
+  // PARTNER_DID_REGISTRY_REQUIRED=false explicitly.  Outside production the default
+  // is the legacy warning-only behaviour; set PARTNER_DID_REGISTRY_REQUIRED=true
+  // to turn it into an error.
+  const isProduction = nodeEnv === 'production';
+  const registryRequired = opts.registryRequired !== undefined
+    ? opts.registryRequired
+    : (isProduction
+        ? env.PARTNER_DID_REGISTRY_REQUIRED !== 'false'   // production: default TRUE (opt-out)
+        : env.PARTNER_DID_REGISTRY_REQUIRED === 'true');  // non-prod: default false (opt-in)
 
   // Build the backing store.
   // Prefer an explicitly-supplied client; otherwise auto-create from REDIS_URL
@@ -619,11 +776,11 @@ export async function createPartnerDidRegistryFromEnv(
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       RedisCtor = require('ioredis');
     } catch (err) {
-      const isProduction =
-        nodeEnv === 'production' ||
+      const isProductionOrMultiReplica =
+        isProduction ||
         (deploymentTier && deploymentTier !== 'single-replica');
       const detail = err instanceof Error ? err.message : 'unknown error';
-      if (isProduction) {
+      if (isProductionOrMultiReplica) {
         throw new Error(
           'REDIS_URL is set but the "ioredis" package is not installed. ' +
           'Install it (npm install ioredis) to enable the distributed partner-DID registry. ' +
@@ -664,28 +821,25 @@ export async function createPartnerDidRegistryFromEnv(
 
     if (dids.length > 0) {
       if (registryRequired) {
+        const optOutInstructions = isProduction
+          ? 'Set PARTNER_DID_REGISTRY_REQUIRED=false to opt out (production only, not recommended).'
+          : 'Remove TRUSTED_PARTNER_DIDS and use the partner-DID registry admin API instead.';
         throw new Error(
-          'PARTNER_DID_REGISTRY_REQUIRED=true but TRUSTED_PARTNER_DIDS is also set. ' +
-            'Remove TRUSTED_PARTNER_DIDS and use the partner-DID registry admin API instead.',
+          'TRUSTED_PARTNER_DIDS is set but the partner-DID registry is required. ' +
+          'This env-var bypass has no pin, no two-eyes approval, and no audit trail — ' +
+          'a config-map change can silently add an untrusted issuer without operator review. ' +
+          optOutInstructions,
         );
       }
-
-      const isProductionMultiReplica =
-        nodeEnv === 'production' &&
-        deploymentTier !== undefined &&
-        deploymentTier !== 'single-replica';
 
       const msg =
         'TRUSTED_PARTNER_DIDS is set and seeded into the partner-DID registry as unpinned active ' +
         'entries. This env-var bypass has no pin, no two-eyes approval, and no audit trail. ' +
-        'Migrate to the registry admin API (POST /admin/partner-dids/proposals) and set ' +
-        'PARTNER_DID_REGISTRY_REQUIRED=true to prevent future regressions.';
+        'Migrate to the registry admin API (POST /admin/partner-dids/proposals) and remove ' +
+        'TRUSTED_PARTNER_DIDS. In production, set PARTNER_DID_REGISTRY_REQUIRED=false ' +
+        'only as a temporary transition measure.';
 
-      if (isProductionMultiReplica) {
-        logger.error(msg);
-      } else {
-        logger.warn(msg);
-      }
+      logger.warn(msg);
 
       // Await the seed so all entries are persisted before the gateway
       // starts serving requests (prevents the startup race on the Redis path).

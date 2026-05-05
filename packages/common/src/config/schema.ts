@@ -1048,18 +1048,37 @@ export const GatewayConfigSchema = z
         'a pinnedDocSha256 value. Enforces pin discipline; proposals without a pin are rejected ' +
         'with HTTP 400. Does not retroactively affect env-var-seeded entries. Boolean: true | false.',
     }),
-    PARTNER_DID_REGISTRY_REQUIRED: envBoolean({
-      default: false,
-      description:
-        'When true, TRUSTED_PARTNER_DIDS (the legacy env-var bypass) is rejected at startup with ' +
-        'an error. Forces operators to use the two-eyes registry workflow for all partner-DID trust ' +
-        'entries. Set to true once the registry is fully adopted and TRUSTED_PARTNER_DIDS removed. ' +
-        'Boolean: true | false.',
-    }),
     PARTNER_DID_REGISTRY_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for partner-DID registry entries. Default "euno:gateway:partner-did". ' +
       'Override when multiple gateway clusters share one Redis instance.',
     ),
+    PARTNER_DID_REGISTRY_REQUIRED: envBoolean({
+      default: false,
+      description:
+        'Controls whether TRUSTED_PARTNER_DIDS (the legacy env-var bypass) is accepted. ' +
+        'In production (NODE_ENV=production) the default flips to true — TRUSTED_PARTNER_DIDS is a ' +
+        'startup error unless PARTNER_DID_REGISTRY_REQUIRED=false is explicitly set. ' +
+        'Outside production the default remains false (warning only) unless this is set to true. ' +
+        'Set to false in production only as a temporary migration measure; set to true everywhere ' +
+        'once the registry is fully adopted and TRUSTED_PARTNER_DIDS has been removed.',
+    }),
+    PARTNER_DID_PIN_SECRET: optionalString.describe(
+      'HMAC-SHA-256 secret used to sign and verify pin attestations on partner-DID registry entries. ' +
+      'When set, the approval endpoint wraps pinnedDocSha256 in a signed attestation binding the hash ' +
+      'to the approving operator and activation timestamp. The resolver then verifies this signature ' +
+      'before trusting any pin — a tampered Redis store cannot forge a valid attestation without this ' +
+      'secret. Min 32 bytes recommended; generate with: openssl rand -hex 32. ' +
+      'When absent, attestations are not created and existing pins are verified hash-only (back-compat).',
+    ),
+    PARTNER_DID_AUTO_FETCH_PIN: envBoolean({
+      default: false,
+      description:
+        'When true, the approval endpoint auto-fetches the partner DID document and computes the ' +
+        'pinnedDocSha256 hash if the proposal did not include one. This ensures the pin was derived ' +
+        'from the live document at the moment of approval — not from an operator-typed or proposer- ' +
+        'supplied value. Requires network access to the partner DID endpoint at approval time. ' +
+        'Boolean: true | false. Default false.',
+    }),
 
     // Distributed coordination (Redis) --------------------------------------
     REDIS_URL: optionalString.describe(

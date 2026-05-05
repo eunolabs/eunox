@@ -31,6 +31,7 @@ import * as jose from 'jose';
 import { CapabilityError, ErrorCode, Logger, createAuditLogger } from '@euno/common';
 import {
   resolveDID,
+  resolveDidIon,
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
@@ -41,6 +42,7 @@ import {
   PartnerDidEntry,
   jcsSha256,
   fetchJson,
+  verifyPinAttestation,
 } from './partner-did-registry';
 
 /** Cached entry for one (DID, kid?) pair. */
@@ -99,6 +101,24 @@ export interface PartnerIssuerResolverOptions {
    * indicator that an attacker is forcing repeated re-fetches.
    */
   logger?: Logger;
+  /**
+   * HMAC secret for verifying {@link PinAttestation}s (see
+   * `PARTNER_DID_PIN_SECRET`).  When set, the resolver verifies the
+   * attestation stored in the registry entry before trusting any
+   * `pinnedDocSha256` — tampered Redis entries cannot forge a valid
+   * attestation without knowing this secret.
+   *
+   * Verification behaviour:
+   *   - Entry has a pin AND a valid attestation → pin is trusted.
+   *   - Entry has a pin AND an invalid / mismatched attestation → fail-closed
+   *     (treated as a tampering signal).
+   *   - Entry has a pin but NO attestation (e.g. legacy env-seeded entry or
+   *     entry created before the feature) → a warning is logged and the pin is
+   *     still checked hash-only (no HMAC guarantee).  This preserves
+   *     backwards-compatibility while the secret is first rolled out.
+   *   - Entry has no pin → hash check is skipped entirely (same as before).
+   */
+  pinAttestationSecret?: string;
 }
 
 /**
@@ -117,6 +137,7 @@ export class PartnerIssuerResolver {
   private readonly negativeCache = new Map<string, NegativeCacheEntry>();
   private readonly logger?: Logger;
   private readonly auditLogger = createAuditLogger('tool-gateway');
+  private readonly pinAttestationSecret?: string;
   private static readonly DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
   private static readonly DEFAULT_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
 
@@ -126,6 +147,7 @@ export class PartnerIssuerResolver {
     this.cacheTtlMs = opts.cacheTtlMs ?? PartnerIssuerResolver.DEFAULT_CACHE_TTL_MS;
     this.negativeCacheTtlMs = opts.negativeCacheTtlMs ?? PartnerIssuerResolver.DEFAULT_NEGATIVE_CACHE_TTL_MS;
     this.logger = opts.logger;
+    this.pinAttestationSecret = opts.pinAttestationSecret;
   }
 
   /** Whether the resolver has any partner DIDs configured at all. */
@@ -210,7 +232,7 @@ export class PartnerIssuerResolver {
 
       // Pin verification (2C): check JCS-SHA-256 of the DID document.
       if (registryEntry?.pinnedDocSha256) {
-        await this.verifyDocPin(did, didDoc, registryEntry.pinnedDocSha256);
+        await this.verifyDocPin(did, didDoc, registryEntry.pinnedDocSha256, registryEntry);
       }
 
       // Secondary-resolver cross-check (2C).
@@ -305,7 +327,69 @@ export class PartnerIssuerResolver {
     did: string,
     didDoc: unknown,
     pinnedSha256: string,
+    entry: PartnerDidEntry,
   ): Promise<void> {
+    // ── Attestation verification ───────────────────────────────────────────────
+    //
+    // When pinAttestationSecret is configured, verify the HMAC attestation
+    // before trusting the hash.  This detects Redis-level tampering even when
+    // the hash itself looks plausible.
+    if (this.pinAttestationSecret) {
+      if (entry.pinAttestation) {
+        if (!verifyPinAttestation(entry.pinAttestation, this.pinAttestationSecret)) {
+          this.auditLogger.warn('partner_did_pin_attestation_invalid', {
+            eventType: 'partner_did_pin_attestation_invalid',
+            did,
+            reason: 'hmac_mismatch',
+          });
+          this.storeNegativeDid(did);
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Partner DID ${did} pin attestation HMAC mismatch — possible registry tampering`,
+            401,
+          );
+        }
+        // Attestation HMAC valid; also verify the did and hash fields match
+        // what we're currently evaluating (prevents cross-entry splicing).
+        if (entry.pinAttestation.did !== did) {
+          this.auditLogger.warn('partner_did_pin_attestation_invalid', {
+            eventType: 'partner_did_pin_attestation_invalid',
+            did,
+            reason: 'did_mismatch',
+          });
+          this.storeNegativeDid(did);
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Partner DID ${did} pin attestation DID field mismatch`,
+            401,
+          );
+        }
+        if (entry.pinAttestation.pinnedDocSha256.toLowerCase() !== pinnedSha256.toLowerCase()) {
+          this.auditLogger.warn('partner_did_pin_attestation_invalid', {
+            eventType: 'partner_did_pin_attestation_invalid',
+            did,
+            reason: 'hash_field_mismatch',
+          });
+          this.storeNegativeDid(did);
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Partner DID ${did} pin attestation hash field does not match stored pinnedDocSha256`,
+            401,
+          );
+        }
+      } else {
+        // Secret is configured but no attestation was found.  Warn but do not
+        // fail — this allows a smooth rollout: entries created before the
+        // feature was enabled continue to work with hash-only verification
+        // until they are refreshed / re-approved.
+        this.logger?.warn('Partner DID entry has no pin attestation (legacy entry — hash-only check)', {
+          eventType: 'partner_did_pin_attestation_missing',
+          did,
+        });
+      }
+    }
+
+    // ── Hash check ────────────────────────────────────────────────────────────
     const actualHash = jcsSha256(didDoc);
     if (actualHash !== pinnedSha256.toLowerCase()) {
       this.auditLogger.warn('partner_did_pin_violation', {
@@ -395,7 +479,28 @@ export class PartnerIssuerResolver {
   ): Promise<void> {
     const spec = entry.secondaryResolver!;
     try {
-      const secondaryDoc = await fetchJson(spec.url);
+      let secondaryDoc: unknown;
+
+      if (spec.method === 'ion-anchor') {
+        // Use the dedicated ION resolver which properly unwraps the DIF
+        // universal resolver wrapper ({ didDocument: {...} }) and validates
+        // the DID identifier match.  The `url` field on the spec is treated
+        // as informational documentation (the actual URL comes from
+        // ION_RESOLVER_URL env var).
+        try {
+          secondaryDoc = await resolveDidIon(did);
+        } catch (ionErr) {
+          // Re-wrap as a generic error so the outer catch below handles it
+          // uniformly (negative-cache + fail-closed).
+          throw new Error(
+            `ION anchor cross-check failed for ${did}: ${ionErr instanceof Error ? ionErr.message : String(ionErr)}`,
+          );
+        }
+      } else {
+        // 'web' or 'ipfs': fetch the URL as raw JSON.
+        secondaryDoc = await fetchJson(spec.url);
+      }
+
       if (spec.expectedSha256) {
         // Compare against a pre-computed hash (e.g. from an out-of-band ledger).
         const actualHash = jcsSha256(secondaryDoc);
@@ -403,6 +508,7 @@ export class PartnerIssuerResolver {
           this.auditLogger.warn('partner_did_secondary_resolver_mismatch', {
             eventType: 'partner_did_secondary_resolver_mismatch',
             did,
+            method: spec.method,
             url: spec.url,
             expectedSha256: spec.expectedSha256,
             actualSha256: actualHash,
@@ -422,6 +528,7 @@ export class PartnerIssuerResolver {
           this.auditLogger.warn('partner_did_secondary_resolver_mismatch', {
             eventType: 'partner_did_secondary_resolver_mismatch',
             did,
+            method: spec.method,
             url: spec.url,
             primarySha256: primaryCanon,
             secondarySha256: secondaryCanon,
@@ -438,6 +545,7 @@ export class PartnerIssuerResolver {
       if (err instanceof CapabilityError) throw err;
       this.logger?.error('Partner DID secondary resolver fetch failed', {
         did,
+        method: spec.method,
         url: spec.url,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -534,5 +642,6 @@ export function createPartnerIssuerResolverFromEnv(
     cacheTtlMs,
     negativeCacheTtlMs,
     logger,
+    pinAttestationSecret: env.PARTNER_DID_PIN_SECRET || undefined,
   });
 }

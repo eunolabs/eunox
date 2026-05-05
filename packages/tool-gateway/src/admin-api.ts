@@ -13,6 +13,9 @@ import {
   PartnerDidRegistry,
   TwoEyesViolationError,
   PartnerDidStatus,
+  PinAttestation,
+  createPinAttestation,
+  jcsSha256,
 } from './partner-did-registry';
 
 export interface AdminApiOptions {
@@ -44,6 +47,29 @@ export interface AdminApiOptions {
    */
   partnerRegistry?: PartnerDidRegistry;
   /**
+   * When supplied, the approval endpoint automatically fetches the DID document
+   * for proposals that lack a `pinnedDocSha256`, computes the hash, and stores
+   * it on the entry.  This removes the manual SHA-256 computation step from
+   * the operator's workflow and ensures the hash was derived from the live
+   * document at approval time — not from a proposer-supplied value.
+   *
+   * Pass `resolveDID` from `@euno/capability-issuer/adapters` here.
+   * When omitted, auto-fetch is disabled (pin must be supplied in the proposal).
+   */
+  resolveDidDocument?: (did: string) => Promise<unknown>;
+  /**
+   * HMAC-SHA-256 secret used to sign pin attestations at approval time.
+   * When set, the approval endpoint wraps the computed or proposer-supplied
+   * `pinnedDocSha256` in a {@link PinAttestation} that binds the hash to
+   * the approving operator and activation timestamp.  The resolver then
+   * verifies this signature before trusting the hash — tampered registry
+   * entries (e.g. Redis store compromise) cannot forge a valid attestation.
+   *
+   * Plumbed from `PARTNER_DID_PIN_SECRET`.  When omitted attestations are not
+   * created and the resolver skips HMAC verification (hash-only check).
+   */
+  pinAttestationSecret?: string;
+  /**
    * When true, proposals without `pinnedDocSha256` are rejected with HTTP 400.
    * Plumbed from `PARTNER_DID_REQUIRE_PIN`.
    */
@@ -71,6 +97,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     partnerResolver,
     partnerRegistry,
     requirePin = false,
+    resolveDidDocument,
+    pinAttestationSecret,
     resolveOperator: resolveOperatorFn,
   } = options;
 
@@ -662,11 +690,111 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       return;
     }
     try {
-      const entry = await partnerRegistry.approve(did, operator);
+      // ── Auto-fetch DID document and sign pin attestation ─────────────────────
+      //
+      // When resolveDidDocument is wired (PARTNER_DID_AUTO_FETCH_PIN=true in
+      // bootstrap), we fetch the live DID document at approval time so:
+      //   (a) the pin is computed from the real document, not an operator-typed
+      //       SHA-256 that could be wrong or spoofed, and
+      //   (b) approval fails fast if the DID endpoint is unreachable or
+      //       returns garbage — the approver knows immediately rather than
+      //       discovering a broken trust root the first time a token arrives.
+      //
+      // pinOverrides is merged into the entry as part of the atomic approve()
+      // call, keeping the state transition consistent.
+      let pinOverrides: Partial<Pick<import('./partner-did-registry').PartnerDidEntry,
+        'pinnedDocSha256' | 'pinnedVerificationKeys' | 'pinAttestation'>> | undefined;
+
+      if (resolveDidDocument) {
+        // Peek at the current entry to know whether a pin was already supplied.
+        const proposed = await partnerRegistry.get(did);
+        if (!proposed) {
+          res.status(404).json({ error: { code: 'NOT_FOUND', message: `Partner DID not found: ${did}` } });
+          return;
+        }
+
+        let effectivePinnedDocSha256 = proposed.pinnedDocSha256;
+
+        if (!effectivePinnedDocSha256) {
+          // Auto-compute: fetch the live DID document and hash it.
+          let didDoc: unknown;
+          try {
+            didDoc = await resolveDidDocument(did);
+          } catch (fetchErr) {
+            const detail = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+            logger.error('Auto-fetch of DID document failed during approval', { did, error: detail });
+            res.status(502).json({
+              error: {
+                code: 'DID_FETCH_FAILED',
+                message: `Could not fetch DID document for ${did} during approval: ${detail}`,
+              },
+            });
+            return;
+          }
+          effectivePinnedDocSha256 = jcsSha256(didDoc);
+          logger.info('Auto-computed DID document pin at approval', {
+            eventType: 'partner_did_pin_auto_computed',
+            did,
+            approver: operator,
+            pinnedDocSha256: effectivePinnedDocSha256,
+          });
+        }
+
+        // Sign the pin attestation when a secret is configured.
+        pinOverrides = { pinnedDocSha256: effectivePinnedDocSha256 };
+        if (pinAttestationSecret) {
+          // activatedAt is set inside approve(); use Date.now() here for the
+          // attestation — the registry will also stamp activatedAt to ~this time.
+          const activatedAt = Date.now();
+          const attestation: PinAttestation = createPinAttestation(
+            {
+              did,
+              pinnedDocSha256: effectivePinnedDocSha256,
+              approver: operator,
+              activatedAt,
+            },
+            pinAttestationSecret,
+          );
+          pinOverrides.pinAttestation = attestation;
+          logger.info('Pin attestation created at approval', {
+            eventType: 'partner_did_pin_attestation_created',
+            did,
+            approver: operator,
+          });
+        }
+      } else if (pinAttestationSecret) {
+        // resolveDidDocument not wired, but we have a secret. Sign over the
+        // proposer-supplied pin (if any) so the hash at least has provenance.
+        const proposed = await partnerRegistry.get(did);
+        if (proposed?.pinnedDocSha256) {
+          const activatedAt = Date.now();
+          pinOverrides = {
+            pinAttestation: createPinAttestation(
+              {
+                did,
+                pinnedDocSha256: proposed.pinnedDocSha256,
+                approver: operator,
+                activatedAt,
+              },
+              pinAttestationSecret,
+            ),
+          };
+          logger.info('Pin attestation signed over proposer-supplied hash', {
+            eventType: 'partner_did_pin_attestation_created',
+            did,
+            approver: operator,
+          });
+        }
+      }
+      // ── End auto-fetch / attestation ─────────────────────────────────────────
+
+      const entry = await partnerRegistry.approve(did, operator, pinOverrides);
       auditLogger.info('partner_did_approved', {
         eventType: 'partner_did_approved',
         did,
         approver: operator,
+        pinnedDocSha256: entry.pinnedDocSha256 ?? null,
+        hasAttestation: !!entry.pinAttestation,
       });
       // Invalidate resolver cache so the new trust takes effect immediately.
       if (partnerResolver) partnerResolver.invalidateAll(did);

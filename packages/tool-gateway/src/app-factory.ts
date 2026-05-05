@@ -25,6 +25,7 @@ import {
   createMetricsHandler,
   tracingMiddleware,
 } from '@euno/common';
+import { resolveDID } from '@euno/capability-issuer/adapters';
 
 import { createAdminRouter } from './admin-api';
 import { createHealthRouter } from './routes/health';
@@ -238,6 +239,10 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       partnerResolver: deps.partnerResolver,
       partnerRegistry: deps.partnerRegistry,
       requirePin: deps.requirePin,
+      pinAttestationSecret: deps.pinAttestationSecret,
+      // When PARTNER_DID_AUTO_FETCH_PIN=true, wire resolveDID so the approval
+      // endpoint can auto-compute the pinnedDocSha256 from the live document.
+      resolveDidDocument: deps.partnerDidAutoFetchPin ? resolveDID : undefined,
     }),
   );
 

@@ -11,6 +11,11 @@ import {
   createPartnerIssuerResolverFromEnv,
 } from '../src/partner-issuer-resolver';
 import { JWTTokenVerifier } from '../src/verifier';
+import {
+  InMemoryPartnerDidRegistry,
+  jcsSha256,
+  createPinAttestation,
+} from '../src/partner-did-registry';
 
 const PARTNER_DID = 'did:web:partner-sim.local%3A4001';
 
@@ -259,5 +264,128 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
       code: ErrorCode.INVALID_TOKEN,
       statusCode: 401,
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PartnerIssuerResolver — pin attestation verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PartnerIssuerResolver — pin attestation verification', () => {
+  const DID = 'did:web:partner.example.com';
+  const SECRET = 'test-secret-32-bytes-padding!!';
+
+  async function makeKeys(did = DID) {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicJwk = publicKey.export({ format: 'jwk' }) as jose.JWK;
+    publicJwk.alg = 'EdDSA';
+    publicJwk.use = 'sig';
+    const privateJose = await jose.importPKCS8(
+      privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(), 'EdDSA',
+    ) as jose.KeyLike;
+    const vmId = `${did}#key-1`;
+    const didDoc = {
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      id: did,
+      verificationMethod: [{ id: vmId, type: 'JsonWebKey2020', controller: did, publicKeyJwk: publicJwk }],
+      authentication: [vmId],
+      assertionMethod: [vmId],
+    };
+    return { privateKey: privateJose, publicJwk, didDoc };
+  }
+
+  let originalFetch: typeof global.fetch;
+  beforeEach(() => { originalFetch = global.fetch; });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it('accepts a resolution when attestation is valid', async () => {
+    const { didDoc } = await makeKeys();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => didDoc } as unknown as Response);
+
+    const reg = new InMemoryPartnerDidRegistry();
+    const docHash = jcsSha256(didDoc);
+    const activatedAt = Date.now();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: docHash });
+    const att = createPinAttestation({ did: DID, pinnedDocSha256: docHash, approver: 'bob', activatedAt }, SECRET);
+    await reg.approve(DID, 'bob', { pinnedDocSha256: docHash, pinAttestation: att });
+
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [DID],
+      registry: reg,
+      pinAttestationSecret: SECRET,
+    });
+    // Should not throw.
+    const result = await resolver.getKey(DID, `${DID}#key-1`);
+    expect(result.alg).toBe('EdDSA');
+  });
+
+  it('rejects with INVALID_TOKEN when attestation HMAC is tampered', async () => {
+    const { didDoc } = await makeKeys();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => didDoc } as unknown as Response);
+
+    const reg = new InMemoryPartnerDidRegistry();
+    const docHash = jcsSha256(didDoc);
+    const activatedAt = Date.now();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: docHash });
+    const att = createPinAttestation({ did: DID, pinnedDocSha256: docHash, approver: 'bob', activatedAt }, SECRET);
+    // Tamper the HMAC before storing.
+    const tamperedAtt = { ...att, hmac: 'ff'.repeat(32) };
+    await reg.approve(DID, 'bob', { pinnedDocSha256: docHash, pinAttestation: tamperedAtt });
+
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [DID],
+      registry: reg,
+      pinAttestationSecret: SECRET,
+    });
+    await expect(resolver.getKey(DID, `${DID}#key-1`)).rejects.toMatchObject({
+      code: ErrorCode.INVALID_TOKEN,
+    });
+  });
+
+  it('rejects when attestation DID field does not match entry DID', async () => {
+    const { didDoc } = await makeKeys();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => didDoc } as unknown as Response);
+
+    const reg = new InMemoryPartnerDidRegistry();
+    const docHash = jcsSha256(didDoc);
+    const activatedAt = Date.now();
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: docHash });
+    // Attestation signed for a different DID.
+    const att = createPinAttestation({
+      did: 'did:web:evil.example.com',
+      pinnedDocSha256: docHash,
+      approver: 'bob',
+      activatedAt,
+    }, SECRET);
+    await reg.approve(DID, 'bob', { pinnedDocSha256: docHash, pinAttestation: att });
+
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [DID],
+      registry: reg,
+      pinAttestationSecret: SECRET,
+    });
+    await expect(resolver.getKey(DID, `${DID}#key-1`)).rejects.toMatchObject({
+      code: ErrorCode.INVALID_TOKEN,
+    });
+  });
+
+  it('warns but succeeds (hash-only) when secret is set but no attestation exists (legacy entry)', async () => {
+    const { didDoc } = await makeKeys();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => didDoc } as unknown as Response);
+
+    const reg = new InMemoryPartnerDidRegistry();
+    const docHash = jcsSha256(didDoc);
+    // Approve without attestation (legacy path).
+    await reg.propose({ did: DID, proposer: 'alice', pinnedDocSha256: docHash });
+    await reg.approve(DID, 'bob');
+
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [DID],
+      registry: reg,
+      pinAttestationSecret: SECRET,
+    });
+    // Should succeed with hash-only verification (warning is logged, not thrown).
+    const result = await resolver.getKey(DID, `${DID}#key-1`);
+    expect(result.alg).toBe('EdDSA');
   });
 });
