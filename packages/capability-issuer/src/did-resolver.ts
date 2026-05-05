@@ -79,14 +79,17 @@ export interface DIDResolutionResult {
  */
 export interface DidResolverOptions {
   /**
-   * Pre-parsed HTTP allow-list for did:web.  When provided, overrides
-   * the runtime read of `process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS`.
-   * Construct via {@link parseDidWebHttpAllowList} at service boot.
+   * Pre-parsed HTTP allow-list for did:web.  When provided, any host[:port]
+   * in the set is fetched over plain HTTP instead of HTTPS.
+   * Construct via {@link parseDidWebHttpAllowList} at service boot and pass
+   * through from the validated config — do not read `process.env` at call
+   * time.
    */
   httpAllowList?: Set<string>;
   /**
-   * Explicit did:ion resolver base URL.  When provided, overrides
-   * the runtime read of `process.env.ION_RESOLVER_URL`.
+   * Explicit did:ion resolver base URL.  When provided, overrides the
+   * compiled-in default (`https://ion.msidentity.com/api/v1.0/identifiers`).
+   * Pass from the validated config (`cfg.ION_RESOLVER_URL`) at boot.
    */
   ionResolverUrl?: string;
 }
@@ -155,11 +158,10 @@ export function parseDidWebHttpAllowList(raw: string | undefined): Set<string> {
  * **Test-mode HTTP exception (cross-org harness, gap #5):**
  * The default behaviour is HTTPS-only — production DID resolution MUST go
  * over TLS. For local docker-compose / CI harnesses that cannot terminate
- * TLS, set `DID_WEB_ALLOW_HTTP_FOR_HOSTS=partner-sim.local:4001,...` on the
- * resolver process: any host[:port] in that allow-list will be fetched over
- * plain HTTP. Hosts NOT in the allow-list still go over HTTPS. The
- * allow-list is consulted on every call so that an empty / unset value
- * means "no exceptions" (fail closed).
+ * TLS, pass an explicit `httpAllowList` (built via `parseDidWebHttpAllowList`
+ * from the validated config): any host[:port] in the set will be fetched over
+ * plain HTTP. Hosts NOT in the set still go over HTTPS. Omitting the argument
+ * means "no exceptions" (fail-closed).
  */
 export async function resolveDidWeb(did: string, httpAllowList?: Set<string>): Promise<DIDDocument> {
   if (!did.startsWith('did:web:')) {
@@ -183,14 +185,12 @@ export async function resolveDidWeb(did: string, httpAllowList?: Set<string>): P
   const domain = decodeURIComponent(didParts[0]);
   const path = didParts.slice(1).map(decodeURIComponent).join('/');
 
-  // Decide HTTP vs HTTPS. Default is HTTPS — the allow-list is opt-in and
-  // only consulted when explicitly provided or the env var is set, so
-  // production deployments that never set DID_WEB_ALLOW_HTTP_FOR_HOSTS are
-  // unaffected.  The caller (service boot path) should pass the allow-list
-  // derived from the validated config; the env-var fallback is retained as a
-  // backward-compatible last resort.
-  const resolvedAllowList =
-    httpAllowList ?? parseDidWebHttpAllowList(process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS);
+  // Decide HTTP vs HTTPS. Default is HTTPS — the allow-list is opt-in.
+  // Production deployments that never supply an httpAllowList use HTTPS for
+  // all did:web resolution (fail-closed). Callers should build the allow-list
+  // from the validated config via parseDidWebHttpAllowList() at boot and pass
+  // it through DidResolverOptions / PartnerIssuerResolverOptions.
+  const resolvedAllowList = httpAllowList ?? new Set<string>();
   const scheme = resolvedAllowList.has(domain.toLowerCase()) ? 'http' : 'https';
 
   // Construct URL to DID Document
@@ -487,8 +487,9 @@ const ION_RESOLVER_TIMEOUT_MS = 15000;
 
 /**
  * Default ION resolver endpoint (Microsoft public resolver).
- * Override via the `ION_RESOLVER_URL` environment variable so deployments
- * that run their own ION node can point at it without code changes.
+ * Override by passing `resolverBaseUrl` (sourced from `cfg.ION_RESOLVER_URL`)
+ * to {@link resolveDidIon} so deployments running their own ION node can
+ * point at it without reading process.env at call time.
  */
 const DEFAULT_ION_RESOLVER_URL = 'https://ion.msidentity.com/api/v1.0/identifiers';
 
@@ -499,8 +500,8 @@ const DEFAULT_ION_RESOLVER_URL = 'https://ion.msidentity.com/api/v1.0/identifier
  * Reference: https://identity.foundation/ion/
  *
  * Defaults to the public Microsoft resolver
- * (https://ion.msidentity.com/api/v1.0/identifiers/{did}); override with the
- * `ION_RESOLVER_URL` environment variable.
+ * (https://ion.msidentity.com/api/v1.0/identifiers/{did}); pass an explicit
+ * `resolverBaseUrl` (from the validated config) to use a self-hosted node.
  *
  * Errors are categorised so callers (and operators reading the logs) can
  * distinguish:
@@ -521,8 +522,9 @@ export async function resolveDidIon(did: string, resolverBaseUrl?: string): Prom
   }
 
   // Prefer the explicitly-supplied URL (from validated boot config) over the
-  // env var so that library consumers do not need to set process.env.
-  const rawBase = resolverBaseUrl ?? process.env.ION_RESOLVER_URL ?? DEFAULT_ION_RESOLVER_URL;
+  // compiled-in default so that library consumers and deployments with
+  // self-hosted ION can override without touching process.env.
+  const rawBase = resolverBaseUrl ?? DEFAULT_ION_RESOLVER_URL;
   // Trim trailing slashes without a backtracking regex (avoids ReDoS on
   // adversarial inputs derived from library consumers).
   let trimEnd = rawBase.length;
@@ -557,7 +559,7 @@ export async function resolveDidIon(did: string, resolverBaseUrl?: string): Prom
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
         `ION resolver DNS lookup failed (resolver=${resolverBase}): ${message}. ` +
-        'Check ION_RESOLVER_URL and network egress configuration.',
+        'Check the ION_RESOLVER_URL config value and network egress configuration.',
         502
       );
     }

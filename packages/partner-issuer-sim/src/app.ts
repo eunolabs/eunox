@@ -59,6 +59,15 @@ export interface PartnerAppConfig {
    * outbound trust. Empty by default.
    */
   trustedIssuerDids?: string[];
+  /**
+   * Pre-parsed HTTP allow-list for did:web resolution on the `/validate`
+   * endpoint.  The sim passes this to `resolveDID()` so that CI harnesses
+   * without TLS can resolve "our" (the gateway's) DID document over plain
+   * HTTP.  In production or docker-compose deployments this is left unset
+   * and HTTPS-only resolution applies.  Build via
+   * `parseDidWebHttpAllowList(cfg.DID_WEB_ALLOW_HTTP_FOR_HOSTS)`.
+   */
+  httpAllowList?: Set<string>;
 }
 
 interface IssueRequestBody {
@@ -205,7 +214,7 @@ export function createPartnerApp(config: PartnerAppConfig): express.Express {
       let publicKeyPem: string;
       let alg: string;
       try {
-        const didDoc = await resolveDID(issuer);
+        const didDoc = await resolveDID(issuer, { httpAllowList: config.httpAllowList });
         const kid = typeof header.kid === 'string' ? header.kid : undefined;
         const vm = findVerificationMethod(didDoc, kid);
         if (!vm) {

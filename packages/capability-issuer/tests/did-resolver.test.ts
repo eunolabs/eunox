@@ -664,7 +664,6 @@ describe('parseDidWebHttpAllowList', () => {
 
 describe('resolveDidWeb', () => {
   let originalFetch: typeof global.fetch;
-  let originalAllow: string | undefined;
   let lastUrl: string | undefined;
 
   const buildFetchMock = (didDoc: DIDDocument) =>
@@ -678,17 +677,11 @@ describe('resolveDidWeb', () => {
 
   beforeEach(() => {
     originalFetch = global.fetch;
-    originalAllow = process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     lastUrl = undefined;
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
-    if (originalAllow === undefined) {
-      delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
-    } else {
-      process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = originalAllow;
-    }
   });
 
   it('rejects identifiers that are not did:web', async () => {
@@ -698,7 +691,6 @@ describe('resolveDidWeb', () => {
   });
 
   it('fetches the .well-known/did.json over HTTPS by default', async () => {
-    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     const did = 'did:web:example.com';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
@@ -709,7 +701,6 @@ describe('resolveDidWeb', () => {
   });
 
   it('appends path segments for nested did:web identifiers', async () => {
-    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     const did = 'did:web:example.com:user:alice';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
@@ -719,7 +710,6 @@ describe('resolveDidWeb', () => {
   });
 
   it('supports custom ports encoded as %3A in the host label', async () => {
-    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     const did = 'did:web:partner-sim.local%3A4001';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
@@ -729,38 +719,34 @@ describe('resolveDidWeb', () => {
     expect(lastUrl).toBe('https://partner-sim.local:4001/.well-known/did.json');
   });
 
-  it('switches to HTTP only for hosts in DID_WEB_ALLOW_HTTP_FOR_HOSTS', async () => {
-    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'partner-sim.local:4001';
+  it('switches to HTTP only for hosts in the explicit allow-list', async () => {
     const did = 'did:web:partner-sim.local%3A4001';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
 
-    await resolveDidWeb(did);
+    await resolveDidWeb(did, parseDidWebHttpAllowList('partner-sim.local:4001'));
     expect(lastUrl).toBe('http://partner-sim.local:4001/.well-known/did.json');
   });
 
   it('keeps using HTTPS for hosts NOT in the allow-list (fail-closed)', async () => {
-    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'partner-sim.local:4001';
     const did = 'did:web:example.com';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
 
-    await resolveDidWeb(did);
+    await resolveDidWeb(did, parseDidWebHttpAllowList('partner-sim.local:4001'));
     expect(lastUrl?.startsWith('https://')).toBe(true);
   });
 
   it('matches the allow-list case-insensitively', async () => {
-    process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = 'Partner-Sim.Local:4001';
     const did = 'did:web:partner-sim.local%3A4001';
     const doc: DIDDocument = { '@context': 'https://www.w3.org/ns/did/v1', id: did };
     global.fetch = buildFetchMock(doc);
 
-    await resolveDidWeb(did);
+    await resolveDidWeb(did, parseDidWebHttpAllowList('Partner-Sim.Local:4001'));
     expect(lastUrl?.startsWith('http://')).toBe(true);
   });
 
   it('rejects the document when its id does not match the requested DID', async () => {
-    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     const did = 'did:web:example.com';
     global.fetch = buildFetchMock({
       '@context': 'https://www.w3.org/ns/did/v1',
@@ -774,7 +760,6 @@ describe('resolveDidWeb', () => {
   });
 
   it('surfaces non-2xx responses as AUTHENTICATION_FAILED', async () => {
-    delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 404,

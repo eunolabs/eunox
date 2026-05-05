@@ -35,6 +35,7 @@ import {
 import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
 import { PartnerIssuerResolver } from '../../tool-gateway/src/partner-issuer-resolver';
 import { createPartnerApp, loadOrCreateKey } from '@euno/partner-issuer-sim';
+import { parseDidWebHttpAllowList } from '@euno/capability-issuer/adapters';
 
 const PARTNER_SEED_HEX = 'b'.repeat(64);
 
@@ -76,19 +77,6 @@ async function mountDidWebHost(didDocFactory: (did: string) => Record<string, un
 }
 
 describe('cross-org trust harness', () => {
-  let originalAllow: string | undefined;
-
-  beforeAll(() => {
-    originalAllow = process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
-  });
-
-  afterAll(() => {
-    if (originalAllow === undefined) {
-      delete process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS;
-    } else {
-      process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = originalAllow;
-    }
-  });
 
   // -----------------------------------------------------------------
   // Inbound: partner → us
@@ -122,13 +110,13 @@ describe('cross-org trust harness', () => {
       partnerServer = server;
 
       // Allow HTTP did:web resolution for the partner's loopback host.
-      process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = `127.0.0.1:${port}`;
+      const httpAllowList = parseDidWebHttpAllowList(`127.0.0.1:${port}`);
 
       // Gateway verifier with a throw-away local key + the partner DID
       // in the trusted set.
       const { publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
       const localSpki = await jose.exportSPKI(publicKey);
-      const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [partnerDid] });
+      const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [partnerDid], httpAllowList });
       verifier = new JWTTokenVerifier(localSpki, ['RS256'], undefined, resolver);
     });
 
@@ -231,13 +219,13 @@ describe('cross-org trust harness', () => {
         defaultTtlSeconds: 600,
         key: partnerKey,
         trustedIssuerDids: [ourDid],
+        // Allow HTTP did:web for our host (the partner needs to resolve us
+        // over plain HTTP since the loopback test server has no TLS).
+        httpAllowList: parseDidWebHttpAllowList(`127.0.0.1:${ourHost.port}`),
       });
       const partnerListener = await listenOnEphemeralPort(partnerApp);
       partnerServer = partnerListener.server;
       partnerPort = partnerListener.port;
-
-      // Allow HTTP did:web for our host (the partner needs to resolve us).
-      process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = `127.0.0.1:${ourHost.port}`;
     });
 
     afterAll(async () => {
@@ -295,8 +283,6 @@ describe('cross-org trust harness', () => {
         ],
       }));
       try {
-        process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS = `127.0.0.1:${host.port}`;
-
         // Mint a token signed by this unknown DID.
         const now = Math.floor(Date.now() / 1000);
         const token = await new jose.SignJWT({

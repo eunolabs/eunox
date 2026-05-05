@@ -35,6 +35,7 @@ import {
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
+  parseDidWebHttpAllowList,
   type VerificationMethod,
 } from '@euno/capability-issuer/adapters';
 import {
@@ -119,6 +120,19 @@ export interface PartnerIssuerResolverOptions {
    *   - Entry has no pin → hash check is skipped entirely (same as before).
    */
   pinAttestationSecret?: string;
+  /**
+   * Pre-parsed HTTP allow-list for did:web resolution.  Any host[:port] in
+   * this set is fetched over plain HTTP instead of HTTPS.  Construct via
+   * `parseDidWebHttpAllowList(cfg.DID_WEB_ALLOW_HTTP_FOR_HOSTS)` at boot.
+   * Leave unset (or pass an empty Set) in production — HTTPS is the default.
+   */
+  httpAllowList?: Set<string>;
+  /**
+   * did:ion resolver base URL.  When set, overrides the compiled-in default
+   * (`https://ion.msidentity.com/api/v1.0/identifiers`).
+   * Source from `cfg.ION_RESOLVER_URL` at boot.
+   */
+  ionResolverUrl?: string;
 }
 
 /**
@@ -138,6 +152,8 @@ export class PartnerIssuerResolver {
   private readonly logger?: Logger;
   private readonly auditLogger = createAuditLogger('tool-gateway');
   private readonly pinAttestationSecret?: string;
+  private readonly httpAllowList?: Set<string>;
+  private readonly ionResolverUrl?: string;
   private static readonly DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
   private static readonly DEFAULT_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
 
@@ -148,6 +164,8 @@ export class PartnerIssuerResolver {
     this.negativeCacheTtlMs = opts.negativeCacheTtlMs ?? PartnerIssuerResolver.DEFAULT_NEGATIVE_CACHE_TTL_MS;
     this.logger = opts.logger;
     this.pinAttestationSecret = opts.pinAttestationSecret;
+    this.httpAllowList = opts.httpAllowList;
+    this.ionResolverUrl = opts.ionResolverUrl;
   }
 
   /** Whether the resolver has any partner DIDs configured at all. */
@@ -228,7 +246,7 @@ export class PartnerIssuerResolver {
     const registryEntry = this.registry ? await this.registry.get(did) : undefined;
 
     try {
-      const didDoc = await resolveDID(did);
+      const didDoc = await resolveDID(did, { httpAllowList: this.httpAllowList, ionResolverUrl: this.ionResolverUrl });
 
       // Pin verification (2C): check JCS-SHA-256 of the DID document.
       if (registryEntry?.pinnedDocSha256) {
@@ -485,10 +503,10 @@ export class PartnerIssuerResolver {
         // Use the dedicated ION resolver which properly unwraps the DIF
         // universal resolver wrapper ({ didDocument: {...} }) and validates
         // the DID identifier match.  The `url` field on the spec is treated
-        // as informational documentation (the actual URL comes from
-        // ION_RESOLVER_URL env var).
+        // as informational documentation; the actual URL comes from the
+        // ionResolverUrl option (sourced from cfg.ION_RESOLVER_URL at boot).
         try {
-          secondaryDoc = await resolveDidIon(did);
+          secondaryDoc = await resolveDidIon(did, this.ionResolverUrl);
         } catch (ionErr) {
           // Re-wrap as a generic error so the outer catch below handles it
           // uniformly (negative-cache + fail-closed).
@@ -643,5 +661,7 @@ export function createPartnerIssuerResolverFromEnv(
     negativeCacheTtlMs,
     logger,
     pinAttestationSecret: env.PARTNER_DID_PIN_SECRET || undefined,
+    httpAllowList: parseDidWebHttpAllowList(env.DID_WEB_ALLOW_HTTP_FOR_HOSTS),
+    ionResolverUrl: env.ION_RESOLVER_URL || undefined,
   });
 }

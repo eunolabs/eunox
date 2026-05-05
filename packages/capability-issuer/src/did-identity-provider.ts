@@ -41,13 +41,14 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
   /**
    * Pre-parsed HTTP allow-list for did:web resolution.  Construct via
    * `parseDidWebHttpAllowList(cfg.DID_WEB_ALLOW_HTTP_FOR_HOSTS)` at
-   * service boot and pass here so the resolver does not read
-   * `process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS` directly.
+   * service boot and pass here so the resolver uses the validated config
+   * value rather than falling back to a process.env read.
    */
   didWebHttpAllowList?: Set<string>;
   /**
-   * did:ion resolver base URL.  When set, overrides the runtime read of
-   * `process.env.ION_RESOLVER_URL`.
+   * did:ion resolver base URL.  When set, overrides the compiled-in default
+   * (`https://ion.msidentity.com/api/v1.0/identifiers`).
+   * Source from `cfg.ION_RESOLVER_URL` at boot.
    */
   ionResolverUrl?: string;
 }

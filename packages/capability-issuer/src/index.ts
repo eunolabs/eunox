@@ -217,9 +217,8 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
       return await defaultIdentityRegistry.createIdentityAdapter({
         type: 'did',
         name: 'DID Identity Provider',
-        // Thread the validated config values into the resolver so it does
-        // not need to read process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS or
-        // process.env.ION_RESOLVER_URL at resolution time.
+        // Thread the validated config values into the resolver so that
+        // resolution call sites never read process.env directly.
         didWebHttpAllowList: parseDidWebHttpAllowList(env.DID_WEB_ALLOW_HTTP_FOR_HOSTS),
         ionResolverUrl: env.ION_RESOLVER_URL,
       });
