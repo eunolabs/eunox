@@ -899,6 +899,21 @@ export const GatewayConfigSchema = z
         'Maximum time (ms) to wait for the pipeline to flush queued evidence on graceful shutdown (SIGTERM/SIGINT). Items still buffered when the deadline expires are counted as drops so the metric reflects the loss.',
     }),
 
+    // Audit chain integrity (cross-replica Merkle anchoring) -----------------
+    AUDIT_REPLICA_ID: optionalString.describe(
+      'Replica/pod identifier stamped on every Merkle batch commitment. ' +
+      'In Kubernetes, set to the Pod name via the downward API: $(POD_NAME). ' +
+      'Defaults to the OS hostname when unset. ' +
+      'Used by batch-commitment verifiers and SIEM queries to attribute a batch to a specific replica.',
+    ),
+    AUDIT_ANCHOR_URL: optionalString.describe(
+      'Optional URL to POST each SignedBatchCommitment JSON to after every pipeline drain cycle. ' +
+      'Accepts any endpoint that handles HTTP POST with Content-Type: application/json. ' +
+      'Typical targets: an object-store pre-signed PUT URL (WORM bucket), a transparency-log ingestion endpoint, ' +
+      'or a custom SIEM webhook. When unset, batch commitments are only emitted to the audit log (best-effort; no external anchor). ' +
+      'Pair with AUDIT_PIPELINE_BACKPRESSURE=block and EVIDENCE_SIGNED_DECISIONS=allow,deny for regulated workloads.',
+    ),
+
     // Policy ----------------------------------------------------------------
     POLICY_VERSION: optionalString.describe(
       'Version identifier for the active policy (string, default "1.0.0").',

@@ -4,8 +4,13 @@
  */
 
 import * as crypto from 'crypto';
-import { AuditEvidence, SignedAuditEvidence, EvidenceSigner } from './types';
-import { sha256String, canonicalize, generateId } from './utils';
+import { AuditEvidence, SignedAuditEvidence, AuditBatchCommitment, SignedBatchCommitment, GENESIS_HASH } from './wire';
+import { EvidenceSigner } from './runtime';
+import { sha256String, canonicalize, canonicalSha256, generateId } from './utils';
+
+// Re-export GENESIS_HASH so consumers can import it from this module without
+// needing to know about the wire/types split.
+export { GENESIS_HASH } from './types';
 
 /**
  * Interface for cryptographic signing operations.
@@ -30,28 +35,126 @@ export interface CryptoSigner {
 }
 
 /**
- * Evidence signer that creates tamper-evident audit records
- * Following the Azure security pattern: hash locally, sign with Key Vault
+ * Evidence signer that creates tamper-evident audit records with per-record
+ * hash-chain linkage and Merkle batch commitment support.
+ *
+ * ### Hash chain
+ *
+ * Each `signEvidence` call stamps two chain fields onto the record before
+ * signing:
+ *   - `previousHash` — `canonicalSha256` of the preceding `SignedAuditEvidence`
+ *     (or {@link GENESIS_HASH} for the very first record).
+ *   - `seq`          — monotonically increasing (1-based) sequence number.
+ *
+ * Both fields are included in the canonical form that is signed, so tampering
+ * with them invalidates the signature. Tampering with any earlier record
+ * changes its `canonicalSha256`, which propagates forward through `previousHash`
+ * fields and breaks every subsequent signature in the chain.
+ *
+ * ### Concurrent safety
+ *
+ * `signEvidence` calls are serialised through an internal promise chain so that
+ * the `previousHash`/`seq` state is consistent even when multiple `AuditPipeline`
+ * workers call the signer concurrently.
+ *
+ * ### Batch commitments
+ *
+ * `signBatch` signs an {@link AuditBatchCommitment} using the same key. The
+ * pipeline calls this once per drain cycle, after all per-record signs in that
+ * cycle are complete. The resulting {@link SignedBatchCommitment} can be
+ * published to an external anchor (object store, SIEM, transparency log).
+ *
+ * ### Chain seeding across restarts
+ *
+ * Supply `chainSeed` at construction to resume from the last known chain state
+ * (e.g. read from a persistent store after a process restart). Without seeding,
+ * each process instance starts a new chain segment beginning at seq=1 with
+ * `previousHash=GENESIS_HASH`. Seeding ensures continuity of the hash chain
+ * across rolling restarts. The `getChainState()` accessor exposes the current
+ * state so operators can persist it.
+ *
+ * ### Following the Azure security pattern
+ * "Logs help you debug. Evidence helps you prove."
  */
 export class AuditEvidenceSigner implements EvidenceSigner {
   private cryptoSigner: CryptoSigner;
 
-  constructor(cryptoSigner: CryptoSigner) {
+  // ── Chain state ─────────────────────────────────────────────────────────
+  private chainPreviousHash: string;
+  private chainSeq: number;
+  /**
+   * Serial queue for `signEvidence`. All signing calls are chained on this
+   * promise so that chain-state updates (`previousHash`, `seq`) are
+   * consistent even when multiple callers invoke `signEvidence` concurrently.
+   * The promise always resolves (never rejects) so a failure in one signing
+   * call does not prevent subsequent calls from running.
+   */
+  private chainTail: Promise<unknown> = Promise.resolve();
+
+  /**
+   * @param cryptoSigner  Underlying signing primitive.
+   * @param chainSeed     Optional chain state to resume from (e.g. persisted
+   *                      after a graceful shutdown).  When omitted the chain
+   *                      starts fresh: `previousHash=GENESIS_HASH`, `seq=0`.
+   */
+  constructor(
+    cryptoSigner: CryptoSigner,
+    chainSeed?: { previousHash: string; seq: number },
+  ) {
     this.cryptoSigner = cryptoSigner;
+    this.chainPreviousHash = chainSeed?.previousHash ?? GENESIS_HASH;
+    this.chainSeq = chainSeed?.seq ?? 0;
+  }
+
+  /**
+   * Return a snapshot of the current chain state.
+   *
+   * Operators should persist this on graceful shutdown and supply it as
+   * `chainSeed` on the next start to maintain hash-chain continuity across
+   * process restarts.
+   */
+  getChainState(): { previousHash: string; seq: number } {
+    return { previousHash: this.chainPreviousHash, seq: this.chainSeq };
   }
 
   /**
    * Sign audit evidence to create a tamper-evident record.
+   *
+   * The method is concurrency-safe: concurrent calls are serialised through an
+   * internal promise chain so `previousHash` and `seq` are always consistent.
    * keyId and algorithm are fetched BEFORE canonicalisation so they are
    * covered by the signature and cannot be modified without detection.
    */
   async signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
+    // Enqueue this signing operation so chain-state updates are serialised.
+    // The wrapper promise captures the resolve/reject pair and chains onto
+    // `this.chainTail`.  The tail itself is kept as a never-rejecting
+    // promise so a failure here doesn't prevent later calls from running.
+    return new Promise<SignedAuditEvidence>((resolve, reject) => {
+      this.chainTail = this.chainTail.then(() =>
+        this.doSignEvidence(evidence).then(resolve, reject),
+      ).catch(() => {
+        // Swallow errors from the tail itself so the queue keeps draining.
+      });
+    });
+  }
+
+  /**
+   * Internal signing implementation, called exclusively from the serial queue.
+   */
+  private async doSignEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
     // Fetch signing metadata FIRST so it is included in the signed content
     const keyId = await this.cryptoSigner.getKeyId();
     const algorithm = this.cryptoSigner.getAlgorithm();
 
-    // Create a canonical representation that includes keyId and algorithm
-    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm);
+    // Capture and advance the chain state atomically (this method is never
+    // called concurrently — all calls are serialised through `chainTail`).
+    const previousHash = this.chainPreviousHash;
+    const seq = this.chainSeq + 1;
+
+    // Create a canonical representation that includes keyId, algorithm, and
+    // the chain-linkage fields so all of them are covered by the signature.
+    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm, previousHash, seq);
 
     // Hash the canonical UTF-8 bytes directly – no JSON.stringify wrapping
     const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
@@ -60,12 +163,21 @@ export class AuditEvidenceSigner implements EvidenceSigner {
     const signatureBuffer = await this.cryptoSigner.signDigest(digest);
     const signature = signatureBuffer.toString('base64');
 
-    return {
+    const signed: SignedAuditEvidence = {
       ...evidence,
       signature,
       keyId,
       algorithm,
+      previousHash,
+      seq,
     };
+
+    // Advance the chain state: the hash of this signed record becomes the
+    // `previousHash` of the next one.
+    this.chainPreviousHash = hashSignedRecord(signed);
+    this.chainSeq = seq;
+
+    return signed;
   }
 
   /**
@@ -73,25 +185,36 @@ export class AuditEvidenceSigner implements EvidenceSigner {
    *
    * Performs full cryptographic verification when the underlying
    * {@link CryptoSigner} exposes a `verifyDigest` method:
-   *   1. Re-canonicalises the evidence using the signed `keyId` and
-   *      `algorithm` (so any tampering with those fields invalidates the
-   *      signature).
+   *   1. Re-canonicalises the evidence using the signed `keyId`,
+   *      `algorithm`, `previousHash`, and `seq` (so any tampering with
+   *      those fields invalidates the signature).
    *   2. Hashes the canonical bytes with SHA-256.
    *   3. Asks the signer to verify the supplied signature against the digest.
    *
    * When the signer does NOT implement `verifyDigest` this method fails
    * closed (returns `false`) so callers cannot mistake "verification not
    * possible" for "signature valid".
+   *
+   * **Note:** this method verifies only the cryptographic signature. To
+   * verify hash-chain continuity across a sequence of records (i.e. that
+   * each `previousHash` equals the `canonicalSha256` of the preceding
+   * record), use {@link verifyChain}.
    */
   async verifyEvidence(signedEvidence: SignedAuditEvidence): Promise<boolean> {
     // Reject malformed signed evidence records early
-    const { signature, keyId, algorithm, ...evidence } = signedEvidence;
+    const { signature, keyId, algorithm, previousHash, seq, ...evidence } = signedEvidence;
     if (!signature || !keyId || !algorithm) {
+      return false;
+    }
+    // previousHash and seq are required on every signed record produced by
+    // this signer. Reject records that lack them so old (pre-chain) records
+    // cannot pass verification — they are intentionally not forward-compatible.
+    if (!previousHash || typeof seq !== 'number') {
       return false;
     }
 
     // Ensure a canonical form can be produced
-    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm);
+    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm, previousHash, seq);
     if (!canonical) {
       return false;
     }
@@ -131,10 +254,24 @@ export class AuditEvidenceSigner implements EvidenceSigner {
 
   /**
    * Create a canonical pipe-delimited string representation of evidence for signing.
-   * Fields are ordered deterministically. keyId and algorithm are appended so they
-   * are covered by the signature and cannot be tampered with undetected.
+   * Fields are ordered deterministically. keyId, algorithm, previousHash, and
+   * seq are appended so they are covered by the signature and cannot be tampered
+   * with undetected.
+   *
+   * **Breaking note (chain fields):** adding `previousHash` and `seq` as
+   * positions 17–18 means records signed by an older version of this signer
+   * (without chain fields) will fail signature verification. This is intentional:
+   * pre-chain records lack tamper-evident linkage and should not pass a
+   * chain-aware verifier. Operators upgrading from a pre-chain deployment
+   * must re-sign their historical evidence or start a fresh chain segment.
    */
-  private canonicalizeEvidence(evidence: Partial<AuditEvidence>, keyId?: string, algorithm?: string): string {
+  private canonicalizeEvidence(
+    evidence: Partial<AuditEvidence>,
+    keyId?: string,
+    algorithm?: string,
+    previousHash?: string,
+    seq?: number,
+  ): string {
     const fields = [
       evidence.id || '',
       evidence.sessionId || '',
@@ -153,10 +290,170 @@ export class AuditEvidenceSigner implements EvidenceSigner {
       evidence.decision || '',
       keyId || '',
       algorithm || '',
+      previousHash || '',
+      String(seq ?? 0),
     ];
 
     return fields.join('|');
   }
+
+  /**
+   * Sign an {@link AuditBatchCommitment} to produce a {@link SignedBatchCommitment}.
+   *
+   * The canonical JSON form of the commitment (all fields, sorted keys) is
+   * hashed with SHA-256 and signed with the same key used for
+   * `signEvidence`. The resulting `SignedBatchCommitment` can be published
+   * to an external anchor.
+   *
+   * Unlike `signEvidence`, `signBatch` does NOT participate in the record
+   * chain. The batch commitment chain is maintained by the pipeline
+   * (`batchSeq`, `previousBatchHash`), not by the signer.
+   */
+  async signBatch(commitment: AuditBatchCommitment): Promise<SignedBatchCommitment> {
+    const keyId = await this.cryptoSigner.getKeyId();
+    const algorithm = this.cryptoSigner.getAlgorithm();
+
+    // Use canonical JSON (sorted keys) so the digest is deterministic across
+    // runtimes and cannot be influenced by key-insertion order.
+    const canonical = canonicalize(commitment);
+    const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
+    const signatureBuffer = await this.cryptoSigner.signDigest(digest);
+
+    return {
+      ...commitment,
+      signature: signatureBuffer.toString('base64'),
+      keyId,
+      algorithm,
+    };
+  }
+
+  /**
+   * Verify a {@link SignedBatchCommitment}.
+   *
+   * Re-canonicalises the commitment fields (without `signature`, `keyId`,
+   * `algorithm`) and verifies the signature. Fails closed when the signer
+   * does not implement `verifyDigest`.
+   */
+  async verifyBatch(signed: SignedBatchCommitment): Promise<boolean> {
+    const { signature, keyId, algorithm, ...commitment } = signed;
+    if (!signature || !keyId || !algorithm) {
+      return false;
+    }
+    if (typeof this.cryptoSigner.verifyDigest !== 'function') {
+      return false;
+    }
+    let signatureBuffer: Buffer;
+    try {
+      signatureBuffer = Buffer.from(signature, 'base64');
+    } catch {
+      return false;
+    }
+    if (signatureBuffer.length === 0) {
+      return false;
+    }
+    const canonical = canonicalize(commitment);
+    const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
+    const verify = this.cryptoSigner.verifyDigest;
+    try {
+      return await verify(digest, signatureBuffer, keyId, algorithm);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Compute the canonical SHA-256 hex digest of a `SignedAuditEvidence` record.
+ *
+ * This is the value stored in the next record's `previousHash` field, forming
+ * the tamper-evident hash chain. It is also used as the leaf hash when building
+ * the Merkle tree for a batch commitment.
+ *
+ * Using `canonicalSha256` (sorted-key canonical JSON) ensures the digest is
+ * deterministic regardless of property-insertion order.
+ */
+export function hashSignedRecord(signed: SignedAuditEvidence): string {
+  return canonicalSha256(signed);
+}
+
+/**
+ * Compute the canonical SHA-256 hex digest of a `SignedBatchCommitment`.
+ *
+ * This is the value stored in the next batch commitment's `previousBatchHash`
+ * field, forming the tamper-evident batch chain.
+ */
+export function hashBatchCommitment(signed: SignedBatchCommitment): string {
+  return canonicalSha256(signed);
+}
+
+/**
+ * Verify that a sequence of `SignedAuditEvidence` records forms a valid
+ * hash chain: each record's `previousHash` must equal the `hashSignedRecord`
+ * of the preceding record, and `seq` values must be consecutive integers
+ * starting from `records[0].seq`.
+ *
+ * This complements per-record signature verification (which proves each
+ * individual record was not tampered with) by proving no records were
+ * inserted, deleted, or reordered within the sequence.
+ *
+ * @param records   Ordered array of signed evidence records. May be empty
+ *                  (returns `true`).
+ * @param seedHash  Expected `previousHash` of the first record. Pass
+ *                  `GENESIS_HASH` when verifying from the start of the chain,
+ *                  or the `canonicalSha256` of the last known-good record when
+ *                  verifying a tail segment.
+ * @returns         `true` if every link is intact; `false` on the first broken link.
+ */
+export function verifyChain(
+  records: SignedAuditEvidence[],
+  seedHash: string = GENESIS_HASH,
+): boolean {
+  if (records.length === 0) {
+    return true;
+  }
+  let expectedPreviousHash = seedHash;
+  let expectedSeq = records[0]!.seq;
+
+  for (const record of records) {
+    if (record.previousHash !== expectedPreviousHash) {
+      return false;
+    }
+    if (record.seq !== expectedSeq) {
+      return false;
+    }
+    expectedPreviousHash = hashSignedRecord(record);
+    expectedSeq += 1;
+  }
+  return true;
+}
+
+/**
+ * Verify that a sequence of `SignedBatchCommitment` records forms a valid
+ * batch chain: each commitment's `previousBatchHash` must equal the
+ * `hashBatchCommitment` of the preceding commitment, and `batchSeq` values
+ * must be consecutive integers starting from `batches[0].batchSeq`.
+ */
+export function verifyBatchChain(
+  batches: SignedBatchCommitment[],
+  seedHash: string = GENESIS_HASH,
+): boolean {
+  if (batches.length === 0) {
+    return true;
+  }
+  let expectedPreviousHash = seedHash;
+  let expectedSeq = batches[0]!.batchSeq;
+
+  for (const batch of batches) {
+    if (batch.previousBatchHash !== expectedPreviousHash) {
+      return false;
+    }
+    if (batch.batchSeq !== expectedSeq) {
+      return false;
+    }
+    expectedPreviousHash = hashBatchCommitment(batch);
+    expectedSeq += 1;
+  }
+  return true;
 }
 
 /**
@@ -248,6 +545,12 @@ export interface SoftwareEvidenceSignerConfig {
    * always SHA-256.
    */
   algorithm?: string;
+  /**
+   * Optional chain seed to resume from a previous chain segment (e.g. after
+   * a process restart). When omitted the signer starts a fresh chain
+   * segment: `previousHash=GENESIS_HASH`, `seq=0`.
+   */
+  chainSeed?: { previousHash: string; seq: number };
 }
 
 /**
@@ -413,7 +716,7 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
     },
   };
 
-  return new AuditEvidenceSigner(cryptoSigner);
+  return new AuditEvidenceSigner(cryptoSigner, config.chainSeed);
 }
 
 /**

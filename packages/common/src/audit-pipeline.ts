@@ -14,6 +14,12 @@
  *     Batching is a wake-up amortisation: the underlying single-record
  *     signer interface is unchanged, so existing signers (software, KMS)
  *     work without modification.
+ *   - **Merkle batch commitment** (addresses audit-chain integrity): after
+ *     each drain cycle a worker computes the Merkle root of the batch's
+ *     signed-record hashes, signs an {@link AuditBatchCommitment}, and calls
+ *     the registered {@link AuditAnchor}s. This anchors the batch externally
+ *     so a compromised replica cannot retroactively rewrite records without
+ *     breaking the commitment chain visible to the anchors.
  *   - Backpressure policy when the buffer is full:
  *       * `drop_oldest_with_metric` (default) — pop the oldest item, count
  *         it as dropped, then accept the new one. Producers are never
@@ -39,8 +45,10 @@
  * trail is best-effort tamper-evidence, not durable storage).
  */
 
-import { EvidenceSigner } from './runtime';
-import { AuditEvidence, SignedAuditEvidence } from './types';
+import { EvidenceSigner, AuditBatchSigner, AuditAnchor } from './runtime';
+import { AuditEvidence, SignedAuditEvidence, AuditBatchCommitment, SignedBatchCommitment, GENESIS_HASH } from './types';
+import { computeMerkleRoot, generateId } from './utils';
+import { hashSignedRecord, hashBatchCommitment } from './evidence';
 
 /**
  * Backpressure policy applied when the ring buffer is full.
@@ -136,6 +144,45 @@ export interface AuditPipelineOptions {
    * sink are swallowed.
    */
   onSignError?: (err: unknown, evidence: AuditEvidence) => void;
+  // ── Merkle batch commitment options ─────────────────────────────────────
+  /**
+   * Replica/pod identifier stamped on every {@link AuditBatchCommitment}.
+   * Operators should set this to the Kubernetes Pod name (e.g. via the
+   * downward API: `$(POD_NAME)`) so batch commitments can be attributed to
+   * a specific replica in multi-replica deployments. Defaults to
+   * `'unknown-replica'` when not supplied.
+   */
+  replicaId?: string;
+  /**
+   * Signer used to produce {@link SignedBatchCommitment} records. When
+   * absent, batch commitments are computed but NOT signed — they are still
+   * passed to `onBatch` as an `AuditBatchCommitment` (typed as
+   * `SignedBatchCommitment` with empty signature/keyId/algorithm fields).
+   * For full tamper-evidence, supply the same {@link AuditEvidenceSigner}
+   * instance used for per-record signing.
+   */
+  batchSigner?: AuditBatchSigner;
+  /**
+   * List of external anchors to publish each {@link SignedBatchCommitment}
+   * to after each pipeline drain cycle. Errors from individual anchors are
+   * swallowed so one failing anchor cannot break the pipeline. When empty
+   * or absent, batch commitments are not published externally.
+   *
+   * Bootstrap wires at least a logging anchor (always on when `batchSigner`
+   * is set) and optionally an HTTP anchor when `AUDIT_ANCHOR_URL` is
+   * configured.
+   */
+  anchors?: AuditAnchor[];
+  /**
+   * Called after a batch commitment is signed and published. Fires once per
+   * drain cycle when at least one record was signed. Errors are swallowed.
+   */
+  onBatch?: (commitment: SignedBatchCommitment) => void;
+  /**
+   * Called when batch commitment signing fails. Errors thrown by the sink
+   * are swallowed.
+   */
+  onBatchError?: (err: unknown) => void;
 }
 
 /**
@@ -164,6 +211,30 @@ export class AuditPipeline {
   private readonly onDropped?: (count: number, reason: DropReason) => void;
   private readonly onSigned?: (signed: SignedAuditEvidence) => void;
   private readonly onSignError?: (err: unknown, evidence: AuditEvidence) => void;
+  // ── Merkle batch commitment ─────────────────────────────────────────────
+  private readonly replicaId: string;
+  private readonly batchSigner?: AuditBatchSigner;
+  private readonly anchors: AuditAnchor[];
+  private readonly onBatch?: (commitment: SignedBatchCommitment) => void;
+  private readonly onBatchError?: (err: unknown) => void;
+  /** Monotonically increasing (1-based) batch sequence number for this replica. */
+  private batchSeq = 0;
+  /**
+   * SHA-256 hex of the previous {@link SignedBatchCommitment}, or
+   * {@link GENESIS_HASH} before the first batch.
+   */
+  private previousBatchHash: string = GENESIS_HASH;
+  /**
+   * Tail of the batch-commitment serialisation chain.
+   *
+   * `emitBatchCommitment` chains each new batch onto this tail so that
+   * `batchSeq` / `previousBatchHash` assignments are always serialised,
+   * even when multiple workers call `emitBatchCommitment` concurrently
+   * (they interleave at `await` points inside `doEmitBatchCommitment`).
+   * The chaining assignment is synchronous, so it is always ordered
+   * correctly by the event loop.
+   */
+  private batchChainTail: Promise<void> = Promise.resolve();
 
   /**
    * Fixed-size circular buffer (true ring buffer): enqueue / dequeue /
@@ -204,6 +275,11 @@ export class AuditPipeline {
     this.onDropped = options.onDropped;
     this.onSigned = options.onSigned;
     this.onSignError = options.onSignError;
+    this.replicaId = options.replicaId ?? 'unknown-replica';
+    this.batchSigner = options.batchSigner;
+    this.anchors = options.anchors ?? [];
+    this.onBatch = options.onBatch;
+    this.onBatchError = options.onBatchError;
     this.buffer = new Array<QueueNode | undefined>(this.maxSize);
   }
 
@@ -471,9 +547,9 @@ export class AuditPipeline {
   }
 
   /**
-   * Worker loop: pull a batch, sign each record, repeat until stopped
-   * and queue empty. Per-item rejections are isolated so one bad
-   * record cannot stall the worker.
+   * Worker loop: pull a batch, sign each record, emit a Merkle batch
+   * commitment, then repeat until stopped and queue empty. Per-item
+   * rejections are isolated so one bad record cannot stall the worker.
    */
   private async runWorker(): Promise<void> {
     // Fresh promise loop. The worker terminates when it observes
@@ -488,10 +564,12 @@ export class AuditPipeline {
         continue;
       }
       const batch = this.pullBatch();
+      const signedBatch: SignedAuditEvidence[] = [];
       for (const evidence of batch) {
         try {
           const signed = await this.signer.signEvidence(evidence);
           this.signedTotal += 1;
+          signedBatch.push(signed);
           if (this.onSigned) {
             try {
               this.onSigned(signed);
@@ -510,7 +588,139 @@ export class AuditPipeline {
           }
         }
       }
+      // Emit a Merkle batch commitment when there is at least one consumer:
+      //   - a batchSigner (produces signed commitments)
+      //   - an external anchor (receives the commitment for external anchoring)
+      //   - an onBatch callback (e.g. structured logging)
+      // Without any consumer, skipping the commitment avoids useless work.
+      const hasBatchConsumer = !!this.batchSigner || this.anchors.length > 0 || !!this.onBatch;
+      if (signedBatch.length > 0 && hasBatchConsumer) {
+        await this.emitBatchCommitment(signedBatch);
+      }
     }
+  }
+
+  /**
+   * Compute a Merkle batch commitment for `signedRecords`, sign it (when a
+   * `batchSigner` is configured), publish it to all registered anchors, and
+   * fire `onBatch`. Any error is reported via `onBatchError`; the worker
+   * loop is never interrupted.
+   *
+   * **Serialisation guarantee**: batches are always committed in the order
+   * workers call this method, regardless of how many workers are running.
+   * The returned promise resolves only after the previous batch commitment
+   * has fully completed, so `batchSeq` and `previousBatchHash` are always
+   * assigned in the correct order.
+   */
+  private emitBatchCommitment(signedRecords: SignedAuditEvidence[]): Promise<void> {
+    // Chain onto the current tail synchronously (no await) so that two
+    // workers that reach this line concurrently always form a linear chain
+    // in the order they arrived.
+    const next = this.batchChainTail.then(() =>
+      this.doEmitBatchCommitment(signedRecords),
+    );
+    // Suppress rejection on the tail so a previous failure (already
+    // routed to onBatchError inside doEmitBatchCommitment) never blocks
+    // future batches. The no-op handler intentionally swallows the error
+    // because it has already been reported.
+    this.batchChainTail = next.then(undefined, () => { /* swallow — already reported */ });
+    return next;
+  }
+
+  /**
+   * Inner implementation of batch commitment, always called serially by
+   * `emitBatchCommitment`.
+   */
+  private async doEmitBatchCommitment(signedRecords: SignedAuditEvidence[]): Promise<void> {
+    try {
+      const leafHashes = signedRecords.map(hashSignedRecord);
+      const merkleRoot = computeMerkleRoot(leafHashes);
+      const batchSeq = ++this.batchSeq;
+      const firstSeq = signedRecords[0]!.seq;
+      const lastSeq = signedRecords[signedRecords.length - 1]!.seq;
+
+      const commitment: AuditBatchCommitment = {
+        batchId: generateId(),
+        replicaId: this.replicaId,
+        batchSeq,
+        previousBatchHash: this.previousBatchHash,
+        merkleRoot,
+        recordCount: signedRecords.length,
+        firstSeq,
+        lastSeq,
+        ts: new Date().toISOString(),
+      };
+
+      let signed: SignedBatchCommitment;
+      if (this.batchSigner) {
+        signed = await this.batchSigner.signBatch(commitment);
+      } else {
+        // No batch signer configured: emit an unsigned commitment so
+        // `onBatch` and anchors still receive the Merkle root (useful for
+        // development and staging environments where key management is not
+        // yet set up). The absence of a signature is obvious from the empty
+        // fields.
+        signed = { ...commitment, signature: '', keyId: '', algorithm: '' };
+      }
+
+      // Advance the batch chain before notifying callbacks so the state is
+      // consistent even if a callback throws.
+      this.previousBatchHash = hashBatchCommitment(signed);
+
+      // Fan out to all external anchors concurrently so one slow anchor
+      // does not block others. Per-anchor failures are isolated: a
+      // rejection is caught, reported via onBatchError (with the anchor
+      // name included), and the remaining anchors are unaffected.
+      if (this.anchors.length > 0) {
+        const results = await Promise.allSettled(
+          this.anchors.map((anchor) => anchor.anchorBatch(signed)),
+        );
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i]!;
+          if (result.status === 'rejected') {
+            const anchorName = this.anchors[i]!.name;
+            this.reportBatchError(
+              new Error(
+                `Anchor '${anchorName}' failed: ${
+                  result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason)
+                }`,
+              ),
+            );
+          }
+        }
+      }
+
+      if (this.onBatch) {
+        try {
+          this.onBatch(signed);
+        } catch {
+          // Sink failure must not break the pipeline.
+        }
+      }
+    } catch (err) {
+      this.reportBatchError(err);
+    }
+  }
+
+  /**
+   * Route a batch-level error to `onBatchError` while swallowing any
+   * exception thrown by the sink itself.
+   */
+  private reportBatchError(err: unknown): void {
+    if (this.onBatchError) {
+      try {
+        this.onBatchError(err);
+      } catch {
+        // Sink failure must not break the pipeline.
+      }
+    }
+  }
+
+  /** Number of Merkle batch commitments emitted over the lifetime of this pipeline. */
+  batchCommitmentCount(): number {
+    return this.batchSeq;
   }
 }
 

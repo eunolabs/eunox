@@ -135,7 +135,9 @@ function looksLikeSignedEvidence(record: unknown): record is SignedAuditEvidence
     typeof r.signature === 'string' &&
     typeof r.keyId === 'string' &&
     typeof r.algorithm === 'string' &&
-    typeof r.id === 'string'
+    typeof r.id === 'string' &&
+    typeof r.previousHash === 'string' &&
+    typeof r.seq === 'number'
   );
 }
 
@@ -249,7 +251,7 @@ export async function runVerifyEvidence(
         failures.push({
           file,
           index: i,
-          reason: 'record is missing required fields (signature, keyId, algorithm, id)',
+          reason: 'record is missing required fields (signature, keyId, algorithm, id, previousHash, seq)',
         });
         if (failFast) {
           break outer;

@@ -672,7 +672,31 @@ export interface AuditEvidence {
 }
 
 /**
- * Signed audit evidence with cryptographic signature
+ * Sentinel hash used as `previousHash` for the very first record in a chain
+ * and as `previousBatchHash` for the first batch. Sixty-four hex zeros (the
+ * SHA-256 digest of the empty string is a well-known constant, but an all-
+ * zeros sentinel is more readable and unambiguous as a genesis marker).
+ */
+export const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
+
+/**
+ * Signed audit evidence with cryptographic signature and hash-chain linkage.
+ *
+ * Every `SignedAuditEvidence` produced by {@link AuditEvidenceSigner} carries
+ * two additional fields that bind it into a tamper-evident chain:
+ *
+ *   - `previousHash` — the SHA-256 (hex) digest of the canonical form of the
+ *     preceding `SignedAuditEvidence` in this signer's chain. Set to
+ *     {@link GENESIS_HASH} for the first record. Tampering with any earlier
+ *     record invalidates the hash of its successor, unravelling the whole
+ *     chain from that point forward.
+ *
+ *   - `seq` — a monotonically increasing (1-based) sequence number assigned
+ *     by the signer. Gaps in `seq` indicate dropped records; duplicate `seq`
+ *     values indicate attempted record injection.
+ *
+ * Both fields are included in the canonical form that is signed, so they
+ * cannot be modified without invalidating the signature.
  */
 export interface SignedAuditEvidence extends AuditEvidence {
   /** Digital signature of the evidence */
@@ -680,6 +704,76 @@ export interface SignedAuditEvidence extends AuditEvidence {
   /** Key ID used for signing */
   keyId: string;
   /** Signing algorithm */
+  algorithm: string;
+  /**
+   * SHA-256 hex digest of the canonical form of the previous
+   * `SignedAuditEvidence` in this signer's chain. {@link GENESIS_HASH} for
+   * the first record.
+   */
+  previousHash: string;
+  /**
+   * Monotonically increasing (1-based) sequence number within this signer's
+   * chain. The signer assigns this; producers must not set it.
+   */
+  seq: number;
+}
+
+/**
+ * Unsigned Merkle batch commitment produced after each pipeline batch.
+ *
+ * A batch commitment is a cryptographic summary of all the `SignedAuditEvidence`
+ * records processed in one pipeline drain cycle. Its fields form a second
+ * chain (batch → batch) that is independent of the per-record chain:
+ *
+ *   - `merkleRoot` proves that the exact set of records with leaf hashes
+ *     `leafHashes[0..recordCount-1]` was committed. Any substitution,
+ *     addition, or removal of records changes the root.
+ *
+ *   - `previousBatchHash` links successive commitments so an attacker
+ *     cannot silently discard whole batches without breaking the chain.
+ *
+ * The commitment is signed by {@link AuditEvidenceSigner.signBatch} to
+ * produce a {@link SignedBatchCommitment} that can be published to an
+ * external anchor (object store, transparency log, SIEM).
+ */
+export interface AuditBatchCommitment {
+  /** Unique identifier for this batch. */
+  batchId: string;
+  /** Replica/pod identifier — set from `AUDIT_REPLICA_ID` or hostname. */
+  replicaId: string;
+  /** Monotonically increasing (1-based) batch sequence number for this replica. */
+  batchSeq: number;
+  /**
+   * SHA-256 hex of the canonical form of the previous {@link SignedBatchCommitment}.
+   * {@link GENESIS_HASH} for the first batch on this replica.
+   */
+  previousBatchHash: string;
+  /**
+   * Merkle root of the leaf hashes `canonicalSha256(SignedAuditEvidence)` for
+   * every record in this batch.
+   */
+  merkleRoot: string;
+  /** Number of records committed in this batch. */
+  recordCount: number;
+  /** `seq` of the first record in this batch. */
+  firstSeq: number;
+  /** `seq` of the last record in this batch. */
+  lastSeq: number;
+  /** ISO-8601 timestamp when the commitment was computed. */
+  ts: string;
+}
+
+/**
+ * Cryptographically signed batch commitment.  The signature covers the
+ * canonical JSON form of all {@link AuditBatchCommitment} fields so the
+ * commitment cannot be modified without detection.
+ */
+export interface SignedBatchCommitment extends AuditBatchCommitment {
+  /** Digital signature over the canonical form of the commitment fields. */
+  signature: string;
+  /** Key ID used for signing (matches the evidence signing key). */
+  keyId: string;
+  /** Signing algorithm (matches the evidence signing algorithm). */
   algorithm: string;
 }
 

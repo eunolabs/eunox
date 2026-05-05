@@ -164,6 +164,8 @@ describe('signedEvidenceToOcsf', () => {
       signature: 'sig',
       keyId: 'k1',
       algorithm: 'RS256',
+      previousHash: '0000000000000000000000000000000000000000000000000000000000000000',
+      seq: 1,
     };
     const e = signedEvidenceToOcsf(evidence, product);
     expect(e.class_uid).toBe(6003);

@@ -175,6 +175,61 @@ export function generateId(): string {
 }
 
 /**
+ * Compute the Merkle root of a list of SHA-256 hex digest strings.
+ *
+ * Follows the standard binary Merkle tree convention:
+ *   - **Empty input** → {@link MERKLE_EMPTY_ROOT} (SHA-256 of the empty string,
+ *     hex-encoded). Callers can distinguish "no records" from any non-empty tree.
+ *   - **Single leaf** → the leaf hash itself (the root is the leaf).
+ *   - **Odd number of leaves at any level** → the last node is duplicated before
+ *     computing its parent, matching Bitcoin's and RFC 6962's convention.
+ *   - **Internal node** → `sha256String(leftHex + rightHex)`.
+ *
+ * All leaf hashes must be 64-character lowercase hex strings (SHA-256).
+ * Non-conforming entries throw so callers cannot accidentally pass
+ * pre-base64-encoded or truncated digests.
+ *
+ * @param leafHashes  Array of 64-hex-char SHA-256 digests (one per record).
+ * @returns           64-hex-char Merkle root.
+ */
+export function computeMerkleRoot(leafHashes: string[]): string {
+  if (leafHashes.length === 0) {
+    // Sentinel for an empty batch — different from any valid tree root so
+    // verifiers can distinguish "no records committed" from a real commitment.
+    return MERKLE_EMPTY_ROOT;
+  }
+
+  for (const h of leafHashes) {
+    if (!/^[0-9a-f]{64}$/.test(h)) {
+      throw new Error(
+        `computeMerkleRoot: leaf hash must be a 64-character lowercase hex string, got '${h.substring(0, 16)}...'`,
+      );
+    }
+  }
+
+  let level = leafHashes.map((h) => h.toLowerCase());
+
+  while (level.length > 1) {
+    const next: string[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i]!;
+      // Duplicate the last node when the level has an odd count.
+      const right = i + 1 < level.length ? level[i + 1]! : level[i]!;
+      next.push(sha256String(left + right));
+    }
+    level = next;
+  }
+
+  return level[0]!;
+}
+
+/**
+ * Sentinel Merkle root used when there are no leaf hashes.
+ * This is the SHA-256 hex digest of the empty string.
+ */
+export const MERKLE_EMPTY_ROOT = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+/**
  * Check if a timestamp has expired
  */
 export function isExpired(expirationTimestamp: number): boolean {

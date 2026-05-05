@@ -20,6 +20,8 @@
 import type {
   AuditEvidence,
   SignedAuditEvidence,
+  AuditBatchCommitment,
+  SignedBatchCommitment,
   CapabilityConstraint,
   CapabilityTokenPayload,
 } from './wire';
@@ -110,6 +112,50 @@ export interface EvidenceSigner {
    * Verify a signed evidence record
    */
   verifyEvidence(signedEvidence: SignedAuditEvidence): Promise<boolean>;
+}
+
+/**
+ * Interface for signing Merkle batch commitments.
+ *
+ * Implemented by {@link AuditEvidenceSigner}. The pipeline passes the signer
+ * as `batchSigner` so batch commitments are signed with the same key as
+ * individual records — operators only need one key pair.
+ */
+export interface AuditBatchSigner {
+  signBatch(commitment: AuditBatchCommitment): Promise<SignedBatchCommitment>;
+}
+
+/**
+ * Pluggable external anchor for audit batch commitments.
+ *
+ * After each pipeline drain cycle, the {@link AuditPipeline} calls
+ * `anchorBatch` on every configured anchor so the commitment is published to
+ * an external witness. Anchors are invoked concurrently via `Promise.allSettled`
+ * so one slow anchor does not block others.
+ *
+ * Implementations **MAY throw**. The pipeline isolates per-anchor errors: a
+ * rejection is caught, reported via `onBatchError` (so Prometheus counters
+ * increment), and does not block remaining anchors or interrupt the pipeline.
+ * Retry logic is the anchor implementation's responsibility.
+ *
+ * Built-in implementations:
+ *   - **Logging anchor** (always active when batch signing is enabled): emits
+ *     the commitment as a structured log line for SIEM ingestion.
+ *   - **HTTP anchor** (opt-in via `AUDIT_ANCHOR_URL`): POSTs the
+ *     `SignedBatchCommitment` as JSON to an external endpoint (object-store
+ *     pre-signed PUT URL, transparency log, custom webhook).
+ */
+export interface AuditAnchor {
+  /** Human-readable name for logging and metrics labels. */
+  name: string;
+  /**
+   * Publish a signed batch commitment to the external anchor.
+   *
+   * MAY throw or return a rejected promise. The pipeline catches the error,
+   * includes the anchor name in the message, and forwards it to `onBatchError`
+   * before moving on.
+   */
+  anchorBatch(commitment: SignedBatchCommitment): Promise<void>;
 }
 
 /**

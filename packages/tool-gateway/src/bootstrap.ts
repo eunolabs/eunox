@@ -14,7 +14,12 @@ import {
   BUILTIN_ACTION_RESOLVER,
   ServiceConfig,
   EvidenceSigner,
+  AuditBatchSigner,
+  AuditAnchor,
   createSoftwareEvidenceSignerFromEnv,
+  AuditEvidenceSigner,
+  SignedAuditEvidence,
+  SignedBatchCommitment,
   KillSwitchManager,
   createKillSwitchManagerFromEnv,
   CallCounterStore,
@@ -744,6 +749,101 @@ export async function initializeServices(
       (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
       'drop_oldest_with_metric';
 
+    // Replica identity for batch commitments. Prefer the explicit
+    // AUDIT_REPLICA_ID env var (set to $(POD_NAME) via the Kubernetes
+    // downward API); fall back to the OS hostname so single-replica
+    // deployments still get a meaningful label.
+    const replicaIdFromEnv = (validated as { AUDIT_REPLICA_ID?: string }).AUDIT_REPLICA_ID;
+    let replicaId = replicaIdFromEnv ?? 'unknown-replica';
+    if (!replicaIdFromEnv) {
+      try {
+        replicaId = (require('os') as typeof import('os')).hostname();
+      } catch {
+        // hostname() failed — keep the default 'unknown-replica'
+      }
+    }
+
+    // Build the batch emitted/error counters BEFORE the pipeline so they
+    // exist even if no batches are processed during startup.
+    const batchEmittedCounter = new Counter({
+      name: 'euno_gateway_audit_batch_emitted_total',
+      help: 'Merkle batch commitments emitted by the async pipeline (signed or unsigned). ' +
+        'Each emission anchors a set of signed audit-evidence records in the per-replica batch chain. ' +
+        'Unsigned emissions occur when EVIDENCE_SIGNING_KEY_PEM is not set (dev/staging only).',
+      registers: [metricsRegistry],
+    });
+    batchEmittedCounter.inc(0);
+
+    const batchErrorsCounter = new Counter({
+      name: 'euno_gateway_audit_batch_errors_total',
+      help: 'Errors producing or anchoring Merkle batch commitments (signing failures + per-anchor publish failures). ' +
+        'A non-zero rate means the batch chain may have gaps; investigate the signer or anchor endpoint.',
+      registers: [metricsRegistry],
+    });
+    batchErrorsCounter.inc(0);
+
+    // Batch logger: a dedicated structured logger for batch commitments so
+    // SIEM queries can filter on `message === "Audit batch commitment"`.
+    const batchAuditLogger = createAuditLogger('tool-gateway', {
+      region: validated.GATEWAY_REGION,
+    });
+
+    // Timeout for the HTTP anchor's fetch call (milliseconds).
+    // Prevents a hung TCP connection or slow TLS handshake from stalling
+    // the pipeline worker indefinitely.
+    const AUDIT_ANCHOR_TIMEOUT_MS = 30_000;
+
+    // HTTP anchor — optional external endpoint (WORM bucket, transparency log, etc.)
+    const anchors: AuditAnchor[] = [];
+    const anchorUrl = (validated as { AUDIT_ANCHOR_URL?: string }).AUDIT_ANCHOR_URL;
+    if (anchorUrl) {
+      anchors.push({
+        name: 'http',
+        async anchorBatch(commitment: SignedBatchCommitment): Promise<void> {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), AUDIT_ANCHOR_TIMEOUT_MS);
+          let response: Response;
+          try {
+            response = await fetch(anchorUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(commitment),
+              signal: controller.signal,
+            });
+          } catch (err) {
+            logger.error('Audit batch HTTP anchor failed', {
+              error: err instanceof Error ? err.message : String(err),
+              anchorUrl,
+              timedOut: controller.signal.aborted,
+            });
+            // Re-throw so the pipeline records this via onBatchError.
+            throw err;
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!response.ok) {
+            const msg = `HTTP anchor returned ${response.status}`;
+            logger.warn('Audit batch HTTP anchor returned non-OK status', {
+              status: response.status,
+              anchorUrl,
+              batchId: commitment.batchId,
+            });
+            // Throw so the pipeline records this via onBatchError.
+            throw new Error(msg);
+          }
+        },
+      });
+      logger.info('Audit batch HTTP anchor configured', { anchorUrl });
+    }
+
+    // The evidenceSigner is an AuditEvidenceSigner when created by
+    // createSoftwareEvidenceSignerFromEnv; cast so we can pass it as a
+    // batchSigner. (AuditEvidenceSigner implements both EvidenceSigner
+    // and AuditBatchSigner.)
+    const batchSigner = (evidenceSigner instanceof AuditEvidenceSigner)
+      ? evidenceSigner as unknown as AuditBatchSigner
+      : undefined;
+
     auditPipeline = createAuditPipeline({
       signer: evidenceSigner,
       maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
@@ -752,10 +852,13 @@ export async function initializeServices(
       maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
       backpressure,
       maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS,
-      onDropped: (count, reason) => {
+      replicaId,
+      batchSigner,
+      anchors,
+      onDropped: (count: number, reason: string) => {
         droppedCounter.inc({ reason }, count);
       },
-      onSigned: (signed) => {
+      onSigned: (signed: SignedAuditEvidence) => {
         signedCounter.inc();
         // Mirror the per-record audit log line the synchronous path
         // emits, so operators searching for a specific evidence id
@@ -766,6 +869,8 @@ export async function initializeServices(
             sessionId: signed.sessionId,
             decision: signed.decision,
             signature: signed.signature.substring(0, 20) + '...',
+            seq: signed.seq,
+            previousHash: signed.previousHash.substring(0, 16) + '...',
           });
         } catch {
           // Audit-log emission is best-effort; never break signing on it.
@@ -777,9 +882,32 @@ export async function initializeServices(
           void ocsfTransport.send(signedEvidenceToOcsf(signed, ocsfProduct));
         }
       },
-      onSignError: (err) => {
+      onSignError: (err: unknown) => {
         signErrorsCounter.inc();
         logger.error('Audit pipeline failed to sign evidence', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+      onBatch: (commitment: SignedBatchCommitment) => {
+        batchEmittedCounter.inc();
+        try {
+          batchAuditLogger.info('Audit batch commitment', {
+            batchId: commitment.batchId,
+            replicaId: commitment.replicaId,
+            batchSeq: commitment.batchSeq,
+            merkleRoot: commitment.merkleRoot,
+            recordCount: commitment.recordCount,
+            firstSeq: commitment.firstSeq,
+            lastSeq: commitment.lastSeq,
+            previousBatchHash: commitment.previousBatchHash.substring(0, 16) + '...',
+          });
+        } catch {
+          // Audit-log emission is best-effort.
+        }
+      },
+      onBatchError: (err: unknown) => {
+        batchErrorsCounter.inc();
+        logger.error('Audit batch commitment failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       },
@@ -792,6 +920,9 @@ export async function initializeServices(
       maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
       backpressure,
       maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS ?? validated.AUDIT_PIPELINE_MAX_SIZE,
+      replicaId,
+      batchSigningEnabled: !!batchSigner,
+      httpAnchorEnabled: !!anchorUrl,
     });
   } else if (evidenceSigner && !validated.AUDIT_PIPELINE_ENABLED) {
     logger.warn(

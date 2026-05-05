@@ -31,6 +31,8 @@ class RecordingSigner implements EvidenceSigner {
   public readonly seen: AuditEvidence[] = [];
   public delayMs = 0;
   public failOnIds = new Set<string>();
+  private seq = 0;
+  private previousHash = '0000000000000000000000000000000000000000000000000000000000000000';
 
   async signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
     if (this.delayMs > 0) {
@@ -40,12 +42,19 @@ class RecordingSigner implements EvidenceSigner {
       throw new Error(`signer fail on ${evidence.id}`);
     }
     this.seen.push(evidence);
-    return {
+    const previousHash = this.previousHash;
+    const seq = ++this.seq;
+    const signed: SignedAuditEvidence = {
       ...evidence,
       signature: 'sig-' + evidence.id,
       keyId: 'k1',
       algorithm: 'RS256',
+      previousHash,
+      seq,
     };
+    // Advance the chain (use a simple hash of the id for the stub)
+    this.previousHash = require('crypto').createHash('sha256').update(JSON.stringify(signed)).digest('hex');
+    return signed;
   }
 
   async verifyEvidence(): Promise<boolean> {
