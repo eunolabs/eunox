@@ -138,7 +138,7 @@ flowchart TB
 
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `packages/common`                    | shared       | Types split into two opt-in subpaths — `@euno/common/wire` (JWT/HTTP shapes: `CapabilityTokenPayload`, `CapabilityCondition` discriminated union, issue/validate/audit/storage/db payloads) and `@euno/common/runtime` (in-process surfaces: `UserContext`, `ResolvedRole`, `AgentInventoryRecord`, `EvidenceSigner`, `IdentityProvider`, `TokenSigner/Verifier`, `KillSwitchManager`, `ServiceConfig` and friends) — plus `ConditionRegistry`, `KillSwitchManager` (in-mem + Redis), `EvidenceSigner`, `CallCounterStore`, role mapping, validators. The bare `@euno/common` entry point still re-exports the union of both subpaths for back-compat (R-8 in `IMPROVEMENTS_AND_REFACTORING.md`). |
+| `packages/common`                    | shared       | Types split into two opt-in subpaths — `@euno/common/wire` (JWT/HTTP shapes: `CapabilityTokenPayload`, `CapabilityCondition` discriminated union, issue/validate/audit/storage/db payloads) and `@euno/common/runtime` (in-process surfaces: `UserContext`, `ResolvedRole`, `AgentInventoryRecord`, `EvidenceSigner`, `IdentityProvider`, `TokenSigner/Verifier`, `KillSwitchManager`, `ServiceConfig` and friends) — plus `ConditionRegistry`, `KillSwitchManager` (in-mem + Redis), `EvidenceSigner`, `CallCounterStore`, role mapping, validators. The bare `@euno/common` entry point still re-exports the union of both subpaths for back-compat. |
 | `packages/capability-issuer`         | ~1.6k (service) | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services |
 | `packages/tool-gateway`              | ~0.7k (service) | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store |
 | `packages/agent-runtime`             | small        | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway |
@@ -623,10 +623,10 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Crypto signing      | `signer.ts` adapter; `azure-signer.ts`, `aws-kms-signer.ts`, etc. | KMS never sees the message body — digest only                    |
 | Key rotation (R-6)  | `GET /.well-known/jwks.json` (issuer); `JwksClient` (gateway) | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default). |
 | Audit               | `evidence.ts` + `createAuditLogger` + `EvidenceSigner`        | Fail-closed: cannot enable crypto-audit without a signer             |
-| Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry **not yet wired** (see `IMPROVEMENTS_AND_REFACTORING.md` § R-3) |
+| Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry not yet wired                                          |
 | Rate limiting       | `express-rate-limit` per-IP at issuer and gateway             | Limits are env-configurable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`; defaults are issuer `100/min` and gateway `1000/min`. No per-user / per-token limit yet |
 | Schema evolution    | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`| Fail-closed on unknown versions                                      |
-| Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`); see `IMPROVEMENTS_AND_REFACTORING.md` § R-5 |
+| Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`) |
 | Tests               | Per-package `tests/` + `packages/integration-tests`           | ≈0.7 test:src LOC ratio                                              |
 
 ---
@@ -651,8 +651,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
   capability, missing evidence signer with crypto-audit on — all hard
   refusals.
 
-**Properties this architecture does *not* yet give you** (fully
-catalogued in [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md)):
+**Properties this architecture does *not* yet give you:**
 
 - A self-service UI for non-engineers to author manifests.
 - DPoP sender-constrained tokens (F-2).
@@ -669,4 +668,4 @@ catalogued in [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING
 | Adopt Euno from a specific framework                      | [`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md)                                          |
 | Deploy it                                                 | [`DEPLOYMENT.md`](./DEPLOYMENT.md), [`PRODUCTION_DEPLOYMENT_CHECKLIST.md`](./PRODUCTION_DEPLOYMENT_CHECKLIST.md) |
 | Operate it                                                | [`PILOT_PLAYBOOK.md`](./PILOT_PLAYBOOK.md), [`INCIDENT_RESPONSE_RUNBOOK.md`](./INCIDENT_RESPONSE_RUNBOOK.md) |
-| Find the gaps and the proposed work to close them         | [`IMPROVEMENTS_AND_REFACTORING.md`](./IMPROVEMENTS_AND_REFACTORING.md) ← *this PR*           |
+| Find the gaps and the proposed work to close them         | [`capability-model.md`](./capability-model.md)                                                              |

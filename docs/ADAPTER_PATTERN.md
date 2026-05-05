@@ -32,8 +32,6 @@ The Euno capability governance system implements a clean adapter pattern for ide
    - `DIDSigner`: Signs capability tokens with the issuer's DID-bound
      private key, publishing the public key via `/.well-known/did.json`
    - Implementation lives in `packages/capability-issuer/src/{did-identity-provider,did-signer,did-resolver}.ts`;
-     see [`FUTURE_DEVELOPMENT_IMPLEMENTATION.md`](./FUTURE_DEVELOPMENT_IMPLEMENTATION.md)
-     for the resolver design.
 
 ## Key Benefits
 

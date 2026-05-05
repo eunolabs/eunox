@@ -1,8 +1,7 @@
 # `@euno/partner-issuer-sim`
 
 Simulated "partner organization" capability issuer used by the cross-org
-trust harness (`docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`,
-Sprint 4 → Team DP, item #5).
+trust harness.
 
 This package is **not** published to any registry. It exists in the
 monorepo solely to drive the cross-org integration tests in

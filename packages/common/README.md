@@ -13,11 +13,7 @@ narrowest one that fits its needs.
 | `@euno/common/runtime`  | In-process service interfaces (`EvidenceSigner`, `IdentityProvider`, `TokenSigner`, `TokenVerifier`, `KillSwitchManager`, `PostureEmitterLike`), the authenticated `UserContext` flowing through the issuer, the `AgentInventoryRecord` emitted to posture surfaces, and the `*Config` shapes consumed at boot. | A service or service-side adapter implements one of the pluggable interfaces or threads `UserContext` through its request pipeline. |
 | `@euno/common`          | Back-compat union of both of the above plus the runtime helpers (`ConditionRegistry`, the in-memory and Redis `KillSwitchManager`s, `CallCounterStore`, role mapping, validators, logger, evidence helpers). | Existing code paths and ad-hoc usage where the wire/runtime distinction does not matter. |
 
-The split was introduced by **R-8** in
-[`docs/IMPROVEMENTS_AND_REFACTORING.md`](../../docs/IMPROVEMENTS_AND_REFACTORING.md)
-to address I-11 (`types.ts` mixed wire and runtime surfaces) and to set up
-I-12 (an OpenAPI ↔ TypeScript generator can target `./src/wire.ts` without
-having to filter out runtime declarations).
+The `@euno/common/wire` and `@euno/common/runtime` subpath split separates wire types (JWT/HTTP shapes) from runtime interfaces, so an OpenAPI ↔ TypeScript generator can target `./src/wire.ts` without filtering out runtime declarations.
 
 ```ts
 // Spec-only consumer (parser, partner SDK, type-generation target):

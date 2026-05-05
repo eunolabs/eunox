@@ -1,9 +1,9 @@
 # Capability Manifest Guide
 
-> Sprint 6 deliverable. Patterns "discovered during pilot" for writing
-> capability manifests that work the first time, age well, and survive
-> Sentinel scrutiny. This guide is the canonical companion to
-> `euno init` / `euno validate` / `euno plan` in `packages/cli`.
+> Patterns for writing capability manifests that work the first time,
+> age well, and survive Sentinel scrutiny. This guide is the canonical
+> companion to `euno init` / `euno validate` / `euno plan` in
+> `packages/cli`.
 
 A **capability manifest** is the YAML / JSON document that the
 [`Capability Issuer`](../packages/capability-issuer) consumes to
@@ -272,4 +272,3 @@ fail builds on schema-version drift before they reach production.
 - **Why the gateway is the policy decision point**: [`enforcement.md`](./enforcement.md)
 - **Adapter pattern (custom identity / signers)**: [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md)
 - **DID / IAM integration**: [`did-iam-integration.md`](./did-iam-integration.md)
-- **Sprint 6 hypercare exit and ownership**: [`SPRINT_6_STABILIZATION_HANDOFF.md`](./SPRINT_6_STABILIZATION_HANDOFF.md)

@@ -1,6 +1,6 @@
 # Euno - Capability-Native Agent Governance System
 
-A production-quality capability-based agent governance system with Azure integration, implementing Milestone 1 Sprints 1-2, Milestone 2 Sprints 3-4, and Milestone 3 Sprints 5-6 of the execution plan.
+A production-quality capability-based agent governance system with Azure integration.
 
 ## Overview
 
@@ -15,7 +15,7 @@ Euno provides a zero-trust security framework for AI agents, combining decentral
    - Integrates with Azure AD for user authentication
    - Uses Azure Key Vault, AWS KMS, or GCP Cloud KMS for cryptographic signing
    - Implements policy-driven issuance based on user roles
-   - **NEW Sprint 3**: Token renewal and capability attenuation
+   - Token renewal and capability attenuation
 
 2. **Tool Gateway** (`packages/tool-gateway`)
    - Validates capability tokens
@@ -30,28 +30,25 @@ Euno provides a zero-trust security framework for AI agents, combining decentral
    - Cryptographic utilities
    - Adapter pattern for pluggable identity and signing providers
 
-4. **CLI Tool** (`packages/cli`) **NEW Sprint 3**
+4. **CLI Tool** (`packages/cli`)
    - Command-line interface for capability management
    - Initialize and validate agent manifests
    - Request and manage capability tokens
 
 ## Key Features
 
-### Core Capabilities (Sprints 1-2)
 - **Zero-Trust Architecture**: Every agent action requires explicit capability validation
 - **Azure Integration**: Native support for Azure AD, Key Vault, and managed identities
 - **W3C Standards**: JWT tokens compatible with W3C Verifiable Credentials
 - **Pluggable Identity**: Abstracted identity provider interface for multi-vendor support
 - **Comprehensive Audit**: All issuance and enforcement decisions are logged
 - **Production Ready**: Full TypeScript implementation with comprehensive tests
-
-### Sprint 3 Enhancements
 - **Capability Delegation**: Attenuate tokens to create child capabilities with reduced scope
 - **Token Renewal**: Refresh tokens without re-authentication
-- **DID Integration**: W3C DID Document support (did:web format)
+- **DID Integration**: W3C DID Document support (did:web, did:ion, did:key)
 - **Developer CLI**: Tools for manifest creation and token management
 - **Enhanced Audit**: Parent-child capability tracking in audit logs
-- **Sandbox Hardening**: Production-grade container security (NEW)
+- **Sandbox Hardening**: Production-grade container security
   - Non-privileged user execution (UID 1001/1002)
   - AppArmor/SELinux profiles blocking dangerous syscalls
   - CPU/memory limits via cgroups
@@ -481,108 +478,26 @@ Required environment variables for production:
 - Configure appropriate logging destinations
 - Set secure `ISSUER_DID` (e.g., `did:web:your-domain.com`)
 
-## Future Enhancements (Sprint 7+)
+## Future Enhancements
 
-The Sprint 6 hand-off backlog lives in
-[`docs/NEXT_STEPS_BACKLOG.md`](docs/NEXT_STEPS_BACKLOG.md). Highlights:
+Planned improvements include:
 
 - [ ] Self-service web UI for capability requests and pilot dashboards (`web/`)
 - [ ] Dynamic policy engine (OPA / Cedar) plugged in via the existing condition registry
-- [ ] Productionize the AWS / GCP cross-cloud profile from the [Sprint 6 demo runbook](docs/CROSS_CLOUD_DEMO.md)
 - [ ] Multi-region active/active issuer
-- [ ] Federated trust to a partner organization (already designed in [`docs/cross-organizations.md`](docs/cross-organizations.md))
+- [ ] Federated trust to a partner organization (see [`docs/cross-organizations.md`](docs/cross-organizations.md))
 - [ ] Continuous evidence-chain verification job
 - [ ] OpenTelemetry tracing across issuer → gateway → backend
 - [ ] Submit the capability JWT profile as an IETF Internet-Draft
 
-## Sprint Status
+## Implementation Status
 
-| Sprint | Theme                                                    | Status | Reference                                                      |
-|--------|----------------------------------------------------------|--------|----------------------------------------------------------------|
-| 1-2    | Foundation, sandbox baseline, gateway enforcement, audit | ✅     | [`docs/SPRINT_1_2_SUMMARY.md`](docs/SPRINT_1_2_SUMMARY.md)     |
-| 3-4    | DID, delegation, renewal, distributed kill switch & revocation, framework adapters | ✅ | [`docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`](docs/SPRINT_3_4_IMPLEMENTATION_SUMMARY.md) |
-| 5      | Production pilot launch (Bicep IaC, Sentinel, HA, hypercare) | ✅ | [`docs/SPRINT_5_PILOT_LAUNCH.md`](docs/SPRINT_5_PILOT_LAUNCH.md) |
-| 6      | Pilot stabilization & hand-off (tuned thresholds, ownership, manifest cookbook, cross-cloud demo runbook, next-steps backlog) | ✅ | [`docs/SPRINT_6_STABILIZATION_HANDOFF.md`](docs/SPRINT_6_STABILIZATION_HANDOFF.md) |
-| 7-8    | Self-service UI, dynamic policy engine, federation depth, standards contributions | 🔄 (planning) | [`docs/NEXT_STEPS_BACKLOG.md`](docs/NEXT_STEPS_BACKLOG.md) |
+All core capabilities have shipped:
 
-## Sprint 3 Implementation Status
-
-### Completed Features ✓
-
-1. **Capability Delegation (/attenuate endpoint)**
-   - Child tokens validated as strict subsets of parent capabilities
-   - Expiration cannot exceed parent token's expiration
-   - Parent-child relationships tracked in audit logs via `parentCapabilityId`
-
-2. **Token Renewal (/renew endpoint)**
-   - Extends token lifetime without re-authentication
-   - Maintains all original capabilities
-   - Creates audit trail linking renewed tokens
-
-3. **Developer CLI Tool**
-   - Manifest initialization and validation
-   - Configuration management
-   - Extensible command structure for future features
-
-4. **Enhanced Capability Types**
-   - Resource patterns support wildcards (e.g., `api://service/*`)
-   - `file_access`: Use resource pattern `storage://container/path`
-   - `api_invoke`: Use resource pattern `api://service/endpoint`
-   - Conditions field available for advanced constraints
-
-5. **DID Integration**
-   - `did:web` format fully supported
-   - DID Document endpoint at `/.well-known/did.json`
-   - W3C standards-compliant structure
-   - Ready for `did:ion` extension
-
-6. **Sandbox Hardening (Sprint 3 Security Requirements)**
-   - **Non-privileged User Execution**
-     - Capability Issuer runs as UID 1001
-     - Tool Gateway runs as UID 1002
-     - Both enforce `runAsNonRoot: true`
-   - **AppArmor/SELinux Profiles**
-     - Blocks ptrace, mount, sys_admin, sys_module
-     - Prevents privilege escalation
-     - Profile: `k8s/security-policies/apparmor-profile.conf`
-   - **Resource Limits (cgroups)**
-     - CPU: 250m-1000m per container
-     - Memory: 512Mi-2Gi per container
-     - Node.js: `--max-old-space-size=512`
-   - **Environment Scrubbing**
-     - No secrets in environment variables
-     - Kubernetes Secrets for sensitive data
-     - ConfigMaps for non-sensitive config
-   - **Read-Only Root Filesystem**
-     - Only tmpfs mounts writable (/tmp, /app/.npm)
-     - Persistent volumes quota: 0
-   - **Network Policies**
-     - Default deny all ingress/egress
-     - Allowlist-only egress to necessary services
-     - DNS, Azure services, backend only
-   - **Pod Security Standards**
-     - Restricted mode enforced
-     - Capability drop: ALL
-     - Seccomp: RuntimeDefault
-     - No host namespaces
-
-### Production Readiness
-
-- ✓ All 26 existing tests passing
-- ✓ TypeScript compilation with strict mode enabled
-- ✓ Zero compiler errors or warnings
-- ✓ Comprehensive audit logging
-- ✓ Kill switch mechanisms (global, session, agent-scoped)
-- ✓ Cryptographic evidence generation
-- ✓ Role-based capability mapping
-
-### Design Principles
-
-- **Security**: Token validation at every gateway interaction
-- **Auditability**: Complete audit trail with parent-child relationships
-- **Extensibility**: Adapter pattern for pluggable identity and signing
-- **Standards Compliance**: W3C DIDs, JWT/VC compatibility
-- **Zero Trust**: No implicit trust, always verify
+- ✅ Foundation, sandbox baseline, gateway enforcement, audit logging
+- ✅ DID support (did:web, did:ion, did:key), delegation, renewal, distributed kill switch & revocation, framework adapters
+- ✅ Production pilot deployment (Bicep IaC, Sentinel analytics, HA/HPA)
+- ✅ Pilot stabilization, multi-cloud parity (AWS / GCP), manifest cookbook
 
 ## Production Deployment Checklist
 
@@ -699,9 +614,9 @@ Before deploying Euno to production, ensure all items below are completed:
 
 ## Contributing
 
-This project follows the Azure-Integrated Hybrid Execution Plan for Capability-Native Agent Governance. See `docs/execution-plan.md` for the full roadmap and the per-sprint summaries under `docs/SPRINT_*.md` for what landed in each sprint.
+See [`docs/README.md`](docs/README.md) for the documentation index and contribution guidelines.
 
-Code ownership and review responsibilities are formalized in [`CODEOWNERS`](CODEOWNERS) (Sprint 6 hand-off). On-call rotation and the bug-fix / tuning playbook live in [`docs/SPRINT_6_STABILIZATION_HANDOFF.md`](docs/SPRINT_6_STABILIZATION_HANDOFF.md).
+Code ownership and review responsibilities are formalized in [`CODEOWNERS`](CODEOWNERS).
 
 ## License
 

@@ -65,10 +65,9 @@ so the policy lives in exactly one place.
 
 5. **Create the deployment + stage** as usual.
 
-## Exit criteria parity (Sprint-1)
+## Exit criteria parity
 
-The same exit criteria listed in `docs/SPRINT_1_2_SUMMARY.md` for the
-Azure path apply here:
+The following exit criteria apply here:
 
 * Valid token with correct scope → action allowed (200 from upstream).
 * Missing/invalid/expired token → 401 from API Gateway directly.

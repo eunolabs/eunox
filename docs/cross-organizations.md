@@ -253,7 +253,7 @@ The current state of cross-org agent federation is early: only **23% of organiza
 
 ## 8. Running the Cross-Org Trust Harness Locally
 
-Implements [Sprint 3-4 gap #5: Cross-Organizational Trust Harness](sprint-3-4-gaps/05-cross-org-trust-harness.md).
+
 
 The harness lets you exercise the inbound and outbound legs of cross-org
 delegation end-to-end, without standing up a real partner organization.

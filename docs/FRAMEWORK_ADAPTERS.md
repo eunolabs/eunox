@@ -1,10 +1,8 @@
 # Framework Adapters
 
 > **Status:** ✅ Implemented (all three adapters shipped on top of
-> `@euno/agent-runtime`). This document is the design reference that was
-> previously missing — `execution-plan.md` calls out the framework
-> adapters as a Sprint-2 deliverable but no design doc had been written
-> for them.
+> `@euno/agent-runtime`). This document is the design reference for the
+> framework adapters.
 
 ## Implementation reference
 
@@ -37,7 +35,7 @@ framework-native middleware that:
    trace lines up 1:1 with the audit log produced by the gateway.
 
 These four obligations are spelled out in the Sprint-1 / Sprint-2
-acceptance criteria of [`execution-plan.md`](./execution-plan.md).
+acceptance criteria.
 
 ## Scope (and non-scope)
 
@@ -151,7 +149,7 @@ the SIEM.
 ## Acceptance scenarios (CI matrix)
 
 Each adapter ships with the same three-scenario suite, executed in CI
-for every PR (per `execution-plan.md` §"Framework Adapter Acceptance"):
+for every PR:
 
 | Scenario | Expected behaviour |
 | -------- | ------------------ |
@@ -175,8 +173,7 @@ The implementations of these scenarios live alongside the source in
 
 To make adoption a one-line operation,
 `packages/cli/src/index.ts::init` accepts a
-`--framework {langchain|maf|crewai}` flag (per `execution-plan.md`
-Sprint-4 criterion). When set, `euno init` writes both:
+`--framework {langchain|maf|crewai}` flag. When set, `euno init` writes both:
 
 1. The standard `agent-capability.yaml` manifest.
 2. A starter wiring file for the chosen framework (`euno-langchain.ts`,
@@ -190,8 +187,6 @@ a copy/paste production solution.
 
 ## Cross-references
 
-- [`execution-plan.md`](./execution-plan.md) — Sprint-1 / Sprint-2
-  acceptance criteria and the underlying motivation.
 - [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md) — adapter pattern for
   identity / signing (different layer, same idea).
 - [`enforcement.md`](./enforcement.md) — why the gateway, not the

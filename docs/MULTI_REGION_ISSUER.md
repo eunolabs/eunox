@@ -3,8 +3,6 @@
 Status: implemented in this PR.
 Cross-references:
 
-- `docs/IMPROVEMENTS_AND_REFACTORING.md` § 5 (F-7), § 6.1 (sequencing
-  rules — F-7 ships only after F-1 is tenant-aware, which it is).
 - `docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md` (region-related items).
 - `docs/openapi/capability-issuer.yaml` — `region` in the
   `/.well-known/capability-issuer` discovery doc and the

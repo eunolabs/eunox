@@ -49,9 +49,9 @@ apigeecli apis deploy --name euno-tool-gateway --rev 1 \
   --token $(gcloud auth print-access-token)
 ```
 
-## Exit criteria parity (Sprint-1)
+## Exit criteria parity
 
-The same exit criteria from `docs/SPRINT_1_2_SUMMARY.md` apply:
+The following exit criteria apply:
 
 * Valid token with correct scope → action allowed (200 from upstream).
 * Missing/invalid/expired token → 401 directly from API Gateway / Apigee.

@@ -4,10 +4,8 @@
 
 Wraps `AuditEvidenceSigner.verifyEvidence` from `packages/common/src/evidence.ts`
 in a batch-oriented entry point so the previous interval's signed audit
-evidence can be re-checked on a schedule. Per
-[`docs/IMPROVEMENTS_AND_REFACTORING.md`](../docs/IMPROVEMENTS_AND_REFACTORING.md)
-F-9 and [`docs/NEXT_STEPS_BACKLOG.md`](../docs/NEXT_STEPS_BACKLOG.md) § 4,
-running this on a daily cron is what catches log tampering automatically.
+evidence can be re-checked on a schedule. Running this on a daily cron
+catches log tampering automatically.
 
 ### Inputs
 

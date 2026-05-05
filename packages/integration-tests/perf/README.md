@@ -1,10 +1,6 @@
-# Perf scenarios — load-test artefacts (I-22)
+# Perf scenarios — load-test artefacts
 
-This directory implements **I-22** from
-[`docs/IMPROVEMENTS_AND_REFACTORING.md`](../../../docs/IMPROVEMENTS_AND_REFACTORING.md):
-
-> *No load-test artefacts. `packages/integration-tests` is functional only.
-> A k6 / autocannon scenario per route would let the team set and defend SLOs.*
+This directory provides load-test artefacts so the team can set and defend SLOs.
 
 It ships **two complementary toolchains** that share a single SLO
 source-of-truth ([`slo.ts`](./slo.ts)):

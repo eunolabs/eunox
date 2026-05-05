@@ -226,10 +226,6 @@ curl -X POST http://localhost:3002/admin/kill-switch/agent/agent-456/kill \
 - ⚠️ Data redaction remains roadmap/design work and is tracked in `capability-model.md`
 - 📚 Cross-organization trust remains reference guidance in `cross-organizations.md`, not current MVP runtime scope
 
-For sprint-by-sprint evidence, see
-[`SPRINT_3_4_IMPLEMENTATION_SUMMARY.md`](./SPRINT_3_4_IMPLEMENTATION_SUMMARY.md)
-and [`SPRINT_5_PILOT_LAUNCH.md`](./SPRINT_5_PILOT_LAUNCH.md).
-
 ## Development
 
 ### Project Structure
@@ -259,7 +255,7 @@ euno/
 │       │   ├── verifier.ts   # Token verification
 │       │   └── admin-api.ts  # Admin API endpoints
 │       └── tests/
-├── execution-plan.md         # Detailed implementation plan
+├── docs/                     # Documentation
 └── package.json             # Workspace configuration
 ```
 
@@ -374,7 +370,7 @@ See `.env.example` files in each package for required configuration.
 
 ## Contributing
 
-This project follows the execution plan defined in `execution-plan.md`. See that document for the roadmap and upcoming features.
+See [`docs/README.md`](../docs/README.md) for the documentation index.
 
 ## License
 

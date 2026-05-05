@@ -1,9 +1,8 @@
 # Euno Infrastructure-as-Code
 
-This directory contains the Sprint 5 reproducible-provisioning artifacts for
-the Azure pilot deployment, plus the **Sprint-1 multi-cloud parity**
-artifacts for AWS and GCP that were tracked as gaps in
-`docs/SPRINT_1_2_SUMMARY.md`.
+This directory contains the reproducible-provisioning artifacts for
+the Azure pilot deployment, plus the multi-cloud parity
+artifacts for AWS and GCP.
 
 ## Contents
 
@@ -68,8 +67,7 @@ az deployment group create \
   --parameters workspaceName=<your-law-name>
 ```
 
-See `../docs/SPRINT_5_PILOT_LAUNCH.md` for the full pilot rollout, hypercare,
-and metrics-collection procedures.
+See `../docs/PILOT_PLAYBOOK.md` for the full pilot rollout and metrics-collection procedures.
 
 ## Deploying the AWS Terraform module
 
