@@ -1066,6 +1066,44 @@ export const GatewayConfigSchema = z
       'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',
     ),
 
+    // Horizontal sharding (H-1) — consistent-hash agents to replicas --------
+    //
+    // When GATEWAY_SHARD_COUNT > 1 the gateway data-plane is sharded: the
+    // Envoy router (see k8s/envoy-shard-router.yaml) extracts the `sub` claim
+    // from each Bearer JWT and directs all traffic for a given agent to the
+    // same gateway pod.  That pod then serves the agent's `maxCalls` counter
+    // from its local in-memory store — no Redis INCR on the hot path.
+    // The revocation, kill-switch, and DPoP-replay stores still talk to Redis
+    // for cross-shard safety; the benefit there is that each pod's in-memory
+    // snapshot covers only its 1/N slice of the agent population.
+    //
+    // Set GATEWAY_SHARD_COUNT to the total number of gateway pods and
+    // GATEWAY_SHARD_INDEX to this pod's zero-based ordinal.  When using a
+    // StatefulSet (recommended) the ordinal is extracted from the pod name via
+    // the downward API — see k8s/tool-gateway.yaml for the init-container
+    // pattern that writes GATEWAY_SHARD_INDEX into the pod environment.
+    GATEWAY_SHARD_COUNT: envPositiveInt({
+      default: 1,
+      min: 1,
+      description:
+        'Total number of gateway shards in the fleet. Default 1 (sharding disabled). ' +
+        'Set to the replica count of your gateway StatefulSet when horizontal sharding is ' +
+        'enabled (H-1). The Envoy shard router must be deployed alongside the gateway and ' +
+        'configured with the same shard count so it routes agents consistently. Must match ' +
+        'GATEWAY_SHARD_COUNT on every replica; a mismatch causes inconsistent routing and ' +
+        'counter drift. See docs/HORIZONTAL_SHARDING.md.',
+    }),
+    GATEWAY_SHARD_INDEX: envPositiveInt({
+      default: 0,
+      min: 0,
+      description:
+        'Zero-based shard index for this gateway replica. Default 0. ' +
+        'Must be in the range [0, GATEWAY_SHARD_COUNT - 1]. When running as a Kubernetes ' +
+        'StatefulSet, inject this from the pod ordinal via an init container or a ' +
+        '`GATEWAY_SHARD_INDEX=$(echo $POD_NAME | awk -F- \'{print $NF}\')` env stanza. ' +
+        'See k8s/tool-gateway.yaml and docs/HORIZONTAL_SHARDING.md.',
+    }),
+
     // Multi-region active/active (F-7) ---------------------------------------
     GATEWAY_REGION: optionalString.describe(
       'Logical region tag for this gateway instance (e.g. "eastus2", "westeurope"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
@@ -1342,6 +1380,19 @@ export const GatewayConfigSchema = z
           'TRANSPARENCY_LOG_JWKS_FILE or TRANSPARENCY_LOG_JWKS_INLINE is required when ' +
           'REQUIRE_TRANSPARENCY_LOG_PROOF=true. Without trusted log keys the gateway cannot ' +
           'verify any SCT and would reject every token (fail-closed).',
+      });
+    }
+
+    // Horizontal sharding sanity: index must be within [0, count - 1].
+    if (cfg.GATEWAY_SHARD_COUNT > 1 && cfg.GATEWAY_SHARD_INDEX >= cfg.GATEWAY_SHARD_COUNT) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['GATEWAY_SHARD_INDEX'],
+        message:
+          `GATEWAY_SHARD_INDEX (${cfg.GATEWAY_SHARD_INDEX}) must be less than ` +
+          `GATEWAY_SHARD_COUNT (${cfg.GATEWAY_SHARD_COUNT}). ` +
+          'Each gateway replica needs a unique zero-based ordinal in the range ' +
+          '[0, GATEWAY_SHARD_COUNT - 1]. For a StatefulSet use the pod ordinal from $POD_NAME.',
       });
     }
   });

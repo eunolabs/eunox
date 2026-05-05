@@ -79,6 +79,14 @@ export interface ConditionContext {
   /** Counter store used by {@link MaxCallsCondition}. */
   counterStore?: CallCounterStore;
   /**
+   * The `sub` claim of the capability token currently being enforced.
+   * Forwarded to {@link CallCounterStore.incrementAndGet} so that
+   * shard-aware store implementations can route local-path agents to the
+   * in-memory counter and mis-routed agents to the Redis fallback.
+   * Optional: stores that do not need it simply ignore it.
+   */
+  agentSub?: string;
+  /**
    * Map of registered custom-condition handlers keyed by the
    * `CustomCondition.name` they implement.
    */
@@ -157,8 +165,16 @@ export interface CallCounterStore {
    * post-increment value. The counter MUST expire `windowSeconds`
    * after first creation (sliding-window semantics within
    * `windowSeconds` granularity).
+   *
+   * @param key - Stable counter key (`${capabilityId}:${conditionIndex}`).
+   * @param windowSeconds - Tumbling window length in seconds.
+   * @param agentSub - Optional `sub` claim of the capability token.
+   *   Shard-aware implementations use this to decide whether to serve the
+   *   request from the fast local in-memory path (owned agent) or fall back
+   *   to the shared Redis backend (mis-routed agent). Stores that do not
+   *   implement sharding ignore this parameter.
    */
-  incrementAndGet(key: string, windowSeconds: number): Promise<number>;
+  incrementAndGet(key: string, windowSeconds: number, agentSub?: string): Promise<number>;
 }
 
 /** Thrown by `validate*` helpers — surfaced by the issuer as `INVALID_REQUEST`. */
@@ -622,7 +638,7 @@ const maxCallsHandler: ConditionHandler<MaxCallsCondition> = {
         reason: 'maxCalls requires counterStore and counterKey in request context',
       };
     }
-    const current = await ctx.counterStore.incrementAndGet(ctx.counterKey, c.windowSeconds);
+    const current = await ctx.counterStore.incrementAndGet(ctx.counterKey, c.windowSeconds, ctx.agentSub);
     if (current > c.count) {
       return {
         allow: false,

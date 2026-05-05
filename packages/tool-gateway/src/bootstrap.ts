@@ -19,6 +19,8 @@ import {
   createKillSwitchManagerFromEnv,
   CallCounterStore,
   createCallCounterStoreFromEnv,
+  InMemoryCallCounterStore,
+  ShardLocalCallCounterStore,
   createLogger,
   createAuditLogger,
   loadActionResolverFromFile,
@@ -337,6 +339,8 @@ export async function initializeServices(
   // setup comes later). The callback is only invoked on live requests,
   // by which point the counter is guaranteed to be non-null.
   let redisErrorsCounter: Counter<string> | undefined;
+  // H-1: shard mis-route counter; also late-bound for the same reason.
+  let shardMisroutedCounter: Counter | undefined;
   const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(
     env,
     logger,
@@ -419,11 +423,45 @@ export async function initializeServices(
   const killSwitchManager: KillSwitchManager = await createKillSwitchManagerFromEnv(env, logger);
 
   // Build the call-counter store used by `maxCalls` condition enforcement.
-  const callCounterStore = await createCallCounterStoreFromEnv(
-    env,
-    logger,
-    () => redisErrorsCounter?.inc({ store: 'call_counter' }),
-  );
+  // When sharding is enabled (GATEWAY_SHARD_COUNT > 1) we use a
+  // ShardLocalCallCounterStore: the in-memory store handles owned agents
+  // (zero Redis traffic on the hot path) while the Redis store covers
+  // mis-routed traffic during topology changes. When sharding is disabled
+  // (default), we fall back to the standard Redis / in-memory selection.
+  let callCounterStore: CallCounterStore;
+  {
+    const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
+    const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
+
+    if (shardCount > 1) {
+      logger.info('Horizontal sharding enabled (H-1): using shard-local call-counter store', {
+        shardCount,
+        shardIndex,
+      });
+      // The base Redis store is still needed for mis-routed traffic.
+      const remoteStore = await createCallCounterStoreFromEnv(
+        env,
+        logger,
+        () => redisErrorsCounter?.inc({ store: 'call_counter' }),
+      );
+      callCounterStore = new ShardLocalCallCounterStore(
+        new InMemoryCallCounterStore(),
+        remoteStore,
+        {
+          shardIndex,
+          shardCount,
+          onMisrouted: () => shardMisroutedCounter?.inc(),
+        },
+        logger,
+      );
+    } else {
+      callCounterStore = await createCallCounterStoreFromEnv(
+        env,
+        logger,
+        () => redisErrorsCounter?.inc({ store: 'call_counter' }),
+      );
+    }
+  }
 
   // Build the cross-org partner-issuer trust resolver.
   const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger);
@@ -552,6 +590,59 @@ export async function initializeServices(
   redisErrorsCounter.inc({ store: 'revocation' }, 0);
   redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
   redisErrorsCounter.inc({ store: 'call_counter' }, 0);
+
+  // H-1: Horizontal sharding metrics.
+  // `euno_gateway_shard_info` — static labels with the shard topology so
+  // dashboards can correlate per-shard metrics to replica identity.
+  // `euno_gateway_shard_local_counter_size` — size of the in-memory call
+  // counter cache on this shard; a rising value means agents are accumulating
+  // history (normal); a value at zero in a sharded deployment means the shard
+  // is not receiving traffic (abnormal — check the Envoy router).
+  // `euno_gateway_shard_misrouted_total` — mis-routed requests (LB topology
+  // change in progress or misconfigured router); a sustained non-zero rate
+  // means the Envoy router's shard count does not match GATEWAY_SHARD_COUNT.
+  {
+    const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
+    const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
+
+    new Gauge({
+      name: 'euno_gateway_shard_info',
+      help: 'Static labels describing the shard topology of this replica.',
+      labelNames: ['shard_index', 'shard_count'],
+      registers: [metricsRegistry],
+      collect() {
+        this.set({ shard_index: String(shardIndex), shard_count: String(shardCount) }, 1);
+      },
+    });
+
+    // Register unconditionally so the series always exists in Prometheus.
+    // Returns 0 when sharding is disabled (GATEWAY_SHARD_COUNT <= 1) because
+    // the store is not a ShardLocalCallCounterStore in that case.
+    new Gauge({
+      name: 'euno_gateway_shard_local_counter_size',
+      help:
+        'Number of in-memory call-counter entries held by the shard-local store on this replica. ' +
+        'Non-zero only when GATEWAY_SHARD_COUNT > 1 and traffic is flowing to this shard.',
+      registers: [metricsRegistry],
+      collect() {
+        const store = callCounterStore as { localSize?: () => number } | undefined;
+        this.set(typeof store?.localSize === 'function' ? store.localSize() : 0);
+      },
+    });
+
+    if (shardCount > 1) {
+
+      shardMisroutedCounter = new Counter({
+        name: 'euno_gateway_shard_misrouted_total',
+        help:
+          'Requests whose agent `sub` does not hash to this shard. ' +
+          'A non-zero steady-state rate means the Envoy shard router is mis-configured or ' +
+          'its shard count does not match GATEWAY_SHARD_COUNT.',
+        registers: [metricsRegistry],
+      });
+      shardMisroutedCounter.inc(0);
+    }
+  }
 
   // R-9: build the async audit pipeline when evidence signing is on AND
   // the operator hasn't opted out via AUDIT_PIPELINE_ENABLED=false. The

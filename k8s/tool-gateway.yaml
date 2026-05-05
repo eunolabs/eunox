@@ -1,6 +1,19 @@
-# Kubernetes Deployment for Tool Gateway
+# Tool Gateway — StatefulSet for horizontal sharding (H-1).
+#
+# Using a StatefulSet instead of a Deployment gives every pod a stable
+# ordinal suffix in the form `tool-gateway-<N>`.  The init container below
+# extracts that ordinal and writes it to GATEWAY_SHARD_INDEX so each replica
+# knows its position in the consistent-hash ring without any external
+# coordination service.
+#
+# Combined with the Envoy shard router (k8s/envoy-shard-router.yaml) this
+# eliminates Redis INCR hot-keys for `maxCalls` conditions: all traffic for
+# a given agent consistently reaches the same pod, so that pod tracks the
+# counter in its local memory instead of making a Redis round-trip.
+#
+# See docs/HORIZONTAL_SHARDING.md for the full architecture.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: tool-gateway
   namespace: euno-system
@@ -8,7 +21,11 @@ metadata:
     app: tool-gateway
     component: data-plane
 spec:
+  # Keep in sync with GATEWAY_SHARD_COUNT and with the envoy-shard-router
+  # configmap (SHARD_COUNT).  A mismatch between replica count and
+  # GATEWAY_SHARD_COUNT causes counter drift until the slower end catches up.
   replicas: 3
+  serviceName: tool-gateway-headless
   selector:
     matchLabels:
       app: tool-gateway
@@ -19,10 +36,51 @@ spec:
         component: data-plane
     spec:
       serviceAccountName: tool-gateway
+      # Init container: extract the pod ordinal from $POD_NAME
+      # (e.g. "tool-gateway-2" → "2") and write it to a shared volume as
+      # GATEWAY_SHARD_INDEX so the main container can read it via envFrom.
+      # We use a tiny busybox rather than a custom image to keep the
+      # dependency footprint minimal.
+      initContainers:
+      - name: shard-index-init
+        image: busybox:1.36
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Extract the numeric suffix from the pod name (StatefulSet ordinal).
+          ORDINAL="${POD_NAME##*-}"
+          echo "GATEWAY_SHARD_INDEX=${ORDINAL}" > /env/shard.env
+          echo "Wrote GATEWAY_SHARD_INDEX=${ORDINAL} for pod ${POD_NAME}"
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: shard-env
+          mountPath: /env
       containers:
       - name: tool-gateway
         image: eunoacr.azurecr.io/tool-gateway:v1.0.0
         imagePullPolicy: Always
+        # Source the shard index written by the init container before
+        # starting Node. The init container writes:
+        #   GATEWAY_SHARD_INDEX=<ordinal>
+        # to /env/shard.env as a plain shell assignment. Sourcing the file
+        # exports it into the process environment so Node.js (and therefore
+        # the gateway config schema) can read it via process.env. The `exec`
+        # replaces the shell so signals (SIGTERM) propagate correctly and the
+        # container PID 1 is Node, not sh.
+        command:
+        - sh
+        - -c
+        - |
+          if [ -f /env/shard.env ]; then
+            . /env/shard.env
+            export GATEWAY_SHARD_INDEX
+          fi
+          exec node dist/index.js
         ports:
         - name: http
           containerPort: 3002
@@ -37,27 +95,21 @@ spec:
           value: "3002"
         - name: ADMIN_PORT
           value: "3003"
-        # Bind the admin server to the pod's IP (downward API) instead
-        # of the wildcard interface. The admin Service below targets
-        # port 3003 and reaches this pod via its endpoints, but the
-        # listener itself rejects connections that didn't arrive on
-        # the pod's own IP — defence in depth on top of ClusterIP-only
-        # so a misconfigured ingress or hostNetwork sidecar cannot
-        # expose /admin/* on a public path. Schema rejects production
-        # rollouts that leave this empty or set it to 0.0.0.0 / ::.
         - name: ADMIN_HOST
           valueFrom:
             fieldRef:
               fieldPath: status.podIP
-        # Declare the deployment availability tier so the gateway's
-        # config schema enforces the matching infrastructure (REDIS_URL
-        # is required for multi-replica). See
-        # docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md § "Redis availability tiers".
         - name: EUNO_DEPLOYMENT_TIER
           value: "multi-replica"
-        # R-6: gateway must read keys from the issuer JWKS endpoint, not
-        # the deprecated single-key endpoint. Schema rejects production
-        # rollouts that point at ISSUER_PUBLIC_KEY_URL alone.
+        # Horizontal sharding (H-1).  GATEWAY_SHARD_COUNT must match the
+        # StatefulSet replica count above and the SHARD_COUNT in the Envoy
+        # shard router configmap.  GATEWAY_SHARD_INDEX is injected by the
+        # init container from the pod ordinal.
+        - name: GATEWAY_SHARD_COUNT
+          value: "3"
+        # GATEWAY_SHARD_INDEX is sourced from the init-container-written
+        # /env/shard.env file via the container command wrapper above.
+        # The default (0) applies when running outside a StatefulSet.
         - name: ISSUER_JWKS_URL
           value: "http://capability-issuer:3001/.well-known/jwks.json"
         - name: BACKEND_SERVICE_URL
@@ -67,15 +119,8 @@ spec:
               key: backend-service-url
         - name: POLICY_VERSION
           value: "1.0.0"
-        # F-2: DPoP / RFC 9449 sender-constrained tokens. After the
-        # documented DPoP migration `true` is the production default and
-        # the schema rejects production rollouts that disable it.
         - name: DPOP_REQUIRED
           value: "true"
-        # Distributed coordination — REQUIRED for the multi-replica
-        # gateway so revocation, kill-switch, maxCalls, and DPoP replay
-        # state propagate across pods (otherwise each pod has its own
-        # in-memory store and authorization decisions split-brain).
         - name: REDIS_URL
           valueFrom:
             configMapKeyRef:
@@ -83,9 +128,6 @@ spec:
               key: redis-url
         - name: REVOCATION_FAIL_OPEN
           value: "false"
-        # Evidence signing: production must record a tamper-evident
-        # trail of authorization refusals (allow signing is optional;
-        # `deny` alone meets the production checklist requirement).
         - name: EVIDENCE_SIGNED_DECISIONS
           value: "deny"
         - name: EVIDENCE_SIGNING_KEY_FILE
@@ -127,20 +169,15 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
-        # Evidence-signing private key, mounted read-only from a
-        # Kubernetes Secret so the path at EVIDENCE_SIGNING_KEY_FILE
-        # resolves at boot. The Secret must contain key
-        # `evidence-signing-key.pem`. Without this mount the gateway
-        # fails to start because the production schema requires
-        # evidence signing to be active.
         - name: evidence-signing-key
           mountPath: /var/run/secrets/euno
+          readOnly: true
+        - name: shard-env
+          mountPath: /env
           readOnly: true
       volumes:
       - name: tmp
         emptyDir: {}
-      # Evidence-signing key projected from gateway-secrets so the
-      # file at EVIDENCE_SIGNING_KEY_FILE resolves at boot.
       - name: evidence-signing-key
         secret:
           secretName: gateway-secrets
@@ -148,7 +185,31 @@ spec:
           - key: evidence-signing-key.pem
             path: evidence-signing-key.pem
           defaultMode: 0400
+      - name: shard-env
+        emptyDir: {}
 ---
+# Headless Service required by StatefulSet for pod DNS (tool-gateway-0,
+# tool-gateway-1, …).  The Envoy shard router targets individual pods by
+# their ordinal-stable DNS name; this service makes those names resolvable.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway-headless
+  namespace: euno-system
+  labels:
+    app: tool-gateway
+spec:
+  clusterIP: None
+  ports:
+  - port: 3002
+    targetPort: 3002
+    protocol: TCP
+    name: http
+  selector:
+    app: tool-gateway
+---
+# ClusterIP Service for non-sharded consumers (health checks, metrics
+# scrapers, admin API clients) that do not need pod affinity.
 apiVersion: v1
 kind: Service
 metadata:
@@ -166,11 +227,7 @@ spec:
   selector:
     app: tool-gateway
 ---
-# Admin API Service — internal ClusterIP only. Combined with
-# `ADMIN_HOST=status.podIP` on the Deployment this gives two layers of
-# isolation for the /admin/* surface (ClusterIP scoping + listener
-# binding), so a misconfigured public ingress or LoadBalancer can never
-# accidentally expose token-revocation / kill-switch endpoints.
+# Admin API Service — internal ClusterIP only.
 apiVersion: v1
 kind: Service
 metadata:

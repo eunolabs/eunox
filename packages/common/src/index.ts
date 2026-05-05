@@ -25,3 +25,4 @@ export * from './ocsf';
 export * from './issuance-proofs';
 export * from './cosigner';
 export * from './transparency-log';
+export * from './shard';

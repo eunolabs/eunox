@@ -485,7 +485,7 @@ export class EnforcementEngine {
       // them as denials, in case a token from a future issuer carries
       // a condition this gateway does not yet implement.
       if (matchedCapability?.conditions && matchedCapability.conditions.length > 0) {
-        const conditionCtx = this.buildConditionContext(request, payload.jti);
+        const conditionCtx = this.buildConditionContext(request, payload.jti, payload.sub);
         const result = await enforceConditions(matchedCapability.conditions, conditionCtx);
         if (!result.allow) {
           const reason = `Condition not satisfied: ${result.reason}`;
@@ -780,12 +780,14 @@ export class EnforcementEngine {
   private buildConditionContext(
     request: ValidateActionRequest,
     capabilityId: string,
+    agentSub?: string,
   ): ConditionContext {
     const ctx = (request.context ?? {}) as Record<string, unknown>;
     const ctxOut: ConditionContext = {
       now: new Date(),
       counterStore: this.callCounterStore,
       counterKey: capabilityId,
+      agentSub,
     };
     if (typeof ctx.sourceIp === 'string') ctxOut.sourceIp = ctx.sourceIp;
     if (typeof ctx.operation === 'string') ctxOut.operation = ctx.operation;

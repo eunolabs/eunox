@@ -12,9 +12,11 @@ import {
   InMemoryCallCounterStore,
   RedisCallCounterStore,
   RedisCallCounterClient,
+  ShardLocalCallCounterStore,
   createCallCounterStoreFromEnv,
   createLogger,
 } from '../src';
+import { computeAgentShardIndex } from '../src/shard';
 
 const logger = createLogger('test');
 
@@ -145,5 +147,141 @@ describe('createCallCounterStoreFromEnv', () => {
     // production fallback exercised end-to-end.
     const store = await createCallCounterStoreFromEnv({ REDIS_URL: 'redis://localhost:6379' }, logger);
     expect(store).toBeInstanceOf(InMemoryCallCounterStore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ShardLocalCallCounterStore
+// ---------------------------------------------------------------------------
+
+// Helper: find a sub value that hashes to the given shard index.
+// Iterates numbered sub strings until it finds a match.  With small shard
+// counts (2-10), the first matching value is typically found within a few
+// hundred iterations.
+function subForShard(targetShard: number, shardCount: number): string {
+  for (let i = 0; i < 10_000; i++) {
+    const sub = `agent-${i}`;
+    if (computeAgentShardIndex(sub, shardCount) === targetShard) return sub;
+  }
+  throw new Error(`Could not find a sub for shard ${targetShard}/${shardCount}`);
+}
+
+describe('ShardLocalCallCounterStore', () => {
+  const SHARD_COUNT = 3;
+  const MY_SHARD = 1;
+
+  // Pre-compute subs that hash to each shard index for a 3-shard ring.
+  const ownedSub = subForShard(MY_SHARD, SHARD_COUNT);
+  const foreignSub0 = subForShard(0, SHARD_COUNT);
+  const foreignSub2 = subForShard(2, SHARD_COUNT);
+
+  function makeStore(opts?: { onMisrouted?: () => void }) {
+    const local = new InMemoryCallCounterStore();
+    const remote = new InMemoryCallCounterStore();
+    const store = new ShardLocalCallCounterStore(
+      local,
+      remote,
+      { shardIndex: MY_SHARD, shardCount: SHARD_COUNT, ...opts },
+      logger,
+    );
+    return { store, local, remote };
+  }
+
+  it('routes an owned agent to the local store', async () => {
+    const { store, local, remote } = makeStore();
+    const v = await store.incrementAndGet('key', 60, ownedSub);
+    expect(v).toBe(1);
+    expect(local.size()).toBe(1);
+    expect(remote.size()).toBe(0);
+  });
+
+  it('local counter increments on repeated owned-agent calls', async () => {
+    const { store, local } = makeStore();
+    await store.incrementAndGet('k', 60, ownedSub);
+    await store.incrementAndGet('k', 60, ownedSub);
+    const v = await store.incrementAndGet('k', 60, ownedSub);
+    expect(v).toBe(3);
+    expect(local.size()).toBe(1);
+  });
+
+  it('routes a mis-routed agent to the remote store', async () => {
+    const { store, local, remote } = makeStore();
+    const v = await store.incrementAndGet('key', 60, foreignSub0);
+    expect(v).toBe(1);
+    expect(local.size()).toBe(0);
+    expect(remote.size()).toBe(1);
+  });
+
+  it('increments the onMisrouted callback for mis-routed agents', async () => {
+    let count = 0;
+    const { store } = makeStore({ onMisrouted: () => { count++; } });
+    await store.incrementAndGet('key', 60, foreignSub0);
+    await store.incrementAndGet('key', 60, foreignSub2);
+    expect(count).toBe(2);
+  });
+
+  it('does NOT invoke onMisrouted for owned agents', async () => {
+    let count = 0;
+    const { store } = makeStore({ onMisrouted: () => { count++; } });
+    await store.incrementAndGet('key', 60, ownedSub);
+    expect(count).toBe(0);
+  });
+
+  it('falls back to the remote store when no agentSub hint is given', async () => {
+    const { store, local, remote } = makeStore();
+    const v = await store.incrementAndGet('key', 60);
+    expect(v).toBe(1);
+    expect(local.size()).toBe(0);
+    expect(remote.size()).toBe(1);
+  });
+
+  it('does NOT invoke onMisrouted when no agentSub hint is given', async () => {
+    let count = 0;
+    const { store } = makeStore({ onMisrouted: () => { count++; } });
+    await store.incrementAndGet('key', 60);
+    expect(count).toBe(0);
+  });
+
+  it('localSize() reflects only the local store entry count', async () => {
+    const { store } = makeStore();
+    await store.incrementAndGet('local-key', 60, ownedSub);
+    await store.incrementAndGet('remote-key', 60, foreignSub0);
+    expect(store.localSize()).toBe(1);
+  });
+
+  it('resetLocal() clears only the local store', async () => {
+    const { store, remote } = makeStore();
+    await store.incrementAndGet('local-key', 60, ownedSub);
+    await store.incrementAndGet('remote-key', 60, foreignSub0);
+    store.resetLocal();
+    expect(store.localSize()).toBe(0);
+    // Remote store is unaffected.
+    expect(remote.size()).toBe(1);
+  });
+
+  it('rate-limits the mis-route warn log (only logs once per interval)', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn');
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      const { store } = makeStore();
+      // First mis-route should log.
+      await store.incrementAndGet('k', 60, foreignSub0);
+      const firstWarnCount = warnSpy.mock.calls.length;
+      expect(firstWarnCount).toBeGreaterThan(0);
+
+      // Second mis-route within the interval should NOT log.
+      await store.incrementAndGet('k', 60, foreignSub0);
+      expect(warnSpy.mock.calls.length).toBe(firstWarnCount);
+
+      // After the interval elapses, the next mis-route should log again.
+      now += 61_000;
+      await store.incrementAndGet('k', 60, foreignSub0);
+      expect(warnSpy.mock.calls.length).toBeGreaterThan(firstWarnCount);
+    } finally {
+      Date.now = realNow;
+      warnSpy.mockRestore();
+    }
   });
 });
