@@ -7,6 +7,7 @@ import { DefaultKillSwitchManager } from '../src/kill-switch';
 import {
   RedisKillSwitchClient,
   RedisKillSwitchManager,
+  RedisKillSwitchSubscriber,
   createKillSwitchManagerFromEnv,
 } from '../src/redis-kill-switch';
 
@@ -74,6 +75,10 @@ function makeFakeClient(overrides: Partial<RedisKillSwitchClient> = {}): FakeCli
     async smembers(key: string): Promise<string[]> {
       calls.push({ method: 'smembers', args: [key] });
       return Array.from(sets.get(key) ?? []);
+    },
+    async publish(channel: string, message: string): Promise<unknown> {
+      calls.push({ method: 'publish', args: [channel, message] });
+      return 0;
     },
     async quit(): Promise<unknown> {
       calls.push({ method: 'quit', args: [] });
@@ -432,6 +437,415 @@ describe('RedisKillSwitchManager', () => {
     expect(() => client.triggerError('error', new Error('boom'))).not.toThrow();
     await mgr.close();
   });
+
+  describe('pub/sub propagation', () => {
+    interface FakeSubscriber extends RedisKillSwitchSubscriber {
+      subscribed: Set<string>;
+      emitMessage: (channel: string, message: string) => void;
+      emitError: (err: unknown) => void;
+    }
+
+    function makeFakeSubscriber(
+      overrides: Partial<RedisKillSwitchSubscriber> = {},
+    ): FakeSubscriber {
+      const subscribed = new Set<string>();
+      const messageListeners: Array<(channel: string, message: string) => void> = [];
+      const errorListeners: Array<(err: unknown) => void> = [];
+      const sub: FakeSubscriber = {
+        subscribed,
+        emitMessage(channel, message) {
+          for (const l of messageListeners) l(channel, message);
+        },
+        emitError(err) {
+          for (const l of errorListeners) l(err);
+        },
+        async subscribe(channel: string) {
+          subscribed.add(channel);
+          return undefined;
+        },
+        async unsubscribe(channel?: string) {
+          if (channel) subscribed.delete(channel);
+          else subscribed.clear();
+          return undefined;
+        },
+        async quit() {
+          return 'OK';
+        },
+        on(event: string, listener: (...args: unknown[]) => void) {
+          if (event === 'message') {
+            messageListeners.push(listener as (channel: string, message: string) => void);
+          } else if (event === 'error') {
+            errorListeners.push(listener as (err: unknown) => void);
+          }
+          return undefined;
+        },
+        ...overrides,
+      };
+      return sub;
+    }
+
+    it('publishes a granular event to <prefix>events on every successful write', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-A',
+      });
+      await mgr.start();
+
+      mgr.killSession('sess-1');
+      mgr.killAgent('agent-1');
+      mgr.activateGlobalKill();
+      mgr.deactivateGlobalKill();
+      mgr.reviveSession('sess-1');
+      mgr.reviveAgent('agent-1');
+      mgr.resetAll();
+
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const publishes = client.calls.filter((c) => c.method === 'publish');
+      expect(publishes).toHaveLength(7);
+      const ops = publishes.map((c) => JSON.parse(String(c.args[1])).op);
+      expect(ops).toEqual([
+        'kill_session',
+        'kill_agent',
+        'activate_global',
+        'deactivate_global',
+        'revive_session',
+        'revive_agent',
+        'reset_all',
+      ]);
+      // All publishes target the events channel and carry the
+      // originator instanceId so receivers can ignore self-echoes.
+      for (const c of publishes) {
+        expect(c.args[0]).toBe('killswitch:events');
+        const payload = JSON.parse(String(c.args[1]));
+        expect(payload.src).toBe('pod-A');
+        expect(payload.v).toBe(1);
+      }
+
+      await mgr.close();
+    });
+
+    it('does NOT publish when the Redis write fails (fail-closed)', async () => {
+      const client = makeFakeClient({
+        sadd: async () => {
+          throw new Error('redis down');
+        },
+      });
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-A',
+      });
+      await mgr.start();
+
+      mgr.killSession('sess-x');
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const publishes = client.calls.filter((c) => c.method === 'publish');
+      expect(publishes).toHaveLength(0);
+
+      await mgr.close();
+    });
+
+    it('subscribes to the events channel on start() and unsubscribes on close()', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await mgr.start();
+      expect(subscriber.subscribed.has('killswitch:events')).toBe(true);
+
+      await mgr.close();
+      expect(subscriber.subscribed.has('killswitch:events')).toBe(false);
+    });
+
+    it('applies remote kill_session events from another replica synchronously', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-B',
+      });
+      await mgr.start();
+      expect(mgr.isSessionKilled('remote-sess')).toBe(false);
+
+      // Simulate pod-A publishing a kill_session on the events channel.
+      subscriber.emitMessage(
+        'killswitch:events',
+        JSON.stringify({ v: 1, src: 'pod-A', op: 'kill_session', id: 'remote-sess' }),
+      );
+
+      // The cache update happens synchronously inside the message
+      // handler – no Redis round-trip, no waiting for the periodic
+      // refresh.  shouldBlock() reflects the remote kill immediately.
+      expect(mgr.isSessionKilled('remote-sess')).toBe(true);
+      expect(mgr.shouldBlock('remote-sess')).toBe(true);
+
+      await mgr.close();
+    });
+
+    it('applies every event op from remote replicas to the local cache', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-B',
+      });
+      await mgr.start();
+
+      const send = (op: string, id?: string) =>
+        subscriber.emitMessage(
+          'killswitch:events',
+          JSON.stringify({ v: 1, src: 'pod-A', op, ...(id ? { id } : {}) }),
+        );
+
+      send('activate_global');
+      expect(mgr.isGlobalKillActive()).toBe(true);
+      send('deactivate_global');
+      expect(mgr.isGlobalKillActive()).toBe(false);
+
+      send('kill_session', 's1');
+      send('kill_agent', 'a1');
+      expect(mgr.isSessionKilled('s1')).toBe(true);
+      expect(mgr.isAgentKilled('a1')).toBe(true);
+
+      send('revive_session', 's1');
+      send('revive_agent', 'a1');
+      expect(mgr.isSessionKilled('s1')).toBe(false);
+      expect(mgr.isAgentKilled('a1')).toBe(false);
+
+      send('kill_session', 's2');
+      send('activate_global');
+      send('reset_all');
+      expect(mgr.isGlobalKillActive()).toBe(false);
+      expect(mgr.isSessionKilled('s2')).toBe(false);
+      expect(mgr.getStatus()).toEqual({
+        globalKill: false,
+        killedSessionCount: 0,
+        killedAgentCount: 0,
+      });
+
+      await mgr.close();
+    });
+
+    it('ignores echoes of its own published events (deduplication by instanceId)', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-self',
+      });
+      await mgr.start();
+
+      // Echo of a "kill" we issued ourselves – cache should not double-apply
+      // any state, and a subsequent revive must clear it (i.e. the echo
+      // didn't somehow re-add the entry after the local revive).
+      mgr.killSession('echoed');
+      await flushMicrotasks();
+      mgr.reviveSession('echoed');
+      await flushMicrotasks();
+      subscriber.emitMessage(
+        'killswitch:events',
+        JSON.stringify({ v: 1, src: 'pod-self', op: 'kill_session', id: 'echoed' }),
+      );
+      expect(mgr.isSessionKilled('echoed')).toBe(false);
+
+      await mgr.close();
+    });
+
+    it('ignores messages on unrelated channels', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await mgr.start();
+
+      subscriber.emitMessage(
+        'some:other:channel',
+        JSON.stringify({ v: 1, src: 'x', op: 'activate_global' }),
+      );
+      expect(mgr.isGlobalKillActive()).toBe(false);
+
+      await mgr.close();
+    });
+
+    it('drops malformed event payloads without throwing', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await mgr.start();
+
+      expect(() =>
+        subscriber.emitMessage('killswitch:events', 'not-json{{{'),
+      ).not.toThrow();
+      expect(() =>
+        subscriber.emitMessage('killswitch:events', JSON.stringify({ v: 99, op: 'unknown' })),
+      ).not.toThrow();
+      expect(() =>
+        subscriber.emitMessage('killswitch:events', JSON.stringify(null)),
+      ).not.toThrow();
+      expect(mgr.isGlobalKillActive()).toBe(false);
+
+      await mgr.close();
+    });
+
+    it('drops id-bearing ops when the id field is absent or not a string', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        instanceId: 'pod-B',
+      });
+      await mgr.start();
+
+      // Missing id — must not insert undefined into the set
+      expect(() =>
+        subscriber.emitMessage(
+          'killswitch:events',
+          JSON.stringify({ v: 1, src: 'pod-A', op: 'kill_session' }),
+        ),
+      ).not.toThrow();
+      expect(mgr.getStatus().killedSessionCount).toBe(0);
+
+      // Non-string id — also must not corrupt the set
+      expect(() =>
+        subscriber.emitMessage(
+          'killswitch:events',
+          JSON.stringify({ v: 1, src: 'pod-A', op: 'kill_agent', id: 42 }),
+        ),
+      ).not.toThrow();
+      expect(mgr.getStatus().killedAgentCount).toBe(0);
+
+      // A valid event still works after the invalid ones
+      subscriber.emitMessage(
+        'killswitch:events',
+        JSON.stringify({ v: 1, src: 'pod-A', op: 'kill_session', id: 'sess-valid' }),
+      );
+      expect(mgr.isSessionKilled('sess-valid')).toBe(true);
+
+      await mgr.close();
+    });
+
+    it('does NOT publish when subscriber is absent (KILL_SWITCH_PUBSUB_ENABLED=false)', async () => {
+      // Without a subscriber, publish() should never be called even on
+      // successful writes — the whole point of KILL_SWITCH_PUBSUB_ENABLED=false
+      // is to fall back to periodic-refresh-only propagation without any
+      // pub/sub round-trips.
+      const client = makeFakeClient();
+      // No subscriber passed — mirrors what createKillSwitchManagerFromEnv
+      // does when KILL_SWITCH_PUBSUB_ENABLED=false.
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        // subscriber intentionally omitted
+      });
+      await mgr.start();
+
+      mgr.killSession('sess-nopub');
+      mgr.killAgent('agent-nopub');
+      mgr.activateGlobalKill();
+      mgr.resetAll();
+
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const publishes = client.calls.filter((c) => c.method === 'publish');
+      expect(publishes).toHaveLength(0);
+
+      await mgr.close();
+    });
+
+    it('uses the configured keyPrefix for the events channel', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+        keyPrefix: 'tenantA:ks:',
+        instanceId: 'pod-A',
+      });
+      await mgr.start();
+      expect(subscriber.subscribed.has('tenantA:ks:events')).toBe(true);
+
+      mgr.activateGlobalKill();
+      await flushMicrotasks();
+      const publishes = client.calls.filter((c) => c.method === 'publish');
+      expect(publishes).toHaveLength(1);
+      expect(publishes[0]?.args[0]).toBe('tenantA:ks:events');
+
+      await mgr.close();
+    });
+
+    it('still works (falls back to periodic refresh) when subscribe() fails', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber({
+        subscribe: async () => {
+          throw new Error('SUBSCRIBE failed');
+        },
+      });
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await expect(mgr.start()).resolves.toBeUndefined();
+      // Writes still work even though pub/sub failed to wire up.
+      mgr.killSession('s1');
+      await flushMicrotasks();
+      expect(mgr.isSessionKilled('s1')).toBe(true);
+      await mgr.close();
+    });
+
+    it('logs but does not throw when the subscriber emits an error event', async () => {
+      const client = makeFakeClient();
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await mgr.start();
+      expect(() => subscriber.emitError(new Error('boom'))).not.toThrow();
+      await mgr.close();
+    });
+
+    it('a publish failure does not cause unhandledRejection or break the write', async () => {
+      const client = makeFakeClient({
+        publish: async () => {
+          throw new Error('publish failed');
+        },
+      });
+      const subscriber = makeFakeSubscriber();
+      const mgr = new RedisKillSwitchManager(client, logger, {
+        refreshIntervalMs: 0,
+        subscriber,
+      });
+      await mgr.start();
+
+      mgr.killAgent('a1');
+      await flushMicrotasks();
+      await flushMicrotasks();
+      // Write still landed in Redis and in the local cache.
+      expect(client.store.sets.get('killswitch:killed_agents')?.has('a1')).toBe(true);
+      expect(mgr.isAgentKilled('a1')).toBe(true);
+
+      await mgr.close();
+    });
+  });
 });
 
 describe('createKillSwitchManagerFromEnv', () => {
@@ -459,6 +873,91 @@ describe('createKillSwitchManagerFromEnv', () => {
           logger
         );
         expect(mgr).toBeInstanceOf(fallbackMod.DefaultKillSwitchManager);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('does NOT call duplicate() when KILL_SWITCH_PUBSUB_ENABLED=false', async () => {
+    let duplicateCalled = false;
+    jest.resetModules();
+    try {
+      jest.doMock(
+        'ioredis',
+        () => {
+          return class FakeRedis {
+            get() { return Promise.resolve(null); }
+            set() { return Promise.resolve('OK'); }
+            del() { return Promise.resolve(0); }
+            sadd() { return Promise.resolve(0); }
+            srem() { return Promise.resolve(0); }
+            smembers() { return Promise.resolve([]); }
+            publish() { return Promise.resolve(0); }
+            quit() { return Promise.resolve('OK'); }
+            on() {}
+            duplicate() {
+              duplicateCalled = true;
+              return new (this.constructor as new () => unknown)();
+            }
+          };
+        },
+        { virtual: true },
+      );
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/redis-kill-switch');
+        const mgr = await mod.createKillSwitchManagerFromEnv(
+          {
+            REDIS_URL: 'redis://localhost:6379',
+            KILL_SWITCH_PUBSUB_ENABLED: 'false',
+          } as unknown as NodeJS.ProcessEnv,
+          logger,
+        );
+        expect(duplicateCalled).toBe(false);
+        await (mgr as { close?(): Promise<void> }).close?.();
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('warns and disables pub/sub when the Redis client does not support duplicate()', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock(
+        'ioredis',
+        () => {
+          return class FakeRedisNoDuplicate {
+            get() { return Promise.resolve(null); }
+            set() { return Promise.resolve('OK'); }
+            del() { return Promise.resolve(0); }
+            sadd() { return Promise.resolve(0); }
+            srem() { return Promise.resolve(0); }
+            smembers() { return Promise.resolve([]); }
+            publish() { return Promise.resolve(0); }
+            quit() { return Promise.resolve('OK'); }
+            on() {}
+            // No duplicate() method — intentionally omitted
+          };
+        },
+        { virtual: true },
+      );
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/redis-kill-switch');
+        const { DefaultKillSwitchManager: Default } = await import('../src/kill-switch');
+        const mgr = await mod.createKillSwitchManagerFromEnv(
+          { REDIS_URL: 'redis://localhost:6379' } as unknown as NodeJS.ProcessEnv,
+          logger,
+        );
+        // Should still return a Redis-backed manager (not the in-memory fallback)
+        expect(mgr).not.toBeInstanceOf(Default);
+        // Writes must still work (pub/sub is disabled but periodic refresh works)
+        expect(() => (mgr as { killSession?(s: string): void }).killSession?.('sess-noduplicate')).not.toThrow();
+        await (mgr as { close?(): Promise<void> }).close?.();
       });
     } finally {
       jest.dontMock('ioredis');

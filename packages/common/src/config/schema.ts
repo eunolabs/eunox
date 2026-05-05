@@ -1053,14 +1053,20 @@ export const GatewayConfigSchema = z
       'Optional Redis key prefix for kill-switch entries. Default "killswitch:".',
     ),
     KILL_SWITCH_REFRESH_INTERVAL_MS: envPositiveInt({
-      default: 5000,
+      default: 30000,
+      min: 0,
       description:
-        'Background refresh interval in ms for the kill-switch state. Smaller = faster propagation, more Redis traffic. Default 5000.',
+        'Safety-net refresh interval in ms for the kill-switch state. Pub/sub is the primary cross-replica propagation mechanism (sub-second); this timer covers the rare case of a dropped pub/sub message. Default 30000. Set to 0 to disable the periodic refresh entirely (pub/sub-only; only safe if Redis pub/sub delivery is reliable for your deployment).',
     }),
     KILL_SWITCH_FAIL_OPEN_ON_WRITE: envBoolean({
       default: false,
       description:
         'When true, kill-switch writes that fail against Redis still update the local cache. Default false. Boolean: true | false.',
+    }),
+    KILL_SWITCH_PUBSUB_ENABLED: envBoolean({
+      default: true,
+      description:
+        'When true (default), the gateway opens a second Redis connection in subscribe mode and broadcasts kill-switch mutations on the "<KILL_SWITCH_KEY_PREFIX>events" channel for sub-second cross-replica propagation. Set to false to fall back to periodic-refresh-only propagation (slower; bounded by KILL_SWITCH_REFRESH_INTERVAL_MS). Boolean: true | false.',
     }),
     CALL_COUNTER_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',

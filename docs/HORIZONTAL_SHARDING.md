@@ -220,9 +220,9 @@ but will route randomly (no affinity needed when sharding is off).
    verifies the full JWT signature on every request.
 
 2. **Revocation and kill-switch still use Redis.** A kill issued on any pod
-   must still propagate to all pods within the background-refresh interval
-   (`KILL_SWITCH_REFRESH_INTERVAL_MS`, default 5 s). This is unchanged from
-   the non-sharded deployment.
+   propagates to all pods sub-second via Redis pub/sub (with the
+   `KILL_SWITCH_REFRESH_INTERVAL_MS` periodic refresh, default 30 s, as a
+   safety net). This is unchanged from the non-sharded deployment.
 
 3. **DPoP replay still uses Redis.** A DPoP proof received by shard 0 must
    not be accepted by shard 1. The shared Redis replay store enforces this

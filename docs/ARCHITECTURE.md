@@ -527,9 +527,10 @@ sequenceDiagram
     Admin->>Adm: POST /admin/kill-switch/agent/{id}/kill (X-Admin-API-Key)
     Adm->>KS: killAgent(id)
     KS->>KS: write-through to shared Redis (agent-id added to set)
-    Note over KS,GW2: Other replicas pick up the change on the next<br/>periodic refresh tick (default 5 s, configurable via<br/>KILL_SWITCH_REFRESH_INTERVAL_MS)
+    KS->>KS: PUBLISH <KILL_SWITCH_KEY_PREFIX>events {op:kill_agent,id,...}
+    Note over KS,GW2: Other replicas receive the pub/sub event and<br/>invalidate their cache in single-digit ms.<br/>Periodic refresh (KILL_SWITCH_REFRESH_INTERVAL_MS, default 30 s)<br/>is the safety net for dropped pub/sub messages.
     KS-->>GW1: local cache updated (originating replica, immediate)
-    KS-->>GW2: cache updated on next refresh tick
+    KS-->>GW2: cache updated via pub/sub event (sub-second)
     Agent->>GW1: tool call (any token for that agent)
     GW1->>KS: check(agentId)
     KS-->>GW1: KILLED
@@ -540,10 +541,12 @@ Targeted token revocation (`POST /admin/revoke/{jti}`) follows the
 same shape but writes to `RevocationStore`; the revocation is
 immediate in the shared Redis store and is enforced on the next
 request, when the verifier checks `jti` during token verification.
-Kill-switch propagation across replicas is a separate concern,
-bounded by the kill-switch refresh interval (default 5 s,
-`KILL_SWITCH_REFRESH_INTERVAL_MS`); the originating replica observes
-the change immediately via write-through.
+Kill-switch propagation across replicas is sub-second under normal
+conditions because every mutation is broadcast on a Redis pub/sub
+channel; the periodic refresh
+(`KILL_SWITCH_REFRESH_INTERVAL_MS`, default 30 s) acts as a safety net
+for the rare case of a dropped pub/sub message.  The originating
+replica observes the change immediately via write-through.
 
 ### 6.6 Posture inventory emission
 
