@@ -17,7 +17,10 @@ import {
   AuditBatchSigner,
   AuditAnchor,
   createSoftwareEvidenceSignerFromEnv,
-  AuditEvidenceSigner,
+  LedgerAuditEvidenceSigner,
+  PostgresLedgerBackend,
+  InMemoryLedgerBackend,
+  LedgerChainError,
   SignedAuditEvidence,
   SignedBatchCommitment,
   KillSwitchManager,
@@ -114,6 +117,12 @@ export interface GatewayDependencies {
    * shutdown when the implementation owns external resources.
    */
   dpopReplayStore?: DpopReplayStore;
+  /**
+   * PostgreSQL connection pool owned by the ledger backend.  Present when
+   * `AUDIT_LEDGER_BACKEND=postgres`.  The entrypoint is responsible for calling
+   * `ledgerPgPool.end()` on graceful shutdown so connection sockets are released.
+   */
+  ledgerPgPool?: import('@euno/common').PgPool;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
   /** Backend service URL for the proxy route. */
@@ -556,7 +565,19 @@ export async function initializeServices(
     proofsVerifier: buildProofsVerifierFromEnv(validated, logger),
   });
 
-  // Build the cryptographic evidence signer when audit signing is enabled.
+  // Replica identity — needed both for the ledger backend (stamped on each row)
+  // and for Merkle batch commitments in the audit pipeline.  Compute once here
+  // so both uses share the same value.
+  const replicaIdFromEnv = (validated as { AUDIT_REPLICA_ID?: string }).AUDIT_REPLICA_ID;
+  let replicaId = replicaIdFromEnv ?? 'unknown-replica';
+  if (!replicaIdFromEnv) {
+    try {
+      replicaId = (require('os') as typeof import('os')).hostname();
+    } catch {
+      // hostname() failed — keep the default 'unknown-replica'
+    }
+  }
+
   // Missing-signer is treated as a startup error so misconfiguration cannot
   // survive into a running process.
   //
@@ -574,10 +595,134 @@ export async function initializeServices(
       : !!config.enableCryptographicAudit;
 
   let evidenceSigner: EvidenceSigner | undefined;
+  // When a ledger backend is used the Postgres pool is created here; expose
+  // it in GatewayDependencies so the entrypoint can call pool.end() on shutdown.
+  let ledgerPgPool: import('@euno/common').PgPool | undefined;
+  // When a ledger backend wraps the signing key, keep softwareSigner available
+  // as a batchSigner (signBatch() does not use chain state, so the software
+  // signer can still fulfil the AuditBatchSigner role even in ledger mode).
+  let auditBatchSigner: AuditBatchSigner | undefined;
   if (willSignSomething) {
     try {
-      evidenceSigner = createSoftwareEvidenceSignerFromEnv(env);
+      // Build the base software signer first (key loading, algorithm validation).
+      const softwareSigner = createSoftwareEvidenceSignerFromEnv(env);
+      if (!softwareSigner) {
+        throw new Error(
+          'No evidence signer is configured. Provide ' +
+            'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+            'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
+            'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
+            'programmatically. Refusing to start with cryptographic audit ' +
+            'enabled but no signer attached.',
+        );
+      }
+
+      // Optionally wrap with a pluggable ledger backend to close the
+      // "compromised replica rewrites local chain" gap.
+      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' }).AUDIT_LEDGER_BACKEND;
+      if (ledgerBackendName && ledgerBackendName !== 'none') {
+        const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
+        const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
+        const table = (validated as { AUDIT_LEDGER_TABLE?: string }).AUDIT_LEDGER_TABLE;
+        const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
+        const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
+        const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
+
+        if (ledgerBackendName === 'postgres') {
+          if (!pgUrl) {
+            throw new Error(
+              'AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.',
+            );
+          }
+          if (!hmacSecret) {
+            throw new Error(
+              'AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.',
+            );
+          }
+          if (s3Bucket) {
+            // Fail fast: AUDIT_LEDGER_S3_BUCKET is set but the bootstrap does not
+            // inject a real S3 client.  Operators must wire a client via
+            // GatewayDependencies.ledgerPgPool or use a custom entrypoint that
+            // constructs PostgresLedgerBackend directly with an S3AnchorClient.
+            throw new Error(
+              'AUDIT_LEDGER_S3_BUCKET is set but no S3 client is wired in the standard ' +
+                'bootstrap. Provide an S3AnchorClient by constructing PostgresLedgerBackend ' +
+                'directly (with the s3.client option) in a custom entrypoint, or unset ' +
+                'AUDIT_LEDGER_S3_BUCKET to rely on HMAC + in-DB chain integrity only.',
+            );
+          }
+
+          // Dynamically require pg to avoid a hard dependency in @euno/common.
+          // The tool-gateway package.json must list 'pg' as a dependency when
+          // AUDIT_LEDGER_BACKEND=postgres is used.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
+          const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
+          const pgPool = new Pool({ connectionString: pgUrl });
+          // Expose the pool so the entrypoint can call pgPool.end() on graceful shutdown.
+          ledgerPgPool = pgPool;
+
+          const pgBackend = new PostgresLedgerBackend(pgPool, {
+            table,
+            hmacSecret,
+            onAnchorError: (err: Error) => {
+              logger.error('Ledger S3 anchor failed', { error: err.message });
+            },
+          });
+
+          if (runMigrations) {
+            await pgBackend.migrate();
+            logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
+          }
+
+          // Seed lastAnchoredSeq from the DB tip so a restart doesn't
+          // re-anchor the entire existing history.
+          await pgBackend.initialize();
+
+          // Use getCryptoSigner() (the safe public accessor added to AuditEvidenceSigner)
+          // instead of accessing the private field via a cast.
+          const cryptoSigner = softwareSigner.getCryptoSigner();
+          const ledgerSigner = new LedgerAuditEvidenceSigner(
+            cryptoSigner,
+            pgBackend,
+            replicaId,
+          );
+          await ledgerSigner.initialize();
+          evidenceSigner = ledgerSigner;
+          // Keep softwareSigner as batchSigner: signBatch() does not depend on
+          // chain state, so it can remain the AuditBatchSigner even in ledger mode.
+          auditBatchSigner = softwareSigner;
+
+          logger.info('Audit ledger backend: postgres', {
+            table: table ?? 'euno_audit_ledger',
+            anchorInterval,
+          });
+        } else if (ledgerBackendName === 'in-memory') {
+          const inMemBackend = new InMemoryLedgerBackend();
+          const cryptoSigner = softwareSigner.getCryptoSigner();
+          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, inMemBackend, replicaId);
+          await ledgerSigner.initialize();
+          evidenceSigner = ledgerSigner;
+          // Keep softwareSigner as batchSigner for the same reason as in postgres mode.
+          auditBatchSigner = softwareSigner;
+          logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
+        } else {
+          throw new Error(`Unknown AUDIT_LEDGER_BACKEND value: "${ledgerBackendName}"`);
+        }
+      } else {
+        // No ledger backend — use the software signer with in-process chain state.
+        evidenceSigner = softwareSigner;
+        auditBatchSigner = softwareSigner;
+        if (ledgerBackendName === 'none' || !ledgerBackendName) {
+          logger.warn(
+            'Cryptographic audit is enabled but AUDIT_LEDGER_BACKEND is not set. ' +
+              'The hash chain lives only in process memory and a compromised replica ' +
+              'can rewrite history. Set AUDIT_LEDGER_BACKEND=postgres for production.',
+          );
+        }
+      }
     } catch (err) {
+      // Re-throw LedgerChainError immediately — it indicates a serious integrity problem.
+      if (err instanceof LedgerChainError) throw err;
       throw new Error(
         'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
           'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
@@ -771,19 +916,8 @@ export async function initializeServices(
       (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
       'drop_oldest_with_metric';
 
-    // Replica identity for batch commitments. Prefer the explicit
-    // AUDIT_REPLICA_ID env var (set to $(POD_NAME) via the Kubernetes
-    // downward API); fall back to the OS hostname so single-replica
-    // deployments still get a meaningful label.
-    const replicaIdFromEnv = (validated as { AUDIT_REPLICA_ID?: string }).AUDIT_REPLICA_ID;
-    let replicaId = replicaIdFromEnv ?? 'unknown-replica';
-    if (!replicaIdFromEnv) {
-      try {
-        replicaId = (require('os') as typeof import('os')).hostname();
-      } catch {
-        // hostname() failed — keep the default 'unknown-replica'
-      }
-    }
+    // replicaId was computed above (before the evidence signer block)
+    // so the ledger backend and batch commitments use the same value.
 
     // Build the batch emitted/error counters BEFORE the pipeline so they
     // exist even if no batches are processed during startup.
@@ -858,13 +992,11 @@ export async function initializeServices(
       logger.info('Audit batch HTTP anchor configured', { anchorUrl });
     }
 
-    // The evidenceSigner is an AuditEvidenceSigner when created by
-    // createSoftwareEvidenceSignerFromEnv; cast so we can pass it as a
-    // batchSigner. (AuditEvidenceSigner implements both EvidenceSigner
-    // and AuditBatchSigner.)
-    const batchSigner = (evidenceSigner instanceof AuditEvidenceSigner)
-      ? evidenceSigner as unknown as AuditBatchSigner
-      : undefined;
+    // Use the explicitly-tracked auditBatchSigner (set alongside evidenceSigner above)
+    // so batch commitments remain signed when a ledger backend wraps the evidence signer.
+    // (AuditEvidenceSigner.signBatch() does not rely on chain state and is safe to use
+    // as a batchSigner even when LedgerAuditEvidenceSigner handles per-record signing.)
+    const batchSigner = auditBatchSigner;
 
     auditPipeline = createAuditPipeline({
       signer: evidenceSigner,
@@ -1020,6 +1152,7 @@ export async function initializeServices(
     auditPipelineDrainTimeoutMs,
     ...(ocsfTransport ? { ocsfTransport } : {}),
     dpopReplayStore,
+    ...(ledgerPgPool ? { ledgerPgPool } : {}),
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,

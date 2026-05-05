@@ -914,7 +914,83 @@ export const GatewayConfigSchema = z
       'Pair with AUDIT_PIPELINE_BACKPRESSURE=block and EVIDENCE_SIGNED_DECISIONS=allow,deny for regulated workloads.',
     ),
 
-    // Policy ----------------------------------------------------------------
+    // Pluggable ledger backend (closes the "compromised replica rewrites local chain" gap).
+    // When AUDIT_LEDGER_BACKEND=postgres the gateway stores every signed evidence record
+    // in an external PostgreSQL append-only table with per-row HMAC and optional S3
+    // Object-Lock anchoring. Multiple replicas share the same table; a DB-level
+    // advisory lock serialises writes, so no replica can fork or rewrite the chain
+    // without the DB rejecting the conflicting seq/previousHash pair.
+    AUDIT_LEDGER_BACKEND: optionalString
+      .pipe(
+        z
+          .union([
+            z.literal('none'),
+            z.literal('postgres'),
+            z.literal('in-memory'),
+            z.undefined(),
+          ])
+          .transform((v) => v ?? 'none'),
+      )
+      .describe(
+        'Pluggable ledger backend for evidence signing. ' +
+        '"none" (default) — in-process chain only (no replay protection against a compromised replica). ' +
+        '"postgres" — append-only PostgreSQL table with per-row HMAC. ' +
+        '"in-memory" — ephemeral in-process ledger for testing. ' +
+        'Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to "postgres".',
+      ),
+    AUDIT_LEDGER_PG_URL: optionalString.describe(
+      'PostgreSQL connection URL for the ledger backend. ' +
+      'Required when AUDIT_LEDGER_BACKEND=postgres. ' +
+      'Format: postgresql://user:password@host:5432/dbname. ' +
+      'The service account MUST have INSERT + SELECT on the ledger table; ' +
+      'it does NOT need UPDATE or DELETE (those operations would indicate tampering).',
+    ),
+    AUDIT_LEDGER_HMAC_SECRET: optionalString.describe(
+      'HMAC-SHA-256 secret for per-row ledger integrity. ' +
+      'Required when AUDIT_LEDGER_BACKEND=postgres. ' +
+      'Each row stores HMAC-SHA256(secret, seq:previousHash:recordHash:replicaId). ' +
+      'Offline verification of row HMACs detects DB-level tampering without re-checking ' +
+      'cryptographic signatures. Decoded as hex (64-char string preferred), base64, or raw UTF-8; ' +
+      'must decode to at least 32 bytes (256 bits). Generate with: openssl rand -hex 32. ' +
+      'To rotate: provision a new table name (AUDIT_LEDGER_TABLE) and start writing to it; ' +
+      'never UPDATE existing rows — the append-only model is the tamper-evidence guarantee.',
+    ),
+    AUDIT_LEDGER_TABLE: optionalString.describe(
+      'PostgreSQL table name for the ledger backend. Default "euno_audit_ledger". ' +
+      'Override when multiple gateway clusters share one PostgreSQL instance.',
+    ),
+    AUDIT_LEDGER_RUN_MIGRATIONS: envBoolean({
+      default: false,
+      description:
+        'When true, the gateway runs CREATE TABLE IF NOT EXISTS for the ledger table at startup. ' +
+        'Suitable for development and single-replica deployments. ' +
+        'In production prefer external schema management (Flyway, Liquibase, or a separate migration job) ' +
+        'so the gateway service account does not need DDL privileges. Boolean: true | false. Default false.',
+    }),
+    AUDIT_LEDGER_S3_BUCKET: optionalString.describe(
+      'S3 bucket for periodic Merkle-root anchoring. ' +
+      'NOTE: the standard bootstrap does not inject an S3 client — setting this env var ' +
+      'without a custom entrypoint that constructs PostgresLedgerBackend directly (with an ' +
+      'S3AnchorClient) will cause a startup error. When properly wired, every ' +
+      'AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root of ' +
+      'those rows to S3. The bucket MUST have Object Lock enabled. ' +
+      'When unset, no S3 anchoring is performed (HMAC + in-DB chain is the only protection).',
+    ),
+    AUDIT_LEDGER_S3_PREFIX: optionalString.describe(
+      'S3 key prefix for ledger anchor objects. ' +
+      'Default "audit-anchor/". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json.',
+    ),
+    AUDIT_LEDGER_ANCHOR_INTERVAL: envPositiveInt({
+      default: 1000,
+      min: 1,
+      description:
+        'Number of ledger rows between S3 Object-Lock anchor writes. Default 1000. ' +
+        'Lower values provide more frequent external witnesses (smaller gap between a ' +
+        'DB tamper event and S3 detection) at the cost of more S3 PUT requests. ' +
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+    }),
+
+
     POLICY_VERSION: optionalString.describe(
       'Version identifier for the active policy (string, default "1.0.0").',
     ),

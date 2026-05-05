@@ -76,7 +76,93 @@ export interface CryptoSigner {
  * ### Following the Azure security pattern
  * "Logs help you debug. Evidence helps you prove."
  */
+
+// ── Exported canonical-form helpers ──────────────────────────────────────────
+//
+// These are factored out of AuditEvidenceSigner so that LedgerAuditEvidenceSigner
+// (and any other implementation) can produce identical signed records without
+// sub-classing or duplicating the canonical-form logic.
+
+/**
+ * Produce the canonical pipe-delimited string for a piece of evidence.
+ *
+ * Fields are ordered deterministically. `keyId`, `algorithm`, `previousHash`,
+ * and `seq` are appended so they are **covered by the signature** — any
+ * tampering with those fields invalidates the signature.
+ *
+ * Field positions are stable across versions. Adding new fields would require
+ * bumping a schema version; existing signed records would fail under the new
+ * canonical form. The current set was chosen to capture all audit-relevant
+ * dimensions.
+ */
+export function canonicalizeEvidenceFields(
+  evidence: Partial<AuditEvidence>,
+  keyId?: string,
+  algorithm?: string,
+  previousHash?: string,
+  seq?: number,
+): string {
+  const fields = [
+    evidence.id || '',
+    evidence.sessionId || '',
+    evidence.userId || '',
+    evidence.promptHash || '',
+    evidence.documentsHash || '',
+    evidence.tool || '',
+    evidence.argsHash || '',
+    evidence.nonce || '',
+    evidence.ts || '',
+    evidence.policyVersion || '',
+    evidence.agentId || '',
+    evidence.resource || '',
+    evidence.action || '',
+    evidence.capabilityId || '',
+    evidence.decision || '',
+    keyId || '',
+    algorithm || '',
+    previousHash || '',
+    String(seq ?? 0),
+  ];
+  return fields.join('|');
+}
+
+/**
+ * Sign a single {@link AuditEvidence} record given an explicit chain state.
+ *
+ * This is the core signing primitive shared by both {@link AuditEvidenceSigner}
+ * (which manages chain state in-process) and {@link LedgerAuditEvidenceSigner}
+ * (which reads chain state from an external ledger). Extracting it here
+ * avoids duplicating the canonicalization + digest + sign logic.
+ *
+ * @param evidence      Unsigned evidence record.
+ * @param cryptoSigner  Signing primitive.
+ * @param previousHash  SHA-256 hex of the preceding signed record (or GENESIS_HASH).
+ * @param seq           1-based sequence number assigned by the caller.
+ */
+export async function signEvidenceWithChain(
+  evidence: AuditEvidence,
+  cryptoSigner: CryptoSigner,
+  previousHash: string,
+  seq: number,
+): Promise<SignedAuditEvidence> {
+  const keyId = await cryptoSigner.getKeyId();
+  const algorithm = cryptoSigner.getAlgorithm();
+  const canonical = canonicalizeEvidenceFields(evidence, keyId, algorithm, previousHash, seq);
+  const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
+  const signatureBuffer = await cryptoSigner.signDigest(digest);
+  return {
+    ...evidence,
+    signature: signatureBuffer.toString('base64'),
+    keyId,
+    algorithm,
+    previousHash,
+    seq,
+  };
+}
+
 export class AuditEvidenceSigner implements EvidenceSigner {
+
+
   private cryptoSigner: CryptoSigner;
 
   // ── Chain state ─────────────────────────────────────────────────────────
@@ -118,6 +204,15 @@ export class AuditEvidenceSigner implements EvidenceSigner {
   }
 
   /**
+   * Expose the underlying {@link CryptoSigner} so the ledger wiring in
+   * `bootstrap.ts` can wrap it in a `LedgerAuditEvidenceSigner` without
+   * accessing private fields via unsafe casts.
+   */
+  getCryptoSigner(): CryptoSigner {
+    return this.cryptoSigner;
+  }
+
+  /**
    * Sign audit evidence to create a tamper-evident record.
    *
    * The method is concurrency-safe: concurrent calls are serialised through an
@@ -143,34 +238,14 @@ export class AuditEvidenceSigner implements EvidenceSigner {
    * Internal signing implementation, called exclusively from the serial queue.
    */
   private async doSignEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
-    // Fetch signing metadata FIRST so it is included in the signed content
-    const keyId = await this.cryptoSigner.getKeyId();
-    const algorithm = this.cryptoSigner.getAlgorithm();
-
     // Capture and advance the chain state atomically (this method is never
     // called concurrently — all calls are serialised through `chainTail`).
     const previousHash = this.chainPreviousHash;
     const seq = this.chainSeq + 1;
 
-    // Create a canonical representation that includes keyId, algorithm, and
-    // the chain-linkage fields so all of them are covered by the signature.
-    const canonical = this.canonicalizeEvidence(evidence, keyId, algorithm, previousHash, seq);
-
-    // Hash the canonical UTF-8 bytes directly – no JSON.stringify wrapping
-    const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
-
-    // Sign the digest
-    const signatureBuffer = await this.cryptoSigner.signDigest(digest);
-    const signature = signatureBuffer.toString('base64');
-
-    const signed: SignedAuditEvidence = {
-      ...evidence,
-      signature,
-      keyId,
-      algorithm,
-      previousHash,
-      seq,
-    };
+    // Delegate to the exported helper so the canonical form is shared with
+    // LedgerAuditEvidenceSigner and any other future implementations.
+    const signed = await signEvidenceWithChain(evidence, this.cryptoSigner, previousHash, seq);
 
     // Advance the chain state: the hash of this signed record becomes the
     // `previousHash` of the next one.
@@ -254,16 +329,10 @@ export class AuditEvidenceSigner implements EvidenceSigner {
 
   /**
    * Create a canonical pipe-delimited string representation of evidence for signing.
-   * Fields are ordered deterministically. keyId, algorithm, previousHash, and
-   * seq are appended so they are covered by the signature and cannot be tampered
-   * with undetected.
    *
-   * **Breaking note (chain fields):** adding `previousHash` and `seq` as
-   * positions 17–18 means records signed by an older version of this signer
-   * (without chain fields) will fail signature verification. This is intentional:
-   * pre-chain records lack tamper-evident linkage and should not pass a
-   * chain-aware verifier. Operators upgrading from a pre-chain deployment
-   * must re-sign their historical evidence or start a fresh chain segment.
+   * Delegates to the exported {@link canonicalizeEvidenceFields} function so
+   * both `AuditEvidenceSigner` and external implementations (e.g. the ledger
+   * signer) share an identical canonical form.
    */
   private canonicalizeEvidence(
     evidence: Partial<AuditEvidence>,
@@ -272,29 +341,7 @@ export class AuditEvidenceSigner implements EvidenceSigner {
     previousHash?: string,
     seq?: number,
   ): string {
-    const fields = [
-      evidence.id || '',
-      evidence.sessionId || '',
-      evidence.userId || '',
-      evidence.promptHash || '',
-      evidence.documentsHash || '',
-      evidence.tool || '',
-      evidence.argsHash || '',
-      evidence.nonce || '',
-      evidence.ts || '',
-      evidence.policyVersion || '',
-      evidence.agentId || '',
-      evidence.resource || '',
-      evidence.action || '',
-      evidence.capabilityId || '',
-      evidence.decision || '',
-      keyId || '',
-      algorithm || '',
-      previousHash || '',
-      String(seq ?? 0),
-    ];
-
-    return fields.join('|');
+    return canonicalizeEvidenceFields(evidence, keyId, algorithm, previousHash, seq);
   }
 
   /**
