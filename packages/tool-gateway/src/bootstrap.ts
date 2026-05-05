@@ -18,6 +18,8 @@ import {
   AuditAnchor,
   createSoftwareEvidenceSignerFromEnv,
   LedgerAuditEvidenceSigner,
+  AzureConfidentialLedgerBackend,
+  AzureConfidentialLedgerClient,
   PostgresLedgerBackend,
   InMemoryLedgerBackend,
   LedgerChainError,
@@ -123,6 +125,20 @@ export interface GatewayDependencies {
    * `ledgerPgPool.end()` on graceful shutdown so connection sockets are released.
    */
   ledgerPgPool?: import('@euno/common').PgPool;
+  /**
+   * Azure Confidential Ledger client for the ACL ledger backend.
+   *
+   * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
+   * the following precedence:
+   *   1. **This field** — if set, used as-is. Preferred for custom credentials,
+   *      per-collection configuration, or injecting a mock in tests.
+   *   2. **`AUDIT_LEDGER_ACL_ENDPOINT`** env var — if set, the bootstrap
+   *      constructs a client using `DefaultAzureCredential` from `@azure/identity`
+   *      (workload identity, managed identity, or `AZURE_*` env vars).
+   *
+   * A startup error is thrown when neither option is provided.
+   */
+  ledgerAclClient?: AzureConfidentialLedgerClient;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
   /** Backend service URL for the proxy route. */
@@ -336,6 +352,81 @@ function parseTrustProxy(value: string | undefined): string | boolean | number {
 }
 
 /**
+ * Minimal type stub for the `@azure-rest/confidential-ledger` SDK client.
+ * Used only by {@link buildAclClientFromEndpoint}; extracted here to avoid
+ * an unreadable inline type at the call site.
+ *
+ * @internal
+ */
+type AclSdkPath = {
+  post(opts: { body: { contents: string } }): Promise<{ status: string; body: { transactionId: string } }>;
+  get(): Promise<{ status: string; body: { transactionId: string; contents: string } }>;
+};
+type AclSdkClient = { path(route: string, ...params: string[]): AclSdkPath };
+type AclSdkFactory = (endpoint: string, credential: unknown) => AclSdkClient;
+
+/**
+ * Build an {@link AzureConfidentialLedgerClient} by dynamically requiring
+ * `@azure-rest/confidential-ledger` and `@azure/identity`.
+ *
+ * Both packages must be available at runtime (add to the deployment image).
+ * Authentication uses `DefaultAzureCredential` — workload identity, managed
+ * identity, or `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`
+ * environment variables are all supported automatically.
+ */
+function buildAclClientFromEndpoint(endpoint: string): AzureConfidentialLedgerClient {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ConfidentialLedger = ((require('@azure-rest/confidential-ledger') as { default: unknown }).default as AclSdkFactory);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { DefaultAzureCredential } = require('@azure/identity') as { DefaultAzureCredential: new () => unknown };
+  const sdk = ConfidentialLedger(endpoint, new DefaultAzureCredential());
+  return {
+    async appendTransaction(contents: string) {
+      const res = await sdk.path('/app/transactions').post({ body: { contents } });
+      if (res.status !== '201') {
+        throw new Error(`Azure Confidential Ledger append failed (HTTP ${res.status})`);
+      }
+      return { transactionId: res.body.transactionId };
+    },
+    async getLatestCommittedTransaction() {
+      const res = await sdk.path('/app/transactions').get();
+      if (res.status === '204') return null;
+      if (res.status !== '200') {
+        throw new Error(`Azure Confidential Ledger get-latest failed (HTTP ${res.status})`);
+      }
+      return { transactionId: res.body.transactionId, contents: res.body.contents };
+    },
+    async getTransaction(transactionId: string) {
+      const res = await sdk.path('/app/transactions/{transactionId}', transactionId).get();
+      if (res.status === '404') return null;
+      if (res.status !== '200') {
+        throw new Error(`Azure Confidential Ledger get-transaction failed (HTTP ${res.status})`);
+      }
+      return { transactionId, contents: res.body.contents };
+    },
+  };
+}
+
+/**
+ * Subset of {@link GatewayDependencies} that can be injected into
+ * {@link initializeServices} to override or augment what the bootstrap builds
+ * from environment variables.
+ *
+ * Use this when you need to supply a cloud-SDK client that the standard
+ * bootstrap cannot construct automatically (e.g. a custom Azure credential).
+ */
+export interface InjectableBootstrapDeps {
+  /**
+   * Pre-built Azure Confidential Ledger client.
+   * Required when `AUDIT_LEDGER_BACKEND=acl` and you want to supply a
+   * non-default credential or a mock for testing.  When omitted the bootstrap
+   * falls back to constructing a client from `AUDIT_LEDGER_ACL_ENDPOINT` using
+   * `DefaultAzureCredential`.
+   */
+  ledgerAclClient?: AzureConfidentialLedgerClient;
+}
+
+/**
  * Fetch the issuer public key, build verifier + enforcement engine and all
  * supporting stores. Throws on misconfiguration so the gateway fails closed.
  *
@@ -344,6 +435,7 @@ function parseTrustProxy(value: string | undefined): string | boolean | number {
  */
 export async function initializeServices(
   env: NodeJS.ProcessEnv = process.env,
+  injectDeps: InjectableBootstrapDeps = {},
 ): Promise<{ deps: GatewayDependencies; setReady: (ready: boolean) => void }> {
   // Validate the environment against the typed `EunoConfig` Zod schema
   // (R-5 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). This produces a
@@ -613,7 +705,7 @@ export async function initializeServices(
 
       // Optionally wrap with a pluggable ledger backend to close the
       // "compromised replica rewrites local chain" gap.
-      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' }).AUDIT_LEDGER_BACKEND;
+      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' }).AUDIT_LEDGER_BACKEND;
       if (ledgerBackendName && ledgerBackendName !== 'none') {
         const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
         const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
@@ -621,6 +713,7 @@ export async function initializeServices(
         const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
         const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
         const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
+        const aclEndpoint = (validated as { AUDIT_LEDGER_ACL_ENDPOINT?: string }).AUDIT_LEDGER_ACL_ENDPOINT;
 
         if (ledgerBackendName === 'postgres') {
           if (!pgUrl) {
@@ -668,10 +761,6 @@ export async function initializeServices(
             logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
           }
 
-          // Seed lastAnchoredSeq from the DB tip so a restart doesn't
-          // re-anchor the entire existing history.
-          await pgBackend.initialize();
-
           // Use getCryptoSigner() (the safe public accessor added to AuditEvidenceSigner)
           // instead of accessing the private field via a cast.
           const cryptoSigner = softwareSigner.getCryptoSigner();
@@ -680,6 +769,9 @@ export async function initializeServices(
             pgBackend,
             replicaId,
           );
+          // initialize() delegates to pgBackend.initialize() which seeds
+          // lastAnchoredSeq from the DB tip so a restart doesn't re-anchor
+          // the entire existing history.
           await ledgerSigner.initialize();
           evidenceSigner = ledgerSigner;
           // Keep softwareSigner as batchSigner: signBatch() does not depend on
@@ -690,6 +782,41 @@ export async function initializeServices(
             table: table ?? 'euno_audit_ledger',
             anchorInterval,
           });
+        } else if (ledgerBackendName === 'acl') {
+          // Prefer an explicitly injected client (custom entrypoint / testing).
+          // Fall back to constructing one from AUDIT_LEDGER_ACL_ENDPOINT using
+          // DefaultAzureCredential (requires @azure-rest/confidential-ledger and
+          // @azure/identity in the deployment image).
+          let aclClient: AzureConfidentialLedgerClient;
+          if (injectDeps.ledgerAclClient) {
+            aclClient = injectDeps.ledgerAclClient;
+            logger.info('Audit ledger backend: acl (using injected client)');
+          } else if (aclEndpoint) {
+            aclClient = buildAclClientFromEndpoint(aclEndpoint);
+            logger.info('Audit ledger backend: acl', { endpoint: aclEndpoint });
+          } else {
+            throw new Error(
+              'AUDIT_LEDGER_BACKEND=acl requires either injectDeps.ledgerAclClient ' +
+                '(injected AzureConfidentialLedgerClient) or AUDIT_LEDGER_ACL_ENDPOINT to be set. ' +
+                'For managed identity / workload identity deployments set AUDIT_LEDGER_ACL_ENDPOINT; ' +
+                'the bootstrap will use DefaultAzureCredential. For custom credential scenarios ' +
+                'provide ledgerAclClient via the second argument to initializeServices().',
+            );
+          }
+
+          const aclBackend = new AzureConfidentialLedgerBackend(aclClient, {
+            onError: (err: Error) => {
+              logger.error('Audit ledger ACL error', { error: err.message });
+            },
+          });
+          const cryptoSigner = softwareSigner.getCryptoSigner();
+          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, aclBackend, replicaId);
+          // initialize() delegates to aclBackend.initialize() which seeds
+          // in-process chain state from the latest ACL transaction.
+          await ledgerSigner.initialize();
+          evidenceSigner = ledgerSigner;
+          // Keep softwareSigner as batchSigner for the same reason as postgres mode.
+          auditBatchSigner = softwareSigner;
         } else if (ledgerBackendName === 'in-memory') {
           const inMemBackend = new InMemoryLedgerBackend();
           const cryptoSigner = softwareSigner.getCryptoSigner();

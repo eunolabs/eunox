@@ -80,6 +80,16 @@ export interface LedgerEntry {
   signedEvidence: SignedAuditEvidence;
   /** ISO-8601 timestamp when this row was appended. */
   ts: string;
+  /**
+   * Raw HMAC bytes as stored in the backend row (PostgreSQL backend only).
+   *
+   * Populated by {@link PostgresLedgerBackend.getEntries} so callers can
+   * pass this directly to {@link PostgresLedgerBackend.verifyRowHmac} for
+   * offline integrity verification without an additional raw DB query.
+   * Absent for backends that do not use per-row HMACs (e.g.
+   * {@link AzureConfidentialLedgerBackend}, {@link InMemoryLedgerBackend}).
+   */
+  rowHmac?: Buffer;
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────
@@ -133,6 +143,20 @@ export interface LedgerBackend {
   readonly name: string;
 
   /**
+   * Optional startup initialisation.
+   *
+   * Implementations that maintain in-process chain state should seed it from
+   * the external store here (e.g. `PostgresLedgerBackend` seeds
+   * `lastAnchoredSeq`; `AzureConfidentialLedgerBackend` seeds the chain tip).
+   * Called once by {@link LedgerAuditEvidenceSigner.initialize} before the
+   * first `appendEntry`.
+   *
+   * Implementations MAY throw; the caller treats any thrown error as a
+   * startup failure.
+   */
+  initialize?(): Promise<void>;
+
+  /**
    * Atomically append one signed evidence record to the ledger.
    *
    * The backend MUST:
@@ -141,7 +165,7 @@ export interface LedgerBackend {
    *   3. Call `sign(previousHash, nextSeq)` to produce a `SignedAuditEvidence`.
    *   4. Verify that `signed.previousHash === previousHash` (sanity check;
    *      throws `LedgerChainError` on mismatch).
-   *   5. Persist the record with a per-row HMAC.
+   *   5. Persist the record.
    *   6. Release the lock.
    *
    * The `sign` callback is invoked WHILE THE LOCK IS HELD so no other writer
@@ -219,15 +243,17 @@ export class LedgerAuditEvidenceSigner implements EvidenceSigner {
   ) {}
 
   /**
-   * Prime the signer's state from the current ledger tip.
-   * Optional but recommended at startup so the first `signEvidence` call
-   * does not need an extra round-trip to discover the tip.
+   * Prime the signer's state by delegating to {@link LedgerBackend.initialize}
+   * (if implemented).
+   *
+   * Call once at startup before the first `signEvidence`.  This lets backends
+   * seed their in-process chain state (e.g. reading the tip from Postgres or
+   * ACL) so the first signing call does not need an extra round-trip.
    */
   async initialize(): Promise<void> {
-    // No-op for now: the backend's appendEntry reads the tip atomically, so
-    // explicit seeding is not required for correctness. We keep this method
-    // in the public API for future use (e.g. caching the tip to speed up the
-    // first sign call or to surface ledger connectivity errors at startup).
+    if (typeof this.backend.initialize === 'function') {
+      await this.backend.initialize();
+    }
   }
 
   async signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
@@ -694,6 +720,13 @@ export class PostgresLedgerBackend implements LedgerBackend {
   async migrate(client?: PgClientConnection): Promise<void> {
     const shouldRelease = !client;
     const conn = client ?? await this.pool.connect();
+    // For schema-qualified names like 'audit.euno_ledger' extract just the
+    // table-name part for the index identifier — dots are not allowed in
+    // unquoted PostgreSQL index names so 'idx_audit.euno_ledger_created_at'
+    // would be parsed as schema 'idx_audit', index 'euno_ledger_created_at'
+    // and fail with "schema does not exist".
+    const tableParts = this.table.split('.');
+    const tableNameOnly = tableParts[tableParts.length - 1]!;
     try {
       await conn.query(`
         CREATE TABLE IF NOT EXISTS ${this.table} (
@@ -708,7 +741,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
         )
       `);
       await conn.query(`
-        CREATE INDEX IF NOT EXISTS idx_${this.table}_created_at
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_created_at
           ON ${this.table} (created_at)
       `);
     } finally {
@@ -841,6 +874,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
         replicaId: row.replica_id,
         signedEvidence: row.payload,
         ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
+        rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
       }));
     } finally {
       conn.release();
@@ -927,6 +961,359 @@ export class PostgresLedgerBackend implements LedgerBackend {
   }
 }
 
+// ── AzureConfidentialLedgerBackend ────────────────────────────────────────────
+
+/**
+ * Minimal client interface for Azure Confidential Ledger (ACL).
+ *
+ * Implement this using the official `@azure-rest/confidential-ledger` SDK
+ * with `@azure/identity` for AAD authentication and inject the result via
+ * {@link GatewayDependencies.ledgerAclClient} or directly into
+ * {@link createLedgerSignerFromConfig}.
+ *
+ * Keeping this interface thin ensures `@euno/common` does not take a hard
+ * runtime dependency on the Azure SDK — callers choose their own version
+ * and authentication strategy.
+ *
+ * ### Example wiring (using the Azure REST SDK)
+ *
+ * ```typescript
+ * import ConfidentialLedger from '@azure-rest/confidential-ledger';
+ * import { DefaultAzureCredential } from '@azure/identity';
+ *
+ * const sdkClient = ConfidentialLedger(
+ *   'https://<name>.confidentialledger.azure.com',
+ *   new DefaultAzureCredential(),
+ * );
+ *
+ * const aclClient: AzureConfidentialLedgerClient = {
+ *   async appendTransaction(contents) {
+ *     const res = await sdkClient.path('/app/transactions').post({ body: { contents } });
+ *     if (res.status !== '201') throw new Error(`ACL append failed: ${res.status}`);
+ *     return { transactionId: res.body.transactionId };
+ *   },
+ *   async getLatestCommittedTransaction() {
+ *     const res = await sdkClient.path('/app/transactions').get();
+ *     if (res.status === '204') return null;
+ *     if (res.status !== '200') throw new Error(`ACL get latest failed: ${res.status}`);
+ *     return { transactionId: res.body.transactionId, contents: res.body.contents };
+ *   },
+ *   async getTransaction(transactionId) {
+ *     const res = await sdkClient.path('/app/transactions/{transactionId}', transactionId).get();
+ *     if (res.status === '404') return null;
+ *     if (res.status !== '200') throw new Error(`ACL get tx failed: ${res.status}`);
+ *     return { transactionId, contents: res.body.contents };
+ *   },
+ * };
+ * ```
+ */
+export interface AzureConfidentialLedgerClient {
+  /**
+   * Append a new entry to the current ledger collection.
+   *
+   * @param contents  Base64-encoded payload string (the raw bytes of the
+   *                  serialised {@link AclEntryPayload}).
+   * @returns         The ACL-assigned transaction ID used for later retrieval.
+   */
+  appendTransaction(contents: string): Promise<{ transactionId: string }>;
+
+  /**
+   * Retrieve the latest committed transaction from the current collection.
+   *
+   * Returns `null` when the collection is empty (no entries yet).
+   */
+  getLatestCommittedTransaction(): Promise<{
+    transactionId: string;
+    contents: string;
+  } | null>;
+
+  /**
+   * Retrieve a specific transaction by its ACL transaction ID.
+   *
+   * Returns `null` when no such transaction exists (e.g. after a ledger
+   * rotation or when the ID is from another collection).
+   */
+  getTransaction(transactionId: string): Promise<{
+    transactionId: string;
+    contents: string;
+  } | null>;
+}
+
+/**
+ * Options for {@link AzureConfidentialLedgerBackend}.
+ */
+export interface AzureConfidentialLedgerOptions {
+  /**
+   * Called when a non-fatal ACL operation error occurs (e.g. a `getTransaction`
+   * call fails during `getEntries`). The backend continues operating but the
+   * affected entry is omitted from the result. Default: swallow silently.
+   */
+  onError?: (err: Error) => void;
+}
+
+/**
+ * Payload stored inside each ACL transaction's `contents` field.
+ * Encoded as base64(JSON) so the ledger stores printable data.
+ *
+ * @internal
+ */
+export interface AclEntryPayload {
+  schemaVersion: '1.0';
+  seq: number;
+  previousHash: string;
+  recordHash: string;
+  replicaId: string;
+  signedEvidence: SignedAuditEvidence;
+  ts: string;
+}
+
+function encodeAclContents(payload: AclEntryPayload): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}
+
+function decodeAclContents(contents: string): AclEntryPayload | null {
+  try {
+    const raw = Buffer.from(contents, 'base64').toString('utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      (parsed as AclEntryPayload).schemaVersion !== '1.0' ||
+      typeof (parsed as AclEntryPayload).seq !== 'number' ||
+      typeof (parsed as AclEntryPayload).previousHash !== 'string' ||
+      typeof (parsed as AclEntryPayload).recordHash !== 'string' ||
+      typeof (parsed as AclEntryPayload).replicaId !== 'string' ||
+      typeof (parsed as AclEntryPayload).ts !== 'string' ||
+      typeof (parsed as AclEntryPayload).signedEvidence !== 'object' ||
+      (parsed as AclEntryPayload).signedEvidence === null
+    ) {
+      return null;
+    }
+    return parsed as AclEntryPayload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Azure Confidential Ledger-backed implementation of {@link LedgerBackend}.
+ *
+ * ### TEE-backed tamper evidence
+ *
+ * Azure Confidential Ledger runs inside a Trusted Execution Environment (TEE).
+ * Entries cannot be deleted, modified, or reordered — even by Microsoft.  This
+ * provides a stronger immutability guarantee than `PostgresLedgerBackend` (which
+ * relies on per-row HMAC + optional S3 Object-Lock) without requiring a
+ * separate secret (HMAC key).  ACL issues verifiable receipts that can be
+ * checked against the TEE's public key offline.
+ *
+ * ### Write serialisation
+ *
+ * ACL does not expose a distributed lock primitive equivalent to PostgreSQL's
+ * advisory lock.  This backend therefore uses an in-process serial queue
+ * (identical to {@link InMemoryLedgerBackend}) to prevent concurrent writes
+ * from the same process.  For multi-replica deployments each replica writes
+ * its own chain segment; ACL still records every entry immutably, and each
+ * segment is internally consistent.
+ *
+ * When a single global chain across all replicas is required, route all writes
+ * through a single replica (e.g. a dedicated signing sidecar) or use
+ * `PostgresLedgerBackend` which provides cross-replica serialisation via
+ * `pg_advisory_xact_lock`.
+ *
+ * ### Trade-offs vs PostgresLedgerBackend
+ *
+ * | Property                       | ACL                              | Postgres         |
+ * |--------------------------------|----------------------------------|------------------|
+ * | Tamper evidence                | TEE (hardware)                   | HMAC + S3 anchor |
+ * | Cross-replica chain            | No (per-replica segments)        | Yes (global lock)|
+ * | Additional secrets             | None (ACL + AAD identity)        | HMAC key         |
+ * | Offline receipt verification   | Yes (TEE receipts)               | Yes (HMAC replay)|
+ *
+ * ### getEntries
+ *
+ * `getEntries` uses an in-process `seq → transactionId` index built during
+ * normal operation.  Entries appended before the current process started (or
+ * before `initialize()` was called) are not in the index and will be absent
+ * from the result.  For full offline chain replay, iterate ACL transactions
+ * directly using the SDK and call `decodeAclContents` on each entry's
+ * `contents` field.
+ */
+export class AzureConfidentialLedgerBackend implements LedgerBackend {
+  readonly name = 'azure-confidential-ledger';
+
+  /** Serial queue — prevents concurrent in-process appends from contending. */
+  private appendTail: Promise<unknown> = Promise.resolve();
+
+  /** In-process chain state.  Seeded from ACL by `initialize()`. */
+  private tipHash: string = GENESIS_HASH;
+  private tipSeq: number = 0;
+
+  /**
+   * In-process index: seq → ACL transactionId.
+   *
+   * Built incrementally as entries are written.  The tip entry is re-seeded
+   * from ACL on `initialize()` so reads immediately after a process restart
+   * can at least retrieve the tip.  Entries further back in history are only
+   * in the index when they were written during the current process lifetime.
+   */
+  private readonly seqToTxId = new Map<number, string>();
+
+  private readonly onError: (err: Error) => void;
+
+  constructor(
+    private readonly client: AzureConfidentialLedgerClient,
+    options: AzureConfidentialLedgerOptions = {},
+  ) {
+    this.onError = options.onError ?? ((err) => {
+      // Default: emit to stderr so the error is visible in logs without
+      // crashing the process.  Supply `options.onError` to route to your
+      // logger of choice.
+      console.warn('AzureConfidentialLedgerBackend error:', err.message);
+    });
+  }
+
+  /**
+   * Seed in-process chain state from the latest committed ACL transaction.
+   *
+   * Call once before the first `appendEntry`.  Throws on any of these
+   * conditions so startup fails closed rather than silently producing
+   * a corrupt chain:
+   *   - The ACL client call fails (connectivity / auth error).
+   *   - The latest transaction exists but its `contents` cannot be decoded
+   *     or validated as an `AclEntryPayload` — this indicates data corruption
+   *     or a write from an incompatible implementation.
+   */
+  async initialize(): Promise<void> {
+    const latest = await this.client.getLatestCommittedTransaction();
+    if (!latest) return; // Collection is empty — chain starts from genesis.
+
+    const payload = decodeAclContents(latest.contents);
+    if (!payload) {
+      throw new Error(
+        `AzureConfidentialLedgerBackend.initialize(): latest transaction ` +
+          `(id=${latest.transactionId}) has unrecognised or invalid contents. ` +
+          `Expected a base64-encoded AclEntryPayload (schemaVersion="1.0"). ` +
+          `Refusing to start with tipSeq=0 to prevent overlapping seq values in the ledger.`,
+      );
+    }
+    this.tipHash = payload.recordHash;
+    this.tipSeq = payload.seq;
+    this.seqToTxId.set(payload.seq, latest.transactionId);
+  }
+
+  async appendEntry(
+    _evidence: AuditEvidence,
+    replicaId: string,
+    sign: (previousHash: string, nextSeq: number) => Promise<SignedAuditEvidence>,
+  ): Promise<SignedAuditEvidence> {
+    return new Promise<SignedAuditEvidence>((resolve, reject) => {
+      this.appendTail = this.appendTail
+        .then(async () => {
+          const previousHash = this.tipHash;
+          const nextSeq = this.tipSeq + 1;
+
+          const signed = await sign(previousHash, nextSeq);
+
+          if (signed.previousHash !== previousHash) {
+            throw new LedgerChainError(
+              `AzureConfidentialLedgerBackend: expected previousHash="${previousHash}" ` +
+                `but signed record carries "${signed.previousHash}"`,
+              previousHash,
+              signed.previousHash,
+            );
+          }
+          if (signed.seq !== nextSeq) {
+            throw new LedgerChainError(
+              `AzureConfidentialLedgerBackend: expected seq=${nextSeq} ` +
+                `but signed record carries seq=${signed.seq}`,
+              String(nextSeq),
+              String(signed.seq),
+            );
+          }
+
+          const recordHash = canonicalSha256(signed);
+          const payload: AclEntryPayload = {
+            schemaVersion: '1.0',
+            seq: nextSeq,
+            previousHash,
+            recordHash,
+            replicaId,
+            signedEvidence: signed,
+            ts: new Date().toISOString(),
+          };
+
+          const contents = encodeAclContents(payload);
+          const { transactionId } = await this.client.appendTransaction(contents);
+
+          // Advance in-process state only AFTER the ACL write succeeds.
+          // A failed write leaves the chain at the previous tip so the next
+          // retry will re-sign with the same previousHash.
+          this.tipHash = recordHash;
+          this.tipSeq = nextSeq;
+          this.seqToTxId.set(nextSeq, transactionId);
+
+          return signed;
+        })
+        .then(resolve, reject)
+        .catch(() => {
+          // Keep the appendTail promise resolved after any error so future
+          // calls can continue to queue.  The error has already been forwarded
+          // to the caller via reject() in .then(resolve, reject) above, so
+          // it is not lost — this catch only prevents an unhandled rejection
+          // on the internal tail promise.
+        });
+    });
+  }
+
+  async getChainTip(): Promise<{ seq: number; tipHash: string } | null> {
+    if (this.tipSeq === 0) return null;
+    return { seq: this.tipSeq, tipHash: this.tipHash };
+  }
+
+  /**
+   * Retrieve entries in [fromSeq, toSeq] using the in-process seq→txId index.
+   *
+   * Only entries that were appended during the current process lifetime (or
+   * the single tip entry seeded by `initialize()`) are in the index.  Entries
+   * outside the index are silently omitted.  Non-fatal `getTransaction` errors
+   * are reported via `options.onError` and the affected entry is skipped.
+   */
+  async getEntries(fromSeq: number, toSeq: number): Promise<LedgerEntry[]> {
+    const entries: LedgerEntry[] = [];
+    for (let seq = fromSeq; seq <= toSeq; seq++) {
+      const txId = this.seqToTxId.get(seq);
+      if (!txId) continue; // Not in index.
+
+      let tx: { transactionId: string; contents: string } | null;
+      try {
+        tx = await this.client.getTransaction(txId);
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(String(err)));
+        continue;
+      }
+      if (!tx) continue;
+
+      const payload = decodeAclContents(tx.contents);
+      if (!payload || payload.seq !== seq) continue;
+
+      entries.push({
+        seq: payload.seq,
+        previousHash: payload.previousHash,
+        recordHash: payload.recordHash,
+        replicaId: payload.replicaId,
+        signedEvidence: payload.signedEvidence,
+        ts: payload.ts,
+      });
+    }
+    return entries;
+  }
+
+  async close(): Promise<void> {
+    // ACL HTTP clients have no explicit cleanup.
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -935,13 +1322,17 @@ export class PostgresLedgerBackend implements LedgerBackend {
 export interface LedgerSignerConfig {
   /**
    * Which backend to use.
-   *   - `'none'`     — no ledger backend; falls back to a pure in-process chain.
-   *                    **Does not close the tamper-rewrite gap** — use only in
-   *                    development.
+   *   - `'none'`      — no ledger backend; falls back to a pure in-process chain.
+   *                     **Does not close the tamper-rewrite gap** — use only in
+   *                     development.
    *   - `'in-memory'` — `InMemoryLedgerBackend` for tests.
-   *   - `'postgres'`  — `PostgresLedgerBackend` for production.
+   *   - `'postgres'`  — `PostgresLedgerBackend` for production (cross-replica
+   *                     chain serialisation via `pg_advisory_xact_lock` + HMAC).
+   *   - `'acl'`       — `AzureConfidentialLedgerBackend` for production on
+   *                     Azure (TEE-backed immutability; single-process chain
+   *                     serialisation only — no cross-replica locking).
    */
-  backend: 'none' | 'in-memory' | 'postgres';
+  backend: 'none' | 'in-memory' | 'postgres' | 'acl';
 
   /** Crypto signing primitive (shared with `AuditEvidenceSigner`). */
   cryptoSigner: CryptoSigner;
@@ -967,6 +1358,18 @@ export interface LedgerSignerConfig {
    * the table exists. Default `false` (rely on external schema management).
    */
   runMigrations?: boolean;
+
+  /**
+   * Azure Confidential Ledger client. Required when `backend === 'acl'`.
+   *
+   * Build this from `@azure-rest/confidential-ledger` + `@azure/identity` in
+   * your entrypoint and inject it here (or via
+   * `GatewayDependencies.ledgerAclClient` for the standard bootstrap).
+   */
+  aclClient?: AzureConfidentialLedgerClient;
+
+  /** Options for the ACL backend. Used when `backend === 'acl'`. */
+  aclOptions?: AzureConfidentialLedgerOptions;
 }
 
 /**
@@ -1001,15 +1404,20 @@ export async function createLedgerSignerFromConfig(
     if (config.runMigrations) {
       await pgBackend.migrate();
     }
-    // Seed lastAnchoredSeq from the DB tip so a restarted replica doesn't
-    // re-anchor the entire existing history on its first write.
-    await pgBackend.initialize();
     backend = pgBackend;
+  } else if (config.backend === 'acl') {
+    if (!config.aclClient) {
+      throw new Error('createLedgerSignerFromConfig: aclClient is required for acl backend');
+    }
+    backend = new AzureConfidentialLedgerBackend(config.aclClient, config.aclOptions);
   } else {
     throw new Error(`createLedgerSignerFromConfig: unknown backend "${config.backend}"`);
   }
 
   const signer = new LedgerAuditEvidenceSigner(config.cryptoSigner, backend, config.replicaId);
+  // initialize() delegates to backend.initialize() if implemented, seeding
+  // chain state (Postgres lastAnchoredSeq, ACL tip hash) before the first
+  // signing call.
   await signer.initialize();
   return signer;
 }

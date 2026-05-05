@@ -1043,6 +1043,8 @@ export const GatewayConfigSchema = z
     // Object-Lock anchoring. Multiple replicas share the same table; a DB-level
     // advisory lock serialises writes, so no replica can fork or rewrite the chain
     // without the DB rejecting the conflicting seq/previousHash pair.
+    // When AUDIT_LEDGER_BACKEND=acl the gateway writes to Azure Confidential Ledger,
+    // a TEE-backed immutable store that guarantees entries cannot be deleted or modified.
     AUDIT_LEDGER_BACKEND: optionalString
       .pipe(
         z
@@ -1050,6 +1052,7 @@ export const GatewayConfigSchema = z
             z.literal('none'),
             z.literal('postgres'),
             z.literal('in-memory'),
+            z.literal('acl'),
             z.undefined(),
           ])
           .transform((v) => v ?? 'none'),
@@ -1059,6 +1062,9 @@ export const GatewayConfigSchema = z
         '"none" (default) — in-process chain only (no replay protection against a compromised replica). ' +
         '"postgres" — append-only PostgreSQL table with per-row HMAC. ' +
         '"in-memory" — ephemeral in-process ledger for testing. ' +
+        '"acl" — Azure Confidential Ledger (TEE-backed). Requires either AUDIT_LEDGER_ACL_ENDPOINT ' +
+        '(auto-constructs a client using DefaultAzureCredential) or an AzureConfidentialLedgerClient ' +
+        'injected via the second argument to initializeServices(). ' +
         'Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to "postgres".',
       ),
     AUDIT_LEDGER_PG_URL: optionalString.describe(
@@ -1112,6 +1118,18 @@ export const GatewayConfigSchema = z
         'DB tamper event and S3 detection) at the cost of more S3 PUT requests. ' +
         'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
     }),
+
+    // ACL-specific config (only used when AUDIT_LEDGER_BACKEND=acl).
+    AUDIT_LEDGER_ACL_ENDPOINT: optionalString.describe(
+      'Azure Confidential Ledger endpoint URL. ' +
+      'Required when AUDIT_LEDGER_BACKEND=acl AND the ledger client is constructed ' +
+      'inside the standard bootstrap (i.e. GatewayDependencies.ledgerAclClient is not ' +
+      'provided by a custom entrypoint). Format: https://<name>.confidentialledger.azure.com. ' +
+      'Authentication uses DefaultAzureCredential (workload identity, managed identity, ' +
+      'or AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET environment variables). ' +
+      'NOTE: the standard bootstrap dynamically requires @azure-rest/confidential-ledger and ' +
+      '@azure/identity — add both to your deployment image when using this option.',
+    ),
 
 
     POLICY_VERSION: optionalString.describe(

@@ -17,6 +17,8 @@ import {
   LedgerChainError,
   LedgerEntry,
   PostgresLedgerBackend,
+  AzureConfidentialLedgerBackend,
+  AzureConfidentialLedgerClient,
   PgPool,
   PgClientConnection,
   PgQueryResult,
@@ -755,5 +757,391 @@ describe('PostgresLedgerBackend S3 anchor', () => {
     expect(payload['toSeq']).toBe(3);
     expect(typeof payload['merkleRoot']).toBe('string');
     expect(payload['replicaId']).toBe('rep-1');
+  });
+});
+
+// ── PostgresLedgerBackend.migrate() schema-qualified name fix ─────────────────
+
+describe('PostgresLedgerBackend.migrate() schema-qualified table name', () => {
+  it('generates a valid index name (no dot) for schema-qualified table', async () => {
+    const capturedSql: string[] = [];
+    const fakePool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql.trim());
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+
+    const backend = new PostgresLedgerBackend(fakePool, {
+      hmacSecret: 'a'.repeat(64),
+      table: 'audit.euno_ledger',
+    });
+    await backend.migrate();
+
+    const indexSql = capturedSql.find((s) => s.toUpperCase().startsWith('CREATE INDEX'));
+    expect(indexSql).toBeDefined();
+    // The index name must NOT contain a dot — 'audit.euno_ledger_created_at' is
+    // invalid SQL (dot in unquoted identifier is parsed as schema.name).
+    expect(indexSql).not.toMatch(/idx_audit\./);
+    // Should use just the table name part as the identifier.
+    expect(indexSql).toMatch(/idx_euno_ledger_created_at/);
+  });
+});
+
+// ── PostgresLedgerBackend.getEntries() includes rowHmac ──────────────────────
+
+describe('PostgresLedgerBackend.getEntries() rowHmac field', () => {
+  const HMAC_SECRET = 'a'.repeat(64);
+
+  it('returns rowHmac in each LedgerEntry', async () => {
+    const { pool, rows } = makeMockPgPool();
+    const backend = new PostgresLedgerBackend(pool, { hmacSecret: HMAC_SECRET });
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    const signed = await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    const entries = await backend.getEntries(1, 1);
+    expect(entries.length).toBe(1);
+    const entry = entries[0]!;
+
+    // rowHmac must be present and match what was stored.
+    expect(entry.rowHmac).toBeDefined();
+    expect(Buffer.isBuffer(entry.rowHmac)).toBe(true);
+
+    // And verifyRowHmac with the returned rowHmac must pass — callers no
+    // longer need a separate raw DB query to do offline verification.
+    expect(backend.verifyRowHmac(entry, entry.rowHmac!)).toBe(true);
+
+    // Cross-check: same HMAC as stored in the raw mock rows.
+    const row = rows[0]!;
+    expect(entry.rowHmac!.equals(row.row_hmac)).toBe(true);
+
+    // Tampered entry should fail.
+    const tampered = { ...entry, recordHash: 'ff'.repeat(32) };
+    expect(backend.verifyRowHmac(tampered, entry.rowHmac!)).toBe(false);
+
+    void signed; // suppress unused-var
+  });
+});
+
+
+// ── AzureConfidentialLedgerBackend tests ──────────────────────────────────────
+
+/**
+ * Build a mock AzureConfidentialLedgerClient that stores transactions
+ * in memory, simulating a simple round-trip to ACL.
+ */
+function makeMockAclClient(): {
+  client: AzureConfidentialLedgerClient;
+  transactions: Array<{ transactionId: string; contents: string }>;
+} {
+  const transactions: Array<{ transactionId: string; contents: string }> = [];
+  let nextTxId = 1;
+
+  const client: AzureConfidentialLedgerClient = {
+    async appendTransaction(contents) {
+      const transactionId = String(nextTxId++);
+      transactions.push({ transactionId, contents });
+      return { transactionId };
+    },
+    async getLatestCommittedTransaction() {
+      if (transactions.length === 0) return null;
+      return transactions[transactions.length - 1]!;
+    },
+    async getTransaction(transactionId) {
+      return transactions.find((t) => t.transactionId === transactionId) ?? null;
+    },
+  };
+
+  return { client, transactions };
+}
+
+describe('AzureConfidentialLedgerBackend', () => {
+  it('starts empty, getChainTip returns null', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    expect(await backend.getChainTip()).toBeNull();
+  });
+
+  it('assigns seq=1 and previousHash=GENESIS_HASH to the first entry', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    const signed = await backend.appendEntry(ev, 'replica-1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    expect(signed.seq).toBe(1);
+    expect(signed.previousHash).toBe(GENESIS_HASH);
+    const tip = await backend.getChainTip();
+    expect(tip).not.toBeNull();
+    expect(tip!.seq).toBe(1);
+  });
+
+  it('chains records correctly across multiple appends', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    const records = [];
+    for (let i = 1; i <= 5; i++) {
+      const ev = makeEvidence(i);
+      const signed = await backend.appendEntry(ev, 'r1', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+      records.push(signed);
+    }
+
+    for (let i = 1; i < records.length; i++) {
+      expect(records[i]!.previousHash).toBe(canonicalSha256(records[i - 1]!));
+    }
+    expect(records[0]!.previousHash).toBe(GENESIS_HASH);
+  });
+
+  it('serialises concurrent appends so seq numbers are unique and consecutive', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    const promises = Array.from({ length: 8 }, (_, i) => {
+      const ev = makeEvidence(i + 1);
+      return backend.appendEntry(ev, 'r1', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    });
+    const results = await Promise.all(promises);
+    const seqs = results.map((r) => r.seq).sort((a, b) => a - b);
+    expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('rejects with LedgerChainError when sign callback returns wrong previousHash', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    await expect(
+      backend.appendEntry(ev, 'r1', async (_ph, seq) => {
+        return signEvidenceWithChain(ev, cryptoSigner, 'ff'.repeat(32), seq);
+      }),
+    ).rejects.toThrow(LedgerChainError);
+  });
+
+  it('rejects with LedgerChainError when sign callback returns wrong seq', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    await expect(
+      backend.appendEntry(ev, 'r1', async (ph, _seq) => {
+        return signEvidenceWithChain(ev, cryptoSigner, ph, 99);
+      }),
+    ).rejects.toThrow(LedgerChainError);
+  });
+
+  it('does not advance chain state when ACL append fails', async () => {
+    const { client } = makeMockAclClient();
+    let failNext = true;
+    const failingClient: AzureConfidentialLedgerClient = {
+      ...client,
+      async appendTransaction(contents) {
+        if (failNext) {
+          failNext = false;
+          throw new Error('ACL write timeout');
+        }
+        return client.appendTransaction(contents);
+      },
+    };
+
+    const backend = new AzureConfidentialLedgerBackend(failingClient);
+    const cryptoSigner = new EcP256Signer();
+
+    const ev1 = makeEvidence(1);
+    // First append fails — chain must stay at genesis.
+    await expect(
+      backend.appendEntry(ev1, 'r1', (ph, seq) => signEvidenceWithChain(ev1, cryptoSigner, ph, seq)),
+    ).rejects.toThrow('ACL write timeout');
+    expect(await backend.getChainTip()).toBeNull();
+
+    // Second append succeeds; must continue from genesis (seq=1).
+    const ev2 = makeEvidence(1);
+    const signed2 = await backend.appendEntry(ev2, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev2, cryptoSigner, ph, seq),
+    );
+    expect(signed2.seq).toBe(1);
+    expect(signed2.previousHash).toBe(GENESIS_HASH);
+  });
+
+  it('seeds chain state from ACL on initialize()', async () => {
+    const { client } = makeMockAclClient();
+    const cryptoSigner = new EcP256Signer();
+
+    // Write 3 entries using one backend instance.
+    const backend1 = new AzureConfidentialLedgerBackend(client);
+    for (let i = 1; i <= 3; i++) {
+      const ev = makeEvidence(i);
+      await backend1.appendEntry(ev, 'r1', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+
+    // A new backend instance simulates a process restart.
+    const backend2 = new AzureConfidentialLedgerBackend(client);
+    // Before initialize(): in-process state is empty.
+    expect(await backend2.getChainTip()).toBeNull();
+
+    // After initialize(): chain state is seeded from the latest ACL transaction.
+    await backend2.initialize();
+    const tip = await backend2.getChainTip();
+    expect(tip).not.toBeNull();
+    expect(tip!.seq).toBe(3);
+
+    // Appending after restart must continue from seq=4, not restart at seq=1.
+    const ev4 = makeEvidence(4);
+    const signed4 = await backend2.appendEntry(ev4, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev4, cryptoSigner, ph, seq),
+    );
+    expect(signed4.seq).toBe(4);
+  });
+
+  it('getEntries returns entries from the in-process index', async () => {
+    const { client } = makeMockAclClient();
+    const backend = new AzureConfidentialLedgerBackend(client);
+    const cryptoSigner = new EcP256Signer();
+
+    for (let i = 1; i <= 5; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'r1', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+
+    const slice = await backend.getEntries(2, 4);
+    expect(slice.length).toBe(3);
+    expect(slice[0]!.seq).toBe(2);
+    expect(slice[2]!.seq).toBe(4);
+  });
+
+  it('getEntries silently omits entries not in the in-process index', async () => {
+    const { client } = makeMockAclClient();
+    // Simulate a fresh backend (no index) pointing at a non-empty ACL.
+    const backend = new AzureConfidentialLedgerBackend(client);
+    // No entries written through this instance — index is empty.
+    const entries = await backend.getEntries(1, 5);
+    expect(entries).toEqual([]);
+  });
+
+  it('calls onError when getTransaction fails during getEntries', async () => {
+    const { client } = makeMockAclClient();
+    const cryptoSigner = new EcP256Signer();
+    const errors: Error[] = [];
+
+    const failingClient: AzureConfidentialLedgerClient = {
+      ...client,
+      getTransaction: async () => { throw new Error('ACL fetch error'); },
+    };
+
+    const backend = new AzureConfidentialLedgerBackend(failingClient, {
+      onError: (err) => errors.push(err),
+    });
+
+    const ev = makeEvidence(1);
+    await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    // getEntries will attempt to call getTransaction, which now throws.
+    const entries = await backend.getEntries(1, 1);
+    expect(entries).toEqual([]); // silently omitted
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]!.message).toBe('ACL fetch error');
+  });
+
+  it('initialize() throws when latest transaction contents are malformed', async () => {
+    // Build a mock client that returns garbage contents.
+    const malformedClient: AzureConfidentialLedgerClient = {
+      async appendTransaction() { return { transactionId: '1' }; },
+      async getLatestCommittedTransaction() {
+        // Return invalid base64-JSON (not a valid AclEntryPayload).
+        return { transactionId: '1', contents: Buffer.from('{"broken":true}').toString('base64') };
+      },
+      async getTransaction() { return null; },
+    };
+
+    const backend = new AzureConfidentialLedgerBackend(malformedClient);
+    await expect(backend.initialize()).rejects.toThrow(
+      /unrecognised or invalid contents/,
+    );
+    // Chain state must not have advanced — still at genesis.
+    expect(await backend.getChainTip()).toBeNull();
+  });
+
+  it('initialize() throws when latest transaction contents fail base64/JSON parsing', async () => {
+    const badBase64Client: AzureConfidentialLedgerClient = {
+      async appendTransaction() { return { transactionId: '1' }; },
+      async getLatestCommittedTransaction() {
+        return { transactionId: '1', contents: '!!not-base64!!' };
+      },
+      async getTransaction() { return null; },
+    };
+
+    const backend = new AzureConfidentialLedgerBackend(badBase64Client);
+    await expect(backend.initialize()).rejects.toThrow(
+      /unrecognised or invalid contents/,
+    );
+    expect(await backend.getChainTip()).toBeNull();
+  });
+});
+
+// ── createLedgerSignerFromConfig — acl backend ────────────────────────────────
+
+describe('createLedgerSignerFromConfig — acl backend', () => {
+  it('throws when backend=acl and aclClient is missing', async () => {
+    await expect(
+      createLedgerSignerFromConfig({
+        backend: 'acl',
+        cryptoSigner: new EcP256Signer(),
+        replicaId: 'r1',
+        // aclClient intentionally omitted
+      }),
+    ).rejects.toThrow(/aclClient is required/);
+  });
+
+  it('returns LedgerAuditEvidenceSigner with AzureConfidentialLedgerBackend', async () => {
+    const { client } = makeMockAclClient();
+    const result = await createLedgerSignerFromConfig({
+      backend: 'acl',
+      cryptoSigner: new EcP256Signer(),
+      replicaId: 'r1',
+      aclClient: client,
+    });
+    expect(result).toBeInstanceOf(LedgerAuditEvidenceSigner);
+    expect(result!.getBackend()).toBeInstanceOf(AzureConfidentialLedgerBackend);
+  });
+
+  it('signs and verifies evidence through the ACL backend', async () => {
+    const { client } = makeMockAclClient();
+    const result = await createLedgerSignerFromConfig({
+      backend: 'acl',
+      cryptoSigner: new EcP256Signer(),
+      replicaId: 'r1',
+      aclClient: client,
+    });
+    expect(result).not.toBeNull();
+    const ev = makeEvidence(1);
+    const signed = await result!.signEvidence(ev);
+    expect(signed.seq).toBe(1);
+    expect(signed.previousHash).toBe(GENESIS_HASH);
+    expect(await result!.verifyEvidence(signed)).toBe(true);
   });
 });
