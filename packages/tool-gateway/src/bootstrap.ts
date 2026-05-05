@@ -47,6 +47,11 @@ import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
 import { createRevocationStoreFromEnv, RevocationStore, createRevocationEpochStoreFromEnv, RevocationEpochStore } from './revocation-store';
 import { createPartnerIssuerResolverFromEnv } from './partner-issuer-resolver';
+import {
+  createPartnerDidRegistryFromEnv,
+  InMemoryPartnerDidRegistry,
+  RedisPartnerDidRegistry,
+} from './partner-did-registry';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -187,6 +192,17 @@ export interface GatewayDependencies {
    * cache-refresh endpoint.
    */
   partnerResolver?: import('./partner-issuer-resolver').PartnerIssuerResolver;
+  /**
+   * Optional partner-DID registry (two-eyes lifecycle, pin enforcement).
+   * When configured, the admin router exposes proposal / approval / revoke
+   * / list / refresh endpoints under `/admin/partner-dids/*`.
+   */
+  partnerRegistry?: InMemoryPartnerDidRegistry | RedisPartnerDidRegistry;
+  /**
+   * When true, the admin router requires `pinnedDocSha256` on all proposals.
+   * Plumbed from `PARTNER_DID_REQUIRE_PIN`.
+   */
+  requirePin?: boolean;
   /**
    * Maximum upstream response body size (bytes) to buffer for field-level
    * redaction. Responses larger than this limit AND carrying a redaction
@@ -464,7 +480,27 @@ export async function initializeServices(
   }
 
   // Build the cross-org partner-issuer trust resolver.
-  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger);
+  // The registry is constructed first so the resolver can consult it for trust
+  // decisions and pin verification; the legacy TRUSTED_PARTNER_DIDS env-var path
+  // is preserved as a seed-and-warn fallback (deprecated).
+  //
+  // When REDIS_URL is set the factory creates its own ioredis connection so
+  // admin-API writes (propose/approve/revoke) propagate to all replicas.
+  // The onError callback increments euno_gateway_redis_errors_total{store="partner_did_registry"}.
+  const partnerRegistry = await createPartnerDidRegistryFromEnv(
+    env,
+    logger,
+    undefined, // let the factory auto-create from REDIS_URL when set
+    {
+      requirePin: env.PARTNER_DID_REQUIRE_PIN === 'true',
+      registryRequired: env.PARTNER_DID_REGISTRY_REQUIRED === 'true',
+      keyPrefix: env.PARTNER_DID_REGISTRY_KEY_PREFIX,
+      deploymentTier: env.EUNO_DEPLOYMENT_TIER,
+      nodeEnv: env.NODE_ENV,
+    },
+  );
+
+  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry);
   if (partnerResolver) {
     const partnerDidCount = (env.TRUSTED_PARTNER_DIDS || '')
       .split(',')
@@ -850,6 +886,8 @@ export async function initializeServices(
     trustProxy: parseTrustProxy(validated.TRUST_PROXY),
     actionResolver,
     partnerResolver: partnerResolver ?? undefined,
+    partnerRegistry,
+    requirePin: validated.PARTNER_DID_REQUIRE_PIN === true,
     responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
   };
 

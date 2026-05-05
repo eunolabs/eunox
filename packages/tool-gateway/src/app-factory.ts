@@ -236,6 +236,8 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       tokenVerifier: verifier,
       epochStore: deps.epochStore,
       partnerResolver: deps.partnerResolver,
+      partnerRegistry: deps.partnerRegistry,
+      requirePin: deps.requirePin,
     }),
   );
 

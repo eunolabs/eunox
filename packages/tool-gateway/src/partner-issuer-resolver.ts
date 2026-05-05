@@ -11,9 +11,9 @@
  * advertised in each partner's DID document.
  *
  * Trust model (declarative, not transitive):
- *   - The gateway operator opts a partner DID into trust by listing it in
- *     `TRUSTED_PARTNER_DIDS` (comma-separated).  Tokens from any other
- *     issuer DID are rejected even if the DID resolves successfully.
+ *   - The gateway operator opts a partner DID into trust via the
+ *     {@link PartnerDidRegistry} (two-eyes workflow, optional pin) **or**
+ *     the legacy `TRUSTED_PARTNER_DIDS` env-var (backwards-compat, no pin).
  *   - For each trusted DID, the resolver fetches the DID document via
  *     `resolveDID()` and caches the resulting (alg, public-key) pair for
  *     `cacheTtlMs` (default 5 minutes).  A signature failure invalidates
@@ -28,13 +28,20 @@
  */
 
 import * as jose from 'jose';
-import { CapabilityError, ErrorCode, Logger } from '@euno/common';
+import { CapabilityError, ErrorCode, Logger, createAuditLogger } from '@euno/common';
 import {
   resolveDID,
   findVerificationMethod,
   extractPublicKeyPem,
   determineSigningAlgorithm,
+  type VerificationMethod,
 } from '@euno/capability-issuer/adapters';
+import {
+  PartnerDidRegistry,
+  PartnerDidEntry,
+  jcsSha256,
+  fetchJson,
+} from './partner-did-registry';
 
 /** Cached entry for one (DID, kid?) pair. */
 interface CachedKey {
@@ -65,11 +72,17 @@ interface NegativeCacheEntry {
 
 export interface PartnerIssuerResolverOptions {
   /**
-   * Set of issuer DIDs the gateway is willing to trust.  Tokens whose
-   * `iss` claim is not present in this set are rejected before any
-   * network resolution is attempted.
+   * Set of issuer DIDs the gateway is willing to trust (legacy path).
+   * Tokens whose `iss` claim is not present in this set (and not active in
+   * the registry) are rejected before any network resolution is attempted.
    */
   trustedIssuerDids: string[];
+  /**
+   * Optional registry.  When supplied `trusts(did)` returns true if the DID
+   * is `active` in the registry **or** present in `trustedIssuerDids`.  The
+   * registry also supplies pin material for `getKey()`.
+   */
+  registry?: PartnerDidRegistry;
   /** TTL for successfully cached resolver results (default 5 minutes). */
   cacheTtlMs?: number;
   /**
@@ -97,16 +110,19 @@ export interface PartnerIssuerResolverOptions {
  */
 export class PartnerIssuerResolver {
   private readonly trusted: Set<string>;
+  private readonly registry?: PartnerDidRegistry;
   private readonly cacheTtlMs: number;
   private readonly negativeCacheTtlMs: number;
   private readonly cache = new Map<string, CachedKey>();
   private readonly negativeCache = new Map<string, NegativeCacheEntry>();
   private readonly logger?: Logger;
+  private readonly auditLogger = createAuditLogger('tool-gateway');
   private static readonly DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
   private static readonly DEFAULT_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
 
   constructor(opts: PartnerIssuerResolverOptions) {
     this.trusted = new Set(opts.trustedIssuerDids.filter((d) => d && d.length > 0));
+    this.registry = opts.registry;
     this.cacheTtlMs = opts.cacheTtlMs ?? PartnerIssuerResolver.DEFAULT_CACHE_TTL_MS;
     this.negativeCacheTtlMs = opts.negativeCacheTtlMs ?? PartnerIssuerResolver.DEFAULT_NEGATIVE_CACHE_TTL_MS;
     this.logger = opts.logger;
@@ -114,10 +130,24 @@ export class PartnerIssuerResolver {
 
   /** Whether the resolver has any partner DIDs configured at all. */
   get isEmpty(): boolean {
-    return this.trusted.size === 0;
+    return this.trusted.size === 0 && !this.registry;
   }
 
-  /** Whether the given DID is in the trusted set. */
+  /**
+   * Whether the given DID is trusted (in the legacy set or active in the
+   * registry).  Async because the registry may be Redis-backed.
+   */
+  async trustsAsync(did: string): Promise<boolean> {
+    if (this.trusted.has(did)) return true;
+    if (this.registry) return this.registry.trusts(did);
+    return false;
+  }
+
+  /**
+   * Synchronous trust check for the legacy env-var path.
+   * Only checks the in-memory trusted set; does NOT check the registry.
+   * Use `trustsAsync` when a registry is wired.
+   */
   trusts(did: string): boolean {
     return this.trusted.has(did);
   }
@@ -128,7 +158,9 @@ export class PartnerIssuerResolver {
    * is not trusted, cannot be resolved, or has no usable key.
    */
   async getKey(did: string, kid?: string): Promise<{ key: jose.KeyLike | Uint8Array; alg: string }> {
-    if (!this.trusts(did)) {
+    // Trust check: either legacy set or registry.
+    const trusted = await this.trustsAsync(did);
+    if (!trusted) {
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
         `Issuer DID is not in TRUSTED_PARTNER_DIDS: ${did}`,
@@ -170,8 +202,22 @@ export class PartnerIssuerResolver {
       kid: kid ?? null,
     });
 
+    // Look up registry entry for pin material (may be undefined for legacy path).
+    const registryEntry = this.registry ? await this.registry.get(did) : undefined;
+
     try {
       const didDoc = await resolveDID(did);
+
+      // Pin verification (2C): check JCS-SHA-256 of the DID document.
+      if (registryEntry?.pinnedDocSha256) {
+        await this.verifyDocPin(did, didDoc, registryEntry.pinnedDocSha256);
+      }
+
+      // Secondary-resolver cross-check (2C).
+      if (registryEntry?.secondaryResolver) {
+        await this.verifySecondaryResolver(did, didDoc, registryEntry);
+      }
+
       const vm = findVerificationMethod(didDoc, kid);
       if (!vm) {
         // The DID document was resolved successfully — do NOT negatively
@@ -187,6 +233,14 @@ export class PartnerIssuerResolver {
           kid: kid ?? null,
         });
         throw new CapabilityError(ErrorCode.INVALID_TOKEN, msg, 401);
+      }
+
+      // Per-VM JWK thumbprint pin (2C).
+      if (registryEntry?.pinnedVerificationKeys && kid) {
+        const expectedThumbprint = registryEntry.pinnedVerificationKeys[kid];
+        if (expectedThumbprint !== undefined) {
+          await this.verifyKidPin(did, kid, vm, expectedThumbprint);
+        }
       }
 
       const pem = await extractPublicKeyPem(vm);
@@ -220,6 +274,10 @@ export class PartnerIssuerResolver {
         did,
         kid: kid ?? null,
         ttlMs: this.cacheTtlMs,
+        // Only tracks document-level pin verification; key-level pins
+        // (pinnedVerificationKeys) and secondary resolver checks are
+        // performed above but not reflected in this field.
+        pinnedDocSha256Verified: !!(registryEntry?.pinnedDocSha256),
       });
 
       return { key, alg };
@@ -237,6 +295,157 @@ export class PartnerIssuerResolver {
         ErrorCode.INVALID_TOKEN,
         `Partner DID ${did} is temporarily unavailable`,
         401
+      );
+    }
+  }
+
+  // ── Pin verification helpers ──────────────────────────────────────────────
+
+  private async verifyDocPin(
+    did: string,
+    didDoc: unknown,
+    pinnedSha256: string,
+  ): Promise<void> {
+    const actualHash = jcsSha256(didDoc);
+    if (actualHash !== pinnedSha256.toLowerCase()) {
+      this.auditLogger.warn('partner_did_pin_violation', {
+        eventType: 'partner_did_pin_violation',
+        did,
+        expectedSha256: pinnedSha256,
+        actualSha256: actualHash,
+      });
+      this.storeNegativeDid(did);
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `Partner DID ${did} document hash mismatch — possible tampering`,
+        401,
+      );
+    }
+  }
+
+  private async verifyKidPin(
+    did: string,
+    kid: string,
+    vm: VerificationMethod,
+    expectedThumbprint: string,
+  ): Promise<void> {
+    // A per-VM thumbprint pin is configured — we MUST fail-closed if we cannot
+    // compute the thumbprint.  Silently skipping the check would allow an
+    // attacker to bypass pinning by advertising a key in publicKeyPem /
+    // publicKeyMultibase instead of publicKeyJwk.
+    let thumbprint: string;
+    try {
+      // Preferred path: the VM has an inline publicKeyJwk.
+      const jwk = vm.publicKeyJwk as jose.JWK | undefined;
+      if (jwk) {
+        thumbprint = await jose.calculateJwkThumbprint(jwk, 'sha256');
+      } else {
+        // Fallback: derive the JWK from the PEM extracted by the existing
+        // adapter and export it so we can call calculateJwkThumbprint.
+        // extractPublicKeyPem + determineSigningAlgorithm are always
+        // available for any VM that reaches this path (we already call them
+        // after pin verification).
+        const pem = await extractPublicKeyPem(vm);
+        const alg = determineSigningAlgorithm(vm);
+        const importedKey = await jose.importSPKI(pem, alg);
+        const derivedJwk = await jose.exportJWK(importedKey);
+        thumbprint = await jose.calculateJwkThumbprint(derivedJwk, 'sha256');
+      }
+    } catch (err) {
+      if (err instanceof CapabilityError) throw err;
+      // We could not compute the thumbprint (e.g. unsupported key format or
+      // broken adapter output).  With a pin configured this is fail-closed:
+      // trust without verification is not acceptable.
+      this.auditLogger.warn('partner_did_kid_pin_violation', {
+        eventType: 'partner_did_kid_pin_violation',
+        did,
+        kid,
+        expectedThumbprint,
+        actualThumbprint: null,
+        reason: 'thumbprint_computation_failed',
+      });
+      this.storeNegativeDid(did);
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `Partner DID ${did} kid=${kid} thumbprint could not be computed — pin check fail-closed`,
+        401,
+      );
+    }
+    if (thumbprint !== expectedThumbprint) {
+      this.auditLogger.warn('partner_did_kid_pin_violation', {
+        eventType: 'partner_did_kid_pin_violation',
+        did,
+        kid,
+        expectedThumbprint,
+        actualThumbprint: thumbprint,
+      });
+      this.storeNegativeDid(did);
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `Partner DID ${did} kid=${kid} thumbprint mismatch — possible key substitution`,
+        401,
+      );
+    }
+  }
+
+  private async verifySecondaryResolver(
+    did: string,
+    primaryDoc: unknown,
+    entry: PartnerDidEntry,
+  ): Promise<void> {
+    const spec = entry.secondaryResolver!;
+    try {
+      const secondaryDoc = await fetchJson(spec.url);
+      if (spec.expectedSha256) {
+        // Compare against a pre-computed hash (e.g. from an out-of-band ledger).
+        const actualHash = jcsSha256(secondaryDoc);
+        if (actualHash !== spec.expectedSha256.toLowerCase()) {
+          this.auditLogger.warn('partner_did_secondary_resolver_mismatch', {
+            eventType: 'partner_did_secondary_resolver_mismatch',
+            did,
+            url: spec.url,
+            expectedSha256: spec.expectedSha256,
+            actualSha256: actualHash,
+          });
+          this.storeNegativeDid(did);
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Partner DID ${did} secondary resolver hash mismatch`,
+            401,
+          );
+        }
+      } else {
+        // Byte-equality: both canonicalized documents must match.
+        const primaryCanon = jcsSha256(primaryDoc);
+        const secondaryCanon = jcsSha256(secondaryDoc);
+        if (primaryCanon !== secondaryCanon) {
+          this.auditLogger.warn('partner_did_secondary_resolver_mismatch', {
+            eventType: 'partner_did_secondary_resolver_mismatch',
+            did,
+            url: spec.url,
+            primarySha256: primaryCanon,
+            secondarySha256: secondaryCanon,
+          });
+          this.storeNegativeDid(did);
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `Partner DID ${did} primary and secondary resolver documents disagree`,
+            401,
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof CapabilityError) throw err;
+      this.logger?.error('Partner DID secondary resolver fetch failed', {
+        did,
+        url: spec.url,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.storeNegativeDid(did);
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `Partner DID ${did} secondary resolver unavailable`,
+        401,
       );
     }
   }
@@ -298,16 +507,15 @@ export class PartnerIssuerResolver {
 export function createPartnerIssuerResolverFromEnv(
   env: NodeJS.ProcessEnv,
   logger?: Logger,
+  registry?: PartnerDidRegistry,
 ): PartnerIssuerResolver | undefined {
   const raw = env.TRUSTED_PARTNER_DIDS;
-  if (!raw) {
-    return undefined;
-  }
   const dids = raw
-    .split(',')
-    .map((d) => d.trim())
-    .filter((d) => d.length > 0);
-  if (dids.length === 0) {
+    ? raw.split(',').map((d) => d.trim()).filter((d) => d.length > 0)
+    : [];
+
+  // Build resolver when either a non-empty TRUSTED_PARTNER_DIDS or a registry is supplied.
+  if (dids.length === 0 && !registry) {
     return undefined;
   }
 
@@ -322,6 +530,7 @@ export function createPartnerIssuerResolverFromEnv(
 
   return new PartnerIssuerResolver({
     trustedIssuerDids: dids,
+    registry,
     cacheTtlMs,
     negativeCacheTtlMs,
     logger,

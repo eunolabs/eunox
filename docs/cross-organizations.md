@@ -347,3 +347,44 @@ The suite covers:
 3.  **Untrusted issuer** — a third issuer DID (not in
     `TRUSTED_PARTNER_DIDS`) is rejected even when its DID document is
     reachable.
+
+---
+
+## Partner-DID Registry (two-eyes workflow)
+
+The `TRUSTED_PARTNER_DIDS` env-var is a quick-start shortcut but has no
+pin, no two-eyes approval, and no audit trail.  For production use the
+**partner-DID registry** replaces it with a full lifecycle:
+
+```
+proposed → active → revoked
+```
+
+Key properties:
+
+* **Two-eyes activation**: the operator who proposes a DID cannot approve it.
+* **Optional pin**: `pinnedDocSha256` pins the JCS-SHA-256 fingerprint of the
+  DID document, preventing MITM of the resolver endpoint.
+* **Per-VM thumbprint pins**: `pinnedVerificationKeys` pins individual
+  verification methods by JWK thumbprint (RFC 7638).
+* **Secondary resolver**: `secondaryResolver` adds an independent cross-check
+  against a second URL (e.g. a ledger anchor).
+* **Validity window**: `notBefore` / `notAfter` bound trust to a time range.
+* **Audit trail**: every lifecycle event emits a structured audit log entry.
+
+See `docs/OPERATOR_RUNBOOK_PARTNER_DIDS.md` for the full operator guide and
+API examples.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `PARTNER_DID_REQUIRE_PIN` | `false` | Require `pinnedDocSha256` on all new proposals |
+| `PARTNER_DID_REGISTRY_REQUIRED` | `false` | Reject `TRUSTED_PARTNER_DIDS` (force registry) |
+| `PARTNER_DID_REGISTRY_KEY_PREFIX` | `euno:gateway:partner-did` | Redis key prefix |
+
+### Migration from `TRUSTED_PARTNER_DIDS`
+
+1. Propose + approve each DID via the admin API (see runbook).
+2. Remove `TRUSTED_PARTNER_DIDS` from your config.
+3. Set `PARTNER_DID_REGISTRY_REQUIRED=true`.

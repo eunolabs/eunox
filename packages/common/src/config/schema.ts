@@ -1026,6 +1026,25 @@ export const GatewayConfigSchema = z
         'Default 30 s. Set to 0 to disable negative caching (every failed resolution re-tries immediately, ' +
         'amplifying resolver traffic during outages).',
     }),
+    PARTNER_DID_REQUIRE_PIN: envBoolean({
+      default: false,
+      description:
+        'When true, all partner-DID proposals submitted via the registry admin API MUST include ' +
+        'a pinnedDocSha256 value. Enforces pin discipline; proposals without a pin are rejected ' +
+        'with HTTP 400. Does not retroactively affect env-var-seeded entries. Boolean: true | false.',
+    }),
+    PARTNER_DID_REGISTRY_REQUIRED: envBoolean({
+      default: false,
+      description:
+        'When true, TRUSTED_PARTNER_DIDS (the legacy env-var bypass) is rejected at startup with ' +
+        'an error. Forces operators to use the two-eyes registry workflow for all partner-DID trust ' +
+        'entries. Set to true once the registry is fully adopted and TRUSTED_PARTNER_DIDS removed. ' +
+        'Boolean: true | false.',
+    }),
+    PARTNER_DID_REGISTRY_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for partner-DID registry entries. Default "euno:gateway:partner-did". ' +
+      'Override when multiple gateway clusters share one Redis instance.',
+    ),
 
     // Distributed coordination (Redis) --------------------------------------
     REDIS_URL: optionalString.describe(

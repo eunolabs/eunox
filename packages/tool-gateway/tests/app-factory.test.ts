@@ -548,6 +548,242 @@ describe('createApp(deps) — R-2 in-process factory', () => {
       }
     });
 
+    it('streams a large response (no buffering) when capability has no redactFields', async () => {
+      // 10 MiB response — if the gateway buffers this into memory unconditionally
+      // it would still work, but the test asserts that the body arrives intact and
+      // no REDACTION_OVERSIZE 502 fires even though we set a tiny 10-byte cap on
+      // the *buffered* path. The 10-byte cap is a canary: if the streaming path
+      // accidentally routes through the buffered proxy, the test will return 502.
+      const tenMiB = 10 * 1024 * 1024;
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/octet-stream');
+            res.setHeader('content-length', String(tenMiB));
+            // Stream 10 MiB in 1 MiB chunks so Node keeps memory bounded.
+            let sent = 0;
+            function writeChunk() {
+              const remaining = tenMiB - sent;
+              if (remaining <= 0) { res.end(); return; }
+              const chunkSize = Math.min(1024 * 1024, remaining);
+              const chunk = Buffer.alloc(chunkSize, 0x42);
+              sent += chunkSize;
+              const ok = res.write(chunk);
+              if (ok) setImmediate(writeChunk);
+              else res.once('drain', writeChunk);
+            }
+            writeChunk();
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        // Set a 10-byte cap on the buffered path — any buffering triggers 502.
+        const app = createApp({ ...deps, responseRedactionMaxBytes: 10 });
+
+        // No redactFields — should route to streaming proxy.
+        const token = await signToken(privateKey, [
+          { resource: 'api://api.example.com/**', actions: ['read'] },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/download')
+          .set('Authorization', `Bearer ${token}`)
+          .buffer(true); // collect entire body for size assertion
+
+        expect(res.status).toBe(200);
+        // Body arrived intact, no REDACTION_OVERSIZE 502.
+        // Assert the full 10 MiB arrived — buffer(true) collects the entire
+        // response, so res.body is a Buffer we can measure directly.
+        const body = res.body as Buffer;
+        expect(body).toBeInstanceOf(Buffer);
+        expect(body.length).toBe(tenMiB);
+        // No error code in response.
+        expect(typeof res.body === 'object' && res.body?.error?.code).toBeFalsy();
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('passes Content-Encoding: gzip and Transfer-Encoding: chunked through unmodified on streaming path', async () => {
+      // Backend signals gzip encoding via Content-Encoding header.
+      // The streaming path must not strip or alter the header.
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/octet-stream');
+            res.setHeader('content-encoding', 'gzip');
+            // Transfer-Encoding chunked is implicit for HTTP/1.1 responses
+            // without Content-Length — no need to set it explicitly.
+            res.end(Buffer.from([0x1f, 0x8b])); // just a stub gzip magic header
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          { resource: 'api://api.example.com/**', actions: ['read'] },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/file.gz')
+          .set('Authorization', `Bearer ${token}`)
+          .buffer(false); // don't let supertest decompress
+
+        expect(res.status).toBe(200);
+        // Content-Encoding must be preserved (streaming proxy does not strip it).
+        expect(res.headers['content-encoding']).toBe('gzip');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_STREAM_UNSUPPORTED when backend returns SSE and redactFields is set', async () => {
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'text/event-stream');
+            res.end('data: hello\n\n');
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/events')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_STREAM_UNSUPPORTED');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_CONTENT_TYPE_UNSUPPORTED when backend returns application/x-ndjson and redactFields is set', async () => {
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/x-ndjson');
+            res.end('{"a":1}\n{"b":2}\n');
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/stream')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_CONTENT_TYPE_UNSUPPORTED');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_CONTENT_TYPE_UNSUPPORTED when backend returns application/octet-stream and redactFields is set', async () => {
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/octet-stream');
+            res.end(Buffer.alloc(16));
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/file.bin')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_CONTENT_TYPE_UNSUPPORTED');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
     it('returns 502 REDACTION_PARSE_ERROR when backend returns application/json with non-JSON body and redactFields is set', async () => {
       // Backend claims JSON content-type but sends invalid JSON.
       const backend = await new Promise<{ url: string; close: () => Promise<void> }>(

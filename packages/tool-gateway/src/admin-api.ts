@@ -5,10 +5,15 @@
 
 import * as crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
-import { KillSwitchManager, Logger } from '@euno/common';
+import { KillSwitchManager, Logger, createAuditLogger } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { RevocationEpochStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
+import {
+  PartnerDidRegistry,
+  TwoEyesViolationError,
+  PartnerDidStatus,
+} from './partner-did-registry';
 
 export interface AdminApiOptions {
   killSwitchManager: KillSwitchManager;
@@ -32,6 +37,24 @@ export interface AdminApiOptions {
    * stale negative-cache entry.
    */
   partnerResolver?: PartnerIssuerResolver;
+  /**
+   * Optional partner-DID registry. When supplied, the admin router exposes
+   * the two-eyes proposal/approval/revoke/list/refresh endpoints under
+   * `/admin/partner-dids/*`.
+   */
+  partnerRegistry?: PartnerDidRegistry;
+  /**
+   * When true, proposals without `pinnedDocSha256` are rejected with HTTP 400.
+   * Plumbed from `PARTNER_DID_REQUIRE_PIN`.
+   */
+  requirePin?: boolean;
+  /**
+   * Forward-compat hook: derive the operator identity for a request.
+   * Defaults to reading `X-Admin-Operator` from the (already-authenticated)
+   * request headers.  Override to inject OIDC/mTLS-derived identities in
+   * future without touching the registry code.
+   */
+  resolveOperator?: (req: Request) => string | undefined;
 }
 
 /**
@@ -39,7 +62,25 @@ export interface AdminApiOptions {
  */
 export function createAdminRouter(options: AdminApiOptions): Router {
   const router = Router();
-  const { killSwitchManager, logger, adminApiKey, tokenVerifier, epochStore, partnerResolver } = options;
+  const {
+    killSwitchManager,
+    logger,
+    adminApiKey,
+    tokenVerifier,
+    epochStore,
+    partnerResolver,
+    partnerRegistry,
+    requirePin = false,
+    resolveOperator: resolveOperatorFn,
+  } = options;
+
+  const auditLogger = createAuditLogger('tool-gateway');
+
+  // Default operator resolver: read X-Admin-Operator from the authenticated channel.
+  const resolveOperator = resolveOperatorFn ?? ((req: Request): string | undefined => {
+    const raw = req.headers['x-admin-operator'];
+    return (Array.isArray(raw) ? raw[0] : raw) ?? undefined;
+  });
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -431,7 +472,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
   });
 
   /**
-   * POST /admin/partner-did/refresh/:encodedDid
+   * POST /admin/partner-did/refresh/:encodedDid (legacy alias kept for back-compat)
    *
    * Drops all cached (positive and negative) DID-document entries for
    * the given partner DID so the next token from that partner triggers
@@ -501,6 +542,232 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         error: { code: 'INTERNAL_ERROR', message: 'Failed to refresh partner DID cache' },
       });
     }
+  });
+
+  // ── Partner-DID registry endpoints ──────────────────────────────────────
+  //
+  // These endpoints require the X-Admin-Operator header (inside the
+  // already-authenticated X-Admin-Api-Key channel) so that each operator
+  // action has a distinct identity in the audit trail.  The header is
+  // treated as an opaque label — it is NOT a separate authentication
+  // boundary; security relies on X-Admin-Api-Key as today.
+
+  /** Middleware that requires X-Admin-Operator (for proposal/approval/revoke). */
+  const requireOperator = (req: Request, res: Response, next: NextFunction): void => {
+    const operatorId = resolveOperator(req);
+    if (!operatorId || operatorId.trim().length === 0) {
+      res.status(400).json({
+        error: {
+          code: 'MISSING_OPERATOR',
+          message: 'X-Admin-Operator header is required for this endpoint',
+        },
+      });
+      return;
+    }
+    next();
+  };
+
+  /**
+   * GET /admin/partner-dids
+   * List registry entries, optionally filtered by ?status=proposed|active|revoked
+   */
+  router.get('/partner-dids', async (_req: Request, res: Response): Promise<void> => {
+    if (!partnerRegistry) {
+      res.status(404).json({ error: { code: 'NOT_CONFIGURED', message: 'Partner-DID registry is not configured' } });
+      return;
+    }
+    try {
+      const statusParam = (_req.query.status as string | undefined)?.trim();
+      const filter = (['proposed', 'active', 'revoked'].includes(statusParam ?? ''))
+        ? statusParam as PartnerDidStatus
+        : undefined;
+      const entries = await partnerRegistry.list(filter);
+      res.json({ entries });
+    } catch (error) {
+      logger.error('Failed to list partner DIDs', { error: error instanceof Error ? error.message : 'Unknown' });
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to list partner DIDs' } });
+    }
+  });
+
+  /**
+   * POST /admin/partner-dids/proposals
+   * Create a new entry in `proposed` state.
+   * Body: { did, pinnedDocSha256?, pinnedVerificationKeys?, secondaryResolver?, notBefore?, notAfter?, notes? }
+   */
+  router.post('/partner-dids/proposals', requireOperator, async (req: Request, res: Response): Promise<void> => {
+    if (!partnerRegistry) {
+      res.status(404).json({ error: { code: 'NOT_CONFIGURED', message: 'Partner-DID registry is not configured' } });
+      return;
+    }
+    const operator = resolveOperator(req)!;
+    const { did, pinnedDocSha256, pinnedVerificationKeys, secondaryResolver, notBefore, notAfter, notes } = req.body;
+    if (!did || typeof did !== 'string') {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'did (string) is required' } });
+      return;
+    }
+    // Enforce pin discipline when PARTNER_DID_REQUIRE_PIN is set.
+    if (requirePin && typeof pinnedDocSha256 !== 'string') {
+      res.status(400).json({
+        error: {
+          code: 'PIN_REQUIRED',
+          message:
+            'PARTNER_DID_REQUIRE_PIN is enabled: pinnedDocSha256 is required for all proposals. ' +
+            'Compute it with: SHA-256(JCS(DID document)) encoded as lowercase hex.',
+        },
+      });
+      return;
+    }
+    try {
+      const entry = await partnerRegistry.propose({
+        did,
+        proposer: operator,
+        ...(pinnedDocSha256 ? { pinnedDocSha256 } : {}),
+        ...(pinnedVerificationKeys ? { pinnedVerificationKeys } : {}),
+        ...(secondaryResolver ? { secondaryResolver } : {}),
+        ...(notBefore !== undefined ? { notBefore } : {}),
+        ...(notAfter !== undefined ? { notAfter } : {}),
+        ...(notes ? { notes } : {}),
+      });
+      auditLogger.info('partner_did_proposed', {
+        eventType: 'partner_did_proposed',
+        did,
+        proposer: operator,
+      });
+      logger.info('Partner DID proposed via admin API', { did, operator });
+      res.status(201).json({ entry });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (msg.includes('already exists')) {
+        res.status(409).json({ error: { code: 'CONFLICT', message: msg } });
+        return;
+      }
+      logger.error('Failed to propose partner DID', { error: msg });
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to propose partner DID' } });
+    }
+  });
+
+  /**
+   * POST /admin/partner-dids/proposals/:did/approve
+   * Approve a proposed entry (two-eyes: approver must differ from proposer).
+   */
+  router.post('/partner-dids/proposals/:did/approve', requireOperator, async (req: Request, res: Response): Promise<void> => {
+    if (!partnerRegistry) {
+      res.status(404).json({ error: { code: 'NOT_CONFIGURED', message: 'Partner-DID registry is not configured' } });
+      return;
+    }
+    const operator = resolveOperator(req)!;
+    const did = decodeURIComponent(req.params['did'] ?? '');
+    if (!did) {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
+      return;
+    }
+    try {
+      const entry = await partnerRegistry.approve(did, operator);
+      auditLogger.info('partner_did_approved', {
+        eventType: 'partner_did_approved',
+        did,
+        approver: operator,
+      });
+      // Invalidate resolver cache so the new trust takes effect immediately.
+      if (partnerResolver) partnerResolver.invalidateAll(did);
+      logger.info('Partner DID approved via admin API', { did, operator });
+      res.json({ entry });
+    } catch (error) {
+      if (error instanceof TwoEyesViolationError) {
+        auditLogger.warn('partner_did_two_eyes_violation', {
+          eventType: 'partner_did_two_eyes_violation',
+          did,
+          operator,
+        });
+        res.status(403).json({ error: { code: 'TWO_EYES_VIOLATION', message: error.message } });
+        return;
+      }
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (msg.includes('not found')) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: msg } });
+        return;
+      }
+      if (msg.includes('cannot be approved')) {
+        res.status(409).json({ error: { code: 'CONFLICT', message: msg } });
+        return;
+      }
+      logger.error('Failed to approve partner DID', { error: msg });
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to approve partner DID' } });
+    }
+  });
+
+  /**
+   * DELETE /admin/partner-dids/:did
+   * Revoke a partner DID (single-operator — incident response is fast).
+   * Body: { reason? }
+   */
+  router.delete('/partner-dids/:did', requireOperator, async (req: Request, res: Response): Promise<void> => {
+    if (!partnerRegistry) {
+      res.status(404).json({ error: { code: 'NOT_CONFIGURED', message: 'Partner-DID registry is not configured' } });
+      return;
+    }
+    const operator = resolveOperator(req)!;
+    const did = decodeURIComponent(req.params['did'] ?? '');
+    if (!did) {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
+      return;
+    }
+    try {
+      const entry = await partnerRegistry.revoke(did, operator);
+      auditLogger.warn('partner_did_revoked', {
+        eventType: 'partner_did_revoked',
+        did,
+        revokedBy: operator,
+        reason: req.body?.reason,
+      });
+      // Invalidate resolver cache so tokens from this DID are immediately rejected.
+      if (partnerResolver) partnerResolver.invalidateAll(did);
+      logger.warn('Partner DID revoked via admin API', { did, operator });
+      res.json({ entry });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (msg.includes('not found')) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: msg } });
+        return;
+      }
+      logger.error('Failed to revoke partner DID', { error: msg });
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to revoke partner DID' } });
+    }
+  });
+
+  /**
+   * POST /admin/partner-dids/:did/refresh
+   * Invalidate the resolver cache for a DID and re-validate against the pin.
+   * Also available as the legacy /admin/partner-did/refresh/:encodedDid alias.
+   * Requires X-Admin-Operator for audit trail consistency with other mutations.
+   */
+  router.post('/partner-dids/:did/refresh', requireOperator, async (req: Request, res: Response): Promise<void> => {
+    const did = decodeURIComponent(req.params['did'] ?? '');
+    if (!did) {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
+      return;
+    }
+    if (!partnerResolver && !partnerRegistry) {
+      res.status(404).json({ error: { code: 'NOT_CONFIGURED', message: 'Partner-DID resolver/registry is not configured' } });
+      return;
+    }
+    // Check trust (from either the resolver's legacy set or the registry).
+    const isTrusted = partnerResolver
+      ? (await partnerResolver.trustsAsync(did))
+      : (partnerRegistry ? await partnerRegistry.trusts(did) : false);
+    if (!isTrusted) {
+      res.status(404).json({ error: { code: 'UNKNOWN_DID', message: `DID is not trusted: ${did}` } });
+      return;
+    }
+    if (partnerResolver) partnerResolver.invalidateAll(did);
+    const operator = resolveOperator(req);
+    auditLogger.info('partner_did_refreshed', {
+      eventType: 'partner_did_refreshed',
+      did,
+      operator: operator ?? 'unknown',
+    });
+    logger.info('Partner DID cache refreshed via admin API', { eventType: 'partner_did_cache_admin_refresh', did });
+    res.json({ message: `Cache for partner DID ${did} has been cleared`, did });
   });
 
   return router;
