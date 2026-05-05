@@ -14,10 +14,47 @@ import {
   AuditEvidence,
   SignedAuditEvidence,
   EvidenceSigner,
+  GENESIS_HASH,
   InMemoryCallCounterStore,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
+  canonicalSha256,
 } from '@euno/common';
 import * as jose from 'jose';
+
+/**
+ * Builds a stateful signEvidence stub that matches the production
+ * `AuditEvidenceSigner` chain contract:
+ *   - `seq` is 1-based and increments on every record
+ *   - `previousHash` is `GENESIS_HASH` for the first record and the
+ *     `canonicalSha256` of the prior signed record for every subsequent one
+ *
+ * This means jest mocks behave like a real signer chain, so any future
+ * code that starts validating chain metadata will catch regressions
+ * here instead of being silently masked by impossible mock values
+ * (e.g. `seq: 0`).
+ */
+function makeChainedSignEvidence(
+  overrides: Partial<Pick<SignedAuditEvidence, 'signature' | 'keyId' | 'algorithm'>> = {}
+): jest.Mock<Promise<SignedAuditEvidence>, [AuditEvidence]> {
+  let seq = 0;
+  let previousHash: string = GENESIS_HASH;
+  const signature = overrides.signature ?? 'sig';
+  const keyId = overrides.keyId ?? 'kid';
+  const algorithm = overrides.algorithm ?? 'RS256';
+  return jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(async (ev) => {
+    seq += 1;
+    const signed: SignedAuditEvidence = {
+      ...ev,
+      signature,
+      keyId,
+      algorithm,
+      previousHash,
+      seq,
+    };
+    previousHash = canonicalSha256(signed);
+    return signed;
+  });
+}
 
 describe('EnforcementEngine', () => {
   let engine: EnforcementEngine;
@@ -369,9 +406,7 @@ describe('EnforcementEngine', () => {
 
   describe('cryptographic evidence generation', () => {
     it('should invoke evidenceSigner for an allowed action', async () => {
-      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
-        async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
-      );
+      const signEvidence = makeChainedSignEvidence();
       const verifyEvidence = jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false);
       const mockSigner: EvidenceSigner = { signEvidence, verifyEvidence };
 
@@ -403,9 +438,7 @@ describe('EnforcementEngine', () => {
     });
 
     it('should invoke evidenceSigner for a denied action', async () => {
-      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
-        async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
-      );
+      const signEvidence = makeChainedSignEvidence();
       const mockSigner: EvidenceSigner = {
         signEvidence,
         verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false),
@@ -439,9 +472,7 @@ describe('EnforcementEngine', () => {
     });
 
     it('should not invoke evidenceSigner when audit is disabled', async () => {
-      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
-        async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
-      );
+      const signEvidence = makeChainedSignEvidence();
       const mockSigner: EvidenceSigner = {
         signEvidence,
         verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false),
@@ -473,9 +504,7 @@ describe('EnforcementEngine', () => {
     // replaces it for callers that want fine-grained control.
     describe('per-decision signing (I-8)', () => {
       function makeMockSigner() {
-        const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
-          async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
-        );
+        const signEvidence = makeChainedSignEvidence();
         const mockSigner: EvidenceSigner = {
           signEvidence,
           verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false),
@@ -631,10 +660,11 @@ describe('EnforcementEngine', () => {
     it('enqueues to the pipeline instead of awaiting signEvidence on the request path', async () => {
       // A signer that takes 100ms — if the engine awaited it on the
       // critical path, validateAction would inherit that latency.
+      const chainedSign = makeChainedSignEvidence();
       const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
         async (ev) => {
           await new Promise((r) => setTimeout(r, 100));
-          return { ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' };
+          return chainedSign(ev);
         }
       );
       const verifyEvidence = jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false);
@@ -682,9 +712,7 @@ describe('EnforcementEngine', () => {
     });
 
     it('routes denial evidence through the pipeline as well', async () => {
-      const signEvidence = jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(
-        async (ev) => ({ ...ev, signature: 'sig', keyId: 'kid', algorithm: 'RS256' })
-      );
+      const signEvidence = makeChainedSignEvidence();
       const verifyEvidence = jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => false);
       const fastSigner: EvidenceSigner = { signEvidence, verifyEvidence };
 
