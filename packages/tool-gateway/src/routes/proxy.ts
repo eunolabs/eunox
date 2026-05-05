@@ -8,25 +8,28 @@
  * **Stream-by-default, buffer-on-obligation.** Two proxy middlewares are
  * built once at router-construction time:
  *
- *   - `streamingProxy` — the *default* path. No `selfHandleResponse`, no
- *     `responseInterceptor`. The upstream response is piped through to the
- *     client byte-for-byte without buffering. Used for any request whose
- *     validated capability carries no response-time obligation
- *     (`applyResponseRedactions === undefined`). This is the common case
- *     (JSON APIs without `redactFields`, file downloads, NDJSON exports,
- *     SSE streams, opaque binary, …) and was previously forced through the
- *     interceptor — a memory / GC / DoS risk on large payloads.
+ *   - `streamingProxy` — the *default* path. No `selfHandleResponse`. The
+ *     upstream response is piped through to the client byte-for-byte without
+ *     buffering. Used for any request whose validated capability carries no
+ *     response-time obligation (`applyResponseRedactions === undefined`). This
+ *     is the common case (JSON APIs without `redactFields`, file downloads,
+ *     NDJSON exports, SSE streams, opaque binary, …).
  *
- *   - `bufferedProxy` — the redaction path. `selfHandleResponse` + a
- *     `responseInterceptor` that enforces (in order):
+ *   - `bufferedProxy` — the redaction path. `selfHandleResponse: true` with a
+ *     custom `onProxyRes` ({@link buildBufferedOnProxyRes}) that enforces (in
+ *     order):
  *       1. `text/event-stream` upstream → 502 `REDACTION_STREAM_UNSUPPORTED`
  *          (dedicated audit code so SSE-based bypass attempts are
  *          distinguishable from generic content-type mismatches);
  *       2. content-type registry lookup ({@link RedactionStrategy}); no
  *          match → 502 `REDACTION_CONTENT_TYPE_UNSUPPORTED`;
- *       3. body size <= `RESPONSE_REDACTION_MAX_BYTES`; over →
- *          502 `REDACTION_OVERSIZE`;
- *       4. parse + redact + re-serialize via the matched strategy; parse
+ *       3. declared `Content-Length` > cap → 502 `REDACTION_OVERSIZE` (no
+ *          body bytes read at all);
+ *       4. streaming byte-cap: chunks accumulated into an array and counted
+ *          incrementally; first chunk to push total past the cap → socket
+ *          destroyed, 502 `REDACTION_OVERSIZE` returned without ever holding
+ *          the full body in memory;
+ *       5. parse + redact + re-serialize via the matched strategy; parse
  *          failure → 502 `REDACTION_PARSE_ERROR`.
  *     Used only when the matched capability declares a response-time
  *     obligation; the obligation closure (`applyResponseRedactions`) is
@@ -45,8 +48,11 @@
  * Part of R-2 from `docs/IMPROVEMENTS_AND_REFACTORING.md`.
  */
 
+import * as zlib from 'zlib';
+import { IncomingMessage, ServerResponse } from 'http';
+import { Readable } from 'stream';
 import { Request, Response, NextFunction, Router, RequestHandler } from 'express';
-import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import {
   ActionResolver,
   BUILTIN_ACTION_RESOLVER,
@@ -250,19 +256,413 @@ export function createValidateCapabilityMiddleware(
  * upstream had set.  Specifically:
  *  - Set `Content-Type: application/json; charset=utf-8` so clients don't
  *    try to interpret the body using the upstream MIME type.
- *  - Remove `Content-Encoding` — the responseInterceptor has already
- *    decompressed the upstream body; if the header is left in place clients
- *    may attempt to decompress the JSON error body and fail.
+ *  - Remove `Content-Encoding` — the body has already been decompressed by
+ *    `decompressProxyResponse`; leaving the header in place would cause
+ *    clients to attempt to decompress the JSON error body and fail.
  *  - Remove `Transfer-Encoding` for the same reason (chunked upstream
- *    responses should not be re-chunked after interception).
- *  The `Content-Length` is set automatically by http-proxy-middleware from
- *  the returned buffer's byte length, so we do not set it here.
+ *    responses should not be re-chunked by the client after interception).
+ *  The `Content-Length` header is set by the caller once the response body
+ *  is known (the buffered path calls `res.end(buffer)` which sets it
+ *  implicitly, or the caller sets it explicitly before calling `res.end`).
  */
-function prepareErrorResponse(res: Response, statusCode: number): void {
-  res.status(statusCode);
+function prepareErrorResponse(res: Response | ServerResponse, statusCode: number): void {
+  if ('status' in res && typeof (res as Response).status === 'function') {
+    (res as Response).status(statusCode);
+  } else {
+    (res as ServerResponse).statusCode = statusCode;
+  }
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.removeHeader('Content-Encoding');
   res.removeHeader('Transfer-Encoding');
+}
+
+/**
+ * Decompress a proxy response stream based on its Content-Encoding header.
+ * Returns the raw stream when no encoding (or `identity`) is declared.
+ *
+ * The header value is normalized: lower-cased, trimmed, and arrays are
+ * joined. Multiple comma-separated encodings (e.g. `gzip, deflate`) are not
+ * supported and cause a throw so the caller can emit a fail-closed error
+ * rather than silently passing compressed binary to the JSON parser.
+ *
+ * @throws {Error} when the upstream uses an encoding we cannot decompress.
+ */
+function decompressProxyResponse(proxyRes: IncomingMessage): Readable {
+  const rawEncoding = proxyRes.headers['content-encoding'];
+  // Normalize: arrays (multiple header lines) are trimmed and joined with a
+  // comma so the comma-check below catches both `['gzip', 'br']` and
+  // `'gzip, br'` uniformly.
+  const encoding = (Array.isArray(rawEncoding)
+    ? rawEncoding.map((s) => s.trim()).join(',')
+    : rawEncoding ?? ''
+  )
+    .trim()
+    .toLowerCase();
+
+  // No encoding or explicit identity → return raw stream as-is.
+  if (!encoding || encoding === 'identity') {
+    return proxyRes;
+  }
+
+  // Comma-separated list (multiple encodings) — we don't chain decompressors.
+  if (encoding.includes(',')) {
+    throw new Error(
+      `Unsupported multi-value Content-Encoding: ${encoding}`,
+    );
+  }
+
+  switch (encoding) {
+    case 'gzip':
+      return proxyRes.pipe(zlib.createGunzip());
+    case 'br':
+      return proxyRes.pipe(zlib.createBrotliDecompress());
+    case 'deflate':
+      return proxyRes.pipe(zlib.createInflate());
+    default:
+      throw new Error(`Unsupported Content-Encoding: ${encoding}`);
+  }
+}
+
+/**
+ * Copy upstream response headers to the outbound response, stripping
+ * `content-encoding`, `transfer-encoding`, and `content-length` (the caller
+ * sets `content-length` from the redacted body size; the other two are
+ * meaningless after decompression + redaction).
+ */
+function copyUpstreamHeaders(proxyRes: IncomingMessage, res: ServerResponse): void {
+  res.statusCode = proxyRes.statusCode ?? 200;
+  if (proxyRes.statusMessage) res.statusMessage = proxyRes.statusMessage;
+  const stripHeaders = new Set(['content-encoding', 'transfer-encoding', 'content-length']);
+  for (const [key, value] of Object.entries(proxyRes.headers)) {
+    if (stripHeaders.has(key) || value === undefined) continue;
+    if (key === 'set-cookie') {
+      // Strip Domain attribute from Set-Cookie headers (same behaviour as
+      // http-proxy-middleware's own responseInterceptor).
+      // Split on semicolons, drop the Domain= attribute, then rejoin — this
+      // avoids leaving stray semicolons or double-spaces when the attribute
+      // appears in the middle or end of the cookie string.
+      const cookies = (Array.isArray(value) ? value : [value]).map((c) =>
+        typeof c === 'string'
+          ? c
+              .split(/;\s*/)
+              .filter((attr) => !/^Domain=/i.test(attr.trim()))
+              .join('; ')
+          : c,
+      );
+      res.setHeader(key, cookies as string[]);
+    } else {
+      res.setHeader(key, value);
+    }
+  }
+}
+
+/**
+ * Builds the `onProxyRes` callback for `bufferedProxy`.
+ *
+ * This replaces the library-provided `responseInterceptor` so we can:
+ *
+ *  1. **Early-abort on declared Content-Length** — if the upstream signals a
+ *     body larger than `responseRedactionMaxBytes` via its `Content-Length`
+ *     header, we destroy the socket immediately and return a 502 without ever
+ *     reading a single byte of the body.
+ *
+ *  2. **Streaming byte-cap** — chunks are accumulated into an array and their
+ *     total length is tracked incrementally. As soon as the cap is exceeded,
+ *     the upstream pipe is destroyed and a 502 is written.  This bounds peak
+ *     memory to `responseRedactionMaxBytes + one final chunk` rather than the
+ *     full response body.
+ *
+ *  3. **O(n) accumulation** — using `chunks.push(chunk)` + a single
+ *     `Buffer.concat(chunks)` on `end` avoids the quadratic allocation pattern
+ *     in the library's own `Buffer.concat([buffer, chunk])` per-chunk loop.
+ */
+function buildBufferedOnProxyRes(
+  responseRedactionMaxBytes: number,
+  logger: Logger,
+  auditLogger: ReturnType<typeof createAuditLogger>,
+): (proxyRes: IncomingMessage, req: Request, res: Response) => void {
+  return function onProxyRes(proxyRes, req, res): void {
+    const mimeType = normalizeMimeType(String(proxyRes.headers['content-type'] ?? ''));
+    const validation = (req as unknown as { capabilityValidation?: EnforcementResult })
+      .capabilityValidation;
+    const redactor = validation?.applyResponseRedactions;
+
+    logger.info('Proxy response (redaction path)', {
+      path: req.path,
+      statusCode: proxyRes.statusCode,
+      mimeType,
+      redactionRequired: !!redactor,
+    });
+
+    // ── No obligation: passthrough ───────────────────────────────────────
+    // The dispatcher should have sent this to streamingProxy; handle
+    // gracefully just in case.
+    if (!redactor) {
+      auditLogger.info('Proxy response transmitted', {
+        eventType: 'proxy_response',
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+        contentType: mimeType,
+        redactionApplied: false,
+      });
+      // Forward ALL upstream headers (including content-encoding and
+      // transfer-encoding) unchanged — we are piping the raw compressed/
+      // chunked body, so stripping those headers would corrupt the response.
+      const rawRes = res as unknown as ServerResponse;
+      rawRes.statusCode = proxyRes.statusCode ?? 200;
+      if (proxyRes.statusMessage) rawRes.statusMessage = proxyRes.statusMessage;
+      for (const [key, value] of Object.entries(proxyRes.headers)) {
+        if (value !== undefined) rawRes.setHeader(key, value);
+      }
+      (proxyRes as NodeJS.ReadableStream).pipe(res as unknown as NodeJS.WritableStream);
+      return;
+    }
+
+    // ── SSE: dedicated fail-closed code ─────────────────────────────────
+    if (isStreamingMediaType(mimeType)) {
+      logger.warn(
+        'Refusing to proxy SSE response: redaction required but upstream is text/event-stream',
+        { path: req.path, mimeType },
+      );
+      auditLogger.warn('Proxy response blocked — redaction_stream_unsupported', {
+        eventType: 'proxy_response_blocked',
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+        contentType: mimeType,
+        blockReason: 'redaction_stream_unsupported',
+        redactionApplied: false,
+      });
+      proxyRes.destroy();
+      prepareErrorResponse(res, 502);
+      res.end(
+        Buffer.from(
+          JSON.stringify({
+            error: {
+              code: 'REDACTION_STREAM_UNSUPPORTED',
+              message:
+                'Gateway cannot apply required redaction: response is a Server-Sent Events stream',
+            },
+          }),
+          'utf8',
+        ),
+      );
+      return;
+    }
+
+    // ── Content-type strategy lookup ─────────────────────────────────────
+    const strategy = selectRedactionStrategy(mimeType);
+    if (!strategy) {
+      logger.warn(
+        'Refusing to proxy response: redaction required but content-type is not supported',
+        { path: req.path, mimeType },
+      );
+      auditLogger.warn('Proxy response blocked — redaction_content_type_unsupported', {
+        eventType: 'proxy_response_blocked',
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+        contentType: mimeType,
+        blockReason: 'redaction_content_type_unsupported',
+        redactionApplied: false,
+      });
+      proxyRes.destroy();
+      prepareErrorResponse(res, 502);
+      res.end(
+        Buffer.from(
+          JSON.stringify({
+            error: {
+              code: 'REDACTION_CONTENT_TYPE_UNSUPPORTED',
+              message: 'Gateway cannot apply required redaction: response content-type is not JSON',
+            },
+          }),
+          'utf8',
+        ),
+      );
+      return;
+    }
+
+    // ── Early Content-Length check ───────────────────────────────────────
+    const declaredLengthRaw = proxyRes.headers['content-length'];
+    const declaredLength =
+      declaredLengthRaw !== undefined ? parseInt(String(declaredLengthRaw), 10) : NaN;
+    if (!isNaN(declaredLength) && declaredLength > responseRedactionMaxBytes) {
+      logger.warn('Refusing to proxy response: declared content-length exceeds redaction size limit', {
+        path: req.path,
+        declaredLength,
+        limit: responseRedactionMaxBytes,
+      });
+      auditLogger.warn('Proxy response blocked — redaction_oversize', {
+        eventType: 'proxy_response_blocked',
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+        responseSize: declaredLength,
+        contentType: mimeType,
+        blockReason: 'redaction_oversize',
+        redactionApplied: false,
+      });
+      proxyRes.destroy();
+      prepareErrorResponse(res, 502);
+      res.end(
+        Buffer.from(
+          JSON.stringify({
+            error: {
+              code: 'REDACTION_OVERSIZE',
+              message: 'Gateway cannot apply required redaction: response body exceeds size limit',
+            },
+          }),
+          'utf8',
+        ),
+      );
+      return;
+    }
+
+    // ── Streaming accumulation with live byte-cap ────────────────────────
+    // decompressProxyResponse may throw for unsupported Content-Encoding
+    // values; treat that as a fail-closed error rather than letting a
+    // compressed body silently reach the JSON parser.
+    let bodyStream: Readable;
+    try {
+      bodyStream = decompressProxyResponse(proxyRes);
+    } catch (encodingErr) {
+      proxyRes.destroy();
+      logger.warn('Refusing to proxy response: unsupported Content-Encoding', {
+        path: req.path,
+        contentEncoding: proxyRes.headers['content-encoding'],
+        error: encodingErr instanceof Error ? encodingErr.message : String(encodingErr),
+      });
+      auditLogger.warn('Proxy response blocked — redaction_parse_error', {
+        eventType: 'proxy_response_blocked',
+        path: req.path,
+        statusCode: proxyRes.statusCode,
+        contentType: mimeType,
+        blockReason: 'redaction_parse_error',
+        redactionApplied: false,
+      });
+      prepareErrorResponse(res, 502);
+      res.end(
+        Buffer.from(
+          JSON.stringify({
+            error: {
+              code: 'REDACTION_PARSE_ERROR',
+              message: 'Gateway cannot apply required redaction: response body is not valid JSON',
+            },
+          }),
+          'utf8',
+        ),
+      );
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let accumulated = 0;
+    let responded = false;
+
+    bodyStream.on('data', (chunk: Buffer) => {
+      if (responded) return;
+      accumulated += chunk.length;
+      if (accumulated > responseRedactionMaxBytes) {
+        responded = true;
+        // Destroy both the decompressor stream and the underlying socket so
+        // the upstream stops sending data — destroying only the decompressor
+        // does not close the TCP connection when bodyStream !== proxyRes.
+        bodyStream.destroy();
+        proxyRes.destroy();
+        logger.warn('Refusing to proxy response: body exceeds redaction size limit', {
+          path: req.path,
+          accumulated,
+          limit: responseRedactionMaxBytes,
+        });
+        auditLogger.warn('Proxy response blocked — redaction_oversize', {
+          eventType: 'proxy_response_blocked',
+          path: req.path,
+          statusCode: proxyRes.statusCode,
+          responseSize: accumulated,
+          contentType: mimeType,
+          blockReason: 'redaction_oversize',
+          redactionApplied: false,
+        });
+        prepareErrorResponse(res, 502);
+        res.end(
+          Buffer.from(
+            JSON.stringify({
+              error: {
+                code: 'REDACTION_OVERSIZE',
+                message:
+                  'Gateway cannot apply required redaction: response body exceeds size limit',
+              },
+            }),
+            'utf8',
+          ),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    bodyStream.on('end', () => {
+      if (responded) return;
+      responded = true;
+      const buffer = Buffer.concat(chunks);
+      try {
+        const redactedBuffer = strategy.apply(buffer, redactor);
+        copyUpstreamHeaders(proxyRes, res as unknown as ServerResponse);
+        res.setHeader('content-length', String(Buffer.byteLength(redactedBuffer)));
+        auditLogger.info('Proxy response transmitted with redaction', {
+          eventType: 'proxy_response',
+          path: req.path,
+          statusCode: proxyRes.statusCode,
+          responseSize: buffer.length,
+          redactedResponseSize: redactedBuffer.length,
+          contentType: mimeType,
+          redactionApplied: true,
+        });
+        res.end(redactedBuffer);
+      } catch (err) {
+        logger.warn('Response redaction failed (body not parseable)', {
+          path: req.path,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        auditLogger.warn('Proxy response blocked — redaction_parse_error', {
+          eventType: 'proxy_response_blocked',
+          path: req.path,
+          statusCode: proxyRes.statusCode,
+          responseSize: buffer.length,
+          contentType: mimeType,
+          blockReason: 'redaction_parse_error',
+          redactionApplied: false,
+        });
+        prepareErrorResponse(res, 502);
+        res.end(
+          Buffer.from(
+            JSON.stringify({
+              error: {
+                code: 'REDACTION_PARSE_ERROR',
+                message: 'Gateway cannot apply required redaction: response body is not valid JSON',
+              },
+            }),
+            'utf8',
+          ),
+        );
+      }
+    });
+
+    bodyStream.on('error', (err: Error) => {
+      if (responded) return;
+      responded = true;
+      logger.error('Upstream body stream error during redaction', {
+        path: req.path,
+        error: err.message,
+      });
+      prepareErrorResponse(res, 502);
+      res.end(
+        Buffer.from(
+          JSON.stringify({
+            error: { code: 'PROXY_ERROR', message: 'Failed to proxy request to backend service' },
+          }),
+          'utf8',
+        ),
+      );
+    });
+  };
 }
 
 /**
@@ -273,7 +673,8 @@ function prepareErrorResponse(res: Response, statusCode: number): void {
  * Two proxy instances are built once and shared across requests:
  *   - `streamingProxy` — the default, no buffering; for requests with no
  *     response-time obligation.
- *   - `bufferedProxy` — `selfHandleResponse` + interceptor for redaction.
+ *   - `bufferedProxy` — `selfHandleResponse` + custom `onProxyRes`
+ *     ({@link buildBufferedOnProxyRes}) for redaction.
  *
  * The dispatcher middleware routes between them based on whether the
  * validated capability attached a `applyResponseRedactions` closure.
@@ -316,8 +717,10 @@ export function createProxyRouter(opts: ProxyRouterOptions): Router {
 
   // ── Buffered proxy ──────────────────────────────────────────────────────
   // Used when the capability carries a response-time obligation (redactFields
-  // or any other response-time condition). selfHandleResponse + responseInterceptor
-  // buffer the upstream body so the obligation can be applied before forwarding.
+  // or any other response-time condition). selfHandleResponse gives our custom
+  // onProxyRes full ownership of the response so it can: enforce a streaming
+  // byte-cap (early-abort before the body is fully received), decompress
+  // once, and apply redaction before forwarding.
   const bufferedProxy = createProxyMiddleware({
     target: backendServiceUrl,
     changeOrigin: true,
@@ -326,162 +729,7 @@ export function createProxyRouter(opts: ProxyRouterOptions): Router {
     onProxyReq: (proxyReq, req) => {
       logger.info('Proxying request (redaction)', { path: req.path, target: proxyReq.path });
     },
-    onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, interceptorRes) => {
-      const responseSize = responseBuffer.length;
-      const mimeType = normalizeMimeType(String(proxyRes.headers['content-type'] ?? ''));
-      const validation = (req as unknown as { capabilityValidation?: EnforcementResult })
-        .capabilityValidation;
-      const redactor = validation?.applyResponseRedactions;
-
-      logger.info('Proxy response (redaction path)', {
-        path: (req as Request).path,
-        statusCode: proxyRes.statusCode,
-        responseSize,
-        mimeType,
-        redactionRequired: !!redactor,
-      });
-
-      if (!redactor) {
-        // Dispatcher sent us here but the obligation is absent — tolerate
-        // gracefully and pass through (should not happen in normal flow).
-        auditLogger.info('Proxy response transmitted', {
-          eventType: 'proxy_response',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          contentType: mimeType,
-          redactionApplied: false,
-        });
-        return responseBuffer;
-      }
-
-      // 1. SSE: dedicated fail-closed code distinguishable from generic
-      //    content-type mismatch in the audit trail.
-      if (isStreamingMediaType(mimeType)) {
-        logger.warn(
-          'Refusing to proxy SSE response: redaction required but upstream is text/event-stream',
-          { path: (req as Request).path, mimeType },
-        );
-        auditLogger.warn('Proxy response blocked — redaction_stream_unsupported', {
-          eventType: 'proxy_response_blocked',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          contentType: mimeType,
-          blockReason: 'redaction_stream_unsupported',
-          redactionApplied: false,
-        });
-        prepareErrorResponse(interceptorRes as Response, 502);
-        return Buffer.from(
-          JSON.stringify({
-            error: {
-              code: 'REDACTION_STREAM_UNSUPPORTED',
-              message:
-                'Gateway cannot apply required redaction: response is a Server-Sent Events stream',
-            },
-          }),
-          'utf8',
-        );
-      }
-
-      // 2. Content-type strategy lookup — only JSON (and +json) today.
-      const strategy = selectRedactionStrategy(mimeType);
-      if (!strategy) {
-        logger.warn(
-          'Refusing to proxy response: redaction required but content-type is not supported',
-          { path: (req as Request).path, mimeType },
-        );
-        auditLogger.warn('Proxy response blocked — redaction_content_type_unsupported', {
-          eventType: 'proxy_response_blocked',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          contentType: mimeType,
-          blockReason: 'redaction_content_type_unsupported',
-          redactionApplied: false,
-        });
-        prepareErrorResponse(interceptorRes as Response, 502);
-        return Buffer.from(
-          JSON.stringify({
-            error: {
-              code: 'REDACTION_CONTENT_TYPE_UNSUPPORTED',
-              message:
-                'Gateway cannot apply required redaction: response content-type is not JSON',
-            },
-          }),
-          'utf8',
-        );
-      }
-
-      // 3. Body-size cap — unbounded buffering is an OOM risk.
-      if (responseSize > responseRedactionMaxBytes) {
-        logger.warn('Refusing to proxy response: body exceeds redaction size limit', {
-          path: (req as Request).path,
-          responseSize,
-          limit: responseRedactionMaxBytes,
-        });
-        auditLogger.warn('Proxy response blocked — redaction_oversize', {
-          eventType: 'proxy_response_blocked',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          contentType: mimeType,
-          blockReason: 'redaction_oversize',
-          redactionApplied: false,
-        });
-        prepareErrorResponse(interceptorRes as Response, 502);
-        return Buffer.from(
-          JSON.stringify({
-            error: {
-              code: 'REDACTION_OVERSIZE',
-              message:
-                'Gateway cannot apply required redaction: response body exceeds size limit',
-            },
-          }),
-          'utf8',
-        );
-      }
-
-      // 4. Apply redaction via the matched strategy.
-      try {
-        const redactedBuffer = strategy.apply(responseBuffer, redactor);
-        auditLogger.info('Proxy response transmitted with redaction', {
-          eventType: 'proxy_response',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          redactedResponseSize: redactedBuffer.length,
-          contentType: mimeType,
-          redactionApplied: true,
-        });
-        return redactedBuffer;
-      } catch (err) {
-        logger.warn('Response redaction failed (body not parseable)', {
-          path: (req as Request).path,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        auditLogger.warn('Proxy response blocked — redaction_parse_error', {
-          eventType: 'proxy_response_blocked',
-          path: (req as Request).path,
-          statusCode: proxyRes.statusCode,
-          responseSize,
-          contentType: mimeType,
-          blockReason: 'redaction_parse_error',
-          redactionApplied: false,
-        });
-        prepareErrorResponse(interceptorRes as Response, 502);
-        return Buffer.from(
-          JSON.stringify({
-            error: {
-              code: 'REDACTION_PARSE_ERROR',
-              message:
-                'Gateway cannot apply required redaction: response body is not valid JSON',
-            },
-          }),
-          'utf8',
-        );
-      }
-    }),
+    onProxyRes: buildBufferedOnProxyRes(responseRedactionMaxBytes, logger, auditLogger),
     onError: (err, req, res) => {
       logger.error('Proxy error', { path: req.path, error: err.message });
       (res as Response).status(502).json({

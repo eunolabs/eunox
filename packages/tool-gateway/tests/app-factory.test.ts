@@ -826,6 +826,100 @@ describe('createApp(deps) — R-2 in-process factory', () => {
         await backend.close();
       }
     });
+
+    it('returns 502 REDACTION_OVERSIZE via early Content-Length check when backend declares an oversized body', async () => {
+      // Backend declares a content-length that exceeds the cap in the response
+      // header — the gateway must fail-closed before reading any body bytes.
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json');
+            // Declare a large content-length but only send a tiny body — the
+            // gateway must abort based on the declared size alone.
+            res.setHeader('content-length', String(10 * 1024 * 1024)); // 10 MiB declared
+            res.end('{"tiny":"body"}');
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        // Cap at 1 KiB so the declared 10 MiB triggers the early check.
+        const app = createApp({ ...deps, responseRedactionMaxBytes: 1024 });
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/data')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_OVERSIZE');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('returns 502 REDACTION_PARSE_ERROR when backend uses an unsupported Content-Encoding and redactFields is set', async () => {
+      // Backend uses 'zstd' encoding — not supported by the decompressor.
+      // The gateway must fail-closed with REDACTION_PARSE_ERROR rather than
+      // passing opaque compressed bytes to the JSON parser.
+      const backend = await new Promise<{ url: string; close: () => Promise<void> }>(
+        (resolve) => {
+          const server = http.createServer((_req, res) => {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json');
+            res.setHeader('content-encoding', 'zstd');
+            res.end(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])); // minimal zstd frame magic number (4 bytes)
+          });
+          server.listen(0, '127.0.0.1', () => {
+            const addr = server.address() as AddressInfo;
+            resolve({
+              url: `http://127.0.0.1:${addr.port}`,
+              close: () => new Promise<void>((r) => server.close(() => r())),
+            });
+          });
+        },
+      );
+
+      try {
+        const { deps, privateKey } = await buildDeps({ backendServiceUrl: backend.url });
+        const app = createApp(deps);
+
+        const token = await signToken(privateKey, [
+          {
+            resource: 'api://api.example.com/**',
+            actions: ['read'],
+            conditions: [{ type: 'redactFields', fields: ['secret'] }],
+          },
+        ]);
+
+        const res = await request(app)
+          .get('/proxy/api.example.com/things')
+          .set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(502);
+        expect(res.body.error?.code).toBe('REDACTION_PARSE_ERROR');
+        expect(res.headers['content-type']).toMatch(/application\/json/);
+      } finally {
+        await backend.close();
+      }
+    });
   });
 
   describe('CapabilityError mapping', () => {

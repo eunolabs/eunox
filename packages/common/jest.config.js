@@ -4,7 +4,20 @@ module.exports = {
   roots: ['<rootDir>/tests', '<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
   transform: {
-    '^.+\\.ts$': 'ts-jest',
+    '^.+\\.ts$': ['ts-jest', {
+      tsconfig: {
+        // Let ts-jest resolve @euno/common sub-path imports from source so
+        // the wire-runtime-split tests can import @euno/common/wire etc. without
+        // a pre-built dist/.  Mirrors the same pattern used in tool-gateway.
+        baseUrl: '.',
+        paths: {
+          '@euno/common': ['src'],
+          '@euno/common/wire': ['src/wire'],
+          '@euno/common/runtime': ['src/runtime'],
+          '@euno/common/types': ['src/types'],
+        },
+      },
+    }],
   },
   coverageDirectory: 'coverage',
   collectCoverageFrom: [
