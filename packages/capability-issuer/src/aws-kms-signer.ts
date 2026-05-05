@@ -4,7 +4,7 @@
  */
 
 import { KMSClient, SignCommand, GetPublicKeyCommand, SigningAlgorithmSpec } from '@aws-sdk/client-kms';
-import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AWSKMSConfig } from '@euno/common';
+import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AWSKMSConfig, IssuanceContext, resolveIssuanceContextKey } from '@euno/common';
 import * as crypto from 'crypto';
 
 /**
@@ -190,10 +190,20 @@ export class AWSKMSSigner extends SigningAdapter {
   }
 
   /**
-   * Sign a capability token payload
-   * Follows the AWS KMS pattern: hash locally, then sign the digest with KMS
+   * Sign a capability token payload.
+   *
+   * When an {@link IssuanceContext} is supplied and the `policyHash` maps to
+   * an entry in {@link AWSKMSConfig.grantTokensByPolicyHash}, the matching
+   * grant token is included in the `SignCommand.GrantTokens` array.  AWS KMS
+   * then validates that the caller holds a grant scoped to this policy hash,
+   * bringing the policy boundary into the cryptographic boundary without
+   * requiring a broad `kms:Sign` IAM allow-all statement.
+   *
+   * When no `context` is supplied (or the `policyHash` is unmapped), the call
+   * proceeds with no `GrantTokens`; the operation is authorised by whatever
+   * IAM policy or grant the caller holds — full backward compatibility.
    */
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
+  async sign(payload: CapabilityTokenPayload, context?: IssuanceContext): Promise<string> {
     await this.initialize();
 
     // Create JWT header
@@ -215,12 +225,25 @@ export class AWSKMSSigner extends SigningAdapter {
       .update(signingInput)
       .digest();
 
-    // Sign the digest with AWS KMS
+    // Sign the digest with AWS KMS.
+    // When the caller supplied an IssuanceContext, look up the grant token
+    // using a composite key "${policyHash}:${audience}" first, then fall back
+    // to plain policyHash.  Composite keys let operators assign different grants
+    // to different tenants even when they share the same policy document.
+    // Omitting GrantTokens is always safe: KMS falls back to IAM policy
+    // evaluation, preserving full back-compat.
+    const grantToken =
+      context !== undefined && this.awsConfig.grantTokensByPolicyHash !== undefined
+        ? (this.awsConfig.grantTokensByPolicyHash[resolveIssuanceContextKey(context)] ??
+           this.awsConfig.grantTokensByPolicyHash[context.policyHash])
+        : undefined;
+
     const signCommand = new SignCommand({
       KeyId: this.awsConfig.keyId,
       Message: digest,
       MessageType: 'DIGEST',
       SigningAlgorithm: getAWSSigningAlgorithm(this.algorithm),
+      ...(grantToken !== undefined ? { GrantTokens: [grantToken] } : {}),
     });
 
     const signResult = await this.kmsClient.send(signCommand);

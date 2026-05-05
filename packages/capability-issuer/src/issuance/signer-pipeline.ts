@@ -16,6 +16,7 @@ import {
   CapabilityError,
   CapabilityTokenPayload,
   ErrorCode,
+  IssuanceContext,
   SIGNING_ALGORITHMS,
   TokenSigner,
 } from '@euno/common';
@@ -29,14 +30,22 @@ export const ALLOWED_SIGNING_ALGORITHMS = SIGNING_ALGORITHMS;
 /**
  * Sign a capability-token payload with the configured signer.
  *
+ * Threads the optional {@link IssuanceContext} through to the signer so
+ * KMS back-ends (AWS, Azure Key Vault, GCP Cloud KMS) can scope the signing
+ * operation to a pre-authorised grant or key version for the current policy
+ * boundary.  Callers that do not (yet) construct an {@link IssuanceContext}
+ * may omit it — signers treat `undefined` as an unconstrained sign, which
+ * preserves full backward compatibility.
+ *
  * Thin wrapper kept for symmetry with {@link verifyParentToken} so
  * the orchestrator never imports the raw signer directly.
  */
 export async function signPayload(
   signer: TokenSigner,
   payload: CapabilityTokenPayload,
+  context?: IssuanceContext,
 ): Promise<string> {
-  return signer.sign(payload);
+  return signer.sign(payload, context);
 }
 
 /**

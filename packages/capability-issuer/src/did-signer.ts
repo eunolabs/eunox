@@ -13,6 +13,7 @@ import {
   CapabilityTokenPayload,
   CapabilityError,
   ErrorCode,
+  IssuanceContext,
 } from '@euno/common';
 import * as jose from 'jose';
 import {
@@ -63,7 +64,7 @@ export class DIDSigner extends SigningAdapter {
   /**
    * Sign a capability token using DID-referenced key
    */
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
+  async sign(payload: CapabilityTokenPayload, _context?: IssuanceContext): Promise<string> {
     await this.ensureInitialized();
 
     if (!this.privateKeyObj || !this.verificationMethod) {

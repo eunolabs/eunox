@@ -14,3 +14,4 @@ export * from './signer-pipeline';
 export * from './posture';
 export * from './attenuation';
 export * from './conditions';
+export * from './issuance-context';

@@ -5,7 +5,7 @@
 
 import { CryptographyClient, SignResult, KeyVaultKey } from '@azure/keyvault-keys';
 import { DefaultAzureCredential, ClientSecretCredential } from '@azure/identity';
-import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AzureKeyVaultConfig } from '@euno/common';
+import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, AzureKeyVaultConfig, IssuanceContext, resolveIssuanceContextKey } from '@euno/common';
 import { KeyClient } from '@azure/keyvault-keys';
 import * as crypto from 'crypto';
 import * as jose from 'jose';
@@ -53,6 +53,20 @@ export class AzureKeyVaultSigner extends SigningAdapter {
   private keyVaultConfig: AzureKeyVaultConfig;
   private keyId?: string;
   private publicKeyCache?: string;
+  /**
+   * Per-policyHash `CryptographyClient` cache.
+   * Lazily populated on the first `sign()` call that references a given
+   * `policyHash` so key-vault round-trips are amortised across requests.
+   */
+  private cryptoClientsByPolicyHash: Map<string, CryptographyClient> = new Map();
+  /**
+   * Per-policyHash signing algorithm detected from the mapped key.
+   * A policy-specific key may use a different algorithm than the default key
+   * (e.g. the default key is RSA-2048/RS256 but the high-security policy uses
+   * an EC P-256 key/ES256).  Storing the algorithm alongside the client avoids
+   * calling Key Vault on every sign operation just to re-derive the algorithm.
+   */
+  private algorithmByPolicyHash: Map<string, string> = new Map();
 
   constructor(config: AzureKeyVaultAdapterConfig) {
     super(config);
@@ -147,10 +161,12 @@ export class AzureKeyVaultSigner extends SigningAdapter {
   }
 
   /**
-   * Get the hash algorithm name for the signing algorithm
+   * Get the hash algorithm name for a given signing algorithm.
+   * Accepts the algorithm as a parameter so it can be used for both the
+   * default key and any policy-specific mapped key.
    */
-  private getHashAlgorithm(): string {
-    switch (this.algorithm) {
+  private getHashAlgorithmFor(algorithm: string): string {
+    switch (algorithm) {
       case 'RS256':
       case 'ES256':
         return 'sha256';
@@ -169,15 +185,35 @@ export class AzureKeyVaultSigner extends SigningAdapter {
   }
 
   /**
-   * Sign a capability token payload
-   * Follows the Azure pattern: hash locally, then sign the digest with Key Vault
+   * Sign a capability token payload.
+   *
+   * When an {@link IssuanceContext} is supplied and the `policyHash` matches
+   * an entry in {@link AzureKeyVaultConfig.keysByPolicyHash}, the signer uses
+   * the mapped key name instead of the default {@link AzureKeyVaultConfig.keyName}.
+   * The per-policy key is fetched once and its `CryptographyClient` is cached
+   * so subsequent calls for the same policy hash skip the Key Vault metadata
+   * round-trip.  If the mapped key is not yet cached, it is resolved
+   * synchronously during the sign operation — the overall signing latency is
+   * therefore bounded by at most one additional `getKey` call per distinct
+   * policy hash seen at runtime.
+   *
+   * Falls back to the default key when no `context` is supplied or the
+   * `policyHash` is not mapped in `keysByPolicyHash`.
    */
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
+  async sign(payload: CapabilityTokenPayload, context?: IssuanceContext): Promise<string> {
     await this.initialize();
 
-    // Create JWT header
+    // Resolve the CryptographyClient and effective algorithm for this signing
+    // operation.  When an IssuanceContext maps to a policy-specific key, both
+    // the client and that key's algorithm are selected; otherwise the defaults
+    // (set during initialize()) are used.
+    const { client: activeCryptoClient, algorithm: activeAlgorithm } =
+      await this.resolveSigningResources(context);
+
+    // Create JWT header using the resolved algorithm so the header's `alg`
+    // always matches the key that will actually sign it.
     const header = {
-      alg: this.algorithm,
+      alg: activeAlgorithm,
       typ: 'JWT',
       kid: await this.getKeyId(),
     };
@@ -187,21 +223,70 @@ export class AzureKeyVaultSigner extends SigningAdapter {
     const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
     const signingInput = `${encodedHeader}.${encodedPayload}`;
 
-    // Hash the signing input locally (as per Azure Key Vault best practice)
-    const hashAlgorithm = this.getHashAlgorithm();
+    // Hash the signing input locally (as per Azure Key Vault best practice).
+    // Use the hash algorithm that matches the resolved signing algorithm.
+    const hashAlgorithm = this.getHashAlgorithmFor(activeAlgorithm);
     const digest = crypto
       .createHash(hashAlgorithm)
       .update(signingInput)
       .digest();
 
-    // Sign the digest with Key Vault
-    const signResult: SignResult = await this.cryptoClient.sign(this.algorithm, digest);
+    // Sign the digest with Key Vault using the resolved client and algorithm.
+    const signResult: SignResult = await activeCryptoClient.sign(activeAlgorithm, digest);
 
     // Encode the signature
     const encodedSignature = this.base64UrlEncode(Buffer.from(signResult.result));
 
     // Return the complete JWT
     return `${signingInput}.${encodedSignature}`;
+  }
+
+  /**
+   * Resolve the `CryptographyClient` and signing algorithm for a given signing
+   * operation.
+   *
+   * When an {@link IssuanceContext} is supplied and its `policyHash` maps to
+   * an entry in {@link AzureKeyVaultConfig.keysByPolicyHash}, returns (creating
+   * on first use) a `CryptographyClient` for that key, together with the
+   * algorithm detected from that key.  Falls back to the default client and
+   * algorithm when no context / mapping is present.
+   *
+   * The cache is keyed on `policyHash` rather than the resolved key name so
+   * that each policy boundary has its own client entry and cache invalidation
+   * is straightforward: each distinct hash maps to exactly one client.
+   */
+  private async resolveSigningResources(
+    context?: IssuanceContext,
+  ): Promise<{ client: CryptographyClient; algorithm: string }> {
+    // Try composite key "${policyHash}:${audience}" first so operators can
+    // assign different keys to different tenants even when they share the same
+    // policy document.  Fall back to plain policyHash for single-tenant
+    // deployments where audience differentiation is not needed.
+    const mappedKeyName =
+      context !== undefined && this.keyVaultConfig.keysByPolicyHash !== undefined
+        ? (this.keyVaultConfig.keysByPolicyHash[resolveIssuanceContextKey(context)] ??
+           this.keyVaultConfig.keysByPolicyHash[context.policyHash])
+        : undefined;
+
+    if (mappedKeyName === undefined) {
+      return { client: this.cryptoClient, algorithm: this.algorithm };
+    }
+
+    const policyHash = context!.policyHash;
+    const cached = this.cryptoClientsByPolicyHash.get(policyHash);
+    if (cached !== undefined) {
+      // Algorithm was stored when the client was created — safe to assert.
+      return { client: cached, algorithm: this.algorithmByPolicyHash.get(policyHash)! };
+    }
+
+    // Fetch the policy-specific key from Key Vault, detect its algorithm, and
+    // cache both the client and the algorithm keyed by policyHash.
+    const key = await this.keyClient.getKey(mappedKeyName);
+    const detectedAlgorithm = detectAlgorithmFromKey(key);
+    const client = new CryptographyClient(key, this.createCredential());
+    this.cryptoClientsByPolicyHash.set(policyHash, client);
+    this.algorithmByPolicyHash.set(policyHash, detectedAlgorithm);
+    return { client, algorithm: detectedAlgorithm };
   }
 
   /**

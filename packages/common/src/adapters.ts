@@ -12,6 +12,7 @@ import {
   UserContext,
   TokenSigner,
   CapabilityTokenPayload,
+  IssuanceContext,
 } from './types';
 
 /**
@@ -135,10 +136,16 @@ export abstract class SigningAdapter implements TokenSigner {
   }
 
   /**
-   * Sign a capability token payload
-   * Must be implemented by concrete adapters
+   * Sign a capability token payload.
+   *
+   * Concrete adapters MUST accept the optional `context` parameter and use
+   * it to scope the KMS / key-vault operation when their back-end supports
+   * per-intent grants.  Adapters that do not exploit the context MUST ignore
+   * it silently so callers can pass it uniformly.
+   *
+   * Must be implemented by concrete adapters.
    */
-  abstract sign(payload: CapabilityTokenPayload): Promise<string>;
+  abstract sign(payload: CapabilityTokenPayload, context?: IssuanceContext): Promise<string>;
 
   /**
    * Get the public key for verification (in PEM format)

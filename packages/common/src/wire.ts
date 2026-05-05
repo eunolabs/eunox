@@ -406,6 +406,29 @@ export interface CapabilityTokenPayload {
    */
   region?: string;
   /**
+   * SHA-256 hex digest of the capability-relevant portions of the
+   * role-capability policy that authorized this token.
+   *
+   * Stamped at fresh issuance so attenuation and renewal can restore
+   * the original policy boundary from the token rather than using the
+   * issuer's current loaded policy.  This ensures that a policy rollout
+   * on a running issuer pod does not change which KMS grant or Key Vault
+   * key is used to sign derived tokens — the hash follows the token
+   * lineage, not the current server state.
+   *
+   * The digest covers only the `default` and `tenants` fields of
+   * {@link RoleCapabilityPolicy} (i.e. the capability-granting parts),
+   * not ancillary fields such as `dbUsernamesByRole`, so changes to
+   * credential-minting config that do not alter capability grants do
+   * not invalidate existing KMS grants or key mappings.
+   *
+   * Populated by {@link computeCapabilityPolicyHash} in the issuer.
+   * Gateway verifiers MUST NOT require this field (it was absent in
+   * pre-signing-intent tokens) — it is present only when the issuer
+   * was deployed with signing-intent support.
+   */
+  policyHash?: string;
+  /**
    * Optional confirmation claim binding this token to a specific key
    * the holder MUST prove possession of on every use (RFC 7800 / RFC
    * 9449). When present with a `jkt` member, the token is

@@ -4,7 +4,7 @@
  */
 
 import { KeyManagementServiceClient } from '@google-cloud/kms';
-import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, GCPCloudKMSConfig } from '@euno/common';
+import { SigningAdapter, SigningAdapterConfig, SigningAlgorithm, CapabilityTokenPayload, GCPCloudKMSConfig, IssuanceContext } from '@euno/common';
 import * as crypto from 'crypto';
 
 /**
@@ -186,10 +186,19 @@ export class GCPCloudKMSSigner extends SigningAdapter {
   }
 
   /**
-   * Sign a capability token payload
-   * GCP Cloud KMS asymmetricSign expects the full message or digest
+   * Sign a capability token payload.
+   *
+   * The optional {@link IssuanceContext} is accepted for API uniformity with
+   * the AWS and Azure adapters.  GCP Cloud KMS asymmetric signing keys do not
+   * have a native grant-scoping mechanism equivalent to AWS KMS grant tokens or
+   * Azure Key Vault per-key access policies, so the context is not used to
+   * select a different key version at runtime.  Operators that need policy-hash
+   * key isolation on GCP should create separate key versions per policy tier
+   * and point the `gcpKMS.cryptoKeyVersion` configuration at the appropriate
+   * version for each deployment; the context is available in structured logs
+   * for audit correlation.
    */
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
+  async sign(payload: CapabilityTokenPayload, _context?: IssuanceContext): Promise<string> {
     await this.initialize();
 
     // Create JWT header

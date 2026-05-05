@@ -58,7 +58,9 @@ import {
 import {
   buildAttenuatedPayload,
   buildIssuancePayload,
+  buildIssuanceContext,
   buildRenewedPayload,
+  computeCapabilityPolicyHash,
   computePimCappedExpiry,
   emitPostureRecord,
   enforceConditionalAccess,
@@ -464,6 +466,16 @@ export class CapabilityIssuerService {
   /** Audience claim for minted tokens. Configurable per-tenant to prevent cross-tenant replay. */
   private gatewayAudience: string;
   /**
+   * SHA-256 hex digest of the capability-relevant portions of the
+   * role-capability policy (see {@link computeCapabilityPolicyHash}).
+   * Computed once at construction time and reused on every sign
+   * operation so the hash does not add O(policy-size) cost to the hot
+   * path.  Written into every minted token's `policyHash` claim so
+   * attenuation and renewal can restore it from the parent token instead
+   * of re-hashing whatever policy version is currently loaded.
+   */
+  private readonly cachedPolicyHash: string;
+  /**
    * Independent cosigners attached to every issued / attenuated /
    * renewed token. Empty array means cosignature is disabled for this
    * deployment (back-compat). See {@link CapabilityIssuerServiceOptions.cosigners}.
@@ -533,6 +545,11 @@ export class CapabilityIssuerService {
     if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
     this.actionResolver = options.actionResolver ?? BUILTIN_ACTION_RESOLVER;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
+    // Precompute once at construction — avoids rehashing on every sign call.
+    // Only the capability-granting portions (default + tenants) are hashed;
+    // dbUsernamesByRole is excluded so credential-minting config changes that
+    // leave capability grants unchanged do not invalidate KMS grants / key maps.
+    this.cachedPolicyHash = computeCapabilityPolicyHash(this.policy);
     this.cosigners = options.cosigners ?? [];
     this.transparencyLogs = options.transparencyLogs ?? [];
   }
@@ -742,7 +759,19 @@ export class CapabilityIssuerService {
 
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
       await this.attachIssuanceProofs(payload);
-      const token = await signPayload(this.signer, payload);
+      // Build the signing intent context using the precomputed policy hash so
+      // the hash cost is not paid on the hot path.  Pass it both to signPayload
+      // (KMS back-end scoping) and stamp it into the payload itself so
+      // attenuation/renewal can restore the original policy boundary without
+      // re-hashing whatever policy version happens to be loaded at that time.
+      payload.policyHash = this.cachedPolicyHash;
+      const issuanceContext = buildIssuanceContext({
+        policyHash: this.cachedPolicyHash,
+        manifest: request.manifest,
+        subject: request.agentId,
+        audience: this.gatewayAudience,
+      });
+      const token = await signPayload(this.signer, payload, issuanceContext);
 
       // Step 5b: Mint short-lived cloud-storage and DB credentials.
       // IMPORTANT: this runs AFTER the JWT is signed (step 5 above) so
@@ -1292,7 +1321,19 @@ export class CapabilityIssuerService {
         agentId: parentPayload.sub,
       });
       await this.attachIssuanceProofs(childPayload);
-      const token = await signPayload(this.signer, childPayload);
+      // Restore the policy hash from the parent token so the attenuated child
+      // is signed under the same policy boundary as the original issuance,
+      // regardless of any policy rollout that occurred between the two events.
+      // Fall back to the service's current policy hash for legacy tokens that
+      // pre-date the policyHash claim (present in all tokens issued by a
+      // signing-intent-aware issuer, absent in older tokens).
+      const attenuationPolicyHash = parentPayload.policyHash ?? this.cachedPolicyHash;
+      const attenuationContext = buildIssuanceContext({
+        policyHash: attenuationPolicyHash,
+        subject: parentPayload.sub,
+        audience: this.gatewayAudience,
+      });
+      const token = await signPayload(this.signer, childPayload, attenuationContext);
 
       // Step 6: Audit log the attenuation.
       await this.logAttenuation(
@@ -1414,7 +1455,17 @@ export class CapabilityIssuerService {
         agentId: currentPayload.sub,
       });
       await this.attachIssuanceProofs(renewedPayload);
-      const token = await signPayload(this.signer, renewedPayload);
+      // Restore the policy hash from the token being renewed so the new token
+      // is signed under the same policy boundary as the original issuance.
+      // Fall back to the service's current policy hash for legacy tokens issued
+      // before the policyHash claim was introduced.
+      const renewalPolicyHash = currentPayload.policyHash ?? this.cachedPolicyHash;
+      const renewalContext = buildIssuanceContext({
+        policyHash: renewalPolicyHash,
+        subject: currentPayload.sub,
+        audience: this.gatewayAudience,
+      });
+      const token = await signPayload(this.signer, renewedPayload, renewalContext);
 
       // Step 4: Audit log the renewal.
       await this.logRenewal(

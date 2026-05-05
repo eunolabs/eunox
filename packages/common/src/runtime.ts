@@ -306,13 +306,91 @@ export interface UserContext {
 }
 
 /**
+ * Signing intent context passed to the signing adapter alongside the payload.
+ *
+ * Carries cryptographic fingerprints of the policy and manifest in effect for
+ * this particular issuance so KMS back-ends can enforce per-intent grants:
+ *
+ *   - **AWS KMS**: include `GrantTokens` in the `SignCommand` selected from
+ *     `AWSKMSConfig.grantTokensByPolicyHash` using a composite lookup key
+ *     `"${policyHash}:${audience}"` (with fallback to plain `policyHash`).
+ *     This restricts which caller identities may trigger a sign operation
+ *     under a given policy/tenant pair without a coarse `kms:Sign` allow-all
+ *     grant.
+ *   - **Azure Key Vault**: select the named signing key from
+ *     `AzureKeyVaultConfig.keysByPolicyHash` using the same composite lookup.
+ *     Each mapped key carries its own Key Vault access policy, tying the
+ *     Conditional Access tier boundary to the cryptographic boundary.
+ *   - **GCP Cloud KMS**: the context is carried through for audit annotation;
+ *     asymmetric key version selection by policy hash can be wired via config.
+ *
+ * Implementations that do not exploit the context MUST still accept the
+ * optional parameter without error so the call site can pass it uniformly
+ * across all backends.
+ */
+export interface IssuanceContext {
+  /**
+   * SHA-256 hex digest of the capability-granting portions of the
+   * role-capability policy in effect for this issuance (computed by
+   * `computeCapabilityPolicyHash`).  Used by KMS back-ends to select the
+   * pre-authorized grant or key version that matches this policy boundary.
+   */
+  policyHash: string;
+
+  /**
+   * SHA-256 hex digest of the canonical agent capability manifest, when one
+   * was supplied with the request.  `undefined` when no manifest was present
+   * (e.g. attenuation, renewal, or manifests-not-required deployments).
+   */
+  manifestHash?: string;
+
+  /**
+   * Agent identifier — the `sub` claim of the token being minted.  Included
+   * so KMS grant conditions can restrict signing to a specific agent id
+   * without a separate IAM policy statement.
+   */
+  subject: string;
+
+  /**
+   * Gateway audience — the `aud` claim of the token being minted.  In
+   * multi-tenant deployments this differentiates grants per tenant boundary
+   * so a tenant-A policy grant cannot be used to sign a token for tenant-B.
+   * Combined with `policyHash` to form the composite lookup key
+   * `"${policyHash}:${audience}"` used by {@link resolveIssuanceContextKey}.
+   */
+  audience: string;
+}
+
+/**
+ * Compute the context lookup key used by KMS / Key Vault config maps.
+ *
+ * Returns `"${policyHash}:${audience}"` which allows operators to scope
+ * grants or keys to a `(policy, tenant)` pair.  Callers should try the
+ * composite key first and fall back to plain `policyHash` to support
+ * deployments where all tenants share the same cryptographic scope.
+ *
+ * Exported so tests and operator tooling can compute the same key that
+ * the signers use internally.
+ */
+export function resolveIssuanceContextKey(context: IssuanceContext): string {
+  return `${context.policyHash}:${context.audience}`;
+}
+
+/**
  * Token signing service interface
  */
 export interface TokenSigner {
   /**
-   * Sign a capability token payload
+   * Sign a capability token payload.
+   *
+   * @param payload   - The JWT claims to sign.
+   * @param context   - Optional signing intent that KMS back-ends may use to
+   *                    scope the signing operation to a pre-authorized grant or
+   *                    key version.  Callers SHOULD always supply this when
+   *                    they have access to the issuance context; signers that
+   *                    do not exploit it ignore it without error.
    */
-  sign(payload: CapabilityTokenPayload): Promise<string>;
+  sign(payload: CapabilityTokenPayload, context?: IssuanceContext): Promise<string>;
 
   /**
    * Get the public key for verification
@@ -366,6 +444,44 @@ export interface AzureKeyVaultConfig {
   clientSecret?: string;
   /** Tenant ID for Azure AD */
   tenantId?: string;
+  /**
+   * Per-context key name overrides.
+   *
+   * Maps a context key → Key Vault key name.  When an {@link IssuanceContext}
+   * is passed to `sign()`, the signer constructs the lookup key as:
+   *
+   * ```
+   * "${context.policyHash}:${context.audience}"
+   * ```
+   *
+   * If no entry is found under the composite key, it falls back to just
+   * `context.policyHash`.  This allows operators to share one key across all
+   * tenants for a given policy (plain `policyHash` entry) or to assign
+   * per-tenant keys when two tenants share the same policy document but MUST
+   * be signed by distinct cryptographic keys (`${policyHash}:${audience}` entry).
+   *
+   * Each mapped key carries its own Key Vault access policy, tying the
+   * Conditional Access tier boundary into the cryptographic boundary.
+   *
+   * When no entry is found the default `keyName` is used (full back-compat).
+   *
+   * Example (policy-only keys):
+   * ```json
+   * {
+   *   "<sha256-of-read-only-policy>": "capability-key-readonly",
+   *   "<sha256-of-write-policy>":     "capability-key-write"
+   * }
+   * ```
+   *
+   * Example (composite `policyHash:audience` keys for multi-tenant isolation):
+   * ```json
+   * {
+   *   "<sha256-of-policy>:acme.tool-gateway":    "capability-key-acme",
+   *   "<sha256-of-policy>:widgets.tool-gateway": "capability-key-widgets"
+   * }
+   * ```
+   */
+  keysByPolicyHash?: Record<string, string>;
 }
 
 /**
@@ -382,6 +498,54 @@ export interface AWSKMSConfig {
   secretAccessKey?: string;
   /** AWS session token (optional, for temporary credentials) */
   sessionToken?: string;
+  /**
+   * Per-context KMS grant tokens.
+   *
+   * Maps a context key → KMS grant token.  When an {@link IssuanceContext} is
+   * passed to `sign()`, the signer constructs the lookup key as:
+   *
+   * ```
+   * "${context.policyHash}:${context.audience}"
+   * ```
+   *
+   * If no entry is found under the composite key, it falls back to just
+   * `context.policyHash`.  This allows operators to share one grant across all
+   * tenants for a given policy (plain `policyHash` entry) or to assign
+   * per-tenant grants when two tenants share the same policy document but MUST
+   * use different cryptographic scopes (`${policyHash}:${audience}` entry).
+   *
+   * The matching grant token is included in `SignCommand.GrantTokens` so KMS
+   * enforces the per-scope grant rather than falling back to a coarse IAM
+   * allow-all `kms:Sign` statement.  When no entry is found the call proceeds
+   * without `GrantTokens`; IAM policy evaluation applies (full back-compat).
+   *
+   * **Security note**: Grant tokens authorise `kms:Sign` on behalf of the
+   * grantee principal, not the specific signing payload.  For strongest
+   * isolation each issuer pod should be injected with only the grant token(s)
+   * relevant to its own policy scope — preferably at startup from AWS Secrets
+   * Manager — rather than the full map, so a compromised pod cannot substitute
+   * a different entry and mint tokens under a different policy boundary.
+   *
+   * Grant tokens are short-lived (~15 min) and SHOULD be rotated by the
+   * operator via a separate credential-rotation process.
+   *
+   * Example (policy-only keys):
+   * ```json
+   * {
+   *   "<sha256-of-policy-A>": "<grant-token-A>",
+   *   "<sha256-of-policy-B>": "<grant-token-B>"
+   * }
+   * ```
+   *
+   * Example (composite `policyHash:audience` keys for multi-tenant isolation):
+   * ```json
+   * {
+   *   "<sha256-of-policy>:acme.tool-gateway": "<grant-token-acme>",
+   *   "<sha256-of-policy>:widgets.tool-gateway": "<grant-token-widgets>"
+   * }
+   * ```
+   */
+  grantTokensByPolicyHash?: Record<string, string>;
 }
 
 /**

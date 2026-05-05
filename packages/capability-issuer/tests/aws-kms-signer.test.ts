@@ -412,4 +412,136 @@ describe('AWSKMSSigner', () => {
       await expect(signer.getPublicKey()).rejects.toThrow();
     });
   });
+
+  // -----------------------------------------------------------------------
+  // sign() – IssuanceContext / KMS grant token scoping
+  // -----------------------------------------------------------------------
+
+  describe('sign() with IssuanceContext', () => {
+    async function setupSignerWithRSA(grantMap?: Record<string, string>) {
+      const { pubKeyDerBytes } = await generateRSAKeyPair();
+      mockSend.mockResolvedValueOnce({
+        PublicKey: pubKeyDerBytes,
+        KeySpec: 'RSA_2048',
+        SigningAlgorithms: ['RSASSA_PKCS1_V1_5_SHA_256'],
+      });
+      const signer = new AWSKMSSigner({
+        type: 'aws-kms',
+        name: 'test',
+        awsKMS: {
+          region: 'us-east-1',
+          keyId: 'test-key-id',
+          ...(grantMap !== undefined ? { grantTokensByPolicyHash: grantMap } : {}),
+        },
+      });
+      await signer.initialize();
+      return signer;
+    }
+
+    const minimalPayload = {
+      iss: 'did:web:example.com',
+      sub: 'agent-1',
+      aud: 'tool-gateway',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      jti: 'jti-ctx',
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities: [],
+    };
+
+    function getLastSignCall() {
+      const calls = [...mockSend.mock.calls].reverse();
+      return calls.find((call) => call[0]?.constructor?.name === 'SignCommand');
+    }
+
+    it('includes the mapped grant token when context.policyHash has a plain-hash entry', async () => {
+      const signer = await setupSignerWithRSA({
+        'abc123': 'grant-token-for-abc123',
+        'def456': 'grant-token-for-def456',
+      });
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x01) });
+
+      await signer.sign(minimalPayload, {
+        policyHash: 'abc123',
+        subject: 'agent-1',
+        audience: 'tool-gateway',
+      });
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toEqual(['grant-token-for-abc123']);
+    });
+
+    it('prefers the composite "${policyHash}:${audience}" entry over the plain hash entry', async () => {
+      const signer = await setupSignerWithRSA({
+        'abc123': 'grant-token-plain',
+        'abc123:acme.tool-gateway': 'grant-token-acme',
+      });
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x05) });
+
+      await signer.sign(minimalPayload, {
+        policyHash: 'abc123',
+        subject: 'agent-1',
+        audience: 'acme.tool-gateway',
+      });
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toEqual(['grant-token-acme']);
+    });
+
+    it('falls back to plain hash entry when composite key is absent', async () => {
+      const signer = await setupSignerWithRSA({
+        'abc123': 'grant-token-plain',
+      });
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x06) });
+
+      await signer.sign(minimalPayload, {
+        policyHash: 'abc123',
+        subject: 'agent-1',
+        audience: 'other.tool-gateway', // no composite entry for this audience
+      });
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toEqual(['grant-token-plain']);
+    });
+
+    it('omits GrantTokens when context.policyHash has no mapping', async () => {
+      const signer = await setupSignerWithRSA({
+        'abc123': 'grant-token-for-abc123',
+      });
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x02) });
+
+      await signer.sign(minimalPayload, {
+        policyHash: 'unmapped-hash',
+        subject: 'agent-1',
+        audience: 'tool-gateway',
+      });
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toBeUndefined();
+    });
+
+    it('omits GrantTokens when no IssuanceContext is supplied (back-compat)', async () => {
+      const signer = await setupSignerWithRSA({ 'abc123': 'some-grant' });
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x03) });
+
+      await signer.sign(minimalPayload);
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toBeUndefined();
+    });
+
+    it('omits GrantTokens when signer has no grantTokensByPolicyHash configured', async () => {
+      const signerNoGrants = await setupSignerWithRSA(); // no grant map
+      mockSend.mockResolvedValueOnce({ Signature: Buffer.alloc(256, 0x04) });
+
+      await signerNoGrants.sign(minimalPayload, {
+        policyHash: 'some-hash',
+        subject: 'agent-1',
+        audience: 'tool-gateway',
+      });
+
+      const input = getLastSignCall()![0].input;
+      expect(input.GrantTokens).toBeUndefined();
+    });
+  });
 });

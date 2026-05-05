@@ -111,6 +111,15 @@ export interface IssuancePayloadInputs {
    * request to carry a DPoP proof signed by the matching private key.
    */
   dpopJkt?: string;
+  /**
+   * SHA-256 hex digest of the capability-relevant portions of the
+   * role-capability policy (from `computeCapabilityPolicyHash`).
+   * When supplied, stamped into the token so attenuation and renewal
+   * can restore the original policy boundary from the parent token,
+   * decoupling the signing-intent hash from whatever policy version
+   * happens to be loaded in the issuer at that later time.
+   */
+  policyHash?: string;
 }
 
 /**
@@ -138,6 +147,7 @@ export function buildIssuancePayload(
     },
   };
   if (inputs.region) payload.region = inputs.region;
+  if (inputs.policyHash) payload.policyHash = inputs.policyHash;
   if (inputs.dpopJkt) payload.cnf = { jkt: inputs.dpopJkt };
   payload.vc = buildVerifiableCredential(payload);
   return payload;
@@ -177,6 +187,11 @@ export function buildAttenuatedPayload(
   // a different region does not retroactively change the originating
   // region of the chain.
   if (inputs.parent.region) childPayload.region = inputs.parent.region;
+  // Preserve the policy boundary hash so KMS back-ends continue to
+  // use the same grant / key that was selected at original issuance,
+  // regardless of which policy version is loaded in the issuer at
+  // attenuation time.
+  if (inputs.parent.policyHash) childPayload.policyHash = inputs.parent.policyHash;
   // F-2: a sender-constrained parent yields a sender-constrained
   // child. Attenuation MUST NOT be a path to drop the `cnf.jkt`
   // binding — otherwise the holder of a DPoP-bound token could mint
@@ -223,6 +238,10 @@ export function buildRenewedPayload(
   // Preserve the originating `region` claim across renewal (F-7) so
   // the audit chain can attribute every link to its source region.
   if (inputs.current.region) renewedPayload.region = inputs.current.region;
+  // Preserve the policy boundary hash across renewal for the same
+  // reason as attenuation — the renewed token must continue to use
+  // the KMS grant / key that was selected at original issuance.
+  if (inputs.current.policyHash) renewedPayload.policyHash = inputs.current.policyHash;
   // F-2: renewal preserves the `cnf.jkt` binding for the same reason
   // as attenuation — a sender-constrained credential MUST stay
   // sender-constrained for its entire lineage.
