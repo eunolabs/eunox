@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "storage-grant-service Helm values",
+  "description": "Configuration schema for the `storage-grant-service` service. Generated from packages/common/src/config/schema.ts — do not edit by hand. Regenerate with `npm run gen:helm-schema` from the repository root.",
+  "type": "object",
+  "properties": {
+    "env": {
+      "type": "object",
+      "description": "Environment variables injected into the service container. Keys map 1-to-1 to the environment variables consumed by the service.",
+      "properties": {
+        "NODE_ENV": {
+          "type": "string",
+          "description": "Deployment environment. Used by logging and CORS to pick safe defaults."
+        },
+        "PORT": {
+          "type": "string",
+          "description": "TCP port the storage-grant-service HTTP server binds to."
+        },
+        "ISSUER_JWKS_URI": {
+          "type": "string",
+          "description": "JWKS endpoint of the capability-issuer used to verify incoming capability tokens. Required. Example: http://capability-issuer:3001/.well-known/jwks.json"
+        },
+        "ISSUER_DID": {
+          "type": "string",
+          "description": "Expected `iss` claim in incoming capability tokens. Required. Must match the ISSUER_DID set on the corresponding capability-issuer."
+        },
+        "GATEWAY_AUDIENCE": {
+          "type": "string",
+          "description": "Expected `aud` claim in incoming capability tokens. Default \"tool-gateway\"."
+        },
+        "STORAGE_GRANTS_ENABLED": {
+          "type": "string",
+          "description": "Enable storage-grant minting. Must be \"true\" for the service to issue storage credentials. When false the service starts but all /grant requests return 503."
+        },
+        "STORAGE_GRANT_MAX_TTL_SECONDS": {
+          "type": "string",
+          "description": "Cap on storage grant TTL in seconds. Default 900; hard ceiling 3600."
+        },
+        "AWS_REGION": {
+          "type": "string",
+          "description": "AWS region for S3 storage-grant calls."
+        },
+        "AWS_STORAGE_GRANT_ROLE_ARN": {
+          "type": "string",
+          "description": "IAM role ARN the service assumes to mint AWS storage grants. MUST be distinct from any JWT-signing key role to limit blast radius."
+        },
+        "AWS_ACCESS_KEY_ID": {
+          "type": "string",
+          "description": "AWS access key. Optional; falls back to the default credential provider chain."
+        },
+        "AWS_SECRET_ACCESS_KEY": {
+          "type": "string",
+          "description": "AWS secret access key. Optional; falls back to the default credential provider chain."
+        },
+        "AWS_SESSION_TOKEN": {
+          "type": "string",
+          "description": "AWS session token, for temporary credentials. Optional."
+        }
+      },
+      "required": [
+        "ISSUER_JWKS_URI",
+        "ISSUER_DID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "env"
+  ]
+}

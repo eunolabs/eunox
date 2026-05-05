@@ -491,12 +491,13 @@ export class CapabilityIssuerService {
     this.logger = logger;
     // F-7: `region` is the canonical setting; `postureRegion` is the
     // legacy fallback so existing wiring keeps working unchanged.
-    // `EUNO_DEPLOYMENT_REGION` is the very-legacy fallback (sprint
-    // 3-4 posture-only). Resolved BEFORE the audit logger so every
-    // audit record this service emits — including the synchronous
-    // deny entries from `enforceIssuanceRateLimit` — is stamped with
-    // `region`.
-    this.region = options.region ?? options.postureRegion ?? process.env.EUNO_DEPLOYMENT_REGION ?? '';
+    // `region` is set by the caller from the validated boot config — see
+    // capability-issuer/src/index.ts. The `postureRegion` option is a
+    // legacy alias for the same value kept for library back-compat. The
+    // env-var fallback has been removed: callers must supply `options.region`
+    // (populated from `ISSUER_REGION` / `EUNO_DEPLOYMENT_REGION` via the
+    // validated schema) or accept an empty string.
+    this.region = options.region ?? options.postureRegion ?? '';
     this.postureRegion = this.region.length > 0 ? this.region : 'unknown';
     this.auditLogger = createAuditLogger('capability-issuer', { region: this.region });
     if (options.auditTransports) {

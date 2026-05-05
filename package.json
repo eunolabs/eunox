@@ -12,6 +12,8 @@
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
     "verify-evidence": "node scripts/verify-evidence.js",
+    "gen:helm-schema": "node scripts/generate-helm-schema.mjs",
+    "gen:helm-schema:check": "node scripts/generate-helm-schema.mjs --check",
     "gen:openapi": "node scripts/generate-openapi-types.mjs",
     "gen:openapi:check": "node scripts/generate-openapi-types.mjs --check"
   },

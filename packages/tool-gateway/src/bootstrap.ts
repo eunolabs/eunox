@@ -519,25 +519,22 @@ export async function initializeServices(
     logger,
     undefined, // let the factory auto-create from REDIS_URL when set
     {
-      requirePin: env.PARTNER_DID_REQUIRE_PIN === 'true',
+      requirePin: validated.PARTNER_DID_REQUIRE_PIN,
       // registryRequired: intentionally omitted — factory derives from NODE_ENV
       // (production → default true unless PARTNER_DID_REGISTRY_REQUIRED=false;
       //  non-production → default false unless PARTNER_DID_REGISTRY_REQUIRED=true).
-      keyPrefix: env.PARTNER_DID_REGISTRY_KEY_PREFIX,
-      deploymentTier: env.EUNO_DEPLOYMENT_TIER,
-      nodeEnv: env.NODE_ENV,
+      keyPrefix: validated.PARTNER_DID_REGISTRY_KEY_PREFIX,
+      deploymentTier: validated.EUNO_DEPLOYMENT_TIER,
+      nodeEnv: validated.NODE_ENV,
     },
   );
 
-  const pinAttestationSecret = env.PARTNER_DID_PIN_SECRET || undefined;
-  const partnerDidAutoFetchPin = env.PARTNER_DID_AUTO_FETCH_PIN === 'true';
+  const pinAttestationSecret = validated.PARTNER_DID_PIN_SECRET || undefined;
+  const partnerDidAutoFetchPin = validated.PARTNER_DID_AUTO_FETCH_PIN;
 
   const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry);
   if (partnerResolver) {
-    const partnerDidCount = (env.TRUSTED_PARTNER_DIDS || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean).length;
+    const partnerDidCount = (validated.TRUSTED_PARTNER_DIDS ?? []).length;
     logger.info('Cross-org partner-issuer trust resolver enabled', {
       partnerDidCount,
       pinAttestationEnabled: !!pinAttestationSecret,
@@ -547,10 +544,7 @@ export async function initializeServices(
 
   // Optional allow-list of issuers (DIDs or simple identifiers) that the
   // local SPKI key is authorised to sign for.
-  const localIssuers = (env.LOCAL_ISSUER_IDS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const localIssuers = validated.LOCAL_ISSUER_IDS ?? [];
 
   const verifier = new JwksTokenVerifier(jwksClient, {
     revocationStore,

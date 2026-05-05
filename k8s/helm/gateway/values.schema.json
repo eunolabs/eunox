@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "gateway Helm values",
+  "description": "Configuration schema for the `gateway` service. Generated from packages/common/src/config/schema.ts — do not edit by hand. Regenerate with `npm run gen:helm-schema` from the repository root.",
+  "type": "object",
+  "properties": {
+    "env": {
+      "type": "object",
+      "description": "Environment variables injected into the service container. Keys map 1-to-1 to the environment variables consumed by the service.",
+      "properties": {
+        "NODE_ENV": {
+          "type": "string",
+          "description": "Deployment environment. Used by logging and CORS to pick safe defaults."
+        },
+        "EUNO_DEPLOYMENT_TIER": {
+          "type": "string",
+          "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover. See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md and docs/MULTI_REGION_ISSUER.md."
+        },
+        "PORT": {
+          "type": "string",
+          "description": "TCP port the gateway HTTP server binds to."
+        },
+        "ADMIN_PORT": {
+          "type": "string",
+          "description": "TCP port the gateway admin HTTP server binds to. Admin routes (/admin/*) are served exclusively on this port so they are unreachable from the public-facing load-balancer. Must differ from PORT. Default 3003."
+        },
+        "ADMIN_HOST": {
+          "type": "string",
+          "description": "Network interface the admin HTTP server binds to. The admin surface controls token revocation and kill-switch state and must not be reachable from the public load-balancer. In production the gateway refuses to start unless ADMIN_HOST is set to a non-wildcard address (anything other than \"\" / \"0.0.0.0\" / \"::\"), so a misconfigured ingress / route cannot expose /admin/* even by accident. Recommended values: \"127.0.0.1\" for sidecar-only access, or the pod's internal cluster IP. When unset (non-production only) the admin server binds to all interfaces (Express default)."
+        },
+        "ISSUER_JWKS_URL": {
+          "type": "string",
+          "description": "URL of the issuer JWKS endpoint. Defaults to http://localhost:3001/.well-known/jwks.json. Use this instead of ISSUER_PUBLIC_KEY_URL for R-6 JWKS key rotation."
+        },
+        "ISSUER_PUBLIC_KEY_URL": {
+          "type": "string",
+          "description": "[Deprecated — use ISSUER_JWKS_URL] URL the gateway calls to fetch the issuer SPKI public key. Kept for one deprecation cycle; will be removed in a future release."
+        },
+        "EUNO_JWKS_CACHE_TTL_SECONDS": {
+          "type": "string",
+          "description": "JWKS cache TTL in seconds. The gateway re-fetches /.well-known/jwks.json after this interval. Default 300 (5 min). Reduce for faster key-rotation propagation."
+        },
+        "EUNO_REQUIRE_KID": {
+          "type": "string",
+          "description": "Require a kid (key ID) in the JWT protected header. Default true (strict). Set to false only during the deprecation window when old tokens without kid are still in flight."
+        },
+        "BACKEND_SERVICE_URL": {
+          "type": "string",
+          "description": "URL of the backend service the gateway proxies authorised requests to. Defaults to http://localhost:4000."
+        },
+        "ACTION_RESOLVER_FILE": {
+          "type": "string",
+          "description": "Optional path to a JSON file describing the ActionResolver (R-7) used to derive a capability action from incoming HTTP requests on /proxy and from tool invocations on /api/v1/tools/invoke. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. mapping `POST /graphql` queries to `read`). Should match the value configured on the capability-issuer so mint-time CA tiering and enforcement-time action derivation share a vocabulary."
+        },
+        "ADMIN_API_KEY": {
+          "type": "string",
+          "description": "API key required to call /admin endpoints. MUST be set in production — the gateway refuses to start when NODE_ENV=production and this is unset. When unset in non-production environments the admin API is publicly reachable (not recommended)."
+        },
+        "ENABLE_CRYPTOGRAPHIC_AUDIT": {
+          "type": "string",
+          "description": "Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits. Legacy single-toggle for evidence signing; for finer-grained control use EVIDENCE_SIGNED_DECISIONS (I-8)."
+        },
+        "EVIDENCE_SIGNED_DECISIONS": {
+          "type": "string",
+          "description": "Comma-separated list of validation decisions whose audit evidence is signed. Allowed values: allow, deny. When set, this overrides ENABLE_CRYPTOGRAPHIC_AUDIT (which becomes the legacy on/off shorthand). Use \"deny\" alone to record a tamper-evident trail of refusals without paying the per-allow signing cost (I-8). An evidence signer MUST be configured if this is non-empty."
+        },
+        "EVIDENCE_SIGNING_KEY_PEM": {
+          "type": "string",
+          "description": "Inline PEM-encoded private key for evidence signing. Provide this OR EVIDENCE_SIGNING_KEY_FILE."
+        },
+        "EVIDENCE_SIGNING_KEY_FILE": {
+          "type": "string",
+          "description": "Path to a PEM file containing the evidence signing private key. Provide this OR EVIDENCE_SIGNING_KEY_PEM."
+        },
+        "EVIDENCE_SIGNING_PUBLIC_KEY_PEM": {
+          "type": "string",
+          "description": "Optional inline PEM public key. Derived from the private key when unset."
+        },
+        "EVIDENCE_SIGNING_PUBLIC_KEY_FILE": {
+          "type": "string",
+          "description": "Optional path to a PEM file containing the evidence public key."
+        },
+        "EVIDENCE_SIGNING_ALGORITHM": {
+          "type": "string",
+          "description": "Evidence signing algorithm. Defaults to RS256. Supported: RS256/384/512, PS256/384/512, ES256/384/512, EdDSA."
+        },
+        "EVIDENCE_SIGNING_KEY_ID": {
+          "type": "string",
+          "description": "Evidence signing key id. Defaults to \"software-key\"."
+        },
+        "EUNO_AUDIT_CHAIN_SEED_TOOL_GATEWAY": {
+          "type": "string",
+          "description": "Seed the gateway audit chain with the previous run's terminal hash to maintain tamper-evidence continuity across restarts."
+        },
+        "AUDIT_PIPELINE_ENABLED": {
+          "type": "string",
+          "description": "When true (default), the gateway routes audit evidence through the async batched pipeline (R-9): producers enqueue and return immediately while N background workers call the signer. Set false to revert to the legacy synchronous path that awaits signEvidence on every request — only useful for A/B comparison, the async path is the recommended configuration."
+        },
+        "AUDIT_PIPELINE_MAX_SIZE": {
+          "type": "string",
+          "description": "Maximum number of unsigned audit-evidence records buffered in memory before the AUDIT_PIPELINE_BACKPRESSURE policy kicks in. Sized for a small gateway under burst; raise for high-throughput deployments. Memory cost is O(maxSize * average evidence size)."
+        },
+        "AUDIT_PIPELINE_WORKERS": {
+          "type": "string",
+          "description": "Number of concurrent worker loops draining the audit pipeline. Each worker holds at most one in-flight signEvidence call, so this is also the maximum signer concurrency. Raise when the signer is high-latency (e.g. KMS) and the buffer keeps filling."
+        },
+        "AUDIT_PIPELINE_MAX_BATCH": {
+          "type": "string",
+          "description": "Maximum records a single worker pulls per wake-up. Larger values amortise event-loop wake-ups under heavy load; smaller values keep the per-record latency between enqueue and sign tighter."
+        },
+        "AUDIT_PIPELINE_MAX_AGE_MS": {
+          "type": "string",
+          "description": "Optional maximum age (ms) a record may sit in the queue before it is dropped as `aged_out`. Defends against unbounded queue residency when the signer is slow or down. Unset disables age-based eviction (records wait indefinitely)."
+        },
+        "AUDIT_PIPELINE_BACKPRESSURE": {
+          "type": "string",
+          "description": "Backpressure policy when the pipeline is full. `drop_oldest_with_metric` (default) evicts the oldest queued record and increments a dropped counter; the producer never blocks and request-path p99 is preserved. `block` makes enqueue() await until a slot frees up — no evidence is dropped due to a full buffer, but during a signer stall requests will block until the signer recovers or a client/server timeout fires; records are still dropped once the AUDIT_PIPELINE_MAX_WAITERS cap is reached. Set to `block` only when your compliance posture requires audit completeness and you have a reliably low-latency signer and adequate capacity headroom. COMPLIANCE PROFILE: for regulated workloads that require a complete tamper-evident audit trail, set: AUDIT_PIPELINE_BACKPRESSURE=block, AUDIT_PIPELINE_MAX_WAITERS (bounded), EVIDENCE_SIGNED_DECISIONS=allow,deny, and OCSF_TRANSPORT=http with a durable SIEM collector. Pair with AUDIT_PIPELINE_MAX_AGE_MS to bound queue residency."
+        },
+        "AUDIT_PIPELINE_MAX_WAITERS": {
+          "type": "string",
+          "description": "Hard cap on the number of producers that may park awaiting a free slot under the `block` backpressure policy. When this cap is reached, arriving records are dropped with reason=queue_full instead of growing the waiter list unboundedly. Defaults to AUDIT_PIPELINE_MAX_SIZE (i.e. the parked-waiter list cannot exceed the buffer). Tune downward to bound memory consumption and upstream latency when the signer is slower than the producer rate. Ignored under the `drop_oldest_with_metric` policy."
+        },
+        "AUDIT_PIPELINE_DRAIN_TIMEOUT_MS": {
+          "type": "string",
+          "description": "Maximum time (ms) to wait for the pipeline to flush queued evidence on graceful shutdown (SIGTERM/SIGINT). Items still buffered when the deadline expires are counted as drops so the metric reflects the loss."
+        },
+        "AUDIT_REPLICA_ID": {
+          "type": "string",
+          "description": "Replica/pod identifier stamped on every Merkle batch commitment. In Kubernetes, set to the Pod name via the downward API: $(POD_NAME). Defaults to the OS hostname when unset. Used by batch-commitment verifiers and SIEM queries to attribute a batch to a specific replica."
+        },
+        "AUDIT_ANCHOR_URL": {
+          "type": "string",
+          "description": "Optional URL to POST each SignedBatchCommitment JSON to after every pipeline drain cycle. Accepts any endpoint that handles HTTP POST with Content-Type: application/json. Typical targets: an object-store pre-signed PUT URL (WORM bucket), a transparency-log ingestion endpoint, or a custom SIEM webhook. When unset, batch commitments are only emitted to the audit log (best-effort; no external anchor). Pair with AUDIT_PIPELINE_BACKPRESSURE=block and EVIDENCE_SIGNED_DECISIONS=allow,deny for regulated workloads."
+        },
+        "AUDIT_LEDGER_BACKEND": {
+          "type": "string",
+          "description": "Pluggable ledger backend for evidence signing. \"none\" (default) — in-process chain only (no replay protection against a compromised replica). \"postgres\" — append-only PostgreSQL table with per-row HMAC. \"in-memory\" — ephemeral in-process ledger for testing. Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to \"postgres\"."
+        },
+        "AUDIT_LEDGER_PG_URL": {
+          "type": "string",
+          "description": "PostgreSQL connection URL for the ledger backend. Required when AUDIT_LEDGER_BACKEND=postgres. Format: postgresql://user:password@host:5432/dbname. The service account MUST have INSERT + SELECT on the ledger table; it does NOT need UPDATE or DELETE (those operations would indicate tampering)."
+        },
+        "AUDIT_LEDGER_HMAC_SECRET": {
+          "type": "string",
+          "description": "HMAC-SHA-256 secret for per-row ledger integrity. Required when AUDIT_LEDGER_BACKEND=postgres. Each row stores HMAC-SHA256(secret, seq:previousHash:recordHash:replicaId). Offline verification of row HMACs detects DB-level tampering without re-checking cryptographic signatures. Decoded as hex (64-char string preferred), base64, or raw UTF-8; must decode to at least 32 bytes (256 bits). Generate with: openssl rand -hex 32. To rotate: provision a new table name (AUDIT_LEDGER_TABLE) and start writing to it; never UPDATE existing rows — the append-only model is the tamper-evidence guarantee."
+        },
+        "AUDIT_LEDGER_TABLE": {
+          "type": "string",
+          "description": "PostgreSQL table name for the ledger backend. Default \"euno_audit_ledger\". Override when multiple gateway clusters share one PostgreSQL instance."
+        },
+        "AUDIT_LEDGER_RUN_MIGRATIONS": {
+          "type": "string",
+          "description": "When true, the gateway runs CREATE TABLE IF NOT EXISTS for the ledger table at startup. Suitable for development and single-replica deployments. In production prefer external schema management (Flyway, Liquibase, or a separate migration job) so the gateway service account does not need DDL privileges. Boolean: true | false. Default false."
+        },
+        "AUDIT_LEDGER_S3_BUCKET": {
+          "type": "string",
+          "description": "S3 bucket for periodic Merkle-root anchoring. NOTE: the standard bootstrap does not inject an S3 client — setting this env var without a custom entrypoint that constructs PostgresLedgerBackend directly (with an S3AnchorClient) will cause a startup error. When properly wired, every AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root of those rows to S3. The bucket MUST have Object Lock enabled. When unset, no S3 anchoring is performed (HMAC + in-DB chain is the only protection)."
+        },
+        "AUDIT_LEDGER_S3_PREFIX": {
+          "type": "string",
+          "description": "S3 key prefix for ledger anchor objects. Default \"audit-anchor/\". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json."
+        },
+        "AUDIT_LEDGER_ANCHOR_INTERVAL": {
+          "type": "string",
+          "description": "Number of ledger rows between S3 Object-Lock anchor writes. Default 1000. Lower values provide more frequent external witnesses (smaller gap between a DB tamper event and S3 detection) at the cost of more S3 PUT requests. Only relevant when AUDIT_LEDGER_S3_BUCKET is set."
+        },
+        "POLICY_VERSION": {
+          "type": "string",
+          "description": "Version identifier for the active policy (string, default \"1.0.0\")."
+        },
+        "ARGUMENT_SCHEMA_REQUIRED": {
+          "type": "string",
+          "description": "When true, the gateway denies any matched capability that does not declare an `argumentSchema` (strict mode for I-7). The default (false) preserves existing behaviour: capabilities without an argument schema impose no argument-level constraint. Enable this once every capability your gateway accepts has been migrated to declare an explicit argument schema, to fail closed on schema-less tokens."
+        },
+        "ENABLE_DETAILED_LOGGING": {
+          "type": "string",
+          "description": "Enable verbose request / decision logs. Boolean: true | false."
+        },
+        "ALLOWED_ORIGINS": {
+          "type": "string",
+          "description": "Comma-separated list of browser origins allowed to call the gateway. In production the gateway disables CORS entirely when this is unset (fail-safe)."
+        },
+        "RATE_LIMIT_WINDOW_MS": {
+          "type": "string",
+          "description": "Rate-limit window in milliseconds. Default 60000 (60 s). See README for tuning guidance."
+        },
+        "RATE_LIMIT_MAX_REQUESTS": {
+          "type": "string",
+          "description": "Max requests per IP per RATE_LIMIT_WINDOW_MS. Default 1000 (development); tighten in production."
+        },
+        "GATEWAY_AUDIENCE": {
+          "type": "string",
+          "description": "Expected `aud` claim for capability tokens this gateway will accept. Defaults to \"tool-gateway\". In multi-tenant deployments set this to a unique per-tenant value (e.g. \"tool-gateway:acme-corp-prod\") so a token minted for one tenant's gateway cannot be replayed at another tenant's gateway. MUST match the GATEWAY_AUDIENCE configured on the corresponding capability-issuer instance."
+        },
+        "RESPONSE_REDACTION_MAX_BYTES": {
+          "type": "string",
+          "description": "Maximum upstream response body size (bytes) that the gateway will buffer for redaction. Responses larger than this limit AND carrying a redaction obligation are refused with HTTP 502 (redaction_oversize) rather than passed through unredacted. Default 1 MiB (1048576). Raise only after confirming that large responses are expected and safe to buffer in memory."
+        },
+        "TRUSTED_PARTNER_DIDS": {
+          "type": "string",
+          "description": "Comma-separated list of partner issuer DIDs whose capability tokens this gateway will accept. Empty / unset = local issuer only."
+        },
+        "LOCAL_ISSUER_IDS": {
+          "type": "string",
+          "description": "Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_JWKS_URL)."
+        },
+        "REQUIRE_COSIGNATURE_COUNT": {
+          "type": "string",
+          "description": "Minimum number of valid cosignatures the gateway requires on every capability token. 0 (default) disables cosignature enforcement. Set to N>0 to require N independent cosignatures from authorities listed in COSIGNER_JWKS_FILE. Strict-mode rejections raise HTTP 401. The corresponding capability-issuer instance MUST be configured with at least N cosigners (see COSIGNERS on the issuer)."
+        },
+        "COSIGNER_JWKS_FILE": {
+          "type": "string",
+          "description": "Path to a JWKS file (`{\"keys\":[...]}` JSON) containing the public keys of every cosigner this gateway trusts. Required when REQUIRE_COSIGNATURE_COUNT > 0. The file is read once at startup; rotate the file and restart the gateway to roll cosigner keys (cosigners are infrequent — file-based publishing is the lowest-complexity path that still satisfies independence from the primary issuer JWKS)."
+        },
+        "COSIGNER_JWKS_INLINE": {
+          "type": "string",
+          "description": "Inline JSON literal of the cosigner JWKS, used as an alternative to COSIGNER_JWKS_FILE for environments (tests, k8s ConfigMaps) that prefer to inject JWKS via env vars rather than mounted files. Provide one of COSIGNER_JWKS_FILE / COSIGNER_JWKS_INLINE when REQUIRE_COSIGNATURE_COUNT > 0."
+        },
+        "REQUIRE_TRANSPARENCY_LOG_PROOF": {
+          "type": "string",
+          "description": "When true, every capability token MUST carry at least one valid SCT (Signed Certificate Timestamp) from a transparency log listed in TRANSPARENCY_LOG_JWKS_FILE. Provides an independent witness of issuance — an attacker who suborns the issuer cannot retroactively erase log entries; auditors cross-check the log against the issuer's audit trail to detect silent fraud. Boolean: true | false. Default false."
+        },
+        "TRANSPARENCY_LOG_JWKS_FILE": {
+          "type": "string",
+          "description": "Path to a JSON file mapping logId -> JWKS (`{\"log-id\":{\"keys\":[...]}, ...}`) of every transparency log this gateway trusts. Required when REQUIRE_TRANSPARENCY_LOG_PROOF=true. Each top-level key MUST equal the `logId` embedded in SCTs the corresponding log produces."
+        },
+        "TRANSPARENCY_LOG_JWKS_INLINE": {
+          "type": "string",
+          "description": "Inline JSON literal mapping logId -> JWKS, alternative to TRANSPARENCY_LOG_JWKS_FILE for env-var-only injection."
+        },
+        "PARTNER_DID_CACHE_TTL_SECONDS": {
+          "type": "string",
+          "description": "TTL (seconds) for cached partner-DID document entries. After expiry the resolver re-fetches the DID document on the next use. Default 300 (5 min). Lower values propagate key rotations faster at the cost of more resolver traffic."
+        },
+        "PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS": {
+          "type": "string",
+          "description": "TTL (seconds) for negative (failed-resolution) partner-DID cache entries. A short window here absorbs transient resolver outages without pinning a stale denial for as long as the positive TTL. Default 30 s. Set to 0 to disable negative caching (every failed resolution re-tries immediately, amplifying resolver traffic during outages)."
+        },
+        "PARTNER_DID_REQUIRE_PIN": {
+          "type": "string",
+          "description": "When true, all partner-DID proposals submitted via the registry admin API MUST include a pinnedDocSha256 value. Enforces pin discipline; proposals without a pin are rejected with HTTP 400. Does not retroactively affect env-var-seeded entries. Boolean: true | false."
+        },
+        "PARTNER_DID_REGISTRY_KEY_PREFIX": {
+          "type": "string",
+          "description": "Optional Redis key prefix for partner-DID registry entries. Default \"euno:gateway:partner-did\". Override when multiple gateway clusters share one Redis instance."
+        },
+        "PARTNER_DID_REGISTRY_REQUIRED": {
+          "type": "string",
+          "description": "Controls whether TRUSTED_PARTNER_DIDS (the legacy env-var bypass) is accepted. In production (NODE_ENV=production) the default flips to true — TRUSTED_PARTNER_DIDS is a startup error unless PARTNER_DID_REGISTRY_REQUIRED=false is explicitly set. Outside production the default remains false (warning only) unless this is set to true. Set to false in production only as a temporary migration measure; set to true everywhere once the registry is fully adopted and TRUSTED_PARTNER_DIDS has been removed."
+        },
+        "PARTNER_DID_PIN_SECRET": {
+          "type": "string",
+          "description": "HMAC-SHA-256 secret used to sign and verify pin attestations on partner-DID registry entries. When set, the approval endpoint wraps pinnedDocSha256 in a signed attestation binding the hash to the approving operator and activation timestamp. The resolver then verifies this signature before trusting any pin — a tampered Redis store cannot forge a valid attestation without this secret. Min 32 bytes recommended; generate with: openssl rand -hex 32. When absent, attestations are not created and existing pins are verified hash-only (back-compat)."
+        },
+        "PARTNER_DID_AUTO_FETCH_PIN": {
+          "type": "string",
+          "description": "When true, the approval endpoint auto-fetches the partner DID document and computes the pinnedDocSha256 hash if the proposal did not include one. This ensures the pin was derived from the live document at the moment of approval — not from an operator-typed or proposer- supplied value. Requires network access to the partner DID endpoint at approval time. Boolean: true | false. Default false."
+        },
+        "REDIS_URL": {
+          "type": "string",
+          "description": "Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments."
+        },
+        "REVOCATION_KEY_PREFIX": {
+          "type": "string",
+          "description": "Optional Redis key prefix for revoked-token entries. Default \"revoked:\"."
+        },
+        "REVOCATION_FAIL_OPEN": {
+          "type": "string",
+          "description": "When Redis is unreachable, treat lookups as \"not revoked\" instead of \"revoked\". Use ONLY if availability matters more than revocation freshness. Boolean: true | false."
+        },
+        "REVOCATION_EPOCH_KEY_PREFIX": {
+          "type": "string",
+          "description": "Optional Redis key prefix for per-issuer revocation epoch entries. Default \"epoch:\". Each key stores the epoch (unix seconds) for one issuer; tokens with iat before the epoch are rejected."
+        },
+        "REVOCATION_EPOCH_FAIL_OPEN": {
+          "type": "string",
+          "description": "When Redis is unreachable for epoch lookups, treat the check as \"no epoch set\" instead of failing closed. Use ONLY if availability matters more than the epoch-revocation guarantee. Boolean: true | false."
+        },
+        "KILL_SWITCH_KEY_PREFIX": {
+          "type": "string",
+          "description": "Optional Redis key prefix for kill-switch entries. Default \"killswitch:\"."
+        },
+        "KILL_SWITCH_REFRESH_INTERVAL_MS": {
+          "type": "string",
+          "description": "Safety-net refresh interval in ms for the kill-switch state. Pub/sub is the primary cross-replica propagation mechanism (sub-second); this timer covers the rare case of a dropped pub/sub message. Default 30000. Set to 0 to disable the periodic refresh entirely (pub/sub-only; only safe if Redis pub/sub delivery is reliable for your deployment)."
+        },
+        "KILL_SWITCH_FAIL_OPEN_ON_WRITE": {
+          "type": "string",
+          "description": "When true, kill-switch writes that fail against Redis still update the local cache. Default false. Boolean: true | false."
+        },
+        "KILL_SWITCH_PUBSUB_ENABLED": {
+          "type": "string",
+          "description": "When true (default), the gateway opens a second Redis connection in subscribe mode and broadcasts kill-switch mutations on the \"<KILL_SWITCH_KEY_PREFIX>events\" channel for sub-second cross-replica propagation. Set to false to fall back to periodic-refresh-only propagation (slower; bounded by KILL_SWITCH_REFRESH_INTERVAL_MS). Boolean: true | false."
+        },
+        "CALL_COUNTER_KEY_PREFIX": {
+          "type": "string",
+          "description": "Optional Redis key prefix for maxCalls counter entries. Default \"capcall:\"."
+        },
+        "GATEWAY_SHARD_COUNT": {
+          "type": "string",
+          "description": "Total number of gateway shards in the fleet. Default 1 (sharding disabled). Set to the replica count of your gateway StatefulSet when horizontal sharding is enabled (H-1). The Envoy shard router must be deployed alongside the gateway and configured with the same shard count so it routes agents consistently. Must match GATEWAY_SHARD_COUNT on every replica; a mismatch causes inconsistent routing and counter drift. See docs/HORIZONTAL_SHARDING.md."
+        },
+        "GATEWAY_SHARD_INDEX": {
+          "type": "string",
+          "description": "Zero-based shard index for this gateway replica. Default 0. Must be in the range [0, GATEWAY_SHARD_COUNT - 1]. When running as a Kubernetes StatefulSet, inject this from the pod ordinal via an init container or a `GATEWAY_SHARD_INDEX=$(echo $POD_NAME | awk -F- '{print $NF}')` env stanza. See k8s/tool-gateway.yaml and docs/HORIZONTAL_SHARDING.md."
+        },
+        "GATEWAY_REGION": {
+          "type": "string",
+          "description": "Logical region tag for this gateway instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md."
+        },
+        "DPOP_REQUIRED": {
+          "type": "string",
+          "description": "When true (default), the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449 / F-2). Set to false only for backward-compatible deployments where issuers have not yet been rolled out with DPoP support; in that mode a leaked token remains usable as a plain bearer token until it expires or is revoked."
+        },
+        "DPOP_CLOCK_SKEW_SECONDS": {
+          "type": "string",
+          "description": "Maximum number of seconds the DPoP proof `iat` claim may be ahead of the gateway clock before the proof is rejected as future-dated. Default 60. Lower values demand tighter NTP sync; higher values widen the replay window slightly."
+        },
+        "DPOP_MAX_AGE_SECONDS": {
+          "type": "string",
+          "description": "Maximum age (in seconds) of an accepted DPoP proof. Anything older is refused as expired. Default 300 (5 minutes). The proof `jti` is remembered for this period to defeat replays."
+        },
+        "TRUST_PROXY": {
+          "type": "string",
+          "description": "Express `trust proxy` setting. Controls whether `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-For` are honoured when reconstructing the request URL — required for DPoP `htu` verification (F-2) when the gateway sits behind a TLS-terminating reverse proxy. Accepts: \"true\" (trust all proxies — UNSAFE if the gateway is also reachable directly by clients), \"false\"/unset (ignore X-Forwarded-* — safe default for direct deployment), an integer hop count (\"1\" = trust the immediate upstream proxy, recommended), or a comma-separated list of trusted CIDRs (\"10.0.0.0/8,172.16.0.0/12\"). MUST be configured when running behind a load balancer; without it, a direct caller can spoof X-Forwarded-* to make the DPoP proof verify against an attacker-chosen URL."
+        },
+        "OCSF_TRANSPORT": {
+          "type": "string",
+          "description": "Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: \"stdout\" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), \"file\" (append to OCSF_FILE_PATH), \"http\" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser."
+        },
+        "OCSF_FILE_PATH": {
+          "type": "string",
+          "description": "Path the file OCSF transport appends events to. Required when OCSF_TRANSPORT=file. Rotation is delegated to the operating system (logrotate / journald)."
+        },
+        "OCSF_HTTP_URL": {
+          "type": "string",
+          "description": "Collector URL the http OCSF transport POSTs events to. Required when OCSF_TRANSPORT=http. Failures are logged and swallowed — operators who need guaranteed delivery should layer a queueing collector (Vector, Fluent Bit) in front of this transport."
+        },
+        "OCSF_HTTP_HEADERS": {
+          "type": "string",
+          "description": "Optional JSON object of additional HTTP headers for the http OCSF transport (e.g. '{\"x-api-key\":\"...\"}'). Ignored if OCSF_TRANSPORT≠http."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "env"
+  ]
+}

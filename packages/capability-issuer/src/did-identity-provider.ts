@@ -22,6 +22,7 @@ import {
   extractPublicKeyPem,
   determineSigningAlgorithm,
   type DIDDocument,
+  type DidResolverOptions,
 } from './did-resolver';
 
 /**
@@ -37,6 +38,18 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
   supportedMethods?: string[];
   /** Cache TTL for resolved DID Documents in seconds (default: 300 = 5 minutes) */
   documentCacheTtlSeconds?: number;
+  /**
+   * Pre-parsed HTTP allow-list for did:web resolution.  Construct via
+   * `parseDidWebHttpAllowList(cfg.DID_WEB_ALLOW_HTTP_FOR_HOSTS)` at
+   * service boot and pass here so the resolver does not read
+   * `process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS` directly.
+   */
+  didWebHttpAllowList?: Set<string>;
+  /**
+   * did:ion resolver base URL.  When set, overrides the runtime read of
+   * `process.env.ION_RESOLVER_URL`.
+   */
+  ionResolverUrl?: string;
 }
 
 /** Cached DID Document entry */
@@ -63,6 +76,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
   private didConfig: DIDIdentityAdapterConfig;
   private documentCache = new Map<string, CachedDIDDocument>();
   private readonly cacheTtlMs: number;
+  private readonly resolverOpts: DidResolverOptions;
   /** Maximum number of DID Documents held in the cache at one time. */
   private static readonly MAX_CACHE_SIZE = 256;
 
@@ -70,6 +84,10 @@ export class DIDIdentityProvider extends IdentityAdapter {
     super(config);
     this.didConfig = config;
     this.cacheTtlMs = (config.documentCacheTtlSeconds ?? 300) * 1000;
+    this.resolverOpts = {
+      httpAllowList: config.didWebHttpAllowList,
+      ionResolverUrl: config.ionResolverUrl,
+    };
   }
 
   /**
@@ -91,7 +109,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
       this.documentCache.delete(did);
     }
 
-    const document = await resolveDID(did);
+    const document = await resolveDID(did, this.resolverOpts);
 
     // Enforce maximum cache size: evict the oldest entry (Map preserves insertion order)
     if (this.documentCache.size >= DIDIdentityProvider.MAX_CACHE_SIZE) {

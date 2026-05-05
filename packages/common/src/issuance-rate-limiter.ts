@@ -357,6 +357,30 @@ export class RedisIssuanceRateLimiter implements IssuanceRateLimiter {
 export interface IssuanceRateLimiterEnvOptions {
   /** Optional logger for boot diagnostics. */
   logger?: Logger;
+  /**
+   * Explicit maximum issuances per window.  When set, overrides the
+   * `ISSUANCE_RATE_LIMIT_MAX` env var so callers can configure
+   * per-credential-type limits (storage-grant, DB-token) without
+   * constructing a synthetic `NodeJS.ProcessEnv`.
+   */
+  max?: number;
+  /**
+   * Explicit window length in seconds.  When set, overrides
+   * `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS`.
+   */
+  windowSeconds?: number;
+  /**
+   * Explicit Redis key prefix.  When set, overrides
+   * `ISSUANCE_RATE_LIMIT_KEY_PREFIX`.  Useful to namespace per-
+   * credential-type limiters (e.g. `'sgrl:'` for storage grants,
+   * `'dbrl:'` for DB tokens).
+   */
+  keyPrefix?: string;
+  /**
+   * Explicit fail-closed flag.  When set, overrides
+   * `ISSUANCE_RATE_LIMIT_FAIL_CLOSED`.
+   */
+  failClosedOnError?: boolean;
 }
 
 /**
@@ -368,7 +392,7 @@ export interface IssuanceRateLimiterEnvOptions {
  * — the same client wiring as {@link createCallCounterStoreFromEnv} so
  * deployments that already use Redis do not need an additional client.
  *
- * Environment variables:
+ * Environment variables (all can be overridden via `options`):
  *  - `REDIS_URL` — Redis connection string. When unset, falls back
  *    to the in-memory limiter.
  *  - `ISSUANCE_RATE_LIMIT_MAX` — max issuances per window. Default 60.
@@ -382,12 +406,16 @@ export async function createIssuanceRateLimiterFromEnv(
 ): Promise<IssuanceRateLimiter> {
   const logger = options.logger;
 
-  const max = parsePositiveInt(env.ISSUANCE_RATE_LIMIT_MAX, DEFAULT_ISSUANCE_RATE_LIMIT_MAX);
-  const windowSeconds = parsePositiveInt(
-    env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS,
-    DEFAULT_ISSUANCE_RATE_LIMIT_WINDOW_SECONDS,
-  );
-  const failClosedOnError = env.ISSUANCE_RATE_LIMIT_FAIL_CLOSED !== 'false';
+  const max =
+    options.max ?? parsePositiveInt(env.ISSUANCE_RATE_LIMIT_MAX, DEFAULT_ISSUANCE_RATE_LIMIT_MAX);
+  const windowSeconds =
+    options.windowSeconds ??
+    parsePositiveInt(
+      env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS,
+      DEFAULT_ISSUANCE_RATE_LIMIT_WINDOW_SECONDS,
+    );
+  const failClosedOnError =
+    options.failClosedOnError ?? env.ISSUANCE_RATE_LIMIT_FAIL_CLOSED !== 'false';
 
   const redisUrl = env.REDIS_URL;
   if (!redisUrl) {
@@ -438,7 +466,7 @@ export async function createIssuanceRateLimiterFromEnv(
     },
   );
 
-  const keyPrefix = env.ISSUANCE_RATE_LIMIT_KEY_PREFIX || DEFAULT_KEY_PREFIX;
+  const keyPrefix = options.keyPrefix ?? env.ISSUANCE_RATE_LIMIT_KEY_PREFIX ?? DEFAULT_KEY_PREFIX;
   logger?.info('Using Redis-backed issuance rate limiter', {
     max,
     windowSeconds,

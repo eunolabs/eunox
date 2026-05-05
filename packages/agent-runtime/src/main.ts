@@ -1,61 +1,58 @@
 /**
  * Agent Runtime Service Entrypoint
  *
+ * All configuration is validated at boot via the typed `AgentRuntimeConfigSchema`
+ * (see packages/common/src/config/schema.ts).  Run:
+ *
+ *   euno config dump-template --service agent-runtime
+ *
+ * to generate a `.env.example` listing every supported variable with its
+ * description and default value.
+ *
  * Long-running process that:
- * 1. Reads configuration from environment variables
+ * 1. Validates configuration against the typed schema
  * 2. Initializes the AgentRuntime (acquires capability token, starts refresh loop)
  * 3. Serves a health-check HTTP endpoint on PORT (default 3003)
  * 4. Handles graceful shutdown on SIGTERM
  */
 
 import * as http from 'http';
+import { loadConfigOrExit } from '@euno/common';
 import { AgentRuntime } from './runtime';
 
-const DEFAULT_HEALTH_PORT = 3003;
-const PORT = parseInt(process.env.PORT || String(DEFAULT_HEALTH_PORT), 10);
-const AGENT_ID = process.env.AGENT_ID;
-const GATEWAY_URL = process.env.GATEWAY_URL;
-const ISSUER_URL = process.env.ISSUER_URL;
-const AUTH_TOKEN = process.env.AUTH_TOKEN;
-const TOKEN_REFRESH_INTERVAL = process.env.TOKEN_REFRESH_INTERVAL
-  ? parseInt(process.env.TOKEN_REFRESH_INTERVAL, 10)
-  : 600;
-
-if (!AGENT_ID || !GATEWAY_URL || !ISSUER_URL || !AUTH_TOKEN) {
-  console.error(
-    'Missing required environment variables: AGENT_ID, GATEWAY_URL, ISSUER_URL, AUTH_TOKEN'
-  );
-  process.exit(1);
-}
+// Validate the environment against the typed schema and exit with a
+// structured error report on misconfig — no service code runs until
+// every required variable is present and valid.
+const cfg = loadConfigOrExit(process.env, 'agent-runtime');
 
 let runtime: AgentRuntime | null = null;
 let healthy = false;
 
 async function start(): Promise<void> {
-  console.log(`[agent-runtime] Starting agent ${AGENT_ID}`);
+  console.log(`[agent-runtime] Starting agent ${cfg.AGENT_ID}`);
 
   runtime = new AgentRuntime({
-    agentId: AGENT_ID!,
-    gatewayUrl: GATEWAY_URL!,
-    issuerUrl: ISSUER_URL!,
-    authToken: AUTH_TOKEN!,
-    tokenRefreshInterval: TOKEN_REFRESH_INTERVAL,
+    agentId: cfg.AGENT_ID,
+    gatewayUrl: cfg.GATEWAY_URL,
+    issuerUrl: cfg.ISSUER_URL,
+    authToken: cfg.AUTH_TOKEN,
+    tokenRefreshInterval: cfg.TOKEN_REFRESH_INTERVAL,
   });
 
   await runtime.initialize();
   healthy = true;
-  console.log(`[agent-runtime] Agent ${AGENT_ID} initialized successfully`);
+  console.log(`[agent-runtime] Agent ${cfg.AGENT_ID} initialized successfully`);
 }
 
-// Health-check HTTP server - allows Kubernetes liveness/readiness probes
+// Health-check HTTP server — allows Kubernetes liveness/readiness probes
 const server = http.createServer((req, res) => {
   if (req.url === '/health' && req.method === 'GET') {
     if (healthy) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'healthy', agentId: AGENT_ID }));
+      res.end(JSON.stringify({ status: 'healthy', agentId: cfg.AGENT_ID }));
     } else {
       res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'initializing', agentId: AGENT_ID }));
+      res.end(JSON.stringify({ status: 'initializing', agentId: cfg.AGENT_ID }));
     }
   } else {
     res.writeHead(404);
@@ -63,8 +60,8 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[agent-runtime] Health endpoint listening on port ${PORT}`);
+server.listen(cfg.PORT, () => {
+  console.log(`[agent-runtime] Health endpoint listening on port ${cfg.PORT}`);
 });
 
 // Graceful shutdown

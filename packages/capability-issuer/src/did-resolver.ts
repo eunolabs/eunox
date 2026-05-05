@@ -73,10 +73,29 @@ export interface DIDResolutionResult {
 }
 
 /**
+ * Runtime options that influence DID resolution behaviour.  Pass these
+ * through from boot-time validated config so resolver functions do not
+ * need to read `process.env` directly.
+ */
+export interface DidResolverOptions {
+  /**
+   * Pre-parsed HTTP allow-list for did:web.  When provided, overrides
+   * the runtime read of `process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS`.
+   * Construct via {@link parseDidWebHttpAllowList} at service boot.
+   */
+  httpAllowList?: Set<string>;
+  /**
+   * Explicit did:ion resolver base URL.  When provided, overrides
+   * the runtime read of `process.env.ION_RESOLVER_URL`.
+   */
+  ionResolverUrl?: string;
+}
+
+/**
  * Resolve a DID to its DID Document
  * Supports did:web and did:ion methods
  */
-export async function resolveDID(did: string): Promise<DIDDocument> {
+export async function resolveDID(did: string, opts?: DidResolverOptions): Promise<DIDDocument> {
   if (!did || !did.startsWith('did:')) {
     throw new CapabilityError(
       ErrorCode.INVALID_REQUEST,
@@ -89,9 +108,9 @@ export async function resolveDID(did: string): Promise<DIDDocument> {
 
   switch (method) {
     case 'web':
-      return await resolveDidWeb(did);
+      return await resolveDidWeb(did, opts?.httpAllowList);
     case 'ion':
-      return await resolveDidIon(did);
+      return await resolveDidIon(did, opts?.ionResolverUrl);
     case 'key':
       return await resolveDidKey(did);
     default:
@@ -142,7 +161,7 @@ export function parseDidWebHttpAllowList(raw: string | undefined): Set<string> {
  * allow-list is consulted on every call so that an empty / unset value
  * means "no exceptions" (fail closed).
  */
-export async function resolveDidWeb(did: string): Promise<DIDDocument> {
+export async function resolveDidWeb(did: string, httpAllowList?: Set<string>): Promise<DIDDocument> {
   if (!did.startsWith('did:web:')) {
     throw new CapabilityError(
       ErrorCode.INVALID_REQUEST,
@@ -165,10 +184,14 @@ export async function resolveDidWeb(did: string): Promise<DIDDocument> {
   const path = didParts.slice(1).map(decodeURIComponent).join('/');
 
   // Decide HTTP vs HTTPS. Default is HTTPS — the allow-list is opt-in and
-  // only consulted when the env var is set, so production deployments that
-  // never set DID_WEB_ALLOW_HTTP_FOR_HOSTS are unaffected.
-  const httpAllowed = parseDidWebHttpAllowList(process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS);
-  const scheme = httpAllowed.has(domain.toLowerCase()) ? 'http' : 'https';
+  // only consulted when explicitly provided or the env var is set, so
+  // production deployments that never set DID_WEB_ALLOW_HTTP_FOR_HOSTS are
+  // unaffected.  The caller (service boot path) should pass the allow-list
+  // derived from the validated config; the env-var fallback is retained as a
+  // backward-compatible last resort.
+  const resolvedAllowList =
+    httpAllowList ?? parseDidWebHttpAllowList(process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS);
+  const scheme = resolvedAllowList.has(domain.toLowerCase()) ? 'http' : 'https';
 
   // Construct URL to DID Document
   let url: string;
@@ -488,7 +511,7 @@ const DEFAULT_ION_RESOLVER_URL = 'https://ion.msidentity.com/api/v1.0/identifier
  *   - resolver 4xx (other than 404)                      → 502 AUTHENTICATION_FAILED
  *   - DID document content invalid                       → 502 / 400
  */
-export async function resolveDidIon(did: string): Promise<DIDDocument> {
+export async function resolveDidIon(did: string, resolverBaseUrl?: string): Promise<DIDDocument> {
   if (!did.startsWith('did:ion:')) {
     throw new CapabilityError(
       ErrorCode.INVALID_REQUEST,
@@ -497,7 +520,14 @@ export async function resolveDidIon(did: string): Promise<DIDDocument> {
     );
   }
 
-  const resolverBase = (process.env.ION_RESOLVER_URL || DEFAULT_ION_RESOLVER_URL).replace(/\/+$/, '');
+  // Prefer the explicitly-supplied URL (from validated boot config) over the
+  // env var so that library consumers do not need to set process.env.
+  const rawBase = resolverBaseUrl ?? process.env.ION_RESOLVER_URL ?? DEFAULT_ION_RESOLVER_URL;
+  // Trim trailing slashes without a backtracking regex (avoids ReDoS on
+  // adversarial inputs derived from library consumers).
+  let trimEnd = rawBase.length;
+  while (trimEnd > 0 && rawBase[trimEnd - 1] === '/') trimEnd--;
+  const resolverBase = rawBase.slice(0, trimEnd);
   const resolverUrl = `${resolverBase}/${encodeURIComponent(did)}`;
 
   let response: Response;

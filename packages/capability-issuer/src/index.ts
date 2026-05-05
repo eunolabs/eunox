@@ -45,6 +45,7 @@ import { DbTokenService } from './db-token';
 import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credential-broker';
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { PostureEmitter } from '@euno/posture-emitter';
+import { parseDidWebHttpAllowList } from './did-resolver';
 
 // Load environment variables
 dotenv.config();
@@ -58,16 +59,11 @@ dotenv.config();
 const env = loadConfigOrExit(process.env, 'issuer');
 
 // F-7: resolve the deployment's logical region exactly once at boot
-// so every region-aware surface sees the same value. The
-// `EUNO_DEPLOYMENT_REGION` fallback matches the legacy fallback
-// CapabilityIssuerService still honours (sprint 3-4 posture wiring),
-// otherwise tracing spans would silently omit `euno.region` in any
-// deployment that hasn't migrated to `ISSUER_REGION` yet — which is
-// exactly the inconsistency F-7 is supposed to eliminate.
+// so every region-aware surface sees the same value.  ISSUER_REGION is
+// the canonical name; EUNO_DEPLOYMENT_REGION is the legacy alias — both
+// are now in the validated schema so the precedence is explicit.
 const issuerRegion: string | undefined =
-  (env.ISSUER_REGION && env.ISSUER_REGION.length > 0
-    ? env.ISSUER_REGION
-    : process.env.EUNO_DEPLOYMENT_REGION) || undefined;
+  (env.ISSUER_REGION || env.EUNO_DEPLOYMENT_REGION) || undefined;
 
 // Map the validated `EunoConfig` onto the existing in-memory
 // `ServiceConfig` shape.  The structured nested groups (`keyVault`,
@@ -221,6 +217,11 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
       return await defaultIdentityRegistry.createIdentityAdapter({
         type: 'did',
         name: 'DID Identity Provider',
+        // Thread the validated config values into the resolver so it does
+        // not need to read process.env.DID_WEB_ALLOW_HTTP_FOR_HOSTS or
+        // process.env.ION_RESOLVER_URL at resolution time.
+        didWebHttpAllowList: parseDidWebHttpAllowList(env.DID_WEB_ALLOW_HTTP_FOR_HOSTS),
+        ionResolverUrl: env.ION_RESOLVER_URL,
       });
 
     default:
@@ -276,7 +277,13 @@ async function initializeServices() {
     // (the per-IP express-rate-limit middleware below still runs).
     let issuanceRateLimiter: IssuanceRateLimiter | undefined;
     if (env.ISSUANCE_RATE_LIMIT_ENABLED) {
-      issuanceRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, { logger });
+      issuanceRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, {
+        logger,
+        max: env.ISSUANCE_RATE_LIMIT_MAX,
+        windowSeconds: env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS,
+        keyPrefix: env.ISSUANCE_RATE_LIMIT_KEY_PREFIX,
+        failClosedOnError: env.ISSUANCE_RATE_LIMIT_FAIL_CLOSED,
+      });
     } else {
       logger.warn(
         'ISSUANCE_RATE_LIMIT_ENABLED=false — per-subject issuance rate limit is DISABLED. ' +
@@ -292,13 +299,12 @@ async function initializeServices() {
     // issuance limit (60 per window).
     let storageGrantRateLimiter: IssuanceRateLimiter | undefined;
     if (env.STORAGE_GRANTS_ENABLED && env.STORAGE_GRANT_RATE_LIMIT_ENABLED) {
-      const sgEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        ISSUANCE_RATE_LIMIT_MAX: String(env.STORAGE_GRANT_RATE_LIMIT_MAX),
-        ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: String(env.STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS),
-        ISSUANCE_RATE_LIMIT_KEY_PREFIX: env.STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX ?? 'sgrl:',
-      };
-      storageGrantRateLimiter = await createIssuanceRateLimiterFromEnv(sgEnv, { logger });
+      storageGrantRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, {
+        logger,
+        max: env.STORAGE_GRANT_RATE_LIMIT_MAX,
+        windowSeconds: env.STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS,
+        keyPrefix: env.STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX ?? 'sgrl:',
+      });
       logger.info('Storage-grant rate limiter enabled', {
         max: env.STORAGE_GRANT_RATE_LIMIT_MAX,
         windowSeconds: env.STORAGE_GRANT_RATE_LIMIT_WINDOW_SECONDS,
@@ -307,13 +313,12 @@ async function initializeServices() {
 
     let dbTokenRateLimiter: IssuanceRateLimiter | undefined;
     if (env.DB_TOKENS_ENABLED && env.DB_TOKEN_RATE_LIMIT_ENABLED) {
-      const dbEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        ISSUANCE_RATE_LIMIT_MAX: String(env.DB_TOKEN_RATE_LIMIT_MAX),
-        ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: String(env.DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS),
-        ISSUANCE_RATE_LIMIT_KEY_PREFIX: env.DB_TOKEN_RATE_LIMIT_KEY_PREFIX ?? 'dbrl:',
-      };
-      dbTokenRateLimiter = await createIssuanceRateLimiterFromEnv(dbEnv, { logger });
+      dbTokenRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, {
+        logger,
+        max: env.DB_TOKEN_RATE_LIMIT_MAX,
+        windowSeconds: env.DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS,
+        keyPrefix: env.DB_TOKEN_RATE_LIMIT_KEY_PREFIX ?? 'dbrl:',
+      });
       logger.info('DB-token rate limiter enabled', {
         max: env.DB_TOKEN_RATE_LIMIT_MAX,
         windowSeconds: env.DB_TOKEN_RATE_LIMIT_WINDOW_SECONDS,
@@ -353,8 +358,8 @@ async function initializeServices() {
     // (StorageGrantService + DbTokenService) wrapped in an
     // InProcessSideCredentialBroker for backward compatibility.
     let sideCredentialBroker: SideCredentialBroker | undefined;
-    const storageGrantServiceUrl = process.env.STORAGE_GRANT_SERVICE_URL;
-    const dbTokenServiceUrl = process.env.DB_TOKEN_SERVICE_URL;
+    const storageGrantServiceUrl = env.STORAGE_GRANT_SERVICE_URL;
+    const dbTokenServiceUrl = env.DB_TOKEN_SERVICE_URL;
     if (storageGrantServiceUrl || dbTokenServiceUrl) {
       sideCredentialBroker = new HttpSideCredentialBroker({
         storageGrantServiceUrl,
@@ -407,10 +412,7 @@ async function initializeServices() {
         // logged and metered but the signed JWT is still returned. Opt in
         // for deployments that can tolerate missing side credentials (e.g.
         // during STS maintenance windows).
-        sideCredentialFailureMode:
-          process.env.SIDE_CREDENTIAL_FAILURE_MODE === 'best-effort'
-            ? 'best-effort'
-            : 'fail-fast',
+        sideCredentialFailureMode: env.SIDE_CREDENTIAL_FAILURE_MODE,
         onSideCredentialError: (kind, _error) => {
           sideCredentialErrorCounter.inc({ kind });
         },
@@ -987,3 +989,12 @@ if (require.main === module) {
 }
 
 export { app, initializeServices, issuerService };
+
+// Re-export the standalone micro-service classes so downstream packages
+// (db-token-service, storage-grant-service) can import from the main
+// entry point without relying on subpath exports (which require
+// moduleResolution: node16 / bundler).
+export { DbTokenService } from './db-token';
+export type { DbTokenServiceOptions } from './db-token';
+export { StorageGrantService } from './storage-grant';
+export type { StorageGrantServiceOptions } from './storage-grant';

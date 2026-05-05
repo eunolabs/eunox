@@ -129,6 +129,15 @@ function envPositiveInt(opts: {
 }
 
 /**
+ * Specialisation of {@link envPositiveInt} for TCP port numbers (1–65535).
+ * Validates that the value is a valid port number and provides a consistent
+ * error message across all service schemas.
+ */
+function envPort(opts: { default: number; description: string }): z.ZodType<number, z.ZodTypeDef, unknown> {
+  return envPositiveInt({ ...opts, min: 1, max: 65535 }) as z.ZodType<number, z.ZodTypeDef, unknown>;
+}
+
+/**
  * Treat an env var as a comma-separated list of trimmed, non-empty
  * strings.  Returns `undefined` when unset so callers can distinguish
  * "no value" from "empty list".
@@ -217,11 +226,9 @@ export const IssuerConfigSchema = z
   .object({
     NODE_ENV,
     EUNO_DEPLOYMENT_TIER,
-    PORT: envPositiveInt({
+    PORT: envPort({
       default: 3001,
       description: 'TCP port the issuer HTTP server binds to.',
-      min: 1,
-      max: 65535,
     }),
 
     // Provider selection ----------------------------------------------------
@@ -619,6 +626,126 @@ export const IssuerConfigSchema = z
     TRANSPARENCY_LOG_KEY_FILE: optionalString.describe(
       'Path to a PEM-encoded private key for the transparency log. Provide this OR TRANSPARENCY_LOG_KEY_PEM.',
     ),
+
+    // Microservice decomposition (R-1) --------------------------------------
+    // When these URLs are set the issuer delegates side-credential minting
+    // to the dedicated remote services (HttpSideCredentialBroker).  Leave
+    // unset to use the in-process backends (InProcessSideCredentialBroker,
+    // backward-compatible default).
+    STORAGE_GRANT_SERVICE_URL: optionalString.describe(
+      'URL of the standalone storage-grant-service. When set, storage-grant minting is ' +
+      'delegated to this remote service instead of the in-process StorageGrantService. ' +
+      'Example: http://storage-grant-service:8082. See docs/microservice-decomposition.md.',
+    ),
+    DB_TOKEN_SERVICE_URL: optionalString.describe(
+      'URL of the standalone db-token-service. When set, DB-token minting is delegated ' +
+      'to this remote service instead of the in-process DbTokenService. ' +
+      'Example: http://db-token-service:8083. See docs/microservice-decomposition.md.',
+    ),
+    SIDE_CREDENTIAL_FAILURE_MODE: envEnum({
+      values: ['fail-fast', 'best-effort'] as const,
+      default: 'fail-fast',
+      description:
+        'Controls how the issuer reacts when side-credential minting (storage-grant or DB-token) ' +
+        'fails. "fail-fast" (default): the whole /issue request fails and the caller receives an ' +
+        'error — ensures credentials are never returned without their associated side credentials. ' +
+        '"best-effort": the side-credential error is logged and metered but the signed JWT is still ' +
+        'returned — use only when partial credential delivery is explicitly acceptable (e.g. during ' +
+        'STS maintenance windows).',
+    }),
+
+    // DID resolution --------------------------------------------------------
+    // DID_WEB_ALLOW_HTTP_FOR_HOSTS is loaded once at the resolver call site
+    // but placed here so misconfiguration is caught at boot and the value is
+    // visible in dump-template output.
+    DID_WEB_ALLOW_HTTP_FOR_HOSTS: optionalString.describe(
+      'Comma-separated list of host[:port] entries for which the did:web resolver is ' +
+      'permitted to use plain HTTP instead of HTTPS. Default empty (HTTPS-only, fail-closed). ' +
+      'Intended exclusively for local docker-compose / CI harnesses that cannot terminate TLS. ' +
+      'MUST NOT be set in production. Example: partner-sim.local:4001,localhost:4002',
+    ),
+
+    // Legacy region alias (F-7) ---------------------------------------------
+    // EUNO_DEPLOYMENT_REGION was the original env var before ISSUER_REGION
+    // was introduced as the canonical name.  Both are accepted; ISSUER_REGION
+    // takes precedence when both are set.  New deployments should use
+    // ISSUER_REGION; this alias is preserved for backward compatibility.
+    EUNO_DEPLOYMENT_REGION: optionalString.describe(
+      'Legacy alias for ISSUER_REGION. Provides the logical region tag for this issuer ' +
+      'instance. ISSUER_REGION takes precedence when both are set. New deployments should ' +
+      'use ISSUER_REGION instead.',
+    ),
+
+    // Posture emitter (sprint 3-4 gap item #9) ------------------------------
+    // The posture emitter is disabled by default.  When POSTURE_EMITTER_ENABLED=true
+    // the issuer streams AI-posture inventory records to the configured sink(s).
+    // All fields are consumed by PostureEmitter.fromEnv() — declaring them here
+    // ensures misconfiguration is caught at boot rather than silently ignored.
+    POSTURE_EMITTER_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Enable the AI-posture inventory emitter. When true, the issuer streams posture ' +
+        'records to the configured sink(s) on every issuance. Boolean: true | false.',
+    }),
+    POSTURE_EMITTER_PLUGINS: optionalString.describe(
+      'Comma-separated list of posture-emitter plugin names to activate. Supported values: ' +
+      '"stdout", "azure-security-center", "aws-security-hub", "gcp-security-command-center". ' +
+      'Default "stdout" when POSTURE_EMITTER_ENABLED=true.',
+    ),
+    POSTURE_REFRESH_INTERVAL_MS: envPositiveInt({
+      default: 300000,
+      description:
+        'How often (milliseconds) a long-running posture agent should re-emit a full inventory ' +
+        'snapshot even when nothing has changed. Default 300000 (5 minutes).',
+    }),
+    POSTURE_DURABLE_QUEUE_PATH: optionalString.describe(
+      'Filesystem path for the SQLite-backed durable posture queue ' +
+      '(POSTURE_EMITTER_PLUGINS=durable). When unset, an in-memory queue is used ' +
+      '(records are lost on restart). Set to a persistent path in production.',
+    ),
+    POSTURE_DURABLE_POLL_INTERVAL_MS: envPositiveInt({
+      default: 5000,
+      description:
+        'How often (milliseconds) the durable-queue delivery worker polls for unsent records. ' +
+        'Default 5000 (5 s).',
+    }),
+    POSTURE_DURABLE_MAX_ATTEMPTS: envPositiveInt({
+      default: 5,
+      description:
+        'Maximum delivery attempts per posture record before it is moved to the dead-letter ' +
+        'store. Default 5.',
+    }),
+    POSTURE_DURABLE_BATCH_SIZE: envPositiveInt({
+      default: 50,
+      description:
+        'Number of posture records delivered per delivery-worker cycle. Default 50.',
+    }),
+
+    // Cloud-posture plugin credentials --------------------------------------
+    // These are typically injected by the cloud runtime (IRSA / Workload
+    // Identity / Managed Identity) rather than set by the operator, but
+    // declaring them here makes the expected set of env vars explicit and
+    // ensures they appear in the dump-template output so developers know
+    // which vars the posture plugins consume.
+    AZURE_SUBSCRIPTION_ID: optionalString.describe(
+      'Azure subscription ID used by the azure-security-center posture plugin. ' +
+      'Usually injected by Managed Identity or set as a Kubernetes secret.',
+    ),
+    AWS_ACCOUNT_ID: optionalString.describe(
+      'AWS account ID used by the aws-security-hub posture plugin.',
+    ),
+    AWS_DEFAULT_REGION: optionalString.describe(
+      'Fallback AWS region when AWS_REGION is not set. Used by the aws-security-hub posture ' +
+      'plugin and other AWS SDK calls.',
+    ),
+    SECURITY_HUB_PRODUCT_ARN: optionalString.describe(
+      'ARN of the AWS Security Hub custom product to publish posture findings to. ' +
+      'Required when POSTURE_EMITTER_PLUGINS includes "aws-security-hub".',
+    ),
+    GCP_SCC_SOURCE_NAME: optionalString.describe(
+      'Google Cloud Security Command Center source resource name to publish posture findings ' +
+      'to. Required when POSTURE_EMITTER_PLUGINS includes "gcp-security-command-center".',
+    ),
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -756,20 +883,16 @@ export const GatewayConfigSchema = z
   .object({
     NODE_ENV,
     EUNO_DEPLOYMENT_TIER,
-    PORT: envPositiveInt({
+    PORT: envPort({
       default: 3002,
       description: 'TCP port the gateway HTTP server binds to.',
-      min: 1,
-      max: 65535,
     }),
-    ADMIN_PORT: envPositiveInt({
+    ADMIN_PORT: envPort({
       default: 3003,
       description:
         'TCP port the gateway admin HTTP server binds to. Admin routes (/admin/*) are served ' +
         'exclusively on this port so they are unreachable from the public-facing load-balancer. ' +
         'Must differ from PORT. Default 3003.',
-      min: 1,
-      max: 65535,
     }),
     ADMIN_HOST: optionalString.describe(
       'Network interface the admin HTTP server binds to. The admin surface controls ' +
@@ -1535,6 +1658,205 @@ export const GatewayConfigSchema = z
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// DB Token Service schema — `db-token-service`
+// ---------------------------------------------------------------------------
+
+export const DbTokenServiceConfigSchema = z
+  .object({
+    NODE_ENV,
+    PORT: envPort({
+      default: 8083,
+      description: 'TCP port the db-token-service HTTP server binds to.',
+    }),
+
+    // JWT verification — tokens presented to this service were minted by
+    // the capability-issuer; we verify them with the issuer's public JWKS.
+    ISSUER_JWKS_URI: z
+      .string()
+      .min(1)
+      .describe(
+        'JWKS endpoint of the capability-issuer used to verify incoming capability tokens. ' +
+        'Required. Example: http://capability-issuer:3001/.well-known/jwks.json',
+      ),
+    ISSUER_DID: z
+      .string()
+      .min(1)
+      .describe(
+        'Expected `iss` claim in incoming capability tokens. Required. ' +
+        'Must match the ISSUER_DID set on the corresponding capability-issuer.',
+      ),
+    GATEWAY_AUDIENCE: optionalString.describe(
+      'Expected `aud` claim in incoming capability tokens. Default "tool-gateway". ' +
+      'Must match the GATEWAY_AUDIENCE set on the corresponding capability-issuer and gateway.',
+    ),
+
+    // DB token minting
+    DB_TOKENS_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Enable DB-token minting. Must be "true" for the service to issue database credentials. ' +
+        'When false the service starts but all /token requests return 503.',
+    }),
+    DB_INSTANCES_FILE: optionalString.describe(
+      'Path to the operator-declared JSON allow-list of permitted DB instances. ' +
+      'Required when DB_TOKENS_ENABLED=true.',
+    ),
+    DB_TOKEN_MAX_TTL_SECONDS: envPositiveInt({
+      default: 900,
+      description: 'Cap on DB token TTL in seconds. Default 900; hard ceiling 900.',
+      max: 900,
+    }),
+    DB_USERNAME_POLICY_FILE: optionalString.describe(
+      'Optional path to a JSON file mapping capability roles to DB usernames. ' +
+      'When unset, the ambient IAM user / role name is used.',
+    ),
+    AWS_DB_TOKEN_ROLE_ARN: optionalString.describe(
+      'IAM role ARN to assume before calling rds:GenerateDbAuthToken. ' +
+      'When set, RDS token minting uses a dedicated minimal role distinct from the ambient IAM credentials.',
+    ),
+    AWS_REGION: optionalString.describe(
+      'AWS region for RDS DB-token calls.',
+    ),
+    AWS_ACCESS_KEY_ID: optionalString.describe(
+      'AWS access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SECRET_ACCESS_KEY: optionalString.describe(
+      'AWS secret access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SESSION_TOKEN: optionalString.describe(
+      'AWS session token, for temporary credentials. Optional.',
+    ),
+  })
+  .superRefine((cfg, ctx) => {
+    if (cfg.DB_TOKENS_ENABLED && !cfg.DB_INSTANCES_FILE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DB_INSTANCES_FILE'],
+        message:
+          'DB_INSTANCES_FILE is required when DB_TOKENS_ENABLED=true (operator-declared instance allow-list).',
+      });
+    }
+  });
+
+export type DbTokenServiceConfig = z.infer<typeof DbTokenServiceConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Storage Grant Service schema — `storage-grant-service`
+// ---------------------------------------------------------------------------
+
+export const StorageGrantServiceConfigSchema = z
+  .object({
+    NODE_ENV,
+    PORT: envPort({
+      default: 8082,
+      description: 'TCP port the storage-grant-service HTTP server binds to.',
+    }),
+
+    // JWT verification
+    ISSUER_JWKS_URI: z
+      .string()
+      .min(1)
+      .describe(
+        'JWKS endpoint of the capability-issuer used to verify incoming capability tokens. ' +
+        'Required. Example: http://capability-issuer:3001/.well-known/jwks.json',
+      ),
+    ISSUER_DID: z
+      .string()
+      .min(1)
+      .describe(
+        'Expected `iss` claim in incoming capability tokens. Required. ' +
+        'Must match the ISSUER_DID set on the corresponding capability-issuer.',
+      ),
+    GATEWAY_AUDIENCE: optionalString.describe(
+      'Expected `aud` claim in incoming capability tokens. Default "tool-gateway".',
+    ),
+
+    // Storage grant minting
+    STORAGE_GRANTS_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Enable storage-grant minting. Must be "true" for the service to issue storage credentials. ' +
+        'When false the service starts but all /grant requests return 503.',
+    }),
+    STORAGE_GRANT_MAX_TTL_SECONDS: envPositiveInt({
+      default: 900,
+      description: 'Cap on storage grant TTL in seconds. Default 900; hard ceiling 3600.',
+      max: 3600,
+    }),
+    AWS_REGION: optionalString.describe(
+      'AWS region for S3 storage-grant calls.',
+    ),
+    AWS_STORAGE_GRANT_ROLE_ARN: optionalString.describe(
+      'IAM role ARN the service assumes to mint AWS storage grants. ' +
+      'MUST be distinct from any JWT-signing key role to limit blast radius.',
+    ),
+    AWS_ACCESS_KEY_ID: optionalString.describe(
+      'AWS access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SECRET_ACCESS_KEY: optionalString.describe(
+      'AWS secret access key. Optional; falls back to the default credential provider chain.',
+    ),
+    AWS_SESSION_TOKEN: optionalString.describe(
+      'AWS session token, for temporary credentials. Optional.',
+    ),
+  });
+
+export type StorageGrantServiceConfig = z.infer<typeof StorageGrantServiceConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent Runtime schema — `agent-runtime`
+// ---------------------------------------------------------------------------
+
+export const AgentRuntimeConfigSchema = z
+  .object({
+    NODE_ENV,
+    PORT: envPort({
+      default: 3003,
+      description: 'TCP port the agent-runtime health check HTTP server binds to.',
+    }),
+
+    // Agent identity
+    AGENT_ID: z
+      .string()
+      .min(1)
+      .describe(
+        'Unique identifier for this agent. Included in capability-token requests as the ' +
+        '`agentId` claim. Required.',
+      ),
+    GATEWAY_URL: z
+      .string()
+      .url()
+      .describe(
+        'URL of the tool-gateway this agent connects to. Required. ' +
+        'Example: https://gateway.example.com',
+      ),
+    ISSUER_URL: z
+      .string()
+      .url()
+      .describe(
+        'URL of the capability-issuer this agent authenticates against. Required. ' +
+        'Example: https://issuer.example.com',
+      ),
+    AUTH_TOKEN: z
+      .string()
+      .min(1)
+      .describe(
+        'Bootstrap credential presented to the issuer to obtain the first capability token. ' +
+        'This is the agent\'s proof of identity (e.g. an OIDC access token or API key). Required.',
+      ),
+
+    // Token refresh
+    TOKEN_REFRESH_INTERVAL: envPositiveInt({
+      default: 600,
+      description:
+        'How often (seconds) the agent proactively refreshes its capability token before it ' +
+        'expires. Default 600 (10 minutes). Set below DEFAULT_TOKEN_TTL on the issuer.',
+    }),
+  });
+
+export type AgentRuntimeConfig = z.infer<typeof AgentRuntimeConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Service registry — drives the loader and the dump-template generator.
 // ---------------------------------------------------------------------------
 
@@ -1549,21 +1871,41 @@ export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
  *   4. Run `euno config dump-template --service <service> > .env.example`
  *      to materialise the template.
  */
-export const EUNO_SERVICE_NAMES = ['issuer', 'gateway'] as const;
+export const EUNO_SERVICE_NAMES = [
+  'issuer',
+  'gateway',
+  'db-token-service',
+  'storage-grant-service',
+  'agent-runtime',
+] as const;
 export type EunoServiceName = (typeof EUNO_SERVICE_NAMES)[number];
 
 export const EUNO_CONFIG_SCHEMAS = {
   issuer: IssuerConfigSchema,
   gateway: GatewayConfigSchema,
+  'db-token-service': DbTokenServiceConfigSchema,
+  'storage-grant-service': StorageGrantServiceConfigSchema,
+  'agent-runtime': AgentRuntimeConfigSchema,
 } as const;
 
 export type EunoConfigFor<S extends EunoServiceName> = S extends 'issuer'
   ? IssuerConfig
   : S extends 'gateway'
     ? GatewayConfig
-    : never;
+    : S extends 'db-token-service'
+      ? DbTokenServiceConfig
+      : S extends 'storage-grant-service'
+        ? StorageGrantServiceConfig
+        : S extends 'agent-runtime'
+          ? AgentRuntimeConfig
+          : never;
 
 /**
  * The shape of a `EunoConfig` for any of the registered services.
  */
-export type EunoConfig = IssuerConfig | GatewayConfig;
+export type EunoConfig =
+  | IssuerConfig
+  | GatewayConfig
+  | DbTokenServiceConfig
+  | StorageGrantServiceConfig
+  | AgentRuntimeConfig;
