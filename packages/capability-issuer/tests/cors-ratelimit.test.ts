@@ -68,20 +68,39 @@ describe('Rate-limit env-var validation', () => {
   it('starts successfully when rate-limit env vars are valid numbers', async () => {
     process.env.RATE_LIMIT_WINDOW_MS = '30000';
     process.env.RATE_LIMIT_MAX_REQUESTS = '50';
-    // Should not throw during module initialisation.
-    await expect(import('../src/index')).resolves.not.toThrow();
+    // Use toBeDefined() — resolves.not.toThrow() is not a valid assertion
+    // because toThrow() expects a function, not the resolved module value.
+    const mod = await import('../src/index');
+    expect(mod.app).toBeDefined();
   });
 
-  it('falls back to defaults when rate-limit env vars are non-numeric strings', async () => {
-    process.env.RATE_LIMIT_WINDOW_MS = 'bad-value';
-    process.env.RATE_LIMIT_MAX_REQUESTS = 'also-bad';
-    // Should not throw – invalid values are replaced with safe defaults.
-    await expect(import('../src/index')).resolves.not.toThrow();
+  it('fails at startup when RATE_LIMIT env vars are non-numeric strings (strict fail-closed)', async () => {
+    // Intercept process.exit so the jest worker is not killed when the
+    // config validator rejects the non-integer value.  The schema now
+    // validates strictly: non-integer values are rejected at startup
+    // rather than silently replaced with safe defaults, so a
+    // misconfigured rate limiter is caught early (fail-closed).
+    const exitSpy = jest
+      .spyOn(process, 'exit')
+      .mockImplementation((() => {
+        throw new Error('process.exit intercepted');
+      }) as unknown as (code?: string | number | null) => never);
+    try {
+      process.env.RATE_LIMIT_WINDOW_MS = 'bad-value';
+      process.env.RATE_LIMIT_MAX_REQUESTS = 'also-bad';
+      // Pin the intended failure mode: startup validation triggers exit(1).
+      await expect(import('../src/index')).rejects.toThrow('process.exit intercepted');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 
-  it('still responds to requests when rate-limit env vars are invalid', async () => {
-    process.env.RATE_LIMIT_WINDOW_MS = 'NaN';
-    process.env.RATE_LIMIT_MAX_REQUESTS = 'NaN';
+  it('still responds to requests when rate-limit env vars are set to minimum valid values', async () => {
+    // Confirm the service starts and handles requests normally when valid
+    // (but non-default) rate-limit values are provided.
+    process.env.RATE_LIMIT_WINDOW_MS = '1000';
+    process.env.RATE_LIMIT_MAX_REQUESTS = '1';
     const { app } = await import('../src/index');
 
     const res = await request(app).get('/health');
