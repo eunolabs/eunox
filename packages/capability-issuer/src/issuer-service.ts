@@ -17,6 +17,8 @@ import {
   CapabilityConstraint,
   CapabilityError,
   CapabilityTokenPayload,
+  Cosigner,
+  cosignPayload,
   DEFAULT_ROLE_CAPABILITY_MAP,
   DbCredential,
   ErrorCode,
@@ -32,6 +34,7 @@ import {
   RoleCapabilityPolicy,
   StorageGrant,
   TokenSigner,
+  TransparencyLog,
   UserConsent,
   UserContext,
   createAuditLogger,
@@ -41,6 +44,7 @@ import {
   jwkToJkt,
   mapRolesToCapabilitiesForPolicy,
   matchesResource,
+  witnessPayload,
 } from '@euno/common';
 import * as crypto from 'crypto';
 import type TransportStream from 'winston-transport';
@@ -307,6 +311,43 @@ export interface CapabilityIssuerServiceOptions {
    * configured on the corresponding tool-gateway instance.
    */
   gatewayAudience?: string;
+  /**
+   * Optional list of independent {@link Cosigner}s that countersign
+   * every issuance receipt. Mitigates the "single-issuer trust root"
+   * critical risk: an attacker who pivots from a compromised issuer
+   * pod to the primary KMS `signDigest` permission still cannot mint
+   * usable tokens because they do not control any cosigner's private
+   * key. Cosigners SHOULD be held by a different principal than the
+   * primary issuer signing key — typical realisations are an offline
+   * policy authority key (sealed PEM mounted into the pod), a second
+   * KMS key in a different cloud account, or a remote co-signing
+   * micro-service.
+   *
+   * Cosignatures are added to the token's `proofs.cosig[]` claim. The
+   * gateway verifies them against its own cosigner JWKS — see
+   * `REQUIRE_COSIGNATURE_COUNT` and `COSIGNER_JWKS_FILE` on the gateway.
+   *
+   * Optional: when omitted, no `cosig` claim is emitted and tokens
+   * remain wire-compatible with the previous schema (back-compat).
+   */
+  cosigners?: ReadonlyArray<Cosigner>;
+  /**
+   * Optional list of {@link TransparencyLog} clients that this issuer
+   * submits every issuance receipt to. Each log returns an
+   * {@link Sct}-style witness record that is added to the token's
+   * `proofs.sct[]` claim. Provides an external, append-only trail of
+   * issuances independent of the issuer's signing key — auditors can
+   * reconcile the log against the issuer's audit trail to detect
+   * silent issuance fraud. Mitigates the "single-issuer trust root"
+   * critical risk together with {@link cosigners}.
+   *
+   * Submission failures abort the issuance (an SCT-required deployment
+   * cannot silently fall back to issuing without an SCT or a partial
+   * outage becomes a forge window).
+   *
+   * Optional: when omitted, no `sct` claim is emitted (back-compat).
+   */
+  transparencyLogs?: ReadonlyArray<TransparencyLog>;
 }
 
 export class CapabilityIssuerService {
@@ -349,6 +390,18 @@ export class CapabilityIssuerService {
   private actionResolver: ActionResolver;
   /** Audience claim for minted tokens. Configurable per-tenant to prevent cross-tenant replay. */
   private gatewayAudience: string;
+  /**
+   * Independent cosigners attached to every issued / attenuated /
+   * renewed token. Empty array means cosignature is disabled for this
+   * deployment (back-compat). See {@link CapabilityIssuerServiceOptions.cosigners}.
+   */
+  private cosigners: ReadonlyArray<Cosigner>;
+  /**
+   * Transparency-log clients submitted-to on every issuance. Empty
+   * array means transparency logging is disabled (back-compat). See
+   * {@link CapabilityIssuerServiceOptions.transparencyLogs}.
+   */
+  private transparencyLogs: ReadonlyArray<TransparencyLog>;
 
   constructor(
     signer: TokenSigner,
@@ -391,6 +444,8 @@ export class CapabilityIssuerService {
     if (options.onIssuanceRateLimited) this.onIssuanceRateLimited = options.onIssuanceRateLimited;
     this.actionResolver = options.actionResolver ?? BUILTIN_ACTION_RESOLVER;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
+    this.cosigners = options.cosigners ?? [];
+    this.transparencyLogs = options.transparencyLogs ?? [];
   }
 
   /**
@@ -402,6 +457,44 @@ export class CapabilityIssuerService {
    */
   getRegion(): string {
     return this.region;
+  }
+
+  /**
+   * Attach the configured `proofs` claim (cosignatures + transparency-log
+   * SCTs) to a freshly-built payload, in place. No-op when neither
+   * cosigners nor transparency logs are configured (back-compat: the
+   * payload remains byte-for-byte identical to the pre-feature shape and
+   * gateways without proof requirements continue to accept it).
+   *
+   * Cosigner / log failures abort the issuance — minting a token whose
+   * cosignature or SCT silently failed would degrade to the previous
+   * single-signer trust model and create a forge window during partial
+   * outages.
+   *
+   * Returns the (mutated) payload for call-site convenience.
+   */
+  private async attachIssuanceProofs(
+    payload: CapabilityTokenPayload,
+  ): Promise<CapabilityTokenPayload> {
+    if (this.cosigners.length === 0 && this.transparencyLogs.length === 0) {
+      return payload;
+    }
+    // Run cosignature + transparency-log submission in parallel.
+    // Both backends consume the same payload and their outputs are
+    // independent, so serialising them would put mint latency at
+    // (cosigner-RTT + log-RTT) instead of max(cosigner-RTT, log-RTT).
+    // With remote signers / logs this matters on every issuance.
+    const [cosigs, scts] = await Promise.all([
+      cosignPayload(payload, this.cosigners),
+      witnessPayload(payload, this.transparencyLogs),
+    ]);
+    if (cosigs || scts) {
+      payload.proofs = {
+        ...(cosigs ? { cosig: cosigs } : {}),
+        ...(scts ? { sct: scts } : {}),
+      };
+    }
+    return payload;
   }
 
   /**
@@ -559,6 +652,7 @@ export class CapabilityIssuerService {
       });
 
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
+      await this.attachIssuanceProofs(payload);
       const token = await signPayload(this.signer, payload);
 
       // Step 5b: Mint short-lived cloud-storage and DB credentials.
@@ -1071,6 +1165,7 @@ export class CapabilityIssuerService {
         parentTokenId: parentPayload.jti,
         agentId: parentPayload.sub,
       });
+      await this.attachIssuanceProofs(childPayload);
       const token = await signPayload(this.signer, childPayload);
 
       // Step 6: Audit log the attenuation.
@@ -1192,6 +1287,7 @@ export class CapabilityIssuerService {
         previousTokenId: currentPayload.jti,
         agentId: currentPayload.sub,
       });
+      await this.attachIssuanceProofs(renewedPayload);
       const token = await signPayload(this.signer, renewedPayload);
 
       // Step 4: Audit log the renewal.

@@ -40,6 +40,7 @@ import {
   OcsfAuditTransport,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
+import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
 import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
 import { createRevocationStoreFromEnv, RevocationStore } from './revocation-store';
@@ -428,6 +429,11 @@ export async function initializeServices(
     partnerResolver: partnerResolver ?? undefined,
     localIssuers: localIssuers.length > 0 ? localIssuers : undefined,
     requireKid,
+    // Multi-issuer trust hardening: build the cosignature + transparency-log
+    // verifier from env. Returns undefined when neither REQUIRE_COSIGNATURE_COUNT
+    // nor REQUIRE_TRANSPARENCY_LOG_PROOF is set, in which case the verifier
+    // chain runs as before (back-compat).
+    proofsVerifier: buildProofsVerifierFromEnv(validated, logger),
   });
 
   // Build the cryptographic evidence signer when audit signing is enabled.

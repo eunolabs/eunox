@@ -428,6 +428,141 @@ export interface CapabilityTokenPayload {
      */
     jkt: string;
   };
+  /**
+   * Optional issuance proofs (multi-issuer trust hardening — addresses the
+   * "single-issuer trust root" critical risk).  Carries:
+   *
+   *   - `cosig[]` — independent co-signatures over the canonical
+   *     {@link IssuanceReceipt} derived from this token. A second, separately
+   *     keyed authority (an offline policy authority, a different KMS account,
+   *     a separately deployed pod identity) signs the receipt so that the
+   *     gateway will reject a token whose primary issuer signature is valid
+   *     but whose required co-signatures are missing or do not verify.  This
+   *     means an attacker who pivots from the issuer pod to KMS `signDigest`
+   *     permission still cannot mint usable tokens — they would also need
+   *     the cosigner's private key, which is held by a different principal.
+   *
+   *   - `sct[]` — Signed Certificate Timestamp-style witness records from
+   *     one or more transparency logs (analogous to RFC 6962 / Certificate
+   *     Transparency for X.509). Each SCT proves that the receipt was
+   *     submitted to (and signed by) an external append-only log, giving
+   *     the gateway an out-of-band witness independent of the issuer's
+   *     signing key. Auditors can reconcile the log against the issuer's
+   *     own audit trail to detect silent issuance fraud.
+   *
+   * Tokens minted without `proofs` continue to verify when the gateway has
+   * no proof requirements configured (back-compat). Strict deployments set
+   * `REQUIRE_COSIGNATURE_COUNT > 0` and/or `REQUIRE_TRANSPARENCY_LOG_PROOF=true`
+   * on the gateway to require these proofs at verification time.
+   */
+  proofs?: IssuanceProofs;
+}
+
+/**
+ * Canonical "issuance receipt" — the deterministic, signature-input
+ * representation of a capability token used by both the cosignature and
+ * transparency-log paths.  Mirrors the load-bearing JWT claims of the
+ * primary token (`iss`, `sub`, `aud`, `iat`, `exp`, `jti`) plus a
+ * deterministic hash of the granted capability set so that a cosigner /
+ * log entry binds to the *exact* set of capabilities the issuer is
+ * vouching for.  Any tampering with the capability list invalidates the
+ * `capabilitiesHash` and therefore both the cosignature and the SCT.
+ *
+ * This shape is intentionally free of `vc` / `cnf` / `region` / `proofs`
+ * so the canonical bytes are stable across schema evolution: a future
+ * version of this codebase that adds optional claims must not invalidate
+ * historical cosignatures or SCTs.
+ */
+export interface IssuanceReceipt {
+  /** `iss` claim — issuer DID / domain. */
+  iss: string;
+  /** `sub` claim — subject (agent) identifier. */
+  sub: string;
+  /** `aud` claim — gateway audience this token is bound to. */
+  aud: string;
+  /** `iat` claim — issued-at (unix seconds). */
+  iat: number;
+  /** `exp` claim — expiry (unix seconds). */
+  exp: number;
+  /** `jti` claim — unique token id. */
+  jti: string;
+  /**
+   * Base64url-encoded SHA-256 of the canonical JSON serialization of
+   * the granted {@link CapabilityConstraint}[] array.
+   */
+  capabilitiesHash: string;
+  /**
+   * Optional `cnf.jkt` — DPoP key thumbprint binding the token to a
+   * specific holder key (RFC 7800 / RFC 9449). Included in the receipt
+   * when the source payload carries `cnf.jkt` so cosignatures and SCTs
+   * commit to the holder-binding too. This prevents a "thumbprint
+   * substitution" attack where an attacker holding only the primary
+   * issuer key takes a legitimately proofed token, rewrites `cnf.jkt`
+   * to their own DPoP key, re-signs the JWT, and continues to satisfy
+   * the gateway's cosignature / SCT checks.
+   *
+   * Omitted (rather than set to `null`/`undefined`) for tokens without
+   * `cnf` so the canonical JSON of legacy receipts is unchanged
+   * — back-compat: deployments that have not enabled DPoP keep
+   * producing the previous receipt bytes.
+   */
+  cnfJkt?: string;
+}
+
+/**
+ * A single cosignature on an {@link IssuanceReceipt}.  The `sig` is a
+ * detached JWS-style signature — base64url-encoded raw signature bytes
+ * over the canonical receipt input bytes (see
+ * `canonicalReceiptSigningInput` in `@euno/common`).  We do not embed
+ * a JWS protected header on the wire because the cosigner's `kid` /
+ * `alg` are explicit fields; the verifier reconstructs the input from
+ * the token and the receipt deterministically.
+ */
+export interface Cosignature {
+  /** Cosigner key id — looked up against the gateway's cosigner JWKS. */
+  kid: string;
+  /** JWS signature algorithm (e.g. `EdDSA`, `ES256`). */
+  alg: string;
+  /** base64url-encoded raw signature bytes over the canonical receipt input. */
+  sig: string;
+}
+
+/**
+ * A Signed Certificate Timestamp-like witness record from a transparency
+ * log.  Independent of the issuer's signing key: an attacker who controls
+ * the issuer's KMS still cannot forge an SCT without the log's signing
+ * key.  Auditors can reconcile the log's append-only entry list against
+ * the issuer's audit trail to detect silent issuance fraud.
+ */
+export interface Sct {
+  /** Stable identifier of the transparency log (e.g. `"euno-prod-log-1"`). */
+  logId: string;
+  /** Signing-key id (matches a key in the log's published JWKS). */
+  kid: string;
+  /** JWS signature algorithm. */
+  alg: string;
+  /** Unix milliseconds at which the log appended this entry. */
+  timestamp: number;
+  /** Optional log entry index (for inclusion-proof retrieval by an auditor). */
+  entryIndex?: number;
+  /**
+   * base64url-encoded raw signature bytes over
+   * `canonicalSctSigningInput(logId, timestamp, receiptHash)`.
+   */
+  sig: string;
+}
+
+/**
+ * Container claim attached to a {@link CapabilityTokenPayload} when
+ * cosignature and/or transparency-log witnessing is configured on the
+ * issuer.  Each member is independently optional so an operator can
+ * roll the two defenses out incrementally.
+ */
+export interface IssuanceProofs {
+  /** Co-signatures on the issuance receipt. */
+  cosig?: Cosignature[];
+  /** Signed Certificate Timestamps from one or more transparency logs. */
+  sct?: Sct[];
 }
 
 /**

@@ -563,6 +563,62 @@ export const IssuerConfigSchema = z
     OCSF_HTTP_HEADERS: optionalString.describe(
       'Optional JSON object of additional HTTP headers for the http OCSF transport (e.g. \'{"x-api-key":"..."}\'). Ignored if OCSF_TRANSPORT≠http.',
     ),
+
+    // Multi-issuer trust hardening (cosignature + transparency log) ---------
+    //
+    // Mitigates the "single-issuer trust root" critical risk: an attacker
+    // who pivots from a compromised issuer pod to KMS `signDigest`
+    // permission still cannot mint usable tokens because (a) at least one
+    // independent cosigner key is also required, and (b) every issuance
+    // is recorded in an append-only transparency log the gateway
+    // independently verifies. Both layers are off by default for back-
+    // compat; production deployments should enable at least cosignature.
+    COSIGNERS: optionalString.describe(
+      'Optional JSON array of independent cosigner specs. Each element is ' +
+      '`{"kid":"...","alg":"EdDSA|ES256|...","keyPem":"-----BEGIN PRIVATE KEY-----\\n..."}` ' +
+      'or `{"kid":"...","keyPemFile":"/path/to/key.pem"}`. Each cosigner countersigns every ' +
+      'issuance receipt with an independent key — the gateway then requires ' +
+      'REQUIRE_COSIGNATURE_COUNT of these signatures to verify a token. The cosigner key ' +
+      'MUST be held by a different principal than the primary issuer signing key (the whole ' +
+      'point is independence): typical realisations are an offline policy authority key ' +
+      '(sealed PEM mounted from a separate secret store), a second KMS in a different ' +
+      'cloud account, or a remote co-signing micro-service. When unset, no cosignature ' +
+      'is added (back-compat).',
+    ),
+    TRANSPARENCY_LOG_ENABLED: envBoolean({
+      default: false,
+      description:
+        'When true, every issuance receipt is submitted to the in-process software ' +
+        'transparency log and the resulting SCT is added to the token\'s `proofs.sct[]` claim. ' +
+        'Provides an external, append-only witness independent of the issuer\'s primary ' +
+        'signing key — auditors can reconcile the log against the issuer\'s audit trail to ' +
+        'detect silent issuance fraud. Requires TRANSPARENCY_LOG_KEY_PEM (or _FILE), ' +
+        'TRANSPARENCY_LOG_KEY_KID, and TRANSPARENCY_LOG_ID. NOTE: for the strongest defence ' +
+        'run an out-of-process log with its own KMS key and load only its public JWKS into ' +
+        'the gateway; the in-process log is intended for tests, dev, and intentionally co-' +
+        'located deployments. Boolean: true | false. Default false.',
+    }),
+    TRANSPARENCY_LOG_ID: optionalString.describe(
+      'Stable identifier of this issuer\'s transparency log (e.g. "euno-prod-log-1"). ' +
+      'Required when TRANSPARENCY_LOG_ENABLED=true. Stamped on every SCT and used by the ' +
+      'gateway to look up the log\'s trusted JWKS.',
+    ),
+    TRANSPARENCY_LOG_KEY_KID: optionalString.describe(
+      'kid of the transparency log signing key. Required when TRANSPARENCY_LOG_ENABLED=true.',
+    ),
+    TRANSPARENCY_LOG_KEY_ALG: envEnum({
+      values: ['EdDSA', 'ES256', 'ES384', 'ES512', 'RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512'] as const,
+      description:
+        'JWA algorithm of the transparency log signing key. When omitted, the alg is ' +
+        'inferred from the key material (EdDSA for Ed25519/Ed448, ES{256,384,512} for ' +
+        'P-{256,384,521}). Must be supplied for RSA keys.',
+    }),
+    TRANSPARENCY_LOG_KEY_PEM: optionalString.describe(
+      'Inline PEM-encoded private key for the transparency log. Provide this OR TRANSPARENCY_LOG_KEY_FILE.',
+    ),
+    TRANSPARENCY_LOG_KEY_FILE: optionalString.describe(
+      'Path to a PEM-encoded private key for the transparency log. Provide this OR TRANSPARENCY_LOG_KEY_PEM.',
+    ),
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -659,6 +715,34 @@ export const IssuerConfigSchema = z
           'tokens, audit events, posture records, and trace spans so audit trails can be ' +
           'reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
       });
+    }
+    // Multi-issuer trust hardening: when the transparency log is enabled,
+    // its identifier, kid, and a private key (inline OR file) MUST all be
+    // present — otherwise the issuer would silently fall back to issuing
+    // tokens without an SCT, defeating the whole point of enabling the log.
+    if (cfg.TRANSPARENCY_LOG_ENABLED) {
+      if (!cfg.TRANSPARENCY_LOG_ID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TRANSPARENCY_LOG_ID'],
+          message: 'TRANSPARENCY_LOG_ID is required when TRANSPARENCY_LOG_ENABLED=true.',
+        });
+      }
+      if (!cfg.TRANSPARENCY_LOG_KEY_KID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TRANSPARENCY_LOG_KEY_KID'],
+          message: 'TRANSPARENCY_LOG_KEY_KID is required when TRANSPARENCY_LOG_ENABLED=true.',
+        });
+      }
+      if (!cfg.TRANSPARENCY_LOG_KEY_PEM && !cfg.TRANSPARENCY_LOG_KEY_FILE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TRANSPARENCY_LOG_KEY_PEM'],
+          message:
+            'TRANSPARENCY_LOG_KEY_PEM or TRANSPARENCY_LOG_KEY_FILE is required when TRANSPARENCY_LOG_ENABLED=true.',
+        });
+      }
     }
   });
 
@@ -874,6 +958,58 @@ export const GatewayConfigSchema = z
       description:
         'Comma-separated list of identifiers treated as the local issuer (in addition to ISSUER_JWKS_URL).',
     }),
+
+    // Multi-issuer trust hardening (cosignature + transparency log) ---------
+    //
+    // Mitigates the "single-issuer trust root" critical risk: an attacker
+    // who pivots from a compromised issuer pod to KMS `signDigest`
+    // permission still cannot mint usable tokens that this gateway
+    // accepts, because (a) we require N independent cosignatures from
+    // separately-keyed authorities and (b) we require an SCT from a
+    // trusted transparency log. Both are off by default for back-compat;
+    // production gateways should enable at least cosignature.
+    REQUIRE_COSIGNATURE_COUNT: envPositiveInt({
+      default: 0,
+      min: 0,
+      description:
+        'Minimum number of valid cosignatures the gateway requires on every capability ' +
+        'token. 0 (default) disables cosignature enforcement. Set to N>0 to require N ' +
+        'independent cosignatures from authorities listed in COSIGNER_JWKS_FILE. ' +
+        'Strict-mode rejections raise HTTP 401. The corresponding capability-issuer ' +
+        'instance MUST be configured with at least N cosigners (see COSIGNERS on the issuer).',
+    }),
+    COSIGNER_JWKS_FILE: optionalString.describe(
+      'Path to a JWKS file (`{"keys":[...]}` JSON) containing the public keys of every ' +
+      'cosigner this gateway trusts. Required when REQUIRE_COSIGNATURE_COUNT > 0. The ' +
+      'file is read once at startup; rotate the file and restart the gateway to roll ' +
+      'cosigner keys (cosigners are infrequent — file-based publishing is the lowest-' +
+      'complexity path that still satisfies independence from the primary issuer JWKS).',
+    ),
+    COSIGNER_JWKS_INLINE: optionalString.describe(
+      'Inline JSON literal of the cosigner JWKS, used as an alternative to ' +
+      'COSIGNER_JWKS_FILE for environments (tests, k8s ConfigMaps) that prefer to inject ' +
+      'JWKS via env vars rather than mounted files. Provide one of COSIGNER_JWKS_FILE / ' +
+      'COSIGNER_JWKS_INLINE when REQUIRE_COSIGNATURE_COUNT > 0.',
+    ),
+    REQUIRE_TRANSPARENCY_LOG_PROOF: envBoolean({
+      default: false,
+      description:
+        'When true, every capability token MUST carry at least one valid SCT (Signed ' +
+        'Certificate Timestamp) from a transparency log listed in TRANSPARENCY_LOG_JWKS_FILE. ' +
+        'Provides an independent witness of issuance — an attacker who suborns the issuer ' +
+        'cannot retroactively erase log entries; auditors cross-check the log against the ' +
+        'issuer\'s audit trail to detect silent fraud. Boolean: true | false. Default false.',
+    }),
+    TRANSPARENCY_LOG_JWKS_FILE: optionalString.describe(
+      'Path to a JSON file mapping logId -> JWKS (`{"log-id":{"keys":[...]}, ...}`) of ' +
+      'every transparency log this gateway trusts. Required when ' +
+      'REQUIRE_TRANSPARENCY_LOG_PROOF=true. Each top-level key MUST equal the `logId` ' +
+      'embedded in SCTs the corresponding log produces.',
+    ),
+    TRANSPARENCY_LOG_JWKS_INLINE: optionalString.describe(
+      'Inline JSON literal mapping logId -> JWKS, alternative to TRANSPARENCY_LOG_JWKS_FILE ' +
+      'for env-var-only injection.',
+    ),
     PARTNER_DID_CACHE_TTL_SECONDS: envPositiveInt({
       default: 300,
       description:
@@ -1171,6 +1307,32 @@ export const GatewayConfigSchema = z
             'or the pod\'s internal cluster IP.',
         });
       }
+    }
+
+    // Multi-issuer trust hardening cross-field rules.
+    if (cfg.REQUIRE_COSIGNATURE_COUNT > 0 && !cfg.COSIGNER_JWKS_FILE && !cfg.COSIGNER_JWKS_INLINE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['COSIGNER_JWKS_FILE'],
+        message:
+          'COSIGNER_JWKS_FILE or COSIGNER_JWKS_INLINE is required when ' +
+          'REQUIRE_COSIGNATURE_COUNT > 0. Without trusted cosigner keys the gateway ' +
+          'cannot verify any cosignature and would reject every token (fail-closed).',
+      });
+    }
+    if (
+      cfg.REQUIRE_TRANSPARENCY_LOG_PROOF &&
+      !cfg.TRANSPARENCY_LOG_JWKS_FILE &&
+      !cfg.TRANSPARENCY_LOG_JWKS_INLINE
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRANSPARENCY_LOG_JWKS_FILE'],
+        message:
+          'TRANSPARENCY_LOG_JWKS_FILE or TRANSPARENCY_LOG_JWKS_INLINE is required when ' +
+          'REQUIRE_TRANSPARENCY_LOG_PROOF=true. Without trusted log keys the gateway cannot ' +
+          'verify any SCT and would reject every token (fail-closed).',
+      });
     }
   });
 

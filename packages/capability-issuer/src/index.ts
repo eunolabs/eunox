@@ -42,6 +42,7 @@ import { CapabilityIssuerService } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
 import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
+import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { PostureEmitter } from '@euno/posture-emitter';
 
 // Load environment variables
@@ -333,6 +334,14 @@ async function initializeServices() {
       logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
     }
 
+    // Multi-issuer trust hardening: load independent cosigners and the
+    // transparency log when configured. Both default to empty (no
+    // cosignature, no SCT) for back-compat — only deployments that
+    // explicitly opt in via the env-config get the additional proofs
+    // attached to every minted token.
+    const cosigners = await loadCosignersFromEnv(env, logger);
+    const transparencyLogs = await loadTransparencyLogsFromEnv(env, logger);
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
@@ -378,6 +387,8 @@ async function initializeServices() {
         // Defaults to "tool-gateway" for back-compat when unset.
         ...(env.GATEWAY_AUDIENCE ? { gatewayAudience: env.GATEWAY_AUDIENCE } : {}),
         ...(auditTransports ? { auditTransports } : {}),
+        ...(cosigners.length > 0 ? { cosigners } : {}),
+        ...(transparencyLogs.length > 0 ? { transparencyLogs } : {}),
         onIssuanceRateLimited: (subject, reason, kind = 'issuance') => {
           // Forward the limiter's classification verbatim so dashboards
           // can distinguish a real rate-limit hit from a Redis outage —

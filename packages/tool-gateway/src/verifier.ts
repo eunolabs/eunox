@@ -17,6 +17,7 @@ import {
 import { InMemoryRevocationStore, RevocationStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
 import { JwksClient } from './jwks-client';
+import { ProofsVerifier } from './proofs-verifier';
 
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
@@ -64,6 +65,15 @@ export class JWTTokenVerifier implements TokenVerifier {
    */
   protected requireKid: boolean;
 
+  /**
+   * Optional cosignature + transparency-log proofs verifier (multi-issuer
+   * trust hardening). When configured with strict-mode requirements, runs
+   * after the primary signature succeeds and rejects tokens that do not
+   * carry the required proofs. Defaults to a no-op verifier so existing
+   * deployments are unchanged. See {@link ProofsVerifier}.
+   */
+  protected proofsVerifier?: ProofsVerifier;
+
   /** Default revocation TTL used when the caller does not supply an expiry. */
   private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
 
@@ -75,6 +85,7 @@ export class JWTTokenVerifier implements TokenVerifier {
     localIssuers?: string[],
     jwksKeySource?: JwksKeySource,
     requireKid?: boolean,
+    proofsVerifier?: ProofsVerifier,
   ) {
     this.publicKey = publicKey;
     // Default to RS256 for backward compatibility, but allow multiple algorithms.
@@ -88,6 +99,7 @@ export class JWTTokenVerifier implements TokenVerifier {
     this.jwksKeySource = jwksKeySource;
     // Default to false so existing tests (which don't set kid) keep passing.
     this.requireKid = requireKid ?? false;
+    this.proofsVerifier = proofsVerifier;
   }
 
   /**
@@ -337,6 +349,12 @@ export class JWTTokenVerifier implements TokenVerifier {
         401,
       );
     }
+    // Multi-issuer trust hardening: verify cosignatures and SCTs (when
+    // configured). No-op when neither is required and the token carries
+    // no proofs. Strict-mode rejections raise CapabilityError.
+    if (this.proofsVerifier) {
+      await this.proofsVerifier.verify(payload);
+    }
     return payload;
   }
 }
@@ -366,6 +384,14 @@ export interface JwksTokenVerifierOptions {
    * are still in circulation).
    */
   requireKid?: boolean;
+  /**
+   * Optional cosignature + transparency-log proofs verifier (multi-issuer
+   * trust hardening). When supplied, runs after the primary signature
+   * succeeds. See {@link ProofsVerifier} and the gateway env-config
+   * keys `REQUIRE_COSIGNATURE_COUNT`, `COSIGNER_JWKS_FILE`,
+   * `REQUIRE_TRANSPARENCY_LOG_PROOF`, `TRANSPARENCY_LOG_JWKS_FILE`.
+   */
+  proofsVerifier?: ProofsVerifier;
 }
 
 /**
@@ -404,6 +430,7 @@ export class JwksTokenVerifier extends JWTTokenVerifier {
       options.localIssuers,
       jwksKeySource,
       options.requireKid ?? true, // strict by default for JWKS-only verifiers
+      options.proofsVerifier,
     );
     this.jwksSource = jwksKeySource;
   }

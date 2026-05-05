@@ -22,3 +22,6 @@ export * from './audit-pipeline';
 export * from './action-resolver';
 export * from './dpop';
 export * from './ocsf';
+export * from './issuance-proofs';
+export * from './cosigner';
+export * from './transparency-log';
