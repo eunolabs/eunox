@@ -1,20 +1,30 @@
 /**
  * Agent Runtime Tests
  *
- * Uses Jest module mocking to verify request routing, header attachment,
- * token refresh, and 401 retry behaviour without requiring a live server.
+ * Gateway calls (tool invocations and proxy requests) are intercepted via an
+ * InProcessToolTransport injected into the runtime config.  Issuer calls still
+ * go through an axios mock (the runtime uses axios exclusively for the issuer
+ * token-acquisition path and does not use the transport for those).
  */
 
 import axios from 'axios';
-import { AgentRuntime } from '../src/runtime';
+import {
+  AgentRuntime,
+  InProcessToolTransport,
+} from '../src/runtime';
+import type {
+  ToolTransportInvokeRequest,
+  ToolTransportProxyRequest,
+  TransportCredentials,
+  ToolTransportResponse,
+} from '../src/runtime';
 
-// ── axios mock setup ──────────────────────────────────────────────────────────
+// ── axios mock setup (issuer calls only) ──────────────────────────────────────
 
 jest.mock('axios');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-// Track instances created by axios.create()
 interface FakeInstance {
   post: jest.Mock;
   request: jest.Mock;
@@ -33,36 +43,49 @@ const makeInstance = (): FakeInstance => ({
 });
 
 let issuerInstance: FakeInstance;
-let gatewayInstance: FakeInstance;
+
+// Transport mock state — recreated by buildRuntime() on every call.
+let toolHandler: jest.Mock<
+  Promise<ToolTransportResponse>,
+  [ToolTransportInvokeRequest, TransportCredentials]
+>;
+let proxyHandler: jest.Mock<
+  Promise<ToolTransportResponse>,
+  [ToolTransportProxyRequest, TransportCredentials]
+>;
 
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useFakeTimers();
 
   issuerInstance = makeInstance();
-  gatewayInstance = makeInstance();
-
-  // Differentiate instances by baseURL so order of create() calls doesn't matter.
-  mockedAxios.create = jest.fn().mockImplementation((cfg?: { baseURL?: string }) => {
-    if (cfg?.baseURL?.includes('issuer') || cfg?.baseURL?.includes('3001')) {
-      return issuerInstance;
-    }
-    return gatewayInstance;
-  }) as any;
+  mockedAxios.create = jest.fn().mockImplementation(() => issuerInstance) as any;
 });
 
 afterEach(() => {
   jest.useRealTimers();
 });
 
-// Helper to build a runtime with a pre-seeded token so most tests skip real acquisition
+// Helper to build a runtime with a fresh InProcessToolTransport and optional
+// overrides.  Sets the module-level toolHandler/proxyHandler so individual
+// tests can configure responses via mockResolvedValueOnce.
 function buildRuntime(overrides?: Partial<ConstructorParameters<typeof AgentRuntime>[0]>) {
+  toolHandler = jest.fn<
+    Promise<ToolTransportResponse>,
+    [ToolTransportInvokeRequest, TransportCredentials]
+  >();
+  proxyHandler = jest.fn<
+    Promise<ToolTransportResponse>,
+    [ToolTransportProxyRequest, TransportCredentials]
+  >();
+  const transport = new InProcessToolTransport(toolHandler, proxyHandler);
   return new AgentRuntime({
     agentId: 'test-agent',
     gatewayUrl: 'http://gateway:3002',
     issuerUrl: 'http://issuer:3001',
     authToken: 'bearer-test-token',
-    ...overrides as any,
+    transport,
+    ...(overrides as any),
   });
 }
 
@@ -128,68 +151,63 @@ describe('AgentRuntime – tool invocation', () => {
     return rt;
   }
 
-  it('routes tool calls through the gateway URL', async () => {
+  it('dispatches tool calls through the transport', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { success: true } });
+    toolHandler.mockResolvedValueOnce({ success: true, data: { result: 'ok' }, statusCode: 200 });
 
     await rt.invokeTool({ tool: 'read_file', args: { path: '/data/f.txt' } });
 
-    expect(gatewayInstance.post).toHaveBeenCalledWith(
-      '/api/v1/tools/invoke',
+    expect(toolHandler).toHaveBeenCalledWith(
       expect.objectContaining({ tool: 'read_file', args: { path: '/data/f.txt' } }),
       expect.any(Object)
     );
   });
 
-  it('attaches capability token in Authorization header', async () => {
+  it('passes capability token in credentials', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: {} });
+    toolHandler.mockResolvedValueOnce({ success: true, data: {}, statusCode: 200 });
 
     await rt.invokeTool({ tool: 'read_file', args: {} });
 
-    const callArgs = gatewayInstance.post.mock.calls[0];
-    expect(callArgs[2]).toMatchObject({
-      headers: expect.objectContaining({ Authorization: 'Bearer cap-token-123' }),
-    });
+    const creds = toolHandler.mock.calls[0]![1] as TransportCredentials;
+    expect(creds.capabilityToken).toBe('cap-token-123');
   });
 
-  it('attaches X-Agent-ID header', async () => {
+  it('passes agentId in credentials', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: {} });
+    toolHandler.mockResolvedValueOnce({ success: true, data: {}, statusCode: 200 });
 
     await rt.invokeTool({ tool: 'read_file', args: {} });
 
-    const callArgs = gatewayInstance.post.mock.calls[0];
-    expect(callArgs[2]).toMatchObject({
-      headers: expect.objectContaining({ 'X-Agent-ID': 'test-agent' }),
-    });
+    const creds = toolHandler.mock.calls[0]![1] as TransportCredentials;
+    expect(creds.agentId).toBe('test-agent');
   });
 
   it('retries with refreshed token on 401', async () => {
     const rt = await initializedRuntime();
 
     // First call → 401; issuer gives new token; second call → 200
-    gatewayInstance.post.mockResolvedValueOnce({ status: 401, data: {} });
+    toolHandler.mockResolvedValueOnce({ success: false, statusCode: 401, errorCode: undefined });
     issuerInstance.post.mockResolvedValueOnce({
       status: 200,
       data: { token: 'cap-token-refreshed' },
     });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    toolHandler.mockResolvedValueOnce({ success: true, data: { ok: true }, statusCode: 200 });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
 
     expect(result.success).toBe(true);
     expect(rt.getCapabilityToken()).toBe('cap-token-refreshed');
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(2);
+    expect(toolHandler).toHaveBeenCalledTimes(2);
   });
 
   it('returns success=false for 403 responses', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 403, data: { error: 'Forbidden' } });
+    toolHandler.mockResolvedValueOnce({ success: false, statusCode: 403, error: 'Forbidden' });
 
     const result = await rt.invokeTool({ tool: 'delete_file', args: {} });
 
@@ -211,47 +229,44 @@ describe('AgentRuntime – makeRequest', () => {
     return rt;
   }
 
-  it('routes absolute URLs through /proxy/<host><path> and forwards X-Target-Host', async () => {
+  it('passes the URL unchanged to the transport proxyRequest', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: {} });
+    proxyHandler.mockResolvedValueOnce({ success: true, data: {}, statusCode: 200 });
 
     await rt.makeRequest('GET', 'http://api.example.com/data/items');
 
-    expect(gatewayInstance.request).toHaveBeenCalledWith(
+    expect(proxyHandler).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: '/proxy/api.example.com/data/items',
-        headers: expect.objectContaining({
-          'X-Target-Host': 'api.example.com',
-          'X-Target-Scheme': 'http',
-        }),
-      })
+        method: 'GET',
+        url: 'http://api.example.com/data/items',
+      }),
+      expect.any(Object)
     );
   });
 
-  it('routes relative paths through /proxy/<path>', async () => {
+  it('passes relative paths to the transport proxyRequest', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: {} });
+    proxyHandler.mockResolvedValueOnce({ success: true, data: {}, statusCode: 200 });
 
     await rt.makeRequest('POST', '/internal/resource', { key: 'val' });
 
-    expect(gatewayInstance.request).toHaveBeenCalledWith(
-      expect.objectContaining({ url: '/proxy/internal/resource' })
+    expect(proxyHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'POST', url: '/internal/resource', data: { key: 'val' } }),
+      expect.any(Object)
     );
   });
 
-  it('attaches capability token to proxy requests', async () => {
+  it('passes capability token to proxy requests', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: {} });
+    proxyHandler.mockResolvedValueOnce({ success: true, data: {}, statusCode: 200 });
 
     await rt.makeRequest('GET', '/some/path');
 
-    const callArgs = gatewayInstance.request.mock.calls[0][0];
-    expect(callArgs.headers).toMatchObject({
-      Authorization: 'Bearer cap-token-req',
-    });
+    const creds = proxyHandler.mock.calls[0]![1] as TransportCredentials;
+    expect(creds.capabilityToken).toBe('cap-token-req');
   });
 });
 
@@ -342,26 +357,32 @@ describe('AgentRuntime – authTokenProvider', () => {
       gatewayUrl: 'http://gateway:3002',
       issuerUrl: 'http://issuer:3001',
       authTokenProvider: provider,
+      transport: new InProcessToolTransport(
+        jest.fn().mockResolvedValueOnce({
+          success: false,
+          statusCode: 401,
+          errorCode: 'EXPIRED_TOKEN',
+        }).mockResolvedValueOnce({
+          success: true,
+          data: { ok: true },
+          statusCode: 200,
+        }),
+      ),
     });
     await rt.initialize();
 
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(issuerInstance.post.mock.calls[0][2]).toMatchObject({
+    expect(issuerInstance.post.mock.calls[0]![2]).toMatchObject({
       headers: { Authorization: 'Bearer obo-token-1' },
     });
 
     // A 401 with EXPIRED_TOKEN triggers a fresh provider call for the refresh.
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 401,
-      data: { error: { code: 'EXPIRED_TOKEN', message: 'expired' } },
-    });
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-2' } });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
 
     await rt.invokeTool({ tool: 'read_file', args: {} });
 
     expect(provider).toHaveBeenCalledTimes(2);
-    expect(issuerInstance.post.mock.calls[1][2]).toMatchObject({
+    expect(issuerInstance.post.mock.calls[1]![2]).toMatchObject({
       headers: { Authorization: 'Bearer obo-token-2' },
     });
   });
@@ -376,10 +397,11 @@ describe('AgentRuntime – authTokenProvider', () => {
       issuerUrl: 'http://issuer:3001',
       authToken: 'static-should-be-ignored',
       authTokenProvider: provider,
+      transport: new InProcessToolTransport(jest.fn()),
     });
     await rt.initialize();
 
-    expect(issuerInstance.post.mock.calls[0][2]).toMatchObject({
+    expect(issuerInstance.post.mock.calls[0]![2]).toMatchObject({
       headers: { Authorization: 'Bearer from-provider' },
     });
   });
@@ -391,6 +413,7 @@ describe('AgentRuntime – authTokenProvider', () => {
       gatewayUrl: 'http://gateway:3002',
       issuerUrl: 'http://issuer:3001',
       authTokenProvider: provider,
+      transport: new InProcessToolTransport(jest.fn()),
     });
     await expect(rt.initialize()).rejects.toMatchObject({ statusCode: 401 });
   });
@@ -444,7 +467,7 @@ describe('AgentRuntime – issuanceHints / issuanceHintsProvider', () => {
 
     // Only `agentId` should be in the body — no `requestedCapabilities`, no
     // `manifest`, no `consent` keys at all.
-    expect(issuerInstance.post.mock.calls[0][1]).toEqual({ agentId: 'test-agent' });
+    expect(issuerInstance.post.mock.calls[0]![1]).toEqual({ agentId: 'test-agent' });
   });
 
   it('issuanceHintsProvider takes precedence over static issuanceHints and is called per refresh', async () => {
@@ -471,20 +494,21 @@ describe('AgentRuntime – issuanceHints / issuanceHintsProvider', () => {
     await rt.initialize();
 
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(issuerInstance.post.mock.calls[0][1]).toMatchObject({ consent: consentA });
+    expect(issuerInstance.post.mock.calls[0]![1]).toMatchObject({ consent: consentA });
 
     // Trigger a refresh via 401 EXPIRED_TOKEN — provider must be invoked again.
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 401,
-      data: { error: { code: 'EXPIRED_TOKEN', message: 'expired' } },
+    toolHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 401,
+      errorCode: 'EXPIRED_TOKEN',
     });
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-2' } });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    toolHandler.mockResolvedValueOnce({ success: true, data: { ok: true }, statusCode: 200 });
 
     await rt.invokeTool({ tool: 'read_file', args: {} });
 
     expect(provider).toHaveBeenCalledTimes(2);
-    expect(issuerInstance.post.mock.calls[1][1]).toMatchObject({ consent: consentB });
+    expect(issuerInstance.post.mock.calls[1]![1]).toMatchObject({ consent: consentB });
   });
 });
 
@@ -504,29 +528,31 @@ describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () 
   it('refreshes and retries on 401 EXPIRED_TOKEN', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 401,
-      data: { error: { code: 'EXPIRED_TOKEN', message: 'Token has expired' } },
+    toolHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 401,
+      errorCode: 'EXPIRED_TOKEN',
     });
     issuerInstance.post.mockResolvedValueOnce({
       status: 200,
       data: { token: 'cap-token-refreshed' },
     });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    toolHandler.mockResolvedValueOnce({ success: true, data: { ok: true }, statusCode: 200 });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
 
     expect(result.success).toBe(true);
     expect(rt.getCapabilityToken()).toBe('cap-token-refreshed');
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(2);
+    expect(toolHandler).toHaveBeenCalledTimes(2);
   });
 
   it('does NOT refresh on 401 TOKEN_REVOKED — surfaces the failure instead', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 401,
-      data: { error: { code: 'TOKEN_REVOKED', message: 'Token has been revoked' } },
+    toolHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 401,
+      errorCode: 'TOKEN_REVOKED',
     });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
@@ -536,18 +562,17 @@ describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () 
     expect(result.errorCode).toBe('TOKEN_REVOKED');
     // Crucially, no refresh round-trip to the issuer beyond the initial one.
     expect(issuerInstance.post).toHaveBeenCalledTimes(1);
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(1);
+    expect(toolHandler).toHaveBeenCalledTimes(1);
     expect(rt.getCapabilityToken()).toBe('cap-token-init');
   });
 
   it('marks runtime terminated and stops refresh loop on 403 AGENT_TERMINATED', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 403,
-      data: {
-        error: { code: 'AGENT_TERMINATED', message: 'Agent or session has been terminated' },
-      },
+    toolHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 403,
+      errorCode: 'AGENT_TERMINATED',
     });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
@@ -557,23 +582,24 @@ describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () 
     expect(result.errorCode).toBe('AGENT_TERMINATED');
     expect(rt.isTerminated()).toBe(true);
 
-    // A subsequent call must short-circuit without contacting the issuer or gateway.
+    // A subsequent call must short-circuit without contacting the issuer or transport.
     issuerInstance.post.mockClear();
-    gatewayInstance.post.mockClear();
+    toolHandler.mockClear();
 
     const second = await rt.invokeTool({ tool: 'read_file', args: {} });
     expect(second.success).toBe(false);
     expect(second.errorCode).toBe('AGENT_TERMINATED');
     expect(issuerInstance.post).not.toHaveBeenCalled();
-    expect(gatewayInstance.post).not.toHaveBeenCalled();
+    expect(toolHandler).not.toHaveBeenCalled();
   });
 
   it('does not refresh on 401 with an unrelated error code (e.g. INVALID_TOKEN)', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({
-      status: 401,
-      data: { error: { code: 'INVALID_TOKEN', message: 'Token verification failed' } },
+    toolHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 401,
+      errorCode: 'INVALID_TOKEN',
     });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
@@ -582,41 +608,42 @@ describe('AgentRuntime – distinguishes expired / revoked / kill-switched', () 
     expect(result.errorCode).toBe('INVALID_TOKEN');
     // Initial issuance only — no refresh was attempted.
     expect(issuerInstance.post).toHaveBeenCalledTimes(1);
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(1);
+    expect(toolHandler).toHaveBeenCalledTimes(1);
   });
 
   it('still refreshes on a 401 without a structured error code (back-compat)', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 401, data: {} });
+    toolHandler.mockResolvedValueOnce({ success: false, statusCode: 401 });
     issuerInstance.post.mockResolvedValueOnce({
       status: 200,
       data: { token: 'cap-back-compat' },
     });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    toolHandler.mockResolvedValueOnce({ success: true, data: { ok: true }, statusCode: 200 });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
 
     expect(result.success).toBe(true);
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(2);
+    expect(toolHandler).toHaveBeenCalledTimes(2);
   });
 
   it('makeRequest also short-circuits when terminated', async () => {
     const rt = await initializedRuntime();
 
-    gatewayInstance.request.mockResolvedValueOnce({
-      status: 403,
-      data: { error: { code: 'AGENT_TERMINATED', message: 'killed' } },
+    proxyHandler.mockResolvedValueOnce({
+      success: false,
+      statusCode: 403,
+      errorCode: 'AGENT_TERMINATED',
     });
 
     const r1 = await rt.makeRequest('GET', '/some/path');
     expect(r1.errorCode).toBe('AGENT_TERMINATED');
     expect(rt.isTerminated()).toBe(true);
 
-    gatewayInstance.request.mockClear();
+    proxyHandler.mockClear();
     const r2 = await rt.makeRequest('GET', '/another');
     expect(r2.errorCode).toBe('AGENT_TERMINATED');
-    expect(gatewayInstance.request).not.toHaveBeenCalled();
+    expect(proxyHandler).not.toHaveBeenCalled();
   });
 });
 
@@ -636,11 +663,6 @@ describe('AgentRuntime – DPoP (F-2)', () => {
     dpopFixture = { privateKey, publicJwk };
   });
 
-  // Track runtimes so we can shut them down after each test — without
-  // this the token-refresh setTimeout keeps the Node event loop alive
-  // and Jest hangs on exit (the file-wide fake-timer afterEach
-  // doesn't help here because we deliberately use real timers in this
-  // describe block).
   const runtimes: AgentRuntime[] = [];
   beforeEach(() => {
     jest.useRealTimers();
@@ -651,10 +673,6 @@ describe('AgentRuntime – DPoP (F-2)', () => {
       await rt.shutdown().catch(() => undefined);
     }
     runtimes.length = 0;
-    // Restore fake timers so the file-wide `afterEach` (`useRealTimers`)
-    // and the next `beforeEach` (`useFakeTimers`) do not see any
-    // residual real-timer handles that would keep the Jest worker
-    // alive after the suite finishes.
     jest.useFakeTimers();
     jest.clearAllTimers();
   });
@@ -682,93 +700,104 @@ describe('AgentRuntime – DPoP (F-2)', () => {
 
     const issueBody = issuerInstance.post.mock.calls[0]![1] as Record<string, unknown>;
     expect(issueBody['dpopJkt']).toEqual(expect.any(String));
-    // RFC 7638 SHA-256 thumbprints are 43 base64url chars.
     expect(issueBody['dpopJkt'] as string).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    // The thumbprint sent must equal the one derived locally from the public JWK.
     expect(issueBody['dpopJkt']).toBe(
       await jose.calculateJwkThumbprint(dpopFixture.publicJwk, 'sha256'),
     );
   });
 
-  it('attaches a DPoP proof header on every tool invocation', async () => {
+  it('passes a dpopSigner to the transport on every tool invocation', async () => {
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-dpop' } });
     const rt = dpopRuntime();
     await rt.initialize();
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    // Capture credentials and call the signer to verify it works.
+    let capturedCreds: TransportCredentials | undefined;
+    toolHandler.mockImplementationOnce(async (_req, creds) => {
+      capturedCreds = creds;
+      return { success: true, data: { ok: true }, statusCode: 200 };
+    });
 
     await rt.invokeTool({ tool: 'read_file', args: {} });
 
-    const headers = gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>;
-    expect(headers).toHaveProperty('DPoP');
-    expect(typeof headers['DPoP']).toBe('string');
-    // DPoP proofs are JWS Compact: three base64url segments.
-    expect(headers['DPoP']!.split('.')).toHaveLength(3);
+    expect(capturedCreds!.dpopSigner).toBeDefined();
+    const proof = await capturedCreds!.dpopSigner!('POST', 'http://gateway:3002/api/v1/tools/invoke');
+    expect(typeof proof).toBe('string');
+    expect(proof.split('.')).toHaveLength(3);
 
-    // The proof binds to method + URL; decode the payload and check.
-    const decoded = jose.decodeJwt(headers['DPoP']!);
+    const decoded = jose.decodeJwt(proof);
     expect(decoded['htm']).toBe('POST');
     expect(decoded['htu']).toBe('http://gateway:3002/api/v1/tools/invoke');
-    // Header carries the public JWK so the verifier can match cnf.jkt.
-    const protectedHeader = jose.decodeProtectedHeader(headers['DPoP']!);
+    const protectedHeader = jose.decodeProtectedHeader(proof);
     expect(protectedHeader.typ).toBe('dpop+jwt');
     expect(protectedHeader.jwk).toBeDefined();
   });
 
-  it('issues a FRESH DPoP proof on the 401 retry (no replay) — PR review #10', async () => {
-    // First call 401 → token refresh → second call. The retry MUST
-    // sign a new proof with a new `jti`, otherwise the gateway's
-    // replay store would refuse it as a duplicate of the original.
+  it('provides a fresh dpopSigner on the 401 retry (proof jti must differ)', async () => {
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-1' } });
     const rt = dpopRuntime();
     await rt.initialize();
 
-    gatewayInstance.post.mockResolvedValueOnce({ status: 401, data: {} });
+    const proofs: string[] = [];
+    let callCount = 0;
+    toolHandler.mockImplementation(async (_req, creds) => {
+      callCount++;
+      if (creds.dpopSigner) {
+        const proof = await creds.dpopSigner('POST', 'http://gateway:3002/api/v1/tools/invoke');
+        proofs.push(proof);
+      }
+      if (callCount === 1) {
+        return { success: false, statusCode: 401, errorCode: undefined };
+      }
+      return { success: true, statusCode: 200, data: { ok: true } };
+    });
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-2' } });
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
 
     const result = await rt.invokeTool({ tool: 'read_file', args: {} });
     expect(result.success).toBe(true);
-    expect(gatewayInstance.post).toHaveBeenCalledTimes(2);
+    expect(toolHandler).toHaveBeenCalledTimes(2);
+    expect(proofs).toHaveLength(2);
 
-    const proof1 = (gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>)['DPoP'];
-    const proof2 = (gatewayInstance.post.mock.calls[1]![2].headers as Record<string, string>)['DPoP'];
-    expect(proof1).toBeDefined();
-    expect(proof2).toBeDefined();
-    expect(proof1).not.toBe(proof2);
-    const jti1 = jose.decodeJwt(proof1!)['jti'];
-    const jti2 = jose.decodeJwt(proof2!)['jti'];
+    // Each proof must have a different jti (no replay).
+    const jti1 = jose.decodeJwt(proofs[0]!)['jti'];
+    const jti2 = jose.decodeJwt(proofs[1]!)['jti'];
     expect(jti1).toBeDefined();
     expect(jti2).toBeDefined();
     expect(jti1).not.toBe(jti2);
   });
 
-  it('attaches a DPoP proof on /proxy requests too', async () => {
+  it('passes a dpopSigner to the transport on proxy requests', async () => {
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-dpop' } });
     const rt = dpopRuntime();
     await rt.initialize();
-    gatewayInstance.request.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    let capturedCreds: TransportCredentials | undefined;
+    proxyHandler.mockImplementationOnce(async (_req, creds) => {
+      capturedCreds = creds;
+      return { success: true, data: { ok: true }, statusCode: 200 };
+    });
 
     await rt.makeRequest('GET', 'https://api.example.com/data');
 
-    const opts = gatewayInstance.request.mock.calls[0]![0];
-    const headers = opts.headers as Record<string, string>;
-    expect(headers).toHaveProperty('DPoP');
-    const decoded = jose.decodeJwt(headers['DPoP']!);
-    expect(decoded['htm']).toBe('GET');
-    // Proof URL points at the gateway path the runtime actually dialled.
-    expect(typeof decoded['htu']).toBe('string');
-    expect(decoded['htu']).toContain('http://gateway:3002');
+    expect(capturedCreds!.dpopSigner).toBeDefined();
   });
 
-  it('omits DPoP headers when no dpop config is supplied (back-compat)', async () => {
+  it('omits dpopSigner when no dpop config is supplied (back-compat)', async () => {
     issuerInstance.post.mockResolvedValueOnce({ status: 200, data: { token: 'cap-token-plain' } });
     const rt = buildRuntime(); // no dpop
     runtimes.push(rt);
     await rt.initialize();
-    gatewayInstance.post.mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+    let capturedCreds: TransportCredentials | undefined;
+    toolHandler.mockImplementationOnce(async (_req, creds) => {
+      capturedCreds = creds;
+      return { success: true, data: { ok: true }, statusCode: 200 };
+    });
+
     await rt.invokeTool({ tool: 'read_file', args: {} });
-    const headers = gatewayInstance.post.mock.calls[0]![2].headers as Record<string, string>;
-    expect(headers).not.toHaveProperty('DPoP');
+
+    expect(capturedCreds!.dpopSigner).toBeUndefined();
+
     // Issuance body must not include dpopJkt either.
     const body = issuerInstance.post.mock.calls[0]![1] as Record<string, unknown>;
     expect(body['dpopJkt']).toBeUndefined();

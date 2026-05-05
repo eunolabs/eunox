@@ -5,9 +5,14 @@
  * - Network egress restrictions (all traffic routed through Tool Gateway)
  * - Capability token management
  * - Secure tool invocation
+ *
+ * The gateway interaction is fully mediated through a {@link ToolTransport}.
+ * The default is {@link HttpToolTransport}, but callers may supply any
+ * conforming implementation (e.g. {@link InProcessToolTransport} for tests or
+ * a future gRPC implementation) via {@link AgentRuntimeConfig.transport}.
  */
 
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import {
   CapabilityError,
   ErrorCode,
@@ -21,8 +26,27 @@ import {
   SpanKind,
   computeJwkThumbprint,
   createDpopProof,
+  ToolTransport,
+  HttpToolTransport,
+  TransportCredentials,
 } from '@euno/common';
 import type { JWK, KeyLike } from 'jose';
+
+// Re-export transport types and classes for consumer convenience.
+export {
+  HttpToolTransport,
+  InProcessToolTransport,
+} from '@euno/common';
+export type {
+  ToolTransport,
+  ToolTransportResponse,
+  ToolTransportInvokeRequest,
+  ToolTransportProxyRequest,
+  TransportCredentials,
+  HttpToolTransportOptions,
+  InProcessToolHandler,
+  InProcessProxyHandler,
+} from '@euno/common';
 
 /**
  * Async provider for short-lived user authentication tokens.
@@ -132,6 +156,23 @@ export interface AgentRuntimeConfig {
    * use it without also stealing the key.
    */
   dpop?: DpopConfig;
+
+  /**
+   * Optional transport implementation used to send tool calls and proxy
+   * requests to the Tool Gateway.
+   *
+   * When omitted the runtime creates an {@link HttpToolTransport} backed by
+   * the Node 18+ `fetch` API, which is the right default for all production
+   * deployments.
+   *
+   * Callers can inject an alternative implementation to:
+   *   - Use a gRPC transport for streaming tool calls.
+   *   - Use an {@link InProcessToolTransport} in unit tests without needing
+   *     an HTTP server.
+   *   - Wrap the default HTTP transport to add custom retry, circuit-breaking,
+   *     or observability logic.
+   */
+  transport?: ToolTransport;
 }
 
 /**
@@ -206,7 +247,12 @@ export interface ToolCallResponse {
 export class AgentRuntime {
   private config: AgentRuntimeConfig;
   private capabilityToken?: string;
-  private httpClient: AxiosInstance;
+  /**
+   * The transport used to send all tool calls and proxy requests to the
+   * gateway.  Defaults to {@link HttpToolTransport}; can be overridden via
+   * {@link AgentRuntimeConfig.transport} for tests or alternative protocols.
+   */
+  private transport: ToolTransport;
   private tokenRefreshTimer?: NodeJS.Timeout;
   /** AbortController used to cancel any in-flight token acquisition during
    *  shutdown so a refresh racing with shutdown does not resurrect state. */
@@ -255,24 +301,10 @@ export class AgentRuntime {
       ...config,
     };
 
-    // Create HTTP client that routes ALL requests through gateway
-    this.httpClient = axios.create({
-      baseURL: this.config.gatewayUrl,
-      timeout: 30000,
-      validateStatus: () => true, // Handle all status codes manually
-    });
-
-    // R-3: inject the active trace context (W3C `traceparent` / `tracestate`)
-    // on every outbound gateway request so the gateway's tracingMiddleware
-    // joins the same trace as the agent-side client span. No-op when no
-    // SDK is registered (the inject call sees an invalid context and
-    // writes nothing).
-    this.httpClient.interceptors.request.use((req) => {
-      const headers = (req.headers ?? {}) as Record<string, string>;
-      injectTraceContext(headers);
-      req.headers = headers as typeof req.headers;
-      return req;
-    });
+    // Use the caller-supplied transport or fall back to the default HTTP
+    // transport backed by the Node 18+ fetch API.
+    this.transport =
+      config.transport ?? new HttpToolTransport(this.config.gatewayUrl);
   }
 
   /**
@@ -577,24 +609,6 @@ export class AgentRuntime {
   }
 
   /**
-   * Extract the structured error code returned by the gateway error
-   * middleware, which serializes a `CapabilityError` as
-   * `{ error: { code, message } }`.  Returns `undefined` when the body is
-   * missing or doesn't carry a code (e.g. proxied upstream error).
-   */
-  private extractErrorCode(data: unknown): string | undefined {
-    if (!data || typeof data !== 'object') return undefined;
-    const err = (data as { error?: unknown }).error;
-    if (err && typeof err === 'object' && typeof (err as { code?: unknown }).code === 'string') {
-      return (err as { code: string }).code;
-    }
-    if (typeof (data as { code?: unknown }).code === 'string') {
-      return (data as { code: string }).code;
-    }
-    return undefined;
-  }
-
-  /**
    * Decide whether a 401 response from the gateway warrants a refresh+retry.
    *
    * - `EXPIRED_TOKEN` → yes, the token simply aged out; refresh and try again.
@@ -609,56 +623,54 @@ export class AgentRuntime {
   }
 
   /**
-   * Build the per-request `DPoP` header (F-2). Returns `{}` when DPoP
-   * is not configured so the call sites can spread the result
-   * unconditionally.
+   * Build a DPoP signer closure for the current request (F-2).
    *
-   * The proof binds the request to (`method`, `<gatewayUrl><path>`)
-   * — the gateway reconstructs the same canonical URL on its side
-   * (honouring `X-Forwarded-*` for TLS-terminating reverse proxies)
-   * before comparing.
+   * Returns `undefined` when DPoP is not configured so the transport skips
+   * proof generation entirely.  The closure captures the dpop config by
+   * reference so multiple calls within the same runtime lifecycle reuse the
+   * same key material without re-importing it.
    */
-  private async buildDpopHeader(
-    method: string,
-    path: string,
-  ): Promise<Record<string, string>> {
-    if (!this.config.dpop) return {};
-    const proof = await createDpopProof({
-      privateKey: this.config.dpop.privateKey,
-      publicJwk: this.config.dpop.publicJwk,
-      algorithm: this.config.dpop.algorithm ?? 'ES256',
-      httpMethod: method,
-      httpUrl: this.absoluteGatewayUrl(path),
-    });
-    return { DPoP: proof };
+  private makeDpopSigner():
+    | ((method: string, url: string) => Promise<string>)
+    | undefined {
+    if (!this.config.dpop) return undefined;
+    const { privateKey, publicJwk, algorithm = 'ES256' } = this.config.dpop;
+    return (method: string, url: string) =>
+      createDpopProof({ privateKey, publicJwk, algorithm, httpMethod: method, httpUrl: url });
   }
 
   /**
-   * Compose `gatewayUrl` + `path` without double slashes, mirroring how
-   * axios's `baseURL` joins them. Used to build the canonical `htu`
-   * for DPoP proofs.
+   * Assemble {@link TransportCredentials} for the current request.
+   *
+   * Injects the active W3C trace context so the gateway's tracing middleware
+   * joins the same distributed trace as the agent-side client span (R-3).
+   * When no SDK is registered, `injectTraceContext` writes nothing and the
+   * `additionalHeaders` object is passed as an empty record.
    */
-  private absoluteGatewayUrl(path: string): string {
-    const base = this.config.gatewayUrl.replace(/\/+$/, '');
-    const tail = path.startsWith('/') ? path : `/${path}`;
-    return `${base}${tail}`;
-  }
+  private buildCredentials(): TransportCredentials {
+    // R-3: collect W3C traceparent / tracestate into a plain object so the
+    // transport can forward them as regular HTTP headers (or gRPC metadata).
+    const traceHeaders: Record<string, string> = {};
+    injectTraceContext(traceHeaders);
 
-  /**
-   * Build a {@link ToolCallResponse} from a raw axios response, capturing the
-   * structured error code when the gateway returned one.
-   */
-  private buildResponse(response: { status: number; data: any }): ToolCallResponse {
-    const code = this.extractErrorCode(response.data);
     return {
-      success: response.status >= 200 && response.status < 300,
-      data: response.data,
-      error: response.status >= 400
-        ? (response.data?.error?.message ?? response.data?.error ?? response.data?.message)
-        : undefined,
-      statusCode: response.status,
-      errorCode: code,
+      capabilityToken: this.capabilityToken!,
+      agentId: this.config.agentId,
+      dpopSigner: this.makeDpopSigner(),
+      additionalHeaders: traceHeaders,
     };
+  }
+
+  /**
+   * Mark the runtime as terminated and stop the token-refresh loop.
+   * Called whenever the gateway signals AGENT_TERMINATED (403).
+   */
+  private handleTermination(): void {
+    this.terminated = true;
+    if (this.tokenRefreshTimer) {
+      clearTimeout(this.tokenRefreshTimer);
+      this.tokenRefreshTimer = undefined;
+    }
   }
 
   /**
@@ -721,83 +733,47 @@ export class AgentRuntime {
       }
     }
 
-    try {
-      const toolsPath = '/api/v1/tools/invoke';
-      const dpopHeaders = await this.buildDpopHeader('POST', toolsPath);
-      const response = await this.httpClient.post(toolsPath, {
-        tool: request.tool,
-        args: request.args,
-        resource: request.resource,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${this.capabilityToken}`,
-          'X-Agent-ID': this.config.agentId,
-          ...dpopHeaders,
-        },
-      });
+    const response = await this.transport.invokeTool(
+      { tool: request.tool, args: request.args, resource: request.resource },
+      this.buildCredentials(),
+    );
 
-      // Distinguish failure modes via the structured error code returned by
-      // the gateway, rather than treating all 401s as "expired".
-      const code = this.extractErrorCode(response.data);
-
-      // 403 + AGENT_TERMINATED → kill switch fired.  Stop refreshing and
-      // mark the runtime terminated so we don't keep minting doomed tokens.
-      if (response.status === 403 && code === ErrorCode.AGENT_TERMINATED) {
-        this.terminated = true;
-        if (this.tokenRefreshTimer) {
-          clearTimeout(this.tokenRefreshTimer);
-          this.tokenRefreshTimer = undefined;
-        }
-        return this.buildResponse(response);
-      }
-
-      // 401 → only refresh+retry when the token actually expired.  Revoked,
-      // invalid, or otherwise rejected tokens won't be helped by a refresh.
-      if (response.status === 401 && this.shouldRefreshOn401(code)) {
-        try {
-          await this.acquireCapabilityToken();
-        } catch (refreshError) {
-          // If refresh itself fails (e.g. terminated mid-flight), surface the
-          // original 401 with its structured code intact.
-          return this.buildResponse(response);
-        }
-
-        // F-2: every request — including the retry — needs a fresh
-        // DPoP proof; reusing the original would be flagged as a
-        // replay by the gateway's jti store.
-        const retryDpopHeaders = await this.buildDpopHeader('POST', toolsPath);
-        const retryResponse = await this.httpClient.post(toolsPath, {
-          tool: request.tool,
-          args: request.args,
-          resource: request.resource,
-        }, {
-          headers: {
-            'Authorization': `Bearer ${this.capabilityToken}`,
-            'X-Agent-ID': this.config.agentId,
-            ...retryDpopHeaders,
-          },
-        });
-
-        const retryCode = this.extractErrorCode(retryResponse.data);
-        if (retryResponse.status === 403 && retryCode === ErrorCode.AGENT_TERMINATED) {
-          this.terminated = true;
-          if (this.tokenRefreshTimer) {
-            clearTimeout(this.tokenRefreshTimer);
-            this.tokenRefreshTimer = undefined;
-          }
-        }
-
-        return this.buildResponse(retryResponse);
-      }
-
-      return this.buildResponse(response);
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        statusCode: 500,
-      };
+    // 403 + AGENT_TERMINATED → kill switch fired.  Stop refreshing and
+    // mark the runtime terminated so we don't keep minting doomed tokens.
+    if (response.statusCode === 403 && response.errorCode === ErrorCode.AGENT_TERMINATED) {
+      this.handleTermination();
+      return response;
     }
+
+    // 401 → only refresh+retry when the token actually expired.  Revoked,
+    // invalid, or otherwise rejected tokens won't be helped by a refresh.
+    if (response.statusCode === 401 && this.shouldRefreshOn401(response.errorCode)) {
+      try {
+        await this.acquireCapabilityToken();
+      } catch {
+        // If refresh itself fails (e.g. terminated mid-flight), surface the
+        // original 401 with its structured code intact.
+        return response;
+      }
+
+      // F-2: every request — including the retry — needs a fresh DPoP proof;
+      // reusing the original would be flagged as a replay by the jti store.
+      const retryResponse = await this.transport.invokeTool(
+        { tool: request.tool, args: request.args, resource: request.resource },
+        this.buildCredentials(),
+      );
+
+      if (
+        retryResponse.statusCode === 403 &&
+        retryResponse.errorCode === ErrorCode.AGENT_TERMINATED
+      ) {
+        this.handleTermination();
+      }
+
+      return retryResponse;
+    }
+
+    return response;
   }
 
   /**
@@ -809,17 +785,13 @@ export class AgentRuntime {
    *
    * Host forwarding
    * ---------------
-   * For absolute URLs we encode the intended target host in BOTH the proxy
-   * path (`/proxy/<host><path>`) AND the `X-Target-Host` / `X-Target-Scheme`
-   * headers. This allows the gateway to:
+   * For absolute URLs the transport encodes the intended target host in BOTH
+   * the proxy path (`/proxy/<host><path>`) AND the `X-Target-Host` /
+   * `X-Target-Scheme` headers. This allows the gateway to:
    *
    *   1. Derive a host-qualified resource (e.g. `api://api.example.com/data`)
    *      so capability tokens can be constrained by intended host, not just
-   *      path. The previous implementation stripped the host and forwarded
-   *      only the path, decoupling the authorized resource (e.g. `api://crm/`)
-   *      from the actual destination URL — meaning a token authorising "talk
-   *      to CRM" could not be cryptographically bound to "you actually called
-   *      CRM and not a look-alike".
+   *      path.
    *   2. Cross-check the path-encoded host against the header to detect
    *      tampering.
    *
@@ -878,58 +850,16 @@ export class AgentRuntime {
       await this.acquireCapabilityToken();
     }
 
-    try {
-      // Derive the proxy path from the URL so requests are forwarded via
-      // the gateway's /proxy/* mount point rather than sent as a JSON payload.
-      let proxyPath: string;
-      const extraHeaders: Record<string, string> = {};
-      if (/^https?:\/\//i.test(url)) {
-        const targetUrl = new URL(url);
-        // Include the intended target host in the proxy path so the gateway
-        // can derive a host-qualified resource identifier. URL.pathname is
-        // guaranteed to start with '/' per the WHATWG URL spec, so we can
-        // concatenate directly.
-        const hostSegment = targetUrl.host; // host:port
-        const pathAndQuery = targetUrl.pathname + targetUrl.search;
-        proxyPath = `/${hostSegment}${pathAndQuery}`;
-        extraHeaders['X-Target-Host'] = hostSegment;
-        extraHeaders['X-Target-Scheme'] = targetUrl.protocol.replace(/:$/, '');
-      } else {
-        proxyPath = url.startsWith('/') ? url : `/${url}`;
-      }
+    const response = await this.transport.proxyRequest(
+      { method, url, data },
+      this.buildCredentials(),
+    );
 
-      const proxyUrl = `/proxy${proxyPath}`;
-      // F-2: bind the proof to the proxy URL the gateway will see.
-      const dpopHeaders = await this.buildDpopHeader(method, proxyUrl);
-      const response = await this.httpClient.request({
-        method,
-        url: proxyUrl,
-        data,
-        headers: {
-          'Authorization': `Bearer ${this.capabilityToken}`,
-          'X-Agent-ID': this.config.agentId,
-          ...extraHeaders,
-          ...dpopHeaders,
-        },
-      });
-
-      const code = this.extractErrorCode(response.data);
-      if (response.status === 403 && code === ErrorCode.AGENT_TERMINATED) {
-        this.terminated = true;
-        if (this.tokenRefreshTimer) {
-          clearTimeout(this.tokenRefreshTimer);
-          this.tokenRefreshTimer = undefined;
-        }
-      }
-
-      return this.buildResponse(response);
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        statusCode: 500,
-      };
+    if (response.statusCode === 403 && response.errorCode === ErrorCode.AGENT_TERMINATED) {
+      this.handleTermination();
     }
+
+    return response;
   }
 
   /**

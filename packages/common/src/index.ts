@@ -27,3 +27,4 @@ export * from './issuance-proofs';
 export * from './cosigner';
 export * from './transparency-log';
 export * from './shard';
+export * from './tool-transport';
