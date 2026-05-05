@@ -317,3 +317,134 @@ describe('JwksTokenVerifier (R-6)', () => {
     expect(payload.sub).toBe('agent-1');
   });
 });
+
+// ── JwksTokenVerifier + epoch revocation ─────────────────────────────────
+
+import { InMemoryRevocationEpochStore } from '../src/revocation-store';
+
+describe('JwksTokenVerifier epoch revocation', () => {
+  const SIGNING_ALG = 'RS256';
+  const KID = 'epoch-test-kid';
+  let privateKey: jose.KeyLike;
+  let publicKey: jose.KeyLike;
+  let jwksClient: JwksClient;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const pair = await jose.generateKeyPair(SIGNING_ALG, { extractable: true });
+    privateKey = pair.privateKey;
+    publicKey = pair.publicKey;
+    const publicKeyJwk = await jose.exportJWK(publicKey);
+
+    const jwks = {
+      keys: [{ ...publicKeyJwk, kid: KID, use: 'sig', alg: SIGNING_ALG, kty: publicKeyJwk.kty! }],
+    };
+    mockedAxios.get.mockResolvedValue({ data: jwks });
+
+    jwksClient = new JwksClient({ jwksUrl: JWKS_URL, cacheTtlMs: 60_000 });
+    await jwksClient.getJwks();
+  });
+
+  async function mintTokenWithIat(iat: number, kid: string = KID): Promise<string> {
+    return new jose.SignJWT({
+      sub: 'agent-epoch',
+      iss: 'did:web:epoch.example.com',
+      aud: 'euno-gateway',
+      iat,
+      exp: Math.floor(Date.now() / 1000) + 600,
+      jti: `jti-${iat}`,
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities: [],
+    })
+      .setProtectedHeader({ alg: SIGNING_ALG, kid })
+      .sign(privateKey);
+  }
+
+  async function mintTokenWithoutIat(kid: string = KID): Promise<string> {
+    // Deliberately omit iat to test the bypass-prevention path
+    return new jose.SignJWT({
+      sub: 'agent-epoch',
+      iss: 'did:web:epoch.example.com',
+      aud: 'euno-gateway',
+      exp: Math.floor(Date.now() / 1000) + 600,
+      jti: 'jti-no-iat',
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities: [],
+    })
+      .setProtectedHeader({ alg: SIGNING_ALG, kid })
+      .sign(privateKey);
+  }
+
+  it('accepts a token when no epoch is set on the JWKS verifier', async () => {
+    const epochStore = new InMemoryRevocationEpochStore();
+    const verifier = new JwksTokenVerifier(jwksClient, { epochStore });
+
+    const token = await mintTokenWithIat(Math.floor(Date.now() / 1000) - 60);
+    await expect(verifier.verify(token)).resolves.toBeDefined();
+  });
+
+  it('rejects a pre-epoch token when epochStore is wired via options', async () => {
+    const epochStore = new InMemoryRevocationEpochStore();
+    const epoch = Math.floor(Date.now() / 1000); // epoch = now
+    await epochStore.setEpoch('did:web:epoch.example.com', epoch);
+
+    const verifier = new JwksTokenVerifier(jwksClient, { epochStore });
+
+    // Token issued 100 s before the epoch
+    const token = await mintTokenWithIat(epoch - 100);
+    await expect(verifier.verify(token)).rejects.toMatchObject({
+      code: 'TOKEN_REVOKED',
+    });
+  });
+
+  it('accepts a token whose iat equals the epoch (strict < check)', async () => {
+    const epochStore = new InMemoryRevocationEpochStore();
+    const epoch = Math.floor(Date.now() / 1000) - 300;
+    await epochStore.setEpoch('did:web:epoch.example.com', epoch);
+
+    const verifier = new JwksTokenVerifier(jwksClient, { epochStore });
+
+    // iat === epoch is not blocked (strict less-than)
+    const token = await mintTokenWithIat(epoch);
+    await expect(verifier.verify(token)).resolves.toBeDefined();
+  });
+
+  it('rejects a token that omits iat when an epoch is active', async () => {
+    const epochStore = new InMemoryRevocationEpochStore();
+    await epochStore.setEpoch('did:web:epoch.example.com', Math.floor(Date.now() / 1000) - 600);
+
+    const verifier = new JwksTokenVerifier(jwksClient, { epochStore });
+
+    const token = await mintTokenWithoutIat();
+    await expect(verifier.verify(token)).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    });
+  });
+
+  it('epoch check is isolated per issuer on JwksTokenVerifier', async () => {
+    const epochStore = new InMemoryRevocationEpochStore();
+    // Set epoch only for a different issuer
+    await epochStore.setEpoch('did:web:other.example.com', Math.floor(Date.now() / 1000) + 3600);
+
+    const verifier = new JwksTokenVerifier(jwksClient, { epochStore });
+
+    // Token from 'did:web:epoch.example.com' — no epoch set for it
+    const token = await mintTokenWithIat(Math.floor(Date.now() / 1000) - 60);
+    await expect(verifier.verify(token)).resolves.toBeDefined();
+  });
+
+  it('epoch store wired via setEpochStore() is honoured on the JWKS path', async () => {
+    const verifier = new JwksTokenVerifier(jwksClient);
+    const epochStore = new InMemoryRevocationEpochStore();
+    const epoch = Math.floor(Date.now() / 1000);
+    await epochStore.setEpoch('did:web:epoch.example.com', epoch);
+
+    // Inject epoch store after construction
+    await verifier.setEpochStore(epochStore);
+
+    const token = await mintTokenWithIat(epoch - 50);
+    await expect(verifier.verify(token)).rejects.toMatchObject({
+      code: 'TOKEN_REVOKED',
+    });
+  });
+});

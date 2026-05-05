@@ -234,6 +234,7 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       logger,
       adminApiKey,
       tokenVerifier: verifier,
+      epochStore: deps.epochStore,
       partnerResolver: deps.partnerResolver,
     }),
   );

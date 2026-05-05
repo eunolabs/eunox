@@ -1039,6 +1039,16 @@ export const GatewayConfigSchema = z
       description:
         'When Redis is unreachable, treat lookups as "not revoked" instead of "revoked". Use ONLY if availability matters more than revocation freshness. Boolean: true | false.',
     }),
+    REVOCATION_EPOCH_KEY_PREFIX: optionalString.describe(
+      'Optional Redis key prefix for per-issuer revocation epoch entries. Default "epoch:". ' +
+      'Each key stores the epoch (unix seconds) for one issuer; tokens with iat before the epoch are rejected.',
+    ),
+    REVOCATION_EPOCH_FAIL_OPEN: envBoolean({
+      default: false,
+      description:
+        'When Redis is unreachable for epoch lookups, treat the check as "no epoch set" instead of failing closed. ' +
+        'Use ONLY if availability matters more than the epoch-revocation guarantee. Boolean: true | false.',
+    }),
     KILL_SWITCH_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for kill-switch entries. Default "killswitch:".',
     ),

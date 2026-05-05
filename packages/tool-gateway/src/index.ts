@@ -42,7 +42,7 @@ export async function startServer(): Promise<void> {
   const app = createApp(deps);
   const adminApp = createAdminApp(deps);
 
-  const { config, logger, revocationStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs, ocsfTransport, dpopReplayStore } = deps;
+  const { config, logger, revocationStore, epochStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs, ocsfTransport, dpopReplayStore } = deps;
 
   const server = app.listen(config.port, () => {
     setReady(true);
@@ -95,6 +95,15 @@ export async function startServer(): Promise<void> {
           }
         } catch (err) {
           logger.warn('Error while closing revocation store', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        try {
+          if (epochStore) {
+            await epochStore.close();
+          }
+        } catch (err) {
+          logger.warn('Error while closing epoch store', {
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         }

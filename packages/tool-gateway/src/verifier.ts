@@ -14,7 +14,7 @@ import {
   JwksKeySource,
   pickJwkByKid,
 } from '@euno/common';
-import { InMemoryRevocationStore, RevocationStore } from './revocation-store';
+import { InMemoryRevocationStore, RevocationStore, RevocationEpochStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
 import { JwksClient } from './jwks-client';
 import { ProofsVerifier } from './proofs-verifier';
@@ -27,6 +27,13 @@ export class JWTTokenVerifier implements TokenVerifier {
   // RedisRevocationStore) so revocations are visible across replicas.
   // See `docs/DISTRIBUTED_REVOCATION.md` for the operational architecture.
   private revocationStore: RevocationStore;
+  /**
+   * Optional per-issuer epoch store.  When configured, `performPostVerificationChecks`
+   * rejects any token whose `iat` is strictly before the epoch recorded for
+   * its `iss` claim.  This gives incident responders a single-knob cut-off
+   * for a compromised signing key without enumerating every outstanding JTI.
+   */
+  protected epochStore?: RevocationEpochStore;
   /** Protected so subclasses (e.g. JwksTokenVerifier) can access in verify(). */
   protected algorithms: SigningAlgorithm[];
   /**
@@ -314,6 +321,25 @@ export class JWTTokenVerifier implements TokenVerifier {
   }
 
   /**
+   * Attach (or replace) the per-issuer epoch store.  When set, every
+   * successfully-verified token is additionally checked against its issuer's
+   * epoch: tokens with `iat` strictly before the recorded epoch are rejected
+   * as if they were individually revoked.  Closes the previous store on a
+   * best-effort basis.
+   */
+  async setEpochStore(store: RevocationEpochStore): Promise<void> {
+    const previous = this.epochStore;
+    this.epochStore = store;
+    if (previous && previous !== store) {
+      try {
+        await previous.close();
+      } catch {
+        // best-effort close; the new store is already in place
+      }
+    }
+  }
+
+  /**
    * Update the public key (for key rotation)
    */
   updatePublicKey(publicKey: string): void {
@@ -322,7 +348,7 @@ export class JWTTokenVerifier implements TokenVerifier {
   }
 
   /**
-   * Shared post-signature checks: revocation + schema version.
+   * Shared post-signature checks: revocation + epoch + schema version.
    * Protected so {@link JwksTokenVerifier} can call it without duplicating
    * the logic.
    */
@@ -332,6 +358,37 @@ export class JWTTokenVerifier implements TokenVerifier {
     const tokenId = payload.jti as string;
     if (tokenId && (await this.isRevoked(tokenId))) {
       throw new CapabilityError(ErrorCode.TOKEN_REVOKED, 'Token has been revoked', 401);
+    }
+
+    // Per-issuer epoch check: reject tokens whose iat predates the cut-off.
+    // getEpoch() is fail-closed by default — a Redis outage returns
+    // nowSeconds()+1 as the epoch, blocking all tokens from that issuer until
+    // the store is reachable again (prevents an outage from bypassing an
+    // active epoch).  Operators may set REVOCATION_EPOCH_FAIL_OPEN=true to
+    // swap to fail-open behaviour.
+    if (this.epochStore && payload.iss) {
+      const epoch = await this.epochStore.getEpoch(payload.iss);
+      if (epoch !== null) {
+        // CapabilityTokenPayload requires iat to be a number, but at runtime
+        // a crafted/malformed token could omit it entirely. Tokens without a
+        // valid numeric iat cannot be placed on the timeline relative to the
+        // epoch, so we treat them as pre-epoch and reject them rather than
+        // silently bypassing the cut-off.
+        if (typeof payload.iat !== 'number') {
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            'Token is missing a required numeric iat claim and cannot be validated against the issuer epoch',
+            401,
+          );
+        }
+        if (payload.iat < epoch) {
+          throw new CapabilityError(
+            ErrorCode.TOKEN_REVOKED,
+            'Token predates the revocation epoch for its issuer',
+            401,
+          );
+        }
+      }
     }
 
     const schemaVersion = payload.schemaVersion;
@@ -392,6 +449,13 @@ export interface JwksTokenVerifierOptions {
    * `REQUIRE_TRANSPARENCY_LOG_PROOF`, `TRANSPARENCY_LOG_JWKS_FILE`.
    */
   proofsVerifier?: ProofsVerifier;
+  /**
+   * Optional per-issuer epoch store (revoke-all-before-T mechanism).
+   * When supplied, tokens whose `iat` is strictly before the epoch recorded
+   * for their `iss` are rejected — useful for a full key-compromise response
+   * without enumerating individual JTIs.  See {@link RevocationEpochStore}.
+   */
+  epochStore?: RevocationEpochStore;
 }
 
 /**
@@ -433,6 +497,9 @@ export class JwksTokenVerifier extends JWTTokenVerifier {
       options.proofsVerifier,
     );
     this.jwksSource = jwksKeySource;
+    if (options.epochStore) {
+      this.epochStore = options.epochStore;
+    }
   }
 
   /**

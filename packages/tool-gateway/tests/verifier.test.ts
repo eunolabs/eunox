@@ -4,6 +4,9 @@
 
 import { JWTTokenVerifier } from '../src/verifier';
 import {
+  InMemoryRevocationEpochStore,
+} from '../src/revocation-store';
+import {
   CapabilityTokenPayload,
   getCurrentTimestamp,
   getExpirationTimestamp,
@@ -341,6 +344,192 @@ describe('JWTTokenVerifier', () => {
 
       // Should be rejected - either as missing or unsupported depending on type coercion
       await expect(verifier.verify(token)).rejects.toThrow();
+    });
+  });
+
+  describe('epoch revocation', () => {
+    it('accepts a token when no epoch is set', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const epochStore = new InMemoryRevocationEpochStore();
+      await freshVerifier.setEpochStore(epochStore);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp() - 60,
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-ok-1',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).resolves.toBeDefined();
+    });
+
+    it('accepts a token whose iat is at or after the epoch', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const epochStore = new InMemoryRevocationEpochStore();
+      const epoch = getCurrentTimestamp() - 600; // 10 min ago
+      await epochStore.setEpoch('did:web:test.com', epoch);
+      await freshVerifier.setEpochStore(epochStore);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: epoch, // exactly at epoch — allowed (strict < check)
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-ok-2',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).resolves.toBeDefined();
+    });
+
+    it('rejects a token whose iat is before the epoch', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const epochStore = new InMemoryRevocationEpochStore();
+      const epoch = getCurrentTimestamp(); // epoch = now
+      await epochStore.setEpoch('did:web:test.com', epoch);
+      await freshVerifier.setEpochStore(epochStore);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: epoch - 100, // issued 100s before the epoch — blocked
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-blocked-1',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).rejects.toThrow(/predates.*epoch/i);
+    });
+
+    it('does not apply epoch check to a different issuer', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const epochStore = new InMemoryRevocationEpochStore();
+      const epoch = getCurrentTimestamp() + 3600; // epoch in the future
+      await epochStore.setEpoch('did:web:other-issuer.com', epoch);
+      await freshVerifier.setEpochStore(epochStore);
+
+      // Token from a different issuer — no epoch set for it, so it passes
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp() - 60,
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-other-issuer',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).resolves.toBeDefined();
+    });
+
+    it('setEpochStore replaces a previous store', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const oldStore = new InMemoryRevocationEpochStore();
+      const epoch = getCurrentTimestamp() + 3600;
+      await oldStore.setEpoch('did:web:test.com', epoch);
+      await freshVerifier.setEpochStore(oldStore);
+
+      // Now replace with a store that has no epoch set
+      const newStore = new InMemoryRevocationEpochStore();
+      await freshVerifier.setEpochStore(newStore);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp() - 60,
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-replace',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      // New store has no epoch — token should pass
+      await expect(freshVerifier.verify(token)).resolves.toBeDefined();
+    });
+
+    it('rejects a token with missing iat when an epoch is active', async () => {
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const epochStore = new InMemoryRevocationEpochStore();
+      await epochStore.setEpoch('did:web:test.com', getCurrentTimestamp() - 300);
+      await freshVerifier.setEpochStore(epochStore);
+
+      // Craft a payload without iat — cannot be placed on the timeline
+      const payloadNoIat = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        // deliberately omit iat
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-no-iat',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [] as any[],
+      };
+
+      const token = await new jose.SignJWT(payloadNoIat as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).rejects.toMatchObject({
+        code: 'INVALID_TOKEN',
+      });
+    });
+
+    it('fail-closed epoch (nowSeconds()+1) blocks a token minted in the same second', async () => {
+      // This test simulates the fail-closed path by constructing a fake epoch
+      // store that returns nowSeconds()+1 (as the Redis error path now does)
+      // and confirms that a token with iat === now is still rejected.
+      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const nowEpoch = getCurrentTimestamp() + 1; // mirrors nowSeconds()+1
+      const epochStore = new InMemoryRevocationEpochStore();
+      await epochStore.setEpoch('did:web:test.com', nowEpoch);
+      await freshVerifier.setEpochStore(epochStore);
+
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(), // iat === now; epoch is now+1 → rejected
+        exp: getExpirationTimestamp(900),
+        jti: 'epoch-same-second',
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [],
+      };
+
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+
+      await expect(freshVerifier.verify(token)).rejects.toThrow(/predates.*epoch/i);
     });
   });
 });

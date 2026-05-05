@@ -43,7 +43,7 @@ import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
 import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
-import { createRevocationStoreFromEnv, RevocationStore } from './revocation-store';
+import { createRevocationStoreFromEnv, RevocationStore, createRevocationEpochStoreFromEnv, RevocationEpochStore } from './revocation-store';
 import { createPartnerIssuerResolverFromEnv } from './partner-issuer-resolver';
 
 type Logger = ReturnType<typeof createLogger>;
@@ -62,6 +62,12 @@ export interface GatewayDependencies {
   killSwitchManager: KillSwitchManager;
   callCounterStore?: CallCounterStore;
   revocationStore?: RevocationStore;
+  /**
+   * Per-issuer epoch store.  When set, every token verification also checks
+   * the issuer epoch: tokens with `iat` before the epoch are rejected.
+   * Wired from `REDIS_URL` (Redis-backed) or falls back to in-memory.
+   */
+  epochStore?: RevocationEpochStore;
   evidenceSigner?: EvidenceSigner;
   /**
    * Async audit pipeline (R-9). Present when evidence signing is
@@ -392,6 +398,18 @@ export async function initializeServices(
     () => redisErrorsCounter?.inc({ store: 'revocation' }),
   );
 
+  // Build the per-issuer epoch store from environment.  Defaults to in-memory;
+  // if REDIS_URL is set we use Redis so an epoch set on one replica is
+  // immediately honoured by all others.  Epochs are a "revoke-all-before-T"
+  // knob for incident response (key compromise).  Redis errors fail-closed by
+  // default (REVOCATION_EPOCH_FAIL_OPEN=false): the store returns the current
+  // time as the epoch, blocking all tokens until Redis recovers.
+  const epochStore = await createRevocationEpochStoreFromEnv(
+    env,
+    logger,
+    () => redisErrorsCounter?.inc({ store: 'revocation_epoch' }),
+  );
+
   // Build the kill-switch manager from environment.  Defaults to the
   // in-process implementation; if REDIS_URL is set we use the Redis-backed
   // manager so kills (global / session / agent) propagate across every
@@ -426,6 +444,7 @@ export async function initializeServices(
 
   const verifier = new JwksTokenVerifier(jwksClient, {
     revocationStore,
+    epochStore,
     partnerResolver: partnerResolver ?? undefined,
     localIssuers: localIssuers.length > 0 ? localIssuers : undefined,
     requireKid,
@@ -515,15 +534,15 @@ export async function initializeServices(
   decisionsCounter.inc({ decision: 'allow' }, 0);
   decisionsCounter.inc({ decision: 'deny' }, 0);
 
-  // Redis store health counter. Incremented by any of the three
-  // Redis-backed stores (DPoP replay, revocation, call-counter) on
+  // Redis store health counter. Incremented by any of the four
+  // Redis-backed stores (DPoP replay, revocation, revocation_epoch, call-counter) on
   // every operational error. A non-zero rate indicates that Redis is
   // partially unavailable; a sustained high rate means the gateway is
   // running in fail-closed mode (DPoP replay / revocation / maxCalls)
   // and legitimate requests will be denied.
   redisErrorsCounter = new Counter({
     name: 'euno_gateway_redis_errors_total',
-    help: 'Redis errors encountered by gateway stores (dpop_replay, revocation, call_counter). ' +
+    help: 'Redis errors encountered by gateway stores (dpop_replay, revocation, revocation_epoch, call_counter). ' +
       'A non-zero rate indicates Redis instability; a sustained rate means the gateway is ' +
       'failing closed on affected checks — monitor alongside denial rates.',
     labelNames: ['store'],
@@ -531,6 +550,7 @@ export async function initializeServices(
   });
   redisErrorsCounter.inc({ store: 'dpop_replay' }, 0);
   redisErrorsCounter.inc({ store: 'revocation' }, 0);
+  redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
   redisErrorsCounter.inc({ store: 'call_counter' }, 0);
 
   // R-9: build the async audit pipeline when evidence signing is on AND
@@ -714,6 +734,7 @@ export async function initializeServices(
     killSwitchManager,
     callCounterStore,
     revocationStore,
+    epochStore,
     evidenceSigner,
     auditPipeline,
     auditPipelineDrainTimeoutMs,

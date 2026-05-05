@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { KillSwitchManager, Logger } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
+import { RevocationEpochStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
 
 export interface AdminApiOptions {
@@ -14,6 +15,13 @@ export interface AdminApiOptions {
   logger: Logger;
   adminApiKey?: string;
   tokenVerifier?: JWTTokenVerifier;
+  /**
+   * Optional per-issuer epoch store.  When supplied the admin router exposes
+   * `POST /admin/revocation/epoch` so incident responders can set a cut-off
+   * timestamp that invalidates every token from a given issuer issued before
+   * that point — without enumerating individual JTIs.
+   */
+  epochStore?: RevocationEpochStore;
   /**
    * Optional partner-issuer resolver. When supplied the admin router
    * exposes a `POST /admin/partner-did/refresh/:encodedDid` endpoint
@@ -31,7 +39,7 @@ export interface AdminApiOptions {
  */
 export function createAdminRouter(options: AdminApiOptions): Router {
   const router = Router();
-  const { killSwitchManager, logger, adminApiKey, tokenVerifier, partnerResolver } = options;
+  const { killSwitchManager, logger, adminApiKey, tokenVerifier, epochStore, partnerResolver } = options;
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -341,6 +349,82 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to revoke token',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/revocation/epoch
+   *
+   * Set (or replace) the per-issuer revocation epoch.  Every token from the
+   * given issuer whose `iat` claim is strictly before `issuedBefore` will be
+   * rejected by the gateway on the next verification attempt — without
+   * requiring the caller to enumerate individual JTIs.
+   *
+   * This is the incident-response "single-knob cut-off": if a signing key is
+   * believed compromised, set `issuedBefore` to the unix-seconds timestamp of
+   * the suspected breach.  All tokens minted from that point back are
+   * immediately blocked.
+   *
+   * Body: `{ issuer: string, issuedBefore: number }`
+   *   - `issuer`      — The `iss` claim value of the tokens to block
+   *                     (DID or plain string, must match exactly).
+   *   - `issuedBefore` — Unix timestamp (seconds).  Tokens with
+   *                      `iat < issuedBefore` are rejected.
+   */
+  router.post('/revocation/epoch', async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (!epochStore) {
+        res.status(501).json({
+          error: {
+            code: 'NOT_IMPLEMENTED',
+            message: 'Epoch revocation not available — epoch store not configured',
+          },
+        });
+        return;
+      }
+
+      const { issuer, issuedBefore } = req.body;
+      if (!issuer || typeof issuer !== 'string') {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'issuer (string) is required',
+          },
+        });
+        return;
+      }
+
+      if (
+        issuedBefore === undefined ||
+        typeof issuedBefore !== 'number' ||
+        !Number.isFinite(issuedBefore)
+      ) {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'issuedBefore must be a finite number (Unix timestamp in seconds)',
+          },
+        });
+        return;
+      }
+
+      await epochStore.setEpoch(issuer, issuedBefore);
+      logger.warn('Revocation epoch set via admin API', { issuer, issuedBefore });
+      res.json({
+        message: `Revocation epoch set for issuer ${issuer}: tokens issued before ${issuedBefore} are now rejected`,
+        issuer,
+        issuedBefore,
+      });
+    } catch (error) {
+      logger.error('Failed to set revocation epoch', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      res.status(500).json({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to set revocation epoch',
         },
       });
     }
