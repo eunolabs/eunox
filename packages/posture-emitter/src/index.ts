@@ -339,6 +339,11 @@ export {
   DEFAULT_DEDUPE_WINDOW_MS,
   DEFAULT_PLUGIN_TIMEOUT_MS,
   DEFAULT_REFRESH_INTERVAL_MS,
+  DEFAULT_DELIVERY_POLL_INTERVAL_MS,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_BACKOFF_BASE_MS,
+  DEFAULT_BACKOFF_MAX_MS,
+  DEFAULT_DELIVERY_BATCH_SIZE,
 } from './types';
 export { RecordStore } from './record-store';
 export { redactForPosture, RedactOptions } from './redact';
@@ -346,3 +351,10 @@ export { StdoutPosturePlugin, StdoutPluginOptions } from './plugins/stdout';
 export { DefenderCspmPlugin, DefenderCspmPluginOptions, DefenderCspmClient } from './plugins/defender-cspm';
 export { SecurityHubPlugin, SecurityHubPluginOptions, SecurityHubClient } from './plugins/security-hub';
 export { SccPlugin, SccPluginOptions, SccClient } from './plugins/scc';
+export { DurableQueue, DurableQueueOptions, QueuedEvent, QueuedEventType } from './durable-queue';
+export { DeliveryWorker, DeliveryWorkerOptions, DeliveryMetricsHooks } from './delivery-worker';
+export {
+  DurablePostureEmitter,
+  DurablePostureEmitterOptions,
+  hashManifest as hashManifestDurable,
+} from './durable-emitter';

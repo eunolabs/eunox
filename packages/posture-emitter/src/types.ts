@@ -44,3 +44,18 @@ export const DEFAULT_DEDUPE_WINDOW_MS = 5 * 60 * 1_000;
 
 /** Default periodic refresh interval (1 hour). */
 export const DEFAULT_REFRESH_INTERVAL_MS = 60 * 60 * 1_000;
+
+/** Default delivery worker poll interval (ms). */
+export const DEFAULT_DELIVERY_POLL_INTERVAL_MS = 1_000;
+
+/** Default maximum delivery attempts before dead-lettering. */
+export const DEFAULT_MAX_ATTEMPTS = 10;
+
+/** Default base back-off interval for exponential retry (ms). */
+export const DEFAULT_BACKOFF_BASE_MS = 1_000;
+
+/** Default maximum back-off interval for exponential retry (ms). */
+export const DEFAULT_BACKOFF_MAX_MS = 300_000;
+
+/** Default events pulled per delivery worker poll tick. */
+export const DEFAULT_DELIVERY_BATCH_SIZE = 50;
