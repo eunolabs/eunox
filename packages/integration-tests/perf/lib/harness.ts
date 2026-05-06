@@ -467,10 +467,11 @@ export async function buildHarness(): Promise<PerfHarness> {
   // I/O dependency (Redis, KMS, OCSF transport).
   const gatewayLogger = createLogger('perf-gateway', 'production');
   gatewayLogger.level = 'error';
-  const verifier = new JWTTokenVerifier(await signer.getPublicKey(), [SIGNING_ALG]);
+  const verifier = new JWTTokenVerifier(await signer.getPublicKey(), { requireKid: false, algorithms: [SIGNING_ALG] });
   const enforcementEngine = new EnforcementEngine({
     verifier,
     logger: gatewayLogger,
+    dpop: { required: false },
   });
   silenceAuditLogger(enforcementEngine as unknown as Record<string, unknown>);
   const killSwitchManager = await createKillSwitchManagerFromEnv({}, gatewayLogger);

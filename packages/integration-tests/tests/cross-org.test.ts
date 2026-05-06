@@ -117,7 +117,7 @@ describe('cross-org trust harness', () => {
       const { publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
       const localSpki = await jose.exportSPKI(publicKey);
       const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [partnerDid], httpAllowList });
-      verifier = new JWTTokenVerifier(localSpki, ['RS256'], undefined, resolver);
+      verifier = new JWTTokenVerifier(localSpki, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
     });
 
     afterAll(async () => {
@@ -165,7 +165,7 @@ describe('cross-org trust harness', () => {
       const { publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
       const localSpki = await jose.exportSPKI(publicKey);
       const emptyResolver = new PartnerIssuerResolver({ trustedIssuerDids: ['did:web:never-trusted.example'] });
-      const strictVerifier = new JWTTokenVerifier(localSpki, ['RS256'], undefined, emptyResolver);
+      const strictVerifier = new JWTTokenVerifier(localSpki, { requireKid: false, algorithms: ['RS256'], partnerResolver: emptyResolver });
 
       await expect(strictVerifier.verify(token)).rejects.toMatchObject({
         code: ErrorCode.INVALID_TOKEN,
@@ -304,7 +304,7 @@ describe('cross-org trust harness', () => {
         const resolver = new PartnerIssuerResolver({
           trustedIssuerDids: ['did:web:trusted-partner.example'],
         });
-        const verifier = new JWTTokenVerifier(localSpki, ['RS256'], undefined, resolver);
+        const verifier = new JWTTokenVerifier(localSpki, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
 
         await expect(verifier.verify(token)).rejects.toMatchObject({
           code: ErrorCode.INVALID_TOKEN,

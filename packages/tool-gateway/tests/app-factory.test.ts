@@ -43,8 +43,13 @@ async function buildDeps(opts?: {
 
   const logger = createLogger('test');
   const killSwitchManager = new DefaultKillSwitchManager(logger);
-  const verifier = new JWTTokenVerifier(publicKey);
-  const enforcementEngine = new EnforcementEngine({ verifier, logger, killSwitchManager });
+  const verifier = new JWTTokenVerifier(publicKey, { requireKid: false });
+  const enforcementEngine = new EnforcementEngine({
+    verifier,
+    logger,
+    killSwitchManager,
+    dpop: { required: false },
+  });
 
   const config: ServiceConfig = {
     name: 'tool-gateway',

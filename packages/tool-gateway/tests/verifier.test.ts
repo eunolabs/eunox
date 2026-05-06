@@ -25,7 +25,7 @@ describe('JWTTokenVerifier', () => {
     privateKey = privKey;
     publicKey = await jose.exportSPKI(pubKey);
 
-    verifier = new JWTTokenVerifier(publicKey);
+    verifier = new JWTTokenVerifier(publicKey, { requireKid: false });
   });
 
   describe('verify', () => {
@@ -145,7 +145,7 @@ describe('JWTTokenVerifier', () => {
   describe('revokeToken', () => {
     it('should use a default expiry (~24 h) when expiresAt is omitted', async () => {
       const before = Math.floor(Date.now() / 1000);
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       await freshVerifier.revokeToken('default-ttl-id');
       expect(await freshVerifier.isRevoked('default-ttl-id')).toBe(true);
       // Confirm the stored expiry is roughly 24 h from now
@@ -162,7 +162,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('should prune expired entries when a new revocation is added', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const pastExpiry = Math.floor(Date.now() / 1000) - 1;
       // Add several already-expired entries
       await freshVerifier.revokeToken('old-1', pastExpiry);
@@ -186,7 +186,7 @@ describe('JWTTokenVerifier', () => {
       const ecPublicKeyPEM = await jose.exportSPKI(ecPubKey);
 
       // Create verifier with ES256 algorithm
-      const es256Verifier = new JWTTokenVerifier(ecPublicKeyPEM, ['ES256']);
+      const es256Verifier = new JWTTokenVerifier(ecPublicKeyPEM, { requireKid: false, algorithms: ['ES256'] });
 
       const payload: CapabilityTokenPayload = {
         iss: 'did:web:test.com',
@@ -217,7 +217,7 @@ describe('JWTTokenVerifier', () => {
       const rsaPublicKeyPEM = await jose.exportSPKI(rsaPubKey);
 
       // Create verifier that accepts both RS256 and RS384
-      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, ['RS256', 'RS384']);
+      const multiAlgoVerifier = new JWTTokenVerifier(rsaPublicKeyPEM, { requireKid: false, algorithms: ['RS256', 'RS384'] });
 
       const payload: CapabilityTokenPayload = {
         iss: 'did:web:test.com',
@@ -349,7 +349,7 @@ describe('JWTTokenVerifier', () => {
 
   describe('epoch revocation', () => {
     it('accepts a token when no epoch is set', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const epochStore = new InMemoryRevocationEpochStore();
       await freshVerifier.setEpochStore(epochStore);
 
@@ -372,7 +372,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('accepts a token whose iat is at or after the epoch', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const epochStore = new InMemoryRevocationEpochStore();
       const epoch = getCurrentTimestamp() - 600; // 10 min ago
       await epochStore.setEpoch('did:web:test.com', epoch);
@@ -397,7 +397,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('rejects a token whose iat is before the epoch', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const epochStore = new InMemoryRevocationEpochStore();
       const epoch = getCurrentTimestamp(); // epoch = now
       await epochStore.setEpoch('did:web:test.com', epoch);
@@ -422,7 +422,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('does not apply epoch check to a different issuer', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const epochStore = new InMemoryRevocationEpochStore();
       const epoch = getCurrentTimestamp() + 3600; // epoch in the future
       await epochStore.setEpoch('did:web:other-issuer.com', epoch);
@@ -448,7 +448,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('setEpochStore replaces a previous store', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const oldStore = new InMemoryRevocationEpochStore();
       const epoch = getCurrentTimestamp() + 3600;
       await oldStore.setEpoch('did:web:test.com', epoch);
@@ -478,7 +478,7 @@ describe('JWTTokenVerifier', () => {
     });
 
     it('rejects a token with missing iat when an epoch is active', async () => {
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const epochStore = new InMemoryRevocationEpochStore();
       await epochStore.setEpoch('did:web:test.com', getCurrentTimestamp() - 300);
       await freshVerifier.setEpochStore(epochStore);
@@ -508,7 +508,7 @@ describe('JWTTokenVerifier', () => {
       // This test simulates the fail-closed path by constructing a fake epoch
       // store that returns nowSeconds()+1 (as the Redis error path now does)
       // and confirms that a token with iat === now is still rejected.
-      const freshVerifier = new JWTTokenVerifier(publicKey);
+      const freshVerifier = new JWTTokenVerifier(publicKey, { requireKid: false });
       const nowEpoch = getCurrentTimestamp() + 1; // mirrors nowSeconds()+1
       const epochStore = new InMemoryRevocationEpochStore();
       await epochStore.setEpoch('did:web:test.com', nowEpoch);
@@ -530,6 +530,33 @@ describe('JWTTokenVerifier', () => {
         .sign(privateKey);
 
       await expect(freshVerifier.verify(token)).rejects.toThrow(/predates.*epoch/i);
+    });
+  });
+
+  // Defence in depth for the constructor's two supported call shapes:
+  // the typed overloads make a mixed call a compile-time error, but a
+  // bypass via `as any` / transpiled JS would otherwise silently drop
+  // the legacy positional args. The runtime guard turns that into a
+  // loud throw so misconfigurations like "passed revocationStore as
+  // arg 3 alongside an options bag" can't reach production.
+  describe('constructor — mixed-form rejection', () => {
+    it('throws when an options bag is combined with a legacy positional argument', () => {
+      expect(
+        () =>
+          // Bypass the TS overloads so we actually exercise the runtime
+          // guard; without the cast tsc would already reject this call.
+          new (JWTTokenVerifier as unknown as new (
+            pk: string,
+            opts: object,
+            extra: object,
+          ) => JWTTokenVerifier)(
+            publicKey,
+            { requireKid: false },
+            // 3rd arg is `revocationStore` in the legacy positional form
+            // — silently ignored before this guard, now rejected.
+            {} as object,
+          ),
+      ).toThrow(/mixing the options-bag and legacy positional/);
     });
   });
 });

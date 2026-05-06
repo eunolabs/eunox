@@ -106,22 +106,39 @@ export interface EnforcementEngineOptions {
   /**
    * DPoP (RFC 9449 / F-2) configuration.
    *
+   * - `required` defaults to `true` and matches the `DPOP_REQUIRED`
+   *   env-var default, so embedders that omit `dpop` get the same
+   *   sender-constrained-token enforcement as the production gateway.
+   *   When `true`, any token without a `cnf.jkt` claim is rejected.
+   *   Set to `false` only for backward-compatible deployments that
+   *   have not yet rolled DPoP issuance out to all callers.
    * - `replayStore` is the per-instance (or shared) store used to
-   *   reject replays of a previously-seen proof. When omitted the
-   *   engine creates an {@link InMemoryDpopReplayStore} sized for a
-   *   single gateway process. Multi-instance deployments should plug
-   *   in a shared backend so a replay sent to a different replica is
-   *   still detected.
-   * - `required` (default `false` when constructing directly; `true`
-   *   via the `DPOP_REQUIRED` env var which defaults to `true`) makes
-   *   DPoP mandatory: any token without a `cnf.jkt` claim is rejected.
-   *   Recommended for all production deployments.
+   *   reject replays of a previously-seen proof. **When `required`
+   *   is `true`, a `replayStore` MUST be supplied** — otherwise the
+   *   constructor throws. This closes the seam where embedders or
+   *   tests could silently fall back to an in-process store, which
+   *   downgrades sender-constrained tokens to ordinary bearer tokens
+   *   across the fleet (a captured proof remains accepted at any
+   *   replica that has not yet seen its `jti`). To intentionally
+   *   keep the in-process store in single-replica or development
+   *   deployments, pass `allowInProcessReplayStore: true`; the engine
+   *   logs a loud warning so the relaxed posture is observable.
+   *   When `required` is `false`, an omitted `replayStore` is treated
+   *   as an in-process store with no warning (DPoP is opt-in there).
    * - `clockSkewSeconds` and `maxAgeSeconds` are forwarded to
    *   {@link verifyDpopProof}.
    */
   dpop?: {
     replayStore?: DpopReplayStore;
     required?: boolean;
+    /**
+     * Explicit opt-in for the {@link InMemoryDpopReplayStore} fallback
+     * when {@link required} is `true`. Set this only for single-replica
+     * deployments, embedded callers that do not span replicas, or
+     * tests. The engine logs a warning at construction time when this
+     * is set so the relaxed replay-defence posture is observable.
+     */
+    allowInProcessReplayStore?: boolean;
     clockSkewSeconds?: number;
     maxAgeSeconds?: number;
   };
@@ -217,8 +234,44 @@ export class EnforcementEngine {
     this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
-    this.dpopRequired = options.dpop?.required === true;
-    this.dpopReplayStore = options.dpop?.replayStore ?? new InMemoryDpopReplayStore();
+    // Defaults are aligned with the `DPOP_REQUIRED` env var (which
+    // defaults to `true`) so embedders that omit `dpop` get the same
+    // sender-constrained-token enforcement as the production gateway.
+    // The historical "default false in code, default true in env"
+    // asymmetry leaked into production via embedded callers.
+    this.dpopRequired = options.dpop?.required ?? true;
+    const suppliedReplayStore = options.dpop?.replayStore;
+    const allowInProcess = options.dpop?.allowInProcessReplayStore === true;
+    if (this.dpopRequired && !suppliedReplayStore && !allowInProcess) {
+      // Fail closed: refuse to construct the engine when DPoP is
+      // required but no shared replay store has been wired. Without
+      // this guard the engine would silently install an
+      // {@link InMemoryDpopReplayStore}, which only catches replays
+      // on the originating replica — a captured proof replayed at
+      // a sibling pod would be accepted, downgrading sender-
+      // constrained tokens to ordinary bearer tokens across the
+      // fleet with no startup signal.
+      throw new Error(
+        'EnforcementEngine: dpop.required=true but no dpop.replayStore was supplied. ' +
+          'A captured DPoP proof would be replayable across replicas because the in-process ' +
+          'fallback only tracks jtis on the originating instance. Wire a shared store ' +
+          '(e.g. RedisDpopReplayStore via createDpopReplayStoreFromEnv) — or, for explicitly ' +
+          'single-replica or development deployments, pass dpop.allowInProcessReplayStore=true ' +
+          'to acknowledge that replay defence is per-process only.',
+      );
+    }
+    if (this.dpopRequired && !suppliedReplayStore && allowInProcess) {
+      // Loud warning: the operator opted in to the in-process
+      // fallback. Make the relaxed posture observable in logs so an
+      // accidental promotion from dev to prod surfaces immediately.
+      this.logger.warn(
+        'EnforcementEngine: dpop.required=true with the in-process replay store. ' +
+          'DPoP replay defence is scoped to this process only; a captured proof can ' +
+          'be replayed once per replica inside its acceptance window. Acceptable for ' +
+          'single-replica or development deployments only.',
+      );
+    }
+    this.dpopReplayStore = suppliedReplayStore ?? new InMemoryDpopReplayStore();
     this.dpopClockSkewSeconds = options.dpop?.clockSkewSeconds ?? 60;
     this.dpopMaxAgeSeconds = options.dpop?.maxAgeSeconds ?? 300;
   }

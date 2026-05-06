@@ -88,15 +88,12 @@ describe('JWKS key-rotation — end-to-end (R-6)', () => {
     key2 = await generateKeyPair('key-2');
 
     client = new JwksClient({ jwksUrl: JWKS_URL, cacheTtlMs: 60_000 });
-    verifier = new JWTTokenVerifier(
-      '', // no SPKI — JWKS path
-      [SIGNING_ALG],
-      undefined,
-      undefined,
-      undefined,
-      client,
-      false, // requireKid — false so we can test without kid as well
-    );
+    verifier = new JWTTokenVerifier('', {
+      // no SPKI — JWKS path
+      requireKid: false, // false so we can test without kid as well
+      algorithms: [SIGNING_ALG],
+      jwksKeySource: client,
+    });
   });
 
   it('Step 1 → 3: gateway verifies token signed with key-1 (single-key JWKS)', async () => {
@@ -155,15 +152,11 @@ describe('JWKS key-rotation — end-to-end (R-6)', () => {
   it('Step 7: token signed with removed key-1 is rejected after cache expires (fail-closed)', async () => {
     // Short TTL so we can simulate expiry in the test
     const shortTtlClient = new JwksClient({ jwksUrl: JWKS_URL, cacheTtlMs: 1 });
-    const shortTtlVerifier = new JWTTokenVerifier(
-      '',
-      [SIGNING_ALG],
-      undefined,
-      undefined,
-      undefined,
-      shortTtlClient,
-      false,
-    );
+    const shortTtlVerifier = new JWTTokenVerifier('', {
+      requireKid: false,
+      algorithms: [SIGNING_ALG],
+      jwksKeySource: shortTtlClient,
+    });
 
     // Stage 1: Issuer publishes [key-1, key-2], gateway boots
     mockedAxios.get

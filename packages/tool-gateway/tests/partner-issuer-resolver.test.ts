@@ -165,7 +165,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     const partner = await makePartnerKeys();
     global.fetch = mockFetchForDid(partner.didDoc);
     const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [PARTNER_DID] });
-    const verifier = new JWTTokenVerifier(localPublicKeyPem, ['RS256'], undefined, resolver);
+    const verifier = new JWTTokenVerifier(localPublicKeyPem, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
 
     const token = await mintPartnerJWT(partner.privateKey, PARTNER_DID);
     const payload = await verifier.verify(token);
@@ -178,7 +178,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     global.fetch = mockFetchForDid(partner.didDoc);
     // Resolver trusts a different DID.
     const resolver = new PartnerIssuerResolver({ trustedIssuerDids: ['did:web:other'] });
-    const verifier = new JWTTokenVerifier(localPublicKeyPem, ['RS256'], undefined, resolver);
+    const verifier = new JWTTokenVerifier(localPublicKeyPem, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
 
     const token = await mintPartnerJWT(partner.privateKey, PARTNER_DID);
     // The token is EdDSA-signed but routes through the local-key path because
@@ -193,7 +193,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     const partner = await makePartnerKeys();
     global.fetch = mockFetchForDid(partner.didDoc);
     const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [PARTNER_DID] });
-    const verifier = new JWTTokenVerifier(localPublicKeyPem, ['RS256'], undefined, resolver);
+    const verifier = new JWTTokenVerifier(localPublicKeyPem, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
 
     const token = await mintPartnerJWT(partner.privateKey, PARTNER_DID);
     // Flip a byte in the signature segment.
@@ -214,7 +214,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     const { publicKey, privateKey } = await jose.generateKeyPair('RS256', { extractable: true });
     const spki = await jose.exportSPKI(publicKey);
     const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [PARTNER_DID] });
-    const verifier = new JWTTokenVerifier(spki, ['RS256'], undefined, resolver);
+    const verifier = new JWTTokenVerifier(spki, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
 
     const now = Math.floor(Date.now() / 1000);
     const localToken = await new jose.SignJWT({
@@ -238,13 +238,7 @@ describe('JWTTokenVerifier — cross-org partner verification', () => {
     const { publicKey, privateKey } = await jose.generateKeyPair('RS256', { extractable: true });
     const spki = await jose.exportSPKI(publicKey);
     const resolver = new PartnerIssuerResolver({ trustedIssuerDids: [PARTNER_DID] });
-    const verifier = new JWTTokenVerifier(
-      spki,
-      ['RS256'],
-      undefined,
-      resolver,
-      ['known-local-issuer']
-    );
+    const verifier = new JWTTokenVerifier(spki, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver, localIssuers: ['known-local-issuer'] });
 
     const now = Math.floor(Date.now() / 1000);
     const token = await new jose.SignJWT({

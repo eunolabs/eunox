@@ -19,6 +19,47 @@ import { PartnerIssuerResolver } from './partner-issuer-resolver';
 import { JwksClient } from './jwks-client';
 import { ProofsVerifier } from './proofs-verifier';
 
+/**
+ * Constructor options for {@link JWTTokenVerifier} (and its
+ * {@link JwksTokenVerifier} subclass).
+ *
+ * The options bag is the documented constructor form. The legacy
+ * positional signature is still accepted by {@link JWTTokenVerifier}
+ * for in-tree back-compat, but new call sites — and especially any
+ * external embedder — should use this object so security-sensitive
+ * defaults like {@link requireKid} are explicit at the call site.
+ */
+export interface JWTTokenVerifierOptions {
+  /** JWT signing algorithms the verifier will accept (default `['RS256']`). */
+  algorithms?: SigningAlgorithm[];
+  /** Revocation store backend (default: in-process `InMemoryRevocationStore`). */
+  revocationStore?: RevocationStore;
+  /** Cross-org partner-issuer trust resolver. */
+  partnerResolver?: PartnerIssuerResolver;
+  /** Issuer IDs (DIDs or plain strings) the local SPKI key is allowed to sign for. */
+  localIssuers?: string[];
+  /** JWKS-based key source (R-6). When set, tokens carrying a `kid` are routed here. */
+  jwksKeySource?: JwksKeySource;
+  /**
+   * Whether to require a `kid` in every JWT protected header.
+   *
+   * Defaults to `true` so embedders that omit the option get the same
+   * strict behaviour as the production gateway (`EUNO_REQUIRE_KID`
+   * also defaults to `true`).  Set to `false` only during a rolling
+   * deploy while tokens that pre-date the JWKS migration are still
+   * in circulation.
+   */
+  requireKid?: boolean;
+  /** Optional cosignature + transparency-log proofs verifier. */
+  proofsVerifier?: ProofsVerifier;
+  /**
+   * Optional per-issuer epoch store (revoke-all-before-T mechanism).
+   * When supplied, tokens whose `iat` is strictly before the epoch
+   * recorded for their `iss` are rejected.
+   */
+  epochStore?: RevocationEpochStore;
+}
+
 export class JWTTokenVerifier implements TokenVerifier {
   private publicKey: string;
   private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
@@ -66,9 +107,11 @@ export class JWTTokenVerifier implements TokenVerifier {
 
   /**
    * Whether to require a `kid` in the JWT protected header (R-6).
-   * Default `false` for backward compatibility with tokens minted before
-   * the JWKS migration.  Set to `true` in production once all issuers
-   * include `kid` in their tokens (controlled via `EUNO_REQUIRE_KID`).
+   * Defaults to `true` so embedders that omit the option get the same
+   * strict behaviour as the production gateway (`EUNO_REQUIRE_KID`
+   * also defaults to `true`).  Set to `false` only during a rolling
+   * deploy while tokens that pre-date the JWKS migration are still
+   * in circulation.
    */
   protected requireKid: boolean;
 
@@ -84,9 +127,25 @@ export class JWTTokenVerifier implements TokenVerifier {
   /** Default revocation TTL used when the caller does not supply an expiry. */
   private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
 
+  // Two supported constructor forms. The overloads make it a *compile-time*
+  // error to mix them (e.g. supplying both an options bag and a legacy
+  // positional `revocationStore`), so misconfigurations like passing
+  // `revocationStore` as the 3rd arg while also passing `{ algorithms }`
+  // as the 2nd are caught by tsc rather than silently dropped.
+  constructor(publicKey: string, options?: JWTTokenVerifierOptions);
   constructor(
     publicKey: string,
-    algorithms?: SigningAlgorithm[],
+    algorithms: SigningAlgorithm[],
+    revocationStore?: RevocationStore,
+    partnerResolver?: PartnerIssuerResolver,
+    localIssuers?: string[],
+    jwksKeySource?: JwksKeySource,
+    requireKid?: boolean,
+    proofsVerifier?: ProofsVerifier,
+  );
+  constructor(
+    publicKey: string,
+    optionsOrAlgorithms?: JWTTokenVerifierOptions | SigningAlgorithm[],
     revocationStore?: RevocationStore,
     partnerResolver?: PartnerIssuerResolver,
     localIssuers?: string[],
@@ -94,19 +153,64 @@ export class JWTTokenVerifier implements TokenVerifier {
     requireKid?: boolean,
     proofsVerifier?: ProofsVerifier,
   ) {
+    // Accept either an options bag (preferred) or the historical
+    // positional signature for back-compat with existing call sites.
+    // The options-bag form is the only one documented going forward
+    // because it makes per-field defaults — particularly the
+    // security-sensitive `requireKid` — explicit at the call site.
+    const usingOptionsBag =
+      optionsOrAlgorithms !== undefined && !Array.isArray(optionsOrAlgorithms);
+    if (usingOptionsBag) {
+      // Defence in depth against callers that bypass the typed overloads
+      // (e.g. `.ts` files with `@ts-ignore`, or transpiled JS): if any
+      // legacy positional argument is supplied alongside the options
+      // bag, fail fast rather than silently drop the extra args.
+      if (
+        revocationStore !== undefined ||
+        partnerResolver !== undefined ||
+        localIssuers !== undefined ||
+        jwksKeySource !== undefined ||
+        requireKid !== undefined ||
+        proofsVerifier !== undefined
+      ) {
+        throw new Error(
+          'JWTTokenVerifier: mixing the options-bag and legacy positional ' +
+            'constructor forms is not supported. Pass all configuration ' +
+            'inside the JWTTokenVerifierOptions object (the second argument).',
+        );
+      }
+    }
+    const opts: JWTTokenVerifierOptions = Array.isArray(optionsOrAlgorithms)
+      ? {
+          algorithms: optionsOrAlgorithms,
+          revocationStore,
+          partnerResolver,
+          localIssuers,
+          jwksKeySource,
+          requireKid,
+          proofsVerifier,
+        }
+      : optionsOrAlgorithms ?? {};
+
     this.publicKey = publicKey;
     // Default to RS256 for backward compatibility, but allow multiple algorithms.
     // Normalize so that an explicitly passed empty array also falls back to RS256.
-    this.algorithms = algorithms?.length ? algorithms : ['RS256'];
-    this.revocationStore = revocationStore ?? new InMemoryRevocationStore();
-    this.partnerResolver = partnerResolver;
-    if (localIssuers && localIssuers.length > 0) {
-      this.localIssuers = new Set(localIssuers);
+    this.algorithms = opts.algorithms?.length ? opts.algorithms : ['RS256'];
+    this.revocationStore = opts.revocationStore ?? new InMemoryRevocationStore();
+    this.partnerResolver = opts.partnerResolver;
+    if (opts.localIssuers && opts.localIssuers.length > 0) {
+      this.localIssuers = new Set(opts.localIssuers);
     }
-    this.jwksKeySource = jwksKeySource;
-    // Default to false so existing tests (which don't set kid) keep passing.
-    this.requireKid = requireKid ?? false;
-    this.proofsVerifier = proofsVerifier;
+    this.jwksKeySource = opts.jwksKeySource;
+    // Default to `true` so this matches the production gateway and the
+    // `EUNO_REQUIRE_KID` env-var default.  Tests / embedders that
+    // intentionally exercise the legacy "no kid" path must opt out
+    // explicitly with `{ requireKid: false }`.
+    this.requireKid = opts.requireKid ?? true;
+    this.proofsVerifier = opts.proofsVerifier;
+    if (opts.epochStore) {
+      this.epochStore = opts.epochStore;
+    }
   }
 
   /**
@@ -121,8 +225,10 @@ export class JWTTokenVerifier implements TokenVerifier {
       const algorithm = alg ?? this.algorithms[0] ?? 'RS256';
       const kid = typeof header.kid === 'string' ? header.kid : undefined;
 
-      // Enforce kid requirement (R-6).  Default is false for backward compat;
-      // production deployments should enable EUNO_REQUIRE_KID=true.
+      // Enforce kid requirement (R-6).  Default is now `true` (matches
+      // the `EUNO_REQUIRE_KID` env-var default); pass `requireKid: false`
+      // to the constructor to allow legacy tokens without a `kid` while
+      // a rolling deploy completes.
       if (this.requireKid && !kid) {
         throw new CapabilityError(
           ErrorCode.INVALID_TOKEN,
@@ -420,43 +526,13 @@ export class JWTTokenVerifier implements TokenVerifier {
 
 /**
  * Constructor options for {@link JwksTokenVerifier}.
+ *
+ * Extends {@link JWTTokenVerifierOptions} so the JWKS verifier accepts
+ * the same fields as its base class (no field is JWKS-only). The
+ * `jwksKeySource` field is intentionally omitted because the JWKS
+ * verifier takes the key source as its first positional argument.
  */
-export interface JwksTokenVerifierOptions {
-  /** JWT signing algorithms the verifier will accept (default `['RS256']`). */
-  algorithms?: SigningAlgorithm[];
-  /** Revocation store backend (default: in-process `InMemoryRevocationStore`). */
-  revocationStore?: RevocationStore;
-  /** Cross-org partner-issuer trust resolver. */
-  partnerResolver?: PartnerIssuerResolver;
-  /** Issuer IDs (DIDs or plain strings) associated with the local JWKS source. */
-  localIssuers?: string[];
-  /**
-   * Whether to require a `kid` in every JWT protected header.
-   * Defaults to `true` (strict) — recommended for production once all
-   * issuers include `kid` in their tokens.
-   *
-   * When `false`, tokens without a `kid` are verified by trying every key
-   * in the JWKS in turn (less efficient, but allows a rolling-deploy
-   * transition window while older tokens that pre-date the JWKS migration
-   * are still in circulation).
-   */
-  requireKid?: boolean;
-  /**
-   * Optional cosignature + transparency-log proofs verifier (multi-issuer
-   * trust hardening). When supplied, runs after the primary signature
-   * succeeds. See {@link ProofsVerifier} and the gateway env-config
-   * keys `REQUIRE_COSIGNATURE_COUNT`, `COSIGNER_JWKS_FILE`,
-   * `REQUIRE_TRANSPARENCY_LOG_PROOF`, `TRANSPARENCY_LOG_JWKS_FILE`.
-   */
-  proofsVerifier?: ProofsVerifier;
-  /**
-   * Optional per-issuer epoch store (revoke-all-before-T mechanism).
-   * When supplied, tokens whose `iat` is strictly before the epoch recorded
-   * for their `iss` are rejected — useful for a full key-compromise response
-   * without enumerating individual JTIs.  See {@link RevocationEpochStore}.
-   */
-  epochStore?: RevocationEpochStore;
-}
+export type JwksTokenVerifierOptions = Omit<JWTTokenVerifierOptions, 'jwksKeySource'>;
 
 /**
  * A JWKS-backed token verifier.
@@ -486,20 +562,14 @@ export class JwksTokenVerifier extends JWTTokenVerifier {
   private readonly jwksSource: JwksKeySource;
 
   constructor(jwksKeySource: JwksKeySource, options: JwksTokenVerifierOptions = {}) {
-    super(
-      '', // No SPKI — key material comes exclusively from the JWKS source
-      options.algorithms,
-      options.revocationStore,
-      options.partnerResolver,
-      options.localIssuers,
+    super('', {
+      ...options,
       jwksKeySource,
-      options.requireKid ?? true, // strict by default for JWKS-only verifiers
-      options.proofsVerifier,
-    );
+      // `requireKid` defaults to `true` for both the base class and the
+      // JWKS verifier; pass it through unchanged so explicit `false`
+      // (rolling deploys) still works.
+    });
     this.jwksSource = jwksKeySource;
-    if (options.epochStore) {
-      this.epochStore = options.epochStore;
-    }
   }
 
   /**

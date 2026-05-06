@@ -757,6 +757,21 @@ export async function initializeServices(
           });
 
           if (runMigrations) {
+            // DDL at startup is appropriate for development / single-replica
+            // deployments only. Production databases should grant DML-only
+            // privileges to the gateway role and run schema migrations from
+            // a dedicated identity (Helm pre-install hook, Flyway/Liquibase
+            // job, etc.). Surface the relaxed posture in logs so it is
+            // observable to anyone reviewing a running production cluster.
+            if (validated.NODE_ENV === 'production') {
+              logger.warn(
+                'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
+                  'is performing DDL on the audit ledger table. Production deployments should ' +
+                  'instead run migrations from a sidecar / Job under a separate database role ' +
+                  'with DDL privileges and grant the gateway role only DML on the table. See ' +
+                  'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
+              );
+            }
             await pgBackend.migrate();
             logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
           }

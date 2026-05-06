@@ -68,8 +68,9 @@ describe('EnforcementEngine', () => {
     privateKey = privKey;
     publicKey = await jose.exportSPKI(pubKey);
 
-    verifier = new JWTTokenVerifier(publicKey);
+    verifier = new JWTTokenVerifier(publicKey, { requireKid: false });
     engine = new EnforcementEngine({
+      dpop: { required: false },
       verifier,
       logger,
     });
@@ -323,7 +324,7 @@ describe('EnforcementEngine', () => {
 
     beforeEach(() => {
       killSwitchManager = new DefaultKillSwitchManager(logger);
-      killEngine = new EnforcementEngine({ verifier, logger, killSwitchManager });
+      killEngine = new EnforcementEngine({ dpop: { required: false }, verifier, logger, killSwitchManager });
     });
 
     it('should block all requests when global kill switch is active', async () => {
@@ -411,6 +412,7 @@ describe('EnforcementEngine', () => {
       const mockSigner: EvidenceSigner = { signEvidence, verifyEvidence };
 
       const auditEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         evidenceSigner: mockSigner,
@@ -445,6 +447,7 @@ describe('EnforcementEngine', () => {
       };
 
       const auditEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         evidenceSigner: mockSigner,
@@ -479,6 +482,7 @@ describe('EnforcementEngine', () => {
       };
 
       const auditEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         evidenceSigner: mockSigner,
@@ -516,6 +520,7 @@ describe('EnforcementEngine', () => {
         const { signEvidence, mockSigner } = makeMockSigner();
 
         const auditEngine = new EnforcementEngine({
+          dpop: { required: false },
           verifier,
           logger,
           evidenceSigner: mockSigner,
@@ -556,6 +561,7 @@ describe('EnforcementEngine', () => {
         const { signEvidence, mockSigner } = makeMockSigner();
 
         const auditEngine = new EnforcementEngine({
+          dpop: { required: false },
           verifier,
           logger,
           evidenceSigner: mockSigner,
@@ -593,6 +599,7 @@ describe('EnforcementEngine', () => {
         const { signEvidence, mockSigner } = makeMockSigner();
 
         const auditEngine = new EnforcementEngine({
+          dpop: { required: false },
           verifier,
           logger,
           evidenceSigner: mockSigner,
@@ -624,6 +631,7 @@ describe('EnforcementEngine', () => {
         const { signEvidence, mockSigner } = makeMockSigner();
 
         const auditEngine = new EnforcementEngine({
+          dpop: { required: false },
           verifier,
           logger,
           evidenceSigner: mockSigner,
@@ -675,6 +683,7 @@ describe('EnforcementEngine', () => {
       pipeline.start();
 
       const auditEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         auditPipeline: pipeline,
@@ -721,6 +730,7 @@ describe('EnforcementEngine', () => {
       pipeline.start();
 
       const auditEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         auditPipeline: pipeline,
@@ -758,6 +768,7 @@ describe('EnforcementEngine', () => {
 
     beforeAll(() => {
       strictEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         argumentSchemaRequired: true,
@@ -831,6 +842,7 @@ describe('EnforcementEngine', () => {
     beforeAll(() => {
       counterStore = new InMemoryCallCounterStore();
       conditionEngine = new EnforcementEngine({
+        dpop: { required: false },
         verifier,
         logger,
         callCounterStore: counterStore,
@@ -1020,7 +1032,7 @@ describe('EnforcementEngine', () => {
     });
 
     it('denies maxCalls when the engine has no counter store wired (deny-by-default)', async () => {
-      const noStoreEngine = new EnforcementEngine({ verifier, logger });
+      const noStoreEngine = new EnforcementEngine({ dpop: { required: false }, verifier, logger });
       const token = await createTestToken([
         {
           resource: 'api://service/endpoint',
@@ -1072,7 +1084,7 @@ describe('EnforcementEngine', () => {
     let recorded: Array<'allow' | 'deny'>;
 
     beforeEach(() => {
-      recorderEngine = new EnforcementEngine({ verifier, logger });
+      recorderEngine = new EnforcementEngine({ dpop: { required: false }, verifier, logger });
       recorded = [];
       recorderEngine.setDecisionRecorder((decision) => {
         recorded.push(decision);
@@ -1125,7 +1137,7 @@ describe('EnforcementEngine', () => {
     });
 
     it('does not destabilise validateAction when the recorder throws', async () => {
-      const noisyEngine = new EnforcementEngine({ verifier, logger });
+      const noisyEngine = new EnforcementEngine({ dpop: { required: false }, verifier, logger });
       noisyEngine.setDecisionRecorder(() => {
         throw new Error('metrics sink exploded');
       });
@@ -1302,7 +1314,7 @@ describe('EnforcementEngine', () => {
       const strict = new EnforcementEngine({
         verifier,
         logger,
-        dpop: { required: true },
+        dpop: { required: true, allowInProcessReplayStore: true },
       });
       const token = await createTestToken([
         { resource: 'api://service/endpoint', actions: ['read'] },
@@ -1331,6 +1343,72 @@ describe('EnforcementEngine', () => {
         resource: 'api://service/endpoint',
       });
       expect(res.allowed).toBe(true);
+    });
+
+    // Security regression guard: the constructor MUST refuse to install
+    // an in-process replay store when DPoP is required, otherwise a
+    // captured proof is replayable at sibling pods (the bug this PR
+    // closes). These tests pin both the throw and the explicit opt-in.
+    describe('replay-store fail-closed (constructor)', () => {
+      it('throws when dpop.required=true and no replayStore is supplied', () => {
+        expect(
+          () =>
+            new EnforcementEngine({
+              verifier,
+              logger,
+              dpop: { required: true },
+            }),
+        ).toThrow(/no dpop\.replayStore was supplied/);
+      });
+
+      it('throws even when other dpop fields are set but replayStore is omitted', () => {
+        expect(
+          () =>
+            new EnforcementEngine({
+              verifier,
+              logger,
+              dpop: {
+                required: true,
+                clockSkewSeconds: 30,
+                maxAgeSeconds: 120,
+              },
+            }),
+        ).toThrow(/no dpop\.replayStore was supplied/);
+      });
+
+      it('constructs successfully with allowInProcessReplayStore=true (single-replica opt-in)', () => {
+        expect(
+          () =>
+            new EnforcementEngine({
+              verifier,
+              logger,
+              dpop: { required: true, allowInProcessReplayStore: true },
+            }),
+        ).not.toThrow();
+      });
+
+      it('constructs successfully when a shared replayStore is supplied', async () => {
+        const { InMemoryDpopReplayStore } = await import('@euno/common');
+        expect(
+          () =>
+            new EnforcementEngine({
+              verifier,
+              logger,
+              dpop: { required: true, replayStore: new InMemoryDpopReplayStore() },
+            }),
+        ).not.toThrow();
+      });
+
+      it('does not throw when dpop.required is false (in-process default is acceptable)', () => {
+        expect(
+          () =>
+            new EnforcementEngine({
+              verifier,
+              logger,
+              dpop: { required: false },
+            }),
+        ).not.toThrow();
+      });
     });
   });
 });

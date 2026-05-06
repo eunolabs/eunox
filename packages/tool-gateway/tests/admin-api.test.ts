@@ -15,7 +15,7 @@ function buildApp(adminApiKey?: string, withVerifier = true): Express {
 
   const killSwitchManager = new DefaultKillSwitchManager();
   const logger = createLogger('test');
-  const tokenVerifier = withVerifier ? new JWTTokenVerifier('dummy-key') : undefined;
+  const tokenVerifier = withVerifier ? new JWTTokenVerifier('dummy-key', { requireKid: false }) : undefined;
 
   const adminRouter = createAdminRouter({
     killSwitchManager,
@@ -144,7 +144,7 @@ describe('POST /admin/revoke', () => {
       // Extract the verifier from the app by building a fresh pair
       const killSwitchManager = new DefaultKillSwitchManager();
       const logger = createLogger('test');
-      const tokenVerifier = new JWTTokenVerifier('dummy-key');
+      const tokenVerifier = new JWTTokenVerifier('dummy-key', { requireKid: false });
 
       const localApp = express();
       localApp.use(express.json());

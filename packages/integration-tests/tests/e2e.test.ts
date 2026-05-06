@@ -332,7 +332,7 @@ async function buildHarness(opts?: {
   const pkResp = await fetch(`${issuer.baseUrl}/api/v1/public-key`);
   const pkData = (await pkResp.json()) as { publicKey: string };
 
-  const verifier = new JWTTokenVerifier(pkData.publicKey, [SIGNING_ALG]);
+  const verifier = new JWTTokenVerifier(pkData.publicKey, { requireKid: false, algorithms: [SIGNING_ALG] });
   // Wrap verify() so we can assert the audience contract from the issuer
   // matches what the gateway expects.
   const expectedAudience = opts?.audience ?? AUDIENCE;
@@ -357,6 +357,7 @@ async function buildHarness(opts?: {
   const engine = new EnforcementEngine({
     verifier: audienceCheckedVerifier,
     logger: createLogger('gateway-it', 'test'),
+    dpop: { required: false },
   });
 
   const gateway = await startGatewayServer(engine, (path, headers) => ({

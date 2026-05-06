@@ -311,7 +311,7 @@ describe('JwksTokenVerifier (R-6)', () => {
     // Confirm backward compat: base class with SPKI still works without kid
     const spki = await jose.exportSPKI(publicKey);
     const token = await mintToken(undefined); // no kid
-    const baseVerifier = new BaseJWTTokenVerifier(spki, [SIGNING_ALG]);
+    const baseVerifier = new BaseJWTTokenVerifier(spki, { algorithms: [SIGNING_ALG], requireKid: false });
 
     const payload = await baseVerifier.verify(token);
     expect(payload.sub).toBe('agent-1');

@@ -229,6 +229,18 @@ For deeper background see:
       (`seq`, `prevHash`, `hash`). For cross-replica continuity, seed the
       previous run's terminal hash via
       `EUNO_AUDIT_CHAIN_SEED_<SERVICE_NAME>`.
+- [ ] **Audit-ledger schema is managed out-of-band.** Leave
+      `AUDIT_LEDGER_RUN_MIGRATIONS=false` (the default) on the gateway in
+      production. The gateway service account must hold only DML privileges
+      (`SELECT`, `INSERT` on the audit table); DDL privileges (`CREATE TABLE`,
+      `CREATE INDEX`) belong to a dedicated migrations identity. Run
+      `PostgresLedgerBackend.migrate()` from a Helm `pre-install`/`pre-upgrade`
+      Job, a Flyway/Liquibase pipeline, or any other change-managed sidecar
+      that uses a separate database role. This separation of duties limits
+      blast radius if the gateway role is ever exfiltrated and matches the
+      least-privilege model already in force for the signing key. Set
+      `AUDIT_LEDGER_RUN_MIGRATIONS=true` only in development or single-replica
+      deployments where the gateway role legitimately owns the schema.
 - [ ] Metrics scraped: request rate, p50/p95/p99 latency per route, 4xx/5xx
       rate, active kill-switches, revocations per minute, Redis errors.
 - [ ] Alerts wired:

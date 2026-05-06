@@ -163,16 +163,11 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
       cosignerJwks,
       logJwksByLogId,
     });
-    const verifier = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
+    const verifier = new JWTTokenVerifier(await signer.getPublicKey(), {
+      requireKid: false,
+      algorithms: ['EdDSA'],
       proofsVerifier,
-    );
+    });
     const verified = await verifier.verify(response.token);
     expect(verified.sub).toBe('agent-1');
     expect(verified.proofs?.cosig).toHaveLength(2);
@@ -207,21 +202,16 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
     const decoded = jose.decodeJwt(response.token) as unknown as CapabilityTokenPayload;
     expect(decoded.proofs).toBeUndefined();
 
-    const strict = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      new ProofsVerifier({
+    const strict = new JWTTokenVerifier(await signer.getPublicKey(), {
+      requireKid: false,
+      algorithms: ['EdDSA'],
+      proofsVerifier: new ProofsVerifier({
         requireCosignatureCount: 2,
         requireTransparencyLogProof: true,
         cosignerJwks,
         logJwksByLogId,
       }),
-    );
+    });
     await expect(strict.verify(response.token)).rejects.toThrow(
       /at least 2 valid cosignature/,
     );
@@ -246,21 +236,16 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
     tampered.proofs!.cosig![0]!.sig = (sig.startsWith('A') ? 'B' : 'A') + sig.slice(1);
     const reForged = await signer.sign(tampered);
 
-    const strict = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      new ProofsVerifier({
+    const strict = new JWTTokenVerifier(await signer.getPublicKey(), {
+      requireKid: false,
+      algorithms: ['EdDSA'],
+      proofsVerifier: new ProofsVerifier({
         requireCosignatureCount: 2,
         requireTransparencyLogProof: true,
         cosignerJwks,
         logJwksByLogId,
       }),
-    );
+    });
     await expect(strict.verify(reForged)).rejects.toThrow(
       /at least 2 valid cosignature/,
     );
@@ -300,21 +285,16 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
     };
     const forged = await signer.sign(forgedPayload);
 
-    const strict = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      new ProofsVerifier({
+    const strict = new JWTTokenVerifier(await signer.getPublicKey(), {
+      requireKid: false,
+      algorithms: ['EdDSA'],
+      proofsVerifier: new ProofsVerifier({
         requireCosignatureCount: 2,
         requireTransparencyLogProof: true,
         cosignerJwks,
         logJwksByLogId,
       }),
-    );
+    });
     await expect(strict.verify(forged)).rejects.toThrow(
       /at least 2 valid cosignature|transparency-log inclusion proof/,
     );
@@ -325,16 +305,8 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
   });
 
   it('back-compat: gateway with no proofs requirement accepts both proofed and non-proofed tokens', async () => {
-    const verifier = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      // No proofs verifier configured → behaves exactly as before this feature.
-    );
+    // No proofs verifier configured → behaves exactly as before this feature.
+    const verifier = new JWTTokenVerifier(await signer.getPublicKey(), { requireKid: false, algorithms: ['EdDSA'] });
 
     const proofed = await issuerService.issueCapability({
       authToken: 'irrelevant',
@@ -379,21 +351,16 @@ describe('Issuance proofs — cosignature + transparency log (multi-issuer trust
     expect(decodedRen.proofs?.sct).toHaveLength(1);
 
     // Verify the attenuated token under strict gateway
-    const strict = new JWTTokenVerifier(
-      await signer.getPublicKey(),
-      ['EdDSA'],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      new ProofsVerifier({
+    const strict = new JWTTokenVerifier(await signer.getPublicKey(), {
+      requireKid: false,
+      algorithms: ['EdDSA'],
+      proofsVerifier: new ProofsVerifier({
         requireCosignatureCount: 2,
         requireTransparencyLogProof: true,
         cosignerJwks,
         logJwksByLogId,
       }),
-    );
+    });
     await expect(strict.verify(attenuated.token)).resolves.toBeDefined();
     await expect(strict.verify(renewed.token)).resolves.toBeDefined();
 
