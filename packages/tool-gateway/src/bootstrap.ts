@@ -60,7 +60,7 @@ import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
 import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
 import { createRevocationStoreFromEnv, RevocationStore, createRevocationEpochStoreFromEnv, RevocationEpochStore } from './revocation-store';
-import { createPartnerIssuerResolverFromEnv } from './partner-issuer-resolver';
+import { createPartnerIssuerResolverFromEnv, type PartnerIssuerResolverFromEnvOptions } from './partner-issuer-resolver';
 import {
   createPartnerDidRegistryFromEnv,
   InMemoryPartnerDidRegistry,
@@ -599,6 +599,11 @@ export async function initializeServices(
   // Late-bound counters for per-surface degradation signals.
   let revocationUnavailableCounter: Counter | undefined;
   let counterFallbackCounter: Counter | undefined;
+  // Late-bound counter for per-DID circuit breaker state transitions.
+  // Labelled by DID and state transition so operators can alert on
+  // `euno_gateway_partner_did_circuit_transitions_total{to="open"}` to detect
+  // flapping partner endpoints before they degrade cross-org p99 latency.
+  let partnerDidCircuitTransitionsCounter: Counter<string> | undefined;
   const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(
     env,
     logger,
@@ -819,13 +824,26 @@ export async function initializeServices(
   const pinAttestationSecret = validated.PARTNER_DID_PIN_SECRET || undefined;
   const partnerDidAutoFetchPin = validated.PARTNER_DID_AUTO_FETCH_PIN;
 
-  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry);
+  const partnerResolverOptions: PartnerIssuerResolverFromEnvOptions = {
+    // Wire the Prometheus counter callback.  The counter is a late-bound
+    // `let` declared above and instantiated after metricsRegistry is created;
+    // the closure is safe because it is only invoked during live requests.
+    onCircuitStateChange: (did, from, to) => {
+      partnerDidCircuitTransitionsCounter?.inc({ did, from, to });
+      logger.warn('Partner DID circuit breaker state change', { did, from, to });
+    },
+  };
+
+  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry, partnerResolverOptions);
   if (partnerResolver) {
     const partnerDidCount = (validated.TRUSTED_PARTNER_DIDS ?? []).length;
     logger.info('Cross-org partner-issuer trust resolver enabled', {
       partnerDidCount,
       pinAttestationEnabled: !!pinAttestationSecret,
       autoFetchPin: partnerDidAutoFetchPin,
+      circuitBreakerFailureThreshold: validated.PARTNER_DID_CB_FAILURE_THRESHOLD,
+      circuitBreakerWindowSeconds: validated.PARTNER_DID_CB_WINDOW_SECONDS,
+      circuitBreakerCooldownSeconds: validated.PARTNER_DID_CB_COOLDOWN_SECONDS,
     });
   }
 
@@ -1160,6 +1178,21 @@ export async function initializeServices(
     registers: [metricsRegistry],
   });
   counterFallbackCounter.inc(0);
+
+  // Per-DID partner circuit-breaker transition counter.
+  // Alert on `rate(euno_gateway_partner_did_circuit_transitions_total{to="open"}[5m]) > 0`
+  // to detect flapping partner DID endpoints before their tail latency
+  // degrades /proxy/* p99 system-wide.
+  if (partnerResolver) {
+    partnerDidCircuitTransitionsCounter = new Counter({
+      name: 'euno_gateway_partner_did_circuit_transitions_total',
+      help: 'Number of per-DID circuit breaker state transitions for partner DID document resolution. ' +
+        'Labels: did (partner DID string), from (previous state), to (new state). ' +
+        'Alert on to="open" to detect flapping partner endpoints.',
+      labelNames: ['did', 'from', 'to'],
+      registers: [metricsRegistry],
+    });
+  }
 
   // Circuit-breaker state gauges.  0 = closed (healthy), 1 = half-open
   // (probing), 2 = open (failing fast — Redis unreachable).  A sustained

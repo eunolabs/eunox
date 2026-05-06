@@ -1352,6 +1352,31 @@ export const GatewayConfigSchema = z
         'supplied value. Requires network access to the partner DID endpoint at approval time. ' +
         'Boolean: true | false. Default false.',
     }),
+    PARTNER_DID_CB_FAILURE_THRESHOLD: envPositiveInt({
+      default: 3,
+      min: 1,
+      description:
+        'Number of DID-document fetch failures within PARTNER_DID_CB_WINDOW_SECONDS that open the ' +
+        'per-DID circuit breaker. Once open, getKey() calls for that DID fast-fail without any ' +
+        'network round-trip until the cooldown (PARTNER_DID_CB_COOLDOWN_SECONDS) elapses. ' +
+        'Default 3. Lower values trip the circuit faster at the cost of more false positives on ' +
+        'transient glitches. Each trusted DID has its own independent breaker.',
+    }),
+    PARTNER_DID_CB_WINDOW_SECONDS: envPositiveInt({
+      default: 30,
+      min: 1,
+      description:
+        'Sliding window (seconds) for partner-DID circuit-breaker failure counting. Failures older ' +
+        'than this window do not count toward the threshold. Default 30 s.',
+    }),
+    PARTNER_DID_CB_COOLDOWN_SECONDS: envPositiveInt({
+      default: 60,
+      min: 1,
+      description:
+        'Time (seconds) a per-DID circuit breaker stays open before allowing a single probe ' +
+        'request. If the probe succeeds the circuit closes; if it fails the cooldown restarts. ' +
+        'Default 60 s.',
+    }),
 
     // Distributed coordination (Redis) --------------------------------------
     REDIS_URL: optionalString.describe(

@@ -28,7 +28,16 @@
  */
 
 import * as jose from 'jose';
-import { CapabilityError, ErrorCode, Logger, createAuditLogger } from '@euno/common';
+import {
+  CapabilityError,
+  ErrorCode,
+  Logger,
+  createAuditLogger,
+  RedisCircuitBreaker,
+  CircuitOpenError,
+  type CircuitBreakerOptions,
+  type CircuitState,
+} from '@euno/common';
 import {
   resolveDID,
   resolveDidIon,
@@ -36,6 +45,7 @@ import {
   extractPublicKeyPem,
   determineSigningAlgorithm,
   parseDidWebHttpAllowList,
+  type DIDDocument,
   type VerificationMethod,
 } from '@euno/capability-issuer/adapters';
 import {
@@ -133,6 +143,31 @@ export interface PartnerIssuerResolverOptions {
    * Source from `cfg.ION_RESOLVER_URL` at boot.
    */
   ionResolverUrl?: string;
+  /**
+   * Per-DID circuit-breaker tuning.  A dedicated {@link RedisCircuitBreaker}
+   * is instantiated for each trusted DID.  When the partner's DID-document
+   * endpoint becomes slow or unreachable the circuit trips open and subsequent
+   * `getKey` calls fast-fail without any network round-trip until the cooldown
+   * elapses and a single probe request succeeds.
+   *
+   * Only the `resolveDID` network call is wrapped — pin-mismatch and
+   * key-validation errors do not count as circuit failures because they
+   * indicate data problems, not network outages.
+   *
+   * Tune aggressively for production: a flapping partner should open the
+   * circuit quickly so its latency tail does not bleed into unrelated
+   * cross-org requests sharing the same gateway worker pool.
+   */
+  circuitBreaker?: Pick<CircuitBreakerOptions, 'failureThreshold' | 'windowMs' | 'cooldownMs'>;
+  /**
+   * Optional callback invoked whenever a per-DID circuit breaker transitions
+   * between states.  Inject a Prometheus counter increment or log line here.
+   *
+   * @param did  The partner DID whose circuit changed.
+   * @param from Previous state.
+   * @param to   New state.
+   */
+  onCircuitStateChange?: (did: string, from: CircuitState, to: CircuitState) => void;
 }
 
 /**
@@ -154,8 +189,35 @@ export class PartnerIssuerResolver {
   private readonly pinAttestationSecret?: string;
   private readonly httpAllowList?: Set<string>;
   private readonly ionResolverUrl?: string;
+  /**
+   * Per-DID circuit breakers keyed by DID string.  Created lazily on the
+   * first `getKey` call for a given DID so that resolver construction
+   * remains cheap and deterministic.  Each breaker is independent: a
+   * flapping partner's circuit state has no effect on other trusted DIDs.
+   */
+  private readonly circuitBreakers = new Map<string, RedisCircuitBreaker>();
+  /** Constructor options shared by every per-DID circuit breaker. */
+  private readonly circuitBreakerOpts: Pick<CircuitBreakerOptions, 'failureThreshold' | 'windowMs' | 'cooldownMs'>;
+  private readonly onCircuitStateChange?: (did: string, from: CircuitState, to: CircuitState) => void;
+  /**
+   * In-flight resolution Promises keyed by `${did}::${kid ?? ''}`.
+   *
+   * When a cache miss occurs, the outgoing `_doResolve` Promise is registered
+   * here so that concurrent requests for the **identical** (DID, kid) pair
+   * coalesce onto the same Promise instead of each launching a redundant
+   * network round-trip.  The entry is removed once the Promise settles so the
+   * map size is bounded by the number of simultaneously-in-flight distinct
+   * (DID, kid) lookups — typically very small in normal operation.
+   */
+  private readonly inFlight = new Map<string, Promise<{ key: jose.KeyLike | Uint8Array; alg: string }>>();
   private static readonly DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
   private static readonly DEFAULT_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+  /** Default number of fetch failures within the window that trips the circuit. */
+  private static readonly DEFAULT_CB_FAILURE_THRESHOLD = 3;
+  /** Default sliding-window width (ms) for failure counting. */
+  private static readonly DEFAULT_CB_WINDOW_MS = 30_000;
+  /** Default time (ms) the circuit stays open before a probe is allowed. */
+  private static readonly DEFAULT_CB_COOLDOWN_MS = 60_000;
 
   constructor(opts: PartnerIssuerResolverOptions) {
     this.trusted = new Set(opts.trustedIssuerDids.filter((d) => d && d.length > 0));
@@ -166,6 +228,31 @@ export class PartnerIssuerResolver {
     this.pinAttestationSecret = opts.pinAttestationSecret;
     this.httpAllowList = opts.httpAllowList;
     this.ionResolverUrl = opts.ionResolverUrl;
+    const cb = opts.circuitBreaker ?? {};
+    this.circuitBreakerOpts = {
+      failureThreshold: cb.failureThreshold ?? PartnerIssuerResolver.DEFAULT_CB_FAILURE_THRESHOLD,
+      windowMs: cb.windowMs ?? PartnerIssuerResolver.DEFAULT_CB_WINDOW_MS,
+      cooldownMs: cb.cooldownMs ?? PartnerIssuerResolver.DEFAULT_CB_COOLDOWN_MS,
+    };
+    this.onCircuitStateChange = opts.onCircuitStateChange;
+  }
+
+  /**
+   * Return the circuit breaker for `did`, creating one if it does not yet
+   * exist.  Lazily instantiated so resolver construction stays cheap.
+   */
+  private getOrCreateBreaker(did: string): RedisCircuitBreaker {
+    let breaker = this.circuitBreakers.get(did);
+    if (!breaker) {
+      breaker = new RedisCircuitBreaker({
+        ...this.circuitBreakerOpts,
+        onStateChange: this.onCircuitStateChange
+          ? (from, to) => this.onCircuitStateChange!(did, from, to)
+          : undefined,
+      });
+      this.circuitBreakers.set(did, breaker);
+    }
+    return breaker;
   }
 
   /** Whether the resolver has any partner DIDs configured at all. */
@@ -211,15 +298,17 @@ export class PartnerIssuerResolver {
     const cacheKey = `${did}::${kid ?? ''}`;
     const now = Date.now();
 
-    // Positive cache hit.
+    // Positive cache hit — fast path, no locking needed.
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return { key: cached.key, alg: cached.alg };
     }
 
     // Negative cache: absorb a recent DID-level resolution failure (network
-    // error, DID doc not fetchable) without re-fetching.  Keyed by DID only —
-    // see NegativeCacheEntry comment for why this is intentional.
+    // error, DID doc not fetchable) without re-fetching.  Checked before
+    // in-flight coalescing so a request is never coalesced onto an in-flight
+    // that is doomed to fail because another concurrent call (for a different
+    // kid of the same DID) already recorded a DID-level error.
     const negEntry = this.negativeCache.get(did);
     if (negEntry && negEntry.expiresAt > now) {
       throw new CapabilityError(
@@ -233,6 +322,41 @@ export class PartnerIssuerResolver {
       this.negativeCache.delete(did);
     }
 
+    // In-flight coalescing: if an identical (DID, kid) resolution is already
+    // in progress, attach to it rather than launching a redundant network
+    // round-trip.  This prevents a thundering herd when the cache expires
+    // under concurrent load — only the first caller fetches; the rest wait.
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) return pending;
+
+    // Start a new resolution and register it as in-flight so concurrent
+    // requests for the same (DID, kid) pair coalesce onto this Promise.
+    // The entry is removed once the Promise settles (success or failure).
+    // Use await + try/finally rather than a floating .finally() chain so
+    // that rejections do not surface as unhandled Promise rejections in
+    // the host process — the error propagates to the awaiting caller.
+    const resolution = this._doResolve(did, kid, cacheKey);
+    this.inFlight.set(cacheKey, resolution);
+    try {
+      return await resolution;
+    } finally {
+      this.inFlight.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Internal: perform the network fetch + pin/key validation for one
+   * (DID, kid) pair and populate the positive cache on success.
+   *
+   * Must only be called when the positive and negative caches have both
+   * missed.  Callers should register the returned Promise in `inFlight`
+   * before awaiting it (done by `getKey`).
+   */
+  private async _doResolve(
+    did: string,
+    kid: string | undefined,
+    cacheKey: string,
+  ): Promise<{ key: jose.KeyLike | Uint8Array; alg: string }> {
     // Cache miss — re-fetch.  Emit a structured audit event so an
     // abnormally high rate (e.g. an attacker forcing repeated re-fetches)
     // is visible in the audit trail.
@@ -245,9 +369,57 @@ export class PartnerIssuerResolver {
     // Look up registry entry for pin material (may be undefined for legacy path).
     const registryEntry = this.registry ? await this.registry.get(did) : undefined;
 
+    // ── Network fetch, wrapped in the per-DID circuit breaker ────────────────
+    //
+    // Only `resolveDID` is inside the breaker.  Pin-mismatch and key-validation
+    // errors signal data problems (not network outages) and must NOT count as
+    // circuit failures — doing so would let an attacker with a malformed DID
+    // document force the circuit open against a partner that is perfectly
+    // reachable.
+    const breaker = this.getOrCreateBreaker(did);
+    let didDoc: DIDDocument;
     try {
-      const didDoc = await resolveDID(did, { httpAllowList: this.httpAllowList, ionResolverUrl: this.ionResolverUrl });
+      didDoc = await breaker.execute(() =>
+        resolveDID(did, { httpAllowList: this.httpAllowList, ionResolverUrl: this.ionResolverUrl }),
+      );
+    } catch (resolveErr) {
+      if (resolveErr instanceof CircuitOpenError) {
+        // The circuit is open (or a half-open probe is already in flight).
+        // Fast-fail without a network round-trip and without storing a new
+        // negative-cache entry — the circuit already manages its own cooldown
+        // and an additional stale-denial entry would only extend the effective
+        // blackout unnecessarily.
+        this.logger?.warn('Partner DID circuit open — fast failing', {
+          eventType: 'partner_did_circuit_open',
+          did,
+          kid: kid ?? null,
+        });
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `Partner DID ${did} is temporarily unavailable (circuit open)`,
+          401,
+        );
+      }
+      // Network error, timeout, or non-200 response from the DID endpoint.
+      // Store a negative cache entry so requests during the circuit-opening
+      // window (before the threshold is reached) do not all pay the full
+      // TCP/TLS timeout.
+      const detail = resolveErr instanceof Error ? resolveErr.message : String(resolveErr);
+      this.logger?.error('Partner DID resolution failed', {
+        eventType: 'partner_did_resolution_error',
+        did,
+        error: detail,
+      });
+      this.storeNegativeDid(did);
+      throw new CapabilityError(
+        ErrorCode.INVALID_TOKEN,
+        `Partner DID ${did} is temporarily unavailable`,
+        401,
+      );
+    }
 
+    // ── Post-resolution validation (pin checks, key extraction) ─────────────
+    try {
       // Pin verification (2C): check JCS-SHA-256 of the DID document.
       if (registryEntry?.pinnedDocSha256) {
         await this.verifyDocPin(did, didDoc, registryEntry.pinnedDocSha256, registryEntry);
@@ -306,7 +478,7 @@ export class PartnerIssuerResolver {
         );
       }
 
-      this.cache.set(cacheKey, { key, alg, expiresAt: now + this.cacheTtlMs });
+      this.cache.set(cacheKey, { key, alg, expiresAt: Date.now() + this.cacheTtlMs });
       this.negativeCache.delete(did);
 
       this.logger?.info('Partner DID document fetched and cached', {
@@ -323,7 +495,7 @@ export class PartnerIssuerResolver {
       return { key, alg };
     } catch (err) {
       if (err instanceof CapabilityError) throw err;
-      // Unexpected error (network failure, etc.) — negatively cache by DID.
+      // Unexpected error in post-resolution processing.
       const detail = err instanceof Error ? err.message : String(err);
       this.logger?.error('Partner DID resolution failed', {
         eventType: 'partner_did_resolution_error',
@@ -626,14 +798,31 @@ export class PartnerIssuerResolver {
 }
 
 /**
+ * Options accepted by {@link createPartnerIssuerResolverFromEnv} beyond what
+ * is derived from environment variables.
+ */
+export interface PartnerIssuerResolverFromEnvOptions {
+  /**
+   * Optional callback invoked whenever a per-DID circuit breaker transitions
+   * state.  Inject a Prometheus counter increment here.
+   */
+  onCircuitStateChange?: (did: string, from: CircuitState, to: CircuitState) => void;
+}
+
+/**
  * Build a {@link PartnerIssuerResolver} from environment variables.
  * Returns `undefined` when `TRUSTED_PARTNER_DIDS` is unset or empty so
  * single-issuer deployments incur zero overhead.
+ *
+ * Circuit-breaker tuning is read from `PARTNER_DID_CB_FAILURE_THRESHOLD`,
+ * `PARTNER_DID_CB_WINDOW_SECONDS`, and `PARTNER_DID_CB_COOLDOWN_SECONDS`.
+ * Omitting any of those falls back to the class-level defaults (3 / 30 s / 60 s).
  */
 export function createPartnerIssuerResolverFromEnv(
   env: NodeJS.ProcessEnv,
   logger?: Logger,
   registry?: PartnerDidRegistry,
+  options?: PartnerIssuerResolverFromEnvOptions,
 ): PartnerIssuerResolver | undefined {
   const raw = env.TRUSTED_PARTNER_DIDS;
   const dids = raw
@@ -654,6 +843,20 @@ export function createPartnerIssuerResolverFromEnv(
   const negTtlSec = negTtlSecRaw ? parseInt(negTtlSecRaw, 10) : undefined;
   const negativeCacheTtlMs = negTtlSec !== undefined && Number.isFinite(negTtlSec) ? negTtlSec * 1000 : undefined;
 
+  // Circuit-breaker env vars (all optional; class defaults apply when absent).
+  const cbThreshRaw = env.PARTNER_DID_CB_FAILURE_THRESHOLD;
+  const cbThresh = cbThreshRaw ? parseInt(cbThreshRaw, 10) : undefined;
+  const cbWindowRaw = env.PARTNER_DID_CB_WINDOW_SECONDS;
+  const cbWindow = cbWindowRaw ? parseInt(cbWindowRaw, 10) : undefined;
+  const cbCooldownRaw = env.PARTNER_DID_CB_COOLDOWN_SECONDS;
+  const cbCooldown = cbCooldownRaw ? parseInt(cbCooldownRaw, 10) : undefined;
+
+  const circuitBreaker: PartnerIssuerResolverOptions['circuitBreaker'] = {
+    ...(cbThresh && Number.isFinite(cbThresh) && cbThresh > 0 ? { failureThreshold: cbThresh } : {}),
+    ...(cbWindow && Number.isFinite(cbWindow) && cbWindow > 0 ? { windowMs: cbWindow * 1000 } : {}),
+    ...(cbCooldown && Number.isFinite(cbCooldown) && cbCooldown > 0 ? { cooldownMs: cbCooldown * 1000 } : {}),
+  };
+
   return new PartnerIssuerResolver({
     trustedIssuerDids: dids,
     registry,
@@ -663,5 +866,7 @@ export function createPartnerIssuerResolverFromEnv(
     pinAttestationSecret: env.PARTNER_DID_PIN_SECRET || undefined,
     httpAllowList: parseDidWebHttpAllowList(env.DID_WEB_ALLOW_HTTP_FOR_HOSTS),
     ionResolverUrl: env.ION_RESOLVER_URL || undefined,
+    circuitBreaker,
+    onCircuitStateChange: options?.onCircuitStateChange,
   });
 }
