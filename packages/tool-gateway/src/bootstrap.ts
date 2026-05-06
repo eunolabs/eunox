@@ -1,73 +1,56 @@
 /**
  * Tool Gateway bootstrap
  * ---------------------------------------------------------------------------
- * Owns environment loading and dependency wiring (verifier, enforcement
- * engine, kill-switch, evidence signer, stores, partner resolver) so that
- * `app-factory.ts` can stay a pure composition function with no env reads,
+ * Sequences the three concern modules (dpop-module, revocation-module,
+ * audit-module) and performs final wiring: JWKS client, action resolver,
+ * verifier, enforcement engine. Hands the completed dependency bag to
+ * `createApp(deps)`.
+ *
+ * `app-factory.ts` remains a pure composition function with no env reads,
  * no I/O and no listening.
  *
- * Part of R-2 from `docs/IMPROVEMENTS_AND_REFACTORING.md`.
+ * See R-2, R-3 in `docs/IMPROVEMENTS_AND_REFACTORING.md`.
  */
 
 import {
   ActionResolver,
+  AuditPipeline,
   BUILTIN_ACTION_RESOLVER,
-  ServiceConfig,
-  EvidenceSigner,
-  AuditBatchSigner,
-  AuditAnchor,
-  createSoftwareEvidenceSignerFromEnv,
-  LedgerAuditEvidenceSigner,
-  AzureConfidentialLedgerBackend,
   AzureConfidentialLedgerClient,
-  PostgresLedgerBackend,
-  PerReplicaPostgresLedgerBackend,
   CrossChainAnchor,
-  InMemoryLedgerBackend,
-  LedgerChainError,
-  SignedAuditEvidence,
-  SignedBatchCommitment,
-  KillSwitchManager,
-  createKillSwitchManagerFromEnv,
-  CallCounterStore,
-  createCallCounterStoreFromEnv,
-  InMemoryCallCounterStore,
-  ShardLocalCallCounterStore,
   createLogger,
-  createAuditLogger,
+  createOcsfTransportFromEnv,
+  createOcsfWinstonTransport,
+  createMetricsRegistry,
+  Counter,
+  DpopReplayStore,
+  EvidenceSigner,
+  Gauge,
+  GatewayConfig,
+  GatewayQuotaEngine,
+  CallCounterBackedGatewayQuotaEngine,
+  KillSwitchManager,
   loadActionResolverFromFileWithHash,
   computeActionResolverHash,
   loadConfigOrExit,
   loadConfig,
-  GatewayConfig,
-  createMetricsRegistry,
-  Counter,
-  Gauge,
-  Registry,
-  AuditPipeline,
-  BackpressurePolicy,
-  createAuditPipeline,
-  createDpopReplayStoreFromEnv,
-  DpopReplayStore,
-  createOcsfTransportFromEnv,
-  createOcsfWinstonTransport,
-  signedEvidenceToOcsf,
   OcsfAuditTransport,
-  RedisCircuitBreaker,
-  GatewayQuotaEngine,
-  CallCounterBackedGatewayQuotaEngine,
+  Registry,
+  ServiceConfig,
+  CallCounterStore,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
 import { JwksClient } from './jwks-client';
 import { EnforcementEngine } from './enforcement';
-import { createRevocationStoreFromEnv, RevocationStore, createRevocationEpochStoreFromEnv, RevocationEpochStore } from './revocation-store';
-import { createPartnerIssuerResolverFromEnv, type PartnerIssuerResolverFromEnvOptions } from './partner-issuer-resolver';
+import { RevocationStore, RevocationEpochStore } from './revocation-store';
 import {
-  createPartnerDidRegistryFromEnv,
   InMemoryPartnerDidRegistry,
   RedisPartnerDidRegistry,
 } from './partner-did-registry';
+import { buildDpopModule } from './dpop-module';
+import { buildRevocationModule } from './revocation-module';
+import { buildAuditModule } from './audit-module';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -482,62 +465,6 @@ function parseTrustProxy(value: string | undefined): string | boolean | number {
 }
 
 /**
- * Minimal type stub for the `@azure-rest/confidential-ledger` SDK client.
- * Used only by {@link buildAclClientFromEndpoint}; extracted here to avoid
- * an unreadable inline type at the call site.
- *
- * @internal
- */
-type AclSdkPath = {
-  post(opts: { body: { contents: string } }): Promise<{ status: string; body: { transactionId: string } }>;
-  get(): Promise<{ status: string; body: { transactionId: string; contents: string } }>;
-};
-type AclSdkClient = { path(route: string, ...params: string[]): AclSdkPath };
-type AclSdkFactory = (endpoint: string, credential: unknown) => AclSdkClient;
-
-/**
- * Build an {@link AzureConfidentialLedgerClient} by dynamically requiring
- * `@azure-rest/confidential-ledger` and `@azure/identity`.
- *
- * Both packages must be available at runtime (add to the deployment image).
- * Authentication uses `DefaultAzureCredential` — workload identity, managed
- * identity, or `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`
- * environment variables are all supported automatically.
- */
-function buildAclClientFromEndpoint(endpoint: string): AzureConfidentialLedgerClient {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const ConfidentialLedger = ((require('@azure-rest/confidential-ledger') as { default: unknown }).default as AclSdkFactory);
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { DefaultAzureCredential } = require('@azure/identity') as { DefaultAzureCredential: new () => unknown };
-  const sdk = ConfidentialLedger(endpoint, new DefaultAzureCredential());
-  return {
-    async appendTransaction(contents: string) {
-      const res = await sdk.path('/app/transactions').post({ body: { contents } });
-      if (res.status !== '201') {
-        throw new Error(`Azure Confidential Ledger append failed (HTTP ${res.status})`);
-      }
-      return { transactionId: res.body.transactionId };
-    },
-    async getLatestCommittedTransaction() {
-      const res = await sdk.path('/app/transactions').get();
-      if (res.status === '204') return null;
-      if (res.status !== '200') {
-        throw new Error(`Azure Confidential Ledger get-latest failed (HTTP ${res.status})`);
-      }
-      return { transactionId: res.body.transactionId, contents: res.body.contents };
-    },
-    async getTransaction(transactionId: string) {
-      const res = await sdk.path('/app/transactions/{transactionId}', transactionId).get();
-      if (res.status === '404') return null;
-      if (res.status !== '200') {
-        throw new Error(`Azure Confidential Ledger get-transaction failed (HTTP ${res.status})`);
-      }
-      return { transactionId, contents: res.body.contents };
-    },
-  };
-}
-
-/**
  * Subset of {@link GatewayDependencies} that can be injected into
  * {@link initializeServices} to override or augment what the bootstrap builds
  * from environment variables.
@@ -578,61 +505,176 @@ export async function initializeServices(
   env: NodeJS.ProcessEnv = process.env,
   injectDeps: InjectableBootstrapDeps = {},
 ): Promise<{ deps: GatewayDependencies; setReady: (ready: boolean) => void }> {
-  // Validate the environment against the typed `EunoConfig` Zod schema
-  // (R-5 in `docs/IMPROVEMENTS_AND_REFACTORING.md`). This produces a
-  // single, structured "what's wrong" report on misconfig and exits
-  // before any service is constructed.
+  // ── Step 1: Validate config ───────────────────────────────────────────────
   const validated: GatewayConfig = loadConfigOrExit(env, 'gateway');
-
   const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
   const logger = createLogger(config.name, config.environment);
 
-  // F-6: optional OCSF audit transport. Constructed early so it can
-  // be attached to (a) the audit logger (used by the synchronous
-  // enforcement path) and (b) the audit pipeline's `onSigned` sink
-  // (used when R-9 async signing is enabled). When `OCSF_TRANSPORT`
-  // is unset the factory returns `undefined` and OCSF stays off —
-  // existing deployments get no behavioural change.
-  const ocsfProduct = {
-    name: 'euno-tool-gateway',
-    vendor: 'Euno',
-  };
-  const ocsfTransport = createOcsfTransportFromEnv(env, logger);
+  // ── Step 2: OCSF transport (F-6) — created early so it can be shared with
+  //            both the enforcement-engine audit logger and the pipeline sink.
+  const ocsfProduct = { name: 'euno-tool-gateway', vendor: 'Euno' };
+  const ocsfTransport: OcsfAuditTransport | undefined = createOcsfTransportFromEnv(env, logger);
   if (ocsfTransport) {
     logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
   }
 
-  // F-2: shared DPoP replay store. Wires Redis when `REDIS_URL` is
-  // set so a captured proof can't be replayed once per replica
-  // inside its acceptance window — the failure mode flagged by the
-  // PR review of F-2. Falls back to per-process in-memory when no
-  // Redis is configured (single-replica / dev). See
-  // `RedisDpopReplayStore` for the SET NX semantics that make this
-  // race-free.
-  //
-  // `onError` is late-bound via the closure below because the Prometheus
-  // counter is registered after the stores are created (the registry
-  // setup comes later). The callback is only invoked on live requests,
-  // by which point the counter is guaranteed to be non-null.
-  let redisErrorsCounter: Counter<string> | undefined;
-  // H-1: shard mis-route counter; also late-bound for the same reason.
+  // ── Step 3: Prometheus registry + counters ────────────────────────────────
+  // Created BEFORE the stores so all callbacks are fully bound when passed to
+  // the module factories — the late-binding anti-pattern is eliminated.
+  const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
+
+  const decisionsCounter = new Counter({
+    name: 'euno_gateway_decisions_total',
+    help: 'Authorization decisions made by the gateway, labelled allow|deny.',
+    labelNames: ['decision'],
+    registers: [metricsRegistry],
+  });
+  decisionsCounter.inc({ decision: 'allow' }, 0);
+  decisionsCounter.inc({ decision: 'deny' }, 0);
+
+  const redisErrorsCounter = new Counter({
+    name: 'euno_gateway_redis_errors_total',
+    help: 'Redis errors encountered by gateway stores (dpop_replay, revocation, revocation_epoch, call_counter). ' +
+      'A non-zero rate indicates Redis instability; a sustained rate means the gateway is ' +
+      'failing closed on affected checks — monitor alongside denial rates.',
+    labelNames: ['store'],
+    registers: [metricsRegistry],
+  });
+  redisErrorsCounter.inc({ store: 'dpop_replay' }, 0);
+  redisErrorsCounter.inc({ store: 'revocation' }, 0);
+  redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
+  redisErrorsCounter.inc({ store: 'call_counter' }, 0);
+
+  const revocationUnavailableCounter = new Counter({
+    name: 'euno_gateway_revocation_unavailable_total',
+    help: 'Revocation checks that could not be completed because the backing store (Redis) was unreachable. ' +
+      'Does not fire in stale-readable or fail-open mode. ' +
+      'A non-zero rate means the gateway is either fail-closing (→ 401) or returning 503 on token checks.',
+    registers: [metricsRegistry],
+  });
+  revocationUnavailableCounter.inc(0);
+
+  const counterFallbackCounter = new Counter({
+    name: 'euno_gateway_counter_fallback_total',
+    help: 'Call-counter increments served from the local in-memory fallback because Redis was unavailable. ' +
+      'A non-zero rate means maxCalls enforcement is per-replica (effective cap = maxCalls × replicaCount).',
+    registers: [metricsRegistry],
+  });
+  counterFallbackCounter.inc(0);
+
+  // H-1: shard mis-route counter — conditional on sharding being enabled.
+  const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
+  const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
   let shardMisroutedCounter: Counter | undefined;
-  // Late-bound counters for per-surface degradation signals.
-  let revocationUnavailableCounter: Counter | undefined;
-  let counterFallbackCounter: Counter | undefined;
-  // Late-bound counter for per-DID circuit breaker state transitions.
-  // Labelled by DID and state transition so operators can alert on
-  // `euno_gateway_partner_did_circuit_transitions_total{to="open"}` to detect
-  // flapping partner endpoints before they degrade cross-org p99 latency.
+  if (shardCount > 1) {
+    shardMisroutedCounter = new Counter({
+      name: 'euno_gateway_shard_misrouted_total',
+      help: 'Requests whose agent `sub` does not hash to this shard. ' +
+        'A non-zero steady-state rate means the Envoy shard router is mis-configured or ' +
+        'its shard count does not match GATEWAY_SHARD_COUNT.',
+      registers: [metricsRegistry],
+    });
+    shardMisroutedCounter.inc(0);
+  }
+
+  // Partner-DID circuit transitions — registered after partnerResolver is known;
+  // declared here so the closure captures the variable reference.
   let partnerDidCircuitTransitionsCounter: Counter<string> | undefined;
-  const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(
+
+  // ── Step 4: DPoP replay store (F-2) ──────────────────────────────────────
+  const { dpopReplayStore } = await buildDpopModule(
     env,
     logger,
-    () => redisErrorsCounter?.inc({ store: 'dpop_replay' }),
+    () => redisErrorsCounter.inc({ store: 'dpop_replay' }),
   );
 
-  // Build the JWKS client (R-6).  Prefers ISSUER_JWKS_URL; falls back to
-  // deriving the JWKS URL from the deprecated ISSUER_PUBLIC_KEY_URL base.
+  // ── Step 5: Redis-backed control-surface stores ───────────────────────────
+  const {
+    revocationStore,
+    epochStore,
+    killSwitchManager,
+    callCounterStore,
+    revocationCircuitBreaker,
+    callCounterCircuitBreaker,
+    partnerRegistry,
+    partnerResolver,
+  } = await buildRevocationModule(validated, env, logger, {
+    onRedisError: (store: string) => redisErrorsCounter.inc({ store }),
+    onRevocationUnavailable: () => revocationUnavailableCounter.inc(),
+    onCounterFallback: () => counterFallbackCounter.inc(),
+    onShardMisrouted: () => shardMisroutedCounter?.inc(),
+    onPartnerCircuitStateChange: (did, from, to) => {
+      partnerDidCircuitTransitionsCounter?.inc({ did, from, to });
+    },
+  });
+
+  // Register partner-DID circuit counter now that we know whether a resolver
+  // was wired (avoids registering a counter that can never be incremented).
+  if (partnerResolver) {
+    partnerDidCircuitTransitionsCounter = new Counter({
+      name: 'euno_gateway_partner_did_circuit_transitions_total',
+      help: 'Number of per-DID circuit breaker state transitions for partner DID document resolution. ' +
+        'Labels: did (partner DID string), from (previous state), to (new state). ' +
+        'Alert on to="open" to detect flapping partner endpoints.',
+      labelNames: ['did', 'from', 'to'],
+      registers: [metricsRegistry],
+    });
+  }
+
+  // ── Step 6: Prometheus gauges (reference stores via closures) ─────────────
+  new Gauge({
+    name: 'euno_gateway_revocation_list_size',
+    help: 'Number of revocation entries currently tracked by the in-process revocation store. ' +
+      'May include expired entries not yet pruned. Always 0 when a non-introspectable backend ' +
+      '(e.g. Redis) is in use.',
+    registers: [metricsRegistry],
+    collect() {
+      const store = revocationStore as { size?: () => number } | undefined;
+      this.set(typeof store?.size === 'function' ? store.size() : 0);
+    },
+  });
+
+  new Gauge({
+    name: 'euno_gateway_redis_circuit_state',
+    help: 'State of the Redis circuit breaker for each control-surface store: 0=closed (healthy), 1=half-open (probing), 2=open (failing fast).',
+    labelNames: ['store'],
+    registers: [metricsRegistry],
+    collect() {
+      const toNumeric = (s: string): number => {
+        switch (s) {
+          case 'closed': return 0;
+          case 'half-open': return 1;
+          case 'open': return 2;
+          default: return 0;
+        }
+      };
+      this.set({ store: 'revocation' }, toNumeric(revocationCircuitBreaker.getState()));
+      this.set({ store: 'call_counter' }, toNumeric(callCounterCircuitBreaker.getState()));
+    },
+  });
+
+  new Gauge({
+    name: 'euno_gateway_shard_info',
+    help: 'Static labels describing the shard topology of this replica.',
+    labelNames: ['shard_index', 'shard_count'],
+    registers: [metricsRegistry],
+    collect() {
+      this.set({ shard_index: String(shardIndex), shard_count: String(shardCount) }, 1);
+    },
+  });
+
+  new Gauge({
+    name: 'euno_gateway_shard_local_counter_size',
+    help: 'Number of in-memory call-counter entries held by the shard-local store on this replica. ' +
+      'Non-zero only when GATEWAY_SHARD_COUNT > 1 and traffic is flowing to this shard.',
+    registers: [metricsRegistry],
+    collect() {
+      const store = callCounterStore as { localSize?: () => number } | undefined;
+      this.set(typeof store?.localSize === 'function' ? store.localSize() : 0);
+    },
+  });
+
+  // ── Step 7: JWKS client + pre-warm ───────────────────────────────────────
   const jwksCacheTtlMs = (validated.EUNO_JWKS_CACHE_TTL_SECONDS ?? 300) * 1000;
   const issuerJwksUrl = validated.ISSUER_JWKS_URL
     ?? deriveJwksUrl(validated.ISSUER_PUBLIC_KEY_URL)
@@ -641,43 +683,24 @@ export async function initializeServices(
   if (!validated.ISSUER_JWKS_URL && validated.ISSUER_PUBLIC_KEY_URL) {
     logger.warn(
       'ISSUER_PUBLIC_KEY_URL is deprecated for gateway key bootstrap. ' +
-        'Set ISSUER_JWKS_URL to the issuer\'s JWKS endpoint ' +
-        '(e.g. https://issuer.example.com/.well-known/jwks.json) instead.',
+        'Set ISSUER_JWKS_URL to the issuer\'s JWKS endpoint instead.',
       { derivedJwksUrl: issuerJwksUrl },
     );
   }
 
-  const jwksClient = new JwksClient({
-    jwksUrl: issuerJwksUrl,
-    cacheTtlMs: jwksCacheTtlMs,
-    logger,
-  });
-
+  const jwksClient = new JwksClient({ jwksUrl: issuerJwksUrl, cacheTtlMs: jwksCacheTtlMs, logger });
   logger.info('Fetching initial JWKS from Capability Issuer', { url: issuerJwksUrl });
-  // Pre-warm the JWKS cache so the first token verification is synchronous.
   await jwksClient.getJwks();
   logger.info('JWKS fetched and cached successfully');
 
   const adminApiKey = validated.ADMIN_API_KEY;
   const requireKid = validated.EUNO_REQUIRE_KID !== undefined ? validated.EUNO_REQUIRE_KID : true;
 
-  // R-7: load operator-supplied ActionResolver from disk if
-  // ACTION_RESOLVER_FILE is set. The same file is consumed by the
-  // capability-issuer so mint-time CA tiering and gateway action
-  // derivation share a single vocabulary. Failure to load is a
-  // startup error so misconfiguration cannot survive into a running
-  // process. Falls back to the in-process BUILTIN_ACTION_RESOLVER
-  // (legacy behaviour) when the env var is unset.
+  // ── Step 8: Action resolver + parity check ────────────────────────────────
   let actionResolver: ActionResolver = BUILTIN_ACTION_RESOLVER;
-  // Canonical SHA-256 of the operator-supplied ActionResolverConfig. When no
-  // file is configured this equals computeActionResolverHash(null) — the same
-  // sentinel the issuer publishes — so the hashes still agree when both sides
-  // use the built-in defaults.
   let localActionResolverHash: string;
   if (validated.ACTION_RESOLVER_FILE && validated.ACTION_RESOLVER_FILE.trim().length > 0) {
-    logger.info('Loading action resolver config from file', {
-      path: validated.ACTION_RESOLVER_FILE,
-    });
+    logger.info('Loading action resolver config from file', { path: validated.ACTION_RESOLVER_FILE });
     const { resolver, hash } = loadActionResolverFromFileWithHash(validated.ACTION_RESOLVER_FILE);
     actionResolver = resolver;
     localActionResolverHash = hash;
@@ -686,20 +709,7 @@ export async function initializeServices(
     localActionResolverHash = computeActionResolverHash(null);
   }
 
-  // Action resolver vocabulary parity check: fetch the issuer's discovery
-  // document and compare its actionResolverHash with our locally-computed
-  // hash. A mismatch means the issuer minted tokens with a different action
-  // vocabulary than we will enforce — a silent privilege-drift vector.
-  //
-  // The metadata URL is taken from ISSUER_METADATA_URL if set; otherwise
-  // derived from ISSUER_JWKS_URL by replacing the JWKS suffix with the
-  // capability-issuer suffix.  When neither can be derived (unlikely in
-  // practice: the gateway already requires ISSUER_JWKS_URL in production)
-  // the check is skipped with a warning.
-  const issuerMetadataUrl = deriveIssuerMetadataUrl(
-    validated.ISSUER_METADATA_URL,
-    issuerJwksUrl,
-  );
+  const issuerMetadataUrl = deriveIssuerMetadataUrl(validated.ISSUER_METADATA_URL, issuerJwksUrl);
   if (issuerMetadataUrl) {
     await checkActionResolverHashParity({
       issuerMetadataUrl,
@@ -714,180 +724,18 @@ export async function initializeServices(
     );
   }
 
-  // Build the revocation store from environment.  Defaults to in-memory; if
-  // REVOCATION_REDIS_URL or REDIS_URL is set we connect to Redis so revocations
-  // are shared across gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
-  //
-  // A dedicated circuit breaker is wired for the revocation stores so repeated
-  // Redis failures trip the circuit to "open" and subsequent authorization
-  // decisions fail immediately (no TCP timeout on every request).  The circuit
-  // breaker is shared between the revocation and epoch stores because they use
-  // the same Redis URL (REVOCATION_REDIS_URL / REDIS_URL).
-  const cbConfig = {
-    failureThreshold: (validated as { REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD?: number }).REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD ?? 5,
-    windowMs: (validated as { REDIS_CIRCUIT_BREAKER_WINDOW_MS?: number }).REDIS_CIRCUIT_BREAKER_WINDOW_MS ?? 10_000,
-    cooldownMs: (validated as { REDIS_CIRCUIT_BREAKER_COOLDOWN_MS?: number }).REDIS_CIRCUIT_BREAKER_COOLDOWN_MS ?? 30_000,
-  };
-
-  // Separate circuit breakers per control surface so a failure on the
-  // revocation Redis does not trip the call-counter circuit (or vice versa).
-  const revocationCircuitBreaker = new RedisCircuitBreaker({
-    ...cbConfig,
-    onStateChange: (from, to) => {
-      logger.warn('Redis revocation circuit breaker state change', { from, to });
-    },
-  });
-  const callCounterCircuitBreaker = new RedisCircuitBreaker({
-    ...cbConfig,
-    onStateChange: (from, to) => {
-      logger.warn('Redis call-counter circuit breaker state change', { from, to });
-    },
-  });
-
-  const revocationStore = await createRevocationStoreFromEnv(
-    env,
-    logger,
-    () => redisErrorsCounter?.inc({ store: 'revocation' }),
-    revocationCircuitBreaker,
-    () => revocationUnavailableCounter?.inc(),
-  );
-
-  // Build the per-issuer epoch store from environment.  Defaults to in-memory;
-  // if REVOCATION_REDIS_URL or REDIS_URL is set we use Redis so an epoch set
-  // on one replica is immediately honoured by all others.  Epochs are a
-  // "revoke-all-before-T" knob for incident response (key compromise).  Redis
-  // errors fail-closed by default (REVOCATION_EPOCH_FAIL_OPEN=false).
-  // The epoch store reuses the revocation circuit breaker because both stores
-  // target the same Redis URL.
-  const epochStore = await createRevocationEpochStoreFromEnv(
-    env,
-    logger,
-    () => redisErrorsCounter?.inc({ store: 'revocation_epoch' }),
-    revocationCircuitBreaker,
-  );
-
-  // Build the kill-switch manager from environment.  Defaults to the
-  // in-process implementation; if KILL_SWITCH_REDIS_URL or REDIS_URL is set
-  // we use the Redis-backed manager so kills (global / session / agent)
-  // propagate across every gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
-  // `createKillSwitchManagerFromEnv` always returns a manager (in-process
-  // when Redis is unset, Redis-backed otherwise).
-  const killSwitchManager: KillSwitchManager = await createKillSwitchManagerFromEnv(env, logger);
-
-  // Build the call-counter store used by `maxCalls` condition enforcement.
-  // When sharding is enabled (GATEWAY_SHARD_COUNT > 1) we use a
-  // ShardLocalCallCounterStore: the in-memory store handles owned agents
-  // (zero Redis traffic on the hot path) while the Redis store covers
-  // mis-routed traffic during topology changes. When sharding is disabled
-  // (default), we fall back to the standard Redis / in-memory selection.
-  let callCounterStore: CallCounterStore;
-  {
-    const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
-    const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
-
-    if (shardCount > 1) {
-      logger.info('Horizontal sharding enabled (H-1): using shard-local call-counter store', {
-        shardCount,
-        shardIndex,
-      });
-      // The base Redis store is still needed for mis-routed traffic.
-      const remoteStore = await createCallCounterStoreFromEnv(
-        env,
-        logger,
-        () => redisErrorsCounter?.inc({ store: 'call_counter' }),
-        callCounterCircuitBreaker,
-        () => counterFallbackCounter?.inc(),
-      );
-      callCounterStore = new ShardLocalCallCounterStore(
-        new InMemoryCallCounterStore(),
-        remoteStore,
-        {
-          shardIndex,
-          shardCount,
-          onMisrouted: () => shardMisroutedCounter?.inc(),
-        },
-        logger,
-      );
-    } else {
-      callCounterStore = await createCallCounterStoreFromEnv(
-        env,
-        logger,
-        () => redisErrorsCounter?.inc({ store: 'call_counter' }),
-        callCounterCircuitBreaker,
-        () => counterFallbackCounter?.inc(),
-      );
-    }
-  }
-
-  // Build the cross-org partner-issuer trust resolver.
-  // The registry is constructed first so the resolver can consult it for trust
-  // decisions and pin verification; the legacy TRUSTED_PARTNER_DIDS env-var path
-  // is preserved as a seed-and-warn fallback (deprecated in non-production,
-  // hard-error in production unless PARTNER_DID_REGISTRY_REQUIRED=false).
-  //
-  // When REDIS_URL is set the factory creates its own ioredis connection so
-  // admin-API writes (propose/approve/revoke) propagate to all replicas.
-  const partnerRegistry = await createPartnerDidRegistryFromEnv(
-    env,
-    logger,
-    undefined, // let the factory auto-create from REDIS_URL when set
-    {
-      requirePin: validated.PARTNER_DID_REQUIRE_PIN,
-      // registryRequired: intentionally omitted — factory derives from NODE_ENV
-      // (production → default true unless PARTNER_DID_REGISTRY_REQUIRED=false;
-      //  non-production → default false unless PARTNER_DID_REGISTRY_REQUIRED=true).
-      keyPrefix: validated.PARTNER_DID_REGISTRY_KEY_PREFIX,
-      deploymentTier: validated.EUNO_DEPLOYMENT_TIER,
-      nodeEnv: validated.NODE_ENV,
-    },
-  );
-
-  const pinAttestationSecret = validated.PARTNER_DID_PIN_SECRET || undefined;
-  const partnerDidAutoFetchPin = validated.PARTNER_DID_AUTO_FETCH_PIN;
-
-  const partnerResolverOptions: PartnerIssuerResolverFromEnvOptions = {
-    // Wire the Prometheus counter callback.  The counter is a late-bound
-    // `let` declared above and instantiated after metricsRegistry is created;
-    // the closure is safe because it is only invoked during live requests.
-    onCircuitStateChange: (did, from, to) => {
-      partnerDidCircuitTransitionsCounter?.inc({ did, from, to });
-      logger.warn('Partner DID circuit breaker state change', { did, from, to });
-    },
-  };
-
-  const partnerResolver = createPartnerIssuerResolverFromEnv(env, logger, partnerRegistry, partnerResolverOptions);
-  if (partnerResolver) {
-    const partnerDidCount = (validated.TRUSTED_PARTNER_DIDS ?? []).length;
-    logger.info('Cross-org partner-issuer trust resolver enabled', {
-      partnerDidCount,
-      pinAttestationEnabled: !!pinAttestationSecret,
-      autoFetchPin: partnerDidAutoFetchPin,
-      circuitBreakerFailureThreshold: validated.PARTNER_DID_CB_FAILURE_THRESHOLD,
-      circuitBreakerWindowSeconds: validated.PARTNER_DID_CB_WINDOW_SECONDS,
-      circuitBreakerCooldownSeconds: validated.PARTNER_DID_CB_COOLDOWN_SECONDS,
-    });
-  }
-
-  // Optional allow-list of issuers (DIDs or simple identifiers) that the
-  // local SPKI key is authorised to sign for.
+  // ── Step 9: Verifier ─────────────────────────────────────────────────────
   const localIssuers = validated.LOCAL_ISSUER_IDS ?? [];
-
   const verifier = new JwksTokenVerifier(jwksClient, {
     revocationStore,
     epochStore,
     partnerResolver: partnerResolver ?? undefined,
     localIssuers: localIssuers.length > 0 ? localIssuers : undefined,
     requireKid,
-    // Multi-issuer trust hardening: build the cosignature + transparency-log
-    // verifier from env. Returns undefined when neither REQUIRE_COSIGNATURE_COUNT
-    // nor REQUIRE_TRANSPARENCY_LOG_PROOF is set, in which case the verifier
-    // chain runs as before (back-compat).
     proofsVerifier: buildProofsVerifierFromEnv(validated, logger),
   });
 
-  // Replica identity — needed both for the ledger backend (stamped on each row)
-  // and for Merkle batch commitments in the audit pipeline.  Compute once here
-  // so both uses share the same value.
+  // ── Step 10: Replica identity ─────────────────────────────────────────────
   const replicaIdFromEnv = (validated as { AUDIT_REPLICA_ID?: string }).AUDIT_REPLICA_ID;
   let replicaId = replicaIdFromEnv ?? 'unknown-replica';
   if (!replicaIdFromEnv) {
@@ -898,718 +746,26 @@ export async function initializeServices(
     }
   }
 
-  // Missing-signer is treated as a startup error so misconfiguration cannot
-  // survive into a running process.
-  //
-  // I-8: when EVIDENCE_SIGNED_DECISIONS is defined it is authoritative
-  // (an explicitly-empty list disables signing even if the legacy
-  // boolean is true); only fall back to ENABLE_CRYPTOGRAPHIC_AUDIT when
-  // the env var is unset. This must match the schema-level rule and the
-  // EnforcementEngine constructor so all three layers agree.
-  const signedDecisions = validated.EVIDENCE_SIGNED_DECISIONS as
-    | Array<'allow' | 'deny'>
-    | undefined;
-  const willSignSomething =
-    signedDecisions !== undefined
-      ? signedDecisions.length > 0
-      : !!config.enableCryptographicAudit;
-
-  let evidenceSigner: EvidenceSigner | undefined;
-  // When a ledger backend is used the Postgres pool is created here; expose
-  // it in GatewayDependencies so the entrypoint can call pool.end() on shutdown.
-  let ledgerPgPool: import('@euno/common').PgPool | undefined;
-  // CrossChainAnchor for per-replica-postgres; stopped during graceful shutdown.
-  let crossChainAnchor: CrossChainAnchor | undefined;
-  // When a ledger backend wraps the signing key, keep softwareSigner available
-  // as a batchSigner (signBatch() does not use chain state, so the software
-  // signer can still fulfil the AuditBatchSigner role even in ledger mode).
-  let auditBatchSigner: AuditBatchSigner | undefined;
-  if (willSignSomething) {
-    try {
-      // Build the base software signer first (key loading, algorithm validation).
-      const softwareSigner = createSoftwareEvidenceSignerFromEnv(env);
-      if (!softwareSigner) {
-        throw new Error(
-          'No evidence signer is configured. Provide ' +
-            'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
-            'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
-            'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
-            'programmatically. Refusing to start with cryptographic audit ' +
-            'enabled but no signer attached.',
-        );
-      }
-
-      // Optionally wrap with a pluggable ledger backend to close the
-      // "compromised replica rewrites local chain" gap.
-      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
-      if (ledgerBackendName && ledgerBackendName !== 'none') {
-        const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
-        const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
-        const table = (validated as { AUDIT_LEDGER_TABLE?: string }).AUDIT_LEDGER_TABLE;
-        const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
-        const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
-        const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
-        const aclEndpoint = (validated as { AUDIT_LEDGER_ACL_ENDPOINT?: string }).AUDIT_LEDGER_ACL_ENDPOINT;
-
-        if (ledgerBackendName === 'postgres') {
-          if (!pgUrl) {
-            throw new Error(
-              'AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.',
-            );
-          }
-          if (!hmacSecret) {
-            throw new Error(
-              'AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.',
-            );
-          }
-          if (s3Bucket) {
-            // Fail fast: AUDIT_LEDGER_S3_BUCKET is set but the bootstrap does not
-            // inject a real S3 client.  Operators must wire a client via
-            // GatewayDependencies.ledgerPgPool or use a custom entrypoint that
-            // constructs PostgresLedgerBackend directly with an S3AnchorClient.
-            throw new Error(
-              'AUDIT_LEDGER_S3_BUCKET is set but no S3 client is wired in the standard ' +
-                'bootstrap. Provide an S3AnchorClient by constructing PostgresLedgerBackend ' +
-                'directly (with the s3.client option) in a custom entrypoint, or unset ' +
-                'AUDIT_LEDGER_S3_BUCKET to rely on HMAC + in-DB chain integrity only.',
-            );
-          }
-
-          // Dynamically require pg to avoid a hard dependency in @euno/common.
-          // The tool-gateway package.json must list 'pg' as a dependency when
-          // AUDIT_LEDGER_BACKEND=postgres is used.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
-          const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
-          const pgPool = new Pool({ connectionString: pgUrl });
-          // Expose the pool so the entrypoint can call pgPool.end() on graceful shutdown.
-          ledgerPgPool = pgPool;
-
-          const pgBackend = new PostgresLedgerBackend(pgPool, {
-            table,
-            hmacSecret,
-            onAnchorError: (err: Error) => {
-              logger.error('Ledger S3 anchor failed', { error: err.message });
-            },
-          });
-
-          if (runMigrations) {
-            // DDL at startup is appropriate for development / single-replica
-            // deployments only. Production databases should grant DML-only
-            // privileges to the gateway role and run schema migrations from
-            // a dedicated identity (Helm pre-install hook, Flyway/Liquibase
-            // job, etc.). Surface the relaxed posture in logs so it is
-            // observable to anyone reviewing a running production cluster.
-            if (validated.NODE_ENV === 'production') {
-              logger.warn(
-                'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
-                  'is performing DDL on the audit ledger table. Production deployments should ' +
-                  'instead run migrations from a sidecar / Job under a separate database role ' +
-                  'with DDL privileges and grant the gateway role only DML on the table. See ' +
-                  'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
-              );
-            }
-            await pgBackend.migrate();
-            logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
-          }
-
-          // Use getCryptoSigner() (the safe public accessor added to AuditEvidenceSigner)
-          // instead of accessing the private field via a cast.
-          const cryptoSigner = softwareSigner.getCryptoSigner();
-          const ledgerSigner = new LedgerAuditEvidenceSigner(
-            cryptoSigner,
-            pgBackend,
-            replicaId,
-          );
-          // initialize() delegates to pgBackend.initialize() which seeds
-          // lastAnchoredSeq from the DB tip so a restart doesn't re-anchor
-          // the entire existing history.
-          await ledgerSigner.initialize();
-          evidenceSigner = ledgerSigner;
-          // Keep softwareSigner as batchSigner: signBatch() does not depend on
-          // chain state, so it can remain the AuditBatchSigner even in ledger mode.
-          auditBatchSigner = softwareSigner;
-
-          logger.info('Audit ledger backend: postgres', {
-            table: table ?? 'euno_audit_ledger',
-            anchorInterval,
-          });
-        } else if (ledgerBackendName === 'acl') {
-          // Prefer an explicitly injected client (custom entrypoint / testing).
-          // Fall back to constructing one from AUDIT_LEDGER_ACL_ENDPOINT using
-          // DefaultAzureCredential (requires @azure-rest/confidential-ledger and
-          // @azure/identity in the deployment image).
-          let aclClient: AzureConfidentialLedgerClient;
-          if (injectDeps.ledgerAclClient) {
-            aclClient = injectDeps.ledgerAclClient;
-            logger.info('Audit ledger backend: acl (using injected client)');
-          } else if (aclEndpoint) {
-            aclClient = buildAclClientFromEndpoint(aclEndpoint);
-            logger.info('Audit ledger backend: acl', { endpoint: aclEndpoint });
-          } else {
-            throw new Error(
-              'AUDIT_LEDGER_BACKEND=acl requires either injectDeps.ledgerAclClient ' +
-                '(injected AzureConfidentialLedgerClient) or AUDIT_LEDGER_ACL_ENDPOINT to be set. ' +
-                'For managed identity / workload identity deployments set AUDIT_LEDGER_ACL_ENDPOINT; ' +
-                'the bootstrap will use DefaultAzureCredential. For custom credential scenarios ' +
-                'provide ledgerAclClient via the second argument to initializeServices().',
-            );
-          }
-
-          const aclBackend = new AzureConfidentialLedgerBackend(aclClient, {
-            onError: (err: Error) => {
-              logger.error('Audit ledger ACL error', { error: err.message });
-            },
-          });
-          const cryptoSigner = softwareSigner.getCryptoSigner();
-          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, aclBackend, replicaId);
-          // initialize() delegates to aclBackend.initialize() which seeds
-          // in-process chain state from the latest ACL transaction.
-          await ledgerSigner.initialize();
-          evidenceSigner = ledgerSigner;
-          // Keep softwareSigner as batchSigner for the same reason as postgres mode.
-          auditBatchSigner = softwareSigner;
-        } else if (ledgerBackendName === 'in-memory') {
-          const inMemBackend = new InMemoryLedgerBackend();
-          const cryptoSigner = softwareSigner.getCryptoSigner();
-          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, inMemBackend, replicaId);
-          await ledgerSigner.initialize();
-          evidenceSigner = ledgerSigner;
-          // Keep softwareSigner as batchSigner for the same reason as in postgres mode.
-          auditBatchSigner = softwareSigner;
-          logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
-        } else if (ledgerBackendName === 'per-replica-postgres') {
-          if (!pgUrl) {
-            throw new Error(
-              'AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.',
-            );
-          }
-          if (!hmacSecret) {
-            throw new Error(
-              'AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.',
-            );
-          }
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
-          const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
-          const pgPool = new Pool({ connectionString: pgUrl });
-          ledgerPgPool = pgPool;
-
-          const perReplicaBackend = new PerReplicaPostgresLedgerBackend(pgPool, replicaId, {
-            table,
-            hmacSecret,
-            onAnchorError: (err: Error) => {
-              logger.error('Per-replica ledger S3 anchor failed', { error: err.message });
-            },
-          });
-
-          if (runMigrations) {
-            if (validated.NODE_ENV === 'production') {
-              logger.warn(
-                'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
-                  'is performing DDL on the audit ledger table. Production deployments should ' +
-                  'run migrations from a separate database role. See ' +
-                  'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
-              );
-            }
-            await perReplicaBackend.migrate();
-            logger.info('Per-replica audit ledger migrations completed', {
-              table: table ?? 'euno_audit_ledger_v2',
-            });
-          }
-
-          const cryptoSigner = softwareSigner.getCryptoSigner();
-          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, perReplicaBackend, replicaId);
-          await ledgerSigner.initialize();
-          evidenceSigner = ledgerSigner;
-          auditBatchSigner = softwareSigner;
-
-          // CrossChainAnchor is not started in the standard bootstrap because there is
-          // no wired external output (the S3 client is unavailable here, and custom external
-          // anchors require a custom entrypoint). Starting the anchor without external output
-          // would fire DB queries every intervalMs and log commitments that are never
-          // persisted anywhere, producing misleading noise. Operators who want periodic
-          // cross-replica Merkle commitments should:
-          //   1. Set AUDIT_LEDGER_S3_BUCKET and provide an S3AnchorClient, OR
-          //   2. Provide a pre-built CrossChainAnchor via injectDeps.crossChainAnchor.
-          const crossChainIntervalMs = (validated as { AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number }).AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
-          if (s3Bucket) {
-            // S3 client wiring is not available in the standard bootstrap — same
-            // limitation as postgres mode.  When operators add a custom S3 client,
-            // they should construct PerReplicaPostgresLedgerBackend directly with
-            // the s3.client option and pass crossChainAnchor in injectDeps.
-            logger.warn(
-              'AUDIT_LEDGER_S3_BUCKET is set with per-replica-postgres but no S3 client is ' +
-                'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
-                'to S3. Construct PerReplicaPostgresLedgerBackend with an S3AnchorClient in a ' +
-                'custom entrypoint to enable S3 anchoring.',
-            );
-          }
-
-          if (injectDeps.crossChainAnchor) {
-            crossChainAnchor = injectDeps.crossChainAnchor;
-          }
-
-          logger.info('Audit ledger backend: per-replica-postgres', {
-            table: table ?? 'euno_audit_ledger_v2',
-            replicaId,
-            crossChainEnabled: crossChainAnchor !== undefined,
-            crossChainIntervalMs,
-          });
-        } else {
-          throw new Error(`Unknown AUDIT_LEDGER_BACKEND value: "${ledgerBackendName}"`);
-        }
-      } else {
-        // No ledger backend — use the software signer with in-process chain state.
-        evidenceSigner = softwareSigner;
-        auditBatchSigner = softwareSigner;
-        if (ledgerBackendName === 'none' || !ledgerBackendName) {
-          logger.warn(
-            'Cryptographic audit is enabled but AUDIT_LEDGER_BACKEND is not set. ' +
-              'The hash chain lives only in process memory and a compromised replica ' +
-              'can rewrite history. Set AUDIT_LEDGER_BACKEND=postgres for production.',
-          );
-        }
-      }
-    } catch (err) {
-      // Re-throw LedgerChainError immediately — it indicates a serious integrity problem.
-      if (err instanceof LedgerChainError) throw err;
-      throw new Error(
-        'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
-          'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
-          'non-empty) but the configured evidence signer could not be ' +
-          'initialised: ' +
-          (err instanceof Error ? err.message : String(err)),
-      );
-    }
-    if (!evidenceSigner) {
-      throw new Error(
-        'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
-          'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
-          'non-empty) but no evidence signer is configured. Provide ' +
-          'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
-          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
-          'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
-          'programmatically. Refusing to start with cryptographic audit ' +
-          'enabled but no signer attached.',
-      );
-    }
-    if (signedDecisions !== undefined) {
-      logger.info('Cryptographic audit enabled with per-decision signing', {
-        signedDecisions,
-      });
-    } else {
-      logger.info('Cryptographic audit enabled with software evidence signer');
-    }
-  }
-
-  // F-5 (I-16): Prometheus surface. Build a per-process registry tagged with
-  // the service name and pre-register gateway-specific series. We build this
-  // before the audit pipeline so the pipeline's dropped/signed/error
-  // counters (R-9) can be registered on the same registry.
-  const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
-  new Gauge({
-    name: 'euno_gateway_revocation_list_size',
-    help: 'Number of revocation entries currently tracked by the in-process revocation store. ' +
-      'May include expired entries that have not yet been pruned (the in-memory store ' +
-      'prunes lazily on lookup/insert). Always 0 when a non-introspectable backend ' +
-      '(e.g. Redis) is in use.',
-    registers: [metricsRegistry],
-    collect() {
-      const store = revocationStore as { size?: () => number } | undefined;
-      this.set(typeof store?.size === 'function' ? store.size() : 0);
-    },
-  });
-  const decisionsCounter = new Counter({
-    name: 'euno_gateway_decisions_total',
-    help: 'Authorization decisions made by the gateway, labelled allow|deny.',
-    labelNames: ['decision'],
-    registers: [metricsRegistry],
-  });
-  // Pre-initialise the time-series so `rate()` queries succeed before the
-  // first request flows through the gateway.
-  decisionsCounter.inc({ decision: 'allow' }, 0);
-  decisionsCounter.inc({ decision: 'deny' }, 0);
-
-  // Redis store health counter. Incremented by any of the four
-  // Redis-backed stores (DPoP replay, revocation, revocation_epoch, call-counter) on
-  // every operational error. A non-zero rate indicates that Redis is
-  // partially unavailable; a sustained high rate means the gateway is
-  // running in fail-closed mode (DPoP replay / revocation / maxCalls)
-  // and legitimate requests will be denied.
-  redisErrorsCounter = new Counter({
-    name: 'euno_gateway_redis_errors_total',
-    help: 'Redis errors encountered by gateway stores (dpop_replay, revocation, revocation_epoch, call_counter). ' +
-      'A non-zero rate indicates Redis instability; a sustained rate means the gateway is ' +
-      'failing closed on affected checks — monitor alongside denial rates.',
-    labelNames: ['store'],
-    registers: [metricsRegistry],
-  });
-  redisErrorsCounter.inc({ store: 'dpop_replay' }, 0);
-  redisErrorsCounter.inc({ store: 'revocation' }, 0);
-  redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
-  redisErrorsCounter.inc({ store: 'call_counter' }, 0);
-
-  // Revocation-unavailability counter.  Incremented when the revocation store
-  // cannot complete a check because Redis is unreachable AND the configured
-  // unavailableMode is 'fail-closed' (→ 401) or '503' (→ 503 to caller).
-  // Distinct from redisErrorsCounter in that it fires on EVERY degraded check,
-  // not just on raw socket errors — once the circuit is open, errors stop but
-  // degraded responses continue until Redis recovers.  A non-zero rate here
-  // combined with zero redis_errors means the circuit is open.
-  revocationUnavailableCounter = new Counter({
-    name: 'euno_gateway_revocation_unavailable_total',
-    help: 'Revocation checks that could not be completed because the backing store (Redis) was unreachable. ' +
-      'Does not fire in stale-readable or fail-open mode (those serve from the local cache / allow through). ' +
-      'A non-zero rate means the gateway is either fail-closing (→ 401) or returning 503 on token checks.',
-    registers: [metricsRegistry],
-  });
-  revocationUnavailableCounter.inc(0);
-
-  // Counter-fallback counter.  Incremented every time the call-counter store
-  // falls back to the local in-memory counter (Redis error or circuit-open).
-  // Unlike redisErrorsCounter, this fires on EVERY fallback, including when the
-  // circuit is already open (no new errors, but counting locally).
-  // Agents still get a 200 in this mode; the counter fires as a signal that
-  // maxCalls enforcement has relaxed from fleet-wide to per-replica.
-  counterFallbackCounter = new Counter({
-    name: 'euno_gateway_counter_fallback_total',
-    help: 'Call-counter increments served from the local in-memory fallback because Redis was unavailable. ' +
-      'A non-zero rate means maxCalls enforcement is per-replica (effective cap = maxCalls × replicaCount). ' +
-      'Requests are not denied (counter loss → 200 with metric); use alongside redis_errors for root-cause.',
-    registers: [metricsRegistry],
-  });
-  counterFallbackCounter.inc(0);
-
-  // Per-DID partner circuit-breaker transition counter.
-  // Alert on `rate(euno_gateway_partner_did_circuit_transitions_total{to="open"}[5m]) > 0`
-  // to detect flapping partner DID endpoints before their tail latency
-  // degrades /proxy/* p99 system-wide.
-  if (partnerResolver) {
-    partnerDidCircuitTransitionsCounter = new Counter({
-      name: 'euno_gateway_partner_did_circuit_transitions_total',
-      help: 'Number of per-DID circuit breaker state transitions for partner DID document resolution. ' +
-        'Labels: did (partner DID string), from (previous state), to (new state). ' +
-        'Alert on to="open" to detect flapping partner endpoints.',
-      labelNames: ['did', 'from', 'to'],
-      registers: [metricsRegistry],
-    });
-  }
-
-  // Circuit-breaker state gauges.  0 = closed (healthy), 1 = half-open
-  // (probing), 2 = open (failing fast — Redis unreachable).  A sustained
-  // value of 2 means the gateway is serving from its local cache / fallback
-  // for the corresponding control surface.
-  new Gauge({
-    name: 'euno_gateway_redis_circuit_state',
-    help: 'State of the Redis circuit breaker for each control-surface store: 0=closed (healthy), 1=half-open (probing), 2=open (failing fast). ' +
-      'A value of 2 means the store is serving from its local fallback (stale-readable / local-counter mode).',
-    labelNames: ['store'],
-    registers: [metricsRegistry],
-    collect() {
-      const toNumeric = (s: string): number => {
-        switch (s) {
-          case 'closed': return 0;
-          case 'half-open': return 1;
-          case 'open': return 2;
-          // No default needed: CircuitState is a union of the three cases
-          // above; the exhaustive switch is a compile-time guarantee.
-          default: return 0;
-        }
-      };
-      this.set({ store: 'revocation' }, toNumeric(revocationCircuitBreaker.getState()));
-      this.set({ store: 'call_counter' }, toNumeric(callCounterCircuitBreaker.getState()));
-    },
+  // ── Step 11: Audit module (evidence signer + pipeline) ───────────────────
+  const {
+    evidenceSigner,
+    auditPipeline,
+    auditPipelineDrainTimeoutMs,
+    ledgerPgPool,
+    crossChainAnchor,
+  } = await buildAuditModule({
+    validated,
+    env,
+    logger,
+    config,
+    metricsRegistry,
+    replicaId,
+    ledgerAclClient: injectDeps.ledgerAclClient,
+    crossChainAnchorOverride: injectDeps.crossChainAnchor,
+    ocsfTransport,
   });
 
-  // H-1: Horizontal sharding metrics.
-  // `euno_gateway_shard_info` — static labels with the shard topology so
-  // dashboards can correlate per-shard metrics to replica identity.
-  // `euno_gateway_shard_local_counter_size` — size of the in-memory call
-  // counter cache on this shard; a rising value means agents are accumulating
-  // history (normal); a value at zero in a sharded deployment means the shard
-  // is not receiving traffic (abnormal — check the Envoy router).
-  // `euno_gateway_shard_misrouted_total` — mis-routed requests (LB topology
-  // change in progress or misconfigured router); a sustained non-zero rate
-  // means the Envoy router's shard count does not match GATEWAY_SHARD_COUNT.
-  {
-    const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
-    const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
-
-    new Gauge({
-      name: 'euno_gateway_shard_info',
-      help: 'Static labels describing the shard topology of this replica.',
-      labelNames: ['shard_index', 'shard_count'],
-      registers: [metricsRegistry],
-      collect() {
-        this.set({ shard_index: String(shardIndex), shard_count: String(shardCount) }, 1);
-      },
-    });
-
-    // Register unconditionally so the series always exists in Prometheus.
-    // Returns 0 when sharding is disabled (GATEWAY_SHARD_COUNT <= 1) because
-    // the store is not a ShardLocalCallCounterStore in that case.
-    new Gauge({
-      name: 'euno_gateway_shard_local_counter_size',
-      help:
-        'Number of in-memory call-counter entries held by the shard-local store on this replica. ' +
-        'Non-zero only when GATEWAY_SHARD_COUNT > 1 and traffic is flowing to this shard.',
-      registers: [metricsRegistry],
-      collect() {
-        const store = callCounterStore as { localSize?: () => number } | undefined;
-        this.set(typeof store?.localSize === 'function' ? store.localSize() : 0);
-      },
-    });
-
-    if (shardCount > 1) {
-
-      shardMisroutedCounter = new Counter({
-        name: 'euno_gateway_shard_misrouted_total',
-        help:
-          'Requests whose agent `sub` does not hash to this shard. ' +
-          'A non-zero steady-state rate means the Envoy shard router is mis-configured or ' +
-          'its shard count does not match GATEWAY_SHARD_COUNT.',
-        registers: [metricsRegistry],
-      });
-      shardMisroutedCounter.inc(0);
-    }
-  }
-
-  // R-9: build the async audit pipeline when evidence signing is on AND
-  // the operator hasn't opted out via AUDIT_PIPELINE_ENABLED=false. The
-  // pipeline lifts signEvidence off the request critical path; the
-  // legacy synchronous behaviour is reachable for A/B comparison by
-  // setting AUDIT_PIPELINE_ENABLED=false.
-  let auditPipeline: AuditPipeline | undefined;
-  const auditPipelineDrainTimeoutMs = validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS;
-  if (evidenceSigner && validated.AUDIT_PIPELINE_ENABLED) {
-    const droppedCounter = new Counter({
-      name: 'euno_gateway_audit_pipeline_dropped_total',
-      help: 'Audit-evidence records dropped by the async pipeline before they could be signed. ' +
-        'Labelled by reason: queue_full (buffer full, waiter cap reached, or pipeline stopped) ' +
-        'or aged_out (record exceeded AUDIT_PIPELINE_MAX_AGE_MS while waiting). A non-zero rate ' +
-        'is the operator\'s signal to raise AUDIT_PIPELINE_MAX_SIZE / AUDIT_PIPELINE_WORKERS or ' +
-        'to investigate signer latency.',
-      labelNames: ['reason'],
-      registers: [metricsRegistry],
-    });
-    droppedCounter.inc({ reason: 'queue_full' }, 0);
-    droppedCounter.inc({ reason: 'aged_out' }, 0);
-
-    const signedCounter = new Counter({
-      name: 'euno_gateway_audit_pipeline_signed_total',
-      help: 'Audit-evidence records successfully signed by the async pipeline.',
-      registers: [metricsRegistry],
-    });
-    signedCounter.inc(0);
-
-    const signErrorsCounter = new Counter({
-      name: 'euno_gateway_audit_pipeline_sign_errors_total',
-      help: 'Audit-evidence records the async pipeline failed to sign (signer rejection). ' +
-        'A persistent non-zero rate indicates a broken signer key or KMS outage.',
-      registers: [metricsRegistry],
-    });
-    signErrorsCounter.inc(0);
-
-    new Gauge({
-      name: 'euno_gateway_audit_pipeline_queue_depth',
-      help: 'Current number of unsigned audit-evidence records buffered in the async pipeline ring.',
-      registers: [metricsRegistry],
-      collect() {
-        this.set(auditPipeline ? auditPipeline.queueDepth() : 0);
-      },
-    });
-
-    // Build the audit-log sink once, reuse it across every signed
-    // record. Matches the logger the synchronous path in
-    // `EnforcementEngine.generateEvidence` uses, so log routing is
-    // identical whether or not R-9 is enabled.
-    // F-7: stamp `region` on every audit record so multi-region
-    // deployments can attribute events to a region after a regional
-    // failover. Omitted when GATEWAY_REGION is unset (back-compat).
-    const pipelineAuditLogger = createAuditLogger('tool-gateway', {
-      region: validated.GATEWAY_REGION,
-    });
-    // F-6: bridge AuditLogEntry-shaped log records into OCSF.
-    if (ocsfTransport) {
-      pipelineAuditLogger.add(createOcsfWinstonTransport(ocsfTransport, ocsfProduct));
-    }
-
-    const backpressure: BackpressurePolicy =
-      (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
-      'drop_oldest_with_metric';
-
-    // replicaId was computed above (before the evidence signer block)
-    // so the ledger backend and batch commitments use the same value.
-
-    // Build the batch emitted/error counters BEFORE the pipeline so they
-    // exist even if no batches are processed during startup.
-    const batchEmittedCounter = new Counter({
-      name: 'euno_gateway_audit_batch_emitted_total',
-      help: 'Merkle batch commitments emitted by the async pipeline (signed or unsigned). ' +
-        'Each emission anchors a set of signed audit-evidence records in the per-replica batch chain. ' +
-        'Unsigned emissions occur when EVIDENCE_SIGNING_KEY_PEM is not set (dev/staging only).',
-      registers: [metricsRegistry],
-    });
-    batchEmittedCounter.inc(0);
-
-    const batchErrorsCounter = new Counter({
-      name: 'euno_gateway_audit_batch_errors_total',
-      help: 'Errors producing or anchoring Merkle batch commitments (signing failures + per-anchor publish failures). ' +
-        'A non-zero rate means the batch chain may have gaps; investigate the signer or anchor endpoint.',
-      registers: [metricsRegistry],
-    });
-    batchErrorsCounter.inc(0);
-
-    // Batch logger: a dedicated structured logger for batch commitments so
-    // SIEM queries can filter on `message === "Audit batch commitment"`.
-    const batchAuditLogger = createAuditLogger('tool-gateway', {
-      region: validated.GATEWAY_REGION,
-    });
-
-    // Timeout for the HTTP anchor's fetch call (milliseconds).
-    // Prevents a hung TCP connection or slow TLS handshake from stalling
-    // the pipeline worker indefinitely.
-    const AUDIT_ANCHOR_TIMEOUT_MS = 30_000;
-
-    // HTTP anchor — optional external endpoint (WORM bucket, transparency log, etc.)
-    const anchors: AuditAnchor[] = [];
-    const anchorUrl = (validated as { AUDIT_ANCHOR_URL?: string }).AUDIT_ANCHOR_URL;
-    if (anchorUrl) {
-      anchors.push({
-        name: 'http',
-        async anchorBatch(commitment: SignedBatchCommitment): Promise<void> {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), AUDIT_ANCHOR_TIMEOUT_MS);
-          let response: Response;
-          try {
-            response = await fetch(anchorUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(commitment),
-              signal: controller.signal,
-            });
-          } catch (err) {
-            logger.error('Audit batch HTTP anchor failed', {
-              error: err instanceof Error ? err.message : String(err),
-              anchorUrl,
-              timedOut: controller.signal.aborted,
-            });
-            // Re-throw so the pipeline records this via onBatchError.
-            throw err;
-          } finally {
-            clearTimeout(timer);
-          }
-          if (!response.ok) {
-            const msg = `HTTP anchor returned ${response.status}`;
-            logger.warn('Audit batch HTTP anchor returned non-OK status', {
-              status: response.status,
-              anchorUrl,
-              batchId: commitment.batchId,
-            });
-            // Throw so the pipeline records this via onBatchError.
-            throw new Error(msg);
-          }
-        },
-      });
-      logger.info('Audit batch HTTP anchor configured', { anchorUrl });
-    }
-
-    // Use the explicitly-tracked auditBatchSigner (set alongside evidenceSigner above)
-    // so batch commitments remain signed when a ledger backend wraps the evidence signer.
-    // (AuditEvidenceSigner.signBatch() does not rely on chain state and is safe to use
-    // as a batchSigner even when LedgerAuditEvidenceSigner handles per-record signing.)
-    const batchSigner = auditBatchSigner;
-
-    auditPipeline = createAuditPipeline({
-      signer: evidenceSigner,
-      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
-      workers: validated.AUDIT_PIPELINE_WORKERS,
-      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
-      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
-      backpressure,
-      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS,
-      replicaId,
-      batchSigner,
-      anchors,
-      onDropped: (count: number, reason: string) => {
-        droppedCounter.inc({ reason }, count);
-      },
-      onSigned: (signed: SignedAuditEvidence) => {
-        signedCounter.inc();
-        // Mirror the per-record audit log line the synchronous path
-        // emits, so operators searching for a specific evidence id
-        // still find it once R-9 is enabled.
-        try {
-          pipelineAuditLogger.info('Cryptographic evidence generated', {
-            evidenceId: signed.id,
-            sessionId: signed.sessionId,
-            decision: signed.decision,
-            signature: signed.signature.substring(0, 20) + '...',
-            seq: signed.seq,
-            previousHash: signed.previousHash.substring(0, 16) + '...',
-          });
-        } catch {
-          // Audit-log emission is best-effort; never break signing on it.
-        }
-        // F-6: forward the signed evidence to the OCSF sink. Errors
-        // from the transport are swallowed inside `send` itself, so
-        // we never need to wrap this in a try/catch.
-        if (ocsfTransport) {
-          void ocsfTransport.send(signedEvidenceToOcsf(signed, ocsfProduct));
-        }
-      },
-      onSignError: (err: unknown) => {
-        signErrorsCounter.inc();
-        logger.error('Audit pipeline failed to sign evidence', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      },
-      onBatch: (commitment: SignedBatchCommitment) => {
-        batchEmittedCounter.inc();
-        try {
-          batchAuditLogger.info('Audit batch commitment', {
-            batchId: commitment.batchId,
-            replicaId: commitment.replicaId,
-            batchSeq: commitment.batchSeq,
-            merkleRoot: commitment.merkleRoot,
-            recordCount: commitment.recordCount,
-            firstSeq: commitment.firstSeq,
-            lastSeq: commitment.lastSeq,
-            previousBatchHash: commitment.previousBatchHash.substring(0, 16) + '...',
-          });
-        } catch {
-          // Audit-log emission is best-effort.
-        }
-      },
-      onBatchError: (err: unknown) => {
-        batchErrorsCounter.inc();
-        logger.error('Audit batch commitment failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      },
-    });
-
-    logger.info('Async audit pipeline enabled (R-9)', {
-      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
-      workers: validated.AUDIT_PIPELINE_WORKERS,
-      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
-      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
-      backpressure,
-      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS ?? validated.AUDIT_PIPELINE_MAX_SIZE,
-      replicaId,
-      batchSigningEnabled: !!batchSigner,
-      httpAnchorEnabled: !!anchorUrl,
-    });
-  } else if (evidenceSigner && !validated.AUDIT_PIPELINE_ENABLED) {
-    logger.warn(
-      'Async audit pipeline disabled (AUDIT_PIPELINE_ENABLED=false); ' +
-        'evidence signing runs on the request critical path.',
-    );
-  }
-
-  // Gateway quota engine (F-1b). Re-uses the existing callCounterStore
-  // so no additional Redis client is needed. Enabled only when
-  // GATEWAY_QUOTA_ENABLED=true to preserve pre-F-1b behaviour.
+  // ── Step 12: Gateway quota engine (F-1b) ──────────────────────────────────
   let gatewayQuota: GatewayQuotaEngine | undefined;
   if (validated.GATEWAY_QUOTA_ENABLED) {
     gatewayQuota = new CallCounterBackedGatewayQuotaEngine(
@@ -1628,6 +784,11 @@ export async function initializeServices(
     });
   }
 
+  // ── Step 13: Enforcement engine ───────────────────────────────────────────
+  const signedDecisions = validated.EVIDENCE_SIGNED_DECISIONS as
+    | Array<'allow' | 'deny'>
+    | undefined;
+
   const enforcementEngine = new EnforcementEngine({
     verifier,
     logger,
@@ -1640,43 +801,22 @@ export async function initializeServices(
     policyVersion: config.policyVersion,
     callCounterStore,
     ...(gatewayQuota ? { gatewayQuota } : {}),
-    // F-7: stamp region on every enforcement audit record (deny logs,
-    // signed evidence). Symmetrical to ISSUER_REGION.
     region: validated.GATEWAY_REGION,
-    // F-6: bridge AuditLogEntry-shaped log records the enforcement
-    // engine emits on the request hot path (`Action allowed` /
-    // `Action denied`) into OCSF. Without this hook OCSF would only
-    // see `pipelineAuditLogger`'s "Cryptographic evidence generated"
-    // line and miss every synchronous deny.
     ...(ocsfTransport
       ? { auditTransports: [createOcsfWinstonTransport(ocsfTransport, ocsfProduct)] }
       : {}),
-    // F-2: DPoP / RFC 9449 sender-constrained tokens. `required=true`
-    // (the default) refuses any token without `cnf.jkt`; set
-    // DPOP_REQUIRED=false only for back-compat deployments where
-    // issuers haven't been rolled out with DPoP support yet. The
-    // replay store is per-instance unless wired to a shared backend
-    // — multi-replica deployments using `REDIS_URL` get a
-    // Redis-backed store automatically.
     dpop: {
       required: validated.DPOP_REQUIRED,
       clockSkewSeconds: validated.DPOP_CLOCK_SKEW_SECONDS,
       maxAgeSeconds: validated.DPOP_MAX_AGE_SECONDS,
       replayStore: dpopReplayStore,
     },
-    // Cross-tenant audience defence: tokens are only accepted when
-    // their `aud` claim matches GATEWAY_AUDIENCE. Defaults to
-    // "tool-gateway" when not configured (back-compat).
     ...(validated.GATEWAY_AUDIENCE ? { gatewayAudience: validated.GATEWAY_AUDIENCE } : {}),
   });
 
+  // ── Step 14: Assemble deps bag ────────────────────────────────────────────
   let ready = false;
-  const setReady = (value: boolean) => {
-    ready = value;
-  };
-
-  const rateLimitWindowMs = validated.RATE_LIMIT_WINDOW_MS;
-  const rateLimitMax = validated.RATE_LIMIT_MAX_REQUESTS;
+  const setReady = (value: boolean) => { ready = value; };
 
   enforcementEngine.setDecisionRecorder((decision) => {
     decisionsCounter.inc({ decision });
@@ -1701,15 +841,10 @@ export async function initializeServices(
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,
-    // Trim `ADMIN_HOST` so values like " 127.0.0.1 " (whitespace from
-    // a templated env var or downward-API source) bind correctly. The
-    // schema's production-tier check already trims before validating,
-    // so storing the raw string here would let a config that passed
-    // validation still fail at `listen()` time with EADDRNOTAVAIL.
     adminHost: validated.ADMIN_HOST?.trim() || undefined,
     allowedOrigins: resolveAllowedOrigins(env, config.environment),
-    rateLimitWindowMs,
-    rateLimitMax,
+    rateLimitWindowMs: validated.RATE_LIMIT_WINDOW_MS,
+    rateLimitMax: validated.RATE_LIMIT_MAX_REQUESTS,
     metricsRegistry,
     decisionsCounter,
     isReady: () => ready,
@@ -1719,11 +854,12 @@ export async function initializeServices(
     partnerResolver: partnerResolver ?? undefined,
     partnerRegistry,
     requirePin: validated.PARTNER_DID_REQUIRE_PIN === true,
-    pinAttestationSecret,
-    partnerDidAutoFetchPin,
+    pinAttestationSecret: validated.PARTNER_DID_PIN_SECRET || undefined,
+    partnerDidAutoFetchPin: validated.PARTNER_DID_AUTO_FETCH_PIN,
     responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
   };
 
   logger.info('Tool Gateway services initialized successfully');
   return { deps, setReady };
 }
+

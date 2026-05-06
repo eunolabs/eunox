@@ -1,0 +1,585 @@
+/**
+ * Audit module — evidence signer + ledger backend + audit pipeline.
+ *
+ * Encapsulates construction of:
+ *   • Evidence signer (software or ledger-wrapped: postgres, per-replica-postgres,
+ *     in-memory, Azure Confidential Ledger)
+ *   • Async audit pipeline (R-9) with its Prometheus counters
+ *
+ * `buildAclClientFromEndpoint` is kept private to this module —
+ * it was previously a file-scoped function in bootstrap.ts.
+ *
+ * All metric callbacks and the `metricsRegistry` MUST be fully
+ * constructed when calling this function — the late-binding pattern
+ * from the pre-R-3 bootstrap has been eliminated.
+ *
+ * See `docs/IMPROVEMENTS_AND_REFACTORING.md` § R-3.
+ */
+
+import {
+  AuditAnchor,
+  AuditBatchSigner,
+  AuditPipeline,
+  AzureConfidentialLedgerBackend,
+  AzureConfidentialLedgerClient,
+  BackpressurePolicy,
+  Counter,
+  createAuditLogger,
+  createAuditPipeline,
+  createLogger,
+  createOcsfWinstonTransport,
+  createSoftwareEvidenceSignerFromEnv,
+  CrossChainAnchor,
+  EvidenceSigner,
+  GatewayConfig,
+  Gauge,
+  InMemoryLedgerBackend,
+  LedgerAuditEvidenceSigner,
+  LedgerChainError,
+  OcsfAuditTransport,
+  PerReplicaPostgresLedgerBackend,
+  PostgresLedgerBackend,
+  Registry,
+  ServiceConfig,
+  signedEvidenceToOcsf,
+  SignedAuditEvidence,
+  SignedBatchCommitment,
+} from '@euno/common';
+
+type Logger = ReturnType<typeof createLogger>;
+
+/**
+ * Minimal type stub for the `@azure-rest/confidential-ledger` SDK client.
+ * @internal
+ */
+type AclSdkPath = {
+  post(opts: { body: { contents: string } }): Promise<{ status: string; body: { transactionId: string } }>;
+  get(): Promise<{ status: string; body: { transactionId: string; contents: string } }>;
+};
+type AclSdkClient = { path(route: string, ...params: string[]): AclSdkPath };
+type AclSdkFactory = (endpoint: string, credential: unknown) => AclSdkClient;
+
+/**
+ * Build an {@link AzureConfidentialLedgerClient} by dynamically requiring
+ * `@azure-rest/confidential-ledger` and `@azure/identity`.
+ *
+ * Both packages must be available at runtime (add to the deployment image).
+ * Authentication uses `DefaultAzureCredential` — workload identity, managed
+ * identity, or `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`
+ * environment variables are all supported automatically.
+ */
+function buildAclClientFromEndpoint(endpoint: string): AzureConfidentialLedgerClient {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ConfidentialLedger = ((require('@azure-rest/confidential-ledger') as { default: unknown }).default as AclSdkFactory);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { DefaultAzureCredential } = require('@azure/identity') as { DefaultAzureCredential: new () => unknown };
+  const sdk = ConfidentialLedger(endpoint, new DefaultAzureCredential());
+  return {
+    async appendTransaction(contents: string) {
+      const res = await sdk.path('/app/transactions').post({ body: { contents } });
+      if (res.status !== '201') {
+        throw new Error(`Azure Confidential Ledger append failed (HTTP ${res.status})`);
+      }
+      return { transactionId: res.body.transactionId };
+    },
+    async getLatestCommittedTransaction() {
+      const res = await sdk.path('/app/transactions').get();
+      if (res.status === '204') return null;
+      if (res.status !== '200') {
+        throw new Error(`Azure Confidential Ledger get-latest failed (HTTP ${res.status})`);
+      }
+      return { transactionId: res.body.transactionId, contents: res.body.contents };
+    },
+    async getTransaction(transactionId: string) {
+      const res = await sdk.path('/app/transactions/{transactionId}', transactionId).get();
+      if (res.status === '404') return null;
+      if (res.status !== '200') {
+        throw new Error(`Azure Confidential Ledger get-transaction failed (HTTP ${res.status})`);
+      }
+      return { transactionId, contents: res.body.contents };
+    },
+  };
+}
+
+export interface AuditModuleInput {
+  validated: GatewayConfig;
+  env: NodeJS.ProcessEnv;
+  logger: Logger;
+  config: ServiceConfig;
+  metricsRegistry: Registry;
+  replicaId: string;
+  /** Optional injected ACL client (custom credential or test mock). */
+  ledgerAclClient?: AzureConfidentialLedgerClient;
+  /** Optional injected CrossChainAnchor for per-replica-postgres mode. */
+  crossChainAnchorOverride?: CrossChainAnchor;
+  /** F-6 OCSF transport; used by the pipeline's `onSigned` sink and the audit logger. */
+  ocsfTransport?: OcsfAuditTransport;
+}
+
+export interface AuditModuleResult {
+  /** The active evidence signer; undefined when `ENABLE_CRYPTOGRAPHIC_AUDIT=false`. */
+  evidenceSigner?: EvidenceSigner;
+  /**
+   * Batch signer (same as `evidenceSigner` in software mode; the raw
+   * software signer when a ledger backend wraps it). `undefined` when
+   * signing is disabled.
+   */
+  auditBatchSigner?: AuditBatchSigner;
+  /** Async audit pipeline (R-9); undefined when disabled or signing is off. */
+  auditPipeline?: AuditPipeline;
+  /** Drain timeout in ms for graceful shutdown. Populated when `auditPipeline` is set. */
+  auditPipelineDrainTimeoutMs: number;
+  /**
+   * PostgreSQL pool owned by the ledger backend. Present when
+   * `AUDIT_LEDGER_BACKEND=postgres` or `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
+   * Caller MUST call `ledgerPgPool.end()` on graceful shutdown.
+   */
+  ledgerPgPool?: import('@euno/common').PgPool;
+  /**
+   * Cross-chain anchor. Present when injected via `crossChainAnchorOverride`
+   * for per-replica-postgres mode.
+   * Caller MUST call `crossChainAnchor.stop()` on graceful shutdown.
+   */
+  crossChainAnchor?: CrossChainAnchor;
+}
+
+/**
+ * Build the evidence signer and (optionally) the async audit pipeline.
+ *
+ * Registers pipeline-specific Prometheus counters and gauges on the
+ * supplied `metricsRegistry`.
+ */
+export async function buildAuditModule(input: AuditModuleInput): Promise<AuditModuleResult> {
+  const {
+    validated,
+    env,
+    logger,
+    config,
+    metricsRegistry,
+    replicaId,
+    ledgerAclClient: injectedAclClient,
+    crossChainAnchorOverride,
+    ocsfTransport,
+  } = input;
+
+  const signedDecisions = validated.EVIDENCE_SIGNED_DECISIONS as
+    | Array<'allow' | 'deny'>
+    | undefined;
+  const willSignSomething =
+    signedDecisions !== undefined
+      ? signedDecisions.length > 0
+      : !!config.enableCryptographicAudit;
+
+  if (!willSignSomething) {
+    return { auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS };
+  }
+
+  let evidenceSigner: EvidenceSigner | undefined;
+  let ledgerPgPool: import('@euno/common').PgPool | undefined;
+  let crossChainAnchor: CrossChainAnchor | undefined;
+  let auditBatchSigner: AuditBatchSigner | undefined;
+
+  try {
+    const softwareSigner = createSoftwareEvidenceSignerFromEnv(env);
+    if (!softwareSigner) {
+      throw new Error(
+        'No evidence signer is configured. Provide ' +
+          'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
+          'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
+          'programmatically. Refusing to start with cryptographic audit ' +
+          'enabled but no signer attached.',
+      );
+    }
+
+    const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
+
+    if (ledgerBackendName && ledgerBackendName !== 'none') {
+      const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
+      const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
+      const table = (validated as { AUDIT_LEDGER_TABLE?: string }).AUDIT_LEDGER_TABLE;
+      const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
+      const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
+      const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
+      const aclEndpoint = (validated as { AUDIT_LEDGER_ACL_ENDPOINT?: string }).AUDIT_LEDGER_ACL_ENDPOINT;
+
+      if (ledgerBackendName === 'postgres') {
+        if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
+        if (!hmacSecret) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.');
+        if (s3Bucket) {
+          throw new Error(
+            'AUDIT_LEDGER_S3_BUCKET is set but no S3 client is wired in the standard ' +
+              'bootstrap. Provide an S3AnchorClient by constructing PostgresLedgerBackend ' +
+              'directly (with the s3.client option) in a custom entrypoint, or unset ' +
+              'AUDIT_LEDGER_S3_BUCKET to rely on HMAC + in-DB chain integrity only.',
+          );
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
+        const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
+        const pgPool = new Pool({ connectionString: pgUrl });
+        ledgerPgPool = pgPool;
+
+        const pgBackend = new PostgresLedgerBackend(pgPool, {
+          table,
+          hmacSecret,
+          onAnchorError: (err: Error) => logger.error('Ledger S3 anchor failed', { error: err.message }),
+        });
+
+        if (runMigrations) {
+          if (validated.NODE_ENV === 'production') {
+            logger.warn(
+              'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
+                'is performing DDL on the audit ledger table. Production deployments should ' +
+                'instead run migrations from a sidecar / Job under a separate database role ' +
+                'with DDL privileges and grant the gateway role only DML on the table. See ' +
+                'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
+            );
+          }
+          await pgBackend.migrate();
+          logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
+        }
+
+        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, pgBackend, replicaId);
+        await ledgerSigner.initialize();
+        evidenceSigner = ledgerSigner;
+        auditBatchSigner = softwareSigner;
+
+        logger.info('Audit ledger backend: postgres', {
+          table: table ?? 'euno_audit_ledger',
+          anchorInterval,
+        });
+      } else if (ledgerBackendName === 'acl') {
+        let aclClient: AzureConfidentialLedgerClient;
+        if (injectedAclClient) {
+          aclClient = injectedAclClient;
+          logger.info('Audit ledger backend: acl (using injected client)');
+        } else if (aclEndpoint) {
+          aclClient = buildAclClientFromEndpoint(aclEndpoint);
+          logger.info('Audit ledger backend: acl', { endpoint: aclEndpoint });
+        } else {
+          throw new Error(
+            'AUDIT_LEDGER_BACKEND=acl requires either injectDeps.ledgerAclClient ' +
+              '(injected AzureConfidentialLedgerClient) or AUDIT_LEDGER_ACL_ENDPOINT to be set. ' +
+              'For managed identity / workload identity deployments set AUDIT_LEDGER_ACL_ENDPOINT; ' +
+              'the bootstrap will use DefaultAzureCredential. For custom credential scenarios ' +
+              'provide ledgerAclClient via the second argument to initializeServices().',
+          );
+        }
+
+        const aclBackend = new AzureConfidentialLedgerBackend(aclClient, {
+          onError: (err: Error) => logger.error('Audit ledger ACL error', { error: err.message }),
+        });
+        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, aclBackend, replicaId);
+        await ledgerSigner.initialize();
+        evidenceSigner = ledgerSigner;
+        auditBatchSigner = softwareSigner;
+      } else if (ledgerBackendName === 'in-memory') {
+        const inMemBackend = new InMemoryLedgerBackend();
+        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, inMemBackend, replicaId);
+        await ledgerSigner.initialize();
+        evidenceSigner = ledgerSigner;
+        auditBatchSigner = softwareSigner;
+        logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
+      } else if (ledgerBackendName === 'per-replica-postgres') {
+        if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.');
+        if (!hmacSecret) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.');
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
+        const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
+        const pgPool = new Pool({ connectionString: pgUrl });
+        ledgerPgPool = pgPool;
+
+        const perReplicaBackend = new PerReplicaPostgresLedgerBackend(pgPool, replicaId, {
+          table,
+          hmacSecret,
+          onAnchorError: (err: Error) => logger.error('Per-replica ledger S3 anchor failed', { error: err.message }),
+        });
+
+        if (runMigrations) {
+          if (validated.NODE_ENV === 'production') {
+            logger.warn(
+              'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
+                'is performing DDL on the audit ledger table. Production deployments should ' +
+                'run migrations from a separate database role. See ' +
+                'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
+            );
+          }
+          await perReplicaBackend.migrate();
+          logger.info('Per-replica audit ledger migrations completed', {
+            table: table ?? 'euno_audit_ledger_v2',
+          });
+        }
+
+        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, perReplicaBackend, replicaId);
+        await ledgerSigner.initialize();
+        evidenceSigner = ledgerSigner;
+        auditBatchSigner = softwareSigner;
+
+        if (s3Bucket) {
+          logger.warn(
+            'AUDIT_LEDGER_S3_BUCKET is set with per-replica-postgres but no S3 client is ' +
+              'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
+              'to S3. Construct PerReplicaPostgresLedgerBackend with an S3AnchorClient in a ' +
+              'custom entrypoint to enable S3 anchoring.',
+          );
+        }
+
+        if (crossChainAnchorOverride) {
+          crossChainAnchor = crossChainAnchorOverride;
+        }
+
+        const crossChainIntervalMs = (validated as { AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number }).AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
+        logger.info('Audit ledger backend: per-replica-postgres', {
+          table: table ?? 'euno_audit_ledger_v2',
+          replicaId,
+          crossChainEnabled: crossChainAnchor !== undefined,
+          crossChainIntervalMs,
+        });
+      } else {
+        throw new Error(`Unknown AUDIT_LEDGER_BACKEND value: "${ledgerBackendName}"`);
+      }
+    } else {
+      // No ledger backend — use the software signer with in-process chain state.
+      evidenceSigner = softwareSigner;
+      auditBatchSigner = softwareSigner;
+      if (ledgerBackendName === 'none' || !ledgerBackendName) {
+        logger.warn(
+          'Cryptographic audit is enabled but AUDIT_LEDGER_BACKEND is not set. ' +
+            'The hash chain lives only in process memory and a compromised replica ' +
+            'can rewrite history. Set AUDIT_LEDGER_BACKEND=postgres for production.',
+        );
+      }
+    }
+  } catch (err) {
+    if (err instanceof LedgerChainError) throw err;
+    throw new Error(
+      'Evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with ' +
+        'EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS ' +
+        'non-empty) but the configured evidence signer could not be ' +
+        'initialised: ' +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+
+  if (!evidenceSigner) {
+    throw new Error(
+      'Evidence signing is enabled but no evidence signer is configured. Provide ' +
+        'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded private key).',
+    );
+  }
+
+  if (signedDecisions !== undefined) {
+    logger.info('Cryptographic audit enabled with per-decision signing', { signedDecisions });
+  } else {
+    logger.info('Cryptographic audit enabled with software evidence signer');
+  }
+
+  // ── Async audit pipeline (R-9) ────────────────────────────────────────────
+
+  let auditPipeline: AuditPipeline | undefined;
+
+  if (validated.AUDIT_PIPELINE_ENABLED) {
+    const ocsfProduct = { name: 'euno-tool-gateway', vendor: 'Euno' };
+
+    const droppedCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_dropped_total',
+      help: 'Audit-evidence records dropped by the async pipeline before they could be signed. ' +
+        'Labelled by reason: queue_full (buffer full, waiter cap reached, or pipeline stopped) ' +
+        'or aged_out (record exceeded AUDIT_PIPELINE_MAX_AGE_MS while waiting). A non-zero rate ' +
+        'is the operator\'s signal to raise AUDIT_PIPELINE_MAX_SIZE / AUDIT_PIPELINE_WORKERS or ' +
+        'to investigate signer latency.',
+      labelNames: ['reason'],
+      registers: [metricsRegistry],
+    });
+    droppedCounter.inc({ reason: 'queue_full' }, 0);
+    droppedCounter.inc({ reason: 'aged_out' }, 0);
+
+    const signedCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_signed_total',
+      help: 'Audit-evidence records successfully signed by the async pipeline.',
+      registers: [metricsRegistry],
+    });
+    signedCounter.inc(0);
+
+    const signErrorsCounter = new Counter({
+      name: 'euno_gateway_audit_pipeline_sign_errors_total',
+      help: 'Audit-evidence records the async pipeline failed to sign (signer rejection). ' +
+        'A persistent non-zero rate indicates a broken signer key or KMS outage.',
+      registers: [metricsRegistry],
+    });
+    signErrorsCounter.inc(0);
+
+    const batchEmittedCounter = new Counter({
+      name: 'euno_gateway_audit_batch_emitted_total',
+      help: 'Merkle batch commitments emitted by the async pipeline (signed or unsigned).',
+      registers: [metricsRegistry],
+    });
+    batchEmittedCounter.inc(0);
+
+    const batchErrorsCounter = new Counter({
+      name: 'euno_gateway_audit_batch_errors_total',
+      help: 'Errors producing or anchoring Merkle batch commitments.',
+      registers: [metricsRegistry],
+    });
+    batchErrorsCounter.inc(0);
+
+    // Pipeline queue depth gauge — accesses `auditPipeline` lazily.
+    let createdPipeline: AuditPipeline | undefined;
+    new Gauge({
+      name: 'euno_gateway_audit_pipeline_queue_depth',
+      help: 'Current number of unsigned audit-evidence records buffered in the async pipeline ring.',
+      registers: [metricsRegistry],
+      collect() {
+        this.set(createdPipeline ? createdPipeline.queueDepth() : 0);
+      },
+    });
+
+    const pipelineAuditLogger = createAuditLogger('tool-gateway', {
+      region: validated.GATEWAY_REGION,
+    });
+    if (ocsfTransport) {
+      pipelineAuditLogger.add(createOcsfWinstonTransport(ocsfTransport, ocsfProduct));
+    }
+
+    const batchAuditLogger = createAuditLogger('tool-gateway', {
+      region: validated.GATEWAY_REGION,
+    });
+
+    const backpressure: BackpressurePolicy =
+      (validated.AUDIT_PIPELINE_BACKPRESSURE as BackpressurePolicy | undefined) ??
+      'drop_oldest_with_metric';
+
+    const anchors: AuditAnchor[] = [];
+    const anchorUrl = (validated as { AUDIT_ANCHOR_URL?: string }).AUDIT_ANCHOR_URL;
+    const AUDIT_ANCHOR_TIMEOUT_MS = 30_000;
+    if (anchorUrl) {
+      anchors.push({
+        name: 'http',
+        async anchorBatch(commitment: SignedBatchCommitment): Promise<void> {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), AUDIT_ANCHOR_TIMEOUT_MS);
+          let response: Response;
+          try {
+            response = await fetch(anchorUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(commitment),
+              signal: controller.signal,
+            });
+          } catch (err) {
+            logger.error('Audit batch HTTP anchor failed', {
+              error: err instanceof Error ? err.message : String(err),
+              anchorUrl,
+              timedOut: controller.signal.aborted,
+            });
+            throw err;
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!response.ok) {
+            logger.warn('Audit batch HTTP anchor returned non-OK status', {
+              status: response.status,
+              anchorUrl,
+              batchId: commitment.batchId,
+            });
+            throw new Error(`HTTP anchor returned ${response.status}`);
+          }
+        },
+      });
+      logger.info('Audit batch HTTP anchor configured', { anchorUrl });
+    }
+
+    createdPipeline = createAuditPipeline({
+      signer: evidenceSigner,
+      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
+      workers: validated.AUDIT_PIPELINE_WORKERS,
+      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
+      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
+      backpressure,
+      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS,
+      replicaId,
+      batchSigner: auditBatchSigner,
+      anchors,
+      onDropped: (count: number, reason: string) => droppedCounter.inc({ reason }, count),
+      onSigned: (signed: SignedAuditEvidence) => {
+        signedCounter.inc();
+        try {
+          pipelineAuditLogger.info('Cryptographic evidence generated', {
+            evidenceId: signed.id,
+            sessionId: signed.sessionId,
+            decision: signed.decision,
+            signature: signed.signature.substring(0, 20) + '...',
+            seq: signed.seq,
+            previousHash: signed.previousHash.substring(0, 16) + '...',
+          });
+        } catch {
+          // Audit-log emission is best-effort.
+        }
+        if (ocsfTransport) {
+          void ocsfTransport.send(signedEvidenceToOcsf(signed, ocsfProduct));
+        }
+      },
+      onSignError: (err: unknown) => {
+        signErrorsCounter.inc();
+        logger.error('Audit pipeline failed to sign evidence', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+      onBatch: (commitment: SignedBatchCommitment) => {
+        batchEmittedCounter.inc();
+        try {
+          batchAuditLogger.info('Audit batch commitment', {
+            batchId: commitment.batchId,
+            replicaId: commitment.replicaId,
+            batchSeq: commitment.batchSeq,
+            merkleRoot: commitment.merkleRoot,
+            recordCount: commitment.recordCount,
+            firstSeq: commitment.firstSeq,
+            lastSeq: commitment.lastSeq,
+            previousBatchHash: commitment.previousBatchHash.substring(0, 16) + '...',
+          });
+        } catch {
+          // Audit-log emission is best-effort.
+        }
+      },
+      onBatchError: (err: unknown) => {
+        batchErrorsCounter.inc();
+        logger.error('Audit batch commitment failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    });
+    auditPipeline = createdPipeline;
+
+    logger.info('Async audit pipeline enabled (R-9)', {
+      maxSize: validated.AUDIT_PIPELINE_MAX_SIZE,
+      workers: validated.AUDIT_PIPELINE_WORKERS,
+      maxBatchSize: validated.AUDIT_PIPELINE_MAX_BATCH,
+      maxAgeMs: validated.AUDIT_PIPELINE_MAX_AGE_MS,
+      backpressure,
+      maxWaiters: validated.AUDIT_PIPELINE_MAX_WAITERS ?? validated.AUDIT_PIPELINE_MAX_SIZE,
+      replicaId,
+      batchSigningEnabled: !!auditBatchSigner,
+      httpAnchorEnabled: !!anchorUrl,
+    });
+  } else {
+    logger.warn(
+      'Async audit pipeline disabled (AUDIT_PIPELINE_ENABLED=false); ' +
+        'evidence signing runs on the request critical path.',
+    );
+  }
+
+  return {
+    evidenceSigner,
+    auditBatchSigner,
+    auditPipeline,
+    auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS,
+    ledgerPgPool,
+    crossChainAnchor,
+  };
+}
