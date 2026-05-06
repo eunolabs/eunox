@@ -231,6 +231,96 @@ export const SLOS: Readonly<Record<string, ScenarioSlo>> = {
     minRequestsPerSecond: 250,
     maxErrorRate: 0,
   },
+
+  // ── Profiled issuance: KMS + stacked optionals ──────────────────────────
+  //
+  // Each scenario name follows the pattern `issuer-issue:<profile-tag>`.
+  // Profile tags map to the definitions in `profiles/definitions.ts`.
+  //
+  // ### How these budgets were derived
+  //
+  // Budget = KMS_P95_LATENCY + optional_component_P95s + NODE_JS_OVERHEAD
+  //
+  // NODE_JS_OVERHEAD ≈ 50 ms (the existing `issuer-issue` baseline p99 — see
+  // `profiles/definitions.ts` NODE_OVERHEAD_MS constant).
+  //
+  // Optional-component P95 estimates = 2× their simulated p50 latency
+  // (conservative: accounts for realistic tail latency). Per-component values
+  // from `profiles/definitions.ts` OPTIONAL_LATENCIES_MS:
+  //   - cosigner:           2 ms p50 → 4 ms p95
+  //   - sideCredentialsBroker: 8 ms p50 → 16 ms p95
+  //   - transparencyLog:    3 ms p50 →  6 ms p95
+  //
+  // Full-stack profiles target ≤ 500 ms to defend the README claim.
+  //
+  // The throughput floors are intentionally lower than the baseline because
+  // each request spends wall-clock time in the simulated delay, so concurrency
+  // alone cannot sustain the same RPS as the software-signer path.
+  //
+  // ### Azure Key Vault
+  'issuer-issue:azure': {
+    // 100 (KMS p95) + 50 (Node overhead) = 150 ms
+    p99LatencyMs: 150,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:azure+cosign': {
+    // 100 (KMS p95) + 4 (cosign p95: 2×2) + 50 = 154 ms
+    p99LatencyMs: 154,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:azure+sidecreds': {
+    // 100 (KMS p95) + 16 (side-creds p95: 2×8) + 50 = 166 ms
+    p99LatencyMs: 166,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:azure+full': {
+    // Maximum stacked optionals. Budget = 500 ms to match the README
+    // "Token issuance < 500 ms (p95)" claim for a fully loaded stack.
+    p99LatencyMs: 500,
+    maxErrorRate: 0,
+  },
+
+  // ### AWS KMS
+  'issuer-issue:aws': {
+    // 80 (KMS p95) + 50 = 130 ms
+    p99LatencyMs: 130,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:aws+cosign': {
+    // 80 + 4 (cosign p95: 2×2) + 50 = 134 ms
+    p99LatencyMs: 134,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:aws+sidecreds': {
+    // 80 + 16 (side-creds p95: 2×8) + 50 = 146 ms
+    p99LatencyMs: 146,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:aws+full': {
+    p99LatencyMs: 500,
+    maxErrorRate: 0,
+  },
+
+  // ### GCP Cloud KMS
+  'issuer-issue:gcp': {
+    // 90 (KMS p95) + 50 = 140 ms
+    p99LatencyMs: 140,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:gcp+cosign': {
+    // 90 + 4 (cosign p95: 2×2) + 50 = 144 ms
+    p99LatencyMs: 144,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:gcp+sidecreds': {
+    // 90 + 16 (side-creds p95: 2×8) + 50 = 156 ms
+    p99LatencyMs: 156,
+    maxErrorRate: 0,
+  },
+  'issuer-issue:gcp+full': {
+    p99LatencyMs: 500,
+    maxErrorRate: 0,
+  },
 };
 
 /** Type-safe access to the canonical scenario name list. */

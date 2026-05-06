@@ -16,7 +16,10 @@
     "gen:helm-schema": "node scripts/generate-helm-schema.mjs",
     "gen:helm-schema:check": "node scripts/generate-helm-schema.mjs --check",
     "gen:openapi": "node scripts/generate-openapi-types.mjs",
-    "gen:openapi:check": "node scripts/generate-openapi-types.mjs --check"
+    "gen:openapi:check": "node scripts/generate-openapi-types.mjs --check",
+    "perf": "npm run perf -w @euno/integration-tests",
+    "perf:quick": "npm run perf -w @euno/integration-tests -- --quick",
+    "perf:slo:emit": "npm run perf:slo:emit -w @euno/integration-tests"
   },
   "keywords": [
     "agent-governance",

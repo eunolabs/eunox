@@ -43,6 +43,14 @@ import { createApp as createGatewayApp, createAdminApp } from '../../../tool-gat
 import type { GatewayDependencies } from '../../../tool-gateway/src/bootstrap';
 import { EnforcementEngine } from '../../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../../tool-gateway/src/verifier';
+import {
+  SimulatedKmsSigner,
+  SimulatedCosigner,
+  SimulatedPostureEmitter,
+  SimulatedSideCredentialBroker,
+  SimulatedTransparencyLog,
+} from '../profiles/stubs';
+import { ISSUANCE_PROFILES } from '../profiles/definitions';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -208,7 +216,7 @@ function listenExpress(app: express.Express): Promise<RunningServer> {
  */
 async function startIssuerServer(
   service: CapabilityIssuerService,
-  signer: JoseRsaSigner,
+  signer: SigningAdapter,
   metricsRegistry: ReturnType<typeof createMetricsRegistry>,
 ): Promise<RunningServer> {
   // R-3 attribute: production stamps `issuer` and `service` labels via
@@ -345,6 +353,14 @@ export interface PerfHarness {
   userAuthToken: string;
   /** API key the gateway's `/admin/*` routes require. */
   adminApiKey: string;
+  /**
+   * Per-profile issuer base URLs, keyed by `IssuanceProfile.tag`
+   * (e.g. `"azure"`, `"aws+full"`). Each entry is an issuer server
+   * wired with the corresponding KMS simulator and optional components.
+   * The profiled issuance scenarios use these URLs instead of the
+   * baseline `issuerUrl`.
+   */
+  profiledIssuerUrls: ReadonlyMap<string, string>;
   /** Tear down all in-process servers. */
   shutdown: () => Promise<void>;
 }
@@ -541,12 +557,89 @@ export async function buildHarness(): Promise<PerfHarness> {
     isReady: () => true,
     adminApiKey,
     adminPort: 0, // the perf harness starts the admin server on an ephemeral port via listenExpress
+    // A positive limit is required: 0 would immediately over-limit any
+    // response that carries a redaction obligation (resulting in 502
+    // REDACTION_OVERSIZE). Redaction work only fires when a capability
+    // includes a redaction obligation, so setting a generous 1 MiB cap
+    // keeps the perf scenario clean without disabling the middleware.
+    responseRedactionMaxBytes: 1024 * 1024,
   };
 
   const app = createGatewayApp(gatewayDeps);
   const gatewayServer = await listenExpress(app);
   const adminApp = createAdminApp(gatewayDeps);
   const adminServer = await listenExpress(adminApp);
+
+  // ── Profiled issuer servers ─────────────────────────────────────────────
+  //
+  // Start one issuer HTTP server per ISSUANCE_PROFILE, each wired with
+  // the profile's KMS simulator and optional components. The profiled
+  // issuance scenarios (`issuer-issue:<tag>`) target these servers.
+  //
+  // We use the same admin identity and policy as the baseline issuer so
+  // the only variable between scenarios is the KMS and optional component
+  // configuration.  Audit loggers are silenced to eliminate stdout noise
+  // from skewing the latency histogram.
+  const profiledServers = new Map<string, RunningServer>();
+  for (const profile of ISSUANCE_PROFILES) {
+    const kmsSigner = await SimulatedKmsSigner.create({
+      signLatencyMs: profile.kms.signLatencyMs,
+      alg: SIGNING_ALG,
+      kid: `perf-${profile.tag}-key`,
+    });
+
+    // Build optional components from the profile spec.
+    const cosigners = profile.optionals.cosign
+      ? [await SimulatedCosigner.create({
+          kid: `perf-${profile.tag}-cosigner`,
+          cosignLatencyMs: profile.optionals.cosign.latencyMs,
+        })]
+      : undefined;
+    const transparencyLogs = profile.optionals.witness
+      ? [await SimulatedTransparencyLog.create({
+          logId: `perf-${profile.tag}-log`,
+          witnessLatencyMs: profile.optionals.witness.latencyMs,
+        })]
+      : undefined;
+    const postureEmitter = profile.optionals.posture
+      ? new SimulatedPostureEmitter({
+          emitLatencyMs: profile.optionals.posture.latencyMs,
+        })
+      : undefined;
+    const sideCredentialBroker = profile.optionals.sideCreds
+      ? new SimulatedSideCredentialBroker({
+          mintLatencyMs: profile.optionals.sideCreds.latencyMs,
+        })
+      : undefined;
+
+    const profileLogger = createLogger(`perf-issuer-${profile.tag}`, 'production');
+    profileLogger.level = 'error';
+
+    const profileService = new CapabilityIssuerService(
+      kmsSigner,
+      adminIdentity,
+      ISSUER_DID,
+      900,
+      profileLogger,
+      {
+        policy: perfPolicy as never,
+        cosigners,
+        transparencyLogs,
+        postureEmitter,
+        sideCredentialBroker,
+        // The side-credential broker stub always returns synthetic creds
+        // successfully, so fail-fast is fine here (no best-effort masking).
+        sideCredentialFailureMode: sideCredentialBroker ? 'fail-fast' : undefined,
+      },
+    );
+    silenceAuditLogger(profileService as unknown as Record<string, unknown>);
+
+    const profileMetrics = createMetricsRegistry({
+      serviceName: `capability-issuer-${profile.tag}`,
+    });
+    const server = await startIssuerServer(profileService, kmsSigner, profileMetrics);
+    profiledServers.set(profile.tag, server);
+  }
 
   return {
     gatewayUrl: gatewayServer.baseUrl,
@@ -558,12 +651,16 @@ export async function buildHarness(): Promise<PerfHarness> {
     capabilityTokenRenewable: renewableCap.token,
     userAuthToken: ISSUANCE_USER_TOKEN,
     adminApiKey,
+    profiledIssuerUrls: new Map(
+      [...profiledServers.entries()].map(([tag, srv]) => [tag, srv.baseUrl]),
+    ),
     shutdown: async () => {
       await Promise.all([
         gatewayServer.close(),
         adminServer.close(),
         issuerServer.close(),
         backendServer.close(),
+        ...[...profiledServers.values()].map((s) => s.close()),
       ]);
       await killSwitchManager.close?.();
     },

@@ -30,8 +30,15 @@ export interface ScenarioDefinition {
   name: string;
   /** One-line description for the report. */
   description: string;
-  /** Which harness URL the request hits — affects metric attribution. */
-  target: 'gateway' | 'gateway-admin' | 'issuer';
+  /**
+   * Which harness URL the request hits — affects metric attribution.
+   *
+   * Use `'gateway'`, `'gateway-admin'`, or `'issuer'` for the baseline
+   * servers. For profiled issuance scenarios, pass `'issuer:<tag>'`
+   * (e.g. `'issuer:azure'`, `'issuer:gcp+full'`) — the runner resolves
+   * these via the harness's `profiledIssuerUrls` map.
+   */
+  target: 'gateway' | 'gateway-admin' | 'issuer' | string;
   /** Shape of the request to repeat. */
   request: ScenarioRequest;
   /**
@@ -41,7 +48,14 @@ export interface ScenarioDefinition {
    */
   expectedStatusCodes?: number[];
   /** Override the default load profile for this scenario. */
-  load?: Partial<typeof DEFAULT_LOAD_PROFILE>;
+  load?: {
+    /** Override concurrent connections. */
+    connections?: number;
+    /** Override pipelining depth. */
+    pipelining?: number;
+    /** Override per-scenario wall-clock duration (seconds). */
+    durationSeconds?: number;
+  };
   /**
    * Override the SLO for this scenario. Merged with the file-level
    * defaults; field-level `undefined` clears that constraint.
@@ -52,7 +66,7 @@ export interface ScenarioDefinition {
 export interface ScenarioResult {
   name: string;
   description: string;
-  target: 'gateway' | 'gateway-admin' | 'issuer';
+  target: string;
   requests: number;
   /** Mean throughput (req/s). */
   requestsPerSecond: number;
@@ -73,8 +87,15 @@ export interface ScenarioResult {
 }
 
 export interface RunScenarioOptions {
-  /** Resolves the absolute URL for the request. */
-  baseUrlFor: (target: 'gateway' | 'gateway-admin' | 'issuer') => string;
+  /**
+   * Resolves the absolute URL for the request.
+   *
+   * Receives the scenario's `target` string verbatim. Built-in values are
+   * `'gateway'`, `'gateway-admin'`, and `'issuer'`; callers must also
+   * handle `'issuer:<tag>'` for profiled issuance scenarios (e.g.
+   * `'issuer:azure'`).
+   */
+  baseUrlFor: (target: string) => string;
   /** Override default duration; useful for `--quick` smoke runs. */
   durationSeconds?: number;
   /** Override default connection count. */

@@ -18,6 +18,7 @@
 
 import { PerfHarness } from '../lib/harness';
 import { ScenarioDefinition } from '../lib/runner';
+import { ISSUANCE_PROFILES } from '../profiles/definitions';
 
 /**
  * Build the full set of scenarios. Returned in the order they should
@@ -268,5 +269,49 @@ export function buildScenarios(h: PerfHarness): ScenarioDefinition[] {
         body: renewBody,
       },
     },
+
+    // ── Profiled issuance (KMS + stacked optionals) ──────────────────────
+    //
+    // Each scenario targets a separate issuer instance wired with the
+    // corresponding KMS simulator and optional components. The SLO
+    // budgets in `slo.ts` are derived from typical same-region KMS p95
+    // latencies plus the Node.js processing overhead baseline.
+    //
+    // The `+full` profiles are the key SLO defenders for the README claim
+    // "Token issuance < 500 ms (p95)": if any of them fail, the stacked
+    // overhead has grown beyond what the README documents.
+    //
+    // Each profiled issuer serves its own isolated in-memory state, so
+    // scenarios can run sequentially without shared-state contamination.
+    //
+    // Load profile for profiled scenarios: fewer connections than the
+    // baseline because each request holds a simulated KMS RTT open.
+    // With 20 connections × 5 s × ~40ms/req (Azure) ≈ 2500 requests —
+    // enough samples for stable p50/p99 percentiles.
+    ...ISSUANCE_PROFILES.map(
+      (profile): ScenarioDefinition => ({
+        name: `issuer-issue:${profile.tag}`,
+        description: profile.description,
+        // Route to the profiled issuer URL via the 'issuer:<tag>' convention.
+        target: `issuer:${profile.tag}`,
+        request: {
+          path: '/api/v1/issue',
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${h.userAuthToken}`,
+            'content-type': 'application/json',
+          },
+          body: issueBody,
+        },
+        // Profiled scenarios run with fewer connections to avoid saturating
+        // the event loop with simulated async delays. The lower connection
+        // count keeps the per-run sample count above ~1k while ensuring
+        // that p99 reflects per-request latency, not queue time.
+        load: { connections: 10, durationSeconds: 5 },
+        // The p99 budget for each profiled scenario is declared in slo.ts
+        // (the single source of truth). No sloOverride needed here — the
+        // runner looks up `SLOS['issuer-issue:<tag>']` automatically.
+      }),
+    ),
   ];
 }

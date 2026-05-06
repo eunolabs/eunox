@@ -111,10 +111,23 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const baseUrlFor = (target: 'gateway' | 'gateway-admin' | 'issuer') => {
+  const baseUrlFor = (target: string): string => {
     if (target === 'gateway') return harness.gatewayUrl;
     if (target === 'gateway-admin') return harness.adminUrl;
-    return harness.issuerUrl;
+    if (target === 'issuer') return harness.issuerUrl;
+    // Profiled issuer targets: 'issuer:<tag>' (e.g. 'issuer:azure+full').
+    if (target.startsWith('issuer:')) {
+      const tag = target.slice('issuer:'.length);
+      const url = harness.profiledIssuerUrls.get(tag);
+      if (!url) {
+        throw new Error(
+          `baseUrlFor: no profiled issuer for tag "${tag}". ` +
+            'Check that the profile is listed in ISSUANCE_PROFILES.',
+        );
+      }
+      return url;
+    }
+    throw new Error(`baseUrlFor: unknown target "${target}".`);
   };
 
   const results: ScenarioResult[] = [];
