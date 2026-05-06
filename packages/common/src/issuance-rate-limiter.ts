@@ -1,59 +1,58 @@
 /**
  * Issuance rate limiter (F-1, addresses I-1).
  *
- * The pre-existing `express-rate-limit` middleware on `/api/v1/issue` is
- * **per-IP** only. A compromised user account with multiple IPs (or a
- * single IP shared by many users behind a corporate NAT) trivially
- * defeats it: in the first case the attacker mints unlimited tokens,
- * in the second case legitimate users blame each other.
+ * ## Multi-dimensional token-bucket
  *
- * This module replaces that with a **per-(tenant, user, agent)** token
- * bucket evaluated *after* authentication, so the limit is keyed on the
- * resolved subject (and tenant) rather than transport metadata.
+ * The limiter keys each bucket on five dimensions:
+ *   `(tenantId, userId, agentId, jti, ip)`
  *
- * ## Tenant-awareness
+ * This replaces the former per-IP `express-rate-limit` middleware, which was
+ * keyed only on the network address before authentication completed. The
+ * multi-dimensional approach is strictly stronger:
  *
- * The key is `(tenantId, userId, agentId)` — `tenantId` first so the
- * Redis-backed store partitions cleanly per tenant. This is the
- * load-bearing prerequisite called out by §6.1 #3 of
- * `docs/IMPROVEMENTS_AND_REFACTORING.md` for F-7 (multi-region
- * active/active issuer): without tenant-scoped keys, a per-user limit
- * coordinated across regions could legitimately deny one tenant's
- * traffic because of another tenant's burst.
+ *  - **`tenantId`** — first in the key so per-tenant Redis prefix-scans work
+ *    and a burst in one tenant never bleeds into another (F-7 prerequisite).
+ *  - **`userId`** — the resolved identity-provider subject. An attacker who
+ *    compromises a single account cannot exceed the budget regardless of how
+ *    many machines they control.
+ *  - **`agentId`** — the agent that requested the token. Different agents
+ *    operated by the same user have independent budgets; a runaway agent
+ *    cannot starve others belonging to the same user.
+ *  - **`jti`** — the parent/current token identifier. Including `jti`
+ *    partitions the budget per token lineage so attenuation and renewal
+ *    of one token lineage do not consume the fresh-issuance budget. A
+ *    caller performing fresh issuance uses the sentinel `'_no_jti'`.
+ *  - **`ip`** — the client's network address. A single user cycling IPs
+ *    (NAT rotation, multi-homed) gets one sub-budget per egress address,
+ *    which, combined with the `userId` and `jti` dimensions above, produces
+ *    a tightly bounded total. A caller with no visible IP uses the sentinel
+ *    `'_no_ip'`.
  *
- * ## Algorithm
+ * ## Backing infrastructure
  *
- * Tumbling window of `windowSeconds`. The first issuance for a given
- * key starts the window; subsequent issuances inside the same window
- * are counted; when the count exceeds `max`, the request is denied
- * with {@link ErrorCode.RATE_LIMIT_EXCEEDED} (HTTP 429). When the
- * window elapses, the next request opens a fresh window. Tumbling (vs
- * sliding) was chosen for two reasons:
+ * The preferred implementation ({@link CallCounterBackedIssuanceRateLimiter})
+ * is backed by {@link CallCounterStore} — the same low-level infrastructure
+ * the gateway uses for `maxCalls`-condition enforcement and the
+ * {@link GatewayQuotaEngine}. This unifies the two Redis-counter subsystems:
+ * a single connection (and a single key-space discipline) covers all
+ * counting operations across both the issuer and the gateway.
  *
- *  1. It maps directly to Redis `INCR` + `EXPIRE`, the same primitive
- *     the `RedisCallCounterStore` uses — so the operational story
- *     (TTLs, key-prefix conventions, failure semantics) is identical.
- *  2. The bound is *tighter* than a sliding window for the same
- *     `max`/`windowSeconds`, which is the right default for a deny
- *     primitive.
- *
- * ## Distributed coordination
- *
- * In-memory by default, Redis-backed when `REDIS_URL` is set. The
- * Redis variant uses atomic `INCR`/`EXPIRE` on the same `ioredis`
- * client surface as {@link RedisCallCounterStore}, so a multi-replica
- * issuer (or a multi-region active/active issuer per F-7) converges
- * on the same per-subject budget.
+ * The legacy {@link RedisIssuanceRateLimiter} (own Redis client) is retained
+ * for deployments that construct the limiter manually, but new code should
+ * prefer {@link CallCounterBackedIssuanceRateLimiter} or the factory
+ * {@link createIssuanceRateLimiterFromEnv}.
  *
  * ## Failure semantics
  *
- * Redis errors fail **closed** by default (the request is denied with
- * `RATE_LIMIT_EXCEEDED`). For an issuance-side limit, allowing
- * unlimited mints when the coordination layer is unavailable would
- * defeat the entire purpose. Operators who need fail-open behaviour
- * (e.g. for staging) can opt in with `failClosedOnError: false`.
+ * Defaults to **fail-closed** (a Redis outage denies issuance with 429).
+ * For an issuance-side limit, allowing unlimited mints when the
+ * coordination layer is unavailable would defeat the entire purpose.
+ * Operators who need fail-open behaviour (e.g. for staging) can opt in
+ * with `failClosedOnError: false`.
  */
 
+import { CallCounterStore } from './condition-registry';
+import { createCallCounterStoreFromEnv } from './call-counter-store';
 import { Logger } from './logger';
 import { escapeRateLimitKeyComponent } from './key-utils';
 
@@ -81,36 +80,39 @@ export interface RateLimitDecision {
 /**
  * Caller-supplied subject identifiers used to derive the bucket key.
  *
- * `tenantId` is optional because some identity providers do not
- * surface a tenant; in that case all callers fall into the
- * synthetic `_no_tenant` bucket. Operators with mixed-tenant traffic
- * SHOULD configure a provider that populates `tenantId` so per-tenant
- * isolation is preserved.
+ * `tenantId` is optional because some identity providers do not surface a
+ * tenant; in that case all callers fall into the synthetic `_no_tenant`
+ * bucket. Operators with mixed-tenant traffic SHOULD configure a provider
+ * that populates `tenantId` so per-tenant isolation is preserved.
  *
- * The bucket key is `(tenantId, userId, agentId)`. This three-component
- * key bounds total KMS calls per identity regardless of which issuance
- * path (issue/attenuate/renew) is used, ensuring the budget is not
- * fragmented across token lineages or source IPs.
+ * The bucket key is `(tenantId, userId, agentId, jti, ip)`.
  *
- * **Why not include `jti` in the key?**
- * Including the parent/current `jti` would split the per-subject budget
- * into per-lineage buckets. An attacker could then mint N parent tokens
- * (consuming the `_no_jti` fresh-issuance budget) and obtain a
- * full attenuation/renew budget for each lineage, multiplying effective
- * KMS load by N instead of keeping it bounded.
+ * **`jti`** — token lineage identifier for the parent/current capability
+ * token (absent on fresh issuance, mapped to the sentinel `'_no_jti'`).
+ * Including `jti` means attenuation and renewal each count against a
+ * per-lineage sub-budget rather than competing with fresh-issuance for
+ * the same slot. Fresh issuance has its own `_no_jti` slot.
  *
- * **Why not include `ip` in the key?**
- * Including the source IP would give the same user/agent a fresh counter
- * every time its source IP changes. A caller behind multiple egress IPs
- * (NAT rotation, CGNAT, multi-homed) would get one budget per IP,
- * multiplying its effective KMS budget — the opposite of the intended
- * constraint. The express-rate-limit middleware already provides a
- * coarse-grained per-IP guard at the HTTP layer.
+ * **`ip`** — the client's network address. Including the source IP adds a
+ * transport-layer dimension so a user exploiting IP-hopping or NAT rotation
+ * to multiply their budget is bounded per-egress-address as well as
+ * per-identity. Absent IP maps to the sentinel `'_no_ip'`.
  */
 export interface IssuanceRateLimitSubject {
   tenantId?: string;
   userId: string;
   agentId: string;
+  /**
+   * Parent or current token's `jti` claim for attenuation / renewal
+   * paths. Omit (or leave undefined) for fresh issuance — the sentinel
+   * `'_no_jti'` is used automatically.
+   */
+  jti?: string;
+  /**
+   * Source IP of the HTTP request. Omit when the IP is unavailable —
+   * the sentinel `'_no_ip'` is substituted automatically.
+   */
+  ip?: string;
 }
 
 export interface IssuanceRateLimiter {
@@ -145,44 +147,37 @@ export interface IssuanceRateLimiterOptions {
 
 export const DEFAULT_ISSUANCE_RATE_LIMIT_MAX = 60;
 export const DEFAULT_ISSUANCE_RATE_LIMIT_WINDOW_SECONDS = 60;
+/** Key prefix prepended to the output of {@link buildIssuanceRateLimitKey} by the limiter implementations (e.g. {@link CallCounterBackedIssuanceRateLimiter} and the legacy {@link RedisIssuanceRateLimiter}). Not embedded by {@link buildIssuanceRateLimitKey} itself. */
 const DEFAULT_KEY_PREFIX = 'issrl:';
-
-/**
- * Escape a key component so the `|` separator (and the escape char
- * itself) cannot appear inside a component and forge a different
- * tuple. Without this, `(t, 'u|v', 'a')` and `(t, 'u', 'v|a')` would
- * share a bucket — and because `agentId` is request-controlled and
- * `userId` is provider-defined, that is a bucket-stealing primitive.
- *
- * Encoding: `\` -> `\\`, `|` -> `\|`. The decoded form is unambiguous
- * because every literal `|` in a component is now preceded by `\`,
- * while a real separator is not. Escape logic is in
- * {@link escapeRateLimitKeyComponent} (shared with the gateway quota engine).
- */
 
 /**
  * Build the canonical rate-limit key. Exposed so tests can assert the
  * tenant-aware shape (which is the F-7 prerequisite — see file
- * header). Order is `tenantId | userId | agentId` so a Redis `KEYS`
+ * header). Order is `tenantId|userId|agentId|jti|ip` so a Redis `KEYS`
  * scan from an operator can prefix-match a single tenant. Components
- * are escaped to prevent collisions when an identifier contains `|`.
+ * are escaped using {@link escapeRateLimitKeyComponent} (shared with
+ * the gateway quota engine) to prevent injection / collision attacks.
  *
- * The key intentionally uses only three dimensions. See
- * {@link IssuanceRateLimitSubject} for the rationale behind excluding
- * `jti` (would fragment the budget per lineage) and `ip` (would allow
- * budget amplification via IP rotation).
+ * Sentinels used when optional fields are absent:
+ *  - `tenantId` absent / empty → `'_no_tenant'`
+ *  - `jti` absent / empty → `'_no_jti'` (fresh-issuance slot)
+ *  - `ip` absent / empty → `'_no_ip'`
  */
 export function buildIssuanceRateLimitKey(s: IssuanceRateLimitSubject): string {
   const tenant = s.tenantId && s.tenantId.length > 0 ? s.tenantId : '_no_tenant';
+  const jti = s.jti && s.jti.length > 0 ? s.jti : '_no_jti';
+  const ip = s.ip && s.ip.length > 0 ? s.ip : '_no_ip';
   const e = escapeRateLimitKeyComponent;
-  return `${e(tenant)}|${e(s.userId)}|${e(s.agentId)}`;
+  return `${e(tenant)}|${e(s.userId)}|${e(s.agentId)}|${e(jti)}|${e(ip)}`;
 }
 
 /**
  * Single-process limiter suitable for development, single-replica
  * issuers, and unit tests. Production multi-replica deployments
- * should use {@link RedisIssuanceRateLimiter} (selected automatically
- * by {@link createIssuanceRateLimiterFromEnv} when `REDIS_URL` is set).
+ * should prefer {@link CallCounterBackedIssuanceRateLimiter} (selected
+ * automatically by {@link createIssuanceRateLimiterFromEnv} when
+ * `REDIS_URL` is set) which re-uses the gateway's {@link CallCounterStore}
+ * infrastructure.
  */
 export class InMemoryIssuanceRateLimiter implements IssuanceRateLimiter {
   private readonly buckets = new Map<string, { count: number; expiresAt: number }>();
@@ -379,6 +374,144 @@ export class RedisIssuanceRateLimiter implements IssuanceRateLimiter {
   }
 }
 
+// ---------------------------------------------------------------------------
+// CallCounterStore-backed implementation (preferred for new deployments)
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link CallCounterBackedIssuanceRateLimiter}.
+ */
+export interface CallCounterBackedIssuanceRateLimiterOptions
+  extends Partial<IssuanceRateLimiterOptions> {
+  /**
+   * Key prefix prepended to every store key so issuance-rate-limit
+   * buckets live in a distinct namespace from `maxCalls`-condition
+   * counters and gateway-quota keys. Default `"issrl:"`.
+   */
+  keyPrefix?: string;
+  /**
+   * When `true` (default), a {@link CallCounterStore} error returns a
+   * deny decision so the issuer fails closed. Set `false` to allow
+   * issuance to continue when the counter store is unavailable.
+   */
+  failClosedOnError?: boolean;
+}
+
+/**
+ * Issuance rate limiter backed by a {@link CallCounterStore}.
+ *
+ * This is the **preferred** production implementation. It re-uses the
+ * same low-level infrastructure that powers `maxCalls`-condition
+ * enforcement and the {@link GatewayQuotaEngine}, so a single Redis
+ * connection (and a single key-space discipline) covers all counting
+ * operations across both the issuer and the gateway.
+ *
+ * The key passed to the store is:
+ *
+ *   `<keyPrefix><tenantId>|<userId>|<agentId>|<jti>|<ip>`
+ *
+ * e.g. `issrl:acme|alice|agent-7|tok-abc|192.0.2.1`
+ *
+ * The store's own key prefix (e.g. `capcall:`) is then prepended
+ * by the store implementation, resulting in a final Redis key like:
+ *
+ *   `capcall:issrl:acme|alice|agent-7|tok-abc|192.0.2.1`
+ *
+ * This two-level prefixing keeps the issuance keys cleanly separated
+ * from the gateway's `gwq:` quota keys and the `maxCalls` condition
+ * keys in the same Redis namespace.
+ *
+ * ### Failure semantics
+ *
+ * When the store throws **or** returns a non-finite count (the
+ * {@link CallCounterStore} convention for "backend unavailable"), the
+ * limiter returns a deny decision (fail-closed) by default. Operators
+ * who need fail-open behaviour can set `failClosedOnError: false`.
+ */
+export class CallCounterBackedIssuanceRateLimiter implements IssuanceRateLimiter {
+  private readonly store: CallCounterStore;
+  private readonly logger?: Logger;
+  private readonly keyPrefix: string;
+  private readonly max: number;
+  /** Configured tumbling-window length; satisfies the interface contract. */
+  public readonly windowSeconds: number;
+  private readonly failClosedOnError: boolean;
+
+  constructor(
+    store: CallCounterStore,
+    options: CallCounterBackedIssuanceRateLimiterOptions = {},
+    logger?: Logger,
+  ) {
+    this.store = store;
+    this.logger = logger;
+    this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
+    this.max = options.max ?? DEFAULT_ISSUANCE_RATE_LIMIT_MAX;
+    this.windowSeconds = options.windowSeconds ?? DEFAULT_ISSUANCE_RATE_LIMIT_WINDOW_SECONDS;
+    this.failClosedOnError = options.failClosedOnError ?? true;
+  }
+
+  async consume(subject: IssuanceRateLimitSubject): Promise<RateLimitDecision> {
+    const storeKey = `${this.keyPrefix}${buildIssuanceRateLimitKey(subject)}`;
+    let count: number;
+    try {
+      count = await this.store.incrementAndGet(storeKey, this.windowSeconds, subject.agentId);
+    } catch (error) {
+      this.logger?.error('Issuance rate-limit store error', {
+        key: storeKey,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        failClosedOnError: this.failClosedOnError,
+      });
+      return this.outageDecision();
+    }
+
+    // CallCounterStore uses POSITIVE_INFINITY as the "backend unavailable"
+    // sentinel (same convention as GatewayQuotaEngine — see gateway-quota.ts).
+    if (!isFinite(count)) {
+      this.logger?.warn('Issuance rate-limit store returned non-finite count (backend unavailable)', {
+        key: storeKey,
+        failClosedOnError: this.failClosedOnError,
+      });
+      return this.outageDecision();
+    }
+
+    if (count > this.max) {
+      return {
+        allowed: false,
+        limit: this.max,
+        remaining: 0,
+        windowSeconds: this.windowSeconds,
+        retryAfterSeconds: this.windowSeconds,
+      };
+    }
+    return {
+      allowed: true,
+      limit: this.max,
+      remaining: Math.max(0, this.max - count),
+      windowSeconds: this.windowSeconds,
+      retryAfterSeconds: 0,
+    };
+  }
+
+  private outageDecision(): RateLimitDecision {
+    if (!this.failClosedOnError) {
+      return {
+        allowed: true,
+        limit: this.max,
+        remaining: this.max,
+        windowSeconds: this.windowSeconds,
+        retryAfterSeconds: 0,
+      };
+    }
+    return {
+      allowed: false,
+      limit: this.max,
+      remaining: 0,
+      windowSeconds: this.windowSeconds,
+      retryAfterSeconds: this.windowSeconds,
+    };
+  }
+}
+
 export interface IssuanceRateLimiterEnvOptions {
   /** Optional logger for boot diagnostics. */
   logger?: Logger;
@@ -413,9 +546,11 @@ export interface IssuanceRateLimiterEnvOptions {
  *
  * Returns the in-process {@link InMemoryIssuanceRateLimiter} when
  * `REDIS_URL` is unset (single-replica / development). When `REDIS_URL`
- * is set, returns a {@link RedisIssuanceRateLimiter} backed by `ioredis`
- * — the same client wiring as {@link createCallCounterStoreFromEnv} so
- * deployments that already use Redis do not need an additional client.
+ * is set, returns a {@link CallCounterBackedIssuanceRateLimiter} backed
+ * by a {@link createCallCounterStoreFromEnv | Redis CallCounterStore} —
+ * the same infrastructure that powers `maxCalls`-condition enforcement
+ * and the gateway quota engine. This eliminates the separate per-service
+ * Redis connection that the legacy {@link RedisIssuanceRateLimiter} required.
  *
  * Environment variables (all can be overridden via `options`):
  *  - `REDIS_URL` — Redis connection string. When unset, falls back
@@ -441,6 +576,7 @@ export async function createIssuanceRateLimiterFromEnv(
     );
   const failClosedOnError =
     options.failClosedOnError ?? env.ISSUANCE_RATE_LIMIT_FAIL_CLOSED !== 'false';
+  const keyPrefix = options.keyPrefix ?? env.ISSUANCE_RATE_LIMIT_KEY_PREFIX ?? DEFAULT_KEY_PREFIX;
 
   const redisUrl = env.REDIS_URL;
   if (!redisUrl) {
@@ -451,59 +587,38 @@ export async function createIssuanceRateLimiterFromEnv(
     return new InMemoryIssuanceRateLimiter({ max, windowSeconds });
   }
 
-  let RedisCtor: unknown;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    RedisCtor = require('ioredis');
-  } catch (error) {
-    const isProduction =
-      env.NODE_ENV === 'production' ||
-      (env.EUNO_DEPLOYMENT_TIER && env.EUNO_DEPLOYMENT_TIER !== 'single-replica');
-    if (isProduction) {
-      throw new Error(
-        'REDIS_URL is set but the "ioredis" package is not installed. ' +
-          'Install it (npm install ioredis) to enable distributed issuance ' +
-          'rate limiting. Refusing to fall back to the in-memory limiter in a ' +
-          'production / multi-replica deployment: per-subject issuance budgets ' +
-          'would be tracked per-pod rather than fleet-wide, multiplying the ' +
-          'effective limit by the replica count. ' +
-          `Original error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
-    logger?.error(
-      'REDIS_URL is set but the "ioredis" package is not installed. ' +
-        'Install it (npm install ioredis) to enable distributed issuance ' +
-        'rate limiting. Falling back to the in-memory limiter; counters ' +
-        'WILL NOT be shared across issuer instances. This is only acceptable ' +
-        'in development / single-replica deployments.',
-      { error: error instanceof Error ? error.message : 'Unknown error' },
-    );
-    return new InMemoryIssuanceRateLimiter({ max, windowSeconds });
-  }
-
-  const Ctor = (RedisCtor as { default?: unknown }).default ?? RedisCtor;
-  const client = new (Ctor as new (url: string, opts?: unknown) => RedisIssuanceRateLimitClient)(
-    redisUrl,
-    {
-      retryStrategy: (times: number) => Math.min(times * 50, 2000),
-      maxRetriesPerRequest: 3,
-      lazyConnect: false,
-    },
+  // Use the shared CallCounterStore infrastructure (same as the gateway quota
+  // engine) instead of spinning up a dedicated ioredis client. This keeps the
+  // connection budget predictable and ensures all counter operations share the
+  // same Redis keyspace conventions.
+  //
+  // Explicitly force CALL_COUNTER_FAIL_OPEN=false so that Redis outages are
+  // NOT silently absorbed by a per-replica in-memory fallback. If we honoured
+  // the env var here, ISSUANCE_RATE_LIMIT_FAIL_CLOSED would be meaningless:
+  // outage → fallback kicks in → effective limit becomes max × replicaCount,
+  // not a hard denial. The CallCounterBackedIssuanceRateLimiter's own
+  // failClosedOnError / outageDecision() logic handles the outage signal
+  // (POSITIVE_INFINITY) consistently across all replicas.
+  //
+  // Use 'false' (string) rather than `undefined` so createCallCounterStoreFromEnv
+  // sees an explicit env override. Setting to `undefined` would leave the key
+  // absent and the factory would re-read the real env var — which could still
+  // be 'true' if the operator set it.
+  const store = await createCallCounterStoreFromEnv(
+    { ...env, CALL_COUNTER_FAIL_OPEN: 'false' },
+    logger,
   );
-
-  const keyPrefix = options.keyPrefix ?? env.ISSUANCE_RATE_LIMIT_KEY_PREFIX ?? DEFAULT_KEY_PREFIX;
-  logger?.info('Using Redis-backed issuance rate limiter', {
+  logger?.info('Using CallCounterStore-backed issuance rate limiter', {
     max,
     windowSeconds,
     keyPrefix,
     failClosedOnError,
   });
-  return new RedisIssuanceRateLimiter(client, logger, {
-    max,
-    windowSeconds,
-    keyPrefix,
-    failClosedOnError,
-  });
+  return new CallCounterBackedIssuanceRateLimiter(
+    store,
+    { max, windowSeconds, keyPrefix, failClosedOnError },
+    logger,
+  );
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {

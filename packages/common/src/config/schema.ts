@@ -492,35 +492,20 @@ export const IssuerConfigSchema = z
         'Comma-separated list of browser origins allowed to call the issuer. In production the issuer disables CORS entirely when this is unset.',
     }),
 
-    // Per-IP rate limit (express-rate-limit, secondary defence) ---------------
-    // Primary per-(tenant,user,agent) defence is ISSUANCE_RATE_LIMIT_* below.
-    // This coarser per-IP limit guards against unauthenticated flooding before
-    // the identity-provider round-trip completes.
-    RATE_LIMIT_WINDOW_MS: envPositiveInt({
-      default: 60000,
-      description:
-        'Rate-limit window in milliseconds for the per-IP express-rate-limit middleware. Default 60000 (60 s). Applies to all issuer routes before authentication.',
-    }),
-    RATE_LIMIT_MAX_REQUESTS: envPositiveInt({
-      default: 100,
-      description:
-        'Maximum requests per IP per RATE_LIMIT_WINDOW_MS. Default 100. The per-(tenant,user,agent) issuance rate limit (ISSUANCE_RATE_LIMIT_*) is the primary post-authentication defence; this coarser guard fires before identity resolution.',
-    }),
-
-    // Per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1) -----
-    // Replaces the legacy per-IP express rate limit as the primary defence
-    // against a compromised user account / agent flooding /api/v1/issue.
-    // Tenant-aware so the same limiter is safe for a multi-region active/
-    // active issuer (F-7) — see docs/MULTI_REGION_ISSUER.md.
+    // Per-(tenant, user, agent, jti, ip) issuance rate limit (F-1, addresses I-1) --
+    // Multi-dimensional token-bucket replacing the former per-IP express-rate-limit.
+    // Keyed on (tenantId, userId, agentId, jti, ip) so a compromised account /
+    // agent / IP is bounded independently. Tenant-aware for F-7 multi-region.
+    // See docs/MULTI_REGION_ISSUER.md.
     ISSUANCE_RATE_LIMIT_ENABLED: envBoolean({
       default: true,
       description:
-        'Enable the per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1). Default true. Disable only in development; in production this is the primary defence against a compromised user/agent flooding /api/v1/issue.',
+        'Enable the per-(tenant, user, agent, jti, ip) issuance rate limit (F-1, addresses I-1). Default true. Disable only in development; in production this is the primary defence against a compromised user/agent flooding /api/v1/issue.',
     }),
     ISSUANCE_RATE_LIMIT_MAX: envPositiveInt({
       default: 60,
       description:
-        'Maximum capability-issuance requests permitted per ISSUANCE_RATE_LIMIT_WINDOW_SECONDS for the same (tenantId, userId, agentId) tuple. Default 60.',
+        'Maximum capability-issuance requests permitted per ISSUANCE_RATE_LIMIT_WINDOW_SECONDS for the same (tenantId, userId, agentId, jti, ip) tuple. Default 60.',
     }),
     ISSUANCE_RATE_LIMIT_WINDOW_SECONDS: envPositiveInt({
       default: 60,
@@ -528,12 +513,12 @@ export const IssuerConfigSchema = z
         'Length (seconds) of the tumbling window used by the issuance rate limiter. Default 60.',
     }),
     ISSUANCE_RATE_LIMIT_KEY_PREFIX: optionalString.describe(
-      'Optional Redis key prefix for the issuance rate limiter. Default "issrl:".',
+      'Optional Redis key prefix for the issuance rate limiter. Default "issrl:". Prepended to the store key before the CallCounterStore backend adds its own prefix (default "capcall:").',
     ),
     ISSUANCE_RATE_LIMIT_FAIL_CLOSED: envBoolean({
       default: true,
       description:
-        'When true (default), Redis errors during issuance rate-limit lookup deny the request (fail closed). Set to false only when transient Redis loss should not block issuance — note this re-opens the window an attacker could exploit.',
+        'When true (default), CallCounterStore errors during issuance rate-limit lookup deny the request (fail closed). Set to false only when transient Redis loss should not block issuance — note this re-opens the window an attacker could exploit.',
     }),
 
     // Distributed coordination (Redis) — required for multi-replica issuer ----

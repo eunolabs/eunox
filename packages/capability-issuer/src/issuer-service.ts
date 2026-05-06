@@ -632,29 +632,25 @@ export class CapabilityIssuerService {
    */
   async issueCapability(
     request: IssueCapabilityRequest,
-    // `_enforcement` is accepted but intentionally unused in the rate-limit
-    // path. It is retained so route handlers (index.ts) can continue passing
-    // `{ clientIp: req.ip }` for future use (e.g. IP-based audit logging or
-    // an additional out-of-band IP guard) without a breaking API change.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _enforcement?: IssuerEnforcementContext,
+    enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
       // Step 1: Validate the user's authentication token.
       this.logger.info('Validating user authentication token', { agentId: request.agentId });
       const userContext = await this.identityProvider.validateToken(request.authToken);
 
-      // Step 1a: Per-(tenantId, userId, agentId) issuance rate limit (F-1).
+      // Step 1a: Per-(tenantId, userId, agentId, jti, ip) issuance rate limit (F-1).
       // Runs *after* authentication so the limit is keyed on the resolved
       // subject rather than transport metadata, and *before* any signing or
       // side-credential mint so a compromised account cannot exhaust KMS
-      // budget. The three-component key correctly bounds total KMS load per
-      // identity across all mint paths (issue/attenuate/renew); see
-      // IssuanceRateLimitSubject for why jti and ip are intentionally excluded.
+      // budget. Fresh issuance uses the '_no_jti' sentinel; the IP dimension
+      // (from IssuerEnforcementContext.clientIp) adds transport-level scoping.
       await this.enforceIssuanceRateLimit({
         tenantId: userContext.tenantId,
         userId: userContext.userId,
         agentId: request.agentId,
+        // jti='_no_jti' sentinel is applied by buildIssuanceRateLimitKey when absent
+        ip: enforcement?.clientIp,
       });
 
       // Step 1b: Enforce PIM-required roles.
@@ -954,7 +950,7 @@ export class CapabilityIssuerService {
   }
 
   /**
-   * Apply a per-(tenant, user, agent) rate limit. When no limiter is
+   * Apply a per-(tenant, user, agent, jti, ip) rate limit. When no limiter is
    * wired this is a no-op (back-compat). On exhaustion logs an
    * audit-deny entry, fires the optional metric callback, and throws
    * {@link CapabilityError} with {@link ErrorCode.RATE_LIMIT_EXCEEDED}
@@ -976,7 +972,7 @@ export class CapabilityIssuerService {
       decision = await activeLimiter.consume(subject);
     } catch (error) {
       // The limiter implementation already chose its failure mode
-      // (see RedisIssuanceRateLimiter.failClosedOnError). When it
+      // (see CallCounterBackedIssuanceRateLimiter.failClosedOnError). When it
       // chose to propagate, treat the error as fail-closed here too:
       // the issuer cannot mint without a working limiter when one is
       // wired, otherwise the limit is bypassed silently.
@@ -1296,9 +1292,7 @@ export class CapabilityIssuerService {
     parentToken: string,
     requestedCapabilities: CapabilityConstraint[],
     ttl?: number,
-    // Retained for API compatibility and future use; see issueCapability.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _enforcement?: IssuerEnforcementContext,
+    enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
       this.logger.info('Attenuating capability token');
@@ -1320,16 +1314,16 @@ export class CapabilityIssuerService {
         );
       }
 
-      // Step 2a: Per-(tenantId, userId, agentId) rate limit for attenuation
-      // (F-1). Shares the same three-component bucket as fresh issuance so
-      // issue + attenuate + renew all compete for the same per-identity
-      // budget — a compromised account cannot exhaust KMS by alternating
-      // mint paths. See IssuanceRateLimitSubject for why jti and ip are
-      // intentionally excluded from the key.
+      // Step 2a: Per-(tenantId, userId, agentId, jti, ip) rate limit for attenuation
+      // (F-1). Uses the parent token's jti to scope the budget to this lineage
+      // so attenuation/renewal do not compete with fresh-issuance slots.
+      // The IP dimension adds transport-level scoping.
       await this.enforceIssuanceRateLimit({
         tenantId: parentPayload.authorizedBy?.tenantId,
         userId: parentPayload.authorizedBy?.userId ?? 'unknown',
         agentId: parentPayload.sub,
+        jti: parentPayload.jti,
+        ip: enforcement?.clientIp,
       });
 
       // Step 3: Validate requested capabilities are a subset of parent's.
@@ -1453,9 +1447,7 @@ export class CapabilityIssuerService {
   async renewCapability(
     currentToken: string,
     ttl?: number,
-    // Retained for API compatibility and future use; see issueCapability.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _enforcement?: IssuerEnforcementContext,
+    enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
       this.logger.info('Renewing capability token');
@@ -1467,15 +1459,16 @@ export class CapabilityIssuerService {
         'Invalid capability token format',
       );
 
-      // Step 1a: Per-(tenantId, userId, agentId) rate limit for renewal (F-1).
+      // Step 1a: Per-(tenantId, userId, agentId, jti, ip) rate limit for renewal (F-1).
       // An attacker holding a non-expired token can otherwise extend its
       // lineage forever in a tight renew loop, defeating short TTLs.
-      // Shares the same three-component bucket as fresh issuance and
-      // attenuation so the per-identity KMS budget covers all mint paths.
+      // Uses the current token's jti to scope the budget to this lineage.
       await this.enforceIssuanceRateLimit({
         tenantId: currentPayload.authorizedBy?.tenantId,
         userId: currentPayload.authorizedBy?.userId ?? 'unknown',
         agentId: currentPayload.sub,
+        jti: currentPayload.jti,
+        ip: enforcement?.clientIp,
       });
 
       // Step 2: Build the renewed token.

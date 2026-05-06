@@ -65,16 +65,14 @@ describe('Rate-limit env-var validation', () => {
     jest.resetModules();
   });
 
-  it('starts successfully when rate-limit env vars are valid numbers', async () => {
-    process.env.RATE_LIMIT_WINDOW_MS = '30000';
-    process.env.RATE_LIMIT_MAX_REQUESTS = '50';
-    // Use toBeDefined() — resolves.not.toThrow() is not a valid assertion
-    // because toThrow() expects a function, not the resolved module value.
+  it('starts successfully when issuance rate-limit env vars are valid numbers', async () => {
+    process.env.ISSUANCE_RATE_LIMIT_MAX = '30';
+    process.env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS = '60';
     const mod = await import('../src/index');
     expect(mod.app).toBeDefined();
   });
 
-  it('fails at startup when RATE_LIMIT env vars are non-numeric strings (strict fail-closed)', async () => {
+  it('fails at startup when ISSUANCE_RATE_LIMIT_MAX is a non-numeric string (strict fail-closed)', async () => {
     // Intercept process.exit so the jest worker is not killed when the
     // config validator rejects the non-integer value.  The schema now
     // validates strictly: non-integer values are rejected at startup
@@ -86,8 +84,8 @@ describe('Rate-limit env-var validation', () => {
         throw new Error('process.exit intercepted');
       }) as unknown as (code?: string | number | null) => never);
     try {
-      process.env.RATE_LIMIT_WINDOW_MS = 'bad-value';
-      process.env.RATE_LIMIT_MAX_REQUESTS = 'also-bad';
+      process.env.ISSUANCE_RATE_LIMIT_MAX = 'bad-value';
+      process.env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS = 'also-bad';
       // Pin the intended failure mode: startup validation triggers exit(1).
       await expect(import('../src/index')).rejects.toThrow('process.exit intercepted');
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -96,11 +94,11 @@ describe('Rate-limit env-var validation', () => {
     }
   });
 
-  it('still responds to requests when rate-limit env vars are set to minimum valid values', async () => {
+  it('still responds to requests when issuance rate-limit env vars are set to minimum valid values', async () => {
     // Confirm the service starts and handles requests normally when valid
     // (but non-default) rate-limit values are provided.
-    process.env.RATE_LIMIT_WINDOW_MS = '1000';
-    process.env.RATE_LIMIT_MAX_REQUESTS = '1';
+    process.env.ISSUANCE_RATE_LIMIT_MAX = '1';
+    process.env.ISSUANCE_RATE_LIMIT_WINDOW_SECONDS = '1';
     const { app } = await import('../src/index');
 
     const res = await request(app).get('/health');

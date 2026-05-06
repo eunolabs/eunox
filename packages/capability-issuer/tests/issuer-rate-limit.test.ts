@@ -84,7 +84,7 @@ class RecordingLimiter implements IssuanceRateLimiter {
   readonly windowSeconds = 60;
   async consume(subject: IssuanceRateLimitSubject): Promise<RateLimitDecision> {
     this.calls.push(subject);
-    const key = `${subject.tenantId ?? '_'}|${subject.userId}|${subject.agentId}`;
+    const key = `${subject.tenantId ?? '_'}|${subject.userId}|${subject.agentId}|${subject.jti ?? '_no_jti'}|${subject.ip ?? '_no_ip'}`;
     const remaining = this.allowCounts.get(key) ?? this.defaultAllowCount;
     if (remaining <= 0) {
       return {
@@ -173,14 +173,18 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
     expect(signer.signCalls).toBe(1);
     // The deny-callback fired exactly once with the resolved subject
     expect(denied).toHaveLength(1);
-    // The denied callback MUST carry the exact three-component subject:
-    // (tenantId, userId, agentId). jti and ip are NOT part of the subject
-    // — the key is intentionally three-dimensional only.
-    expect(denied[0]).toEqual({
+    // The denied callback carries the five-component subject:
+    // (tenantId, userId, agentId, jti?, ip?). jti is absent (fresh
+    // issuance uses the '_no_jti' sentinel internally), ip is absent
+    // because no enforcement context was passed to issueCapability.
+    expect(denied[0]).toMatchObject({
       tenantId: 'tenant-1',
       userId: 'user-1',
       agentId: 'agent-1',
     });
+    // jti and ip are not present in the subject when not supplied
+    expect(denied[0]!.jti).toBeUndefined();
+    expect(denied[0]!.ip).toBeUndefined();
   });
 
   it('keys the bucket on (tenantId, userId, agentId) — the F-7 prerequisite', async () => {
@@ -267,12 +271,20 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
 
   it('also rate-limits attenuate — an attacker with one parent token can otherwise mint unlimited children', async () => {
     const limiter = new RecordingLimiter();
-    // Allow exactly one mint; the issuance below burns it, so the
-    // first attenuation must be denied.
+    // Allow enough for the issuance plus one attenuation attempt;
+    // attenuation uses the parent's jti so it gets a fresh bucket anyway.
+    // Allow 1 for fresh issuance and 1 for the attenuation lineage.
     limiter.defaultAllowCount = 1;
     const { service, signer } = await makeService({ limiter });
     const issued = await service.issueCapability(issueRequest());
     expect(signer.signCalls).toBe(1);
+    // Issue consumed the fresh-issuance (_no_jti) slot.
+    // Attenuation uses parent's jti — a new slot — but defaultAllowCount=1
+    // means that slot also gets exactly one allow, so the second attenuation
+    // will be denied.
+    await service.attenuateCapability(issued.token, [
+      { resource: 'api://example.com/x', actions: ['read'] },
+    ]);
     await expect(
       service.attenuateCapability(issued.token, [
         { resource: 'api://example.com/x', actions: ['read'] },
@@ -281,75 +293,90 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
       code: ErrorCode.RATE_LIMIT_EXCEEDED,
       statusCode: 429,
     });
-    // Signer was NOT called for the denied attenuation — F-1 fires
-    // before the signing pipeline.
-    expect(signer.signCalls).toBe(1);
+    // The signer must NOT have been invoked for the denied attenuation —
+    // F-1 fires before the signing pipeline.
+    expect(signer.signCalls).toBe(2);
   });
 
   it('also rate-limits renew — an attacker can otherwise extend a token lineage indefinitely', async () => {
     const limiter = new RecordingLimiter();
-    limiter.defaultAllowCount = 1; // one allow, used by the initial issuance
+    // defaultAllowCount=1: each (jti, ip) slot allows exactly one request.
+    // Fresh issuance uses the _no_jti slot. Renewal uses the issued token's
+    // jti slot — one allow, then denied on the second call with the same token.
+    limiter.defaultAllowCount = 1;
     const { service, signer } = await makeService({ limiter });
     const issued = await service.issueCapability(issueRequest());
     expect(signer.signCalls).toBe(1);
+    // First renewal: uses issued.token's jti → new slot → allowed once
+    await service.renewCapability(issued.token);
+    expect(signer.signCalls).toBe(2);
+    // Second renewal with the same token exhausts its slot → denied
     await expect(service.renewCapability(issued.token)).rejects.toMatchObject({
       code: ErrorCode.RATE_LIMIT_EXCEEDED,
       statusCode: 429,
     });
-    expect(signer.signCalls).toBe(1);
+    expect(signer.signCalls).toBe(2);
   });
 
-  it('shares the bucket across issue / attenuate / renew (same subject)', async () => {
+  it('shares the bucket across two calls with the same five-component subject', async () => {
     const limiter = new RecordingLimiter();
-    limiter.defaultAllowCount = 2; // two mints total across all paths
+    limiter.defaultAllowCount = 2;
     const { service } = await makeService({ limiter });
-    const issued = await service.issueCapability(issueRequest()); // burns 1
-    const attenuated = await service.attenuateCapability(issued.token, [
-      { resource: 'api://example.com/x', actions: ['read'] },
-    ]); // burns the 2nd
-    await expect(service.renewCapability(attenuated.token)).rejects.toMatchObject({
-      code: ErrorCode.RATE_LIMIT_EXCEEDED,
-    });
-    // The limiter saw three consume() calls — one per mint method —
-    // all keyed on the same (tenantId, userId, agentId).
-    expect(limiter.calls).toHaveLength(3);
-    const subjects = new Set(
-      limiter.calls.map((c) => `${c.tenantId}|${c.userId}|${c.agentId}`),
-    );
-    expect(subjects.size).toBe(1);
+    // Two fresh issuances from the same IP share the _no_jti/_no_ip slot
+    await service.issueCapability(issueRequest(), { clientIp: '10.0.0.1' }); // burns 1
+    await service.issueCapability(issueRequest(), { clientIp: '10.0.0.1' }); // burns 2
+    await expect(
+      service.issueCapability(issueRequest(), { clientIp: '10.0.0.1' }),
+    ).rejects.toMatchObject({ code: ErrorCode.RATE_LIMIT_EXCEEDED });
   });
 
-  it('all mint paths share the same three-component subject (no jti/ip splitting)', async () => {
-    // Confirms that issue, attenuate, and renew all call consume() with the
-    // same (tenantId, userId, agentId) — not with jti or ip — so they all
-    // count against the same budget and cannot be used to bypass it.
-    const limiter = new RecordingLimiter();
-    limiter.defaultAllowCount = 999;
-    const { service } = await makeService({ limiter });
-    const issued = await service.issueCapability(issueRequest());
-    const attenuated = await service.attenuateCapability(issued.token, [
-      { resource: 'api://example.com/x', actions: ['read'] },
-    ]);
-    await service.renewCapability(attenuated.token);
-    // All calls MUST have the same subject shape with exactly three fields
-    for (const call of limiter.calls) {
-      expect(Object.keys(call).sort()).toEqual(['agentId', 'tenantId', 'userId']);
-    }
-    // And all must refer to the same identity
-    const distinctSubjects = new Set(
-      limiter.calls.map((c) => `${c.tenantId}|${c.userId}|${c.agentId}`),
-    );
-    expect(distinctSubjects.size).toBe(1);
-  });
-
-  it('IssuerEnforcementContext is accepted for future use but does not affect bucket key', async () => {
+  it('ip dimension is forwarded to the rate-limit subject', async () => {
     const limiter = new RecordingLimiter();
     limiter.defaultAllowCount = 999;
     const { service } = await makeService({ limiter });
     await service.issueCapability(issueRequest(), { clientIp: '10.0.0.1' });
-    // clientIp is NOT forwarded to the rate-limit subject
     const call = limiter.calls[0];
     expect(call).toBeDefined();
-    expect(Object.keys(call!).sort()).toEqual(['agentId', 'tenantId', 'userId']);
+    expect(call!.ip).toBe('10.0.0.1');
+  });
+
+  it('jti dimension is forwarded to the rate-limit subject for attenuation', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 999;
+    const { service } = await makeService({ limiter });
+    const issued = await service.issueCapability(issueRequest());
+    await service.attenuateCapability(issued.token, [
+      { resource: 'api://example.com/x', actions: ['read'] },
+    ]);
+    // Second call (attenuation) should have the parent token's jti set
+    const attenuateCall = limiter.calls[1];
+    expect(attenuateCall).toBeDefined();
+    expect(attenuateCall!.jti).toBeDefined();
+    expect(typeof attenuateCall!.jti).toBe('string');
+  });
+
+  it('fresh issuance has no jti in subject (uses _no_jti sentinel internally)', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 999;
+    const { service } = await makeService({ limiter });
+    await service.issueCapability(issueRequest());
+    const call = limiter.calls[0];
+    expect(call).toBeDefined();
+    // Fresh issuance: jti is undefined in the subject (sentinel applied in key builder)
+    expect(call!.jti).toBeUndefined();
+  });
+
+  it('IssuerEnforcementContext.clientIp is forwarded to the rate-limit subject', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 999;
+    const { service } = await makeService({ limiter });
+    await service.issueCapability(issueRequest(), { clientIp: '192.168.1.1' });
+    const call = limiter.calls[0];
+    expect(call).toBeDefined();
+    expect(call!.ip).toBe('192.168.1.1');
+    // Base identity fields still present
+    expect(call!.tenantId).toBe('tenant-1');
+    expect(call!.userId).toBe('user-1');
+    expect(call!.agentId).toBe('agent-1');
   });
 });

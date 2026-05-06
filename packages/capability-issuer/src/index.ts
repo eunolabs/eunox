@@ -6,7 +6,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import * as jose from 'jose';
 import {
@@ -296,12 +295,11 @@ async function initializeServices() {
       actionResolverHash = computeActionResolverHash(null);
     }
 
-    // Per-(tenant, user, agent) issuance rate limiter (F-1, addresses
-    // I-1). Tenant-aware, distributed via Redis when REDIS_URL is set
-    // — required for multi-replica or multi-region active/active
-    // deployments (F-7). When ISSUANCE_RATE_LIMIT_ENABLED=false the
-    // service runs without a limiter, preserving pre-F-1 behaviour
-    // (the per-IP express-rate-limit middleware below still runs).
+    // Per-(tenant, user, agent, jti, ip) issuance rate limiter (F-1, addresses
+    // I-1). Multi-dimensional token-bucket backed by CallCounterStore when
+    // REDIS_URL is set — required for multi-replica or multi-region active/
+    // active deployments (F-7). When ISSUANCE_RATE_LIMIT_ENABLED=false the
+    // service runs without any per-subject rate limit.
     let issuanceRateLimiter: IssuanceRateLimiter | undefined;
     if (env.ISSUANCE_RATE_LIMIT_ENABLED) {
       issuanceRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, {
@@ -314,7 +312,7 @@ async function initializeServices() {
     } else {
       logger.warn(
         'ISSUANCE_RATE_LIMIT_ENABLED=false — per-subject issuance rate limit is DISABLED. ' +
-          'Only the legacy per-IP rate limit applies. NOT recommended for production.',
+          'NOT recommended for production.',
       );
     }
 
@@ -631,36 +629,6 @@ issuanceRateLimitDeniedCounter.inc({ tenant: '_no_tenant', reason: 'exceeded' },
 app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
 app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
 
-// Rate limiting - protect against brute force attacks
-const rateLimitWindowMs = env.RATE_LIMIT_WINDOW_MS;
-const rateLimitMax = env.RATE_LIMIT_MAX_REQUESTS;
-
-const limiter = rateLimit({
-  windowMs: rateLimitWindowMs,
-  max: rateLimitMax,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests from this IP, please try again later',
-  handler: (req: Request, res: Response) => {
-    logger.warn('Rate limit exceeded', {
-      ip: req.ip,
-      path: req.path,
-    });
-    // Use the standard issuer error envelope (`{ error: { code, message } }`)
-    // so clients can rely on a single 429 contract on these routes — the
-    // F-1 limiter, the gateway, and this per-IP express limiter all share
-    // a shape. `standardHeaders: true` above already adds `Retry-After`
-    // (RFC 9110 §10.2.3), so the OpenAPI 429 response also holds here.
-    res.status(429).json({
-      error: {
-        code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many requests, please try again later',
-      },
-    });
-  },
-});
-
-app.use(limiter);
 app.use(express.json());
 
 // Request logging middleware
