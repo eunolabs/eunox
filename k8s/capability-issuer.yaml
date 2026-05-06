@@ -1,4 +1,16 @@
-# Kubernetes Deployment for Capability Issuer
+# Capability Issuer — minimal Deployment (LEGACY / reference only).
+#
+# ⚠  USE capability-issuer-deployment.yaml INSTEAD.
+#
+# This file is the original simple manifest and lacks Sprint 3 sandbox
+# hardening (AppArmor, SELinux, seccomp, resource limits, secret scrubbing,
+# read-only root filesystem).  It is retained as a reference baseline.
+#
+# Both this file and capability-issuer-deployment.yaml define the same
+# Deployment and Service names.  If you apply this file after
+# capability-issuer-deployment.yaml, kubectl apply will update the same
+# objects in-place, silently removing all Sprint 3 security hardening.
+# Always apply exactly one of the two.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

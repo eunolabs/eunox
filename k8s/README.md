@@ -64,11 +64,18 @@ kubectl create secret generic gateway-secrets \
 
 ### 2. Update ConfigMap
 
-Edit `namespace-and-config.yaml` with your values:
+The **Capability Issuer** (Sprint 3 hardened variant) reads its configuration
+from the `issuer-config` ConfigMap that is **embedded at the bottom of
+`capability-issuer-deployment.yaml`** — not from `namespace-and-config.yaml`.
+Update the values there before applying:
 - `keyvault-url`: Your Azure Key Vault URL
-- `azure-tenant-id`: Your Azure AD tenant ID
-- `azure-client-id`: Your Azure AD application ID
+- `tenant-id`: Your Azure AD tenant ID
+- `client-id`: Your Azure AD application ID
 - `issuer-did`: Your DID (e.g., `did:web:yourdomain.com`)
+
+The **Tool Gateway** and agent runtime read their shared settings from
+`namespace-and-config.yaml` (`euno-config`).  Edit that file with your values:
+- `keyvault-url`, `azure-tenant-id`, `azure-client-id`, `issuer-did`
 - `backend-service-url`: URL of backend services
 
 ```bash
@@ -77,24 +84,52 @@ kubectl apply -f namespace-and-config.yaml
 
 ### 3. Deploy Services
 
+> **Choose one manifest per component** — each component has two manifest
+> variants.  Applying both at the same time creates conflicting resources.
+>
+> | Component | Production (recommended) | Alternative (simpler, no sharding) |
+> |---|---|---|
+> | Capability Issuer | `capability-issuer-deployment.yaml` | `capability-issuer.yaml` *(legacy, no Sprint 3 hardening)* |
+> | Tool Gateway | `tool-gateway.yaml` *(StatefulSet + Envoy shard router)* | `tool-gateway-deployment.yaml` *(plain Deployment)* |
+
 ```bash
 # Deploy Redis (distributed coordination backend — REQUIRED for HA)
 # Skip this step if you point `redis-url` at a managed Redis instance
 # (Azure Cache for Redis, ElastiCache, Memorystore) in the ConfigMaps.
 kubectl apply -f redis.yaml
 
-# Deploy Capability Issuer
-kubectl apply -f capability-issuer.yaml
+# Apply pod security standards (namespace-wide baseline/restricted policy)
+kubectl apply -f pod-security-standards.yaml
 
-# Deploy Tool Gateway
+# Deploy Capability Issuer (hardened Sprint 3 variant)
+kubectl apply -f capability-issuer-deployment.yaml
+
+# Deploy Tool Gateway (StatefulSet + Envoy shard router)
 kubectl apply -f tool-gateway.yaml
+kubectl apply -f envoy-shard-router.yaml
 
 # Deploy Agent Runtime
+# agent-runtime.yaml points GATEWAY_URL at envoy-shard-router:3002 so every
+# agent's requests are consistently hashed to the correct gateway shard (H-1).
+# Sharding is a performance optimization — security enforcement lives in the
+# gateway regardless of routing.  If you need to bypass the Envoy router
+# (e.g. for debugging), update GATEWAY_URL to http://tool-gateway:3002;
+# the gateway will fall back to Redis for call-counter operations.
 kubectl apply -f agent-runtime.yaml
 
 # Apply Network Policies (Sprint 1 requirement)
 kubectl apply -f network-policies.yaml
+
+# Apply HA policies (PodDisruptionBudgets + Capability Issuer HPA)
+kubectl apply -f ha-policies.yaml
 ```
+
+> **Admin API access:** the admin port (3003) is only reachable from pods
+> labelled `role=ops`.  Label your incident-response or operator pod
+> before calling `/admin` endpoints:
+> ```bash
+> kubectl label pod <ops-pod> role=ops -n euno-system
+> ```
 
 > **HA correctness:** the gateway and issuer run multiple replicas. Redis
 > is required so that revocation, kill-switch propagation, per-token

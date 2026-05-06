@@ -1,4 +1,22 @@
-# Tool Gateway Deployment with Sprint 3 Sandbox Hardening
+# Tool Gateway — simple Deployment (NON-SHARDED alternative).
+#
+# ⚠  CHOOSE ONE gateway manifest, never apply both:
+#
+#   tool-gateway.yaml             ← StatefulSet with Envoy shard router (H-1).
+#                                   Pairs with envoy-shard-router.yaml and the
+#                                   StatefulSet-targeted HPA in ha-policies.yaml.
+#                                   Use this for production / multi-replica.
+#
+#   tool-gateway-deployment.yaml  ← This file. Plain Deployment, no sharding.
+#                                   Simpler to operate; suitable for
+#                                   single-region pilots without shard routing.
+#                                   If you use this, change ha-policies.yaml
+#                                   scaleTargetRef back to kind: Deployment.
+#
+# Applying both creates two controllers (StatefulSet + Deployment) fighting
+# over the same pod selector and a conflicting Service/tool-gateway definition.
+#
+# Sprint 3 Sandbox Hardening settings are present in both files.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -1,17 +1,51 @@
 # Sprint 5: High-availability hardening for the production pilot.
 #
-# Adds PodDisruptionBudgets and HorizontalPodAutoscalers for both control-plane
-# (capability-issuer) and data-plane (tool-gateway) workloads.  Apply *after*
-# the base deployments under capability-issuer-deployment.yaml and
-# tool-gateway-deployment.yaml.
+# Adds PodDisruptionBudgets and (for the Capability Issuer) a
+# HorizontalPodAutoscaler.
+#
+# Apply *after* the base manifests:
+#   - Capability Issuer: capability-issuer-deployment.yaml  (Deployment)
+#   - Tool Gateway:      tool-gateway.yaml                  (StatefulSet + Envoy shard router)
 #
 # Rationale (from execution-plan.md, Sprint 5):
 #   - "Capability Issuer as a highly-available service (two or more instances,
 #     behind load balancer, with auto-scale)."
 #   - "Tool Gateway close to agents (sidecar in AKS pod, DaemonSet, or dedicated
-#     internal service)."  -> we run it as a clustered Deployment with HPA and
-#     keep `agent-runtime.yaml` showing the sidecar pattern for low-latency
-#     workloads.
+#     internal service)."  -> the sharded StatefulSet (tool-gateway.yaml) runs
+#     behind the Envoy shard router; its replica count is managed manually (see
+#     note below) and `agent-runtime.yaml` targets the Envoy router endpoint.
+#
+# ## Why no HPA for the sharded gateway StatefulSet?
+#
+# The H-1 sharding topology is hard-coded for a fixed number of shards:
+#   - spec.replicas in tool-gateway.yaml
+#   - GATEWAY_SHARD_COUNT env var on every pod
+#   - SHARD_COUNT in the Envoy Lua inline_code
+#   - Route entries and per-pod cluster stanzas in envoy-shard-router.yaml
+# All four must be updated in lockstep.  If an HPA scaled the StatefulSet above
+# the current shard count, the new pod would receive GATEWAY_SHARD_INDEX ≥
+# GATEWAY_SHARD_COUNT, fail config validation, and crash-loop — and the Envoy
+# router would have no route for the higher ordinal anyway.
+#
+# To scale the sharded gateway, follow the manual procedure in
+# docs/HORIZONTAL_SHARDING.md (§ "Add a shard").
+#
+# If you are using the non-sharded Deployment variant (tool-gateway-deployment.yaml)
+# you can safely add an HPA like this:
+#
+#   apiVersion: autoscaling/v2
+#   kind: HorizontalPodAutoscaler
+#   metadata:
+#     name: tool-gateway-hpa
+#     namespace: euno-system
+#   spec:
+#     scaleTargetRef:
+#       apiVersion: apps/v1
+#       kind: Deployment
+#       name: tool-gateway
+#     minReplicas: 3
+#     maxReplicas: 20
+#     metrics: [...]
 
 ---
 apiVersion: policy/v1
@@ -91,52 +125,3 @@ spec:
   selector:
     matchLabels:
       app: tool-gateway
-
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: tool-gateway-hpa
-  namespace: euno-system
-  labels:
-    app: tool-gateway
-    component: data-plane
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: tool-gateway
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 70
-  behavior:
-    scaleUp:
-      # The gateway is latency-sensitive; react aggressively on the way up.
-      stabilizationWindowSeconds: 15
-      policies:
-        - type: Percent
-          value: 100
-          periodSeconds: 15
-        - type: Pods
-          value: 4
-          periodSeconds: 15
-      selectPolicy: Max
-    scaleDown:
-      # Be conservative on the way down to avoid thrashing.
-      stabilizationWindowSeconds: 300
-      policies:
-        - type: Percent
-          value: 25
-          periodSeconds: 60

@@ -99,6 +99,14 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.podIP
+        # Used by the audit pipeline to tag each SignedBatchCommitment with
+        # the originating pod so replay/verification tooling can attribute
+        # events to a specific replica.  Matches the pod's stable ordinal
+        # DNS name (e.g. "tool-gateway-0").
+        - name: AUDIT_REPLICA_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         - name: EUNO_DEPLOYMENT_TIER
           value: "multi-replica"
         # Horizontal sharding (H-1).  GATEWAY_SHARD_COUNT must match the

@@ -33,7 +33,22 @@ spec:
     - protocol: TCP
       port: 53
 
-  # Allow traffic to Tool Gateway ONLY
+  # Allow traffic to Envoy Shard Router (H-1 gateway front-door).
+  # Agents send all tool calls to envoy-shard-router:3002 which then
+  # forwards them to the correct gateway shard pod.
+  - to:
+    - podSelector:
+        matchLabels:
+          app: envoy-shard-router
+    ports:
+    - protocol: TCP
+      port: 3002
+
+  # Allow traffic to Tool Gateway directly.
+  # This permits direct-to-gateway calls (e.g. if GATEWAY_URL is changed to
+  # tool-gateway:3002 to bypass the Envoy router) and health-check traffic.
+  # It does not provide automatic failover — the application must be
+  # reconfigured to use this path.
   - to:
     - podSelector:
         matchLabels:
@@ -182,7 +197,7 @@ spec:
       port: 80
 
   ingress:
-  # Allow from agents
+  # Allow from agents (tool calls on the public port)
   - from:
     - podSelector:
         matchLabels:
@@ -191,12 +206,24 @@ spec:
     - protocol: TCP
       port: 3002
 
-  # Allow from within namespace
+  # Allow from within namespace (other services, health-check scrapers)
   - from:
     - podSelector: {}
     ports:
     - protocol: TCP
       port: 3002
+
+  # Allow admin API traffic on port 3003 from pods labelled role=ops.
+  # The admin Service (tool-gateway-admin) is ClusterIP-only and requires
+  # ADMIN_API_KEY, so this rule is defence-in-depth: it narrows which pods
+  # can even attempt a connection.  Label ops pods with role=ops to grant access.
+  - from:
+    - podSelector:
+        matchLabels:
+          role: ops
+    ports:
+    - protocol: TCP
+      port: 3003
 ---
 # Network Policy for Capability Issuer
 # Allows issuer to communicate with Azure services
@@ -290,6 +317,53 @@ spec:
     ports:
     - protocol: TCP
       port: 3001
+---
+# Network Policy for Envoy Shard Router (H-1).
+# The router is the primary ingress point for agent traffic; it must be able
+# to reach the gateway shard pods and may only be reached from agent pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: envoy-shard-router-network-policy
+  namespace: euno-system
+spec:
+  podSelector:
+    matchLabels:
+      app: envoy-shard-router
+  policyTypes:
+  - Ingress
+  - Egress
+
+  ingress:
+  # Accept traffic from agent pods on the public listen port (3002 → 8080).
+  - from:
+    - podSelector:
+        matchLabels:
+          role: agent
+    ports:
+    - protocol: TCP
+      port: 8080
+
+  egress:
+  # Allow DNS resolution.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+  # Allow forwarding to tool-gateway shard pods (port 3002).
+  - to:
+    - podSelector:
+        matchLabels:
+          app: tool-gateway
+    ports:
+    - protocol: TCP
+      port: 3002
 ---
 # Network Policy for Redis (distributed coordination backend).
 # Only the gateway and issuer pods may connect; no other pod (and in
