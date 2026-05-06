@@ -119,8 +119,136 @@ export interface ProxyRouterOptions {
 }
 
 /**
+ * Hostname / IP pattern used to detect whether a path segment encodes a
+ * target host (vs. the first segment of an opaque path).
+ *
+ * Matches:
+ *   - Plain hostnames with optional dots (`api.example.com`, `localhost`)
+ *   - IPv4 addresses (`192.168.1.1`)
+ *   - Bracketed IPv6 addresses (`[::1]`, `[2001:db8::1]`)
+ *   - All of the above optionally followed by a port (`:8080`)
+ *
+ * Intentionally permissive: the IPv6 sub-pattern `[\da-fA-F:]+` accepts
+ * technically-invalid addresses (e.g. `[::::]`).  This is a detection
+ * heuristic, not a validator — full URI / address validation happens
+ * downstream in the backend or at the TLS layer.
+ *
+ * Exported so that `createTargetHostCanonicalizeMiddleware` and
+ * `createValidateCapabilityMiddleware` share exactly one definition.
+ */
+export const TARGET_HOST_RE = /^(\[[\da-fA-F:]+\]|[A-Za-z0-9.\-]+)(:\d+)?$/;
+
+/**
+ * Safely extract a single string value from an HTTP header that may arrive as
+ * a string, an array of strings, or be absent.
+ *
+ * When the header appears multiple times (array), only the **first** value is
+ * used and the rest are silently discarded.  Calling `.trim()` on an array
+ * would throw a TypeError; handling the array case here prevents that from
+ * turning a duplicated header into an unhandled 500.
+ *
+ * Returns `undefined` when the header is absent or the normalized value is
+ * the empty string.
+ */
+function normalizeHeaderString(raw: string | string[] | undefined): string | undefined {
+  let value: string;
+  if (Array.isArray(raw)) {
+    value = raw[0] ?? '';
+  } else {
+    value = raw ?? '';
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Strip any client-supplied `X-Target-Host` header and rewrite it from the
+ * URL path — the only authoritative source of the intended target host.
+ *
+ * ## Why this is necessary
+ *
+ * `createValidateCapabilityMiddleware` derives the `api://` resource label
+ * used for capability enforcement from `X-Target-Host`.  If a client (or any
+ * L7 hop — ingress, service mesh, sidecar) forwards a crafted
+ * `X-Target-Host` without overwriting it, a caller can claim a resource label
+ * (`api://admin.internal/…`) that does not match the URL-path network
+ * destination, potentially passing capability checks for a different host.
+ *
+ * The path cross-check in `createValidateCapabilityMiddleware` partially
+ * mitigates this, but only when the first path segment already looks like a
+ * hostname.  A request with a first segment that does not contain a dot (e.g.
+ * `/proxy/api/v1`) combined with `X-Target-Host: admin.internal` would pass
+ * the check and produce `api://admin.internal/api/v1`.
+ *
+ * This middleware closes the gap by:
+ *   1. Unconditionally stripping any incoming `X-Target-Host` value.
+ *   2. Rewriting the header from the first path segment if that segment
+ *      matches {@link TARGET_HOST_RE} — making the header a deterministic
+ *      reflection of the URL path, never a client-provided value.
+ *
+ * After this middleware runs, `req.headers['x-target-host']` is either:
+ *   - Set to the first path segment (path-canonical), or
+ *   - Absent (when the first segment does not look like a host).
+ *
+ * ## Deployment note
+ *
+ * This middleware is the *primary* enforcement point.  Operators should
+ * **also** strip `X-Target-Host` at the ingress layer (Envoy, nginx,
+ * Kubernetes Gateway API) as defense-in-depth so the header is never
+ * forwarded from an external client.  See `k8s/envoy-shard-router.yaml`
+ * for the Envoy implementation.
+ *
+ * Emits a `warn` log when a client-supplied value differs from the derived
+ * host so operators can detect misconfigured upstream hops or injection
+ * attempts in their SIEM.
+ */
+export function createTargetHostCanonicalizeMiddleware(logger: Logger): RequestHandler {
+  return function targetHostCanonicalizeMiddleware(req, _res, next) {
+    const incomingHost = normalizeHeaderString(req.headers['x-target-host']);
+
+    // Always strip whatever value the client (or any upstream hop) sent.
+    delete req.headers['x-target-host'];
+
+    // Derive the canonical host from the URL path.
+    // req.path is relative to the /proxy mount point — Express has already
+    // stripped the /proxy prefix.
+    const rawPath = req.path.replace(/^\/+/, '');
+    const firstSegment = rawPath.split('/')[0] || '';
+
+    if (TARGET_HOST_RE.test(firstSegment)) {
+      // Rewrite from the path so that validateCapabilityMiddleware reads a
+      // path-canonical value and never a client-supplied one.
+      req.headers['x-target-host'] = firstSegment;
+
+      if (incomingHost && incomingHost.toLowerCase() !== firstSegment.toLowerCase()) {
+        // A client (or upstream proxy) supplied a value that differed from
+        // the URL path host segment.  This is either a misconfigured client
+        // or a header-injection attempt.  Emit a security-relevant warn so
+        // operators can detect and triage such events via their SIEM.
+        logger.warn('X-Target-Host stripped: client value differed from URL path host', {
+          clientSuppliedHost: incomingHost,
+          pathDerivedHost: firstSegment,
+          path: req.path,
+          ip: req.ip,
+        });
+      }
+    }
+
+    next();
+  };
+}
+
+/**
  * Capability validation middleware. Exported separately so tests can exercise
  * the action/resource derivation logic without spinning a proxy target.
+ *
+ * **Prerequisite:** this middleware must be preceded by
+ * {@link createTargetHostCanonicalizeMiddleware} so that
+ * `req.headers['x-target-host']` is always path-derived and never a
+ * client-supplied value.  When `createProxyRouter` assembles the middleware
+ * stack both are mounted in the correct order.  If this middleware is used
+ * standalone (e.g. in tests), callers must either mount the canonicalize
+ * middleware first or ensure `X-Target-Host` is absent / path-canonical.
  */
 export function createValidateCapabilityMiddleware(
   enforcementEngine: EnforcementEngine,
@@ -157,28 +285,30 @@ export function createValidateCapabilityMiddleware(
         headers: req.headers as Record<string, string | string[] | undefined>,
       });
 
-      // Extract resource from path, deriving canonical api:// URI.
+      // Derive the canonical api:// resource URI.
       // req.path has the /proxy prefix already stripped by Express route mounting.
       //
-      // The agent runtime forwards the intended target host (from absolute URLs)
-      // either as the first path segment OR as an X-Target-Host header. We
-      // prefer the header (cheaper, more explicit) and cross-check the path
-      // segment to detect tampering. If neither is supplied (e.g. a relative
-      // path was used) we fall back to the legacy path-only resource so this
-      // change is backwards compatible.
-      const headerHost = (req.headers['x-target-host'] as string | undefined)?.trim();
+      // `X-Target-Host` is always path-derived at this point because
+      // `createTargetHostCanonicalizeMiddleware` (mounted immediately before
+      // this middleware in `createProxyRouter`) strips any incoming value and
+      // rewrites it from the first path segment.  Reading the header here is
+      // therefore equivalent to reading the path directly — it is kept for
+      // clarity and to support the legacy path-only resource format.
+      const headerHost = normalizeHeaderString(req.headers['x-target-host']);
       const rawPath = req.path.replace(/^\/+/, '');
       const firstSegment = rawPath.split('/')[0] || '';
-      // A segment looks like a host if it passes a basic hostname/IP pattern.
-      // We no longer require a dot so single-label names like `localhost` are
-      // recognised; bracketed IPv6 addresses are also accepted.
-      const looksLikeHost = /^(\[[\da-fA-F:]+\]|[A-Za-z0-9.\-]+)(:\d+)?$/.test(firstSegment);
+      // Use the shared regex so the host-detection logic is identical to the
+      // canonicalization middleware above.
+      const looksLikeHost = TARGET_HOST_RE.test(firstSegment);
 
       let resource: string;
       if (headerHost) {
-        // Header explicitly identifies the host; use it.
+        // Header is path-canonical (set by the preceding middleware); use it.
         const pathHasHostSegment = firstSegment.toLowerCase() === headerHost.toLowerCase();
-        // If the path encodes a *different* host segment, treat as tampered.
+        // Defense-in-depth: reject if the path encodes a *different* host
+        // segment than the header.  This is only reachable if this middleware
+        // is used without `createTargetHostCanonicalizeMiddleware` and a
+        // caller provides a conflicting X-Target-Host header directly.
         if (looksLikeHost && !pathHasHostSegment) {
           throw new CapabilityError(
             ErrorCode.INVALID_REQUEST,
@@ -751,7 +881,11 @@ export function createProxyRouter(opts: ProxyRouterOptions): Router {
     }
   };
 
+  // Mount the strip-and-rewrite middleware first so that
+  // createValidateCapabilityMiddleware always sees a path-derived
+  // X-Target-Host — never a client-supplied value.
   router.use(
+    createTargetHostCanonicalizeMiddleware(logger),
     createValidateCapabilityMiddleware(enforcementEngine, actionResolver),
     dispatch,
   );

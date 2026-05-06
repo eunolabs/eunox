@@ -171,6 +171,13 @@ data:
                       -- routing-header injection / shard-affinity spoofing.
                       request_handle:headers():remove("x-euno-shard-index")
 
+                      -- Strip any client-supplied X-Target-Host header.
+                      -- The tool-gateway's createTargetHostCanonicalizeMiddleware
+                      -- rewrites this from the URL path; forwarding a client-
+                      -- controlled value would allow resource-label spoofing
+                      -- in capability enforcement.
+                      request_handle:headers():remove("x-target-host")
+
                       local auth = request_handle:headers():get("authorization")
                       if not auth then return end
 

@@ -254,10 +254,25 @@ flowchart LR
 
 Notable design choices visible in the code:
 
-- **Resource canonicalisation** in `validateCapabilityMiddleware`
-  (`index.ts` ll. 287–342): the gateway deduces the protected resource
-  as `api://{host}/{tail}` from `X-Target-Host` header **and**
-  cross-checks the proxy path; mismatch ⇒ `400` (anti-tampering).
+- **Resource canonicalisation** in `createTargetHostCanonicalizeMiddleware` +
+  `createValidateCapabilityMiddleware` (`routes/proxy.ts`): the gateway
+  derives the protected resource as `api://{host}/{tail}` **exclusively from
+  the URL path** using a two-middleware pipeline:
+  1. `createTargetHostCanonicalizeMiddleware` (strip-and-rewrite) — runs
+     first and unconditionally strips any incoming `X-Target-Host` header,
+     then rewrites it from the first URL-path segment if that segment
+     matches the host pattern.  This ensures the header is always
+     path-canonical and never a client-controlled value, even if a
+     misconfigured or malicious L7 hop (ingress, service mesh, sidecar)
+     forwarded the header without overwriting it.  A `warn` is emitted when
+     the stripped value differed from the path-derived one.
+  2. `createValidateCapabilityMiddleware` — reads `X-Target-Host` (now
+     guaranteed path-derived) to construct the `api://` resource URI for
+     capability enforcement; a residual mismatch check remains as
+     defense-in-depth for callers that bypass the canonicalize middleware.
+  The Envoy shard router additionally strips `x-target-host` from incoming
+  requests (`k8s/envoy-shard-router.yaml`) before they reach the gateway,
+  providing a second enforcement point at the ingress layer.
 - **HTTP-method → action mapping** is supplied by the pluggable
   `ActionResolver` from `@euno/common` (R-7). The built-in default
   preserves the legacy table (`GET→read`, `POST/PUT/PATCH→write`,
