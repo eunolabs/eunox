@@ -4,8 +4,11 @@
 
 > **Status of this document:** strategy / planning. Not implementation.
 > Reviewed against the actual state of `packages/` and the rest of
-> `docs/` (April 2026). See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
-> for what changed in this revision and why.
+> `docs/` (April 2026). A second pass (May 2026) identified four additional
+> problems — `packages/common` split, dependency-direction enforcement,
+> minter threat model, and the two-repo structure — addressed in this
+> revision. See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
+> for what changed and why.
 
 ---
 
@@ -111,11 +114,35 @@ material factual error that this revision fixes.
    design decision: it cannot be retrofitted into a security tool
    without burning trust. See [§ Telemetry & gate instrumentation](#telemetry--gate-instrumentation).
 
+6. **`packages/common` mixes open and operational code.** The package
+   currently contains both Apache-2.0-compatible things (types,
+   interfaces, in-memory stores, the four interface seams) and
+   operational things (Redis/Postgres/KMS-backed implementations).
+   You cannot license it Apache-2.0 without open-sourcing the
+   operational layer. You cannot license it BSL without contaminating
+   `@euno/mcp`. The fix is a hard split into two packages:
+   `common-core` (Apache-2.0, the open seams) and `common-infra`
+   (BSL, the Redis/Postgres/KMS implementations). See
+   [§ License boundary](#license-boundary).
+
+7. **Minter threat model is unaddressed.** The API-key façade
+   introduced in Stage 3 holds a managed signing key with authority
+   to mint any JWT for any policy. If that key is compromised, the
+   entire cryptographic invariant collapses — not just one tenant.
+   The prior plan spent significant effort on the gateway's verifier
+   path but said nothing about this. A threat model for the minter
+   must be written and reviewed before Stage 3 ships. See
+   [§ Minter threat model](#minter-threat-model-required-before-stage-3-ships).
+
 Three additional concerns — not errors, but gaps — are addressed
 in the new sections below: **what happens to the existing 11 packages
 during Stage 1** ([§ Stage 0](#stage-0-stop-the-bleeding-on-the-existing-codebase)),
 **what the business model actually is at Stage 3+** ([§ Pricing](#pricing--business-model-sketch)),
 and **competitive timing** ([§ Critical risks](#critical-risks)).
+
+The May 2026 revision also adds the two-repo structure (public / private)
+that follows from the decision to keep BSL code entirely invisible, not
+just differently licensed. See [§ Repository structure](#repository-structure-public--private).
 
 ---
 
@@ -126,6 +153,14 @@ behavior that must be observed before moving forward. Stages are
 pulled by demand, not pushed by roadmap. The current architecture is
 Stage 5 work that was built first; Stages 0–2 are a deliberate
 walk-back to the on-ramp.
+
+**Important:** stages map to *npm publish gates and hosted-service
+availability*, not to when code is written or merged. All packages
+can coexist in the monorepo from day one. What changes at each stage
+gate is what gets published publicly and what gets deployed. Keeping
+all code together prevents drift and lets integration tests in the
+private repo cover unreleased stages without a branch-per-stage
+strategy.
 
 | Stage | Buyer | What ships | Gate to next |
 |---|---|---|---|
@@ -152,11 +187,12 @@ default behavior is to keep building outwards.
 - **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user.
 - **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Add a `STATUS.md` to each marking it "design-partner driven, not on the roadmap."
 - **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision (e.g. `2025-06-18`), and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage.
-- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial.
+- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and initialising the two-repo structure described in [§ Repository structure](#repository-structure-public--private).
 
 **Gate to Stage 1:** the freeze is announced (internal note is fine),
 the Stage-1 package layout is approved, the license boundary is in
-the tree.
+the tree, the `common-core` / `common-infra` split is done, and the
+two-repo structure is initialised.
 
 ---
 
@@ -166,13 +202,74 @@ the tree.
 |---|---|---|
 | `@euno/mcp` (new) | Apache-2.0 | Wedge. Must be trivially adoptable, redistributable, embeddable in commercial products. Apache-2.0 (not MIT) for the patent grant. |
 | `@euno/langchain` (new) | Apache-2.0 | Same reason. |
-| `packages/common` | Apache-2.0 | Already imported by the open packages; cannot be more restrictive than them. |
+| `packages/common-core` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
 | `packages/cli` | Apache-2.0 | Developer surface. |
+| `packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
 | `packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
 | `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
 
+**Dependency direction rule.** BSL packages may depend on Apache-2.0
+packages. Apache-2.0 packages must never depend on BSL packages.
+`@euno/mcp` imports from `common-core`. `tool-gateway` imports from
+both. This is enforced mechanically: a CI lint script walks the full
+workspace dependency graph — including transitive edges and all
+dependency field types (`dependencies`, `devDependencies`,
+`peerDependencies`, `optionalDependencies`, `workspace:*` references)
+— and fails the build on any Apache-2.0 → BSL edge. Without this
+check, a well-intentioned contributor can introduce the violation
+silently via an indirect transitive dependency.
+
 The boundary must be drawn before `@euno/mcp` ships. Re-licensing
-later is contentious; doing it now is paperwork.
+later is contentious; doing it now is paperwork. For the publish-gate
+model see [§ The Staged Approach](#the-staged-approach).
+
+---
+
+## Repository structure: public + private
+
+Licensing code under BSL does not hide it — source is still visible to
+anyone who reads the repo. After reviewing the tradeoffs the decision is
+to keep BSL code and the private roadmap entirely out of the public repo.
+
+**Two repositories:**
+
+```
+github.com/euno/euno-mcp          # public — Apache-2.0
+  packages/common-core/
+  packages/euno-mcp/
+  packages/langchain/
+  packages/cli/
+
+github.com/euno/euno-platform     # private
+  packages/tool-gateway/
+  packages/capability-issuer/
+  packages/common-infra/
+  packages/agent-runtime/
+  packages/framework-adapters/
+  packages/partner-issuer-sim/
+  ... etc
+```
+
+**How the dependency works.** `common-core` is published to npm from
+the public repo. The private repo installs it as a normal npm
+dependency and adds implementations on top. The interface seams in
+`common-core` become the published API contract. Private
+implementations are completely invisible.
+
+**Tradeoffs introduced by this structure:**
+
+| Concern | Implication |
+|---|---|
+| Versioning discipline | A breaking change to `common-core` requires coordinated updates in both repos. Treat it like a public API contract: proper semver, a CHANGELOG entry, and a migration note before merging. |
+| Integration testing | Unit tests in the public repo run against interfaces and in-memory fakes. Integration tests against the real gateway run only in the private repo. There is no unified test suite that can run in public CI without leaking private packages. |
+| External contributor coverage | Contributors to the public repo cannot validate that their `common-core` changes don't break the gateway. That review is owned internally; it must happen before every `common-core` release. |
+
+**The one thing to avoid.** No comments in the public repo pointing
+at the private one — no `// see tool-gateway for the production
+implementation`, no `// Stage 3 replaces this`, no TODOs naming a
+private package. The public repo must read as complete and
+self-contained. Local enforcement is the product, not a stepping
+stone to something hidden.
 
 ---
 
@@ -199,10 +296,10 @@ escape route.
 MCP code there. The MCP transport, JSON-RPC framing, and request
 routing are new code. What *can* be reused from the repository:
 
-- `CapabilityCondition` discriminated union and `condition-registry` from `packages/common`
-- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `packages/common`
-- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `packages/common/src/call-counter-store.ts`
-- `KillSwitchManager` in-memory backend from `packages/common/src/kill-switch.ts`
+- `CapabilityCondition` discriminated union and `condition-registry` from `packages/common-core`
+- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `packages/common-core`
+- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `packages/common-core/src/call-counter-store.ts`
+- `KillSwitchManager` in-memory backend from `packages/common-core/src/kill-switch.ts`
 - `AgentCapabilityManifest` types and the `euno validate` codepath from `packages/cli`
 
 That reuse is the keystone of [§ Schema parity](#policy-and-audit-schema-parity-non-negotiable).
@@ -267,7 +364,7 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 **`CapabilityCondition` variants supported in v0** (a strict subset of
 the production `CapabilityCondition` discriminated union in
-`packages/common/src/wire.ts`, so policies upgrade without rewriting):
+`packages/common-core/src/wire.ts`, so policies upgrade without rewriting):
 
 - `maxCalls` (sliding window — the `CallCounterStore` already supports both per-session and per-window)
 - `timeWindow` (`notBefore` / `notAfter`)
@@ -277,7 +374,7 @@ the production `CapabilityCondition` discriminated union in
 
 **Plus the `argumentSchema` field on `CapabilityConstraint`** (not a
 condition variant — a sibling field on the constraint itself, defined
-as the `ArgumentSchema` type in `wire.ts`). v0 honours it for the same
+as the `ArgumentSchema` type in `common-core/src/wire.ts`). v0 honours it for the same
 reason the production gateway does: it's the structural argument
 allowlist for a capability and is the natural carrier for the kind of
 "only these arg shapes" enforcement the MCP wedge needs.
@@ -319,7 +416,7 @@ say it for you.
 **Weeks 1–2 — Skeleton + transport.**
 - Create `packages/euno-mcp` (publishes as `@euno/mcp`).
 - Implement stdio and HTTP MCP transports with `tools/list` / `resources/list` / `prompts/list` passthrough and `tools/call` interception. Do not reimplement JSON-RPC; use `@modelcontextprotocol/sdk`.
-- Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common` (no Redis, no Postgres).
+- Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common-core` (no Redis, no Postgres).
 - Local jsonl audit log (`~/.euno/audit.jsonl`), OCSF-shaped, locally HMAC-signed (key generated at first run, stored in `~/.euno/key`). Format identical to the Stage-3+ signed evidence; signer is the only thing that changes.
 
 **Weeks 3–4 — Policy engine + CLI.**
@@ -355,7 +452,7 @@ entire staged plan. Get it wrong and every later stage compounds the
 mistake.
 
 **Rule.** The policy file `@euno/mcp` consumes is a literal subset of
-`AgentCapabilityManifest` (`packages/common/src/types.ts`). The
+`AgentCapabilityManifest` (`packages/common-core/src/types.ts`). The
 condition types it understands are a literal subset of
 `CapabilityCondition`. The audit records it writes are
 OCSF-formatted, identical in shape to what the gateway writes to
@@ -371,12 +468,12 @@ SIEM. The only differences across stages are:
 | Kill switch | In-memory | Redis + Postgres dual-write |
 
 That is the entire Stage 3 migration: swap the implementations of
-four interfaces that already exist as seams in `@euno/common` —
-[`TokenVerifier`](../packages/common/src/runtime.ts),
-[`CallCounterStore`](../packages/common/src/condition-registry.ts),
-[`EvidenceSigner`](../packages/common/src/runtime.ts), and
-[`KillSwitchManager`](../packages/common/src/runtime.ts) (with its
-optional [`KillSwitchPersistenceBackend`](../packages/common/src/redis-kill-switch.ts)
+four interfaces that already exist as seams in `@euno/common-core` —
+[`TokenVerifier`](../packages/common-core/src/runtime.ts),
+[`CallCounterStore`](../packages/common-core/src/condition-registry.ts),
+[`EvidenceSigner`](../packages/common-core/src/runtime.ts), and
+[`KillSwitchManager`](../packages/common-core/src/runtime.ts) (with its
+optional [`KillSwitchPersistenceBackend`](../packages/common-infra/src/redis-kill-switch.ts)
 for Postgres dual-write). Policy storage is the only seam that is
 genuinely new in Stage 3: in Stage 1 the policy is a local file read
 once at startup; in Stage 3 it's a signed JWT verified per request via
@@ -388,7 +485,7 @@ policy file shape or the audit stream's shape changes.
 **Concrete obligation.** In Stage 1, the
 `@euno/mcp` package does not define new policy types. It imports
 `AgentCapabilityManifest`, `CapabilityConstraint`, and
-`CapabilityCondition` from `@euno/common` and rejects anything else.
+`CapabilityCondition` from `@euno/common-core` and rejects anything else.
 Unknown condition types are **rejected at policy-validation time**
 (fail-fast at `euno-mcp validate` and at proxy startup), and if one
 ever reaches the registry it is **denied at enforcement time** — the
@@ -480,6 +577,39 @@ about the security model has to be relaxed.
   whole thing — same Docker image, same config, no managed minter
   (they have to issue their own tokens, but they're at the engineering
   scale where that's acceptable).
+
+### Minter threat model (required before Stage 3 ships)
+
+The API-key minter holds a managed signing key with authority to mint
+any JWT for any policy on the platform. If that key is compromised,
+the attacker can issue tokens for any team, any agent, any capability.
+This is the highest-value target in the entire system, and the prior
+plan does not acknowledge it.
+
+A written threat model must be completed and reviewed before the
+minter ships. At minimum it must address:
+
+| Question | Notes |
+|---|---|
+| Key storage | Managed HSM (Azure Managed HSM, AWS CloudHSM, GCP Cloud KMS with HSM protection level / Cloud HSM) — never software-resident. Key is non-exportable; verify non-exportability is enforced at the HSM level, not just by policy configuration. |
+| Blast radius per key compromise | Which tokens were minted? How many teams? Requires a per-issuance audit trail. |
+| Key rotation | How are previously minted tokens revoked when the signing key is rotated? The existing revocation list covers this for tokens, but the key rotation procedure itself must be documented and tested. |
+| Scope isolation | Can the minter be constrained to mint tokens only within a tenant's allowed capability set? Or is it platform-wide? The answer shapes the damage model. |
+| Credential access path | Who/what can call the minter's signing API? Is it network-isolated? Does it require a second factor or hardware attestation from the caller? |
+| Audit trail | Every mint call logged with caller identity, tenant, policy fingerprint, and resulting JWT `jti`. This log must be immutable (append-only store, separate credentials from the minter itself). |
+| Monitoring and alerting | Anomalous mint volume (e.g., >N mints/minute for a tenant) triggers an alert. Minting outside business hours for a low-activity tenant is a signal. |
+
+This is not exotic security engineering — it is the same threat model
+a managed certificate authority or an OAuth server operates under.
+The difference is that Euno's managed key signs capability tokens
+that authorize agent actions directly, making it a more operationally
+sensitive target than most token services. The gateway's verifier path
+is already solid; the minter's key-management posture must match it.
+
+**Implication for Stage 3 scope.** The minter is not a
+"we'll tighten it later" component. Do not ship it to a paying
+customer before the threat model is written. If completing the
+threat model delays Stage 3, that is the correct trade.
 
 ### Gate to Stage 4 — measurable
 
@@ -659,11 +789,27 @@ all conform.
 
 **Schema drift between the local DSL and the gateway manifest.** This
 is the silent-killer risk. If a contributor adds a condition type to
-`@euno/mcp` that doesn't exist in `@euno/common`, every Stage-3
+`@euno/mcp` that doesn't exist in `@euno/common-core`, every Stage-3
 upgrade for users of that condition type breaks. **Mechanical
 prevention:** `@euno/mcp` has zero local condition definitions; it
-imports them all from `@euno/common`. CI fails the build if it
+imports them all from `@euno/common-core`. CI fails the build if it
 doesn't.
+
+**Minter key compromise.** The API-key minter in Stage 3 holds the
+platform's managed signing key. Compromise of that key gives an
+attacker the ability to mint valid tokens for any tenant, any policy,
+on demand — bypassing every enforcement guarantee the rest of the
+system provides. This is the single highest-value attack target in the
+platform, and it does not have a local blast-radius limit. The minter
+threat model (see [§ above](#minter-threat-model-required-before-stage-3-ships))
+must be completed before Stage 3 ships. Shipping without it is the
+security equivalent of running a certificate authority with no HSM.
+
+**`common-core` breaking changes.** With a two-repo setup, a breaking
+change to `common-core` silently breaks the private platform until a
+coordinated update is done. Treat every `common-core` release like a
+public library release: semver, CHANGELOG, migration note, and a private-repo
+upgrade PR opened before the public release is tagged.
 
 **Quarantined packages becoming maintenance debt.** `partner-issuer-sim`,
 `storage-grant-service`, `db-token-service`, `posture-emitter`,
