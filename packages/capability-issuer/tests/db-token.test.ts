@@ -413,6 +413,7 @@ describe('DbTokenService — dispatch & validation', () => {
         'azure-sql': {
           provider: 'azure-sql',
           mint: async (input) => ({
+            grantId: 'test-grant-id',
             provider: 'azure-sql',
             resource: input.resource,
             actions: [...input.actions],

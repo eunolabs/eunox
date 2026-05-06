@@ -16,7 +16,7 @@
  * radius of a compromise in this code path.
  */
 
-import { CapabilityError, ErrorCode, DbCredential } from '@euno/common';
+import { CapabilityError, ErrorCode, DbCredential, generateId } from '@euno/common';
 import { DbTokenMinter, DbTokenMintInput } from './types';
 
 export interface RdsSignerLike {
@@ -112,6 +112,7 @@ export class RdsTokenMinter implements DbTokenMinter {
     }
     const now = this.opts.now ? this.opts.now() : Date.now();
     return {
+      grantId: generateId(),
       provider: 'rds-iam',
       resource: input.resource,
       actions: [...input.actions],

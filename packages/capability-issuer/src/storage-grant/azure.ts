@@ -11,7 +11,7 @@
  * import entirely.
  */
 
-import { CapabilityError, ErrorCode, StorageGrant } from '@euno/common';
+import { CapabilityError, ErrorCode, StorageGrant, generateId } from '@euno/common';
 import { ParsedStorageUri } from './types';
 import {
   StorageGrantMinter,
@@ -127,6 +127,7 @@ export class AzureStorageGrantMinter implements StorageGrantMinter {
 
     return {
       provider: 'azure-blob',
+      grantId: generateId(),
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: expiresOn.toISOString(),

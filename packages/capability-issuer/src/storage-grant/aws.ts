@@ -14,7 +14,7 @@
  * the dynamic import entirely.
  */
 
-import { CapabilityError, ErrorCode, StorageGrant } from '@euno/common';
+import { CapabilityError, ErrorCode, StorageGrant, generateId } from '@euno/common';
 import { createHash } from 'crypto';
 import { ParsedStorageUri } from './types';
 import {
@@ -115,6 +115,7 @@ export class AwsStorageGrantMinter implements StorageGrantMinter {
     }
     return {
       provider: 's3',
+      grantId: generateId(),
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: new Date(Date.now() + input.ttlSeconds * 1000).toISOString(),
@@ -217,6 +218,7 @@ export class AwsStorageGrantMinter implements StorageGrantMinter {
     }
     return {
       provider: 's3',
+      grantId: generateId(),
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: creds.Expiration ? creds.Expiration.toISOString() : expiresAt,

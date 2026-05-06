@@ -247,6 +247,7 @@ afterEach(() => {
 
 describe('HttpSideCredentialBroker', () => {
   const storageGrant: StorageGrant = {
+    grantId: 'test-grant-id',
     provider: 'azure-blob',
     resource: 'storage://azure/sales/foo.csv',
     actions: ['read'],
@@ -254,6 +255,7 @@ describe('HttpSideCredentialBroker', () => {
     azureSas: { sasToken: 'sig', url: 'https://sales/foo.csv?sig' },
   };
   const dbCred: DbCredential = {
+    grantId: 'test-db-grant-id',
     provider: 'azure-sql',
     resource: 'db://azure-sql/salesserver/salesdb/orders.read',
     actions: ['read'],
@@ -368,7 +370,7 @@ describe('CapabilityIssuerService broker integration', () => {
       isStorageEnabled: () => true,
       isDbEnabled: () => false,
       mint: jest.fn().mockResolvedValue({
-        storageGrants: [{ provider: 'azure-blob', resource: 'storage://azure/sales/foo.csv', actions: ['read'], expiresAt: 9999 }],
+        storageGrants: [{ grantId: 'test-grant-id', provider: 'azure-blob', resource: 'storage://azure/sales/foo.csv', actions: ['read'], expiresAt: new Date(Date.now() + 900_000).toISOString() }],
       }),
     };
     const service = await makeIssuerService({ sideCredentialBroker: mockBroker });

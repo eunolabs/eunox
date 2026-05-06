@@ -425,6 +425,7 @@ describe('StorageGrantService — dispatch and TTL capping', () => {
         'azure-blob': {
           provider: 'azure-blob',
           mint: async (input) => ({
+            grantId: 'test-grant-id',
             provider: 'azure-blob',
             resource: input.resource,
             actions: [...input.actions],
@@ -458,6 +459,7 @@ describe('StorageGrantService — dispatch and TTL capping', () => {
   it('caps TTL at the operator-configured maximum', async () => {
     const minter = jest.fn(async (input) => ({
       provider: 'azure-blob' as const,
+      grantId: 'test-grant-id',
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: new Date(Date.now() + input.ttlSeconds * 1000).toISOString(),

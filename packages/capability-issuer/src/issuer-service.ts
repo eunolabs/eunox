@@ -1250,6 +1250,7 @@ export class CapabilityIssuerService {
         ...(storageGrants && storageGrants.length > 0
           ? {
               storageGrants: storageGrants.map((g) => ({
+                grantId: g.grantId,
                 provider: g.provider,
                 resource: g.resource,
                 actions: g.actions,
@@ -1260,6 +1261,7 @@ export class CapabilityIssuerService {
         ...(dbCredentials && dbCredentials.length > 0
           ? {
               dbCredentials: dbCredentials.map((c) => ({
+                grantId: c.grantId,
                 provider: c.provider,
                 resource: c.resource,
                 actions: c.actions,

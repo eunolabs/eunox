@@ -14,7 +14,7 @@
  * the dynamic import entirely.
  */
 
-import { CapabilityError, ErrorCode, StorageGrant } from '@euno/common';
+import { CapabilityError, ErrorCode, StorageGrant, generateId } from '@euno/common';
 import { ParsedStorageUri } from './types';
 import {
   StorageGrantMinter,
@@ -103,6 +103,7 @@ export class GcpStorageGrantMinter implements StorageGrantMinter {
     }
     return {
       provider: 'gcs',
+      grantId: generateId(),
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: new Date(expires).toISOString(),
@@ -124,6 +125,7 @@ export class GcpStorageGrantMinter implements StorageGrantMinter {
     });
     const grant: StorageGrant = {
       provider: 'gcs',
+      grantId: generateId(),
       resource: input.resource,
       actions: [...input.actions],
       expiresAt: minted.expiresAt ? minted.expiresAt.toISOString() : fallbackExpiresAt,

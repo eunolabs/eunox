@@ -11,7 +11,7 @@
  * user — never anything taken from agent input.
  */
 
-import { CapabilityError, ErrorCode, DbCredential } from '@euno/common';
+import { CapabilityError, ErrorCode, DbCredential, generateId } from '@euno/common';
 import { DbTokenMinter, DbTokenMintInput } from './types';
 
 export interface CloudSqlAuthClientLike {
@@ -61,6 +61,7 @@ export class CloudSqlTokenMinter implements DbTokenMinter {
     // `expiresAt` so downstream gateways/agents reject reuse beyond it.
     const lifetime = Math.min(providerLifetime, input.ttlSeconds);
     return {
+      grantId: generateId(),
       provider: 'cloudsql-iam',
       resource: input.resource,
       actions: [...input.actions],

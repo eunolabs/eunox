@@ -10,7 +10,7 @@
  * `tokenSource` to bypass the dynamic import.
  */
 
-import { CapabilityError, ErrorCode, DbCredential } from '@euno/common';
+import { CapabilityError, ErrorCode, DbCredential, generateId } from '@euno/common';
 import { DbTokenMinter, DbTokenMintInput } from './types';
 
 export interface AzureSqlTokenSource {
@@ -58,6 +58,7 @@ export class AzureSqlTokenMinter implements DbTokenMinter {
       );
     }
     return {
+      grantId: generateId(),
       provider: 'azure-sql',
       resource: input.resource,
       actions: [...input.actions],

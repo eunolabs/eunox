@@ -1024,6 +1024,14 @@ export type StorageGrant =
 
 /** Common fields shared by every {@link StorageGrant} variant. */
 interface StorageGrantBase {
+  /**
+   * Unique identifier for this individual grant, minted by the broker at
+   * issuance time. Written into every audit log entry so the capability ↔
+   * grant relationship can be traced end-to-end in any SIEM that ingests
+   * the OCSF stream (see `auditLogEntryToOcsf`). Never taken from agent
+   * input — always generated with `generateId()` inside the minter.
+   */
+  grantId: string;
   /** The capability resource this grant is scoped to (echoes the capability). */
   resource: ResourceId;
   /** Subset of the capability's actions this grant authorizes. */
@@ -1108,6 +1116,14 @@ export type DbProvider = 'azure-sql' | 'rds-iam' | 'cloudsql-iam';
  * see `docs/sprint-3-4-gaps/08-db-token-issuance.md` § Risks.
  */
 export interface DbCredential {
+  /**
+   * Unique identifier for this individual DB credential, minted by the
+   * broker at issuance time.  Written into every audit log entry so the
+   * capability ↔ credential relationship can be traced end-to-end in any
+   * SIEM that ingests the OCSF stream.  Never taken from agent input —
+   * always generated with `generateId()` inside the minter.
+   */
+  grantId: string;
   provider: DbProvider;
   resource: ResourceId;
   actions: Action[];
