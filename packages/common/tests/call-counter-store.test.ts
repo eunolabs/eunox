@@ -136,6 +136,78 @@ describe('RedisCallCounterStore', () => {
   });
 });
 
+describe('RedisCallCounterStore circuit breaker integration', () => {
+  it('fast-fails without hitting Redis when circuit is open', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const { RedisCircuitBreaker } = await import('../src/redis-circuit-breaker');
+    const cb = new RedisCircuitBreaker({ failureThreshold: 2, windowMs: 5000, cooldownMs: 30000 });
+    const store = new RedisCallCounterStore(fake, logger, { circuitBreaker: cb });
+    const incrSpy = jest.spyOn(fake, 'incr');
+
+    // Trip the circuit
+    await store.incrementAndGet('a', 60);
+    await store.incrementAndGet('b', 60);
+    expect(cb.getState()).toBe('open');
+
+    // Circuit is open: Redis must not be called.
+    incrSpy.mockClear();
+    await store.incrementAndGet('c', 60);
+    expect(incrSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns POSITIVE_INFINITY from circuit-open fast-fail (fail-closed, no fallback)', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const { RedisCircuitBreaker } = await import('../src/redis-circuit-breaker');
+    const cb = new RedisCircuitBreaker({ failureThreshold: 2, windowMs: 5000, cooldownMs: 30000 });
+    const store = new RedisCallCounterStore(fake, logger, { circuitBreaker: cb });
+
+    // Trip the circuit
+    await store.incrementAndGet('a', 60);
+    await store.incrementAndGet('b', 60);
+    expect(cb.getState()).toBe('open');
+
+    // fast-fail → fail-closed → POSITIVE_INFINITY
+    const result = await store.incrementAndGet('c', 60);
+    expect(result).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe('RedisCallCounterStore local fallback', () => {
+  it('delegates to local fallback when Redis errors and localFallback is configured', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const localFallback = new InMemoryCallCounterStore();
+    const store = new RedisCallCounterStore(fake, logger, { localFallback });
+
+    // Redis fails → uses local fallback
+    const v1 = await store.incrementAndGet('cap', 60);
+    expect(v1).toBe(1);
+    const v2 = await store.incrementAndGet('cap', 60);
+    expect(v2).toBe(2);
+  });
+
+  it('delegates to local fallback when circuit is open', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const { RedisCircuitBreaker } = await import('../src/redis-circuit-breaker');
+    const cb = new RedisCircuitBreaker({ failureThreshold: 2, windowMs: 5000, cooldownMs: 30000 });
+    const localFallback = new InMemoryCallCounterStore();
+    const store = new RedisCallCounterStore(fake, logger, { circuitBreaker: cb, localFallback });
+
+    // Trip the circuit
+    await store.incrementAndGet('a', 60);
+    await store.incrementAndGet('b', 60);
+    expect(cb.getState()).toBe('open');
+
+    // circuit open → use local fallback (counting continues, not denied)
+    const v = await store.incrementAndGet('cap', 60);
+    expect(v).toBe(1);
+    expect(v).not.toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
 describe('createCallCounterStoreFromEnv', () => {
   it('returns an in-memory store when REDIS_URL is unset', async () => {
     const store = await createCallCounterStoreFromEnv({}, logger);
@@ -146,6 +218,16 @@ describe('createCallCounterStoreFromEnv', () => {
     // ioredis is not installed in this workspace, so this path is the
     // production fallback exercised end-to-end.
     const store = await createCallCounterStoreFromEnv({ REDIS_URL: 'redis://localhost:6379' }, logger);
+    expect(store).toBeInstanceOf(InMemoryCallCounterStore);
+  });
+
+  it('uses CALL_COUNTER_REDIS_URL in preference to REDIS_URL', async () => {
+    // With neither ioredis nor a real Redis we should still get in-memory
+    // (the env contains both URLs; factory picks CALL_COUNTER_REDIS_URL first)
+    const store = await createCallCounterStoreFromEnv({
+      REDIS_URL: 'redis://shared:6379',
+      CALL_COUNTER_REDIS_URL: 'redis://dedicated:6379',
+    }, logger);
     expect(store).toBeInstanceOf(InMemoryCallCounterStore);
   });
 });

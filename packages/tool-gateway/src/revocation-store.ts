@@ -11,7 +11,7 @@
  * documented in `docs/DISTRIBUTED_REVOCATION.md`.
  */
 
-import { Logger, MinHeap } from '@euno/common';
+import { Logger, MinHeap, RedisCircuitBreaker, CircuitOpenError } from '@euno/common';
 
 /**
  * Common interface implemented by all revocation backends.
@@ -129,6 +129,13 @@ export interface RedisLikeClient {
   /** Retrieve the value stored at `key`, or `null` if absent. */
   get(key: string): Promise<string | null>;
   exists(key: string): Promise<number>;
+  /**
+   * Returns the remaining TTL of `key` in seconds.
+   * Returns -1 if the key has no expiry, -2 if the key does not exist.
+   * Used by the stale-readable revocation store to populate the local cache
+   * with the actual Redis expiry instead of a hard-coded sentinel.
+   */
+  ttl(key: string): Promise<number>;
   /** SET with a TTL — used by the per-token revocation store. */
   set(key: string, value: string, mode: 'EX', ttlSeconds: number): Promise<unknown>;
   /** SET without TTL — used by the epoch store for persistent entries. */
@@ -150,6 +157,22 @@ export interface RedisLikeClient {
  * tokens that may have been revoked elsewhere.  Pass `failOpen: true` to opt
  * into the (less safe) opposite behaviour for environments where availability
  * matters more than revocation freshness.
+ *
+ * **Stale-readable mode** (`staleReadable: true`): the store maintains a
+ * local write-through cache of confirmed revocations (JTIs revoked via
+ * {@link revoke} or confirmed as revoked by Redis).  When Redis is
+ * unreachable and the circuit breaker is open, the store serves from this
+ * local cache — tokens that are locally known to be revoked are still
+ * denied, while tokens not yet seen are allowed through.  This prevents a
+ * Redis blip from becoming a brownout at the cost of a brief window where
+ * cross-replica revocations issued after the cache was last refreshed may
+ * not be honoured on this replica.  Only enable when availability must be
+ * prioritised over perfect cross-replica revocation freshness.
+ *
+ * **Circuit breaker**: when `circuitBreaker` is supplied, repeated Redis
+ * failures trip the circuit to "open" so subsequent `isRevoked()` calls
+ * immediately fall through to the local-cache / fail-closed logic without
+ * incurring a full TCP timeout on every authorization decision.
  */
 export class RedisRevocationStore implements RevocationStore {
   private readonly client: RedisLikeClient;
@@ -157,38 +180,130 @@ export class RedisRevocationStore implements RevocationStore {
   private readonly keyPrefix: string;
   private readonly failOpen: boolean;
   private readonly onError?: () => void;
+  private readonly circuitBreaker?: RedisCircuitBreaker;
+  /**
+   * When `staleReadable` is true this map is kept in sync with every
+   * `revoke()` call and every confirmed-revoked response from Redis.
+   * Entries expire in lock-step with the token TTL so the map stays
+   * bounded to the active-token window.
+   */
+  private readonly staleReadable: boolean;
+  private readonly localRevokedCache: Map<string, number> = new Map(); // jti → expiresAt (unix s)
 
   constructor(
     client: RedisLikeClient,
     logger: Logger,
-    options: { keyPrefix?: string; failOpen?: boolean; onError?: () => void } = {}
+    options: {
+      keyPrefix?: string;
+      failOpen?: boolean;
+      onError?: () => void;
+      /**
+       * Optional circuit breaker.  When provided, Redis calls are wrapped so
+       * that repeated failures trip the circuit to "open" and subsequent
+       * requests fail immediately (no TCP timeout on the hot path).
+       */
+      circuitBreaker?: RedisCircuitBreaker;
+      /**
+       * When true, a local write-through cache of confirmed revocations is
+       * kept.  On circuit-open (or any Redis error), the store serves from
+       * this cache instead of blanket-denying all tokens.  Default: false.
+       */
+      staleReadable?: boolean;
+    } = {}
   ) {
     this.client = client;
     this.logger = logger;
     this.keyPrefix = options.keyPrefix ?? 'revoked:';
     this.failOpen = options.failOpen ?? false;
     this.onError = options.onError;
+    this.circuitBreaker = options.circuitBreaker;
+    this.staleReadable = options.staleReadable ?? false;
 
     this.client.on('error', (err: unknown) => {
       this.logger.error('Redis revocation store connection error', {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
+      // Surface connection-level errors to the circuit breaker so it can
+      // trip even when no in-flight execute() call is pending.
+      this.circuitBreaker?.recordFailure();
     });
   }
 
   async isRevoked(tokenId: string): Promise<boolean> {
     try {
-      const exists = await this.client.exists(this.key(tokenId));
-      return exists === 1;
+      let exists: number;
+      if (this.circuitBreaker) {
+        exists = await this.circuitBreaker.execute(() => this.client.exists(this.key(tokenId)));
+      } else {
+        exists = await this.client.exists(this.key(tokenId));
+      }
+      const revoked = exists === 1;
+      if (this.staleReadable) {
+        // Prune expired entries on every successful Redis round-trip so the
+        // local cache stays bounded even when entries are only added via
+        // isRevoked() (and never via revoke()).
+        this.pruneLocalCache();
+        if (revoked) {
+          // Cache the revocation with the real Redis TTL so the stale entry
+          // expires in lock-step with the key in Redis, regardless of the
+          // token's configured TTL.
+          try {
+            let remaining: number;
+            if (this.circuitBreaker) {
+              remaining = await this.circuitBreaker.execute(() =>
+                this.client.ttl(this.key(tokenId)),
+              );
+            } else {
+              remaining = await this.client.ttl(this.key(tokenId));
+            }
+            // remaining === -2: key vanished between exists and ttl (race) — skip
+            // remaining === -1: key has no expiry (unexpected) — use existing entry
+            if (remaining > 0) {
+              this.localRevokedCache.set(tokenId, nowSeconds() + remaining);
+            }
+          } catch {
+            // TTL fetch failed; fall back to the value already in the cache
+            // (set by a prior revoke() call) or leave the entry absent.
+            // Either way we already have the correct `revoked = true` answer.
+          }
+        }
+      }
+      return revoked;
     } catch (error) {
-      this.logger.error('Failed to query revocation status from Redis', {
-        tokenId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        failMode: this.failOpen ? 'open' : 'closed',
-      });
-      this.onError?.();
-      // Default: fail closed.  An attacker (or split-brain network) cannot
-      // bypass revocation by knocking out Redis.
+      const isCircuitOpen = error instanceof CircuitOpenError;
+      if (!isCircuitOpen) {
+        this.logger.error('Failed to query revocation status from Redis', {
+          tokenId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          failMode: this.failOpen ? 'open' : 'closed',
+          staleReadable: this.staleReadable,
+        });
+        this.onError?.();
+      }
+      // Stale-readable: serve from local cache on circuit-open or Redis error.
+      if (this.staleReadable) {
+        const expiry = this.localRevokedCache.get(tokenId);
+        if (expiry !== undefined) {
+          if (expiry > nowSeconds()) {
+            this.logger.debug('Serving revocation status from stale local cache', {
+              tokenId,
+              circuitOpen: isCircuitOpen,
+            });
+            return true;
+          }
+          // Cached entry has expired — prune and treat as not revoked.
+          this.localRevokedCache.delete(tokenId);
+        }
+        // Not in local revocation cache and Redis is unreachable: allow.
+        // The operator has opted in to availability over perfect consistency.
+        if (!isCircuitOpen) {
+          this.logger.debug('Redis unavailable for revocation check; token not in local cache — allowing (stale-readable mode)', {
+            tokenId,
+          });
+        }
+        return false;
+      }
+      // Default (fail-closed) or fail-open.
       return !this.failOpen;
     }
   }
@@ -200,6 +315,12 @@ export class RedisRevocationStore implements RevocationStore {
       // Token is already past its natural expiry – nothing to revoke.
       this.logger.warn('Skipping Redis revocation for already-expired token', { tokenId });
       return;
+    }
+    // Always update the local stale cache so the circuit-open fallback
+    // can honour revocations issued on this replica even when Redis is down.
+    if (this.staleReadable) {
+      this.pruneLocalCache();
+      this.localRevokedCache.set(tokenId, expiresAt);
     }
     try {
       await this.client.set(this.key(tokenId), '1', 'EX', ttl);
@@ -214,6 +335,7 @@ export class RedisRevocationStore implements RevocationStore {
   }
 
   async close(): Promise<void> {
+    this.localRevokedCache.clear();
     try {
       await this.client.quit();
     } catch (error) {
@@ -226,6 +348,21 @@ export class RedisRevocationStore implements RevocationStore {
   private key(tokenId: string): string {
     return `${this.keyPrefix}${tokenId}`;
   }
+
+  /** Prune expired entries from the local stale cache. */
+  private pruneLocalCache(): void {
+    const now = nowSeconds();
+    for (const [jti, expiry] of this.localRevokedCache) {
+      if (expiry <= now) {
+        this.localRevokedCache.delete(jti);
+      }
+    }
+  }
+
+  /** Test/debug helper: size of the stale-readable local cache. */
+  localCacheSize(): number {
+    return this.localRevokedCache.size;
+  }
 }
 
 /**
@@ -233,17 +370,25 @@ export class RedisRevocationStore implements RevocationStore {
  *
  * `ioredis` is loaded with a runtime `require()` so deployments that do not
  * use Redis are not forced to install it.  When the dependency is absent and
- * the operator has explicitly requested Redis (by setting `REDIS_URL`), this
- * function logs a clear error and falls back to {@link InMemoryRevocationStore}
- * so the gateway can still start.
+ * the operator has explicitly requested Redis (by setting `REDIS_URL` or
+ * `REVOCATION_REDIS_URL`), this function logs a clear error and falls back to
+ * {@link InMemoryRevocationStore} so the gateway can still start.
+ *
+ * **Per-store Redis URL**: `REVOCATION_REDIS_URL` takes precedence over the
+ * shared `REDIS_URL`.  This allows the revocation store to be backed by a
+ * dedicated Redis instance (e.g. a highly-available cluster or Sentinel setup)
+ * that is isolated from the kill-switch and call-counter Redis, so an outage
+ * on one store does not cascade to the others.
  */
 export async function createRevocationStoreFromEnv(
   env: NodeJS.ProcessEnv,
   logger: Logger,
   /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
   onError?: () => void,
+  /** Optional externally-created circuit breaker so the caller can read its state for metrics. */
+  circuitBreaker?: RedisCircuitBreaker,
 ): Promise<RevocationStore> {
-  const redisUrl = env.REDIS_URL;
+  const redisUrl = env.REVOCATION_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
     logger.info('REDIS_URL not configured, using in-memory revocation store');
     return new InMemoryRevocationStore();
@@ -290,14 +435,28 @@ export async function createRevocationStoreFromEnv(
   });
 
   const failOpen = env.REVOCATION_FAIL_OPEN === 'true';
+  const staleReadable = env.REVOCATION_STALE_READABLE === 'true';
   const keyPrefix = env.REVOCATION_KEY_PREFIX || 'revoked:';
 
+  const modeDescription = staleReadable
+    ? 'stale-readable (local cache fallback on Redis outage)'
+    : failOpen
+      ? 'open'
+      : 'closed';
   logger.info('Using Redis revocation store for distributed token revocation', {
     keyPrefix,
-    failMode: failOpen ? 'open' : 'closed',
+    failMode: modeDescription,
+    circuitBreakerEnabled: !!circuitBreaker,
+    dedicatedUrl: !!env.REVOCATION_REDIS_URL,
   });
 
-  return new RedisRevocationStore(client, logger, { keyPrefix, failOpen, onError });
+  return new RedisRevocationStore(client, logger, {
+    keyPrefix,
+    failOpen: staleReadable ? false : failOpen,
+    onError,
+    circuitBreaker,
+    staleReadable,
+  });
 }
 
 function nowSeconds(): number {
@@ -393,6 +552,18 @@ export class InMemoryRevocationEpochStore implements RevocationEpochStore {
  * Pass `failOpen: true` to opt into the (less safe) behaviour of treating
  * an unavailable epoch store as "no epoch configured" — available requests
  * are accepted at the cost of potentially bypassing an active epoch.
+ *
+ * **Stale-readable mode** (`staleReadable: true`): the store maintains a
+ * local write-through cache of epochs set via {@link setEpoch} and confirmed
+ * values from Redis.  On circuit-open or any Redis error it returns the cached
+ * epoch (or `null` if no epoch has been observed for this issuer).  This
+ * avoids a Redis blip invalidating every token fleet-wide, while still
+ * honouring any epoch previously written through this or another replica's
+ * cache.
+ *
+ * **Circuit breaker**: when `circuitBreaker` is supplied, repeated Redis
+ * failures trip the circuit to "open" so subsequent `getEpoch()` calls
+ * immediately fall through to the stale-cache / fail-closed logic.
  */
 export class RedisRevocationEpochStore implements RevocationEpochStore {
   private readonly client: RedisLikeClient;
@@ -400,38 +571,100 @@ export class RedisRevocationEpochStore implements RevocationEpochStore {
   private readonly keyPrefix: string;
   private readonly failOpen: boolean;
   private readonly onError?: () => void;
+  private readonly circuitBreaker?: RedisCircuitBreaker;
+  private readonly staleReadable: boolean;
+  /**
+   * Local write-through cache for epochs.  Populated by `setEpoch()` calls
+   * and by successful `getEpoch()` responses so the stale-readable fallback
+   * has data to serve when Redis is temporarily unavailable.
+   */
+  private readonly localEpochCache: Map<string, number> = new Map();
 
   constructor(
     client: RedisLikeClient,
     logger: Logger,
-    options: { keyPrefix?: string; failOpen?: boolean; onError?: () => void } = {}
+    options: {
+      keyPrefix?: string;
+      failOpen?: boolean;
+      onError?: () => void;
+      /**
+       * Optional circuit breaker.  When provided, Redis calls are wrapped so
+       * that repeated failures trip the circuit to "open" and subsequent
+       * requests fail immediately.
+       */
+      circuitBreaker?: RedisCircuitBreaker;
+      /**
+       * When true, a local cache of epochs is maintained.  On circuit-open
+       * or any Redis error the store returns the cached value instead of
+       * failing closed.  Default: false.
+       */
+      staleReadable?: boolean;
+    } = {}
   ) {
     this.client = client;
     this.logger = logger;
     this.keyPrefix = options.keyPrefix ?? 'epoch:';
     this.failOpen = options.failOpen ?? false;
     this.onError = options.onError;
+    this.circuitBreaker = options.circuitBreaker;
+    this.staleReadable = options.staleReadable ?? false;
 
     this.client.on('error', (err: unknown) => {
       this.logger.error('Redis epoch store connection error', {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
+      this.circuitBreaker?.recordFailure();
     });
   }
 
   async getEpoch(issuer: string): Promise<number | null> {
     try {
-      const raw = await this.client.get(this.key(issuer));
-      if (raw === null) return null;
+      let raw: string | null;
+      if (this.circuitBreaker) {
+        raw = await this.circuitBreaker.execute(() => this.client.get(this.key(issuer)));
+      } else {
+        raw = await this.client.get(this.key(issuer));
+      }
+      if (raw === null) {
+        if (this.staleReadable) {
+          // Cache a confirmed "no epoch" so we don't keep hitting Redis for
+          // the same issuer — but we don't store null, we just leave the
+          // cache empty for this issuer.
+        }
+        return null;
+      }
       const epoch = parseInt(raw, 10);
-      return isNaN(epoch) ? null : epoch;
+      const value = isNaN(epoch) ? null : epoch;
+      // Populate stale cache with confirmed epoch values.
+      if (value !== null && this.staleReadable) {
+        this.localEpochCache.set(issuer, value);
+      }
+      return value;
     } catch (error) {
-      this.logger.error('Failed to query epoch from Redis', {
-        issuer,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        failMode: this.failOpen ? 'open' : 'closed',
-      });
-      this.onError?.();
+      const isCircuitOpen = error instanceof CircuitOpenError;
+      if (!isCircuitOpen) {
+        this.logger.error('Failed to query epoch from Redis', {
+          issuer,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          failMode: this.failOpen ? 'open' : 'closed',
+          staleReadable: this.staleReadable,
+        });
+        this.onError?.();
+      }
+      // Stale-readable: return cached epoch (if any) on circuit-open or error.
+      if (this.staleReadable) {
+        const cached = this.localEpochCache.get(issuer);
+        if (cached !== undefined) {
+          this.logger.debug('Serving revocation epoch from stale local cache', {
+            issuer,
+            epoch: cached,
+            circuitOpen: isCircuitOpen,
+          });
+          return cached;
+        }
+        // No cached epoch for this issuer — treat as no epoch (allow).
+        return null;
+      }
       if (this.failOpen) {
         return null;
       }
@@ -447,6 +680,11 @@ export class RedisRevocationEpochStore implements RevocationEpochStore {
   }
 
   async setEpoch(issuer: string, epochSeconds: number): Promise<void> {
+    // Always update the local stale cache first so this replica honours
+    // the epoch immediately (regardless of whether Redis is reachable).
+    if (this.staleReadable) {
+      this.localEpochCache.set(issuer, epochSeconds);
+    }
     try {
       await this.client.set(this.key(issuer), String(epochSeconds));
       this.logger.info('Revocation epoch set in Redis', { issuer, epochSeconds });
@@ -461,6 +699,7 @@ export class RedisRevocationEpochStore implements RevocationEpochStore {
   }
 
   async close(): Promise<void> {
+    this.localEpochCache.clear();
     try {
       await this.client.quit();
     } catch (error) {
@@ -479,18 +718,25 @@ export class RedisRevocationEpochStore implements RevocationEpochStore {
  * Lazily construct a {@link RedisRevocationEpochStore} backed by `ioredis`,
  * following the same pattern as {@link createRevocationStoreFromEnv}.
  *
- * Falls back to {@link InMemoryRevocationEpochStore} when `REDIS_URL` is unset.
- * In production / multi-replica deployments without Redis the function throws
- * so misconfiguration is caught at startup rather than silently providing an
+ * Falls back to {@link InMemoryRevocationEpochStore} when neither
+ * `REVOCATION_REDIS_URL` nor `REDIS_URL` is set.  In production /
+ * multi-replica deployments without Redis the function throws so
+ * misconfiguration is caught at startup rather than silently providing an
  * epoch store that is invisible to other replicas.
+ *
+ * **Per-store Redis URL**: `REVOCATION_REDIS_URL` takes precedence over the
+ * shared `REDIS_URL` — the epoch store shares a Redis instance with the
+ * per-token revocation store so a single dedicated cluster covers both.
  */
 export async function createRevocationEpochStoreFromEnv(
   env: NodeJS.ProcessEnv,
   logger: Logger,
   /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
   onError?: () => void,
+  /** Optional externally-created circuit breaker so the caller can read its state for metrics. */
+  circuitBreaker?: RedisCircuitBreaker,
 ): Promise<RevocationEpochStore> {
-  const redisUrl = env.REDIS_URL;
+  const redisUrl = env.REVOCATION_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
     logger.info('REDIS_URL not configured, using in-memory revocation epoch store');
     return new InMemoryRevocationEpochStore();
@@ -532,12 +778,26 @@ export async function createRevocationEpochStoreFromEnv(
   });
 
   const failOpen = env.REVOCATION_EPOCH_FAIL_OPEN === 'true';
+  const staleReadable = env.REVOCATION_STALE_READABLE === 'true';
   const keyPrefix = env.REVOCATION_EPOCH_KEY_PREFIX || 'epoch:';
 
+  const modeDescription = staleReadable
+    ? 'stale-readable (local cache fallback on Redis outage)'
+    : failOpen
+      ? 'open'
+      : 'closed';
   logger.info('Using Redis epoch store for distributed epoch revocation', {
     keyPrefix,
-    failMode: failOpen ? 'open' : 'closed',
+    failMode: modeDescription,
+    circuitBreakerEnabled: !!circuitBreaker,
+    dedicatedUrl: !!env.REVOCATION_REDIS_URL,
   });
 
-  return new RedisRevocationEpochStore(client, logger, { keyPrefix, failOpen, onError });
+  return new RedisRevocationEpochStore(client, logger, {
+    keyPrefix,
+    failOpen: staleReadable ? false : failOpen,
+    onError,
+    circuitBreaker,
+    staleReadable,
+  });
 }

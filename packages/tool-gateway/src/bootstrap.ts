@@ -50,6 +50,7 @@ import {
   createOcsfWinstonTransport,
   signedEvidenceToOcsf,
   OcsfAuditTransport,
+  RedisCircuitBreaker,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
@@ -529,32 +530,62 @@ export async function initializeServices(
   }
 
   // Build the revocation store from environment.  Defaults to in-memory; if
-  // REDIS_URL is set we connect to Redis so revocations are shared across
-  // gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
+  // REVOCATION_REDIS_URL or REDIS_URL is set we connect to Redis so revocations
+  // are shared across gateway replicas.  See docs/DISTRIBUTED_REVOCATION.md.
+  //
+  // A dedicated circuit breaker is wired for the revocation stores so repeated
+  // Redis failures trip the circuit to "open" and subsequent authorization
+  // decisions fail immediately (no TCP timeout on every request).  The circuit
+  // breaker is shared between the revocation and epoch stores because they use
+  // the same Redis URL (REVOCATION_REDIS_URL / REDIS_URL).
+  const cbConfig = {
+    failureThreshold: (validated as { REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD?: number }).REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD ?? 5,
+    windowMs: (validated as { REDIS_CIRCUIT_BREAKER_WINDOW_MS?: number }).REDIS_CIRCUIT_BREAKER_WINDOW_MS ?? 10_000,
+    cooldownMs: (validated as { REDIS_CIRCUIT_BREAKER_COOLDOWN_MS?: number }).REDIS_CIRCUIT_BREAKER_COOLDOWN_MS ?? 30_000,
+  };
+
+  // Separate circuit breakers per control surface so a failure on the
+  // revocation Redis does not trip the call-counter circuit (or vice versa).
+  const revocationCircuitBreaker = new RedisCircuitBreaker({
+    ...cbConfig,
+    onStateChange: (from, to) => {
+      logger.warn('Redis revocation circuit breaker state change', { from, to });
+    },
+  });
+  const callCounterCircuitBreaker = new RedisCircuitBreaker({
+    ...cbConfig,
+    onStateChange: (from, to) => {
+      logger.warn('Redis call-counter circuit breaker state change', { from, to });
+    },
+  });
+
   const revocationStore = await createRevocationStoreFromEnv(
     env,
     logger,
     () => redisErrorsCounter?.inc({ store: 'revocation' }),
+    revocationCircuitBreaker,
   );
 
   // Build the per-issuer epoch store from environment.  Defaults to in-memory;
-  // if REDIS_URL is set we use Redis so an epoch set on one replica is
-  // immediately honoured by all others.  Epochs are a "revoke-all-before-T"
-  // knob for incident response (key compromise).  Redis errors fail-closed by
-  // default (REVOCATION_EPOCH_FAIL_OPEN=false): the store returns the current
-  // time as the epoch, blocking all tokens until Redis recovers.
+  // if REVOCATION_REDIS_URL or REDIS_URL is set we use Redis so an epoch set
+  // on one replica is immediately honoured by all others.  Epochs are a
+  // "revoke-all-before-T" knob for incident response (key compromise).  Redis
+  // errors fail-closed by default (REVOCATION_EPOCH_FAIL_OPEN=false).
+  // The epoch store reuses the revocation circuit breaker because both stores
+  // target the same Redis URL.
   const epochStore = await createRevocationEpochStoreFromEnv(
     env,
     logger,
     () => redisErrorsCounter?.inc({ store: 'revocation_epoch' }),
+    revocationCircuitBreaker,
   );
 
   // Build the kill-switch manager from environment.  Defaults to the
-  // in-process implementation; if REDIS_URL is set we use the Redis-backed
-  // manager so kills (global / session / agent) propagate across every
-  // gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
+  // in-process implementation; if KILL_SWITCH_REDIS_URL or REDIS_URL is set
+  // we use the Redis-backed manager so kills (global / session / agent)
+  // propagate across every gateway replica.  See docs/DISTRIBUTED_KILL_SWITCH.md.
   // `createKillSwitchManagerFromEnv` always returns a manager (in-process
-  // when REDIS_URL is unset, Redis-backed otherwise).
+  // when Redis is unset, Redis-backed otherwise).
   const killSwitchManager: KillSwitchManager = await createKillSwitchManagerFromEnv(env, logger);
 
   // Build the call-counter store used by `maxCalls` condition enforcement.
@@ -578,6 +609,7 @@ export async function initializeServices(
         env,
         logger,
         () => redisErrorsCounter?.inc({ store: 'call_counter' }),
+        callCounterCircuitBreaker,
       );
       callCounterStore = new ShardLocalCallCounterStore(
         new InMemoryCallCounterStore(),
@@ -594,6 +626,7 @@ export async function initializeServices(
         env,
         logger,
         () => redisErrorsCounter?.inc({ store: 'call_counter' }),
+        callCounterCircuitBreaker,
       );
     }
   }
@@ -934,6 +967,32 @@ export async function initializeServices(
   redisErrorsCounter.inc({ store: 'revocation' }, 0);
   redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
   redisErrorsCounter.inc({ store: 'call_counter' }, 0);
+
+  // Circuit-breaker state gauges.  0 = closed (healthy), 1 = half-open
+  // (probing), 2 = open (failing fast — Redis unreachable).  A sustained
+  // value of 2 means the gateway is serving from its local cache / fallback
+  // for the corresponding control surface.
+  new Gauge({
+    name: 'euno_gateway_redis_circuit_state',
+    help: 'State of the Redis circuit breaker for each control-surface store: 0=closed (healthy), 1=half-open (probing), 2=open (failing fast). ' +
+      'A value of 2 means the store is serving from its local fallback (stale-readable / local-counter mode).',
+    labelNames: ['store'],
+    registers: [metricsRegistry],
+    collect() {
+      const toNumeric = (s: string): number => {
+        switch (s) {
+          case 'closed': return 0;
+          case 'half-open': return 1;
+          case 'open': return 2;
+          // No default needed: CircuitState is a union of the three cases
+          // above; the exhaustive switch is a compile-time guarantee.
+          default: return 0;
+        }
+      };
+      this.set({ store: 'revocation' }, toNumeric(revocationCircuitBreaker.getState()));
+      this.set({ store: 'call_counter' }, toNumeric(callCounterCircuitBreaker.getState()));
+    },
+  });
 
   // H-1: Horizontal sharding metrics.
   // `euno_gateway_shard_info` — static labels with the shard topology so

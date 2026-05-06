@@ -1299,15 +1299,41 @@ export const GatewayConfigSchema = z
 
     // Distributed coordination (Redis) --------------------------------------
     REDIS_URL: optionalString.describe(
-      'Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments.',
+      'Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments. ' +
+      'Individual stores can override this with REVOCATION_REDIS_URL, KILL_SWITCH_REDIS_URL, or CALL_COUNTER_REDIS_URL to target dedicated Redis clusters.',
     ),
+
+    // Per-store Redis URLs (override REDIS_URL for individual control surfaces)
+    REVOCATION_REDIS_URL: optionalString.describe(
+      'Optional dedicated Redis URL for the revocation and epoch stores. Overrides REDIS_URL for these stores. ' +
+      'Use to isolate revocation Redis from the kill-switch and call-counter Redis so an outage on one store does not cascade to the others.',
+    ),
+    KILL_SWITCH_REDIS_URL: optionalString.describe(
+      'Optional dedicated Redis URL for the kill-switch manager. Overrides REDIS_URL for this store. ' +
+      'Allows the kill-switch to target a separate, highly-available Redis cluster or Sentinel setup.',
+    ),
+    CALL_COUNTER_REDIS_URL: optionalString.describe(
+      'Optional dedicated Redis URL for the maxCalls call-counter store. Overrides REDIS_URL for this store. ' +
+      'Allows the counter store to target a separate Redis cluster isolated from the revocation and kill-switch stores.',
+    ),
+
     REVOCATION_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for revoked-token entries. Default "revoked:".',
     ),
     REVOCATION_FAIL_OPEN: envBoolean({
       default: false,
       description:
-        'When Redis is unreachable, treat lookups as "not revoked" instead of "revoked". Use ONLY if availability matters more than revocation freshness. Boolean: true | false.',
+        'When Redis is unreachable, treat lookups as "not revoked" instead of "revoked". Use ONLY if availability matters more than revocation freshness. ' +
+        'For a safer availability-preserving alternative, see REVOCATION_STALE_READABLE. Boolean: true | false.',
+    }),
+    REVOCATION_STALE_READABLE: envBoolean({
+      default: false,
+      description:
+        'When true, the revocation and epoch stores maintain a local write-through cache. On Redis outage (circuit breaker open or connection error), ' +
+        'the stores serve from this cache: confirmed-revoked tokens are still denied; tokens not seen locally are allowed through. ' +
+        'This prevents a Redis blip from becoming a brownout at the cost of a brief window where cross-replica revocations are not propagated. ' +
+        'Recommended over REVOCATION_FAIL_OPEN when you must prioritise availability — use in conjunction with REDIS_CIRCUIT_BREAKER_COOLDOWN_MS ' +
+        'to control the outage window. Boolean: true | false.',
     }),
     REVOCATION_EPOCH_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for per-issuer revocation epoch entries. Default "epoch:". ' +
@@ -1341,6 +1367,34 @@ export const GatewayConfigSchema = z
     CALL_COUNTER_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',
     ),
+    CALL_COUNTER_FAIL_OPEN: envBoolean({
+      default: false,
+      description:
+        'When true, a Redis error or circuit-open for the call-counter store falls back to an in-process counter instead of denying all maxCalls-conditioned requests. ' +
+        'The effective cap during a Redis outage becomes maxCalls × replicaCount (counters are not shared across replicas). ' +
+        'Recommended for deployments where a Redis blip causing a service brownout is more disruptive than temporarily relaxed rate-limits. Boolean: true | false.',
+    }),
+
+    // Redis circuit breaker (shared defaults; apply to revocation + call-counter stores)
+    REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD: envPositiveInt({
+      default: 5,
+      description:
+        'Number of Redis failures within REDIS_CIRCUIT_BREAKER_WINDOW_MS needed to trip the circuit breaker to "open". ' +
+        'When the circuit is open, Redis calls for the affected store fail immediately (no TCP timeout) and the configured fallback is used. ' +
+        'Default 5. Applies to the revocation and call-counter stores.',
+    }),
+    REDIS_CIRCUIT_BREAKER_WINDOW_MS: envPositiveInt({
+      default: 10000,
+      description:
+        'Sliding window (ms) for Redis failure counting used by the circuit breaker. ' +
+        'Failures older than this value do not count toward REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD. Default 10000.',
+    }),
+    REDIS_CIRCUIT_BREAKER_COOLDOWN_MS: envPositiveInt({
+      default: 30000,
+      description:
+        'Time (ms) the circuit breaker stays in the "open" state before transitioning to "half-open" and allowing a single probe call. ' +
+        'If the probe succeeds the circuit closes; if it fails the circuit reopens and the cooldown restarts. Default 30000.',
+    }),
 
     // Horizontal sharding (H-1) — consistent-hash agents to replicas --------
     //

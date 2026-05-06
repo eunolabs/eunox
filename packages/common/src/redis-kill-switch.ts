@@ -686,7 +686,7 @@ export async function createKillSwitchManagerFromEnv(
   // this module via the public package re-export, not vice versa).
   const { DefaultKillSwitchManager } = await import('./kill-switch');
 
-  const redisUrl = env.REDIS_URL;
+  const redisUrl = env.KILL_SWITCH_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
     logger?.info('REDIS_URL not configured, using in-memory kill-switch manager');
     return new DefaultKillSwitchManager(logger);
@@ -771,6 +771,7 @@ export async function createKillSwitchManagerFromEnv(
     refreshIntervalMs,
     failOpenOnWrite,
     pubsubEnabled: !!subscriber,
+    dedicatedUrl: !!env.KILL_SWITCH_REDIS_URL,
   });
 
   return manager;

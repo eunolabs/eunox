@@ -21,6 +21,7 @@
 import { CallCounterStore } from './condition-registry';
 import { Logger } from './logger';
 import { computeAgentShardIndex } from './shard';
+import { RedisCircuitBreaker, CircuitOpenError } from './redis-circuit-breaker';
 
 /**
  * Per-process counter store. Counters are tracked with a stored
@@ -75,10 +76,34 @@ export interface RedisCallCounterOptions {
    * by returning `Number.POSITIVE_INFINITY` from `incrementAndGet` so
    * the condition evaluation reports "exceeded". When false, the error
    * is propagated to the caller.
+   *
+   * When `localFallback` is provided this option is effectively overridden:
+   * on any Redis error (or circuit-open) the store delegates to `localFallback`
+   * instead of failing closed or propagating the error.
    */
   failClosedOnError?: boolean;
   /** Optional callback invoked on every Redis error, e.g. to increment a Prometheus counter. */
   onError?: () => void;
+  /**
+   * Optional circuit breaker.  When provided, `incrementAndGet` calls are
+   * wrapped so that repeated Redis failures trip the circuit to "open" and
+   * subsequent requests fail immediately, avoiding TCP timeout latency on
+   * the authorization hot path.
+   */
+  circuitBreaker?: RedisCircuitBreaker;
+  /**
+   * Optional in-process fallback store used when the circuit breaker is
+   * open or any Redis error occurs.  When set, a Redis outage degrades
+   * to per-replica counting rather than a full brownout (all `maxCalls`
+   * requests denied).
+   *
+   * **Trade-off**: counters tracked locally are not shared across replicas,
+   * so the effective cap is `maxCalls × replicaCount` during an outage.
+   * This is the correct trade-off for most operators: a brief Redis blip
+   * should not cause service disruption; the `maxCalls` budget is a
+   * soft rate-limit, not a hard security boundary.
+   */
+  localFallback?: InMemoryCallCounterStore;
 }
 
 const DEFAULT_COUNTER_KEY_PREFIX = 'capcall:';
@@ -101,6 +126,8 @@ export class RedisCallCounterStore implements CallCounterStore {
   private readonly keyPrefix: string;
   private readonly failClosedOnError: boolean;
   private readonly onError?: () => void;
+  private readonly circuitBreaker?: RedisCircuitBreaker;
+  private readonly localFallback?: InMemoryCallCounterStore;
 
   constructor(
     client: RedisCallCounterClient,
@@ -112,31 +139,59 @@ export class RedisCallCounterStore implements CallCounterStore {
     this.keyPrefix = options.keyPrefix ?? DEFAULT_COUNTER_KEY_PREFIX;
     this.failClosedOnError = options.failClosedOnError ?? true;
     this.onError = options.onError;
+    this.circuitBreaker = options.circuitBreaker;
+    this.localFallback = options.localFallback;
     this.client.on('error', (err: unknown) => {
       this.logger?.error('Redis call-counter connection error', {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
+      // Surface connection-level errors to the circuit breaker so it can
+      // trip even when no in-flight execute() call is pending.
+      this.circuitBreaker?.recordFailure();
     });
   }
 
   async incrementAndGet(key: string, windowSeconds: number, _agentSub?: string): Promise<number> {
     const fullKey = `${this.keyPrefix}${key}`;
     try {
-      const value = await this.client.incr(fullKey);
-      // `EXPIRE` is best-effort. If it fails on the first increment the
-      // counter would otherwise live forever; we re-raise so the caller
-      // can surface the error rather than silently leaking state.
-      if (value === 1) {
-        await this.client.expire(fullKey, windowSeconds);
+      let value: number;
+      if (this.circuitBreaker) {
+        value = await this.circuitBreaker.execute(async () => {
+          const v = await this.client.incr(fullKey);
+          if (v === 1) {
+            await this.client.expire(fullKey, windowSeconds);
+          }
+          return v;
+        });
+      } else {
+        value = await this.client.incr(fullKey);
+        // `EXPIRE` is best-effort. If it fails on the first increment the
+        // counter would otherwise live forever; we re-raise so the caller
+        // can surface the error rather than silently leaking state.
+        if (value === 1) {
+          await this.client.expire(fullKey, windowSeconds);
+        }
       }
       return value;
     } catch (error) {
-      this.logger?.error('Redis call-counter increment failed', {
-        key: fullKey,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        failClosedOnError: this.failClosedOnError,
-      });
-      this.onError?.();
+      const isCircuitOpen = error instanceof CircuitOpenError;
+      if (!isCircuitOpen) {
+        this.logger?.error('Redis call-counter increment failed', {
+          key: fullKey,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          failClosedOnError: this.failClosedOnError,
+        });
+        this.onError?.();
+      }
+      // Local fallback: degrade to per-replica counting rather than denying all.
+      if (this.localFallback) {
+        if (!isCircuitOpen) {
+          this.logger?.warn('Redis call-counter unavailable — falling back to local in-memory counter', {
+            key: fullKey,
+          });
+        }
+        return this.localFallback.incrementAndGet(key, windowSeconds);
+      }
       if (this.failClosedOnError) {
         // Deny-by-default: report a count above any reasonable budget so
         // the `maxCalls` handler trips the limit. Using POSITIVE_INFINITY
@@ -163,12 +218,19 @@ export class RedisCallCounterStore implements CallCounterStore {
 /**
  * Construct a {@link CallCounterStore} from environment variables.
  *
- * Returns the in-process {@link InMemoryCallCounterStore} when
- * `REDIS_URL` is unset (single-replica / development). When `REDIS_URL`
- * is set, returns a {@link RedisCallCounterStore} backed by `ioredis`,
- * mirroring the wiring of {@link createKillSwitchManagerFromEnv} so
- * deployments that already use Redis for the kill switch do not need
- * an additional client to enable distributed `maxCalls` enforcement.
+ * Returns the in-process {@link InMemoryCallCounterStore} when neither
+ * `CALL_COUNTER_REDIS_URL` nor `REDIS_URL` is set (single-replica /
+ * development). When a Redis URL is configured, returns a
+ * {@link RedisCallCounterStore} backed by `ioredis`.
+ *
+ * **Per-store Redis URL**: `CALL_COUNTER_REDIS_URL` takes precedence over
+ * the shared `REDIS_URL`, allowing the call-counter store to target a
+ * dedicated Redis cluster isolated from the kill-switch and revocation stores.
+ *
+ * **Local fallback** (`CALL_COUNTER_FAIL_OPEN=true`): when Redis is
+ * unavailable, delegates to an {@link InMemoryCallCounterStore} instead of
+ * failing closed.  The effective `maxCalls` cap during an outage becomes
+ * `maxCalls × replicaCount`, but agents are not denied service wholesale.
  *
  * `ioredis` is loaded with a runtime `require()` so callers that do not
  * use Redis are not forced to install it. When `REDIS_URL` is set but
@@ -176,17 +238,21 @@ export class RedisCallCounterStore implements CallCounterStore {
  * to the in-memory store.
  *
  * Environment variables:
- *   - `REDIS_URL` — Redis connection string. When unset, falls back to
- *     the in-memory store.
+ *   - `CALL_COUNTER_REDIS_URL` — dedicated Redis URL for this store.
+ *   - `REDIS_URL` — shared Redis URL (fallback when `CALL_COUNTER_REDIS_URL`
+ *     is unset).
  *   - `CALL_COUNTER_KEY_PREFIX` — overrides the default `capcall:`.
+ *   - `CALL_COUNTER_FAIL_OPEN` — when `true`, use local fallback on error.
  */
 export async function createCallCounterStoreFromEnv(
   env: NodeJS.ProcessEnv,
   logger?: Logger,
   /** Optional callback invoked on every Redis error so callers can increment a Prometheus counter. */
   onError?: () => void,
+  /** Optional externally-created circuit breaker so the caller can read its state for metrics. */
+  circuitBreaker?: RedisCircuitBreaker,
 ): Promise<CallCounterStore> {
-  const redisUrl = env.REDIS_URL;
+  const redisUrl = env.CALL_COUNTER_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
     logger?.info('REDIS_URL not configured, using in-memory call-counter store');
     return new InMemoryCallCounterStore();
@@ -232,7 +298,33 @@ export async function createCallCounterStoreFromEnv(
   );
 
   const keyPrefix = env.CALL_COUNTER_KEY_PREFIX || DEFAULT_COUNTER_KEY_PREFIX;
-  return new RedisCallCounterStore(client, logger, { keyPrefix, onError });
+  // Direct `=== 'true'` comparison is intentional: factory functions receive
+  // raw `process.env` strings, not the schema-validated config object.  All
+  // other factory functions in this package use the same pattern for
+  // boolean env vars.
+  const failOpen = env.CALL_COUNTER_FAIL_OPEN === 'true';
+
+  // When CALL_COUNTER_FAIL_OPEN=true, wire a local in-memory store as
+  // fallback so a Redis outage degrades gracefully to per-replica counting
+  // rather than denying all maxCalls-conditioned requests.
+  const localFallback = failOpen ? new InMemoryCallCounterStore() : undefined;
+
+  logger?.info('Using Redis call-counter store for distributed maxCalls enforcement', {
+    keyPrefix,
+    failOpen,
+    circuitBreakerEnabled: !!circuitBreaker,
+    dedicatedUrl: !!env.CALL_COUNTER_REDIS_URL,
+  });
+
+  return new RedisCallCounterStore(client, logger, {
+    keyPrefix,
+    onError,
+    circuitBreaker,
+    localFallback,
+    // When a local fallback is configured, failClosedOnError is irrelevant
+    // (the fallback takes over before fail-closed logic runs). Leave it at
+    // the default (true) so deployments without a fallback remain safe.
+  });
 }
 
 // ---------------------------------------------------------------------------
