@@ -53,7 +53,7 @@ Out of scope:
 - Inventing a new agent framework. The adapters are middleware, not a
   competing SDK.
 - Re-implementing identity or signing. Those live in
-  `@euno/capability-issuer` (see [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md)).
+  `@euno/capability-issuer` (see [`ADAPTERS.md`](./ADAPTERS.md)).
 - LLM provider abstraction. The adapters do not know or care which
   model the framework is calling.
 
@@ -187,7 +187,7 @@ a copy/paste production solution.
 
 ## Cross-references
 
-- [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md) — adapter pattern for
+- [`ADAPTERS.md`](./ADAPTERS.md) — adapter pattern for
   identity / signing (different layer, same idea).
 - [`enforcement.md`](./enforcement.md) — why the gateway, not the
   framework, is the policy decision point.

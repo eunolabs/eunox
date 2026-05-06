@@ -464,4 +464,131 @@ How it works (for non-technical stakeholders):
 
 5. If Organization B trusts Organization A as an issuer (pre-configured), access is granted.
 
-Research on AI agents equipped with W3C DIDs and VCs demonstrates that this approach enables agents to prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs【4†L14】. The same research reveals that security-critical procedures such as VC verification should not be orchestrated solely by the LLM — they must be implemented as deterministic external controls【4†L94】, reinforcing the core principle that enforcement belongs in the trusted computing base, not in the agent's reasoning layer.
+Research on AI agents equipped with W3C DIDs and VCs demonstrates that this approach enables agents to prove ownership of their self-controlled DIDs for authentication purposes and establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs. The same research reveals that security-critical procedures such as VC verification should not be orchestrated solely by the LLM — they must be implemented as deterministic external controls, reinforcing the core principle that enforcement belongs in the trusted computing base, not in the agent's reasoning layer.
+
+---
+
+## SET D — AGT Integration Diagrams
+
+These diagrams show the layered defense model when integrating with an
+in-process policy engine (e.g. Microsoft AGT) alongside the Euno capability
+gateway.
+
+### D1 — High-Level Architecture: Sandbox and AGT Integration
+
+Shows layered defense — AGT as inner guard, Sandbox + Gateway as outer guard.
+
+```mermaid
+flowchart LR
+    subgraph SandboxBoundary["Agent Sandbox (Container or VM -- No Ambient Authority)"]
+        direction TB
+        LLM["LLM Reasoning Loop"]
+        AGT["AGT Policy Engine (Inner Guard)"]
+        LLM --> AGT
+    end
+
+    Issuer["Capability Issuer"]
+    Gateway["Reference Monitor / Capability Proxy (Outer Guard)"]
+    API["External API or Service"]
+    Denied["BLOCKED (No valid token)"]
+    SIEM["Monitoring and SIEM"]
+    KillSwitch["Kill Switch (Admin-only, outside agent runtime)"]
+
+    Issuer -->|"Signed capability tokens (actions, resources, TTL)"| SandboxBoundary
+    SandboxBoundary -->|"Tool call with token"| Gateway
+    Gateway -->|"Token valid and in scope"| API
+    Gateway -.->|"Token missing or invalid"| Denied
+    SandboxBoundary -.->|"Telemetry and logs"| SIEM
+    Gateway -.->|"Allow and deny events"| SIEM
+    KillSwitch -.->|"Terminate session"| Gateway
+```
+
+### D2 — Runtime Action Enforcement Flow
+
+AGT evaluates intent (soft guard); Gateway enforces capability (hard guard).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant Agent as Agent (in Sandbox)
+    participant AGT as AGT Policy Engine (Inner Guard)
+    participant Gateway as Reference Monitor (Outer Guard)
+    participant API as External API or Tool
+
+    User->>Agent: Command or query
+    Agent->>AGT: Propose tool action with context
+
+    Note over AGT: Evaluates semantic intent, policy rules, trust score
+
+    alt AGT blocks action
+        AGT-->>Agent: DENY - blocked by in-process policy
+    else AGT allows action
+        AGT-->>Agent: ALLOW - proceed
+        Agent->>Gateway: Tool request with capability token and DPoP proof
+
+        Note over Gateway: Validates signature, claims, scope, DPoP, revocation
+
+        alt Token valid and action within scope
+            Gateway->>API: Forward authorized request
+            API-->>Gateway: Response
+            Gateway-->>Agent: Return result
+        else Token invalid, expired, or revoked
+            Gateway-->>Agent: HTTP 401 or 403 DENIED
+        end
+    end
+```
+
+### D3 — Control-Plane Lifecycle: Agent Creation and Sandbox Provisioning
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant IdP as Identity Provider
+    participant Issuer as Capability Issuer
+    participant Platform as Agent Platform
+    participant Sandbox as Sandbox Environment
+    participant Agent as Agent Process
+
+    User->>IdP: Authenticate (OAuth 2.0 / OIDC)
+    IdP-->>Issuer: OIDC token (sub, roles, groups)
+    Issuer->>Issuer: Map roles to capability set; mint signed tokens
+    Issuer-->>Platform: Capability token set
+    Platform->>Sandbox: Provision isolated sandbox (deny-all egress)
+    Sandbox-->>Platform: Sandbox ready
+    Platform->>Agent: Start agent; inject tokens; set proxy as sole egress
+    Agent->>Agent: Initialize LLM runtime and AGT policy engine
+```
+
+### D4 — Incident and Enforcement Flow: Violation, Revocation, Kill-Switch
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as Agent (in Sandbox)
+    participant AGT as AGT (Inner Guard)
+    participant Gateway as Reference Monitor (Outer Guard)
+    participant SIEM as Security Ops / SIEM
+    participant Admin as Admin or Automated Response
+
+    Agent->>AGT: Execute tool action
+
+    alt AGT detects policy violation
+        AGT-->>Agent: BLOCKED
+        AGT->>SIEM: Alert: policy violation
+    else AGT passes
+        Agent->>Gateway: External call with capability token
+
+        alt Token invalid, expired, revoked, or out-of-scope
+            Gateway-->>Agent: 401 / 403 DENIED
+            Gateway->>SIEM: Alert: unauthorized action
+            SIEM->>Admin: Escalation: possible compromised agent
+            Admin->>Gateway: Engage KILL SWITCH
+            Gateway-->>Agent: All further requests return 403 KILLED
+        else Token valid and in scope
+            Gateway->>Gateway: Log: ActionExecuted
+            Gateway-->>Agent: Action executed successfully
+        end
+    end
+```

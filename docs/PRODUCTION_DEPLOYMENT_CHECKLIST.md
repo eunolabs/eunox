@@ -15,7 +15,7 @@ but do not block go-live.
 For deeper background see:
 
 - [`DEPLOYMENT.md`](./DEPLOYMENT.md) – step-by-step Azure deployment
-- [`DISTRIBUTED_REVOCATION.md`](./DISTRIBUTED_REVOCATION.md) – Redis architecture
+- [`DISTRIBUTED_STATE.md`](./DISTRIBUTED_STATE.md) – Redis kill-switch and revocation architecture
 - [`INCIDENT_RESPONSE_RUNBOOK.md`](./INCIDENT_RESPONSE_RUNBOOK.md) – on-call procedures
 - [`PILOT_PLAYBOOK.md`](./PILOT_PLAYBOOK.md) – pilot rollout guidance
 
@@ -143,7 +143,7 @@ For deeper background see:
 
 > Only required if you run capability-issuer or tool-gateway replicas
 > in more than one region. Single-region deployments may skip this
-> section. Read [`MULTI_REGION_ISSUER.md`](./MULTI_REGION_ISSUER.md)
+> section. Read [`SCALING.md`](./SCALING.md) (Part 2)
 > first — it documents the topology, replication contract, RTO/RPO
 > targets, and quarterly drill checklist.
 
@@ -165,7 +165,7 @@ For deeper background see:
       regional failovers can be reconstructed from the audit
       timeline.
 - [ ] **Quarterly failover drill scheduled** following the checklist
-      in `MULTI_REGION_ISSUER.md` § 7.
+      in `SCALING.md` (Part 2, § Failover drill checklist).
 
 ### 1.4 Tool Gateway – Distributed Revocation
 
@@ -279,12 +279,12 @@ For deeper background see:
 ## 2. Recommended (do these soon after go-live)
 
 - [ ] **Distributed Redis** (cluster or sentinel) instead of single instance
-      for HA.  Architecture in [`DISTRIBUTED_REVOCATION.md`](./DISTRIBUTED_REVOCATION.md).
+      for HA.  Architecture in [`DISTRIBUTED_STATE.md`](./DISTRIBUTED_STATE.md).
 - [ ] **Capacity test** the gateway at the chosen rate-limit ceilings to
       verify the tuned values produce acceptable p99 latency.
 - [ ] **DR plan** documented: KMS key backup/recovery, Redis snapshot policy,
       cross-region failover for the issuer (see
-      [`MULTI_REGION_ISSUER.md`](./MULTI_REGION_ISSUER.md) for the
+      [`SCALING.md`](./SCALING.md) for the
       active/active path).
 - [ ] **Quarterly key rotation** scheduled and dry-run executed.
 - [ ] **Penetration test** focused on capability bypass, replay, and
@@ -344,7 +344,7 @@ same value on every replica of every service.
 | ----------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `single-replica` (default)    | Local development, single-pod test deployments.                             | optional (in-memory fallback)                            | not required                       | Revocation, kill-switch, maxCalls counters and DPoP-replay nonces are per-process and lost on restart.  Acceptable for dev; **not** acceptable for HA.  |
 | `multi-replica`               | Production HA in a single region (the default Kubernetes layout).           | **required** (schema rejects production without it)      | not required                       | Redis becomes a runtime dependency.  Choose `REVOCATION_FAIL_OPEN`, `KILL_SWITCH_FAIL_OPEN_ON_WRITE`, `ISSUANCE_RATE_LIMIT_FAIL_CLOSED` deliberately.   |
-| `multi-region-active-active`  | Two or more regions serving live traffic concurrently.                      | **required**, must be globally-replicated (CRDB / GeoR)  | **required** on every replica      | Cross-region Redis replication latency bounds the convergence of revocation / kill-switch / rate-limit state — quantified in `MULTI_REGION_ISSUER.md`.  |
+| `multi-region-active-active`  | Two or more regions serving live traffic concurrently.                      | **required**, must be globally-replicated (CRDB / GeoR)  | **required** on every replica      | Cross-region Redis replication latency bounds the convergence of revocation / kill-switch / rate-limit state — quantified in `SCALING.md` (Part 2).  |
 
 Operational consequences of the fail-open / fail-closed knobs:
 

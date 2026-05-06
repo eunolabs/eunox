@@ -270,5 +270,4 @@ fail builds on schema-version drift before they reach production.
 
 - **Token format and signing**: [`SCHEMA_VERSIONING.md`](./SCHEMA_VERSIONING.md)
 - **Why the gateway is the policy decision point**: [`enforcement.md`](./enforcement.md)
-- **Adapter pattern (custom identity / signers)**: [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md)
-- **DID / IAM integration**: [`did-iam-integration.md`](./did-iam-integration.md)
+- **Adapter pattern (custom identity / signers)**: [`ADAPTERS.md`](./ADAPTERS.md)

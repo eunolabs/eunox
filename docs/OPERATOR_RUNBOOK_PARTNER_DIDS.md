@@ -2,7 +2,7 @@
 
 > **Audience**: Gateway operators and SREs  
 > **Scope**: Managing the cross-org partner-DID trust registry via the admin API  
-> **See also**: `docs/cross-organizations.md` for architecture context
+> **See also**: `docs/ARCHITECTURE.md` (Cross-Organization Trust section) for architecture context
 
 ---
 

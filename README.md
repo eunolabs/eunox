@@ -180,7 +180,7 @@ The system maps Azure AD roles to capability constraints:
 - Signature verification using public key
 - Expiration check (default: 15 minutes)
 - Audience validation
-- Revocation support (in-process by default; configure `REDIS_URL` to share revocations across gateway replicas — see `docs/DISTRIBUTED_REVOCATION.md`)
+- Revocation support (in-process by default; configure `REDIS_URL` to share revocations across gateway replicas — see `docs/DISTRIBUTED_STATE.md`)
 
 ### Audit Logging
 
@@ -485,7 +485,7 @@ Planned improvements include:
 - [ ] Self-service web UI for capability requests and pilot dashboards (`web/`)
 - [ ] Dynamic policy engine (OPA / Cedar) plugged in via the existing condition registry
 - [ ] Multi-region active/active issuer
-- [ ] Federated trust to a partner organization (see [`docs/cross-organizations.md`](docs/cross-organizations.md))
+- [ ] Federated trust to a partner organization (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) cross-org section)
 - [ ] Continuous evidence-chain verification job
 - [ ] OpenTelemetry tracing across issuer → gateway → backend
 - [ ] Submit the capability JWT profile as an IETF Internet-Draft
@@ -550,11 +550,11 @@ Before deploying Euno to production, ensure all items below are completed:
 ### High Availability
 
 - [ ] **Multiple Replicas**: At least 2 replicas for each service
-- [ ] **Distributed Revocation**: Redis deployed for token revocation (see `docs/DISTRIBUTED_REVOCATION.md`)
+- [ ] **Distributed Revocation**: Redis deployed for token revocation (see `docs/DISTRIBUTED_STATE.md`)
   ```bash
   REDIS_URL=redis://euno-redis:6379
   ```
-- [ ] **Distributed Kill Switch**: Redis deployed so kills (global / session / agent) propagate across every gateway replica (see `docs/DISTRIBUTED_KILL_SWITCH.md`). The same `REDIS_URL` configured for distributed revocation is reused; without it a kill issued on one pod is **not** honoured on the others.
+- [ ] **Distributed Kill Switch**: Redis deployed so kills (global / session / agent) propagate across every gateway replica (see `docs/DISTRIBUTED_STATE.md`). The same `REDIS_URL` configured for distributed revocation is reused; without it a kill issued on one pod is **not** honoured on the others.
 - [ ] **Health Checks**: Liveness and readiness probes configured
 - [ ] **Horizontal Pod Autoscaler**: Configured for automatic scaling
 
@@ -595,8 +595,8 @@ Before deploying Euno to production, ensure all items below are completed:
 - [ ] **Security Scan**: No critical vulnerabilities in `npm audit`
 - [ ] **Token Issuance**: End-to-end token issuance tested
 - [ ] **Token Validation**: Gateway correctly validates and enforces tokens
-- [ ] **Token Revocation**: Revocation works across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_REVOCATION.md`)
-- [ ] **Kill Switch**: Global, session, and agent kill switches tested across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_KILL_SWITCH.md`)
+- [ ] **Token Revocation**: Revocation works across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_STATE.md`)
+- [ ] **Kill Switch**: Global, session, and agent kill switches tested across all gateway instances (requires `REDIS_URL`; see `docs/DISTRIBUTED_STATE.md`)
 
 ### Performance Targets
 

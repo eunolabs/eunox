@@ -31,19 +31,15 @@ annotated in-place.
 ## 2. Problem space and architecture
 
 These docs frame *why* Euno exists and the security model it implements.
-They are the foundation everything else builds on.
 
 | Doc | What it is | Status |
 | --- | ---------- | ------ |
-| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | Consolidated architecture reference for the code in `packages/`: C4 context/container/component views, sequence diagrams (issuance, enforcement, attenuation, renewal, kill switch, posture), dataflow diagrams (control vs. data plane, cross-org), deployment view, and cross-cutting concerns. Authoritative for the implementation; see `diagrams.md` for the abstract/pattern view. | ✅ |
-| [`capability-model.md`](./capability-model.md) | Gap analysis of the capability model and the recommendations that closed those gaps. Includes an in-place implementation note pointing at the code that delivers each recommendation. | ✅ |
-| [`enforcement.md`](./enforcement.md) | Why the gateway (not individual tools or the framework) is the policy decision point. | ✅ |
-| [`sandboxing.md`](./sandboxing.md) | Reference architecture for the sandbox boundary: threat models, design principles, layered defence. | ✅ |
-| [`did-iam-integration.md`](./did-iam-integration.md) | Rationale for combining decentralised identity (DIDs) with enterprise IAM in a single capability model. | ✅ |
-| [`diagrams.md`](./diagrams.md) | Mermaid diagram set (engineering / product / executive views of the architecture). | 📚 |
-| [`agt-integration-diagrams.md`](./agt-integration-diagrams.md) | Diagrams showing the layered defence between AGT (in-process semantic guard) and the gateway (cryptographic outer guard). | 📚 |
-| [`agt-comparison.md`](./agt-comparison.md) | Comparison of agent governance approaches. | 📚 |
-| [`cross-organizations.md`](./cross-organizations.md) | Cross-organization trust model (federation, delegation chains). Reference guidance for future federation adoption; not part of the current MVP runtime. | 📚 |
+| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | Consolidated architecture reference for the code in `packages/`: C4 context/container/component views, sequence diagrams (issuance, enforcement, attenuation, renewal, kill switch, posture), dataflow diagrams (control vs. data plane, cross-org), deployment view, and cross-cutting concerns. | ✅ |
+| [`capability-model.md`](./capability-model.md) | Gap analysis of the capability model and the recommendations that closed those gaps. Includes in-place implementation notes pointing at the code that delivers each recommendation. | ✅ |
+| [`enforcement.md`](./enforcement.md) | Why the gateway (not individual tools or the framework) is the policy decision point; network-level enforcement strategies and OS-level sandbox controls. | ✅ |
+| [`sandboxing.md`](./sandboxing.md) | Reference architecture for the sandbox boundary: threat models, design principles, layered defence, Kubernetes and non-Kubernetes implementations. | ✅ |
+| [`diagrams.md`](./diagrams.md) | Mermaid diagram set (engineering / product / executive views of the architecture, plus AGT integration diagrams). | 📚 |
+| [`mvp.md`](./mvp.md) | Strategic direction: current MVP scope, targeted enhancements, and production-readiness roadmap. | 📚 |
 
 ## 3. Design references
 
@@ -51,13 +47,12 @@ Detailed design for specific subsystems.
 
 | Doc | What it is | Status |
 | --- | ---------- | ------ |
-| [`ADAPTER_PATTERN.md`](./ADAPTER_PATTERN.md) | Pluggable identity / signing adapter pattern. | ✅ |
-| [`THIRD_PARTY_PROVIDERS.md`](./THIRD_PARTY_PROVIDERS.md) | How to register custom identity providers and signers (Okta, HSM, custom). | ✅ |
+| [`ADAPTERS.md`](./ADAPTERS.md) | Pluggable identity / signing adapter pattern, built-in providers (Azure, AWS, GCP, DID), and how to register custom adapters. | ✅ |
 | [`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md) | Design of the LangChain / MAF / CrewAI middleware in `packages/framework-adapters`. | ✅ |
 | [`SCHEMA_VERSIONING.md`](./SCHEMA_VERSIONING.md) | Capability-token schema versioning, deployment ordering, and downgrade-attack mitigation. | ✅ |
-| [`DISTRIBUTED_KILL_SWITCH.md`](./DISTRIBUTED_KILL_SWITCH.md) | Redis-backed kill switch for multi-replica gateways. | ✅ |
-| [`DISTRIBUTED_REVOCATION.md`](./DISTRIBUTED_REVOCATION.md) | Redis-backed token revocation list for multi-replica gateways. | ✅ |
+| [`DISTRIBUTED_STATE.md`](./DISTRIBUTED_STATE.md) | Redis-backed kill switch and token revocation for multi-replica gateways: architecture, failure semantics, configuration, monitoring. | ✅ |
 | [`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md) | Canonical guide to writing capability manifests: required structure, golden patterns, wildcard rules, conditions, TTL guidance, anti-patterns, CLI tooling. | ✅ |
+| [`SCALING.md`](./SCALING.md) | Horizontal gateway sharding (H-1, eliminates Redis hot-key pressure) and multi-region active/active deployment (F-7). | ✅ |
 | [`openapi/`](./openapi/) | OpenAPI 3.0 specs for the Capability Issuer and Tool Gateway HTTP services. | ✅ |
 
 ## 4. Operations and deployment
@@ -68,6 +63,7 @@ Detailed design for specific subsystems.
 | [`PILOT_PLAYBOOK.md`](./PILOT_PLAYBOOK.md) | Operational playbook for the 4-8 week pilot phase (pre-flight, monitoring, error handling, daily / weekly checklists). | ✅ |
 | [`PRODUCTION_DEPLOYMENT_CHECKLIST.md`](./PRODUCTION_DEPLOYMENT_CHECKLIST.md) | The Go / No-Go gate for production: managed KMS, distributed Redis, kill-switch drill, audit evidence, admin-API hardening. | ✅ |
 | [`INCIDENT_RESPONSE_RUNBOOK.md`](./INCIDENT_RESPONSE_RUNBOOK.md) | Runbook for runaway agents, leaked tokens, insider threats, and false positives. Includes severity tiers and quick-reference card. | ✅ |
+| [`OPERATOR_RUNBOOK_PARTNER_DIDS.md`](./OPERATOR_RUNBOOK_PARTNER_DIDS.md) | Operational procedures for onboarding and managing partner DIDs. | ✅ |
 
 ---
 
@@ -75,16 +71,17 @@ Detailed design for specific subsystems.
 
 1. New to Euno? Read **[`IMPLEMENTATION.md`](./IMPLEMENTATION.md)** for
    the system overview, then **[`ARCHITECTURE.md`](./ARCHITECTURE.md)**
-   for the implementation-level architecture (diagrams, dataflows,
-   sequence diagrams), then **[`capability-model.md`](./capability-model.md)**
-   for the security model.
+   for the implementation-level architecture, then
+   **[`capability-model.md`](./capability-model.md)** for the security model.
 2. Adopting Euno from an agent framework? Read
    **[`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md)** and
    **[`enforcement.md`](./enforcement.md)**.
 3. Deploying to production? Read
    **[`DEPLOYMENT.md`](./DEPLOYMENT.md)** then walk
    **[`PRODUCTION_DEPLOYMENT_CHECKLIST.md`](./PRODUCTION_DEPLOYMENT_CHECKLIST.md)**.
-4. Running an incident? Open
+4. Scaling beyond a single replica or to multiple regions? Read
+   **[`SCALING.md`](./SCALING.md)**.
+5. Running an incident? Open
    **[`INCIDENT_RESPONSE_RUNBOOK.md`](./INCIDENT_RESPONSE_RUNBOOK.md)**.
 
 ## Maintenance
@@ -100,3 +97,4 @@ When you change behaviour in `packages/`:
   than leaving the doc to drift.
 - If the change adds a substantial new package, link it from this index
   and from [`IMPLEMENTATION.md`](./IMPLEMENTATION.md).
+

@@ -9,8 +9,8 @@
 > - [`diagrams.md`](./diagrams.md) — abstract / engineering / executive
 >   diagram set framed around the **design pattern** (capability-native
 >   agent governance), not this specific code base.
-> - [`agt-integration-diagrams.md`](./agt-integration-diagrams.md) —
->   AGT (semantic guard) ↔ gateway (cryptographic guard) interaction.
+> - [`diagrams.md`](./diagrams.md) — AGT (semantic guard) ↔ gateway
+>   (cryptographic guard) interaction diagrams (Set D).
 > - [`capability-model.md`](./capability-model.md) — gap analysis &
 >   security model rationale.
 > - [`enforcement.md`](./enforcement.md) — why the gateway is the PDP.

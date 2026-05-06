@@ -224,7 +224,7 @@ curl -X POST http://localhost:3002/admin/kill-switch/agent/agent-456/kill \
 - ✅ Microsoft Sentinel analytics content (`infra/sentinel/analytic-rules.json`)
 - ✅ Cryptographic audit evidence generation and verification helpers
 - ⚠️ Data redaction remains roadmap/design work and is tracked in `capability-model.md`
-- 📚 Cross-organization trust remains reference guidance in `cross-organizations.md`, not current MVP runtime scope
+- 📚 Cross-organization trust (federation, delegation chains) is future work; see `ARCHITECTURE.md` for the trust-chain design
 
 ## Development
 

@@ -653,8 +653,8 @@ The system as currently architected. W3C DID (`did:web`, `did:ion`,
 KMS), partner federation with per-DID circuit breakers, cross-chain
 audit anchors, distributed Postgres ledger, BSL operational tier,
 on-prem deployment, SOC2 audit-trail export, AGT-style in-process
-guard for defense-in-depth (see [`agt-comparison.md`](./agt-comparison.md)
-and [`agt-integration-diagrams.md`](./agt-integration-diagrams.md)).
+guard for defense-in-depth (see [`diagrams.md`](./diagrams.md) Set D
+for the AGT integration diagrams).
 
 This is a sales motion, not a developer-tools play. The
 `/.well-known/capability-issuer` discovery endpoints, `did:ion`
