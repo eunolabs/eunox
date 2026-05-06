@@ -280,6 +280,24 @@ export class PartnerIssuerResolver {
   }
 
   /**
+   * Synchronous "might trust" check used by {@link PartnerDidTrustAnchor.owns}.
+   *
+   * Returns `true` when the DID is known to be trusted without any async
+   * I/O (env-var set), **or** when a registry is configured and the DID is
+   * non-empty — in that case the definitive async check is deferred to
+   * {@link getKey} (via {@link trustsAsync}) so that registry-backed partner
+   * DIDs are not silently dropped at the `owns()` gate.
+   *
+   * Never performs network I/O.
+   */
+  mightTrust(did: string): boolean {
+    if (this.trusted.has(did)) return true;
+    // If a registry is wired, we can't rule out this DID synchronously —
+    // defer to the async check in getKey().
+    return !!this.registry && did.length > 0;
+  }
+
+  /**
    * Look up the (key, algorithm) pair for a (DID, kid?) tuple, resolving
    * and caching as necessary.  Throws {@link CapabilityError} when the DID
    * is not trusted, cannot be resolved, or has no usable key.

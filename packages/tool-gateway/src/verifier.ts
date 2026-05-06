@@ -12,12 +12,16 @@ import {
   SigningAlgorithm,
   SUPPORTED_SCHEMA_VERSIONS,
   JwksKeySource,
-  pickJwkByKid,
 } from '@euno/common';
 import { InMemoryRevocationStore, RevocationStore, RevocationEpochStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
-import { JwksClient } from './jwks-client';
 import { ProofsVerifier } from './proofs-verifier';
+import {
+  TrustAnchor,
+  TrustAnchorContext,
+  SpkiTrustAnchor,
+  buildTrustChain,
+} from './trust-anchor';
 
 /**
  * Constructor options for {@link JWTTokenVerifier} (and its
@@ -61,13 +65,19 @@ export interface JWTTokenVerifierOptions {
 }
 
 export class JWTTokenVerifier implements TokenVerifier {
+  /**
+   * The raw SPKI PEM kept so `updatePublicKey` can update it and flush the
+   * `SpkiTrustAnchor` cache.  Not used directly for verification — that is
+   * delegated to the trust-anchor chain.
+   */
   private publicKey: string;
-  private cachedKeyObjects: Map<string, jose.KeyLike | Uint8Array> = new Map();
+
   // Pluggable revocation backend.  Defaults to an in-process store; production
   // multi-instance deployments should inject a shared store (e.g.
   // RedisRevocationStore) so revocations are visible across replicas.
   // See `docs/DISTRIBUTED_REVOCATION.md` for the operational architecture.
   private revocationStore: RevocationStore;
+
   /**
    * Optional per-issuer epoch store.  When configured, `performPostVerificationChecks`
    * rejects any token whose `iat` is strictly before the epoch recorded for
@@ -75,35 +85,9 @@ export class JWTTokenVerifier implements TokenVerifier {
    * for a compromised signing key without enumerating every outstanding JTI.
    */
   protected epochStore?: RevocationEpochStore;
+
   /** Protected so subclasses (e.g. JwksTokenVerifier) can access in verify(). */
   protected algorithms: SigningAlgorithm[];
-  /**
-   * Optional cross-org partner-issuer trust resolver.  When configured,
-   * tokens whose `iss` claim matches a trusted partner DID are verified
-   * against the public key advertised in the partner's DID document
-   * instead of the gateway's local SPKI key.  Tokens from untrusted
-   * issuers continue to be rejected by the local-key path.
-   *
-   * See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
-   */
-  protected partnerResolver?: PartnerIssuerResolver;
-  /**
-   * Optional list of issuer DIDs/strings the local SPKI key is allowed
-   * to sign for.  When the partner resolver is configured AND the token's
-   * `iss` claim is a trusted partner DID, verification routes through the
-   * partner resolver; otherwise it falls back to the local SPKI path.
-   * Empty / undefined means the local-key path accepts any `iss`
-   * (preserves Sprint-1/2 behaviour).
-   */
-  protected localIssuers?: Set<string>;
-
-  /**
-   * Optional JWKS key source (R-6).  When provided, the local key path
-   * uses JWKS-based key selection by `kid` instead of the single SPKI
-   * (`publicKey`).  If both are present the JWKS source takes precedence
-   * for any token that carries a `kid` header.
-   */
-  private jwksKeySource?: JwksKeySource;
 
   /**
    * Whether to require a `kid` in the JWT protected header (R-6).
@@ -123,6 +107,16 @@ export class JWTTokenVerifier implements TokenVerifier {
    * deployments are unchanged. See {@link ProofsVerifier}.
    */
   protected proofsVerifier?: ProofsVerifier;
+
+  /**
+   * Ordered trust-anchor chain.  The verifier delegates key selection to
+   * the first anchor whose `owns()` returns `true`.  Built from constructor
+   * options; subclasses may supply their own chain.
+   *
+   * Protected so subclasses (e.g. `JwksTokenVerifier`) can inspect or extend
+   * the chain without re-implementing the full `verify()` loop.
+   */
+  protected trustChain: TrustAnchor[];
 
   /** Default revocation TTL used when the caller does not supply an expiry. */
   private static readonly DEFAULT_REVOCATION_TTL_SECONDS = 86400; // 24 hours
@@ -197,11 +191,6 @@ export class JWTTokenVerifier implements TokenVerifier {
     // Normalize so that an explicitly passed empty array also falls back to RS256.
     this.algorithms = opts.algorithms?.length ? opts.algorithms : ['RS256'];
     this.revocationStore = opts.revocationStore ?? new InMemoryRevocationStore();
-    this.partnerResolver = opts.partnerResolver;
-    if (opts.localIssuers && opts.localIssuers.length > 0) {
-      this.localIssuers = new Set(opts.localIssuers);
-    }
-    this.jwksKeySource = opts.jwksKeySource;
     // Default to `true` so this matches the production gateway and the
     // `EUNO_REQUIRE_KID` env-var default.  Tests / embedders that
     // intentionally exercise the legacy "no kid" path must opt out
@@ -211,24 +200,46 @@ export class JWTTokenVerifier implements TokenVerifier {
     if (opts.epochStore) {
       this.epochStore = opts.epochStore;
     }
+
+    // Resolve the localIssuers set once so it can be passed to the anchor.
+    const localIssuersSet =
+      opts.localIssuers && opts.localIssuers.length > 0
+        ? new Set(opts.localIssuers)
+        : undefined;
+
+    // Build the trust-anchor chain from the supplied options.
+    this.trustChain = buildTrustChain({
+      publicKey: this.publicKey,
+      algorithms: this.algorithms,
+      localIssuers: localIssuersSet,
+      jwksKeySource: opts.jwksKeySource,
+      partnerResolver: opts.partnerResolver,
+    });
   }
 
   /**
-   * Verify and decode a capability token
+   * Verify and decode a capability token.
+   *
+   * The verification pipeline is:
+   * 1. Decode the JWT protected header (alg, kid).
+   * 2. Enforce the `requireKid` constraint.
+   * 3. Decode the `iss` claim from the payload (unsigned at this stage).
+   * 4. Walk the {@link trustChain}: find the first anchor whose `owns()`
+   *    returns `true` and delegate key selection to it.
+   * 5. Call `jose.jwtVerify` with the resolved key + algorithm constraints.
+   *    On `JWSSignatureVerificationFailed`, call `anchor.invalidate()` so
+   *    the anchor can flush any cached key material before the next attempt.
+   * 6. Run `performPostVerificationChecks` (revocation, epoch, schema version,
+   *    proofs).
    */
   async verify(token: string): Promise<CapabilityTokenPayload> {
     try {
-      // Read the algorithm from the token header so we import the key with the
-      // correct alg parameter (jose constrains key usage to the import alg).
+      // Step 1: decode header.
       const header = jose.decodeProtectedHeader(token);
-      const alg = header.alg;
-      const algorithm = alg ?? this.algorithms[0] ?? 'RS256';
+      const alg = (header.alg ?? this.algorithms[0] ?? 'RS256') as string;
       const kid = typeof header.kid === 'string' ? header.kid : undefined;
 
-      // Enforce kid requirement (R-6).  Default is now `true` (matches
-      // the `EUNO_REQUIRE_KID` env-var default); pass `requireKid: false`
-      // to the constructor to allow legacy tokens without a `kid` while
-      // a rolling deploy completes.
+      // Step 2: enforce kid requirement (R-6).
       if (this.requireKid && !kid) {
         throw new CapabilityError(
           ErrorCode.INVALID_TOKEN,
@@ -237,13 +248,8 @@ export class JWTTokenVerifier implements TokenVerifier {
         );
       }
 
-      // Reject tokens whose algorithm is not in the configured allow-list before
-      // importing the key, so we fail fast rather than letting jose handle it.
-      // Partner DIDs may legitimately use algorithms (e.g. EdDSA) the local
-      // signer does not, so when the token's `iss` is a trusted partner DID
-      // we defer the algorithm check to the algorithm declared in the
-      // partner's DID document instead of `this.algorithms`.
-      let payload: CapabilityTokenPayload;
+      // Step 3: decode iss (unsigned; anchor.resolveKey performs the full
+      // check after the key is fetched).
       let iss: string | undefined;
       try {
         const decoded = jose.decodeJwt(token);
@@ -252,110 +258,73 @@ export class JWTTokenVerifier implements TokenVerifier {
         // The signature step below will produce a clearer error.
       }
 
-      const useResolver = this.partnerResolver && iss && this.partnerResolver.trusts(iss);
+      const ctx: TrustAnchorContext = { iss, kid, alg };
 
-      if (useResolver) {
-        // Cross-org path: resolve the partner DID's verification key and use
-        // the algorithm declared in its DID document.  The local algorithm
-        // allow-list is intentionally bypassed because partner DIDs commonly
-        // use EdDSA / ES256 even when the local signer is RS256.
-        const { key: partnerKey, alg: partnerAlg } = await this.partnerResolver!.getKey(iss!, kid);
-        try {
-          const result = await jose.jwtVerify(token, partnerKey, {
-            algorithms: [partnerAlg],
-            issuer: iss!,
-          });
-          payload = result.payload as unknown as CapabilityTokenPayload;
-        } catch (err) {
-          // Only drop the cached key on actual signature verification
-          // failures.  Other jose errors (expiration, claim validation,
-          // malformed JWT) do not indicate stale resolver data — invalidating
-          // for them would (a) cause repeated DID fetches for benign cases
-          // like expired tokens and (b) become a DoS amplifier where any
-          // attacker holding a single partner DID could force unbounded
-          // network resolution by replaying invalid tokens.
-          if (err instanceof jose.errors.JWSSignatureVerificationFailed) {
-            this.partnerResolver!.invalidate(iss!, kid);
+      // Step 4: find the responsible anchor.
+      const anchor = this.trustChain.find((a) => a.owns(ctx));
+      if (!anchor) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          iss
+            ? `No trust anchor found for issuer "${iss}" with algorithm "${alg}"`
+            : `No trust anchor accepts this token (algorithm "${alg}")`,
+          401,
+        );
+      }
+
+      // Step 5: resolve key and verify signature.
+      const resolution = await anchor.resolveKey(ctx);
+      const jwtVerifyOpts: jose.JWTVerifyOptions = {
+        algorithms: resolution.algorithms,
+        ...(resolution.issuer ? { issuer: resolution.issuer } : {}),
+      };
+
+      let payload: CapabilityTokenPayload | undefined;
+
+      if (resolution.keys) {
+        // Rolling-deploy try-all path: no kid — try each key in order.
+        let lastError: unknown;
+        for (const key of resolution.keys) {
+          try {
+            const result = await jose.jwtVerify(token, key, jwtVerifyOpts);
+            payload = result.payload as unknown as CapabilityTokenPayload;
+            break;
+          } catch (err) {
+            lastError = err;
           }
-          throw err;
         }
-      } else if (this.jwksKeySource && kid) {
-        // JWKS path (R-6): select the key by kid from the JWKS source.
-        // This path is used when a JwksClient (or any JwksKeySource impl)
-        // was injected at construction time AND the token carries a kid.
-        if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
+        if (payload === undefined) {
+          // Mirror the single-key path: flush the anchor's key cache when
+          // every key in the set rejected the signature — the JWKS may have
+          // been rotated between the cache population and this request.
+          if (lastError instanceof jose.errors.JWSSignatureVerificationFailed) {
+            anchor.invalidate?.(ctx);
+          }
           throw new CapabilityError(
             ErrorCode.INVALID_TOKEN,
-            `Token uses disallowed algorithm: ${algorithm}`,
+            `Token signature did not match any key in the JWKS: ${lastError instanceof Error ? lastError.message : 'Unknown error'}`,
             401,
           );
         }
-
-        // Retrieve the matching JWK.  JwksClient.getKeyByKid handles the
-        // forced-refresh-on-miss logic (one network round-trip to pick up a
-        // freshly-rotated key) and is fail-closed when the kid is not found
-        // even after the refresh.  For generic JwksKeySource implementations,
-        // do a single lookup and throw on miss.
-        // Note: tokens from non-local issuers (e.g. untrusted partner DIDs)
-        // will naturally fail here because their kid won't be in the local
-        // JWKS cache — no explicit issuer check is needed.
-        let jwkEntry: import('@euno/common').JwkKey;
-        if (this.jwksKeySource instanceof JwksClient) {
-          jwkEntry = await (this.jwksKeySource as JwksClient).getKeyByKid(kid);
-        } else {
-          const jwks = await this.jwksKeySource.getJwks();
-          const found = pickJwkByKid(jwks, kid);
-          if (!found) {
-            throw new CapabilityError(
-              ErrorCode.INVALID_TOKEN,
-              `No public key found for kid="${kid}"`,
-              401,
-            );
-          }
-          jwkEntry = found;
-        }
-
-        const keyObject = await jose.importJWK(jwkEntry as jose.JWK, algorithm);
-        const result = await jose.jwtVerify(token, keyObject as jose.KeyLike, {
-          algorithms: this.algorithms,
-        });
-        payload = result.payload as unknown as CapabilityTokenPayload;
       } else {
-        // Local path: verify against the gateway's bootstrapped SPKI key.
-        if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
-          throw new CapabilityError(
-            ErrorCode.INVALID_TOKEN,
-            `Token uses disallowed algorithm: ${algorithm}`,
-            401
-          );
+        // Normal path: single key.  TypeScript narrows `resolution` to the
+        // `key`-bearing variant of the discriminated union in this `else`
+        // branch (because `resolution.keys` is falsy), so `resolution.key`
+        // is typed as non-optional and requires no non-null assertion.
+        try {
+          const result = await jose.jwtVerify(token, resolution.key, jwtVerifyOpts);
+          payload = result.payload as unknown as CapabilityTokenPayload;
+        } catch (err) {
+          // Invalidate cached key material on signature failure so the next
+          // request re-fetches (handles an out-of-band key rotation).
+          if (err instanceof jose.errors.JWSSignatureVerificationFailed) {
+            anchor.invalidate?.(ctx);
+          }
+          throw err;
         }
-
-        // If a partner resolver is configured AND a local-issuer allow-list
-        // exists, reject tokens whose issuer is neither a trusted partner
-        // nor a recognised local issuer (defence in depth: stops a token
-        // signed by the local key from impersonating a partner DID).
-        if (this.partnerResolver && this.localIssuers && iss && !this.localIssuers.has(iss)) {
-          throw new CapabilityError(
-            ErrorCode.INVALID_TOKEN,
-            `Token issuer ${iss} is neither a trusted partner DID nor a known local issuer`,
-            401
-          );
-        }
-
-        // Import the public key per algorithm (cached for performance; invalidated on key rotation)
-        if (!this.cachedKeyObjects.has(algorithm)) {
-          const keyObject = await jose.importSPKI(this.publicKey, algorithm);
-          this.cachedKeyObjects.set(algorithm, keyObject);
-        }
-        const keyObject = this.cachedKeyObjects.get(algorithm)!;
-
-        // Verify the token signature and decode
-        const result = await jose.jwtVerify(token, keyObject, {
-          algorithms: this.algorithms,
-        });
-        payload = result.payload as unknown as CapabilityTokenPayload;
       }
 
+      // Step 6: revocation, epoch, schema, proofs.
       return this.performPostVerificationChecks(payload);
     } catch (error) {
       if (error instanceof CapabilityError) {
@@ -364,17 +333,13 @@ export class JWTTokenVerifier implements TokenVerifier {
 
       // Map jose JWTExpired to EXPIRED_TOKEN so callers get the correct error code
       if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ERR_JWT_EXPIRED') {
-        throw new CapabilityError(
-          ErrorCode.EXPIRED_TOKEN,
-          'Token has expired',
-          401
-        );
+        throw new CapabilityError(ErrorCode.EXPIRED_TOKEN, 'Token has expired', 401);
       }
 
       throw new CapabilityError(
         ErrorCode.INVALID_TOKEN,
         `Token verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        401
+        401,
       );
     }
   }
@@ -446,11 +411,19 @@ export class JWTTokenVerifier implements TokenVerifier {
   }
 
   /**
-   * Update the public key (for key rotation)
+   * Update the public key (for key rotation).
+   * Flushes the {@link SpkiTrustAnchor} key cache so the next verification
+   * imports the new key.
    */
   updatePublicKey(publicKey: string): void {
     this.publicKey = publicKey;
-    this.cachedKeyObjects.clear(); // Invalidate cache on key rotation
+    // Update the SpkiTrustAnchor in the chain (if present).
+    for (const anchor of this.trustChain) {
+      if (anchor instanceof SpkiTrustAnchor) {
+        anchor.updatePublicKey(publicKey);
+        break;
+      }
+    }
   }
 
   /**
@@ -547,6 +520,9 @@ export type JwksTokenVerifierOptions = Omit<JWTTokenVerifierOptions, 'jwksKeySou
  * - `requireKid` defaults to `true`.  When `true`, a missing `kid` header
  *   is immediately rejected.  When `false`, all JWKS keys are tried in turn
  *   to support tokens minted before the JWKS migration.
+ * - `verify()` is inherited from the base class; the {@link JwksTrustAnchor}
+ *   in the trust chain handles key selection for both the kid-present and
+ *   the try-all paths.
  *
  * @example
  * ```ts
@@ -559,8 +535,6 @@ export type JwksTokenVerifierOptions = Omit<JWTTokenVerifierOptions, 'jwksKeySou
  * ```
  */
 export class JwksTokenVerifier extends JWTTokenVerifier {
-  private readonly jwksSource: JwksKeySource;
-
   constructor(jwksKeySource: JwksKeySource, options: JwksTokenVerifierOptions = {}) {
     super('', {
       ...options,
@@ -569,166 +543,17 @@ export class JwksTokenVerifier extends JWTTokenVerifier {
       // JWKS verifier; pass it through unchanged so explicit `false`
       // (rolling deploys) still works.
     });
-    this.jwksSource = jwksKeySource;
   }
 
   /**
-   * Verify a capability token using JWKS key selection.
-   *
-   * Overrides the parent to:
-   * 1. When `requireKid=true` (default): reject tokens without a `kid`
-   *    header immediately.  When `requireKid=false`: try every key in the
-   *    JWKS in turn, which supports tokens minted before the JWKS migration.
-   * 2. Apply the same `localIssuers` allow-list that the SPKI path enforces
-   *    when a partner resolver is configured (prevents an arbitrary `iss`
-   *    claim from bypassing the local-issuer allow-list).
-   * 3. Route all local-issuer tokens through the JWKS source; cross-org
-   *    partner-DID tokens are still handled via the inherited partner resolver.
-   *
-   * Revocation and schema-version checks are performed by the inherited
-   * {@link JWTTokenVerifier.performPostVerificationChecks} helper.
+   * Not supported on a JWKS-backed verifier — there is no single SPKI key
+   * to rotate.  Call sites that manage key rotation should instead replace
+   * the underlying {@link JwksKeySource} or allow the JWKS cache to expire.
    */
-  override async verify(token: string): Promise<CapabilityTokenPayload> {
-    try {
-      const header = jose.decodeProtectedHeader(token);
-      const algorithm = (header.alg ?? this.algorithms[0] ?? 'RS256') as string;
-      const kid = typeof header.kid === 'string' ? header.kid : undefined;
-
-      // Enforce kid requirement: reject immediately when requireKid=true.
-      // When requireKid=false, proceed to the "try all keys" path below.
-      if (!kid && this.requireKid) {
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          'Token is missing required kid in protected header',
-          401,
-        );
-      }
-
-      // Resolve the issuer for partner-resolver routing.
-      let iss: string | undefined;
-      try {
-        const decoded = jose.decodeJwt(token);
-        iss = typeof decoded.iss === 'string' ? decoded.iss : undefined;
-      } catch {
-        // The signature step below will produce a clearer error.
-      }
-
-      const useResolver = this.partnerResolver && iss && this.partnerResolver.trusts(iss);
-
-      if (useResolver) {
-        // Cross-org path: partner DID document supplies the public key.
-        // kid is required when routing via the partner resolver.
-        if (!kid) {
-          throw new CapabilityError(
-            ErrorCode.INVALID_TOKEN,
-            'Token is missing required kid in protected header for partner-issuer verification',
-            401,
-          );
-        }
-        const { key: partnerKey, alg: partnerAlg } = await this.partnerResolver!.getKey(iss!, kid);
-        let partnerPayload: CapabilityTokenPayload;
-        try {
-          const result = await jose.jwtVerify(token, partnerKey, {
-            algorithms: [partnerAlg],
-            issuer: iss!,
-          });
-          partnerPayload = result.payload as unknown as CapabilityTokenPayload;
-        } catch (err) {
-          if (err instanceof jose.errors.JWSSignatureVerificationFailed) {
-            this.partnerResolver!.invalidate(iss!, kid);
-          }
-          throw err;
-        }
-        return this.performPostVerificationChecks(partnerPayload);
-      } else {
-        // Local-issuer path: look up the key by kid from the JWKS source.
-        if (!this.algorithms.includes(algorithm as SigningAlgorithm)) {
-          throw new CapabilityError(
-            ErrorCode.INVALID_TOKEN,
-            `Token uses disallowed algorithm: ${algorithm}`,
-            401,
-          );
-        }
-
-        // Apply the same localIssuers allow-list that the SPKI path enforces
-        // when a partner resolver is configured, to prevent tokens carrying
-        // an arbitrary iss from bypassing the local-issuer constraint.
-        if (this.partnerResolver && this.localIssuers && iss && !this.localIssuers.has(iss)) {
-          throw new CapabilityError(
-            ErrorCode.INVALID_TOKEN,
-            `Token issuer ${iss} is neither a trusted partner DID nor a known local issuer`,
-            401,
-          );
-        }
-
-        if (kid) {
-          // Fast path: token carries a kid — look up the specific key.
-          // JwksClient supports forced-refresh-on-miss; generic JwksKeySource
-          // implementations do a single lookup.
-          let jwkEntry: import('@euno/common').JwkKey;
-          if (this.jwksSource instanceof JwksClient) {
-            jwkEntry = await this.jwksSource.getKeyByKid(kid);
-          } else {
-            const jwks = await this.jwksSource.getJwks();
-            const found = pickJwkByKid(jwks, kid);
-            if (!found) {
-              throw new CapabilityError(
-                ErrorCode.INVALID_TOKEN,
-                `No public key found for kid="${kid}"`,
-                401,
-              );
-            }
-            jwkEntry = found;
-          }
-
-          const keyObject = await jose.importJWK(jwkEntry as jose.JWK, algorithm);
-          const result = await jose.jwtVerify(token, keyObject as jose.KeyLike, {
-            algorithms: this.algorithms,
-          });
-          return this.performPostVerificationChecks(
-            result.payload as unknown as CapabilityTokenPayload,
-          );
-        }
-
-        // Slow path (requireKid=false): no kid — try all keys in the JWKS.
-        // This supports a rolling-deploy transition while pre-JWKS tokens
-        // are still in circulation.  Less efficient; enforce requireKid=true
-        // once all issuers include kid.
-        const jwks = await this.jwksSource.getJwks();
-        let lastError: unknown;
-
-        for (const jwkEntry of jwks.keys) {
-          try {
-            const keyObject = await jose.importJWK(jwkEntry as jose.JWK, algorithm);
-            const result = await jose.jwtVerify(token, keyObject as jose.KeyLike, {
-              algorithms: this.algorithms,
-            });
-            return this.performPostVerificationChecks(
-              result.payload as unknown as CapabilityTokenPayload,
-            );
-          } catch (err) {
-            lastError = err;
-          }
-        }
-
-        throw new CapabilityError(
-          ErrorCode.INVALID_TOKEN,
-          `Token signature did not match any key in the JWKS: ${lastError instanceof Error ? lastError.message : 'Unknown error'}`,
-          401,
-        );
-      }
-    } catch (error) {
-      if (error instanceof CapabilityError) {
-        throw error;
-      }
-      if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ERR_JWT_EXPIRED') {
-        throw new CapabilityError(ErrorCode.EXPIRED_TOKEN, 'Token has expired', 401);
-      }
-      throw new CapabilityError(
-        ErrorCode.INVALID_TOKEN,
-        `Token verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        401,
-      );
-    }
+  override updatePublicKey(_publicKey: string): never {
+    throw new Error(
+      'JwksTokenVerifier.updatePublicKey() is not supported: key material ' +
+        'is managed by the JWKS key source, not a static SPKI PEM.',
+    );
   }
 }

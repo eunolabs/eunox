@@ -55,6 +55,21 @@ export interface JwksKeySource {
    * cache the result and refresh on a configurable TTL.
    */
   getJwks(): Promise<JwkSet>;
+
+  /**
+   * Optional: retrieve the JWK whose `kid` matches the given string,
+   * applying forced-refresh-on-miss semantics when the kid is not
+   * found in the cache.
+   *
+   * When present, consumers may use this method for optimised kid lookups
+   * instead of fetching the full JWK Set and filtering locally.  This
+   * enables richer refresh semantics (e.g. a forced-refresh-on-cache-miss
+   * strategy) that cannot be expressed through `getJwks()` alone.
+   *
+   * Throw {@link CapabilityError} when the kid is not found even after
+   * any refresh.
+   */
+  getKeyByKid?(kid: string): Promise<JwkKey>;
 }
 
 /**
