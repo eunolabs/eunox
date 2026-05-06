@@ -801,6 +801,91 @@ export interface SignedBatchCommitment extends AuditBatchCommitment {
 }
 
 /**
+ * A snapshot of one replica's chain tip at a specific point in time.
+ *
+ * Used as a leaf in the {@link CrossChainCommitment} Merkle tree so that
+ * any modification to a replica's reported tip invalidates the root.
+ */
+export interface ChainTipSnapshot {
+  /** Replica / pod identifier. */
+  replicaId: string;
+  /** The sequence number of this replica's latest committed record. */
+  seq: number;
+  /**
+   * `canonicalSha256` of the latest `SignedAuditEvidence` for this replica.
+   * Matches the `record_hash` column in the per-replica ledger table.
+   */
+  tipHash: string;
+  /** ISO-8601 timestamp when this tip was observed by the coordinator. */
+  ts: string;
+}
+
+/**
+ * Unsigned cross-chain Merkle commitment.
+ *
+ * Periodically produced by the {@link CrossChainAnchor} to capture the
+ * current tips of **all** known replica chains in a single tamper-evident
+ * record.  The commitment:
+ *
+ *   - Proves that the exact set of replica tips listed in `tips` was
+ *     observed together (Merkle root over `canonicalSha256(ChainTipSnapshot)`
+ *     for each tip — any substitution changes the root).
+ *   - Links successive commitments via `previousCommitmentHash` so a gap or
+ *     reorder of commitment records is detectable.
+ *   - Is signed by {@link SignedCrossChainCommitment} and published to an
+ *     S3 Object-Lock bucket (or other configured anchors) so even a full
+ *     DB compromise cannot silently remove evidence without invalidating
+ *     the S3 anchor trail.
+ *
+ * The cross-chain commitment provides the missing link that the per-replica
+ * model (which removes `pg_advisory_xact_lock`) cannot provide by itself:
+ * a periodic tamper-evident snapshot binding all replica chains together at
+ * a point in time, visible to external auditors without DB access.
+ */
+export interface CrossChainCommitment {
+  /** Unique identifier for this commitment. */
+  commitmentId: string;
+  /** Replica / pod that produced this commitment. */
+  coordinatorId: string;
+  /** ISO-8601 timestamp when the commitment was computed. */
+  ts: string;
+  /** Replica chain tips included in this commitment (sorted by replicaId). */
+  tips: ChainTipSnapshot[];
+  /**
+   * Merkle root of `canonicalSha256(tip)` for each tip in `tips`.
+   * Computed using the same balanced binary Merkle tree as the per-record
+   * and per-batch Merkle trees (see `computeMerkleRoot` in utils.ts).
+   */
+  merkleRoot: string;
+  /** Number of tips included. */
+  tipCount: number;
+  /** Monotonically increasing (1-based) commitment sequence number for this coordinator. */
+  commitmentSeq: number;
+  /**
+   * `canonicalSha256` of the previous `SignedCrossChainCommitment`, or
+   * `GENESIS_HASH` for the first commitment from this coordinator.
+   */
+  previousCommitmentHash: string;
+}
+
+/**
+ * Cryptographically signed cross-chain Merkle commitment.
+ *
+ * The signature covers the canonical JSON form of all
+ * {@link CrossChainCommitment} fields so the commitment cannot be modified
+ * without detection.  Produced by {@link CrossChainAnchor} and published to
+ * S3 Object-Lock (or other configured anchors).
+ */
+export interface SignedCrossChainCommitment extends CrossChainCommitment {
+  /** Digital signature over the canonical form of the commitment fields. */
+  signature: string;
+  /** Key ID used for signing (matches the evidence signing key). */
+  keyId: string;
+  /** Signing algorithm (matches the evidence signing algorithm). */
+  algorithm: string;
+}
+
+/**
  * Capability issuance request
  */
 export interface IssueCapabilityRequest {

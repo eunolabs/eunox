@@ -54,6 +54,7 @@ export async function startServer(): Promise<void> {
     ocsfTransport,
     dpopReplayStore,
     ledgerPgPool,
+    crossChainAnchor,
   } = deps;
 
   const server = app.listen(config.port, () => {
@@ -254,6 +255,12 @@ export async function startServer(): Promise<void> {
         await closeWithTimeout('DPoP replay store', () =>
           Promise.resolve(closableReplay.close!()),
         );
+      }
+
+      // Phase 5.5: stop the CrossChainAnchor timer and wait for any
+      // in-flight commitment to complete before closing the DB pool.
+      if (crossChainAnchor) {
+        await closeWithTimeout('cross-chain anchor', () => crossChainAnchor.stop());
       }
 
       // Phase 6: close the ledger Postgres pool LAST — after the pipeline

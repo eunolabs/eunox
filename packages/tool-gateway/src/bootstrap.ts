@@ -21,6 +21,8 @@ import {
   AzureConfidentialLedgerBackend,
   AzureConfidentialLedgerClient,
   PostgresLedgerBackend,
+  PerReplicaPostgresLedgerBackend,
+  CrossChainAnchor,
   InMemoryLedgerBackend,
   LedgerChainError,
   SignedAuditEvidence,
@@ -125,10 +127,18 @@ export interface GatewayDependencies {
   dpopReplayStore?: DpopReplayStore;
   /**
    * PostgreSQL connection pool owned by the ledger backend.  Present when
-   * `AUDIT_LEDGER_BACKEND=postgres`.  The entrypoint is responsible for calling
-   * `ledgerPgPool.end()` on graceful shutdown so connection sockets are released.
+   * `AUDIT_LEDGER_BACKEND=postgres` or `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
+   * The entrypoint is responsible for calling `ledgerPgPool.end()` on graceful
+   * shutdown so connection sockets are released.
    */
   ledgerPgPool?: import('@euno/common').PgPool;
+  /**
+   * Cross-chain anchor for the per-replica ledger backend.  Present when
+   * `AUDIT_LEDGER_BACKEND=per-replica-postgres` and
+   * `AUDIT_LEDGER_S3_BUCKET` is configured.  The entrypoint is responsible
+   * for calling `crossChainAnchor.stop()` during graceful shutdown.
+   */
+  crossChainAnchor?: CrossChainAnchor;
   /**
    * Azure Confidential Ledger client for the ACL ledger backend.
    *
@@ -544,6 +554,17 @@ export interface InjectableBootstrapDeps {
    * `DefaultAzureCredential`.
    */
   ledgerAclClient?: AzureConfidentialLedgerClient;
+  /**
+   * Pre-built {@link CrossChainAnchor} for `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
+   *
+   * The standard bootstrap does not wire an S3 client, so it never creates a
+   * `CrossChainAnchor` internally.  Supply one here when you want periodic
+   * cross-replica Merkle commitments — typically by constructing
+   * `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` and passing a
+   * `CrossChainAnchor` that wraps it.  The bootstrap will call `.stop()` on it
+   * during graceful shutdown.
+   */
+  crossChainAnchor?: CrossChainAnchor;
 }
 
 /**
@@ -897,6 +918,8 @@ export async function initializeServices(
   // When a ledger backend is used the Postgres pool is created here; expose
   // it in GatewayDependencies so the entrypoint can call pool.end() on shutdown.
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
+  // CrossChainAnchor for per-replica-postgres; stopped during graceful shutdown.
+  let crossChainAnchor: CrossChainAnchor | undefined;
   // When a ledger backend wraps the signing key, keep softwareSigner available
   // as a batchSigner (signBatch() does not use chain state, so the software
   // signer can still fulfil the AuditBatchSigner role even in ledger mode).
@@ -918,7 +941,7 @@ export async function initializeServices(
 
       // Optionally wrap with a pluggable ledger backend to close the
       // "compromised replica rewrites local chain" gap.
-      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' }).AUDIT_LEDGER_BACKEND;
+      const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
       if (ledgerBackendName && ledgerBackendName !== 'none') {
         const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
         const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
@@ -1054,6 +1077,84 @@ export async function initializeServices(
           // Keep softwareSigner as batchSigner for the same reason as in postgres mode.
           auditBatchSigner = softwareSigner;
           logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
+        } else if (ledgerBackendName === 'per-replica-postgres') {
+          if (!pgUrl) {
+            throw new Error(
+              'AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.',
+            );
+          }
+          if (!hmacSecret) {
+            throw new Error(
+              'AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.',
+            );
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
+          const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
+          const pgPool = new Pool({ connectionString: pgUrl });
+          ledgerPgPool = pgPool;
+
+          const perReplicaBackend = new PerReplicaPostgresLedgerBackend(pgPool, replicaId, {
+            table,
+            hmacSecret,
+            onAnchorError: (err: Error) => {
+              logger.error('Per-replica ledger S3 anchor failed', { error: err.message });
+            },
+          });
+
+          if (runMigrations) {
+            if (validated.NODE_ENV === 'production') {
+              logger.warn(
+                'AUDIT_LEDGER_RUN_MIGRATIONS=true in production: the gateway service account ' +
+                  'is performing DDL on the audit ledger table. Production deployments should ' +
+                  'run migrations from a separate database role. See ' +
+                  'docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md §1.6.',
+              );
+            }
+            await perReplicaBackend.migrate();
+            logger.info('Per-replica audit ledger migrations completed', {
+              table: table ?? 'euno_audit_ledger_v2',
+            });
+          }
+
+          const cryptoSigner = softwareSigner.getCryptoSigner();
+          const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, perReplicaBackend, replicaId);
+          await ledgerSigner.initialize();
+          evidenceSigner = ledgerSigner;
+          auditBatchSigner = softwareSigner;
+
+          // CrossChainAnchor is not started in the standard bootstrap because there is
+          // no wired external output (the S3 client is unavailable here, and custom external
+          // anchors require a custom entrypoint). Starting the anchor without external output
+          // would fire DB queries every intervalMs and log commitments that are never
+          // persisted anywhere, producing misleading noise. Operators who want periodic
+          // cross-replica Merkle commitments should:
+          //   1. Set AUDIT_LEDGER_S3_BUCKET and provide an S3AnchorClient, OR
+          //   2. Provide a pre-built CrossChainAnchor via injectDeps.crossChainAnchor.
+          const crossChainIntervalMs = (validated as { AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number }).AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
+          if (s3Bucket) {
+            // S3 client wiring is not available in the standard bootstrap — same
+            // limitation as postgres mode.  When operators add a custom S3 client,
+            // they should construct PerReplicaPostgresLedgerBackend directly with
+            // the s3.client option and pass crossChainAnchor in injectDeps.
+            logger.warn(
+              'AUDIT_LEDGER_S3_BUCKET is set with per-replica-postgres but no S3 client is ' +
+                'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
+                'to S3. Construct PerReplicaPostgresLedgerBackend with an S3AnchorClient in a ' +
+                'custom entrypoint to enable S3 anchoring.',
+            );
+          }
+
+          if (injectDeps.crossChainAnchor) {
+            crossChainAnchor = injectDeps.crossChainAnchor;
+          }
+
+          logger.info('Audit ledger backend: per-replica-postgres', {
+            table: table ?? 'euno_audit_ledger_v2',
+            replicaId,
+            crossChainEnabled: crossChainAnchor !== undefined,
+            crossChainIntervalMs,
+          });
         } else {
           throw new Error(`Unknown AUDIT_LEDGER_BACKEND value: "${ledgerBackendName}"`);
         }
@@ -1596,6 +1697,7 @@ export async function initializeServices(
     ...(ocsfTransport ? { ocsfTransport } : {}),
     dpopReplayStore,
     ...(ledgerPgPool ? { ledgerPgPool } : {}),
+    ...(crossChainAnchor ? { crossChainAnchor } : {}),
     adminApiKey,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,

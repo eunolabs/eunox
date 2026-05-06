@@ -54,10 +54,10 @@
  */
 
 import * as crypto from 'crypto';
-import { AuditEvidence, SignedAuditEvidence, GENESIS_HASH } from './wire';
+import { AuditEvidence, SignedAuditEvidence, GENESIS_HASH, ChainTipSnapshot, CrossChainCommitment, SignedCrossChainCommitment } from './wire';
 import { EvidenceSigner } from './runtime';
 import { CryptoSigner, signEvidenceWithChain, canonicalizeEvidenceFields } from './evidence';
-import { canonicalSha256, computeMerkleRoot } from './utils';
+import { canonicalSha256, computeMerkleRoot, generateId } from './utils';
 
 // ── LedgerEntry ───────────────────────────────────────────────────────────────
 
@@ -1314,6 +1314,761 @@ export class AzureConfidentialLedgerBackend implements LedgerBackend {
   }
 }
 
+// ── PerReplicaPostgresLedgerBackend ───────────────────────────────────────────
+
+/**
+ * Options for {@link PerReplicaPostgresLedgerBackend}.
+ *
+ * Intentionally similar to {@link PostgresLedgerOptions} but without
+ * `advisoryLockId` (lock-free by design) and with a different default table
+ * name (`euno_audit_ledger_v2`) to avoid schema collisions with deployments
+ * already using the global-lock {@link PostgresLedgerBackend}.
+ */
+export interface PerReplicaPostgresLedgerOptions {
+  /**
+   * Name of the per-replica audit ledger table.
+   * Must be a valid SQL identifier (letters, digits, underscores; one dot for
+   * schema-qualified names is allowed, e.g. `audit.euno_ledger_v2`).
+   * Default: `euno_audit_ledger_v2`.
+   *
+   * Use a different name than the global-lock backend (`euno_audit_ledger`)
+   * because the schemas differ: this table uses `record_id` as its PRIMARY KEY
+   * with `(replica_id, seq)` as a unique constraint, whereas the legacy table
+   * uses `seq BIGINT PRIMARY KEY` (global sequence).
+   */
+  table?: string;
+  /**
+   * HMAC-SHA-256 secret for per-row integrity.  Same semantics as
+   * {@link PostgresLedgerOptions.hmacSecret}.
+   */
+  hmacSecret: string;
+  /**
+   * Optional S3 Object-Lock anchor.  Same semantics as
+   * {@link PostgresLedgerOptions.s3}.
+   */
+  s3?: {
+    client: S3AnchorClient;
+    bucket: string;
+    /**
+     * Key prefix for anchor objects.
+     * Resulting key: `{prefix}{replicaId}/{fromSeq}-{toSeq}.json`
+     * Default: `audit-anchor/`.
+     */
+    prefix?: string;
+    /**
+     * Number of rows between S3 anchors (per replica).
+     * Default: 1000.
+     */
+    anchorIntervalRows?: number;
+  };
+  /**
+   * Called when an S3 anchor write fails.  The append itself succeeds.
+   * Default: swallow silently.
+   */
+  onAnchorError?: (err: Error) => void;
+}
+
+/** Row shape returned by the per-replica SELECT for chain tip. */
+interface PerReplicaTipRow extends Record<string, unknown> {
+  seq: string;
+  record_hash: string;
+}
+
+/** Row shape returned by per-replica getEntries. */
+interface PerReplicaSelectRow extends Record<string, unknown> {
+  seq: string;
+  previous_hash: string;
+  record_hash: string;
+  replica_id: string;
+  payload: SignedAuditEvidence;
+  row_hmac: Buffer;
+  created_at: Date;
+}
+
+/** Row shape returned by getReplicaTips. */
+interface ReplicaTipsRow extends Record<string, unknown> {
+  replica_id: string;
+  seq: string;
+  record_hash: string;
+  created_at: Date;
+}
+
+/**
+ * Lock-free, per-replica PostgreSQL ledger backend.
+ *
+ * ## Design
+ *
+ * Unlike {@link PostgresLedgerBackend}, this backend does **not** acquire a
+ * cluster-wide `pg_advisory_xact_lock`. Instead:
+ *
+ *   - Each replica maintains its own independent chain segment.  `seq` is
+ *     monotonically increasing **within a replica**, not globally.  The
+ *     `(replica_id, seq)` pair is globally unique.
+ *
+ *   - Write serialisation is handled by an **in-process promise queue**
+ *     (identical to {@link InMemoryLedgerBackend} and
+ *     {@link AzureConfidentialLedgerBackend}).  Concurrent `appendEntry` calls
+ *     from the same process are queued; there is no cross-replica locking.
+ *
+ *   - Cross-replica tamper evidence is provided by the periodic
+ *     {@link CrossChainAnchor}, which snapshots all replica tips into a
+ *     `SignedCrossChainCommitment` and publishes it to S3 Object-Lock.
+ *
+ * ## Throughput scaling
+ *
+ * The append throughput scales **linearly with the number of replicas**.
+ * Adding a second replica doubles the cluster-wide evidence signing rate.
+ * The global advisory-lock bottleneck (`O(replicas × T_sign)` for the old
+ * backend) is replaced by `O(T_sign)` per replica.
+ *
+ * ## Schema
+ *
+ * ```sql
+ * CREATE TABLE euno_audit_ledger_v2 (
+ *   record_id     TEXT PRIMARY KEY,    -- signed evidence ID (globally unique)
+ *   replica_id    TEXT NOT NULL,
+ *   seq           BIGINT NOT NULL,     -- per-replica sequence (1-based)
+ *   previous_hash TEXT NOT NULL,
+ *   record_hash   TEXT NOT NULL,
+ *   payload       JSONB NOT NULL,
+ *   row_hmac      BYTEA NOT NULL,
+ *   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ *   UNIQUE (replica_id, seq)
+ * );
+ * CREATE INDEX idx_euno_audit_ledger_v2_replica_seq
+ *   ON euno_audit_ledger_v2 (replica_id, seq DESC);
+ * CREATE INDEX idx_euno_audit_ledger_v2_created_at
+ *   ON euno_audit_ledger_v2 (created_at);
+ * ```
+ *
+ * ## Comparison with PostgresLedgerBackend (global lock)
+ *
+ * | Property                     | PerReplica (this class)          | Global-lock (Postgres)   |
+ * |------------------------------|----------------------------------|--------------------------|
+ * | Cross-replica locking        | None — in-process queue only     | pg_advisory_xact_lock    |
+ * | Throughput                   | O(replicas) — scales linearly    | O(1) — single global queue|
+ * | Per-record chain             | Per-replica (seq namespaced)     | Global (single seq space)|
+ * | Cross-replica tamper evidence| CrossChainAnchor (periodic)      | Implicit (global chain)  |
+ * | Drop risk on burst           | Reduced (no lock contention)     | Higher under many replicas|
+ */
+export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
+  readonly name: string;
+
+  private readonly table: string;
+  private readonly hmacSecret: Buffer;
+  private readonly anchorIntervalRows: number;
+  private readonly s3?: Required<PerReplicaPostgresLedgerOptions>['s3'];
+  private readonly onAnchorError: (err: Error) => void;
+
+  /** Tracks the seq of the last S3 anchor for this replica. */
+  private lastAnchoredSeq = 0;
+
+  /**
+   * In-process chain state for this replica.
+   * Seeded from the DB by `initialize()`; advanced by each successful `appendEntry`.
+   */
+  private tipHash: string = GENESIS_HASH;
+  private tipSeq: number = 0;
+
+  /** Serial queue — prevents concurrent in-process appends from contending on DB. */
+  private appendTail: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private readonly pool: PgPool,
+    private readonly replicaId: string,
+    options: PerReplicaPostgresLedgerOptions,
+  ) {
+    this.name = 'per-replica-postgres';
+    this.table = validateTableName(options.table ?? 'euno_audit_ledger_v2');
+    if (!options.hmacSecret || options.hmacSecret.length === 0) {
+      throw new Error('PerReplicaPostgresLedgerBackend: hmacSecret is required');
+    }
+    this.hmacSecret = decodeHmacSecret(options.hmacSecret);
+    this.anchorIntervalRows = options.s3?.anchorIntervalRows ?? 1000;
+    this.s3 = options.s3;
+    this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
+  }
+
+  /**
+   * Ensure the per-replica ledger table exists.  Idempotent.
+   * Call once at startup before the first `appendEntry`.
+   */
+  async migrate(client?: PgClientConnection): Promise<void> {
+    const shouldRelease = !client;
+    const conn = client ?? await this.pool.connect();
+    const tableParts = this.table.split('.');
+    const tableNameOnly = tableParts[tableParts.length - 1]!;
+    try {
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS ${this.table} (
+          record_id     TEXT PRIMARY KEY,
+          replica_id    TEXT NOT NULL,
+          seq           BIGINT NOT NULL,
+          previous_hash TEXT NOT NULL,
+          record_hash   TEXT NOT NULL,
+          payload       JSONB NOT NULL,
+          row_hmac      BYTEA NOT NULL,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (replica_id, seq)
+        )
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_replica_seq
+          ON ${this.table} (replica_id, seq DESC)
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_created_at
+          ON ${this.table} (created_at)
+      `);
+    } finally {
+      if (shouldRelease) conn.release();
+    }
+  }
+
+  /**
+   * Seed in-process chain state from this replica's latest DB row.
+   *
+   * Call once at startup before the first `appendEntry` so the chain
+   * continues seamlessly across process restarts.  If the DB is unavailable
+   * at startup the method throws and the caller should surface this as a
+   * startup failure.
+   */
+  async initialize(): Promise<void> {
+    const conn = await this.pool.connect();
+    try {
+      const result = await conn.query<PerReplicaTipRow>(
+        `SELECT seq, record_hash FROM ${this.table}
+          WHERE replica_id = $1
+          ORDER BY seq DESC LIMIT 1`,
+        [this.replicaId],
+      );
+      const row = result.rows[0];
+      if (row) {
+        this.tipSeq = Number(row.seq);
+        this.tipHash = row.record_hash;
+        this.lastAnchoredSeq = this.tipSeq;
+      }
+    } finally {
+      conn.release();
+    }
+  }
+
+  async appendEntry(
+    _evidence: AuditEvidence,
+    replicaId: string,
+    sign: (previousHash: string, nextSeq: number) => Promise<SignedAuditEvidence>,
+  ): Promise<SignedAuditEvidence> {
+    if (replicaId !== this.replicaId) {
+      return Promise.reject(
+        new Error(
+          `PerReplicaPostgresLedgerBackend: appendEntry called with replicaId="${replicaId}" ` +
+            `but backend was constructed for replicaId="${this.replicaId}"`,
+        ),
+      );
+    }
+    return new Promise<SignedAuditEvidence>((resolve, reject) => {
+      this.appendTail = this.appendTail
+        .then(async () => {
+          const previousHash = this.tipHash;
+          const nextSeq = this.tipSeq + 1;
+
+          const signed = await sign(previousHash, nextSeq);
+
+          if (signed.previousHash !== previousHash) {
+            throw new LedgerChainError(
+              `PerReplicaPostgresLedgerBackend at seq ${nextSeq}: ` +
+                `expected previousHash="${previousHash}" ` +
+                `but signed record carries "${signed.previousHash}"`,
+              previousHash,
+              signed.previousHash,
+            );
+          }
+          if (signed.seq !== nextSeq) {
+            throw new LedgerChainError(
+              `PerReplicaPostgresLedgerBackend at seq ${nextSeq}: ` +
+                `expected seq=${nextSeq} ` +
+                `but signed record carries seq=${signed.seq}`,
+              String(nextSeq),
+              String(signed.seq),
+            );
+          }
+
+          const recordHash = canonicalSha256(signed);
+          const rowHmac = this.computeRowHmac(nextSeq, previousHash, recordHash, replicaId);
+
+          // INSERT without an advisory lock — no cross-replica contention
+          // because (replica_id, seq) is unique per replica and in-process
+          // queuing prevents same-replica concurrent appends.
+          const conn = await this.pool.connect();
+          try {
+            await conn.query(
+              `INSERT INTO ${this.table}
+                 (record_id, replica_id, seq, previous_hash, record_hash, payload, row_hmac)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+              [
+                signed.id,
+                replicaId,
+                nextSeq,
+                previousHash,
+                recordHash,
+                JSON.stringify(signed),
+                rowHmac,
+              ],
+            );
+          } finally {
+            conn.release();
+          }
+
+          // Advance in-process chain state AFTER the DB write succeeds.
+          this.tipHash = recordHash;
+          this.tipSeq = nextSeq;
+
+          // Trigger S3 anchor asynchronously.
+          if (this.s3 && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
+            const fromSeq = this.lastAnchoredSeq + 1;
+            const toSeq = nextSeq;
+            this.lastAnchoredSeq = toSeq;
+            this.triggerS3Anchor(fromSeq, toSeq, replicaId).catch((err) => {
+              this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+            });
+          }
+
+          return signed;
+        })
+        .then(resolve, reject)
+        .catch(() => {
+          // Suppress any residual rejection on the tail promise so that an error
+          // inside the work block (already forwarded to `reject` above) does not
+          // propagate as an unhandled rejection on `this.appendTail`.
+          //
+          // State invariant: `this.tipHash` and `this.tipSeq` are only advanced
+          // after the DB write succeeds (lines above).  Any error thrown before
+          // those assignments leaves the chain state unchanged, so the next queued
+          // append continues from the correct tip.
+          //
+          // This is the same pattern used by InMemoryLedgerBackend.appendEntry.
+        });
+    });
+  }
+
+  async getChainTip(): Promise<{ seq: number; tipHash: string } | null> {
+    if (this.tipSeq === 0) return null;
+    return { seq: this.tipSeq, tipHash: this.tipHash };
+  }
+
+  async getEntries(fromSeq: number, toSeq: number): Promise<LedgerEntry[]> {
+    const conn = await this.pool.connect();
+    try {
+      const result = await conn.query<PerReplicaSelectRow>(
+        `SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
+           FROM ${this.table}
+          WHERE replica_id = $1 AND seq >= $2 AND seq <= $3
+          ORDER BY seq ASC`,
+        [this.replicaId, fromSeq, toSeq],
+      );
+      return result.rows.map((row) => ({
+        seq: Number(row.seq),
+        previousHash: row.previous_hash,
+        recordHash: row.record_hash,
+        replicaId: row.replica_id,
+        signedEvidence: row.payload,
+        ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
+        rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
+      }));
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Return the latest chain tip for each known replica.
+   *
+   * Used by {@link CrossChainAnchor} to build a cross-replica Merkle
+   * commitment.  Only replicas that have at least one committed row in this
+   * table are included.
+   */
+  async getReplicaTips(): Promise<ChainTipSnapshot[]> {
+    const conn = await this.pool.connect();
+    try {
+      // For each replica, fetch the row with the highest seq.
+      const result = await conn.query<ReplicaTipsRow>(
+        `SELECT DISTINCT ON (replica_id) replica_id, seq, record_hash, created_at
+           FROM ${this.table}
+          ORDER BY replica_id, seq DESC`,
+      );
+      return result.rows.map((row) => ({
+        replicaId: row.replica_id,
+        seq: Number(row.seq),
+        tipHash: row.record_hash,
+        ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
+      }));
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Verify the per-row HMAC of a ledger entry.  Same semantics as
+   * {@link PostgresLedgerBackend.verifyRowHmac}.
+   */
+  verifyRowHmac(entry: LedgerEntry, rawHmac: Buffer): boolean {
+    const expected = this.computeRowHmac(
+      entry.seq,
+      entry.previousHash,
+      entry.recordHash,
+      entry.replicaId,
+    );
+    if (!Buffer.isBuffer(rawHmac) || rawHmac.length !== expected.length) {
+      return false;
+    }
+    try {
+      return crypto.timingSafeEqual(expected, rawHmac);
+    } catch {
+      return false;
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  // ── private helpers ─────────────────────────────────────────────────────
+
+  private computeRowHmac(
+    seq: number,
+    previousHash: string,
+    recordHash: string,
+    replicaId: string,
+  ): Buffer {
+    return crypto
+      .createHmac('sha256', this.hmacSecret)
+      .update(`${seq}:${previousHash}:${recordHash}:${replicaId}`, 'utf8')
+      .digest();
+  }
+
+  private async triggerS3Anchor(
+    fromSeq: number,
+    toSeq: number,
+    replicaId: string,
+  ): Promise<void> {
+    if (!this.s3) return;
+
+    const entries = await this.getEntries(fromSeq, toSeq);
+    if (entries.length === 0) return;
+
+    const leafHashes = entries.map((e) => e.recordHash);
+    const merkleRoot = computeMerkleRoot(leafHashes);
+    const anchorPayload = JSON.stringify({
+      schemaVersion: '1.0',
+      fromSeq,
+      toSeq,
+      merkleRoot,
+      replicaId,
+      ts: new Date().toISOString(),
+    });
+
+    const prefix = this.s3.prefix ?? 'audit-anchor/';
+    const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+
+    await this.s3.client.putObject({
+      bucket: this.s3.bucket,
+      key,
+      body: anchorPayload,
+      contentType: 'application/json',
+    });
+  }
+}
+
+// ── CrossChainAnchor ──────────────────────────────────────────────────────────
+
+/**
+ * Options for {@link CrossChainAnchor}.
+ */
+export interface CrossChainAnchorOptions {
+  /**
+   * How often (ms) to snapshot all replica tips and publish a cross-chain
+   * commitment.  Must be > 0.  A reasonable production value is 60 000 ms
+   * (one minute).  Lower values provide more frequent external witnesses at
+   * the cost of more Postgres queries and S3 PUT requests.
+   */
+  intervalMs: number;
+
+  /**
+   * Replica / pod identifier for the coordinator that produces commitments.
+   * Stamped on every `SignedCrossChainCommitment` so operators can trace
+   * commitments back to the replica that generated them.
+   */
+  coordinatorId: string;
+
+  /**
+   * Crypto signing primitive.  Cross-chain commitments are signed with the
+   * same key as per-record evidence so operators only need one key pair.
+   */
+  cryptoSigner: CryptoSigner;
+
+  /**
+   * Optional S3 Object-Lock anchor.  When configured, every cross-chain
+   * commitment is PUT to S3 with the key:
+   *   `{prefix}cross-chain/{coordinatorId}/{seq}.json`
+   * The bucket MUST have Object Lock enabled.
+   */
+  s3?: {
+    client: S3AnchorClient;
+    bucket: string;
+    /**
+     * Key prefix.  Default: `audit-anchor/`.
+     */
+    prefix?: string;
+  };
+
+  /**
+   * Additional external anchors (HTTP webhook, SIEM, transparency log).
+   * The raw `SignedCrossChainCommitment` JSON is delivered to each anchor's
+   * `anchorCrossChain(commitment)` call.  Errors from individual anchors
+   * are isolated and reported via `onError`.
+   */
+  anchors?: CrossChainExternalAnchor[];
+
+  /**
+   * Called when a cross-chain commitment cycle fails (query error, sign
+   * error, S3 error, etc.).  The anchor continues running on subsequent
+   * ticks.  Default: swallow silently.
+   */
+  onError?: (err: Error) => void;
+
+  /**
+   * Called after each successful commitment (useful for logging / metrics).
+   * Errors thrown here are swallowed.
+   */
+  onCommitment?: (commitment: SignedCrossChainCommitment) => void;
+}
+
+/**
+ * Pluggable external anchor for cross-chain commitments.
+ *
+ * Similar to {@link AuditAnchor} for per-batch commitments, but for
+ * cross-chain snapshots.  Implementations should be fast and non-blocking;
+ * errors are isolated so one failing anchor never blocks others.
+ */
+export interface CrossChainExternalAnchor {
+  /** Human-readable name for logging / metrics. */
+  name: string;
+  /**
+   * Deliver a signed cross-chain commitment.  MAY throw — errors are caught
+   * and routed to `CrossChainAnchorOptions.onError`.
+   */
+  anchorCrossChain(commitment: SignedCrossChainCommitment): Promise<void>;
+}
+
+/**
+ * Produces periodic cross-chain Merkle commitments that bind all replica
+ * chain tips together into a single tamper-evident, externally anchored
+ * record.
+ *
+ * ## How it works
+ *
+ *   1. Every `intervalMs`, queries `backend.getReplicaTips()` to obtain the
+ *      current tip `{ replicaId, seq, tipHash }` for every known replica.
+ *   2. Sorts tips by `replicaId` (deterministic leaf ordering).
+ *   3. Computes a Merkle root of `canonicalSha256(tip)` for each tip.
+ *   4. Signs a `CrossChainCommitment` (covering all tips + Merkle root)
+ *      to produce a `SignedCrossChainCommitment`.
+ *   5. PUTs the commitment to S3 Object-Lock and/or calls registered
+ *      external anchors.
+ *
+ * ## Why this matters
+ *
+ * With per-replica chains there is no single global sequence that binds all
+ * replicas together.  A compromised replica could advance its own chain in
+ * isolation without affecting others' tips — but a cross-chain commitment
+ * that captures all tips at a point in time creates an external witness.
+ * Anyone holding that S3 Object-Lock record can verify that replica `R` had
+ * advanced to seq `N` at timestamp `T`, and detect any later attempt to
+ * rewrite the replica's earlier history.
+ *
+ * ## Failure handling
+ *
+ * - Query failures (DB down) → logged via `onError`; anchor skips this tick
+ *   and retries on the next interval.
+ * - An empty ledger (no replicas) → skipped silently (no commitment emitted).
+ * - S3 / external anchor failures → logged via `onError`; the commitment
+ *   chain state (`commitmentSeq`, `previousCommitmentHash`) still advances
+ *   so the next commitment maintains a consistent sequence.
+ *
+ * ## Lifecycle
+ *
+ * Call `start()` once after construction.  Call `stop()` during graceful
+ * shutdown — it waits for any in-flight commitment to finish before resolving.
+ */
+export class CrossChainAnchor {
+  private readonly intervalMs: number;
+  private readonly coordinatorId: string;
+  private readonly cryptoSigner: CryptoSigner;
+  private readonly s3?: Required<CrossChainAnchorOptions>['s3'];
+  private readonly anchors: CrossChainExternalAnchor[];
+  private readonly onError: (err: Error) => void;
+  private readonly onCommitment?: (commitment: SignedCrossChainCommitment) => void;
+
+  private commitmentSeq = 0;
+  private previousCommitmentHash: string = GENESIS_HASH;
+
+  private timer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Tail of the in-progress commitment chain so `stop()` can await
+   * any in-flight tick before resolving.
+   */
+  private inFlight: Promise<void> = Promise.resolve();
+  private stopped = false;
+
+  constructor(
+    private readonly backend: PerReplicaPostgresLedgerBackend,
+    options: CrossChainAnchorOptions,
+  ) {
+    if (options.intervalMs <= 0) {
+      throw new Error('CrossChainAnchor: intervalMs must be > 0');
+    }
+    this.intervalMs = options.intervalMs;
+    this.coordinatorId = options.coordinatorId;
+    this.cryptoSigner = options.cryptoSigner;
+    this.s3 = options.s3;
+    this.anchors = options.anchors ?? [];
+    this.onError = options.onError ?? (() => { /* swallow */ });
+    this.onCommitment = options.onCommitment;
+  }
+
+  /** Start the periodic commitment timer. */
+  start(): void {
+    if (this.timer !== undefined) return;
+    this.timer = setInterval(() => {
+      if (!this.stopped) {
+        this.inFlight = this.inFlight.then(() => this.tick()).catch(() => { /* reported inside tick */ });
+      }
+    }, this.intervalMs);
+    // Allow the Node.js event loop to exit even if this timer is running.
+    if (typeof this.timer.unref === 'function') {
+      this.timer.unref();
+    }
+  }
+
+  /**
+   * Stop the timer and wait for any in-flight commitment to finish.
+   * Safe to call multiple times.
+   */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.timer !== undefined) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    await this.inFlight;
+  }
+
+  // ── private ──────────────────────────────────────────────────────────────
+
+  private async tick(): Promise<void> {
+    let tips: ChainTipSnapshot[];
+    try {
+      tips = await this.backend.getReplicaTips();
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    // Nothing to commit when no replicas have written yet.
+    if (tips.length === 0) return;
+
+    // Sort deterministically so the Merkle root is stable regardless of
+    // query ordering.
+    const sortedTips = [...tips].sort((a, b) => a.replicaId.localeCompare(b.replicaId));
+
+    const leafHashes = sortedTips.map((t) => canonicalSha256(t));
+    const merkleRoot = computeMerkleRoot(leafHashes);
+    const commitmentSeq = ++this.commitmentSeq;
+    const now = new Date().toISOString();
+
+    const commitment: CrossChainCommitment = {
+      commitmentId: generateId(),
+      coordinatorId: this.coordinatorId,
+      ts: now,
+      tips: sortedTips,
+      merkleRoot,
+      tipCount: sortedTips.length,
+      commitmentSeq,
+      previousCommitmentHash: this.previousCommitmentHash,
+    };
+
+    let signed: SignedCrossChainCommitment;
+    try {
+      signed = await this.signCommitment(commitment);
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    // Advance chain state before publishing — so the next commitment links
+    // correctly even if publishing fails.
+    this.previousCommitmentHash = canonicalSha256(signed);
+
+    // Publish to S3 Object-Lock.
+    if (this.s3) {
+      const prefix = this.s3.prefix ?? 'audit-anchor/';
+      const key = `${prefix}cross-chain/${this.coordinatorId}/${commitmentSeq}.json`;
+      try {
+        await this.s3.client.putObject({
+          bucket: this.s3.bucket,
+          key,
+          body: JSON.stringify(signed),
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(
+          `CrossChainAnchor S3 write failed: ${String(err)}`,
+        ));
+      }
+    }
+
+    // Fan out to additional external anchors concurrently.
+    if (this.anchors.length > 0) {
+      const results = await Promise.allSettled(
+        this.anchors.map((a) => a.anchorCrossChain(signed)),
+      );
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i]!;
+        if (result.status === 'rejected') {
+          const anchorName = this.anchors[i]!.name;
+          this.onError(
+            new Error(
+              `CrossChainAnchor external anchor '${anchorName}' failed: ${
+                result.reason instanceof Error ? result.reason.message : String(result.reason)
+              }`,
+            ),
+          );
+        }
+      }
+    }
+
+    if (this.onCommitment) {
+      try {
+        this.onCommitment(signed);
+      } catch {
+        // Sink failure must not interrupt the anchor.
+      }
+    }
+  }
+
+  private async signCommitment(
+    commitment: CrossChainCommitment,
+  ): Promise<SignedCrossChainCommitment> {
+    const keyId = await this.cryptoSigner.getKeyId();
+    const algorithm = this.cryptoSigner.getAlgorithm();
+    const canonical = canonicalSha256(commitment);
+    const digest = Buffer.from(canonical, 'hex');
+    const sigBuffer = await this.cryptoSigner.signDigest(digest);
+    const signature = sigBuffer.toString('base64');
+    return { ...commitment, signature, keyId, algorithm };
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -1322,17 +2077,20 @@ export class AzureConfidentialLedgerBackend implements LedgerBackend {
 export interface LedgerSignerConfig {
   /**
    * Which backend to use.
-   *   - `'none'`      — no ledger backend; falls back to a pure in-process chain.
-   *                     **Does not close the tamper-rewrite gap** — use only in
-   *                     development.
-   *   - `'in-memory'` — `InMemoryLedgerBackend` for tests.
-   *   - `'postgres'`  — `PostgresLedgerBackend` for production (cross-replica
-   *                     chain serialisation via `pg_advisory_xact_lock` + HMAC).
-   *   - `'acl'`       — `AzureConfidentialLedgerBackend` for production on
-   *                     Azure (TEE-backed immutability; single-process chain
-   *                     serialisation only — no cross-replica locking).
+   *   - `'none'`                 — no ledger backend; falls back to a pure in-process chain.
+   *                                **Does not close the tamper-rewrite gap** — use only in
+   *                                development.
+   *   - `'in-memory'`            — `InMemoryLedgerBackend` for tests.
+   *   - `'postgres'`             — `PostgresLedgerBackend` for production (cross-replica
+   *                                chain serialisation via `pg_advisory_xact_lock` + HMAC).
+   *   - `'per-replica-postgres'` — `PerReplicaPostgresLedgerBackend` for production
+   *                                (lock-free per-replica chains; requires
+   *                                `CrossChainAnchor` for cross-replica tamper evidence).
+   *   - `'acl'`                  — `AzureConfidentialLedgerBackend` for production on
+   *                                Azure (TEE-backed immutability; single-process chain
+   *                                serialisation only — no cross-replica locking).
    */
-  backend: 'none' | 'in-memory' | 'postgres' | 'acl';
+  backend: 'none' | 'in-memory' | 'postgres' | 'per-replica-postgres' | 'acl';
 
   /** Crypto signing primitive (shared with `AuditEvidenceSigner`). */
   cryptoSigner: CryptoSigner;
@@ -1341,30 +2099,31 @@ export interface LedgerSignerConfig {
   replicaId: string;
 
   /**
-   * PostgreSQL pool. Required when `backend === 'postgres'`.
-   * The pool should be shared with other components (kill switch, revocation
-   * store) rather than creating a new pool per component.
+   * PostgreSQL pool. Required when `backend === 'postgres'` or
+   * `backend === 'per-replica-postgres'`.
    */
   pgPool?: PgPool;
 
   /** PostgreSQL ledger backend options. Required when `backend === 'postgres'`. */
   pgOptions?: PostgresLedgerOptions;
 
+  /**
+   * Per-replica PostgreSQL ledger backend options. Required when
+   * `backend === 'per-replica-postgres'`.
+   */
+  perReplicaPgOptions?: PerReplicaPostgresLedgerOptions;
+
   /** Optional S3 anchor client for the PostgreSQL backend. */
   s3?: PostgresLedgerOptions['s3'];
 
   /**
-   * When `true`, run `PostgresLedgerBackend.migrate()` at startup to ensure
-   * the table exists. Default `false` (rely on external schema management).
+   * When `true`, run `migrate()` at startup to ensure the table exists.
+   * Default `false` (rely on external schema management).
    */
   runMigrations?: boolean;
 
   /**
    * Azure Confidential Ledger client. Required when `backend === 'acl'`.
-   *
-   * Build this from `@azure-rest/confidential-ledger` + `@azure/identity` in
-   * your entrypoint and inject it here (or via
-   * `GatewayDependencies.ledgerAclClient` for the standard bootstrap).
    */
   aclClient?: AzureConfidentialLedgerClient;
 
@@ -1405,6 +2164,26 @@ export async function createLedgerSignerFromConfig(
       await pgBackend.migrate();
     }
     backend = pgBackend;
+  } else if (config.backend === 'per-replica-postgres') {
+    if (!config.pgPool) {
+      throw new Error('createLedgerSignerFromConfig: pgPool is required for per-replica-postgres backend');
+    }
+    const opts = config.perReplicaPgOptions;
+    if (!opts) {
+      throw new Error('createLedgerSignerFromConfig: perReplicaPgOptions is required for per-replica-postgres backend');
+    }
+    const perReplicaBackend = new PerReplicaPostgresLedgerBackend(
+      config.pgPool,
+      config.replicaId,
+      {
+        ...opts,
+        s3: config.s3 ?? opts.s3,
+      },
+    );
+    if (config.runMigrations) {
+      await perReplicaBackend.migrate();
+    }
+    backend = perReplicaBackend;
   } else if (config.backend === 'acl') {
     if (!config.aclClient) {
       throw new Error('createLedgerSignerFromConfig: aclClient is required for acl backend');
@@ -1416,8 +2195,7 @@ export async function createLedgerSignerFromConfig(
 
   const signer = new LedgerAuditEvidenceSigner(config.cryptoSigner, backend, config.replicaId);
   // initialize() delegates to backend.initialize() if implemented, seeding
-  // chain state (Postgres lastAnchoredSeq, ACL tip hash) before the first
-  // signing call.
+  // chain state (Postgres lastAnchoredSeq, per-replica tip hash, ACL tip hash).
   await signer.initialize();
   return signer;
 }

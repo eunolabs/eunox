@@ -1077,6 +1077,7 @@ export const GatewayConfigSchema = z
             z.literal('postgres'),
             z.literal('in-memory'),
             z.literal('acl'),
+            z.literal('per-replica-postgres'),
             z.undefined(),
           ])
           .transform((v) => v ?? 'none'),
@@ -1084,16 +1085,20 @@ export const GatewayConfigSchema = z
       .describe(
         'Pluggable ledger backend for evidence signing. ' +
         '"none" (default) — in-process chain only (no replay protection against a compromised replica). ' +
-        '"postgres" — append-only PostgreSQL table with per-row HMAC. ' +
+        '"postgres" — append-only PostgreSQL table with per-row HMAC; uses pg_advisory_xact_lock ' +
+        '  for cross-replica serialisation (single global write queue). ' +
+        '"per-replica-postgres" — lock-free per-replica chains; each replica maintains its own ' +
+        '  seq namespace; throughput scales linearly with replica count. ' +
+        '  Use AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS to configure periodic cross-replica ' +
+        '  Merkle commitments that bind all replica chains together. ' +
         '"in-memory" — ephemeral in-process ledger for testing. ' +
-        '"acl" — Azure Confidential Ledger (TEE-backed). Requires either AUDIT_LEDGER_ACL_ENDPOINT ' +
-        '(auto-constructs a client using DefaultAzureCredential) or an AzureConfidentialLedgerClient ' +
-        'injected via the second argument to initializeServices(). ' +
-        'Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to "postgres".',
+        '"acl" — Azure Confidential Ledger (TEE-backed). ' +
+        'Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to "postgres" or ' +
+        '"per-replica-postgres".',
       ),
     AUDIT_LEDGER_PG_URL: optionalString.describe(
       'PostgreSQL connection URL for the ledger backend. ' +
-      'Required when AUDIT_LEDGER_BACKEND=postgres. ' +
+      'Required when AUDIT_LEDGER_BACKEND=postgres or AUDIT_LEDGER_BACKEND=per-replica-postgres. ' +
       'Format: postgresql://user:password@host:5432/dbname. ' +
       'The service account MUST have INSERT + SELECT on the ledger table; ' +
       'it does NOT need UPDATE or DELETE (those operations would indicate tampering).',
@@ -1154,6 +1159,20 @@ export const GatewayConfigSchema = z
       'NOTE: the standard bootstrap dynamically requires @azure-rest/confidential-ledger and ' +
       '@azure/identity — add both to your deployment image when using this option.',
     ),
+
+    // Per-replica backend config (only used when AUDIT_LEDGER_BACKEND=per-replica-postgres).
+    AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS: envPositiveInt({
+      default: 60000,
+      min: 5000,
+      description:
+        'How often (ms) the CrossChainAnchor queries all replica tips and emits a ' +
+        'SignedCrossChainCommitment to S3 Object-Lock. Only active when ' +
+        'AUDIT_LEDGER_BACKEND=per-replica-postgres and AUDIT_LEDGER_S3_BUCKET is set. ' +
+        'Default 60000 (1 minute). Minimum 5000 ms. ' +
+        'Lower values provide more frequent cross-replica tamper-evidence checkpoints ' +
+        'at the cost of additional Postgres queries and S3 PUT requests. ' +
+        'Set to a large value (e.g. 3600000) in high-write deployments to control costs.',
+    }),
 
 
     POLICY_VERSION: optionalString.describe(
