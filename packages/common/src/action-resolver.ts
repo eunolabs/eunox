@@ -36,6 +36,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { Action, CaActionTier } from './types';
+import { canonicalSha256 } from './utils';
 
 // Re-export so consumers can import the pair from one place.
 export type { Action, CaActionTier };
@@ -352,6 +353,92 @@ export function loadActionResolverFromFile(filePath: string): DefaultActionResol
     );
   }
   return new DefaultActionResolver(validateActionResolverConfig(parsed));
+}
+
+/**
+ * Compute a stable, canonical SHA-256 hex digest of an
+ * {@link ActionResolverConfig} (or `null` when no
+ * operator-supplied file is configured).
+ *
+ * **Scope**: only the operator-supplied overrides are digested — the
+ * built-in {@link DEFAULT_HTTP_METHOD_ACTIONS}, {@link DEFAULT_TOOL_ACTIONS}
+ * and {@link DEFAULT_ACTION_CA_TIERS} constants are the same in every
+ * deployment and do not need to be part of the fingerprint.  Two services
+ * using the *same* operator-supplied file therefore produce the same hash
+ * regardless of the runtime or the Node.js version, while any difference in
+ * the operator config (including a missing file on one side) is immediately
+ * visible.
+ *
+ * **`null` and `{}` are treated as semantically equivalent** — both mean
+ * "no operator overrides; use built-in defaults only".  A service with no
+ * `ACTION_RESOLVER_FILE` configured will therefore produce the same hash as
+ * a service configured with an empty `{}` file, and the two are treated as
+ * in agreement by the parity check.
+ *
+ * **Algorithm**: {@link canonicalSha256} (sorted-key JSON → SHA-256 hex) so
+ * the digest is deterministic across JS runtimes and matches any out-of-band
+ * operator tool that implements the same algorithm.
+ *
+ * The sentinel value `null` represents "no operator file configured; use
+ * built-in defaults only".  Callers that load an operator file MUST pass the
+ * validated {@link ActionResolverConfig} object (which may be `{}` for an
+ * empty file).
+ */
+export function computeActionResolverHash(config: ActionResolverConfig | null): string {
+  // null and {} are semantically equivalent ("no operator overrides") so we
+  // coalesce null to {} before hashing, ensuring both sides of the parity
+  // check agree even when one service has no ACTION_RESOLVER_FILE configured
+  // and the other has an explicitly empty one.
+  return canonicalSha256(config ?? {});
+}
+
+/**
+ * Result of {@link loadActionResolverFromFileWithHash}: both the ready-to-use
+ * resolver and the canonical digest of the operator config it was built from.
+ */
+export interface ActionResolverWithHash {
+  resolver: DefaultActionResolver;
+  /**
+   * Canonical SHA-256 hex digest of the operator-supplied
+   * {@link ActionResolverConfig}.  Produced by
+   * {@link computeActionResolverHash} and suitable for cross-service
+   * comparison (issuer vs gateway) and for embedding in the issuer's
+   * `/.well-known/capability-issuer` discovery document.
+   */
+  hash: string;
+}
+
+/**
+ * Load a {@link DefaultActionResolver} from a JSON file on disk and return
+ * both the resolver and the canonical {@link computeActionResolverHash}
+ * of the validated config.  Identical to {@link loadActionResolverFromFile}
+ * except that callers receive the hash without a second file read.
+ */
+export function loadActionResolverFromFileWithHash(filePath: string): ActionResolverWithHash {
+  const resolved = path.resolve(filePath);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(resolved, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `Failed to read action resolver config '${resolved}': ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Action resolver config '${resolved}' is not valid JSON: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+  const config = validateActionResolverConfig(parsed);
+  return {
+    resolver: new DefaultActionResolver(config),
+    hash: computeActionResolverHash(config),
+  };
 }
 
 // ---------------------------------------------------------------------------

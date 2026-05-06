@@ -911,6 +911,30 @@ export const GatewayConfigSchema = z
     ISSUER_PUBLIC_KEY_URL: optionalString.describe(
       '[Deprecated — use ISSUER_JWKS_URL] URL the gateway calls to fetch the issuer SPKI public key. Kept for one deprecation cycle; will be removed in a future release.',
     ),
+    ISSUER_METADATA_URL: optionalString.describe(
+      'URL of the issuer /.well-known/capability-issuer discovery document. ' +
+      'When set (or derivable from ISSUER_JWKS_URL), the gateway fetches this ' +
+      'endpoint at startup and compares its `actionResolverHash` against the ' +
+      'locally computed hash of ACTION_RESOLVER_FILE. A mismatch means the issuer ' +
+      'and gateway are using different action vocabularies (silent drift). ' +
+      'Behaviour on mismatch is controlled by ACTION_RESOLVER_HASH_ENFORCEMENT. ' +
+      'Automatically derived from ISSUER_JWKS_URL when that URL ends with ' +
+      '/.well-known/jwks.json (e.g. https://issuer.example.com/.well-known/jwks.json ' +
+      '→ https://issuer.example.com/.well-known/capability-issuer).',
+    ),
+    ACTION_RESOLVER_HASH_ENFORCEMENT: optionalString
+      .pipe(
+        z
+          .union([z.literal('warn'), z.literal('error'), z.undefined()])
+          .transform((v) => v ?? 'warn'),
+      )
+      .describe(
+        'Policy applied when the gateway detects an actionResolverHash mismatch with the ' +
+        'issuer\'s /.well-known/capability-issuer document. ' +
+        '"warn" (default): log a warning and continue — suitable during migrations. ' +
+        '"error": abort startup with a non-zero exit code — recommended for production to ' +
+        'prevent a gateway from enforcing a different action vocabulary than the issuer minted with.',
+      ),
     EUNO_JWKS_CACHE_TTL_SECONDS: envPositiveInt({
       default: 300,
       description:

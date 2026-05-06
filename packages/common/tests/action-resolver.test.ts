@@ -22,7 +22,9 @@ import {
   DEFAULT_HTTP_METHOD_ACTIONS,
   DEFAULT_TOOL_ACTIONS,
   DefaultActionResolver,
+  computeActionResolverHash,
   loadActionResolverFromFile,
+  loadActionResolverFromFileWithHash,
   validateActionResolverConfig,
 } from '../src/action-resolver';
 
@@ -310,5 +312,86 @@ describe('loadActionResolverFromFile', () => {
     const file = path.join(tmpDir, 'wrong.json');
     fs.writeFileSync(file, JSON.stringify({ defaultTier: 'super-admin' }));
     expect(() => loadActionResolverFromFile(file)).toThrow(/must be one of/);
+  });
+});
+
+describe('computeActionResolverHash', () => {
+  it('produces a 64-character hex string (SHA-256)', () => {
+    const h = computeActionResolverHash(null);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('null and {} produce the same hash (semantic equivalence)', () => {
+    expect(computeActionResolverHash(null)).toBe(computeActionResolverHash({}));
+  });
+
+  it('is deterministic across calls', () => {
+    const cfg = { actionTiers: { 'db:select': 'read' as const } };
+    expect(computeActionResolverHash(cfg)).toBe(computeActionResolverHash(cfg));
+  });
+
+  it('is order-independent (canonical JSON)', () => {
+    // Object key order must not affect the hash.
+    const a = { actionTiers: { 'db:select': 'read' as const, 's3:putObject': 'write' as const } };
+    const b = { actionTiers: { 's3:putObject': 'write' as const, 'db:select': 'read' as const } };
+    expect(computeActionResolverHash(a)).toBe(computeActionResolverHash(b));
+  });
+
+  it('different configs produce different hashes', () => {
+    const a = computeActionResolverHash({ actionTiers: { 'db:select': 'read' as const } });
+    const b = computeActionResolverHash({ actionTiers: { 'db:select': 'write' as const } });
+    expect(a).not.toBe(b);
+  });
+
+  it('a config with operator overrides differs from the null/empty hash', () => {
+    const withOverride = computeActionResolverHash({
+      httpMethodActions: { POST: 'read' },
+    });
+    expect(withOverride).not.toBe(computeActionResolverHash(null));
+  });
+});
+
+describe('loadActionResolverFromFileWithHash', () => {
+  const tmpDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'action-resolver-hash-'));
+
+  afterAll(() => {
+    fs.rmSync(tmpDir2, { recursive: true, force: true });
+  });
+
+  it('returns resolver and hash; hash equals computeActionResolverHash of the validated config', () => {
+    const cfg = { actionTiers: { 'app:read': 'read' as const } };
+    const file = path.join(tmpDir2, 'cfg.json');
+    fs.writeFileSync(file, JSON.stringify(cfg));
+
+    const { resolver, hash } = loadActionResolverFromFileWithHash(file);
+    expect(resolver.toCaTier('app:read')).toBe('read');
+    expect(hash).toBe(computeActionResolverHash(cfg));
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('two files with identical content produce the same hash', () => {
+    const cfg = { httpMethodActions: { POST: 'read' } };
+    const file1 = path.join(tmpDir2, 'f1.json');
+    const file2 = path.join(tmpDir2, 'f2.json');
+    fs.writeFileSync(file1, JSON.stringify(cfg));
+    fs.writeFileSync(file2, JSON.stringify(cfg));
+
+    const { hash: h1 } = loadActionResolverFromFileWithHash(file1);
+    const { hash: h2 } = loadActionResolverFromFileWithHash(file2);
+    expect(h1).toBe(h2);
+  });
+
+  it('an empty-object file produces the same hash as null (no overrides)', () => {
+    const file = path.join(tmpDir2, 'empty.json');
+    fs.writeFileSync(file, '{}');
+
+    const { hash } = loadActionResolverFromFileWithHash(file);
+    expect(hash).toBe(computeActionResolverHash(null));
+  });
+
+  it('throws for missing files', () => {
+    expect(() => loadActionResolverFromFileWithHash(path.join(tmpDir2, 'nope.json'))).toThrow(
+      /Failed to read action resolver config/,
+    );
   });
 });

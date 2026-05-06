@@ -20,8 +20,9 @@ import {
   TokenSigner,
   IdentityProvider,
   RoleCapabilityPolicy,
-  loadActionResolverFromFile,
+  loadActionResolverFromFileWithHash,
   loadRoleCapabilityPolicyFromFile,
+  computeActionResolverHash,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   SUPPORTED_SCHEMA_VERSIONS,
   SIGNING_ALGORITHMS,
@@ -231,6 +232,13 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
 // Initialize services
 let issuerService: CapabilityIssuerService | undefined;
 let isInitialized = false;
+/**
+ * Canonical SHA-256 hash of the operator-supplied ActionResolver config
+ * (see {@link computeActionResolverHash}).  Populated by
+ * {@link initializeServices} and exposed at /.well-known/capability-issuer
+ * so the gateway can verify it loaded the same action vocabulary.
+ */
+let actionResolverHash: string | undefined;
 
 async function initializeServices() {
   try {
@@ -264,8 +272,15 @@ async function initializeServices() {
     const actionResolverFile = env.ACTION_RESOLVER_FILE;
     if (actionResolverFile && actionResolverFile.trim().length > 0) {
       logger.info('Loading action resolver config from file', { path: actionResolverFile });
-      actionResolver = loadActionResolverFromFile(actionResolverFile);
-      logger.info('Action resolver config loaded');
+      const { resolver, hash } = loadActionResolverFromFileWithHash(actionResolverFile);
+      actionResolver = resolver;
+      actionResolverHash = hash;
+      logger.info('Action resolver config loaded', { actionResolverHash: hash });
+    } else {
+      // No operator file — record the sentinel hash for the built-in defaults
+      // so /.well-known/capability-issuer always surfaces a hash the gateway
+      // can compare against its own.
+      actionResolverHash = computeActionResolverHash(null);
     }
 
     // Per-(tenant, user, agent) issuance rate limiter (F-1, addresses
@@ -880,6 +895,7 @@ app.get('/.well-known/did.json', async (_req: Request, res: Response, next: Next
  * - Current token schema version being minted
  * - Supported signing algorithms
  * - Link to public key and DID document
+ * - actionResolverHash: canonical SHA-256 of the loaded ActionResolver config
  */
 app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
   const body: Record<string, unknown> = {
@@ -894,6 +910,13 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
       publicKey: '/api/v1/public-key (deprecated — use jwks)',
       didDocument: '/.well-known/did.json',
     },
+    // Canonical SHA-256 of the operator-supplied ActionResolver config
+    // (or the sentinel hash of `{}` when no file is configured). The
+    // gateway compares this against its own locally-computed hash at
+    // startup — a mismatch means the two services are using different
+    // action vocabularies and tokens minted by this issuer may not be
+    // enforced correctly at the gateway.
+    actionResolverHash,
   };
   // F-7: surface the region tag so a multi-region active/active
   // deployment can be inspected from the outside (e.g. an operator

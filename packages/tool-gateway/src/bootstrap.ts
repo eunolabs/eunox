@@ -33,7 +33,8 @@ import {
   ShardLocalCallCounterStore,
   createLogger,
   createAuditLogger,
-  loadActionResolverFromFile,
+  loadActionResolverFromFileWithHash,
+  computeActionResolverHash,
   loadConfigOrExit,
   loadConfig,
   GatewayConfig,
@@ -327,6 +328,122 @@ function deriveJwksUrl(publicKeyUrl: string | undefined): string | undefined {
 }
 
 /**
+ * Derive the issuer's `/.well-known/capability-issuer` metadata URL.
+ *
+ * Resolution order:
+ *   1. `explicitMetadataUrl` — when the operator sets `ISSUER_METADATA_URL`.
+ *   2. Derived from `jwksUrl` — when the JWKS URL ends with
+ *      `/.well-known/jwks.json` the metadata URL is the same base with
+ *      `/.well-known/capability-issuer` appended.
+ *   3. `undefined` — when neither is available; the parity check is skipped.
+ */
+export function deriveIssuerMetadataUrl(
+  explicitMetadataUrl: string | undefined,
+  jwksUrl: string,
+): string | undefined {
+  if (explicitMetadataUrl && explicitMetadataUrl.trim().length > 0) {
+    return explicitMetadataUrl.trim();
+  }
+  const jwksSuffix = '/.well-known/jwks.json';
+  if (jwksUrl.endsWith(jwksSuffix)) {
+    return `${jwksUrl.slice(0, -jwksSuffix.length)}/.well-known/capability-issuer`;
+  }
+  return undefined;
+}
+
+/**
+ * Fetch the issuer's `/.well-known/capability-issuer` discovery document and
+ * compare its `actionResolverHash` against the locally-computed hash.
+ *
+ * On mismatch the behaviour is controlled by `enforcement`:
+ *   - `'warn'`  — log a structured warning and continue.
+ *   - `'error'` — throw so the gateway aborts startup.
+ *
+ * Non-fatal fetch/parse errors are always logged as warnings: we do not want
+ * a transient issuer outage to block gateway restarts (the check is best-effort
+ * at startup; the issuer's tokens are still cryptographically verified on every
+ * request).
+ *
+ * @internal Exported for unit testing only; not part of the public API.
+ */
+export async function checkActionResolverHashParity({
+  issuerMetadataUrl,
+  localHash,
+  enforcement,
+  logger,
+}: {
+  issuerMetadataUrl: string;
+  localHash: string;
+  enforcement: string;
+  logger: Logger;
+}): Promise<void> {
+  logger.info('Fetching issuer metadata for action-resolver hash parity check', {
+    issuerMetadataUrl,
+  });
+
+  let remoteHash: string | undefined;
+  try {
+    const resp = await fetch(issuerMetadataUrl, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) {
+      logger.warn(
+        'Issuer metadata fetch returned non-OK status; skipping action-resolver hash parity check',
+        { issuerMetadataUrl, status: resp.status },
+      );
+      return;
+    }
+    const body = (await resp.json()) as Record<string, unknown>;
+    if (typeof body.actionResolverHash === 'string') {
+      remoteHash = body.actionResolverHash;
+    } else {
+      logger.warn(
+        'Issuer metadata does not include actionResolverHash; skipping parity check. ' +
+          'Ensure the issuer is running a version that populates this field.',
+        { issuerMetadataUrl },
+      );
+      return;
+    }
+  } catch (err) {
+    logger.warn(
+      'Failed to fetch issuer metadata for action-resolver hash parity check; ' +
+        'check will be skipped. This is non-fatal but may indicate an issuer connectivity issue.',
+      {
+        issuerMetadataUrl,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    return;
+  }
+
+  if (remoteHash === localHash) {
+    logger.info('Action-resolver hash parity check passed', {
+      hash: localHash,
+      issuerMetadataUrl,
+    });
+    return;
+  }
+
+  const message =
+    'ACTION RESOLVER HASH MISMATCH: the gateway is enforcing a different action ' +
+    'vocabulary than the issuer used to mint tokens. Tokens whose actions appear ' +
+    'valid to the issuer may be rejected by the gateway (or silently permitted). ' +
+    'Ensure ACTION_RESOLVER_FILE is the same on both services, then restart. ' +
+    `issuerHash=${remoteHash} localHash=${localHash} issuerMetadataUrl=${issuerMetadataUrl}`;
+
+  if (enforcement === 'error') {
+    throw new Error(message);
+  } else {
+    logger.warn(message, {
+      issuerHash: remoteHash,
+      localHash,
+      issuerMetadataUrl,
+    });
+  }
+}
+
+/**
  * Parse the `TRUST_PROXY` env var into the value Express's
  * `app.set('trust proxy', …)` accepts. Mirrors the Express docs:
  *
@@ -521,12 +638,49 @@ export async function initializeServices(
   // process. Falls back to the in-process BUILTIN_ACTION_RESOLVER
   // (legacy behaviour) when the env var is unset.
   let actionResolver: ActionResolver = BUILTIN_ACTION_RESOLVER;
+  // Canonical SHA-256 of the operator-supplied ActionResolverConfig. When no
+  // file is configured this equals computeActionResolverHash(null) — the same
+  // sentinel the issuer publishes — so the hashes still agree when both sides
+  // use the built-in defaults.
+  let localActionResolverHash: string;
   if (validated.ACTION_RESOLVER_FILE && validated.ACTION_RESOLVER_FILE.trim().length > 0) {
     logger.info('Loading action resolver config from file', {
       path: validated.ACTION_RESOLVER_FILE,
     });
-    actionResolver = loadActionResolverFromFile(validated.ACTION_RESOLVER_FILE);
-    logger.info('Action resolver config loaded');
+    const { resolver, hash } = loadActionResolverFromFileWithHash(validated.ACTION_RESOLVER_FILE);
+    actionResolver = resolver;
+    localActionResolverHash = hash;
+    logger.info('Action resolver config loaded', { actionResolverHash: hash });
+  } else {
+    localActionResolverHash = computeActionResolverHash(null);
+  }
+
+  // Action resolver vocabulary parity check: fetch the issuer's discovery
+  // document and compare its actionResolverHash with our locally-computed
+  // hash. A mismatch means the issuer minted tokens with a different action
+  // vocabulary than we will enforce — a silent privilege-drift vector.
+  //
+  // The metadata URL is taken from ISSUER_METADATA_URL if set; otherwise
+  // derived from ISSUER_JWKS_URL by replacing the JWKS suffix with the
+  // capability-issuer suffix.  When neither can be derived (unlikely in
+  // practice: the gateway already requires ISSUER_JWKS_URL in production)
+  // the check is skipped with a warning.
+  const issuerMetadataUrl = deriveIssuerMetadataUrl(
+    validated.ISSUER_METADATA_URL,
+    issuerJwksUrl,
+  );
+  if (issuerMetadataUrl) {
+    await checkActionResolverHashParity({
+      issuerMetadataUrl,
+      localHash: localActionResolverHash,
+      enforcement: validated.ACTION_RESOLVER_HASH_ENFORCEMENT ?? 'warn',
+      logger,
+    });
+  } else {
+    logger.warn(
+      'Skipping issuer action-resolver hash parity check: cannot derive issuer metadata URL. ' +
+      'Set ISSUER_METADATA_URL to enable the check.',
+    );
   }
 
   // Build the revocation store from environment.  Defaults to in-memory; if

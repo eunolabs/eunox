@@ -12,6 +12,7 @@
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
     "verify-evidence": "node scripts/verify-evidence.js",
+    "lint:action-resolver": "node scripts/check-action-resolver-parity.mjs",
     "gen:helm-schema": "node scripts/generate-helm-schema.mjs",
     "gen:helm-schema:check": "node scripts/generate-helm-schema.mjs --check",
     "gen:openapi": "node scripts/generate-openapi-types.mjs",
