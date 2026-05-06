@@ -52,6 +52,8 @@ import {
   signedEvidenceToOcsf,
   OcsfAuditTransport,
   RedisCircuitBreaker,
+  GatewayQuotaEngine,
+  CallCounterBackedGatewayQuotaEngine,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
@@ -1434,6 +1436,27 @@ export async function initializeServices(
     );
   }
 
+  // Gateway quota engine (F-1b). Re-uses the existing callCounterStore
+  // so no additional Redis client is needed. Enabled only when
+  // GATEWAY_QUOTA_ENABLED=true to preserve pre-F-1b behaviour.
+  let gatewayQuota: GatewayQuotaEngine | undefined;
+  if (validated.GATEWAY_QUOTA_ENABLED) {
+    gatewayQuota = new CallCounterBackedGatewayQuotaEngine(
+      callCounterStore,
+      {
+        max: validated.GATEWAY_QUOTA_MAX,
+        windowSeconds: validated.GATEWAY_QUOTA_WINDOW_SECONDS,
+        failOpen: !validated.GATEWAY_QUOTA_FAIL_CLOSED,
+      },
+      logger,
+    );
+    logger.info('Gateway quota engine enabled (F-1b)', {
+      max: validated.GATEWAY_QUOTA_MAX,
+      windowSeconds: validated.GATEWAY_QUOTA_WINDOW_SECONDS,
+      failClosed: validated.GATEWAY_QUOTA_FAIL_CLOSED,
+    });
+  }
+
   const enforcementEngine = new EnforcementEngine({
     verifier,
     logger,
@@ -1445,6 +1468,7 @@ export async function initializeServices(
     argumentSchemaRequired: validated.ARGUMENT_SCHEMA_REQUIRED,
     policyVersion: config.policyVersion,
     callCounterStore,
+    ...(gatewayQuota ? { gatewayQuota } : {}),
     // F-7: stamp region on every enforcement audit record (deny logs,
     // signed evidence). Symmetrical to ISSUER_REGION.
     region: validated.GATEWAY_REGION,

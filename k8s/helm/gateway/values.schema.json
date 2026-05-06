@@ -143,7 +143,7 @@
         },
         "AUDIT_LEDGER_BACKEND": {
           "type": "string",
-          "description": "Pluggable ledger backend for evidence signing. \"none\" (default) — in-process chain only (no replay protection against a compromised replica). \"postgres\" — append-only PostgreSQL table with per-row HMAC. \"in-memory\" — ephemeral in-process ledger for testing. Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to \"postgres\"."
+          "description": "Pluggable ledger backend for evidence signing. \"none\" (default) — in-process chain only (no replay protection against a compromised replica). \"postgres\" — append-only PostgreSQL table with per-row HMAC. \"in-memory\" — ephemeral in-process ledger for testing. \"acl\" — Azure Confidential Ledger (TEE-backed). Requires either AUDIT_LEDGER_ACL_ENDPOINT (auto-constructs a client using DefaultAzureCredential) or an AzureConfidentialLedgerClient injected via the second argument to initializeServices(). Requires AUDIT_LEDGER_PG_URL and AUDIT_LEDGER_HMAC_SECRET when set to \"postgres\"."
         },
         "AUDIT_LEDGER_PG_URL": {
           "type": "string",
@@ -173,6 +173,10 @@
           "type": "string",
           "description": "Number of ledger rows between S3 Object-Lock anchor writes. Default 1000. Lower values provide more frequent external witnesses (smaller gap between a DB tamper event and S3 detection) at the cost of more S3 PUT requests. Only relevant when AUDIT_LEDGER_S3_BUCKET is set."
         },
+        "AUDIT_LEDGER_ACL_ENDPOINT": {
+          "type": "string",
+          "description": "Azure Confidential Ledger endpoint URL. Required when AUDIT_LEDGER_BACKEND=acl AND the ledger client is constructed inside the standard bootstrap (i.e. GatewayDependencies.ledgerAclClient is not provided by a custom entrypoint). Format: https://<name>.confidentialledger.azure.com. Authentication uses DefaultAzureCredential (workload identity, managed identity, or AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET environment variables). NOTE: the standard bootstrap dynamically requires @azure-rest/confidential-ledger and @azure/identity — add both to your deployment image when using this option."
+        },
         "POLICY_VERSION": {
           "type": "string",
           "description": "Version identifier for the active policy (string, default \"1.0.0\")."
@@ -196,6 +200,22 @@
         "RATE_LIMIT_MAX_REQUESTS": {
           "type": "string",
           "description": "Max requests per IP per RATE_LIMIT_WINDOW_MS. Default 1000 (development); tighten in production."
+        },
+        "GATEWAY_QUOTA_ENABLED": {
+          "type": "string",
+          "description": "Enable the per-(jti, action, resource) gateway quota engine (F-1b). Default false. When enabled, every validated tool invocation is counted against a per-token/action/resource budget so a single long-lived token cannot flood the enforcement engine. Wire CALL_COUNTER_REDIS_URL (or REDIS_URL) for distributed counting across replicas."
+        },
+        "GATEWAY_QUOTA_MAX": {
+          "type": "string",
+          "description": "Maximum invocations per GATEWAY_QUOTA_WINDOW_SECONDS for the same (jti, action, resource) tuple. Default 1000. Lower for sensitive actions."
+        },
+        "GATEWAY_QUOTA_WINDOW_SECONDS": {
+          "type": "string",
+          "description": "Length (seconds) of the tumbling window used by the gateway quota engine. Default 60."
+        },
+        "GATEWAY_QUOTA_FAIL_CLOSED": {
+          "type": "string",
+          "description": "When false (default), a counter-store error allows the request through (fail-open). Set to true to deny when the store is unavailable — note this will deny all quota-eligible traffic during Redis outages."
         },
         "GATEWAY_AUDIENCE": {
           "type": "string",
@@ -267,7 +287,19 @@
         },
         "REDIS_URL": {
           "type": "string",
-          "description": "Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments."
+          "description": "Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments. Individual stores can override this with REVOCATION_REDIS_URL, KILL_SWITCH_REDIS_URL, or CALL_COUNTER_REDIS_URL to target dedicated Redis clusters."
+        },
+        "REVOCATION_REDIS_URL": {
+          "type": "string",
+          "description": "Optional dedicated Redis URL for the revocation and epoch stores. Overrides REDIS_URL for these stores. Use to isolate revocation Redis from the kill-switch and call-counter Redis so an outage on one store does not cascade to the others."
+        },
+        "KILL_SWITCH_REDIS_URL": {
+          "type": "string",
+          "description": "Optional dedicated Redis URL for the kill-switch manager. Overrides REDIS_URL for this store. Allows the kill-switch to target a separate, highly-available Redis cluster or Sentinel setup."
+        },
+        "CALL_COUNTER_REDIS_URL": {
+          "type": "string",
+          "description": "Optional dedicated Redis URL for the maxCalls call-counter store. Overrides REDIS_URL for this store. Allows the counter store to target a separate Redis cluster isolated from the revocation and kill-switch stores."
         },
         "REVOCATION_KEY_PREFIX": {
           "type": "string",
@@ -275,7 +307,11 @@
         },
         "REVOCATION_FAIL_OPEN": {
           "type": "string",
-          "description": "When Redis is unreachable, treat lookups as \"not revoked\" instead of \"revoked\". Use ONLY if availability matters more than revocation freshness. Boolean: true | false."
+          "description": "When Redis is unreachable, treat lookups as \"not revoked\" instead of \"revoked\". Use ONLY if availability matters more than revocation freshness. For a safer availability-preserving alternative, see REVOCATION_STALE_READABLE. Boolean: true | false."
+        },
+        "REVOCATION_STALE_READABLE": {
+          "type": "string",
+          "description": "When true, the revocation and epoch stores maintain a local write-through cache. On Redis outage (circuit breaker open or connection error), the stores serve from this cache: confirmed-revoked tokens are still denied; tokens not seen locally are allowed through. This prevents a Redis blip from becoming a brownout at the cost of a brief window where cross-replica revocations are not propagated. Recommended over REVOCATION_FAIL_OPEN when you must prioritise availability — use in conjunction with REDIS_CIRCUIT_BREAKER_COOLDOWN_MS to control the outage window. Boolean: true | false."
         },
         "REVOCATION_EPOCH_KEY_PREFIX": {
           "type": "string",
@@ -304,6 +340,22 @@
         "CALL_COUNTER_KEY_PREFIX": {
           "type": "string",
           "description": "Optional Redis key prefix for maxCalls counter entries. Default \"capcall:\"."
+        },
+        "CALL_COUNTER_FAIL_OPEN": {
+          "type": "string",
+          "description": "When true, a Redis error or circuit-open for the call-counter store falls back to an in-process counter instead of denying all maxCalls-conditioned requests. The effective cap during a Redis outage becomes maxCalls × replicaCount (counters are not shared across replicas). Recommended for deployments where a Redis blip causing a service brownout is more disruptive than temporarily relaxed rate-limits. Boolean: true | false."
+        },
+        "REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD": {
+          "type": "string",
+          "description": "Number of Redis failures within REDIS_CIRCUIT_BREAKER_WINDOW_MS needed to trip the circuit breaker to \"open\". When the circuit is open, Redis calls for the affected store fail immediately (no TCP timeout) and the configured fallback is used. Default 5. Applies to the revocation and call-counter stores."
+        },
+        "REDIS_CIRCUIT_BREAKER_WINDOW_MS": {
+          "type": "string",
+          "description": "Sliding window (ms) for Redis failure counting used by the circuit breaker. Failures older than this value do not count toward REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD. Default 10000."
+        },
+        "REDIS_CIRCUIT_BREAKER_COOLDOWN_MS": {
+          "type": "string",
+          "description": "Time (ms) the circuit breaker stays in the \"open\" state before transitioning to \"half-open\" and allowing a single probe call. If the probe succeeds the circuit closes; if it fails the circuit reopens and the cooldown restarts. Default 30000."
         },
         "GATEWAY_SHARD_COUNT": {
           "type": "string",

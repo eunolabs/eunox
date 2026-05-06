@@ -32,6 +32,7 @@ import {
   DpopReplayStore,
   InMemoryDpopReplayStore,
   verifyDpopProof,
+  GatewayQuotaEngine,
 } from '@euno/common';
 import type TransportStream from 'winston-transport';
 
@@ -150,6 +151,19 @@ export interface EnforcementEngineOptions {
    * MUST match the GATEWAY_AUDIENCE configured on the issuer.
    */
   gatewayAudience?: string;
+  /**
+   * Optional per-(jti, action, resource) gateway quota engine (F-1b).
+   * When supplied, every `validateAction` call that matches a
+   * capability is counted against the per-token/action/resource budget
+   * **before** typed-condition evaluation. This protects the enforcement
+   * hot-path from token-flooding even when the token carries no
+   * `maxCalls` condition. The engine defaults to fail-open (errors
+   * allow the request) — flip `GATEWAY_QUOTA_FAIL_CLOSED=true` for a
+   * hard stop. Omitting this option preserves pre-F-1b behaviour
+   * (no gateway-side invocation quota beyond per-token `maxCalls`
+   * conditions).
+   */
+  gatewayQuota?: GatewayQuotaEngine;
 }
 
 /**
@@ -187,6 +201,12 @@ export class EnforcementEngine {
   private signedDecisions: Set<'allow' | 'deny'>;
   private argumentSchemaRequired: boolean;
   private callCounterStore?: CallCounterStore;
+  /**
+   * Per-(jti, action, resource) gateway quota engine (F-1b). When set,
+   * each `validateAction` call that successfully matches a capability
+   * is counted before typed-condition evaluation.
+   */
+  private gatewayQuota?: GatewayQuotaEngine;
   /**
    * Optional sink invoked once per `validateAction` call with the final
    * decision (`allow` | `deny`). Wired by `bootstrap.ts` to a Prometheus
@@ -233,6 +253,7 @@ export class EnforcementEngine {
     }
     this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
+    this.gatewayQuota = options.gatewayQuota;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
     // Defaults are aligned with the `DPOP_REQUIRED` env var (which
     // defaults to `true`) so embedders that omit `dpop` get the same
@@ -522,6 +543,36 @@ export class EnforcementEngine {
             allowed: false,
             reason,
           };
+        }
+      }
+
+      // Step 5.5: Gateway quota enforcement (F-1b). Fires after the
+      // capability match and argument validation so only requests that
+      // actually hold the matching capability consume quota — this
+      // avoids penalising agents for probing capabilities they don't
+      // have. Fires *before* typed-condition evaluation so that
+      // condition-failing requests (e.g. wrong time-window, wrong IP)
+      // still count, preventing adversaries from bypassing the quota
+      // by crafting requests guaranteed to trip a benign condition.
+      if (this.gatewayQuota) {
+        const quotaDecision = await this.gatewayQuota.checkAndCount({
+          jti: payload.jti,
+          action: request.action,
+          resource: request.resource,
+          agentSub: payload.sub,
+        });
+        if (!quotaDecision.allowed) {
+          const reason = 'Gateway invocation quota exceeded for this token/action/resource';
+          await this.logDenial(payload.sub, request.action, request.resource, reason, sessionId);
+          if (this.shouldSignDecision('deny') && payload.authorizedBy) {
+            await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
+          }
+          throw new CapabilityError(
+            ErrorCode.RATE_LIMIT_EXCEEDED,
+            `${reason}. Retry after ${quotaDecision.retryAfterSeconds}s.`,
+            429,
+            { 'Retry-After': String(quotaDecision.retryAfterSeconds) },
+          );
         }
       }
 

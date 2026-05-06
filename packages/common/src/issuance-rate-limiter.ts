@@ -55,6 +55,7 @@
  */
 
 import { Logger } from './logger';
+import { escapeRateLimitKeyComponent } from './key-utils';
 
 /**
  * Outcome of an {@link IssuanceRateLimiter.consume} call.
@@ -85,6 +86,26 @@ export interface RateLimitDecision {
  * synthetic `_no_tenant` bucket. Operators with mixed-tenant traffic
  * SHOULD configure a provider that populates `tenantId` so per-tenant
  * isolation is preserved.
+ *
+ * The bucket key is `(tenantId, userId, agentId)`. This three-component
+ * key bounds total KMS calls per identity regardless of which issuance
+ * path (issue/attenuate/renew) is used, ensuring the budget is not
+ * fragmented across token lineages or source IPs.
+ *
+ * **Why not include `jti` in the key?**
+ * Including the parent/current `jti` would split the per-subject budget
+ * into per-lineage buckets. An attacker could then mint N parent tokens
+ * (consuming the `_no_jti` fresh-issuance budget) and obtain a
+ * full attenuation/renew budget for each lineage, multiplying effective
+ * KMS load by N instead of keeping it bounded.
+ *
+ * **Why not include `ip` in the key?**
+ * Including the source IP would give the same user/agent a fresh counter
+ * every time its source IP changes. A caller behind multiple egress IPs
+ * (NAT rotation, CGNAT, multi-homed) would get one budget per IP,
+ * multiplying its effective KMS budget — the opposite of the intended
+ * constraint. The express-rate-limit middleware already provides a
+ * coarse-grained per-IP guard at the HTTP layer.
  */
 export interface IssuanceRateLimitSubject {
   tenantId?: string;
@@ -135,11 +156,9 @@ const DEFAULT_KEY_PREFIX = 'issrl:';
  *
  * Encoding: `\` -> `\\`, `|` -> `\|`. The decoded form is unambiguous
  * because every literal `|` in a component is now preceded by `\`,
- * while a real separator is not.
+ * while a real separator is not. Escape logic is in
+ * {@link escapeRateLimitKeyComponent} (shared with the gateway quota engine).
  */
-function escapeKeyComponent(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
-}
 
 /**
  * Build the canonical rate-limit key. Exposed so tests can assert the
@@ -147,10 +166,16 @@ function escapeKeyComponent(value: string): string {
  * header). Order is `tenantId | userId | agentId` so a Redis `KEYS`
  * scan from an operator can prefix-match a single tenant. Components
  * are escaped to prevent collisions when an identifier contains `|`.
+ *
+ * The key intentionally uses only three dimensions. See
+ * {@link IssuanceRateLimitSubject} for the rationale behind excluding
+ * `jti` (would fragment the budget per lineage) and `ip` (would allow
+ * budget amplification via IP rotation).
  */
 export function buildIssuanceRateLimitKey(s: IssuanceRateLimitSubject): string {
   const tenant = s.tenantId && s.tenantId.length > 0 ? s.tenantId : '_no_tenant';
-  return `${escapeKeyComponent(tenant)}|${escapeKeyComponent(s.userId)}|${escapeKeyComponent(s.agentId)}`;
+  const e = escapeRateLimitKeyComponent;
+  return `${e(tenant)}|${e(s.userId)}|${e(s.agentId)}`;
 }
 
 /**

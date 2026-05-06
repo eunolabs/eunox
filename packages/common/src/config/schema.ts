@@ -1187,6 +1187,38 @@ export const GatewayConfigSchema = z
         'Max requests per IP per RATE_LIMIT_WINDOW_MS. Default 1000 (development); tighten in production.',
     }),
 
+    // Per-(jti, action, resource) gateway quota (F-1b) -----------------------
+    // Protects the enforcement hot-path from token-flooding. Fires on every
+    // validateAction call after capability-match and argument validation, so
+    // only well-formed requests consume quota.  Default disabled (back-compat);
+    // enable in production with GATEWAY_QUOTA_ENABLED=true.
+    GATEWAY_QUOTA_ENABLED: envBoolean({
+      default: false,
+      description:
+        'Enable the per-(jti, action, resource) gateway quota engine (F-1b). Default false. ' +
+        'When enabled, every validated tool invocation is counted against a per-token/action/resource ' +
+        'budget so a single long-lived token cannot flood the enforcement engine. ' +
+        'Wire CALL_COUNTER_REDIS_URL (or REDIS_URL) for distributed counting across replicas.',
+    }),
+    GATEWAY_QUOTA_MAX: envPositiveInt({
+      default: 1000,
+      description:
+        'Maximum invocations per GATEWAY_QUOTA_WINDOW_SECONDS for the same ' +
+        '(jti, action, resource) tuple. Default 1000. Lower for sensitive actions.',
+    }),
+    GATEWAY_QUOTA_WINDOW_SECONDS: envPositiveInt({
+      default: 60,
+      description:
+        'Length (seconds) of the tumbling window used by the gateway quota engine. Default 60.',
+    }),
+    GATEWAY_QUOTA_FAIL_CLOSED: envBoolean({
+      default: false,
+      description:
+        'When false (default), a counter-store error allows the request through (fail-open). ' +
+        'Set to true to deny when the store is unavailable — note this will deny all ' +
+        'quota-eligible traffic during Redis outages.',
+    }),
+
     // Gateway audience (cross-tenant defence) --------------------------------
     GATEWAY_AUDIENCE: optionalString.describe(
       'Expected `aud` claim for capability tokens this gateway will accept. Defaults to "tool-gateway". ' +

@@ -39,7 +39,7 @@ import {
   createOcsfTransportFromEnv,
   createOcsfWinstonTransport,
 } from '@euno/common';
-import { CapabilityIssuerService } from './issuer-service';
+import { CapabilityIssuerService, IssuerEnforcementContext } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
 import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
@@ -665,8 +665,11 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
       );
     }
 
+    // Build enforcement context (transport-level metadata, not in the wire type).
+    const enforcementCtx: IssuerEnforcementContext = { clientIp: req.ip };
+
     // Issue the capability
-    const response = await getIssuerService().issueCapability(issueRequest);
+    const response = await getIssuerService().issueCapability(issueRequest, enforcementCtx);
 
     issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
 
@@ -737,7 +740,8 @@ app.post('/api/v1/attenuate', async (req: Request, res: Response, next: NextFunc
     const response = await getIssuerService().attenuateCapability(
       parentToken,
       req.body.requestedCapabilities,
-      ttl
+      ttl,
+      { clientIp: req.ip },
     );
 
     issuanceCounter.inc({ operation: 'attenuate', outcome: 'success' });
@@ -796,7 +800,8 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
 
     const response = await getIssuerService().renewCapability(
       currentToken,
-      renewTtl
+      renewTtl,
+      { clientIp: req.ip },
     );
 
     issuanceCounter.inc({ operation: 'renew', outcome: 'success' });

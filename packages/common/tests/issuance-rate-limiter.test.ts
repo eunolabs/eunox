@@ -56,6 +56,16 @@ describe('buildIssuanceRateLimitKey', () => {
     const escaped2 = buildIssuanceRateLimitKey({ tenantId: 't', userId: 'u', agentId: '\\|a' });
     expect(escaped1).not.toBe(escaped2);
   });
+
+  it('issue/attenuate/renew all share the same (tenant,user,agent) bucket', () => {
+    // All three mint paths MUST consume from the same budget so the
+    // per-identity KMS cap cannot be bypassed by alternating paths.
+    const issueKey = buildIssuanceRateLimitKey({ tenantId: 't', userId: 'u', agentId: 'a' });
+    const attenuateKey = buildIssuanceRateLimitKey({ tenantId: 't', userId: 'u', agentId: 'a' });
+    const renewKey = buildIssuanceRateLimitKey({ tenantId: 't', userId: 'u', agentId: 'a' });
+    expect(issueKey).toBe(attenuateKey);
+    expect(issueKey).toBe(renewKey);
+  });
 });
 
 describe('InMemoryIssuanceRateLimiter', () => {
@@ -169,6 +179,20 @@ describe('RedisIssuanceRateLimiter', () => {
     const r2 = await limiter.consume({ tenantId: 't', userId: 'u', agentId: 'a' });
     expect(r2.allowed).toBe(true);
     expect(r2.remaining).toBe(3);
+  });
+
+  it('issue/attenuate/renew share the same (tenant,user,agent) bucket', async () => {
+    // All three mint paths must consume from the same budget so the
+    // per-identity KMS cap cannot be bypassed by alternating paths.
+    const fake = new FakeRedis();
+    const limiter = new RedisIssuanceRateLimiter(fake, logger, { max: 2, windowSeconds: 60 });
+    const subjectBase = { tenantId: 't', userId: 'u', agentId: 'a' };
+    await limiter.consume(subjectBase); // simulates issue
+    await limiter.consume(subjectBase); // simulates attenuate (same bucket)
+    const denied = await limiter.consume(subjectBase); // third call denied
+    expect(denied.allowed).toBe(false);
+    // Only one Redis key exists — all three calls used the same bucket
+    expect(fake.values.size).toBe(1);
   });
 
   it('denies once the count exceeds max', async () => {

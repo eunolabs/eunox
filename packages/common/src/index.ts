@@ -30,3 +30,5 @@ export * from './transparency-log';
 export * from './shard';
 export * from './tool-transport';
 export * from './redis-circuit-breaker';
+export * from './gateway-quota';
+export * from './key-utils';

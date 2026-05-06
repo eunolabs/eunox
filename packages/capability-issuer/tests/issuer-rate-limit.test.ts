@@ -173,6 +173,9 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
     expect(signer.signCalls).toBe(1);
     // The deny-callback fired exactly once with the resolved subject
     expect(denied).toHaveLength(1);
+    // The denied callback MUST carry the exact three-component subject:
+    // (tenantId, userId, agentId). jti and ip are NOT part of the subject
+    // — the key is intentionally three-dimensional only.
     expect(denied[0]).toEqual({
       tenantId: 'tenant-1',
       userId: 'user-1',
@@ -314,5 +317,39 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
       limiter.calls.map((c) => `${c.tenantId}|${c.userId}|${c.agentId}`),
     );
     expect(subjects.size).toBe(1);
+  });
+
+  it('all mint paths share the same three-component subject (no jti/ip splitting)', async () => {
+    // Confirms that issue, attenuate, and renew all call consume() with the
+    // same (tenantId, userId, agentId) — not with jti or ip — so they all
+    // count against the same budget and cannot be used to bypass it.
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 999;
+    const { service } = await makeService({ limiter });
+    const issued = await service.issueCapability(issueRequest());
+    const attenuated = await service.attenuateCapability(issued.token, [
+      { resource: 'api://example.com/x', actions: ['read'] },
+    ]);
+    await service.renewCapability(attenuated.token);
+    // All calls MUST have the same subject shape with exactly three fields
+    for (const call of limiter.calls) {
+      expect(Object.keys(call).sort()).toEqual(['agentId', 'tenantId', 'userId']);
+    }
+    // And all must refer to the same identity
+    const distinctSubjects = new Set(
+      limiter.calls.map((c) => `${c.tenantId}|${c.userId}|${c.agentId}`),
+    );
+    expect(distinctSubjects.size).toBe(1);
+  });
+
+  it('IssuerEnforcementContext is accepted for future use but does not affect bucket key', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 999;
+    const { service } = await makeService({ limiter });
+    await service.issueCapability(issueRequest(), { clientIp: '10.0.0.1' });
+    // clientIp is NOT forwarded to the rate-limit subject
+    const call = limiter.calls[0];
+    expect(call).toBeDefined();
+    expect(Object.keys(call!).sort()).toEqual(['agentId', 'tenantId', 'userId']);
   });
 });

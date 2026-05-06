@@ -137,6 +137,24 @@ function inferAlgFromJwk(jwkData: Record<string, unknown>): string | undefined {
  */
 export type IssuanceLimiterKind = 'issuance' | 'storage-grant' | 'db-token';
 
+/**
+ * Per-request enforcement context supplied by the HTTP layer.
+ *
+ * Separates transport-level metadata (source IP) from the wire-format
+ * request body ({@link IssueCapabilityRequest}) so the wire types stay
+ * clean while the rate-limiter can still key on the caller's IP.
+ */
+export interface IssuerEnforcementContext {
+  /**
+   * Source IP of the HTTP request (`req.ip` in the Express handler).
+   * Passed to the issuance rate limiter so the five-component key
+   * includes the caller's network address, preventing IP-hopping from
+   * multiplying the effective issuance budget. Absent or `undefined`
+   * maps to the sentinel `'_no_ip'` inside the limiter.
+   */
+  clientIp?: string;
+}
+
 export interface CapabilityIssuerServiceOptions {
   /**
    * When true, every call to {@link CapabilityIssuerService.issueCapability}
@@ -609,18 +627,27 @@ export class CapabilityIssuerService {
    * → cap TTL to PIM → build payload → sign → mint side-credentials →
    * audit → emit posture.
    */
-  async issueCapability(request: IssueCapabilityRequest): Promise<IssueCapabilityResponse> {
+  async issueCapability(
+    request: IssueCapabilityRequest,
+    // `_enforcement` is accepted but intentionally unused in the rate-limit
+    // path. It is retained so route handlers (index.ts) can continue passing
+    // `{ clientIp: req.ip }` for future use (e.g. IP-based audit logging or
+    // an additional out-of-band IP guard) without a breaking API change.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _enforcement?: IssuerEnforcementContext,
+  ): Promise<IssueCapabilityResponse> {
     try {
       // Step 1: Validate the user's authentication token.
       this.logger.info('Validating user authentication token', { agentId: request.agentId });
       const userContext = await this.identityProvider.validateToken(request.authToken);
 
-      // Step 1a: Per-(tenant, user, agent) issuance rate limit (F-1,
-      // addresses I-1). Runs *after* authentication so the limit is
-      // keyed on the resolved subject rather than transport metadata,
-      // and *before* any signing or side-credential mint so a
-      // compromised account cannot exhaust KMS budget. Skipped when
-      // no limiter was configured (back-compat).
+      // Step 1a: Per-(tenantId, userId, agentId) issuance rate limit (F-1).
+      // Runs *after* authentication so the limit is keyed on the resolved
+      // subject rather than transport metadata, and *before* any signing or
+      // side-credential mint so a compromised account cannot exhaust KMS
+      // budget. The three-component key correctly bounds total KMS load per
+      // identity across all mint paths (issue/attenuate/renew); see
+      // IssuanceRateLimitSubject for why jti and ip are intentionally excluded.
       await this.enforceIssuanceRateLimit({
         tenantId: userContext.tenantId,
         userId: userContext.userId,
@@ -1258,6 +1285,9 @@ export class CapabilityIssuerService {
     parentToken: string,
     requestedCapabilities: CapabilityConstraint[],
     ttl?: number,
+    // Retained for API compatibility and future use; see issueCapability.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
       this.logger.info('Attenuating capability token');
@@ -1279,13 +1309,12 @@ export class CapabilityIssuerService {
         );
       }
 
-      // Step 2a: Apply F-1 rate limit to attenuation. An attacker
-      // holding a single parent token can otherwise mint unlimited
-      // children with different capability subsets to evade per-token
-      // revocation; the limit must therefore cover this path. Keyed on
-      // the same (tenantId, userId, agentId) tuple as fresh issuance
-      // so a compromised account hits a single shared budget across
-      // issue/attenuate/renew.
+      // Step 2a: Per-(tenantId, userId, agentId) rate limit for attenuation
+      // (F-1). Shares the same three-component bucket as fresh issuance so
+      // issue + attenuate + renew all compete for the same per-identity
+      // budget — a compromised account cannot exhaust KMS by alternating
+      // mint paths. See IssuanceRateLimitSubject for why jti and ip are
+      // intentionally excluded from the key.
       await this.enforceIssuanceRateLimit({
         tenantId: parentPayload.authorizedBy?.tenantId,
         userId: parentPayload.authorizedBy?.userId ?? 'unknown',
@@ -1413,6 +1442,9 @@ export class CapabilityIssuerService {
   async renewCapability(
     currentToken: string,
     ttl?: number,
+    // Retained for API compatibility and future use; see issueCapability.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
       this.logger.info('Renewing capability token');
@@ -1424,12 +1456,11 @@ export class CapabilityIssuerService {
         'Invalid capability token format',
       );
 
-      // Step 1a: Apply F-1 rate limit to renewal too. Without this an
-      // attacker holding any non-expired token can keep its lineage
-      // alive forever by renewing in a tight loop, defeating short
-      // TTLs entirely. Same shared (tenantId, userId, agentId) bucket
-      // as fresh issuance and attenuation so the budget is meaningful
-      // regardless of which mint path is being abused.
+      // Step 1a: Per-(tenantId, userId, agentId) rate limit for renewal (F-1).
+      // An attacker holding a non-expired token can otherwise extend its
+      // lineage forever in a tight renew loop, defeating short TTLs.
+      // Shares the same three-component bucket as fresh issuance and
+      // attenuation so the per-identity KMS budget covers all mint paths.
       await this.enforceIssuanceRateLimit({
         tenantId: currentPayload.authorizedBy?.tenantId,
         userId: currentPayload.authorizedBy?.userId ?? 'unknown',

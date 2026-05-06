@@ -18,6 +18,8 @@ import {
   InMemoryCallCounterStore,
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   canonicalSha256,
+  CallCounterBackedGatewayQuotaEngine,
+  GatewayQuotaEngine,
 } from '@euno/common';
 import * as jose from 'jose';
 
@@ -1409,6 +1411,142 @@ describe('EnforcementEngine', () => {
             }),
         ).not.toThrow();
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Gateway quota enforcement (F-1b)
+  // ---------------------------------------------------------------------------
+
+  describe('Gateway quota enforcement (F-1b)', () => {
+    let quotaPrivKey: jose.KeyLike;
+    let quotaPubKey: string;
+
+    beforeAll(async () => {
+      const { publicKey: pub, privateKey: priv } = await jose.generateKeyPair('RS256');
+      quotaPrivKey = priv;
+      quotaPubKey = await jose.exportSPKI(pub);
+    });
+
+    async function makeQuotaToken(
+      capabilities: CapabilityConstraint[],
+      jtiSuffix = 'quota-jti',
+    ): Promise<{ token: string; jti: string }> {
+      const jti = `${jtiSuffix}-${Date.now()}`;
+      const payload: CapabilityTokenPayload = {
+        iss: 'did:web:test.com',
+        sub: 'quota-agent',
+        aud: 'tool-gateway',
+        iat: getCurrentTimestamp(),
+        exp: getExpirationTimestamp(900),
+        jti,
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities,
+      };
+      const token = await new jose.SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(quotaPrivKey);
+      return { token, jti };
+    }
+
+    function makeQuotaEngine(max: number): EnforcementEngine {
+      const store = new InMemoryCallCounterStore();
+      const quotaEng = new CallCounterBackedGatewayQuotaEngine(
+        store,
+        { max, windowSeconds: 60, failOpen: false },
+        logger,
+      );
+      return new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(quotaPubKey, { requireKid: false }),
+        logger,
+        gatewayQuota: quotaEng,
+      });
+    }
+
+    it('allows requests under the quota', async () => {
+      const eng = makeQuotaEngine(3);
+      const { token } = await makeQuotaToken([{ resource: 'api://svc/ep', actions: ['read'] }]);
+      const r1 = await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' });
+      const r2 = await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' });
+      expect(r1.allowed).toBe(true);
+      expect(r2.allowed).toBe(true);
+    });
+
+    it('denies with RATE_LIMIT_EXCEEDED once the quota is exhausted', async () => {
+      const eng = makeQuotaEngine(2);
+      const { token } = await makeQuotaToken([{ resource: 'api://svc/ep', actions: ['read'] }]);
+      await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' }); // 1
+      await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' }); // 2 = max
+      // 3rd call exceeds the quota
+      await expect(
+        eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' }),
+      ).rejects.toMatchObject({
+        code: 'RATE_LIMIT_EXCEEDED',
+        statusCode: 429,
+      });
+    });
+
+    it('quotas are independent per (jti, action, resource)', async () => {
+      const eng = makeQuotaEngine(1);
+      const { token: t1 } = await makeQuotaToken([{ resource: 'api://a', actions: ['read'] }], 'jti-a');
+      const { token: t2 } = await makeQuotaToken([{ resource: 'api://a', actions: ['read'] }], 'jti-b');
+      // Exhaust quota for token t1
+      await eng.validateAction({ token: t1, action: 'read', resource: 'api://a' });
+      await expect(
+        eng.validateAction({ token: t1, action: 'read', resource: 'api://a' }),
+      ).rejects.toMatchObject({ code: 'RATE_LIMIT_EXCEEDED' });
+      // Token t2 has an independent budget
+      const r = await eng.validateAction({ token: t2, action: 'read', resource: 'api://a' });
+      expect(r.allowed).toBe(true);
+    });
+
+    it('includes Retry-After in the denial error', async () => {
+      const eng = makeQuotaEngine(1);
+      const { token } = await makeQuotaToken([{ resource: 'api://svc/ep', actions: ['read'] }]);
+      await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' }); // exhaust
+      try {
+        await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' });
+        throw new Error('expected rejection');
+      } catch (err: any) {
+        expect(err.responseHeaders?.['Retry-After']).toBeDefined();
+        expect(Number(err.responseHeaders?.['Retry-After'])).toBeGreaterThan(0);
+      }
+    });
+
+    it('passes payload.sub as agentSub for shard-local fast path', async () => {
+      const capturedKeys: Array<{ agentSub: string }> = [];
+      const spyEngine: GatewayQuotaEngine = {
+        windowSeconds: 60,
+        checkAndCount: async (key) => {
+          capturedKeys.push({ agentSub: key.agentSub });
+          return { allowed: true, limit: 100, remaining: 99, windowSeconds: 60, retryAfterSeconds: 0 };
+        },
+      };
+      const eng = new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(quotaPubKey, { requireKid: false }),
+        logger,
+        gatewayQuota: spyEngine,
+      });
+      const { token } = await makeQuotaToken([{ resource: 'api://svc/ep', actions: ['read'] }]);
+      await eng.validateAction({ token, action: 'read', resource: 'api://svc/ep' });
+      expect(capturedKeys[0]?.agentSub).toBe('quota-agent');
+    });
+
+    it('omitting gatewayQuota preserves pre-F-1b behaviour (no quota)', async () => {
+      // Engine without a quota engine set
+      const noQuota = new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(quotaPubKey, { requireKid: false }),
+        logger,
+      });
+      const { token } = await makeQuotaToken([{ resource: 'api://svc/ep', actions: ['read'] }]);
+      // Can call indefinitely with no quota
+      for (let i = 0; i < 10; i++) {
+        const r = await noQuota.validateAction({ token, action: 'read', resource: 'api://svc/ep' });
+        expect(r.allowed).toBe(true);
+      }
     });
   });
 });
