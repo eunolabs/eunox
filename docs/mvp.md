@@ -1,213 +1,601 @@
 # Euno: From MVP to Full Vision
+
 ## Strategic Summary & Staged Execution Plan
+
+> **Status of this document:** strategy / planning. Not implementation.
+> Reviewed against the actual state of `packages/` and the rest of
+> `docs/` (April 2026). See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
+> for what changed in this revision and why.
 
 ---
 
 ## Context
 
-**What Euno is:** A production-ready capability-based security system for AI agent governance — cryptographically signed tokens, fine-grained tool enforcement, comprehensive audit trails, multi-cloud identity, and W3C DID support.
+**What Euno is today.** A capability-native zero-trust governance plane
+for AI agents: cryptographically signed capability tokens (JWT,
+versioned schema), a Tool Gateway that acts as the reference monitor
+in front of every protected backend, typed `CapabilityCondition`
+enforcement, distributed kill-switch and revocation (Redis + Postgres
+backends, with a cross-chain anchor for tamper-evident audit), W3C DID
+support (`did:web`, `did:ion`, `did:key`), pluggable identity
+providers (Entra ID, AWS Cognito, GCP Cloud Identity), pluggable
+signers (Azure Key Vault, AWS KMS, GCP Cloud KMS), framework adapters
+for LangChain / MAF / CrewAI, and ~37k LOC across 11 packages. See
+[`ARCHITECTURE.md`](./ARCHITECTURE.md), [`IMPLEMENTATION.md`](./IMPLEMENTATION.md),
+and [`capability-model.md`](./capability-model.md) for the authoritative
+implementation reference.
 
-**The problem with the current state:** The system is architected for enterprise platform teams responding to compliance mandates. Seven packages, multi-cloud KMS, Redis distributed kill-switches — that's a procurement conversation. There is no grassroots entry point.
+**The problem with the current state.** The system is architected for
+the Stage-5 buyer — an enterprise platform team responding to a
+compliance mandate. Multi-cloud KMS, Redis-backed kill switches,
+partner-issuer DID resolution with per-DID circuit breakers,
+cross-chain audit anchors. That is a procurement conversation.
+There is no grassroots entry point: today, an individual developer
+who wants to stop their LangChain agent from running `DROP TABLE`
+finds nothing they can `npm install` and use in five minutes.
 
-**The core insight:** The framework adapters are the only grassroots surface in the current codebase. Everything else is buried under infrastructure. The wedge is `npm install @euno/mcp` — not the full system.
+**The core insight.** The framework adapters are the closest thing the
+current codebase has to a grassroots surface, but they still depend on
+`@euno/agent-runtime` → Tool Gateway → Capability Issuer → KMS. The
+wedge has to be **a single, dependency-light npm package that runs
+locally and enforces something useful before any infrastructure is
+introduced**. MCP — now the dominant tool protocol across Claude
+Desktop, Cursor, Windsurf, and most agent frameworks — is the right
+protocol surface for that wedge.
 
-**Language:** Stay in TypeScript. LangChain.js is real, the audience is valid, and a Python rewrite is how the project dies. Python becomes relevant only if traction data demands it.
+**Language.** Stay in TypeScript. LangChain.js is real, the audience
+is valid, and a Python rewrite is how the project dies. Python becomes
+relevant only if traction data demands it (Stage 4, at the earliest).
 
-**Licensing:** Open source the developer-facing npm package. Keep the gateway, issuer, and enterprise infrastructure under BSL or Elastic License 2.0. This is the Infisical/Airbyte playbook — open entry point, commercial operational layer.
+**Licensing.** Open source the developer-facing npm package
+(`@euno/mcp` and any companion adapters). Keep the gateway, issuer,
+and enterprise infrastructure under BSL 1.1 with an explicit four-year
+change date to Apache-2.0, or under Elastic License 2.0. This is the
+Infisical / Airbyte / Sentry playbook — open entry point, commercial
+operational layer. The license boundary must be drawn in the
+repository now, not later (see [§ License boundary](#license-boundary)).
+
+---
+
+## Analysis: where the prior plan needed tightening
+
+The previous version of this document was directionally correct on
+strategy (pull-through staging, MCP wedge, TS, source-available
+operational layer). It had four substantive problems and one
+material factual error that this revision fixes.
+
+1. **Factual error.** The prior plan said Stage 1 would *extract* MCP
+   interception logic from `packages/framework-adapters`. There is no
+   MCP code in `packages/framework-adapters` — only LangChain, MAF,
+   and CrewAI adapters. Stage 1 is **greenfield**, not extraction.
+   What can be extracted is the `CapabilityCondition` discriminated
+   union, `condition-registry`, `capability-validators`,
+   `argument-validator`, the in-memory `CallCounterStore`, and the
+   in-memory `KillSwitchManager` from `packages/common`. The MCP
+   protocol layer itself has to be built.
+
+2. **The Stage 3 upgrade is not "a single config change."** The prior
+   plan said upgrading from local enforcement to the gateway is a
+   one-line config flip (`{"enforcer": "https://..."}`) and "nothing
+   in the agent or policy config changes." That is impossible against
+   the actual gateway, which requires a *signed JWT capability token*
+   verified against an issuer's public key (or DID document). API
+   keys do not pass the gateway's verifier. The bridge needs to be
+   designed up front (see [§ Stage 3 upgrade bridge](#stage-3-the-gateway-as-managed-boundary))
+   or the upgrade promise will break the first time a real user tries it.
+
+3. **Policy and audit schema parity were unaddressed.** The local
+   proxy uses an ad-hoc JSON DSL (`{ "read_file": { "allowedPaths": ... } }`).
+   The production system uses signed `AgentCapabilityManifest` +
+   `CapabilityConstraint[]` + typed `CapabilityCondition` (see
+   [`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md)).
+   If these diverge, the upgrade path is structurally broken from
+   day one — every customer who hits the ceiling has to rewrite their
+   policy, exactly when you can least afford friction. **The local DSL
+   must be an isomorphic subset of, or compile target for, the
+   production manifest.** Same applies to the local jsonl audit log
+   vs. signed OCSF evidence: same schema, different signer.
+
+4. **MCP transport reality was missing.** The prior design ran an HTTP
+   server on `port: 7391`. Claude Desktop and Cursor — the headline
+   audience for the pitch — spawn MCP servers as **stdio child
+   processes** via their `mcpServers` config. An HTTP-only proxy
+   doesn't reach them. The MVP must support stdio-as-transport
+   (`euno proxy` as an `npx`-runnable wrapper command), with HTTP /
+   streamable HTTP as a secondary transport for LangChain.js use cases.
+
+5. **Gate conditions were anecdotal.** "Users ask: can I share the
+   policy across my team?" is not a measurable trigger. Without
+   opt-in telemetry built into `@euno/mcp` from day one, "stages
+   pulled by demand" reduces to guessing. Telemetry is a foundational
+   design decision: it cannot be retrofitted into a security tool
+   without burning trust. See [§ Telemetry & gate instrumentation](#telemetry--gate-instrumentation).
+
+Three additional concerns — not errors, but gaps — are addressed
+in the new sections below: **what happens to the existing 11 packages
+during Stage 1** ([§ Stage 0](#stage-0-stop-the-bleeding-on-the-existing-codebase)),
+**what the business model actually is at Stage 3+** ([§ Pricing](#pricing--business-model-sketch)),
+and **competitive timing** ([§ Critical risks](#critical-risks)).
 
 ---
 
 ## The Staged Approach
 
-Each stage has a **gate condition** — a specific user behavior that must be observed before moving forward. Stages are pulled by demand, not pushed by roadmap.
+Each stage has a **gate condition** — a specific, *measurable*
+behavior that must be observed before moving forward. Stages are
+pulled by demand, not pushed by roadmap. The current architecture is
+Stage 5 work that was built first; Stages 0–2 are a deliberate
+walk-back to the on-ramp.
+
+| Stage | Buyer | What ships | Gate to next |
+|---|---|---|---|
+| 0 | (internal) | Codebase triage; freeze the Stage-5 surface | Stage-1 work green-lit |
+| 1 | Individual dev | `@euno/mcp` (stdio + HTTP), local enforcement, jsonl audit | ≥10 inbound asks for richer conditions / cross-process state |
+| 2 | Individual dev / IC | Full `CapabilityCondition` set in proxy, `@euno/langchain` companion, `validate-token` CLI | ≥5 teams (≥3 users each) running it; ≥3 ask for shared audit / policy |
+| 3 | Tech lead / small team | Hosted Tool Gateway with API-key façade + auto-mint shim → real signed token | ≥1 paying team; security/compliance question raised |
+| 4 | Engineering org | Capability Issuer + IdP integration (Entra ID + 1 other) | Enterprise inbound: SOC2, on-prem, CISO review |
+| 5 | Enterprise | Full vision (DID, multi-cloud KMS, federation, ledger, BSL operational tier) | Sales motion |
+
+---
+
+## Stage 0: Stop the bleeding on the existing codebase
+
+**Why this stage exists.** The repository today contains ~37k LOC of
+Stage-5 infrastructure with no Stage-1 buyers using it. Every
+maintenance hour spent on `partner-issuer-sim`, the cross-chain
+anchor, multi-region issuer, or the per-DID circuit breaker is an
+hour not spent on the wedge. Without an explicit triage decision the
+default behavior is to keep building outwards.
+
+**Decisions to make and write down before Stage 1 begins:**
+
+- **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user.
+- **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Add a `STATUS.md` to each marking it "design-partner driven, not on the roadmap."
+- **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision (e.g. `2025-06-18`), and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage.
+- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial.
+
+**Gate to Stage 1:** the freeze is announced (internal note is fine),
+the Stage-1 package layout is approved, the license boundary is in
+the tree.
+
+---
+
+## License boundary
+
+| Package(s) | License | Rationale |
+|---|---|---|
+| `@euno/mcp` (new) | Apache-2.0 | Wedge. Must be trivially adoptable, redistributable, embeddable in commercial products. Apache-2.0 (not MIT) for the patent grant. |
+| `@euno/langchain` (new) | Apache-2.0 | Same reason. |
+| `packages/common` | Apache-2.0 | Already imported by the open packages; cannot be more restrictive than them. |
+| `packages/cli` | Apache-2.0 | Developer surface. |
+| `packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
+| `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
+
+The boundary must be drawn before `@euno/mcp` ships. Re-licensing
+later is contentious; doing it now is paperwork.
 
 ---
 
 ## Stage 1: MCP Proxy MVP
 
-**The pitch:** *"Add guardrails to any MCP server in 5 minutes. No infrastructure required."*
+**The pitch:** *"Add guardrails to any MCP server in 5 minutes.
+No infrastructure required."*
 
-**The pain:** Developers building agents with LangChain.js, Cursor, Claude Desktop, or any MCP-compatible client have no runtime enforcement on tool calls. Agents can run destructive SQL, hammer APIs, write to arbitrary paths. Nothing stops them before the call executes. LangSmith gives you observability after the fact. Euno stops it before.
+**The pain.** Developers building agents with LangChain.js, Cursor,
+Claude Desktop, or any MCP-compatible client have no runtime
+enforcement on tool calls. Agents can run destructive SQL, hammer
+APIs, write to arbitrary paths. Nothing stops them before the call
+executes. LangSmith gives observability *after the fact*. Euno stops
+it *before*.
 
-**Why MCP over LangChain adapter:** MCP is now the dominant tool protocol across Claude Desktop, Cursor, Windsurf, and every serious agent framework. One package works with every MCP-compatible client, not just one framework. The enforcement boundary is the protocol itself — the agent has no import path, no function reference, no escape route.
+**Why MCP and not the LangChain adapter.** MCP is the dominant tool
+protocol across Claude Desktop, Cursor, Windsurf, and every serious
+agent framework. One package works with every MCP-compatible client,
+not just one framework. The enforcement boundary is the protocol
+itself — the agent has no import path, no function reference, no
+escape route.
 
-### What to Deliver
+**Why not extract from `packages/framework-adapters`.** There is no
+MCP code there. The MCP transport, JSON-RPC framing, and request
+routing are new code. What *can* be reused from the repository:
 
-**`@euno/mcp` — standalone npm package**
+- `CapabilityCondition` discriminated union and `condition-registry` from `packages/common`
+- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `packages/common`
+- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `packages/common/src/call-counter-store.ts`
+- `KillSwitchManager` in-memory backend from `packages/common/src/kill-switch.ts`
+- `AgentCapabilityManifest` types and the `euno validate` codepath from `packages/cli`
 
-A proxy MCP server that sits between any agent and any upstream MCP server. It forwards `tools/list` verbatim, intercepts every `tools/call`, enforces the policy, then either forwards to upstream or returns a structured denial.
+That reuse is the keystone of [§ Schema parity](#policy-and-audit-schema-parity-non-negotiable).
+
+### What ships
+
+**`@euno/mcp` — standalone npm package, dual-transport.**
+
+A proxy MCP server that sits between any MCP client and any upstream
+MCP server. It forwards `tools/list`, `resources/list`, and
+`prompts/list` verbatim, intercepts every `tools/call`, enforces the
+policy, then either forwards to upstream or returns a structured
+denial.
 
 ```
-Agent → tools/list  → Euno Proxy → Upstream MCP Server
-Agent ← tool schemas ← Euno Proxy ← Upstream MCP Server
+Client → tools/list  → Euno Proxy → Upstream MCP Server
+Client ← tool schemas ← Euno Proxy ← Upstream MCP Server
 
-Agent → tools/call: query_db { query: "DROP TABLE users" }
+Client → tools/call: query_db { query: "DROP TABLE users" }
                         ↓
                   Policy: SELECT only
                   Pattern check fails
                         ↓
-Agent ← CapabilityDenied: operation not permitted
+Client ← CapabilityDenied: operation not permitted
         (upstream never called)
 ```
 
-**Core API:**
+**Both transports must work in v0:**
+
+- **stdio (primary).** Drop-in replacement for an upstream stdio server in `claude_desktop_config.json` / Cursor's `mcpServers`. The proxy spawns the upstream as a child process and pipes JSON-RPC frames through itself. *Without this, the headline audience cannot use the package.*
+- **streamable HTTP (secondary).** For LangChain.js, in-process clients, and the "show HN" demo. Defaults to a local port; explicitly does not bind to `0.0.0.0`.
+
+**Programmatic API (for embedders):**
 
 ```typescript
 import { createEunoMcpProxy } from "@euno/mcp";
 
 createEunoMcpProxy({
-  upstream: "npx @modelcontextprotocol/server-filesystem /data",
-  port: 7391,
-  policies: {
-    "read_file": {
-      maxCallsPerSession: 100,
-      allowedPaths: ["/data/public/**"]
-    },
-    "write_file": {
-      allowedPaths: ["/data/output/**"],
-      timeWindow: { start: "09:00", end: "18:00" }
-    },
-    "*": {
-      maxCallsPerSession: 200
-    }
-  }
+  upstream: { command: "npx", args: ["@modelcontextprotocol/server-filesystem", "/data"] },
+  transport: "stdio",                    // or "http", port: 7391
+  policyFile: "./euno.policy.yaml",      // or `policy: AgentCapabilityManifest`
+  auditLog: "~/.euno/audit.jsonl",       // jsonl, OCSF-shaped, locally signed
 });
 ```
 
-**Or via CLI:**
+**CLI (the actual usage shape for Claude Desktop / Cursor / npx):**
 
 ```bash
-euno proxy \
-  --upstream "npx @modelcontextprotocol/server-filesystem /data" \
-  --policy ./euno.policy.json \
-  --port 7391
+# Drop-in stdio wrapper — paste this command into mcpServers
+npx -y @euno/mcp proxy \
+  --policy ./euno.policy.yaml \
+  -- npx -y @modelcontextprotocol/server-filesystem /data
+
+# HTTP mode for LangChain.js
+npx -y @euno/mcp proxy --transport http --port 7391 \
+  --policy ./euno.policy.yaml \
+  -- node ./my-mcp-server.js
+
+# Validate a policy without running anything
+npx -y @euno/mcp validate ./euno.policy.yaml
 ```
 
-**What to include:**
-- `tools/list` passthrough from upstream
-- `tools/call` interception with enforcement
-- Policy conditions: `maxCallsPerSession`, `allowedPaths`, `allowedOperations`, `argumentSchema`, `timeWindow`
-- In-memory call counters and enforcement state (no Redis)
-- Local jsonl audit log (`~/.euno/audit.log`)
-- Structured `CapabilityDeniedError` with reason
-- `euno proxy` CLI command
-- `euno validate` — validate a policy config file locally
+**`CapabilityCondition` variants supported in v0** (a strict subset of
+the production `CapabilityCondition` discriminated union in
+`packages/common/src/wire.ts`, so policies upgrade without rewriting):
 
-**What to cut:**
-- Token issuance (no UI, no service)
-- Azure Key Vault / KMS / any cloud dependency
-- W3C DID
-- Redis
-- MAF adapter
+- `maxCalls` (sliding window — the `CallCounterStore` already supports both per-session and per-window)
+- `timeWindow` (`notBefore` / `notAfter`)
+- `allowedOperations` (e.g. SQL verb allowlist; further enforced by `argument-validator`)
+- `allowedExtensions` (file extension allowlist; delegated to existing `capability-validators`)
+- `allowedTables` (DB table / column allowlist; delegated to existing `capability-validators`)
+
+**Plus the `argumentSchema` field on `CapabilityConstraint`** (not a
+condition variant — a sibling field on the constraint itself, defined
+as the `ArgumentSchema` type in `wire.ts`). v0 honours it for the same
+reason the production gateway does: it's the structural argument
+allowlist for a capability and is the natural carrier for the kind of
+"only these arg shapes" enforcement the MCP wedge needs.
+
+`ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`
+are deferred to Stage 2.
+
+**Session identity** (the prior plan punted on this). Define a
+**`session`** as one MCP client connection: for stdio, the lifetime of
+the spawned proxy process; for HTTP, one MCP `initialize` → `shutdown`
+cycle, keyed by the client-supplied `clientInfo` plus a server-minted
+session ID. Counter keys are `<sessionId>|<toolName>|<resource>`. This
+is the local-fallback equivalent of the production `IssuanceRateLimitSubject`
+key shape — same components, different identity source.
+
+### What is explicitly cut from Stage 1
+
+- Token issuance (no UI, no service, no signing key)
+- Any KMS / Key Vault / cloud dependency
+- W3C DID, partner federation, cross-chain anchor
+- Redis, Postgres, anything multi-process
+- MAF and CrewAI adapters (LangChain comes at Stage 2 if pulled)
+- The `posture-emitter`, `db-token-service`, `storage-grant-service`, `partner-issuer-sim` packages
 - Multi-cloud identity providers
+- Network-policy / sandbox guidance from [`sandboxing.md`](./sandboxing.md) — relevant later, not here
 
-**What to extract from existing packages:**
-- `CapabilityCondition` discriminated union from `packages/common`
-- Argument validators (SQL, path, schema) from `packages/common`
-- In-memory call counter store from `packages/common`
-- MCP interception logic from `packages/framework-adapters` (reshape, don't rewrite)
+### Enforcement guarantee — document explicitly
 
-**Enforcement guarantee to document explicitly:**  
-Enforcement is on arguments *as the agent sent them*, not on what the upstream server does with them. The guarantee is "the agent called the tool with these arguments" — not "the underlying operation was constrained." This is correct behavior for a proxy model. Wrapping (for servers you own) gives stronger guarantees; proxying (for servers you don't own) gives broad coverage.
+Enforcement is on arguments **as the agent sent them**, not on what
+the upstream server does with them. The guarantee is "the agent
+called the tool with these arguments" — not "the underlying
+operation was constrained." For an upstream you control, wrapping
+gives stronger guarantees than proxying. The README must say this in
+the same breath as the pitch, or the first hostile HN comment will
+say it for you.
 
-### Execution Plan
+### Execution plan
 
-**Weeks 1–2: Extract and stub**
-- Create `packages/euno-mcp` as a standalone package
-- Strip all service dependencies from extracted common utilities
-- Implement `tools/list` passthrough and `tools/call` interception
-- Wire in-memory enforcement (no Redis)
-- Local jsonl audit logging
+**Weeks 1–2 — Skeleton + transport.**
+- Create `packages/euno-mcp` (publishes as `@euno/mcp`).
+- Implement stdio and HTTP MCP transports with `tools/list` / `resources/list` / `prompts/list` passthrough and `tools/call` interception. Do not reimplement JSON-RPC; use `@modelcontextprotocol/sdk`.
+- Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common` (no Redis, no Postgres).
+- Local jsonl audit log (`~/.euno/audit.jsonl`), OCSF-shaped, locally HMAC-signed (key generated at first run, stored in `~/.euno/key`). Format identical to the Stage-3+ signed evidence; signer is the only thing that changes.
 
-**Weeks 3–4: Policy engine and CLI**
-- Implement policy loader from JSON config
-- Wire `CapabilityCondition` types: `maxCallsPerSession`, `allowedPaths`, `argumentSchema`, `timeWindow`
-- `euno proxy` CLI command
-- `euno validate` CLI command
-- Lightweight integration test (no heavy infra — mock upstream MCP server)
+**Weeks 3–4 — Policy engine + CLI.**
+- Implement YAML/JSON policy loader producing the existing `AgentCapabilityManifest` in memory (one isomorphic shape, see [§ schema parity](#policy-and-audit-schema-parity-non-negotiable)).
+- Wire the `CapabilityCondition` types listed above through `condition-registry`.
+- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `packages/cli` so a manifest validates identically locally and in the issuer.
+- Lightweight integration test using a mock upstream MCP server (a 30-line stdio echo server is enough).
 
-**Weeks 5–6: Ship and distribute**
-- Publish to npm: `@euno/mcp`
-- README with a single 15-line before/after: agent blocked from a destructive SQL call
-- One concrete post: *"How I stopped my LangChain agent from destroying my dev database"*
-- Targets: LangChain Discord `#tools-and-integrations`, r/LocalLLaMA, Hacker News Show HN
-- GitHub repo title: includes "MCP" and "guardrails" — not "capability-based security"
+**Weeks 5–6 — Ship and distribute.**
+- Publish `@euno/mcp` to npm. Pin `@modelcontextprotocol/sdk` to a specific revision.
+- README leads with one 15-line before/after: agent blocked from a destructive SQL call. Second snippet: the exact paste-into-`claude_desktop_config.json` line.
+- One concrete post: *"How I stopped my LangChain agent from destroying my dev database."*
+- Targets: LangChain Discord `#tools-and-integrations`, r/LocalLLaMA, Hacker News Show HN, the MCP servers list (`modelcontextprotocol/servers` README).
+- Repo title and tagline include "MCP" and "guardrails" — not "capability-based security."
+- **Telemetry** (see [§ below](#telemetry--gate-instrumentation)) ships in v0, not bolted on later.
 
-**Gate condition to Stage 2:**  
-Users running this in production ask: *"Can I enforce this on other tools too?"* Stars and downloads are vanity. This specific question means the enforcement model clicked and they want broader surface area.
+### Gate to Stage 2 — measurable
+
+Move when **all three** are true:
+
+1. ≥10 unsolicited inbound asks (issues / Discord / email) for richer condition types or for cross-process state.
+2. Telemetry shows ≥50 distinct installs running ≥1 enforcement event per day for ≥7 consecutive days.
+3. ≥1 design-partner conversation with a team that's already self-rolling something equivalent.
+
+Stars and downloads are vanity. The asks are the signal that the enforcement model clicked.
+
+---
+
+## Policy and audit schema parity (non-negotiable)
+
+This is the single most important architectural decision in the
+entire staged plan. Get it wrong and every later stage compounds the
+mistake.
+
+**Rule.** The policy file `@euno/mcp` consumes is a literal subset of
+`AgentCapabilityManifest` (`packages/common/src/types.ts`). The
+condition types it understands are a literal subset of
+`CapabilityCondition`. The audit records it writes are
+OCSF-formatted, identical in shape to what the gateway writes to
+SIEM. The only differences across stages are:
+
+| Concern | Stage 1–2 | Stage 3+ |
+|---|---|---|
+| Policy storage | Local YAML/JSON file | Signed JWT minted by Capability Issuer |
+| Policy verifier | None (file is trusted local input) | `JWTTokenVerifier` against issuer JWKS / DID |
+| Counter store | `InMemoryCallCounterStore` | `RedisCallCounterStore` (with circuit breaker) |
+| Audit signer | Local HMAC, key in `~/.euno/key` | KMS-backed signer (Azure Key Vault / AWS KMS / GCP) |
+| Audit sink | `~/.euno/audit.jsonl` | OCSF stream → SIEM + ledger backend |
+| Kill switch | In-memory | Redis + Postgres dual-write |
+
+That is the entire Stage 3 migration: swap the implementations of
+four interfaces that already exist as seams in `@euno/common` —
+[`TokenVerifier`](../packages/common/src/runtime.ts),
+[`CallCounterStore`](../packages/common/src/condition-registry.ts),
+[`EvidenceSigner`](../packages/common/src/runtime.ts), and
+[`KillSwitchManager`](../packages/common/src/runtime.ts) (with its
+optional [`KillSwitchPersistenceBackend`](../packages/common/src/redis-kill-switch.ts)
+for Postgres dual-write). Policy storage is the only seam that is
+genuinely new in Stage 3: in Stage 1 the policy is a local file read
+once at startup; in Stage 3 it's a signed JWT verified per request via
+`TokenVerifier`. Stage 1 must therefore wrap its file loader behind a
+small `LocalPolicySource` interface in `@euno/mcp` so the Stage 3
+hosted-token loader is a drop-in replacement. Nothing in the agent's
+policy file shape or the audit stream's shape changes.
+
+**Concrete obligation.** In Stage 1, the
+`@euno/mcp` package does not define new policy types. It imports
+`AgentCapabilityManifest`, `CapabilityConstraint`, and
+`CapabilityCondition` from `@euno/common` and rejects anything else.
+Unknown condition types are **rejected at policy-validation time**
+(fail-fast at `euno-mcp validate` and at proxy startup), and if one
+ever reaches the registry it is **denied at enforcement time** — the
+same posture the production gateway already takes (see
+[`capability-model.md`](./capability-model.md) §6, "unknown types are
+denied by default"). There is no "unrecognized condition = no-op"
+path at any layer.
 
 ---
 
 ## Stage 2: General Tool Enforcement
 
-**What changes:** Expand from SQL-specific conditions to the full `CapabilityCondition` discriminated union. Users get richer policy primitives across any tool type.
+**What changes.** Expand from the v0 condition subset to the full
+`CapabilityCondition` discriminated union exposed in policy config.
+Add a LangChain.js companion. Nothing architecturally new — the proxy
+handles richer conditions unchanged because enforcement is still at
+`tools/call`.
 
-**What to deliver:**
-- Additional condition types exposed in policy config: IP allowlists, argument schema validation, rate limiting by time window
-- `euno validate-token` CLI for debugging enforcement decisions
-- LangChain.js adapter (`@euno/langchain`) as a companion — for developers who prefer in-process wrapping over the MCP proxy
+### What ships
 
-Nothing architecturally new. The proxy handles it unchanged because enforcement is still at `tools/call`. Policy config gets richer, validators get more types.
+- Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
+- `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
+- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `packages/agent-runtime`, just with a local-only backend.**
+- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `packages/euno-mcp/policies/` directory. This is what makes the 5-minute pitch real.
+- Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
-**Gate condition to Stage 3:**  
-Users ask: *"How do I share this policy across my team?"* or *"How do I audit what my agents did last week?"* In-memory enforcement and local logs start feeling inadequate. This is the moment the gateway becomes a real ask.
+### Gate to Stage 3 — measurable
+
+- ≥5 teams (≥3 users each) confirmed running it (telemetry + at least one direct conversation per team)
+- ≥3 unsolicited asks for "how do I share this policy across the team" or "how do I see what the agent did last week from my laptop"
+- ≥1 conversation with a team that has already implemented some hand-rolled cross-process audit
 
 ---
 
 ## Stage 3: The Gateway as Managed Boundary
 
-**What changes:** Move enforcement out of the local proxy process into a persistent service. This is `packages/tool-gateway` — it stops being overengineered and starts being exactly right.
+**What changes.** Move enforcement out of the local proxy process
+into a persistent service. `packages/tool-gateway` stops being
+overengineered and starts being exactly right for the population
+that's pulled this far.
 
-**The upgrade pitch to existing users:**  
-Same policy config. Same MCP proxy interface. But now audit logs persist across sessions, kill-switch works across multiple agent processes, and team members can inspect and modify policies without redeploying.
+### The Stage 3 upgrade bridge — the part the prior plan skipped
 
-**The upgrade path must be a single config change:**
+The prior plan promised that flipping `{"enforcer": "https://..."}`
+would route through the production gateway with no other change.
+That doesn't work as stated: the gateway requires a *signed JWT
+capability token*, not an API key. Three options, one acceptable:
 
-```json
-// Stage 1-2: local enforcement
+| Option | Verdict |
+|---|---|
+| Make the gateway accept API keys directly | **Reject.** Breaks the cryptographic-token invariant the entire system rests on (`enforcement.md`, `capability-model.md`). Forks the verifier into two modes. |
+| Document a multi-step onboarding flow (issuer → token → gateway) at upgrade time | **Reject.** Kills the "single config change" promise — and that promise *is* the retention mechanic. |
+| Ship a thin **API-key façade** in front of the gateway that mints a short-lived signed token from the API key on each session, using a *managed* signing key, then proxies to the real gateway | **Accept.** Same cryptographic invariant. Single config change for the user. The façade is what the hosted service sells. |
+
+This means Stage 3 includes a new component: an **API-key minter**
+that lives in front of the hosted gateway, holds a managed signing
+key, and translates `apiKey` → `AgentCapabilityManifest` (looked up
+from the team's stored policy) → signed JWT. From the developer's
+perspective the upgrade really is one config change:
+
+```jsonc
+// Stage 1–2: local enforcement
 { "enforcer": "local" }
 
-// Stage 3: gateway enforcement
-{ "enforcer": "https://your-euno-gateway.com", "apiKey": "sk-..." }
+// Stage 3: hosted gateway
+{ "enforcer": "https://gateway.euno.example", "apiKey": "sk-..." }
 ```
 
-Nothing in the agent or policy config changes. This is the retention mechanic.
+From the operator's perspective the API-key minter is the new
+service. The Stage-3 gateway code is the existing
+`packages/tool-gateway` with its existing verifier path; nothing
+about the security model has to be relaxed.
 
-**What to deliver:**
-- `packages/tool-gateway` exposed as a hosted service (or self-hosted Docker image)
-- Persistent audit log with query interface
-- Admin API: kill-switch (global, session, agent-level), revocation list
+### What ships
+
+- `packages/tool-gateway` exposed as a hosted service and as a
+  self-hosted Docker image (the latter under BSL).
+- The API-key minter described above (lives in the hosted offering;
+  not part of the self-host bundle initially — that decision can flip
+  later based on demand).
+- Persistent audit log with a query interface (start with the
+  existing `PerReplicaPostgresLedgerBackend`; the cross-chain anchor
+  stays off until Stage 5).
+- Admin API: kill-switch (global / session / agent), revocation list.
+  All of this code already exists.
 - Redis-backed distributed state for multi-process deployments
-- Managed gateway option (this is where revenue begins)
+  (existing implementation).
+- A "Bring your own gateway" path for teams who want to self-host the
+  whole thing — same Docker image, same config, no managed minter
+  (they have to issue their own tokens, but they're at the engineering
+  scale where that's acceptable).
 
-**Gate condition to Stage 4:**  
-Teams using it. Someone mentions audit compliance, SOC2, or "our security team wants to review how tokens are issued."
+### Gate to Stage 4 — measurable
+
+- ≥1 paying team (any plan)
+- A security or compliance question raised in writing (audit retention, SSO, SOC2, GDPR)
 
 ---
 
 ## Stage 4: Capability Issuer + Identity
 
-**What changes:** Multiple agents, multiple users, multiple policies tied to real identities rather than config files. Token issuance becomes necessary.
+**What changes.** Multiple agents, multiple users, multiple policies
+tied to real identities rather than config files. Token issuance
+becomes necessary as a first-class user-visible service rather than
+an internal API-key minter.
 
-This is where Azure AD, JWT signing, and pluggable identity providers stop being over-engineering and become the answer to a question users are actually asking.
+### What ships
 
-**What to deliver:**
-- `packages/capability-issuer` shipped and integrated
-- Azure AD and at minimum one other identity provider
-- Token attenuation and renewal endpoints
-- Role-to-capability mapping
-- `euno request` and `euno validate-token` CLI commands fully wired to live issuer
+- `packages/capability-issuer` shipped as part of the hosted product
+  and self-host bundle.
+- Entra ID + at minimum one other identity provider (AWS Cognito or
+  GCP Cloud Identity — pick whichever the design partners ask for).
+- Token attenuation and renewal endpoints (already implemented).
+- Role-to-capability mapping (already implemented).
+- `euno request` and `euno validate-token` CLI commands fully wired
+  to a live issuer (the CLI wiring exists; the live issuer is what
+  was missing for these to be useful).
+- Capability-manifest *templates* surfaced in the UI: a way for a
+  tech lead to author a manifest once and assign it to many agents.
 
-**Gate condition to Stage 5:**  
-Enterprise inbound. A company with a security team contacts you. They mention compliance, on-prem deployment, or "our CISO needs to review this."
+### Gate to Stage 5 — measurable
+
+- Enterprise inbound from a company with a security team, mentioning
+  compliance, on-prem, or "our CISO needs to review this."
 
 ---
 
 ## Stage 5: Enterprise + Full Vision
 
-The system as currently architected. W3C DID (`did:web`, `did:ion`, `did:key`), multi-cloud KMS (Azure Key Vault, AWS KMS, GCP Cloud KMS), BSL licensing, on-prem deployment options, SOC2 audit trail export.
+The system as currently architected. W3C DID (`did:web`, `did:ion`,
+`did:key`), multi-cloud KMS (Azure Key Vault, AWS KMS, GCP Cloud
+KMS), partner federation with per-DID circuit breakers, cross-chain
+audit anchors, distributed Postgres ledger, BSL operational tier,
+on-prem deployment, SOC2 audit-trail export, AGT-style in-process
+guard for defense-in-depth (see [`agt-comparison.md`](./agt-comparison.md)
+and [`agt-integration-diagrams.md`](./agt-integration-diagrams.md)).
 
-At this stage you have a sales process, not a developer tools play. The `/.well-known/capability-issuer` discovery endpoints, `did:ion` resolution, and cryptographic evidence generation — all of it becomes relevant when a security team is reviewing the system, not before.
+This is a sales motion, not a developer-tools play. The
+`/.well-known/capability-issuer` discovery endpoints, `did:ion`
+resolution, and signed-evidence generation become relevant when a
+security team is reviewing the system, not before.
+
+The strong signal you've reached Stage 5 successfully: a customer
+asks for a feature that's *already in the repository* but was
+quarantined back in Stage 0 (`partner-issuer-sim`,
+`db-token-service`, `storage-grant-service`, the cross-chain
+anchor). That is the moment to un-quarantine, polish, and ship.
+
+---
+
+## Telemetry & gate instrumentation
+
+The staged plan promises gates pulled by demand. Without
+instrumentation that promise is wishful thinking. The design
+constraints, in priority order:
+
+1. **Opt-in, off by default.** First-run prompt, single yes/no, no
+   nags. A security tool that exfiltrates by default is dead on
+   arrival on HN.
+2. **No payload contents, ever.** No tool names, no argument values,
+   no file paths, no SQL fragments. Counts only. The schema is
+   public and small enough to fit in the README.
+3. **Documented schema** in `packages/euno-mcp/TELEMETRY.md`. What's
+   sent, where, why, how to disable.
+4. **Anonymous install ID** (random UUID, regenerated per install).
+   No machine fingerprint. No IP retention beyond aggregation.
+5. **Local-mirror flag**: `EUNO_TELEMETRY_LOCAL=1` writes the
+   telemetry payload to `~/.euno/telemetry.jsonl` and sends nothing.
+   Builds trust and gives security-conscious users a way to inspect.
+
+**What's measured (counts only):**
+- Installs, version, OS family, Node major.
+- Sessions started; sessions with ≥1 enforcement event.
+- Per-condition-type denial counts (just the type name, e.g. `pathPattern`).
+- Upstream MCP server name *if and only if* it matches a known
+  open-source server (`@modelcontextprotocol/server-filesystem`,
+  `server-postgres`, etc.). Otherwise reported as `custom`.
+- CLI subcommand invocation counts.
+
+These metrics directly feed the measurable gate conditions. Without
+them, "Stage 1 → 2" is a feeling.
+
+---
+
+## Pricing & business model sketch
+
+The prior plan said "managed gateway option (this is where revenue
+begins)" and stopped. That's not enough — pricing shapes the Stage 3
+service surface. A first-cut sketch (subject to design-partner
+contact, not a commitment):
+
+| Tier | Audience | Price hint | Boundary |
+|---|---|---|---|
+| OSS / self-host (`@euno/mcp` only) | Individual dev | Free | Local enforcement, no hosted services |
+| OSS + self-host gateway (BSL) | Small team running their own infra | Free for non-competing use | All packages, BYO Redis / Postgres / KMS |
+| Cloud Free | Hobby / evaluation | Free up to N agents and M enforcement events / month | Hosted gateway + API-key façade, 7-day audit retention |
+| Cloud Team | Tech lead | Per-seat or per-enforcement-event | 90-day retention, kill-switch UI, SSO via OIDC |
+| Cloud Enterprise | Engineering org | Contract | Long retention, on-prem option, evidence export, SOC2 attestation |
+
+The wedge from Free → Team is **shared audit and shared kill-switch
+across processes**. The wedge from Team → Enterprise is **compliance
+artifacts** (signed evidence export, on-prem signing key, SSO with
+SCIM).
+
+Don't ship pricing in Stage 1. Do know what the curve looks like
+before you ship Stage 3, because the curve dictates which Stage-3
+features go in the hosted product vs. the self-host bundle.
 
 ---
 
@@ -215,21 +603,71 @@ At this stage you have a sales process, not a developer tools play. The `/.well-
 
 | Stage | Buyer | Motivation |
 |---|---|---|
-| 1–2 | Individual developer | Fear of agent mistakes, curiosity |
-| 3 | Tech lead / small team | Operational control, shared visibility |
-| 4 | Engineering org | Compliance, multi-agent coordination |
-| 5 | Enterprise | Security mandate, audit requirements |
+| 1–2 | Individual developer | Fear of agent mistakes; curiosity; one bad demo |
+| 3 | Tech lead / small team | Operational control, shared visibility, audit |
+| 4 | Engineering org | Compliance, multi-agent coordination, identity |
+| 5 | Enterprise | Security mandate, audit requirements, federation |
 
-The current architecture optimizes for Stage 5 buyers. The current entry point doesn't reach Stage 1 buyers. Stages 1–2 are the on-ramp. Build them first, make the upgrade path frictionless, let users pull themselves forward.
+The current architecture optimizes for Stage 5. The current entry
+point doesn't reach Stage 1. Stages 0–2 are the on-ramp. Build them
+first, make the upgrade path frictionless via [§ schema parity](#policy-and-audit-schema-parity-non-negotiable),
+let users pull themselves forward.
 
 ---
 
-## Critical Risks
+## Critical risks
 
-**LangChain.js API churn.** LangChain's API surface changes constantly. Pin to a tested version range and be explicit. Test against both stable and latest in CI from day one.
+**MCP spec churn.** MCP is pre-1.0 and the protocol revision changes
+on the order of months. Pin `@modelcontextprotocol/sdk` and the
+revision string; gate updates behind the integration tests. Without
+this you'll ship a broken proxy the first week the spec rev moves.
 
-**The Stage 1-2 ceiling.** Some developers will use local enforcement forever and never need the gateway. That's fine — they're your distribution channel, not necessarily your revenue. The ones who hit the ceiling are your customers.
+**First-party MCP guardrails.** Anthropic and the MCP working group
+will eventually ship some form of in-protocol guardrail (probably
+weak, probably permission-prompt-shaped). Position Euno as
+*deterministic, code-defined, audit-grade* enforcement — adjacent to,
+not competing with, an interactive permission prompt. The plan is
+fine; the messaging needs to be ready.
 
-**Scope creep disguised as focus.** A token issuance UI, a database proxy, RAG access control — all reasonable ideas, all wrong for Stage 1. The MVP is the MCP proxy with SQL policy enforcement. Nothing else.
+**Existing MCP-proxy projects.** `mcp-proxy` and similar tools
+already exist and are more popular than zero. The differentiator is
+**typed conditions, denial-by-default on unknown condition types,
+audit shape parity with a real production gateway**. Lead with that
+in the README.
 
-**Selling the architecture before selling the value.** "Capability-based security" and "zero-trust agents" are not search terms developers use. "Stop your agent from dropping your database" is.
+**LangChain.js API churn.** Pin to a tested version range. Test
+against both stable and latest in CI from day one. Nothing about this
+has changed from the prior plan.
+
+**The Stage 1–2 ceiling.** Some developers will use local enforcement
+forever and never need the gateway. That's fine — they're your
+distribution channel, not necessarily your revenue. The ones who hit
+the ceiling are your customers. The risk is conflating them in the
+funnel and over-investing in a Stage 3 surface that the silent
+majority will never use.
+
+**Scope creep disguised as focus.** A token issuance UI, a database
+proxy, a RAG access-control layer, an in-process AGT-style guard —
+all reasonable, all wrong for Stage 1. The MVP is the MCP proxy with
+the existing typed conditions. Nothing else.
+
+**Selling the architecture before selling the value.**
+"Capability-based security" and "zero-trust agents" are not search
+terms developers use. *"Stop your agent from dropping your database"*
+is. The repo description, README first paragraph, and Show HN title
+all conform.
+
+**Schema drift between the local DSL and the gateway manifest.** This
+is the silent-killer risk. If a contributor adds a condition type to
+`@euno/mcp` that doesn't exist in `@euno/common`, every Stage-3
+upgrade for users of that condition type breaks. **Mechanical
+prevention:** `@euno/mcp` has zero local condition definitions; it
+imports them all from `@euno/common`. CI fails the build if it
+doesn't.
+
+**Quarantined packages becoming maintenance debt.** `partner-issuer-sim`,
+`storage-grant-service`, `db-token-service`, `posture-emitter`,
+`capability-issuer` (multi-region active/active component) will rot in
+the freezer. Budget one week per quarter to rebase them on schema
+changes, or accept that un-quarantining later will be a real project,
+not a dust-off. Decide which up front.
