@@ -90,6 +90,42 @@ describe('InMemoryDpopReplayStore', () => {
     }
     expect(store.size()).toBeLessThanOrEqual(1024);
   });
+
+  it('JTI reuse is accepted after the original entry expires (lazy-deletion path)', async () => {
+    const store = new InMemoryDpopReplayStore();
+    const past = Math.floor(Date.now() / 1000) - 10;
+    // First admit: the entry is stored but immediately in the past.
+    expect(await store.checkAndRemember('jti-reuse', past)).toBe(true);
+    // The map entry is stale. checkAndRemember should treat the JTI as novel
+    // and the stale heap node must be silently skipped via lazy deletion.
+    const future = Math.floor(Date.now() / 1000) + 300;
+    expect(await store.checkAndRemember('jti-reuse', future)).toBe(true);
+    // Now it is live — a genuine replay must be rejected.
+    expect(await store.checkAndRemember('jti-reuse', future)).toBe(false);
+    expect(store.size()).toBe(1);
+  });
+
+  it('heap rebuild after FIFO eviction keeps the store consistent', async () => {
+    // Use a tiny cap to exercise the FIFO-eviction + rebuild path cheaply.
+    const max = 1024;
+    const store = new InMemoryDpopReplayStore({ maxEntries: max });
+    const future = Math.floor(Date.now() / 1000) + 600;
+    // Fill to capacity with live entries.
+    for (let i = 0; i < max; i++) {
+      await store.checkAndRemember(`live-${i}`, future);
+    }
+    expect(store.size()).toBe(max);
+    // Exceed capacity: FIFO eviction + heap rebuild fires.
+    for (let i = 0; i < Math.ceil(max * 0.1) + 5; i++) {
+      await store.checkAndRemember(`overflow-${i}`, future);
+    }
+    // Map size must be ≤ max after FIFO eviction kicks in.
+    expect(store.size()).toBeLessThanOrEqual(max);
+    // Evicted JTIs (live-0 … live-N) must be re-admissible as novel.
+    expect(await store.checkAndRemember('live-0', future)).toBe(true);
+    // A non-evicted recent entry must still be rejected as a replay.
+    expect(await store.checkAndRemember(`overflow-0`, future)).toBe(false);
+  });
 });
 
 describe('verifyDpopProof', () => {

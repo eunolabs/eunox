@@ -11,7 +11,7 @@
  * documented in `docs/DISTRIBUTED_REVOCATION.md`.
  */
 
-import { Logger } from '@euno/common';
+import { Logger, MinHeap } from '@euno/common';
 
 /**
  * Common interface implemented by all revocation backends.
@@ -50,7 +50,8 @@ export interface RevocationStore {
  * not configured.
  */
 export class InMemoryRevocationStore implements RevocationStore {
-  private revokedTokens: Map<string, number> = new Map();
+  private readonly revokedTokens: Map<string, number> = new Map();
+  private readonly expiryHeap = new MinHeap();
 
   async isRevoked(tokenId: string): Promise<boolean> {
     const expiry = this.revokedTokens.get(tokenId);
@@ -58,6 +59,8 @@ export class InMemoryRevocationStore implements RevocationStore {
       return false;
     }
     if (expiry <= nowSeconds()) {
+      // Lazily remove this specific stale entry; the heap entry will be
+      // skipped (lazy-deleted) the next time drainExpired() runs.
       this.revokedTokens.delete(tokenId);
       return false;
     }
@@ -65,24 +68,48 @@ export class InMemoryRevocationStore implements RevocationStore {
   }
 
   async revoke(tokenId: string, expiresAt: number): Promise<void> {
-    // Bulk-prune expired entries before inserting so the map cannot grow
-    // unboundedly even under sustained revocation traffic.
+    // Pop every expired entry off the heap front — O(k log n) where k is the
+    // number of newly-expired entries — instead of the former O(n) full-map
+    // scan that made sustained revocation traffic O(n²).
     const now = nowSeconds();
-    for (const [jti, expiry] of this.revokedTokens) {
-      if (expiry <= now) {
-        this.revokedTokens.delete(jti);
-      }
-    }
+    this.drainExpired(now);
     this.revokedTokens.set(tokenId, expiresAt);
+    this.expiryHeap.push(tokenId, expiresAt);
+    // Lazy-deleted entries (removed from the map by isRevoked() but still in
+    // the heap) accumulate over time.  If the heap has grown more than twice
+    // the map size, rebuild it from the map in O(n) to reclaim memory.
+    if (this.expiryHeap.size() > 2 * this.revokedTokens.size) {
+      this.expiryHeap.rebuildFrom(this.revokedTokens);
+    }
   }
 
   async close(): Promise<void> {
     this.revokedTokens.clear();
+    this.expiryHeap.clear();
   }
 
   /** Test/debug helper: number of currently-tracked entries. */
   size(): number {
     return this.revokedTokens.size;
+  }
+
+  /**
+   * Pop every heap node whose expiry has passed and remove it from the map.
+   *
+   * Lazy-deletion guard: if the map entry for a popped key no longer carries
+   * the same expiry (because {@link isRevoked} already cleaned it up, or the
+   * token was re-revoked with a different expiry) we simply skip the map
+   * deletion — the map is always the authoritative source of truth.
+   */
+  private drainExpired(now: number): void {
+    for (;;) {
+      const top = this.expiryHeap.peek();
+      if (top === undefined || top.expiry > now) break;
+      this.expiryHeap.pop();
+      if (this.revokedTokens.get(top.key) === top.expiry) {
+        this.revokedTokens.delete(top.key);
+      }
+    }
   }
 }
 

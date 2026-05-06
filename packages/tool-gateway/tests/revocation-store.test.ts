@@ -46,6 +46,42 @@ describe('InMemoryRevocationStore', () => {
     expect(store.size()).toBe(1);
   });
 
+  it('handles stale-node path: isRevoked() lazy-removes before drainExpired() sees it', async () => {
+    const store = new InMemoryRevocationStore();
+    const past = Math.floor(Date.now() / 1000) - 1;
+    // Insert an expired token; isRevoked() will remove it from the map lazily.
+    await store.revoke('stale-tok', past);
+    // isRevoked() removes 'stale-tok' from the map but leaves the heap node.
+    expect(await store.isRevoked('stale-tok')).toBe(false);
+    expect(store.size()).toBe(0);
+    // A subsequent revoke() triggers drainExpired(). The heap node for
+    // 'stale-tok' (already absent from the map) must be silently skipped
+    // without corrupting state.
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    await store.revoke('new-tok', future);
+    expect(store.size()).toBe(1);
+    expect(await store.isRevoked('new-tok')).toBe(true);
+  });
+
+  it('re-revoking the same token with a different expiry keeps the later expiry', async () => {
+    const store = new InMemoryRevocationStore();
+    const future1 = Math.floor(Date.now() / 1000) + 600;
+    const future2 = Math.floor(Date.now() / 1000) + 3600;
+    await store.revoke('tok-r', future1);
+    // Re-revoke with a longer expiry; map must reflect future2.
+    await store.revoke('tok-r', future2);
+    // The old heap node (future1) is now stale; the map entry holds future2.
+    expect(store.size()).toBe(1);
+    expect(await store.isRevoked('tok-r')).toBe(true);
+    // Insert a new token so drainExpired() has a chance to process the stale
+    // node for future1. Because future1 hasn't expired yet the stale node won't
+    // be popped, but the store must remain consistent regardless.
+    const future3 = Math.floor(Date.now() / 1000) + 7200;
+    await store.revoke('tok-s', future3);
+    expect(store.size()).toBe(2);
+    expect(await store.isRevoked('tok-r')).toBe(true);
+  });
+
   it('close() empties the store', async () => {
     const store = new InMemoryRevocationStore();
     const future = Math.floor(Date.now() / 1000) + 3600;

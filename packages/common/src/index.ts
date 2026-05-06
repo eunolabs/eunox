@@ -1,5 +1,6 @@
 export * from './types';
 export * from './utils';
+export * from './min-heap';
 export * from './logger';
 export * from './evidence';
 export * from './ledger-signer';

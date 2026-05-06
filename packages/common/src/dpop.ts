@@ -44,6 +44,7 @@
 import * as jose from 'jose';
 import * as nodeCrypto from 'crypto';
 import { CapabilityError, ErrorCode } from './utils';
+import { MinHeap } from './min-heap';
 
 /**
  * Hard floor and default for {@link InMemoryDpopReplayStore} capacity.
@@ -152,6 +153,7 @@ export interface DpopReplayStore {
  */
 export class InMemoryDpopReplayStore implements DpopReplayStore {
   private readonly entries = new Map<string, number>();
+  private readonly expiryHeap = new MinHeap();
   private readonly maxEntries: number;
 
   constructor(opts: { maxEntries?: number } = {}) {
@@ -170,42 +172,66 @@ export class InMemoryDpopReplayStore implements DpopReplayStore {
       return false;
     }
     if (existing !== undefined) {
-      // Stale entry — drop and treat as novel.
+      // Stale entry — drop and treat as novel.  The corresponding heap node
+      // will be lazily skipped the next time drainExpired() runs.
       this.entries.delete(jti);
     }
 
+    // Pop every expired entry off the heap front — O(k log n) where k is the
+    // number of newly-expired entries — instead of the former O(n) full-map
+    // scan that made sustained traffic O(n²).  Called unconditionally (not
+    // only at capacity) so the heap stays compact and the map stays accurate.
+    this.drainExpired(nowSec);
+
     if (this.entries.size >= this.maxEntries) {
-      this.evictExpired(nowSec);
-      if (this.entries.size >= this.maxEntries) {
-        // Still over — drop the oldest REPLAY_STORE_EVICTION_FRACTION
-        // (Map preserves insertion order). This keeps the bound
-        // tight even if every queued jti is still in-window.
-        const toDrop = Math.ceil(this.maxEntries * REPLAY_STORE_EVICTION_FRACTION);
-        let dropped = 0;
-        for (const key of this.entries.keys()) {
-          this.entries.delete(key);
-          dropped += 1;
-          if (dropped >= toDrop) break;
-        }
+      // Still over capacity after draining all expired entries.  This is an
+      // abnormal condition (e.g. an attacker flooding unique JTIs).  Evict
+      // the oldest REPLAY_STORE_EVICTION_FRACTION of live entries by
+      // insertion order (Map preserves insertion order).  Those evicted entries
+      // become stale in the heap and will be skipped lazily.
+      const toDrop = Math.ceil(this.maxEntries * REPLAY_STORE_EVICTION_FRACTION);
+      let dropped = 0;
+      for (const key of this.entries.keys()) {
+        this.entries.delete(key);
+        dropped += 1;
+        if (dropped >= toDrop) break;
+      }
+      // FIFO eviction leaves stale nodes in the heap.  If the heap has grown
+      // more than twice the map, rebuild it from scratch in O(n) to reclaim
+      // memory and keep future drain passes fast.
+      if (this.expiryHeap.size() > 2 * this.entries.size) {
+        this.expiryHeap.rebuildFrom(this.entries);
       }
     }
 
     this.entries.set(jti, expiresAtUnixSec);
+    this.expiryHeap.push(jti, expiresAtUnixSec);
     return true;
-  }
-
-  /** Remove every entry whose TTL has passed. Called inline on insert. */
-  private evictExpired(nowSec: number): void {
-    for (const [k, exp] of this.entries) {
-      if (exp <= nowSec) {
-        this.entries.delete(k);
-      }
-    }
   }
 
   /** Test helper: number of currently-tracked proofs. */
   size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * Pop every heap node whose expiry has passed and remove it from the map.
+   *
+   * Lazy-deletion guard: if the map entry for a popped key no longer carries
+   * the same expiry (because a lookup already cleaned it up, or the same jti
+   * was re-admitted with a fresh TTL after its previous entry expired) we
+   * simply skip the map deletion — the map is always the authoritative source
+   * of truth.
+   */
+  private drainExpired(nowSec: number): void {
+    for (;;) {
+      const top = this.expiryHeap.peek();
+      if (top === undefined || top.expiry > nowSec) break;
+      this.expiryHeap.pop();
+      if (this.entries.get(top.key) === top.expiry) {
+        this.entries.delete(top.key);
+      }
+    }
   }
 }
 
