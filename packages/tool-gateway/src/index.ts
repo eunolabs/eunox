@@ -42,7 +42,19 @@ export async function startServer(): Promise<void> {
   const app = createApp(deps);
   const adminApp = createAdminApp(deps);
 
-  const { config, logger, revocationStore, epochStore, killSwitchManager, callCounterStore, auditPipeline, auditPipelineDrainTimeoutMs, ocsfTransport, dpopReplayStore } = deps;
+  const {
+    config,
+    logger,
+    revocationStore,
+    epochStore,
+    killSwitchManager,
+    callCounterStore,
+    auditPipeline,
+    auditPipelineDrainTimeoutMs,
+    ocsfTransport,
+    dpopReplayStore,
+    ledgerPgPool,
+  } = deps;
 
   const server = app.listen(config.port, () => {
     setReady(true);
@@ -76,109 +88,186 @@ export async function startServer(): Promise<void> {
     isShuttingDown = true;
     logger.info(`${signal} received, closing server gracefully`);
     setReady(false);
-    // Close both servers concurrently then clean up shared resources.
-    // Errors from close() are surfaced so shutdown never silently stalls.
+
+    // Compute a single overall shutdown deadline so all six phases share the
+    // same budget (auditPipelineDrainTimeoutMs). Each phase receives only the
+    // time that remains, preventing a pathological close() in an early phase
+    // from silently consuming the budget meant for the audit pipeline drain.
+    const shutdownDeadlineMs = Date.now() + auditPipelineDrainTimeoutMs;
+
+    /** Milliseconds left in the overall shutdown budget (never negative). */
+    const remaining = (): number => Math.max(0, shutdownDeadlineMs - Date.now());
+
+    /**
+     * Races `fn` against the remaining shutdown budget so every close
+     * operation is bounded by the same Kubernetes grace window.
+     *
+     * - **Timeout**: logs `logger.error` — the operator's signal that the
+     *   SIGTERM grace window may be exceeded and SIGKILL could discard
+     *   buffered data.
+     * - **Close error**: logs `logger.warn` — a rejected close() is
+     *   typically an already-closed connection or broken pipe and does not
+     *   necessarily imply data loss.
+     * - **Budget exhausted before start**: logs `logger.error` and returns
+     *   immediately so no phase can quietly squander the remaining time.
+     *
+     * Always resolves so one failed close never blocks subsequent phases.
+     * The timer handle is always cleared when `fn` settles first, preventing
+     * stale timeout callbacks from firing during later phases.  `fn` is
+     * invoked via `Promise.resolve().then()` so that synchronous throws are
+     * captured as promise rejections instead of bypassing the race.
+     */
+    const closeWithTimeout = (
+      label: string,
+      fn: () => Promise<void>,
+    ): Promise<void> => {
+      const timeoutMs = remaining();
+      if (timeoutMs === 0) {
+        logger.error(
+          `Shutdown: skipping ${label} — overall budget exhausted; ` +
+            'SIGKILL may discard buffered data',
+          { label },
+        );
+        return Promise.resolve();
+      }
+
+      let timedOut = false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+      const timer = new Promise<void>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          logger.error(
+            `Shutdown: timed out closing ${label} after ${timeoutMs} ms — ` +
+              'SIGKILL may discard buffered data',
+            { label, timeoutMs },
+          );
+          resolve();
+        }, timeoutMs);
+        // `unref()` prevents an orphaned timer from keeping the Node event
+        // loop alive after process.exit(0) is called. During the active
+        // shutdown chain the loop is never empty, so unref() only takes
+        // effect at process exit — letting the process exit cleanly instead
+        // of waiting out any leftover deadline.
+        timeoutHandle.unref();
+      });
+
+      // Wrap fn() in Promise.resolve().then() so synchronous throws are
+      // converted to rejected promises rather than propagating as unhandled
+      // exceptions that could abort the entire shutdown sequence.
+      const op = Promise.resolve()
+        .then(() => fn())
+        .then(
+          () => {
+            // fn() resolved before the deadline — cancel the pending timer so
+            // it does not fire during subsequent phases and log a false error.
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+          },
+          (err: unknown) => {
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+            // Suppress the warning when the deadline already fired: the error
+            // would be misleading (the operation was abandoned, not just slow).
+            if (!timedOut) {
+              logger.warn(`Shutdown: error while closing ${label}`, {
+                label,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          },
+        );
+
+      return Promise.race([op, timer]);
+    };
+
     const closeServer = (srv: http.Server) =>
       new Promise<void>((resolve, reject) =>
         srv.close((err) => (err ? reject(err) : resolve())),
       );
-    void Promise.all([closeServer(server), closeServer(adminServer)])
-      .catch((err) => {
-        logger.warn('Error while closing HTTP server(s)', {
-          error: err instanceof Error ? err.message : 'Unknown error',
+
+    // Phase 1: stop accepting new requests.
+    void Promise.all([
+      closeWithTimeout('HTTP server', () => closeServer(server)),
+      closeWithTimeout('admin HTTP server', () => closeServer(adminServer)),
+    ]).then(async () => {
+      // Phase 2: close lightweight cache/state stores concurrently.
+      // These hold no durable write buffers so failures are non-critical.
+      await Promise.all([
+        ...(revocationStore
+          ? [closeWithTimeout('revocation store', () => revocationStore.close())]
+          : []),
+        ...(epochStore
+          ? [closeWithTimeout('epoch store', () => epochStore.close())]
+          : []),
+        // Use structural checks rather than `instanceof` so any
+        // KillSwitchManager / CallCounterStore implementation that holds
+        // external resources gets cleaned up without coupling this file to
+        // concrete types.
+        ...(typeof (killSwitchManager as { close?: unknown }).close === 'function'
+          ? [
+              closeWithTimeout('kill-switch manager', () =>
+                (killSwitchManager as { close(): Promise<void> }).close(),
+              ),
+            ]
+          : []),
+        ...(typeof (callCounterStore as { close?: unknown }).close === 'function'
+          ? [
+              closeWithTimeout('call-counter store', () =>
+                Promise.resolve(
+                  (callCounterStore as { close(): Promise<void> | void }).close(),
+                ),
+              ),
+            ]
+          : []),
+      ]);
+
+      // Phase 3: drain the async audit pipeline — must complete BEFORE
+      // closing the ledger backend pool so the signer can flush its last
+      // batch. drain(timeoutMs) manages its own bounded timeout internally:
+      // it stops accepting new items immediately, counts items still buffered
+      // at expiry as metric drops, and resolves (never rejects) once the
+      // deadline passes. We pass remaining() rather than a fixed constant so
+      // the drain consumes only what is left of the overall shutdown budget.
+      try {
+        if (auditPipeline) {
+          await auditPipeline.drain(remaining());
+        }
+      } catch (err) {
+        logger.warn('Shutdown: error while draining audit pipeline', {
+          error: err instanceof Error ? err.message : String(err),
         });
-      })
-      .then(async () => {
-        try {
-          if (revocationStore) {
-            await revocationStore.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing revocation store', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        try {
-          if (epochStore) {
-            await epochStore.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing epoch store', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        try {
-          // Use a structural check rather than `instanceof` so any
-          // KillSwitchManager implementation that holds external resources
-          // (timers, network connections, …) gets cleaned up – not just the
-          // bundled RedisKillSwitchManager. The in-process default omits
-          // `close()` entirely.
-          if (typeof killSwitchManager.close === 'function') {
-            await killSwitchManager.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing kill-switch manager', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        try {
-          // Same structural check used for `killSwitchManager`: only
-          // implementations that own external resources (e.g. the Redis-backed
-          // store) expose `close()`. The in-memory default omits it.
-          const closable = callCounterStore as { close?: () => Promise<void> | void };
-          if (typeof closable.close === 'function') {
-            await closable.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing call-counter store', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        // R-9: drain the async audit pipeline before exit so any
-        // evidence still buffered in the ring is flushed to the signer.
-        // The drain timeout is bounded so SIGTERM cannot hang
-        // indefinitely on a misbehaving signer; items still buffered
-        // when the deadline expires are counted as drops on the
-        // pipeline's metric so the loss is observable.
-        try {
-          if (auditPipeline) {
-            await auditPipeline.drain(auditPipelineDrainTimeoutMs);
-          }
-        } catch (err) {
-          logger.warn('Error while draining audit pipeline', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        // F-6: close the OCSF transport so any buffered HTTP / file
-        // handles are released before exit. `close()` waits for any
-        // in-flight `send()` calls so the tail of the audit stream is
-        // not lost when the process exits.
-        try {
-          if (ocsfTransport) {
-            await ocsfTransport.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing OCSF transport', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        // F-2: close the DPoP replay store. Only the Redis-backed
-        // implementation owns external resources (`close()` is its
-        // own method); the in-memory default omits it, so we
-        // structurally check before calling.
-        try {
-          const closableReplay = dpopReplayStore as { close?: () => Promise<void> | void } | undefined;
-          if (closableReplay && typeof closableReplay.close === 'function') {
-            await closableReplay.close();
-          }
-        } catch (err) {
-          logger.warn('Error while closing DPoP replay store', {
-            error: err instanceof Error ? err.message : 'Unknown error',
-          });
-        }
-        logger.info('Server closed');
-        process.exit(0);
-      });
+      }
+
+      // Phase 4: close the OCSF transport — `close()` waits for any
+      // in-flight `send()` calls so the tail of the audit stream is not
+      // lost when the process exits.
+      if (ocsfTransport) {
+        await closeWithTimeout('OCSF transport', () => ocsfTransport.close());
+      }
+
+      // Phase 5: close the DPoP replay store. Only the Redis-backed
+      // implementation owns external resources; the in-memory default
+      // omits `close()`, so we check structurally.
+      const closableReplay = dpopReplayStore as
+        | { close?: () => Promise<void> | void }
+        | undefined;
+      if (closableReplay && typeof closableReplay.close === 'function') {
+        await closeWithTimeout('DPoP replay store', () =>
+          Promise.resolve(closableReplay.close!()),
+        );
+      }
+
+      // Phase 6: close the ledger Postgres pool LAST — after the pipeline
+      // has finished writing so in-flight INSERT transactions can commit
+      // before the pool is torn down. A stalled pool.end() will exceed the
+      // Kubernetes SIGTERM grace window; the timeout makes this visible as
+      // a loud error rather than a silent SIGKILL.
+      if (ledgerPgPool) {
+        await closeWithTimeout('ledger Postgres pool', () => ledgerPgPool.end());
+      }
+
+      logger.info('Server closed');
+      process.exit(0);
+    });
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
