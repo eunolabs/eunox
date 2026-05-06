@@ -289,19 +289,46 @@ export function isValidResourceId(resource: string): boolean {
 }
 
 /**
- * Check if an action is allowed for a resource given capability constraints
+ * Find the first capability in `capabilities` that permits `action` on
+ * `resource`, applying the same wildcard resource-matching logic as
+ * {@link matchesResource}.
+ *
+ * Returns the matched element so the caller can inspect `argumentSchema`,
+ * `conditions`, and any other fields without a second O(n) scan. Returns
+ * `null` when no capability matches — letting callers treat `null` as a
+ * definitive denial without an additional boolean check.
+ *
+ * The function is generic so it works with any capability supertype (e.g.
+ * `CapabilityConstraint`) without losing type information. Both the outer
+ * array and the `actions` tuple are accepted as `readonly` so callers that
+ * use `as const` literals (e.g. `actions: ['read'] as const`) do not need
+ * a cast.
+ */
+export function findMatchingCapability<C extends { resource: string; actions: readonly string[] }>(
+  action: string,
+  resource: string,
+  capabilities: readonly C[]
+): C | null {
+  for (const cap of capabilities) {
+    if (matchesResource(resource, cap.resource) && cap.actions.includes(action)) {
+      return cap;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if an action is allowed for a resource given capability constraints.
+ *
+ * Delegates to {@link findMatchingCapability} so the two functions share a
+ * single code path and cannot diverge in their matching semantics.
  */
 export function isActionAllowed(
   action: string,
   resource: string,
-  capabilities: Array<{ resource: string; actions: string[] }>
+  capabilities: ReadonlyArray<{ resource: string; actions: readonly string[] }>
 ): boolean {
-  for (const cap of capabilities) {
-    if (matchesResource(resource, cap.resource) && cap.actions.includes(action)) {
-      return true;
-    }
-  }
-  return false;
+  return findMatchingCapability(action, resource, capabilities) !== null;
 }
 
 /**

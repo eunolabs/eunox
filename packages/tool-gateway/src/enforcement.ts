@@ -9,7 +9,7 @@ import {
   ValidateActionResponse,
   CapabilityError,
   ErrorCode,
-  isActionAllowed,
+  findMatchingCapability,
   Logger,
   createAuditLogger,
   AuditLogEntry,
@@ -362,14 +362,16 @@ export class EnforcementEngine {
         );
       }
 
-      // Step 4: Check if the action is allowed for the resource
-      const allowed = isActionAllowed(
+      // Step 4: Find the capability that permits this (action, resource) pair.
+      // A single pass returns the matched cap directly — no second scan is
+      // needed to recover it after the allow/deny decision is made.
+      const matchedCapability = findMatchingCapability(
         request.action,
         request.resource,
         payload.capabilities
       );
 
-      if (!allowed) {
+      if (!matchedCapability) {
         await this.logDenial(
           payload.sub,
           request.action,
@@ -399,12 +401,7 @@ export class EnforcementEngine {
         };
       }
 
-      // Step 5: Find the matched capability
-      const matchedCapability = payload.capabilities.find(cap => {
-        return isActionAllowed(request.action, request.resource, [cap]);
-      });
-
-      // Step 5b: Argument-level enforcement.
+      // Step 5: Argument-level enforcement.
       // After the (action, resource) check passes, validate the actual
       // arguments / request body against the matched capability's
       // declared `argumentSchema`. This is the first-class enforcement
@@ -420,7 +417,7 @@ export class EnforcementEngine {
       // declare an argument schema. This lets operators fail-closed on
       // schema-less tokens once every capability accepted by this
       // gateway has been migrated.
-      if (this.argumentSchemaRequired && matchedCapability && !matchedCapability.argumentSchema) {
+      if (this.argumentSchemaRequired && !matchedCapability.argumentSchema) {
         const reason =
           'Argument schema required: matched capability has no argumentSchema and the gateway is in strict argument-schema mode';
         await this.logDenial(
@@ -441,7 +438,7 @@ export class EnforcementEngine {
         };
       }
 
-      if (matchedCapability?.argumentSchema) {
+      if (matchedCapability.argumentSchema) {
         const argsToValidate = extractArgsForValidation(request.context);
 
         try {
@@ -475,7 +472,7 @@ export class EnforcementEngine {
         }
       }
 
-      // Step 5c: Condition enforcement. After the (action, resource)
+      // Step 6: Condition enforcement. After the (action, resource)
       // match and any argument-schema check pass, every typed
       // condition on the matched capability must also evaluate to
       // "allow" (typed-condition contract from
@@ -484,7 +481,7 @@ export class EnforcementEngine {
       // sound — we still defend against unknown types here by treating
       // them as denials, in case a token from a future issuer carries
       // a condition this gateway does not yet implement.
-      if (matchedCapability?.conditions && matchedCapability.conditions.length > 0) {
+      if (matchedCapability.conditions && matchedCapability.conditions.length > 0) {
         const conditionCtx = this.buildConditionContext(request, payload.jti, payload.sub);
         const result = await enforceConditions(matchedCapability.conditions, conditionCtx);
         if (!result.allow) {
@@ -508,7 +505,7 @@ export class EnforcementEngine {
         }
       }
 
-      // Step 6: Log the successful validation
+      // Step 7: Log the successful validation
       await this.logValidation(
         payload.sub,
         request.action,
@@ -517,7 +514,7 @@ export class EnforcementEngine {
         sessionId
       );
 
-      // Step 7: Generate cryptographic evidence for allowed action if enabled
+      // Step 8: Generate cryptographic evidence for allowed action if enabled
       if (this.shouldSignDecision('allow') && payload.authorizedBy) {
         await this.generateEvidence({
           sessionId: sessionId || 'unknown',
@@ -544,7 +541,7 @@ export class EnforcementEngine {
       // registry. This keeps the per-call cost zero for capabilities
       // whose only conditions are pure authorization checks (e.g.
       // `timeWindow`, `ipRange`, `maxCalls`).
-      const conditions = matchedCapability?.conditions;
+      const conditions = matchedCapability.conditions;
       const applyResponseRedactions: ((body: unknown) => unknown) | undefined =
         conditions && hasRedactObligation(conditions)
           ? (body) => redactConditions(conditions, body)

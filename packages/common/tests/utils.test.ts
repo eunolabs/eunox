@@ -11,6 +11,7 @@ import {
   isValidDID,
   isValidResourceId,
   isActionAllowed,
+  findMatchingCapability,
   matchesResource,
   parseBearerToken,
   sanitizeForLog,
@@ -120,6 +121,80 @@ describe('Utility Functions', () => {
     it('should handle wildcard resources', () => {
       expect(isActionAllowed('read', 'api://other/anything', capabilities)).toBe(true);
       expect(isActionAllowed('write', 'api://other/anything', capabilities)).toBe(false);
+    });
+  });
+
+  describe('findMatchingCapability', () => {
+    const capA = { resource: 'api://service/endpoint', actions: ['read', 'write'], tag: 'A' };
+    const capB = { resource: 'api://other/*', actions: ['read'], tag: 'B' };
+    const capabilities = [capA, capB];
+
+    it('returns the matching capability object', () => {
+      expect(findMatchingCapability('read', 'api://service/endpoint', capabilities)).toBe(capA);
+      expect(findMatchingCapability('write', 'api://service/endpoint', capabilities)).toBe(capA);
+    });
+
+    it('returns null when no capability matches', () => {
+      expect(findMatchingCapability('delete', 'api://service/endpoint', capabilities)).toBeNull();
+      expect(findMatchingCapability('read', 'api://unknown/endpoint', capabilities)).toBeNull();
+    });
+
+    it('returns the wildcard-matched capability', () => {
+      expect(findMatchingCapability('read', 'api://other/anything', capabilities)).toBe(capB);
+    });
+
+    it('returns null when action is not in the matched capability', () => {
+      expect(findMatchingCapability('write', 'api://other/anything', capabilities)).toBeNull();
+    });
+
+    it('returns null for an empty capabilities array', () => {
+      expect(findMatchingCapability('read', 'api://service/endpoint', [])).toBeNull();
+    });
+
+    it('returns the first matching capability when multiple would match', () => {
+      const dup = { resource: 'api://service/endpoint', actions: ['read'], tag: 'DUP' };
+      expect(findMatchingCapability('read', 'api://service/endpoint', [capA, dup])).toBe(capA);
+    });
+
+    it('preserves extra fields on the returned capability (generic parameter)', () => {
+      type Extended = { resource: string; actions: string[]; meta: { priority: number } };
+      const ext: Extended = {
+        resource: 'api://service/endpoint',
+        actions: ['read'],
+        meta: { priority: 1 },
+      };
+      const result = findMatchingCapability('read', 'api://service/endpoint', [ext]);
+      expect(result).toBe(ext);
+      expect(result?.meta.priority).toBe(1);
+    });
+
+    it('accepts readonly arrays and as-const action tuples without a cast', () => {
+      // `as const` produces `readonly ['read']` — assignable to the new
+      // `readonly string[]` constraint but not to the old mutable `string[]`.
+      const readonlyCap = {
+        resource: 'api://service/endpoint',
+        actions: ['read'] as const,
+      } as const;
+      const readonlyList = [readonlyCap] as const;
+      expect(findMatchingCapability('read', 'api://service/endpoint', readonlyList)).toBe(readonlyCap);
+      expect(findMatchingCapability('write', 'api://service/endpoint', readonlyList)).toBeNull();
+      // isActionAllowed must also accept the readonly shape
+      expect(isActionAllowed('read', 'api://service/endpoint', readonlyList)).toBe(true);
+    });
+
+    it('isActionAllowed and findMatchingCapability agree on every case', () => {
+      const pairs: Array<[string, string]> = [
+        ['read', 'api://service/endpoint'],
+        ['write', 'api://service/endpoint'],
+        ['delete', 'api://service/endpoint'],
+        ['read', 'api://other/anything'],
+        ['write', 'api://other/anything'],
+        ['read', 'api://unknown/x'],
+      ];
+      for (const [action, resource] of pairs) {
+        const matched = findMatchingCapability(action, resource, capabilities);
+        expect(isActionAllowed(action, resource, capabilities)).toBe(matched !== null);
+      }
     });
   });
 
