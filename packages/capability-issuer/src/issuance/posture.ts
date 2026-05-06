@@ -2,10 +2,14 @@
  * Issuance — AI posture inventory emission.
  *
  * Owns the {@link PostureEmitterLike} integration: builds an
- * {@link AgentInventoryRecord} from an issuance and dispatches it to
- * the configured emitter. Fire-and-forget — emitter failures never
- * fail the originating issuance. See
- * `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
+ * {@link AgentInventoryRecord} from an issuance and enqueues it with
+ * the configured emitter. With {@link DurablePostureEmitter} the
+ * enqueue is a synchronous SQLite WAL write that completes before the
+ * function resolves, so the caller can `await` it inside the issuance
+ * critical path and be confident the record is durable before the HTTP
+ * response is sent. Emitter failures are caught and logged but never
+ * propagate — posture is observability-only, not a control-plane gate.
+ * See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md` § 5.
  *
  * Extracted from `issuer-service.ts` per refactor R-1 in
  * `docs/IMPROVEMENTS_AND_REFACTORING.md`.
@@ -21,9 +25,20 @@ import {
 } from '@euno/common';
 
 /**
- * Build and dispatch an {@link AgentInventoryRecord} to the supplied
- * posture emitter, if any. Caller MUST NOT await — the function
- * returns synchronously and any emit failure is logged at warn-level.
+ * Build and durably enqueue an {@link AgentInventoryRecord} with the
+ * supplied posture emitter, if any.
+ *
+ * **Callers MUST `await` this function** so that the enqueue is
+ * confirmed before the HTTP response is sent. With
+ * {@link DurablePostureEmitter} the enqueue is a synchronous SQLite
+ * WAL write (< 1 ms); with the basic {@link PostureEmitter} it fans
+ * out to cloud plugins and adds their round-trip to the issuance
+ * latency — see `docs/sprint-3-4-gaps/09-ai-posture-inventory.md`
+ * § 5 for guidance on which emitter to use in production.
+ *
+ * Any error thrown by the emitter is caught and logged at warn-level
+ * so that issuance always succeeds even when the posture surface is
+ * temporarily unavailable.
  *
  * The five required parity fields (`agentId`, `owningTeam`,
  * `capabilityManifestHash`, `runtime`, `region`) flow through to each
@@ -34,7 +49,7 @@ import {
  * the posture record's `capabilityManifestHash` matches the value
  * recorded in audit-log evidence for the same manifest.
  */
-export function emitPostureRecord(
+export async function emitPostureRecord(
   emitter: PostureEmitterLike | undefined,
   logger: Logger,
   args: {
@@ -43,7 +58,7 @@ export function emitPostureRecord(
     capabilities: CapabilityConstraint[];
     region: string;
   },
-): void {
+): Promise<void> {
   if (!emitter || !emitter.isEnabled()) return;
 
   let record: AgentInventoryRecord;
@@ -74,19 +89,13 @@ export function emitPostureRecord(
     return;
   }
 
-  // Intentionally not awaited — best-effort. Guard against both
-  // synchronous throws (some emitter impls may throw before returning
-  // a Promise) and async rejections so issuance is never affected.
+  // Await the enqueue so the caller can be sure the record is durable
+  // before the HTTP response is sent. With DurablePostureEmitter this
+  // is a sub-millisecond synchronous SQLite write. Any error from the
+  // emitter is caught here and logged — this is intentional: posture
+  // is observability-only and must never fail the originating issuance.
   try {
-    const maybePromise = emitter.emitObserved(record);
-    if (maybePromise && typeof maybePromise.catch === 'function') {
-      maybePromise.catch((err) => {
-        logger.warn('posture emit failed', {
-          agentId: args.agentId,
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      });
-    }
+    await emitter.emitObserved(record);
   } catch (err) {
     logger.warn('posture emit failed', {
       agentId: args.agentId,

@@ -5,11 +5,12 @@
  * Asserts:
  *  - When no emitter is configured (default), issuance proceeds
  *    unchanged and no record is observed anywhere.
- *  - When an emitter is configured, a single observation is fired
- *    containing the five required parity fields (agentId,
- *    owningTeam, capabilityManifestHash, runtime, region).
- *  - An emitter that throws does NOT fail the issuance (best-effort
- *    posture observability — never a control-plane gate).
+ *  - When an emitter is configured, a single observation is enqueued
+ *    synchronously (within issueCapability) containing the five
+ *    required parity fields (agentId, owningTeam,
+ *    capabilityManifestHash, runtime, region).
+ *  - An emitter that rejects does NOT fail the issuance (posture
+ *    observability is never a control-plane gate).
  *  - The capabilityManifestHash matches the canonical-hash of the
  *    manifest, so the posture record correlates with audit evidence.
  */
@@ -110,8 +111,7 @@ const MANIFEST: AgentCapabilityManifest = {
   metadata: { owner: 'team-sales', runtime: 'python:3.12' },
 };
 
-// Wait one microtask tick so fire-and-forget posture emits resolve.
-const flush = (): Promise<void> => new Promise((res) => setImmediate(res));
+// ---------------------------------------------------------------------------
 
 describe('Issuer-service ↔ posture-emitter pipeline', () => {
   it('issues without invoking any emitter when none is configured (back-compat)', async () => {
@@ -134,7 +134,7 @@ describe('Issuer-service ↔ posture-emitter pipeline', () => {
       requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
       manifest: MANIFEST,
     });
-    await flush();
+    // The enqueue is awaited inside issueCapability — no flush needed.
     expect(emitter.observed).toHaveLength(1);
     const r = emitter.observed[0]!;
     expect(r.schemaVersion).toBe('1.0');
@@ -153,7 +153,6 @@ describe('Issuer-service ↔ posture-emitter pipeline', () => {
       agentId: 'agent-2',
       requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
     });
-    await flush();
     expect(emitter.observed).toHaveLength(1);
     expect(emitter.observed[0]!.owningTeam).toBe('unknown');
     expect(emitter.observed[0]!.runtime).toBe('unknown');
@@ -169,7 +168,6 @@ describe('Issuer-service ↔ posture-emitter pipeline', () => {
       requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
       manifest: MANIFEST,
     });
-    await flush();
     expect(emitter.observed).toHaveLength(0);
   });
 
@@ -185,8 +183,31 @@ describe('Issuer-service ↔ posture-emitter pipeline', () => {
       requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
       manifest: MANIFEST,
     });
-    await flush();
     expect(resp.token).toBeTruthy();
     expect(resp.tokenId).toBeTruthy();
+  });
+
+  it('enqueue is synchronous with issueCapability — no tick needed before asserting', async () => {
+    // Verify that the observation is present immediately when issueCapability
+    // resolves, without any setImmediate/setTimeout/microtask flush.
+    // This is the core guarantee of the transactional posture design: the
+    // record is durable before the HTTP response leaves the process.
+    let observedDuringIssue: AgentInventoryRecord[] = [];
+    const capturingEmitter: PostureEmitterLike = {
+      isEnabled: () => true,
+      async emitObserved(record) {
+        observedDuringIssue = [...observedDuringIssue, record];
+      },
+    };
+    const service = await makeService(capturingEmitter);
+    await service.issueCapability({
+      authToken: 'irrelevant',
+      agentId: 'agent-1',
+      requestedCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
+      manifest: MANIFEST,
+    });
+    // No await, no flush — the record must already be present.
+    expect(observedDuringIssue).toHaveLength(1);
+    expect(observedDuringIssue[0]!.agentId).toBe('agent-1');
   });
 });

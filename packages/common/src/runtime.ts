@@ -90,9 +90,15 @@ export interface PostureEmitterLike {
    *  MUST short-circuit when this is false to avoid building inventory
    *  records that will be dropped. */
   isEnabled(): boolean;
-  /** Fire-and-forget observation of an agent. Implementations SHOULD
-   *  not throw; producers treat rejected promises as best-effort
-   *  failures and never fail the originating operation. */
+  /**
+   * Enqueue an agent inventory observation. Callers MUST `await` the
+   * returned promise so the enqueue is confirmed before the HTTP
+   * response is sent. With {@link DurablePostureEmitter} the promise
+   * resolves after a synchronous SQLite WAL write (< 1 ms) and plugin
+   * delivery is decoupled to a background worker. A rejected promise
+   * is caught by the caller and logged at warn-level — it never fails
+   * the originating operation.
+   */
   emitObserved(record: AgentInventoryRecord): Promise<void>;
   /** Optional revocation hook. Producers call this when an agent is
    *  decommissioned so posture surfaces can soft-delete the record. */

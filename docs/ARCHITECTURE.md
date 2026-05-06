@@ -569,21 +569,60 @@ replica observes the change immediately via write-through.
 sequenceDiagram
     autonumber
     participant Svc as CapabilityIssuerService
-    participant Post as @euno/posture-emitter
+    participant Q   as SQLite WAL queue<br/>(DurablePostureEmitter)
+    participant W   as DeliveryWorker<br/>(background)
     participant SIEM
 
-    Svc->>Post: emitObserved(AgentInventoryRecord)
-    Note over Post: Currently best-effort, fire-and-forget;<br/>not on the request critical path
-    Post->>SIEM: write (HTTP / log transport)
+    Note over Svc: Step 5 — signPayload() completes
+    Svc->>+Q: await emitObserved(record)<br/>(synchronous SQLite INSERT, < 1 ms)
+    Q-->>-Svc: resolves — record is durable
+    Note over Svc: HTTP response sent
+    W->>Q: peek(batch)
+    Q-->>W: events
+    W->>SIEM: deliver (HTTP / log transport)
+    alt success
+        W->>Q: ack(id)
+    else transient failure
+        W->>Q: nack(id, nextRetryAt)
+        Note over W: exponential back-off; dead-letter after maxAttempts
+    end
 ```
+
+Posture inventory is **transactionally consistent with issuance**:
+the `DurablePostureEmitter.emitObserved` call is `await`-ed
+immediately after `signPayload` (Step 5b of the issuance pipeline),
+so the SQLite WAL write completes *before* the HTTP response is sent.
+A process crash after that point leaves the record in the on-disk
+queue, where the `DeliveryWorker` will pick it up on the next pod
+start.
+
+The `DeliveryWorker` background loop fans out to cloud surfaces
+(Defender CSPM / Security Hub / SCC) asynchronously; plugin delivery
+failures are retried with exponential back-off and dead-lettered after
+`POSTURE_DURABLE_MAX_ATTEMPTS` exhaustion.  A plugin outage therefore
+never affects issuance latency, and dead-lettered events are counted
+via the `euno_issuer_posture_dead_lettered_total` Prometheus counter.
+
+**Remaining gap:** the crash window between `signPayload` completing
+and the SQLite `push` call completing is sub-millisecond but non-zero.
+Closing it entirely would require either (a) a single atomic
+transaction spanning KMS and SQLite (impractical) or (b) idempotent
+re-issuance on crash recovery (out of scope).  The current design is
+the best practical approximation: enqueue-before-response with a WAL
+queue that survives pod restarts.
 
 The issuer service treats the emitter as `PostureEmitterLike`
 (structural interface), so `issuer-service.ts` is interface-based and
 can be wired with any compatible emitter implementation — see
 `issuer-service.ts` ll. 41–52. (The service entry point
-`capability-issuer/src/index.ts` does import the concrete
-`@euno/posture-emitter` to wire the default; the structural-interface
-boundary is at the service class, not the package.)
+`capability-issuer/src/index.ts` wires the concrete
+`DurablePostureEmitter`; the structural-interface boundary is at the
+service class, not the package.)
+
+Set `POSTURE_DURABLE_QUEUE_PATH` to a writable path on a persistent
+volume in production (e.g. `/var/lib/euno/posture-queue.db`);
+omitting it defaults to `':memory:'` which loses the queue on pod
+restart and is equivalent to the old best-effort behaviour.
 
 ---
 

@@ -31,6 +31,7 @@ import {
   createHttpMetricsMiddleware,
   createMetricsHandler,
   Counter,
+  Gauge,
   tracingMiddleware,
   setActiveSpanEunoAttributes,
   EUNO_ATTR,
@@ -45,7 +46,7 @@ import { StorageGrantService } from './storage-grant';
 import { DbTokenService } from './db-token';
 import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credential-broker';
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
-import { PostureEmitter } from '@euno/posture-emitter';
+import { DurablePostureEmitter } from '@euno/posture-emitter';
 import { parseDidWebHttpAllowList } from './did-resolver';
 
 // Load environment variables
@@ -231,6 +232,18 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
 
 // Initialize services
 let issuerService: CapabilityIssuerService | undefined;
+/**
+ * Durable posture emitter — module-level so the graceful-shutdown
+ * handler can call {@link DurablePostureEmitter.stop} even if
+ * {@link initializeServices} fails after the emitter is created.
+ */
+let postureEmitter: DurablePostureEmitter | undefined;
+/**
+ * setInterval handle for posture queue-depth/lag gauge updates.
+ * Module-level so the SIGTERM handler can clear it before stopping
+ * the emitter to avoid callbacks after SQLite is closed.
+ */
+let postureMetricsInterval: ReturnType<typeof setInterval> | undefined;
 let isInitialized = false;
 /**
  * Canonical SHA-256 hash of the operator-supplied ActionResolver config
@@ -397,6 +410,80 @@ async function initializeServices() {
       sideCredentialErrorCounter.inc({ kind }, 0);
     }
 
+    // AI posture-management inventory feed (sprint 3-4 gap item #9).
+    // DurablePostureEmitter writes to a SQLite WAL queue before returning
+    // from emitObserved, so the issuer can await the enqueue inline (Step
+    // 5b of the issuance pipeline) and be certain the record survives a
+    // crash before plugin delivery completes.  The background DeliveryWorker
+    // fans out to cloud surfaces (Defender CSPM / Security Hub / SCC)
+    // independently of the issuance critical path.
+    //
+    // Disabled by default — fromEnv returns an inactive emitter unless
+    // POSTURE_EMITTER_ENABLED=true. In production set
+    // POSTURE_DURABLE_QUEUE_PATH to a path on a persistent volume so
+    // records survive pod restarts.
+    const postureDeliveredCounter = new Counter({
+      name: 'euno_issuer_posture_delivered_total',
+      help: 'Posture inventory records successfully delivered to a cloud surface plugin, labelled by event type and plugin name.',
+      labelNames: ['event_type', 'plugin'],
+      registers: [metricsRegistry],
+    });
+    const postureDeliveryErrorCounter = new Counter({
+      name: 'euno_issuer_posture_delivery_error_total',
+      help: 'Transient posture delivery errors (will be retried), labelled by event type and plugin name.',
+      labelNames: ['event_type', 'plugin'],
+      registers: [metricsRegistry],
+    });
+    const postureDeadLetteredCounter = new Counter({
+      name: 'euno_issuer_posture_dead_lettered_total',
+      help: 'Posture records permanently dead-lettered after exhausting max delivery attempts.',
+      labelNames: [],
+      registers: [metricsRegistry],
+    });
+    const postureQueueDepthGauge = new Gauge({
+      name: 'euno_issuer_posture_queue_depth',
+      help: 'Number of posture inventory records pending delivery in the local SQLite queue.',
+      registers: [metricsRegistry],
+    });
+    const postureQueueLagGauge = new Gauge({
+      name: 'euno_issuer_posture_queue_lag_ms',
+      help: 'Age in milliseconds of the oldest undelivered posture record in the local SQLite queue (0 when empty).',
+      registers: [metricsRegistry],
+    });
+
+    postureEmitter = DurablePostureEmitter.fromEnv(process.env, logger, {
+      onDelivered: (eventType, plugin) => {
+        postureDeliveredCounter.inc({ event_type: eventType, plugin });
+      },
+      onDeliveryError: (eventType, plugin) => {
+        postureDeliveryErrorCounter.inc({ event_type: eventType, plugin });
+      },
+      onDeadLettered: (_eventType) => {
+        postureDeadLetteredCounter.inc();
+      },
+    });
+    postureEmitter.start();
+
+    // Only start the gauge-refresh interval when the emitter is actually
+    // enabled and backed by a queue. When disabled, the emitter is a no-op
+    // and there is nothing meaningful to measure.
+    if (postureEmitter.isEnabled()) {
+      postureMetricsInterval = setInterval(() => {
+        if (postureEmitter) {
+          postureQueueDepthGauge.set(postureEmitter.queueDepth());
+          postureQueueLagGauge.set(postureEmitter.oldestLagMs());
+        }
+      }, 5_000);
+      if (typeof postureMetricsInterval.unref === 'function') {
+        postureMetricsInterval.unref();
+      }
+    } else {
+      // Disabled emitter: pin both gauges to 0 once so dashboards don't
+      // show stale data from a previous deployment that had the emitter on.
+      postureQueueDepthGauge.set(0);
+      postureQueueLagGauge.set(0);
+    }
+
     issuerService = new CapabilityIssuerService(
       signer,
       identityProvider,
@@ -430,13 +517,7 @@ async function initializeServices() {
         onSideCredentialError: (kind, _error) => {
           sideCredentialErrorCounter.inc({ kind });
         },
-        // AI posture-management inventory feed (sprint 3-4 gap item
-        // #9). Disabled by default — `fromEnv` returns an inactive
-        // emitter unless `POSTURE_EMITTER_ENABLED=true`. Failures
-        // never fail issuance.
-        postureEmitter: PostureEmitter.fromEnv(process.env, logger),
-        // F-7: surface region tag on posture inventory so multi-region
-        // deployments can chart per-region issuance distribution.
+        postureEmitter,
         // F-7: surface region tag on tokens, audit, posture inventory,
         // and request span attributes — see docs/MULTI_REGION_ISSUER.md.
         // `region` is the canonical option; the legacy `postureRegion`
@@ -997,8 +1078,29 @@ if (require.main === module) {
   process.on('SIGTERM', () => {
     logger.info('SIGTERM received, closing server gracefully');
     server.close(() => {
-      logger.info('Server closed');
-      process.exit(0);
+      // Use an async IIFE so we can await posture drain and have a
+      // single `.catch()` for any unexpected rejection — Node.js does
+      // not await async callbacks passed to `server.close()`.
+      (async () => {
+        // Stop the gauge-refresh interval first so no callbacks fire
+        // after the SQLite connection is closed.
+        if (postureMetricsInterval !== undefined) {
+          clearInterval(postureMetricsInterval);
+        }
+        // Drain the durable posture queue: stop accepting new enqueues,
+        // finish any in-flight delivery tick, then close the SQLite
+        // connection cleanly.
+        if (postureEmitter) {
+          await postureEmitter.stop();
+        }
+        logger.info('Server closed');
+        process.exit(0);
+      })().catch((err) => {
+        logger.error('Error during graceful shutdown', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        process.exit(1);
+      });
     });
   });
 

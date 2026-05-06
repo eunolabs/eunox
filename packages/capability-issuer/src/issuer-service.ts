@@ -208,11 +208,14 @@ export interface CapabilityIssuerServiceOptions {
    */
   capTtlToPimActivation?: boolean;
   /**
-   * Optional AI posture-management emitter. When supplied, the
-   * issuer fires a fire-and-forget {@link PostureEmitterLike.emitObserved}
-   * after every successful issuance so cloud posture-management
-   * surfaces (Defender CSPM / Security Hub / SCC) keep an accurate
-   * inventory of the agent estate. Failures never affect issuance.
+   * Optional AI posture-management emitter. When supplied, the issuer
+   * awaits {@link PostureEmitterLike.emitObserved} immediately after
+   * signing each token so the inventory record is durably enqueued
+   * before any other async work proceeds. With
+   * {@link DurablePostureEmitter} this is a sub-millisecond synchronous
+   * SQLite WAL write; with the basic {@link PostureEmitter} the plugin
+   * I/O is awaited inline (adds network latency). Failures are caught
+   * and logged but never affect issuance.
    * See `docs/sprint-3-4-gaps/09-ai-posture-inventory.md`.
    */
   postureEmitter?: PostureEmitterLike;
@@ -800,7 +803,21 @@ export class CapabilityIssuerService {
       });
       const token = await signPayload(this.signer, payload, issuanceContext);
 
-      // Step 5b: Mint short-lived cloud-storage and DB credentials.
+      // Step 5b: Enqueue a posture inventory record immediately after
+      // signing, before any other async work, to minimise the crash
+      // window between "token exists" and "record is durable". With
+      // DurablePostureEmitter this resolves after a sub-millisecond
+      // synchronous SQLite WAL write. Emitter errors are caught inside
+      // emitPostureRecord and never propagate — posture is
+      // observability-only, never a control-plane gate.
+      await emitPostureRecord(this.postureEmitter, this.logger, {
+        agentId: request.agentId,
+        manifest: request.manifest,
+        capabilities,
+        region: this.postureRegion,
+      });
+
+      // Step 5c: Mint short-lived cloud-storage and DB credentials.
       // IMPORTANT: this runs AFTER the JWT is signed (step 5 above) so
       // the KMS call completes before any broker code executes.  In
       // 'best-effort' mode a broker failure returns `{}` and the signed
@@ -823,14 +840,6 @@ export class CapabilityIssuerService {
         storageGrants,
         dbCredentials,
       );
-
-      // Step 6b: Push an inventory record (fire-and-forget).
-      emitPostureRecord(this.postureEmitter, this.logger, {
-        agentId: request.agentId,
-        manifest: request.manifest,
-        capabilities,
-        region: this.postureRegion,
-      });
 
       this.logger.info('Capability token issued successfully', {
         tokenId,
