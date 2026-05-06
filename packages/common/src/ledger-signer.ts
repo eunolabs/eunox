@@ -1374,6 +1374,15 @@ interface PerReplicaTipRow extends Record<string, unknown> {
   record_hash: string;
 }
 
+/**
+ * Row shape returned by the phantom-commit recovery SELECT in
+ * {@link PerReplicaPostgresLedgerBackend.appendEntry}.
+ */
+interface PerReplicaPhantomRecoveryRow extends Record<string, unknown> {
+  record_hash: string;
+  payload: SignedAuditEvidence;
+}
+
 /** Row shape returned by per-replica getEntries. */
 interface PerReplicaSelectRow extends Record<string, unknown> {
   seq: string;
@@ -1599,12 +1608,24 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           // INSERT without an advisory lock — no cross-replica contention
           // because (replica_id, seq) is unique per replica and in-process
           // queuing prevents same-replica concurrent appends.
+          //
+          // ON CONFLICT (replica_id, seq) DO NOTHING guards against the
+          // phantom-commit scenario: if a previous INSERT succeeded but the
+          // TCP ACK was lost (network hiccup), tipHash/tipSeq were never
+          // advanced. Without this clause, every retry would fail with a
+          // unique constraint violation and permanently disable the replica's
+          // chain. When 0 rows are returned (conflict), we fetch the existing
+          // row to recover the committed record_hash and advance chain state.
           const conn = await this.pool.connect();
+          let finalSigned = signed;
+          let finalRecordHash = recordHash;
           try {
-            await conn.query(
+            const insertResult = await conn.query<PerReplicaPhantomRecoveryRow>(
               `INSERT INTO ${this.table}
                  (record_id, replica_id, seq, previous_hash, record_hash, payload, row_hmac)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+               ON CONFLICT (replica_id, seq) DO NOTHING
+               RETURNING record_hash, payload`,
               [
                 signed.id,
                 replicaId,
@@ -1615,12 +1636,38 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
                 rowHmac,
               ],
             );
+
+            if (insertResult.rows.length === 0) {
+              // Phantom commit: a prior INSERT committed this (replica_id, seq)
+              // pair but its ACK never reached us. Fetch the existing row so we
+              // can advance tipHash/tipSeq to the value that is actually in the
+              // DB and return the record that was truly persisted.
+              const existingResult = await conn.query<PerReplicaPhantomRecoveryRow>(
+                `SELECT record_hash, payload FROM ${this.table}
+                  WHERE replica_id = $1 AND seq = $2`,
+                [replicaId, nextSeq],
+              );
+              if (existingResult.rows.length === 0) {
+                // This should be impossible: ON CONFLICT fired but SELECT found
+                // nothing. Treat as a fatal chain error.
+                throw new Error(
+                  `PerReplicaPostgresLedgerBackend: INSERT for ` +
+                    `(replica_id=${replicaId}, seq=${nextSeq}) ` +
+                    `was skipped by ON CONFLICT but subsequent SELECT found no row — ` +
+                    `possible race condition or concurrent writer on this replica.`,
+                );
+              }
+              const existingRow = existingResult.rows[0]!;
+              finalRecordHash = existingRow.record_hash;
+              finalSigned = existingRow.payload;
+            }
           } finally {
             conn.release();
           }
 
-          // Advance in-process chain state AFTER the DB write succeeds.
-          this.tipHash = recordHash;
+          // Advance in-process chain state AFTER the DB write is confirmed
+          // (either the current attempt or the phantom-committed prior attempt).
+          this.tipHash = finalRecordHash;
           this.tipSeq = nextSeq;
 
           // Trigger S3 anchor asynchronously.
@@ -1633,7 +1680,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
             });
           }
 
-          return signed;
+          return finalSigned;
         })
         .then(resolve, reject)
         .catch(() => {
@@ -1642,8 +1689,9 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           // propagate as an unhandled rejection on `this.appendTail`.
           //
           // State invariant: `this.tipHash` and `this.tipSeq` are only advanced
-          // after the DB write succeeds (lines above).  Any error thrown before
-          // those assignments leaves the chain state unchanged, so the next queued
+          // once the DB row is confirmed (either from the current INSERT or the
+          // phantom-commit recovery path). Any error thrown before those
+          // assignments leaves the chain state unchanged, so the next queued
           // append continues from the correct tip.
           //
           // This is the same pattern used by InMemoryLedgerBackend.appendEntry.

@@ -347,8 +347,11 @@ export class IssueController {
         dbCredentials,
       );
 
-      // Step 6b: Push an inventory record (fire-and-forget).
-      emitPostureRecord(this.postureEmitter, this.logger, {
+      // Step 6b: Push an inventory record. Awaited so the enqueue is
+      // confirmed durable (SQLite WAL write) before the HTTP response
+      // is sent — per emitPostureRecord's contract. Errors are caught
+      // inside emitPostureRecord and never propagate here.
+      await emitPostureRecord(this.postureEmitter, this.logger, {
         agentId: request.agentId,
         manifest: request.manifest,
         capabilities,
