@@ -11,7 +11,33 @@
  * documented in `docs/DISTRIBUTED_REVOCATION.md`.
  */
 
-import { Logger, MinHeap, RedisCircuitBreaker, CircuitOpenError } from '@euno/common';
+import { Logger, MinHeap, RedisCircuitBreaker, CircuitOpenError, CapabilityError, ErrorCode } from '@euno/common';
+
+/**
+ * Thrown (and propagated to the caller as HTTP 503) when the revocation store
+ * is temporarily unreachable and `unavailableMode` is set to `'503'`.
+ *
+ * Extending {@link CapabilityError} means this propagates correctly through
+ * the verifier's `try/catch` (which re-throws any `CapabilityError` unchanged)
+ * and through the gateway's error-handling middleware (which reads
+ * `error.statusCode` to set the HTTP status).  Callers — notably agent
+ * runtimes — MUST treat 503 as a transient failure and retry with backoff
+ * rather than discarding the token.
+ *
+ * This error is only thrown when `REVOCATION_UNAVAILABLE_MODE=503` is
+ * configured.  The default (fail-closed) preserves backward-compatible
+ * behavior: a Redis outage causes all tokens to be treated as revoked (401).
+ */
+export class RevocationUnavailableError extends CapabilityError {
+  constructor() {
+    super(
+      ErrorCode.REVOCATION_UNAVAILABLE,
+      'Revocation check unavailable — the backing store is temporarily unreachable. Retry the request.',
+      503,
+    );
+    this.name = 'RevocationUnavailableError';
+  }
+}
 
 /**
  * Common interface implemented by all revocation backends.
@@ -158,6 +184,15 @@ export interface RedisLikeClient {
  * into the (less safe) opposite behaviour for environments where availability
  * matters more than revocation freshness.
  *
+ * **503 semantics** (`unavailableMode: '503'`): when Redis is unreachable and
+ * no stale-cache entry is available, the store throws a
+ * {@link RevocationUnavailableError} (HTTP 503 Service Unavailable) instead
+ * of silently treating the token as revoked.  This gives clients accurate
+ * retry semantics — they receive 503 ("service temporarily unavailable")
+ * rather than a misleading 401 ("token revoked").  Enable via
+ * `REVOCATION_UNAVAILABLE_MODE=503`.  Ignored when `staleReadable: true` is
+ * also set (the stale cache handles unavailability before reaching this path).
+ *
  * **Stale-readable mode** (`staleReadable: true`): the store maintains a
  * local write-through cache of confirmed revocations (JTIs revoked via
  * {@link revoke} or confirmed as revoked by Redis).  When Redis is
@@ -178,9 +213,24 @@ export class RedisRevocationStore implements RevocationStore {
   private readonly client: RedisLikeClient;
   private readonly logger: Logger;
   private readonly keyPrefix: string;
-  private readonly failOpen: boolean;
   private readonly onError?: () => void;
+  private readonly onUnavailable?: () => void;
   private readonly circuitBreaker?: RedisCircuitBreaker;
+  /**
+   * How to behave when Redis is unreachable and the stale cache cannot serve
+   * the request:
+   *
+   *   - `'fail-closed'` (default): treat the token as revoked → HTTP 401.
+   *     Maximally conservative; a Redis outage blocks all traffic.
+   *   - `'503'`: throw {@link RevocationUnavailableError} → HTTP 503.
+   *     Accurate retry semantics; clients retry rather than abandoning their
+   *     token.  Recommended over `fail-closed` when you have operational SLAs
+   *     that require transparent retry.
+   *   - `'open'`: treat the token as not revoked → allow through.
+   *     Use only when availability matters more than revocation correctness.
+   *     Equivalent to `failOpen: true` on the legacy API.
+   */
+  private readonly unavailableMode: 'fail-closed' | '503' | 'open';
   /**
    * When `staleReadable` is true this map is kept in sync with every
    * `revoke()` call and every confirmed-revoked response from Redis.
@@ -198,6 +248,14 @@ export class RedisRevocationStore implements RevocationStore {
       failOpen?: boolean;
       onError?: () => void;
       /**
+       * Callback invoked whenever the revocation store cannot complete a check
+       * because Redis is unavailable (circuit open or connection error) AND
+       * the store is returning a degraded response (fail-closed, 503, or stale).
+       * Use to increment a Prometheus counter so operators can distinguish
+       * "store degraded" from "store healthy" on the metrics dashboard.
+       */
+      onUnavailable?: () => void;
+      /**
        * Optional circuit breaker.  When provided, Redis calls are wrapped so
        * that repeated failures trip the circuit to "open" and subsequent
        * requests fail immediately (no TCP timeout on the hot path).
@@ -209,13 +267,29 @@ export class RedisRevocationStore implements RevocationStore {
        * this cache instead of blanket-denying all tokens.  Default: false.
        */
       staleReadable?: boolean;
+      /**
+       * How to handle a Redis unavailability when the stale cache cannot
+       * serve the request.  Default: `'fail-closed'` (back-compat).
+       *
+       * - `'fail-closed'`: treat the token as revoked (→ 401).
+       * - `'503'`: throw {@link RevocationUnavailableError} (→ 503).
+       * - `'open'`: allow the token through (→ allow).
+       *
+       * Ignored when `staleReadable: true` is also set; in that case the
+       * stale cache handles unavailability.
+       */
+      unavailableMode?: 'fail-closed' | '503' | 'open';
     } = {}
   ) {
     this.client = client;
     this.logger = logger;
     this.keyPrefix = options.keyPrefix ?? 'revoked:';
-    this.failOpen = options.failOpen ?? false;
+    // Legacy `failOpen` option maps to `unavailableMode: 'open'` when set.
+    // `unavailableMode` takes precedence when both are supplied.
+    const legacyFailOpen = options.failOpen ?? false;
+    this.unavailableMode = options.unavailableMode ?? (legacyFailOpen ? 'open' : 'fail-closed');
     this.onError = options.onError;
+    this.onUnavailable = options.onUnavailable;
     this.circuitBreaker = options.circuitBreaker;
     this.staleReadable = options.staleReadable ?? false;
 
@@ -275,7 +349,7 @@ export class RedisRevocationStore implements RevocationStore {
         this.logger.error('Failed to query revocation status from Redis', {
           tokenId,
           error: error instanceof Error ? error.message : 'Unknown error',
-          failMode: this.failOpen ? 'open' : 'closed',
+          unavailableMode: this.unavailableMode,
           staleReadable: this.staleReadable,
         });
         this.onError?.();
@@ -303,8 +377,26 @@ export class RedisRevocationStore implements RevocationStore {
         }
         return false;
       }
-      // Default (fail-closed) or fail-open.
-      return !this.failOpen;
+      // Signal unavailability via the callback for any non-open mode.
+      if (this.unavailableMode !== 'open') {
+        this.onUnavailable?.();
+      }
+      if (this.unavailableMode === '503') {
+        // Throw a 503 error so the gateway can surface accurate retry
+        // semantics to the agent runtime (service temporarily unavailable)
+        // rather than a misleading 401 (token revoked).
+        if (!isCircuitOpen) {
+          this.logger.warn('Redis revocation store unavailable; returning 503 (unavailableMode=503)', {
+            tokenId,
+          });
+        }
+        throw new RevocationUnavailableError();
+      }
+      if (this.unavailableMode === 'open') {
+        return false;
+      }
+      // Default: fail-closed — treat token as revoked.
+      return true;
     }
   }
 
@@ -387,6 +479,15 @@ export async function createRevocationStoreFromEnv(
   onError?: () => void,
   /** Optional externally-created circuit breaker so the caller can read its state for metrics. */
   circuitBreaker?: RedisCircuitBreaker,
+  /**
+   * Optional callback invoked whenever the revocation store cannot serve a
+   * check because Redis is unavailable and the degraded response is returned.
+   * Fires for both `fail-closed` and `503` modes (not for `open` mode since
+   * that represents an intentional availability trade-off).  Use to increment
+   * a dedicated Prometheus counter so operators can distinguish a degraded
+   * revocation surface from general Redis errors.
+   */
+  onUnavailable?: () => void,
 ): Promise<RevocationStore> {
   const redisUrl = env.REVOCATION_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
@@ -438,22 +539,34 @@ export async function createRevocationStoreFromEnv(
   const staleReadable = env.REVOCATION_STALE_READABLE === 'true';
   const keyPrefix = env.REVOCATION_KEY_PREFIX || 'revoked:';
 
+  // Parse REVOCATION_UNAVAILABLE_MODE; default is 'fail-closed' for back-compat.
+  // When REVOCATION_FAIL_OPEN=true is set without an explicit unavailableMode,
+  // treat it as 'open' (legacy behaviour preserved).
+  const rawUnavailableMode = env.REVOCATION_UNAVAILABLE_MODE;
+  let unavailableMode: 'fail-closed' | '503' | 'open';
+  if (rawUnavailableMode === '503' || rawUnavailableMode === 'open' || rawUnavailableMode === 'fail-closed') {
+    unavailableMode = rawUnavailableMode;
+  } else if (failOpen) {
+    unavailableMode = 'open';
+  } else {
+    unavailableMode = 'fail-closed';
+  }
+
   const modeDescription = staleReadable
     ? 'stale-readable (local cache fallback on Redis outage)'
-    : failOpen
-      ? 'open'
-      : 'closed';
+    : unavailableMode;
   logger.info('Using Redis revocation store for distributed token revocation', {
     keyPrefix,
-    failMode: modeDescription,
+    unavailableMode: modeDescription,
     circuitBreakerEnabled: !!circuitBreaker,
     dedicatedUrl: !!env.REVOCATION_REDIS_URL,
   });
 
   return new RedisRevocationStore(client, logger, {
     keyPrefix,
-    failOpen: staleReadable ? false : failOpen,
+    unavailableMode: staleReadable ? 'fail-closed' : unavailableMode,
     onError,
+    onUnavailable,
     circuitBreaker,
     staleReadable,
   });

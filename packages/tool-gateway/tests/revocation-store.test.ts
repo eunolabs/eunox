@@ -6,6 +6,7 @@ import { createLogger } from '@euno/common';
 import {
   InMemoryRevocationStore,
   RedisRevocationStore,
+  RevocationUnavailableError,
   RedisLikeClient,
   createRevocationStoreFromEnv,
   InMemoryRevocationEpochStore,
@@ -162,6 +163,96 @@ describe('RedisRevocationStore', () => {
     });
     const store = new RedisRevocationStore(client, logger);
     expect(await store.isRevoked('any')).toBe(true);
+  });
+
+  it('fails open when explicitly configured via unavailableMode', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const store = new RedisRevocationStore(client, logger, { unavailableMode: 'open' });
+    expect(await store.isRevoked('any')).toBe(false);
+  });
+
+  it('legacy failOpen:true maps to unavailableMode:open', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const store = new RedisRevocationStore(client, logger, { failOpen: true });
+    expect(await store.isRevoked('any')).toBe(false);
+  });
+
+  it('unavailableMode=503 throws RevocationUnavailableError on redis failure', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const store = new RedisRevocationStore(client, logger, { unavailableMode: '503' });
+    await expect(store.isRevoked('any')).rejects.toBeInstanceOf(RevocationUnavailableError);
+  });
+
+  it('unavailableMode=503 error has statusCode 503', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const store = new RedisRevocationStore(client, logger, { unavailableMode: '503' });
+    // Use rejects matcher to verify both the type and the statusCode property
+    const err = await store.isRevoked('any').catch((e) => e);
+    expect(err).toBeInstanceOf(RevocationUnavailableError);
+    expect((err as RevocationUnavailableError).statusCode).toBe(503);
+  });
+
+  it('unavailableMode=503 does not throw when staleReadable cache has the token', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const store = new RedisRevocationStore(client, logger, {
+      unavailableMode: '503',
+      staleReadable: true,
+    });
+    // Populate stale cache via revoke()
+    await store.revoke('stale-tok', future).catch(() => {/* ignore redis write failure */});
+    // exists() throws but stale cache has the entry → true (not 503)
+    const result = await store.isRevoked('stale-tok');
+    expect(result).toBe(true);
+  });
+
+  it('onUnavailable callback fires on fail-closed redis failure', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const onUnavailable = jest.fn();
+    const store = new RedisRevocationStore(client, logger, {
+      unavailableMode: 'fail-closed',
+      onUnavailable,
+    });
+    await store.isRevoked('any');
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('onUnavailable callback fires on 503 redis failure', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const onUnavailable = jest.fn();
+    const store = new RedisRevocationStore(client, logger, {
+      unavailableMode: '503',
+      onUnavailable,
+    });
+    await expect(store.isRevoked('any')).rejects.toBeInstanceOf(RevocationUnavailableError);
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('onUnavailable callback does NOT fire on fail-open redis failure', async () => {
+    const client = makeClient({
+      exists: async () => { throw new Error('redis down'); },
+    });
+    const onUnavailable = jest.fn();
+    const store = new RedisRevocationStore(client, logger, {
+      unavailableMode: 'open',
+      onUnavailable,
+    });
+    await store.isRevoked('any');
+    expect(onUnavailable).not.toHaveBeenCalled();
   });
 
   it('fails open when explicitly configured', async () => {

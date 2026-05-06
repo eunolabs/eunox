@@ -1382,6 +1382,16 @@ export const GatewayConfigSchema = z
         'When Redis is unreachable, treat lookups as "not revoked" instead of "revoked". Use ONLY if availability matters more than revocation freshness. ' +
         'For a safer availability-preserving alternative, see REVOCATION_STALE_READABLE. Boolean: true | false.',
     }),
+    REVOCATION_UNAVAILABLE_MODE: envEnum({
+      values: ['fail-closed', '503', 'open'] as const,
+      description:
+        'How the revocation store should behave when Redis is unavailable and the stale cache cannot serve the request. ' +
+        '"fail-closed" (default, back-compat — treat token as revoked → HTTP 401), ' +
+        '"503" (throw RevocationUnavailableError → HTTP 503 Service Unavailable, accurate retry semantics for the agent runtime), ' +
+        '"open" (treat token as not revoked → allow through, equivalent to REVOCATION_FAIL_OPEN=true). ' +
+        'Ignored when REVOCATION_STALE_READABLE=true is also set (stale cache handles unavailability). ' +
+        'Recommended for new deployments: "503".',
+    }),
     REVOCATION_STALE_READABLE: envBoolean({
       default: false,
       description:
@@ -1419,6 +1429,31 @@ export const GatewayConfigSchema = z
       default: true,
       description:
         'When true (default), the gateway opens a second Redis connection in subscribe mode and broadcasts kill-switch mutations on the "<KILL_SWITCH_KEY_PREFIX>events" channel for sub-second cross-replica propagation. Set to false to fall back to periodic-refresh-only propagation (slower; bounded by KILL_SWITCH_REFRESH_INTERVAL_MS). Boolean: true | false.',
+    }),
+
+    // Kill-switch Postgres persistence backend (secondary fallback) ----------
+    // When configured, every Redis kill-switch write is dual-written to Postgres
+    // (fire-and-forget after the Redis write succeeds) and Redis refresh failures
+    // fall back to Postgres. This makes the kill-switch resilient to a complete
+    // Redis outage — a safety control must not fate-share with a non-HA cache.
+    KILL_SWITCH_POSTGRES_URL: optionalString.describe(
+      'Optional Postgres connection string for the kill-switch persistence backend. ' +
+      'When set, every kill-switch mutation is dual-written to Postgres immediately after the Redis write succeeds ' +
+      '(fire-and-forget; write latency is not affected). Redis refresh failures fall back to Postgres so the ' +
+      'local cache remains fresh even during a complete Redis outage. ' +
+      'Strongly recommended for production deployments where the kill-switch is a safety-critical control. ' +
+      'See KILL_SWITCH_PG_TABLE and KILL_SWITCH_PG_RUN_MIGRATIONS.',
+    ),
+    KILL_SWITCH_PG_TABLE: optionalString.describe(
+      'Postgres table name for kill-switch entries. Default "euno_kill_switch_entries". ' +
+      'The table is created automatically when KILL_SWITCH_PG_RUN_MIGRATIONS=true.',
+    ),
+    KILL_SWITCH_PG_RUN_MIGRATIONS: envBoolean({
+      default: false,
+      description:
+        'When true, run CREATE TABLE IF NOT EXISTS for the kill-switch Postgres table at gateway startup. ' +
+        'Safe to run repeatedly (idempotent). Requires the gateway DB role to have DDL privileges on the target schema. ' +
+        'Default false — run migrations from a privileged role in your deployment pipeline instead. Boolean: true | false.',
     }),
     CALL_COUNTER_KEY_PREFIX: optionalString.describe(
       'Optional Redis key prefix for maxCalls counter entries. Default "capcall:".',

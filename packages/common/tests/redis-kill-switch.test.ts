@@ -8,8 +8,11 @@ import {
   RedisKillSwitchClient,
   RedisKillSwitchManager,
   RedisKillSwitchSubscriber,
+  PostgresKillSwitchBackend,
+  KillSwitchPersistenceBackend,
   createKillSwitchManagerFromEnv,
 } from '../src/redis-kill-switch';
+import type { KillSwitchConfig } from '../src/types';
 
 const logger = createLogger('test', 'test');
 
@@ -963,5 +966,544 @@ describe('createKillSwitchManagerFromEnv', () => {
       jest.dontMock('ioredis');
       jest.resetModules();
     }
+  });
+
+  it('throws (fail-fast) when KILL_SWITCH_POSTGRES_URL is set but pg cannot be loaded', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => {
+        return class FakeRedis {
+          get() { return Promise.resolve(null); }
+          set() { return Promise.resolve('OK'); }
+          del() { return Promise.resolve(0); }
+          sadd() { return Promise.resolve(0); }
+          srem() { return Promise.resolve(0); }
+          smembers() { return Promise.resolve([]); }
+          publish() { return Promise.resolve(0); }
+          quit() { return Promise.resolve('OK'); }
+          on() {}
+          duplicate() { return new (this.constructor as new () => unknown)(); }
+        };
+      }, { virtual: true });
+      jest.doMock('pg', () => {
+        throw new Error("Cannot find module 'pg'");
+      }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/redis-kill-switch');
+        await expect(
+          mod.createKillSwitchManagerFromEnv(
+            {
+              REDIS_URL: 'redis://localhost:6379',
+              KILL_SWITCH_POSTGRES_URL: 'postgres://localhost/killswitch',
+              KILL_SWITCH_PUBSUB_ENABLED: 'false',
+            } as unknown as NodeJS.ProcessEnv,
+            logger,
+          ),
+        ).rejects.toThrow();
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.dontMock('pg');
+      jest.resetModules();
+    }
+  });
+
+  it('throws (fail-fast) when KILL_SWITCH_POSTGRES_URL set and KILL_SWITCH_PG_TABLE has invalid name', async () => {
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => {
+        return class FakeRedis {
+          get() { return Promise.resolve(null); }
+          set() { return Promise.resolve('OK'); }
+          del() { return Promise.resolve(0); }
+          sadd() { return Promise.resolve(0); }
+          srem() { return Promise.resolve(0); }
+          smembers() { return Promise.resolve([]); }
+          publish() { return Promise.resolve(0); }
+          quit() { return Promise.resolve('OK'); }
+          on() {}
+          duplicate() { return new (this.constructor as new () => unknown)(); }
+        };
+      }, { virtual: true });
+      jest.doMock('pg', () => ({
+        Pool: class FakePg {
+          connect() { return Promise.resolve({ query: () => Promise.resolve({ rows: [] }), release: () => {} }); }
+          end() { return Promise.resolve(); }
+        },
+      }), { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../src/redis-kill-switch');
+        await expect(
+          mod.createKillSwitchManagerFromEnv(
+            {
+              REDIS_URL: 'redis://localhost:6379',
+              KILL_SWITCH_POSTGRES_URL: 'postgres://localhost/killswitch',
+              // invalid table name with SQL injection attempt
+              KILL_SWITCH_PG_TABLE: "euno_ks; DROP TABLE euno_ks--",
+              KILL_SWITCH_PUBSUB_ENABLED: 'false',
+            } as unknown as NodeJS.ProcessEnv,
+            logger,
+          ),
+        ).rejects.toThrow(/invalid table name/);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.dontMock('pg');
+      jest.resetModules();
+    }
+  });
+});
+
+// ── PostgresKillSwitchBackend ─────────────────────────────────────────────────
+
+describe('PostgresKillSwitchBackend', () => {
+  function makeFakePgPool(opts: {
+    rows?: { entry_type: string; entry_id: string }[];
+    throwOn?: 'query';
+  } = {}) {
+    const queries: { sql: string; params?: unknown[] }[] = [];
+    const storedRows: { entry_type: string; entry_id: string }[] = [...(opts.rows ?? [])];
+
+    const pool = {
+      queries,
+      storedRows,
+      ended: false,
+      connect() {
+        const client = {
+          async query(sql: string, values?: unknown[]) {
+            queries.push({ sql, params: values });
+            if (opts.throwOn === 'query') throw new Error('db-error');
+            if (/INSERT/.test(sql) && values && values.length >= 2) {
+              const [type, id] = values as [string, string];
+              if (!storedRows.find((r) => r.entry_type === type && r.entry_id === id)) {
+                storedRows.push({ entry_type: type, entry_id: id });
+              }
+            }
+            if (/DELETE FROM/.test(sql) && values && values.length >= 2) {
+              const [type, id] = values as [string, string];
+              const idx = storedRows.findIndex((r) => r.entry_type === type && r.entry_id === id);
+              if (idx !== -1) storedRows.splice(idx, 1);
+            }
+            if (/DELETE FROM/.test(sql) && (!values || values.length === 0)) {
+              storedRows.splice(0, storedRows.length);
+            }
+            return { rows: storedRows, rowCount: storedRows.length };
+          },
+          release() {},
+        };
+        return Promise.resolve(client);
+      },
+      async end() {
+        this.ended = true;
+      },
+    };
+    return pool;
+  }
+
+  it('load() returns empty state when table is empty', async () => {
+    const pool = makeFakePgPool({ rows: [] });
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    const state = await backend.load();
+    expect(state.globalKillSwitch).toBe(false);
+    expect(state.killedSessions.size).toBe(0);
+    expect(state.killedAgents.size).toBe(0);
+    await backend.close();
+  });
+
+  it('load() reconstructs full state from DB rows', async () => {
+    const pool = makeFakePgPool({
+      rows: [
+        { entry_type: 'global', entry_id: '' },
+        { entry_type: 'session', entry_id: 'sess-1' },
+        { entry_type: 'session', entry_id: 'sess-2' },
+        { entry_type: 'agent', entry_id: 'agent-1' },
+      ],
+    });
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    const state = await backend.load();
+    expect(state.globalKillSwitch).toBe(true);
+    expect(state.killedSessions.has('sess-1')).toBe(true);
+    expect(state.killedSessions.has('sess-2')).toBe(true);
+    expect(state.killedAgents.has('agent-1')).toBe(true);
+    await backend.close();
+  });
+
+  it('activateGlobalKill() inserts a global row', async () => {
+    const pool = makeFakePgPool();
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.activateGlobalKill();
+    expect(pool.storedRows.some((r) => r.entry_type === 'global' && r.entry_id === '')).toBe(true);
+    await backend.close();
+  });
+
+  it('deactivateGlobalKill() removes the global row', async () => {
+    const pool = makeFakePgPool({ rows: [{ entry_type: 'global', entry_id: '' }] });
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.deactivateGlobalKill();
+    expect(pool.storedRows.some((r) => r.entry_type === 'global')).toBe(false);
+    await backend.close();
+  });
+
+  it('killSession() inserts a session row; reviveSession() removes it', async () => {
+    const pool = makeFakePgPool();
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.killSession('sess-x');
+    expect(pool.storedRows.some((r) => r.entry_type === 'session' && r.entry_id === 'sess-x')).toBe(true);
+    await backend.reviveSession('sess-x');
+    expect(pool.storedRows.some((r) => r.entry_type === 'session')).toBe(false);
+    await backend.close();
+  });
+
+  it('killAgent() inserts an agent row; reviveAgent() removes it', async () => {
+    const pool = makeFakePgPool();
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.killAgent('agent-z');
+    expect(pool.storedRows.some((r) => r.entry_type === 'agent' && r.entry_id === 'agent-z')).toBe(true);
+    await backend.reviveAgent('agent-z');
+    expect(pool.storedRows.some((r) => r.entry_type === 'agent')).toBe(false);
+    await backend.close();
+  });
+
+  it('resetAll() clears all rows', async () => {
+    const pool = makeFakePgPool({
+      rows: [
+        { entry_type: 'global', entry_id: '' },
+        { entry_type: 'session', entry_id: 'sess-1' },
+        { entry_type: 'agent', entry_id: 'agent-1' },
+      ],
+    });
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.resetAll();
+    expect(pool.storedRows.length).toBe(0);
+    await backend.close();
+  });
+
+  it('migrate() issues CREATE TABLE IF NOT EXISTS with the configured table name', async () => {
+    const pool = makeFakePgPool();
+    const backend = new PostgresKillSwitchBackend(pool as never, { table: 'my_ks' });
+    await backend.migrate!();
+    const ddl = pool.queries.find((q) => /CREATE TABLE IF NOT EXISTS/.test(q.sql));
+    expect(ddl).toBeDefined();
+    expect(ddl!.sql).toContain('my_ks');
+    await backend.close();
+  });
+
+  it('close() calls pool.end()', async () => {
+    const pool = makeFakePgPool();
+    const backend = new PostgresKillSwitchBackend(pool as never);
+    await backend.close();
+    expect(pool.ended).toBe(true);
+  });
+});
+
+// ── Kill-switch persistence fallback ─────────────────────────────────────────
+
+describe('RedisKillSwitchManager persistence backend', () => {
+  function makeFakePersistence(
+    initialState: KillSwitchConfig = {
+      globalKillSwitch: false,
+      killedSessions: new Set<string>(),
+      killedAgents: new Set<string>(),
+    }
+  ): KillSwitchPersistenceBackend & {
+    writeLog: string[];
+    state: KillSwitchConfig;
+    failLoad: boolean;
+  } {
+    const state: KillSwitchConfig = {
+      globalKillSwitch: initialState.globalKillSwitch,
+      killedSessions: new Set(initialState.killedSessions),
+      killedAgents: new Set(initialState.killedAgents),
+    };
+    const writeLog: string[] = [];
+
+    return {
+      state,
+      writeLog,
+      failLoad: false,
+      async load() {
+        if (this.failLoad) throw new Error('pg-load-error');
+        return {
+          globalKillSwitch: state.globalKillSwitch,
+          killedSessions: new Set(state.killedSessions),
+          killedAgents: new Set(state.killedAgents),
+        };
+      },
+      async activateGlobalKill() {
+        writeLog.push('activateGlobalKill');
+        state.globalKillSwitch = true;
+      },
+      async deactivateGlobalKill() {
+        writeLog.push('deactivateGlobalKill');
+        state.globalKillSwitch = false;
+      },
+      async killSession(id: string) {
+        writeLog.push(`killSession:${id}`);
+        state.killedSessions.add(id);
+      },
+      async reviveSession(id: string) {
+        writeLog.push(`reviveSession:${id}`);
+        state.killedSessions.delete(id);
+      },
+      async killAgent(id: string) {
+        writeLog.push(`killAgent:${id}`);
+        state.killedAgents.add(id);
+      },
+      async reviveAgent(id: string) {
+        writeLog.push(`reviveAgent:${id}`);
+        state.killedAgents.delete(id);
+      },
+      async resetAll() {
+        writeLog.push('resetAll');
+        state.globalKillSwitch = false;
+        state.killedSessions.clear();
+        state.killedAgents.clear();
+      },
+      async close() {
+        writeLog.push('close');
+      },
+    };
+  }
+
+  it('seeds from persistence backend when initial Redis refresh fails', async () => {
+    const client = makeFakeClient({
+      get: async () => { throw new Error('redis down'); },
+    });
+    const pg = makeFakePersistence({
+      globalKillSwitch: true,
+      killedSessions: new Set(['pg-sess']),
+      killedAgents: new Set(['pg-agent']),
+    });
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+
+    expect(mgr.isGlobalKillActive()).toBe(true);
+    expect(mgr.isSessionKilled('pg-sess')).toBe(true);
+    expect(mgr.isAgentKilled('pg-agent')).toBe(true);
+
+    await mgr.close();
+  });
+
+  it('starts with empty cache when both Redis and persistence fail at startup', async () => {
+    const client = makeFakeClient({
+      get: async () => { throw new Error('redis down'); },
+    });
+    const pg = makeFakePersistence();
+    pg.failLoad = true;
+
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+    expect(mgr.isGlobalKillActive()).toBe(false);
+    await mgr.close();
+  });
+
+  it('refresh() falls back to persistence when Redis is unavailable', async () => {
+    const client = makeFakeClient();
+    const pg = makeFakePersistence();
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+    expect(mgr.isGlobalKillActive()).toBe(false);
+
+    client.get = async () => { throw new Error('redis down'); };
+    pg.state.globalKillSwitch = true;
+    pg.state.killedSessions.add('emergency-sess');
+
+    await mgr.refresh();
+
+    expect(mgr.isGlobalKillActive()).toBe(true);
+    expect(mgr.isSessionKilled('emergency-sess')).toBe(true);
+
+    await mgr.close();
+  });
+
+  it('refresh() propagates error when Redis fails and no persistence is configured', async () => {
+    const client = makeFakeClient({
+      get: async () => { throw new Error('redis down'); },
+    });
+    const mgr = new RedisKillSwitchManager(client, logger, { refreshIntervalMs: 0 });
+    await mgr.start().catch(() => {});
+    await expect(mgr.refresh()).rejects.toThrow('redis down');
+    await mgr.close();
+  });
+
+  it('dual-writes to persistence backend after successful Redis writes', async () => {
+    const client = makeFakeClient();
+    const pg = makeFakePersistence();
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+
+    mgr.activateGlobalKill();
+    mgr.killSession('s1');
+    mgr.killAgent('a1');
+    mgr.deactivateGlobalKill();
+    mgr.reviveSession('s1');
+    mgr.reviveAgent('a1');
+    mgr.resetAll();
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(pg.writeLog).toContain('activateGlobalKill');
+    expect(pg.writeLog).toContain('killSession:s1');
+    expect(pg.writeLog).toContain('killAgent:a1');
+    expect(pg.writeLog).toContain('deactivateGlobalKill');
+    expect(pg.writeLog).toContain('reviveSession:s1');
+    expect(pg.writeLog).toContain('reviveAgent:a1');
+    expect(pg.writeLog).toContain('resetAll');
+
+    await mgr.close();
+  });
+
+  it('does NOT dual-write when the Redis write fails (fail-closed)', async () => {
+    const client = makeFakeClient({
+      sadd: async () => { throw new Error('redis down'); },
+    });
+    const pg = makeFakePersistence();
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+
+    mgr.killSession('sess-broken');
+    await flushMicrotasks();
+
+    expect(pg.writeLog).not.toContain('killSession:sess-broken');
+    expect(mgr.isSessionKilled('sess-broken')).toBe(false);
+
+    await mgr.close();
+  });
+
+  it('persistence write failure does not fail the overall kill operation', async () => {
+    const client = makeFakeClient();
+    const pg = makeFakePersistence();
+    pg.killSession = async () => { throw new Error('pg-error'); };
+
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+
+    mgr.killSession('sess-pg-fail');
+    await flushMicrotasks();
+
+    expect(mgr.isSessionKilled('sess-pg-fail')).toBe(true);
+    expect(client.store.sets.get('killswitch:killed_sessions')?.has('sess-pg-fail')).toBe(true);
+
+    await mgr.close();
+  });
+
+  it('close() also closes the persistence backend', async () => {
+    const client = makeFakeClient();
+    const pg = makeFakePersistence();
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+    await mgr.close();
+    expect(pg.writeLog).toContain('close');
+  });
+});
+
+// ── PostgresKillSwitchBackend table name validation ───────────────────────────
+
+describe('PostgresKillSwitchBackend table name validation', () => {
+  function makeFakePgPool() {
+    return {
+      connect() {
+        return Promise.resolve({
+          query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+          release() {},
+        });
+      },
+      async end() {},
+    };
+  }
+
+  it('accepts valid simple identifiers and schema-qualified names', () => {
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: 'euno_kill_switch_entries' })).not.toThrow();
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: 'ks' })).not.toThrow();
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: 'public.euno_kill_switch_entries' })).not.toThrow();
+  });
+
+  it('throws on table names that would allow SQL injection', () => {
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: 'ks; DROP TABLE ks--' })).toThrow(/invalid table name/);
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: '' })).toThrow(/invalid table name/);
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: '1invalid' })).toThrow(/invalid table name/);
+    expect(() => new PostgresKillSwitchBackend(makeFakePgPool() as never, { table: 'ks-with-dashes' })).toThrow(/invalid table name/);
+  });
+});
+
+// ── Persistence write ordering ────────────────────────────────────────────────
+
+describe('RedisKillSwitchManager persistence write ordering', () => {
+  it('applies Postgres writes in the same order as Redis writes even when I/O durations differ', async () => {
+    const client = makeFakeClient();
+    const writeOrder: string[] = [];
+
+    // Construct a persistence backend where the first write is slow and
+    // the second write is instant.  Without the `persistenceTail`
+    // serialization chain, the second write would overtake the first.
+    const pg: KillSwitchPersistenceBackend = {
+      load: async () => ({
+        globalKillSwitch: false,
+        killedSessions: new Set<string>(),
+        killedAgents: new Set<string>(),
+      }),
+      activateGlobalKill: async () => {},
+      deactivateGlobalKill: async () => {},
+      killSession: async (id: string) => {
+        // Deliberately slow to create the overtaking window
+        await new Promise<void>((r) => setTimeout(r, 20));
+        writeOrder.push(`kill:${id}`);
+      },
+      reviveSession: async (id: string) => {
+        // Instant write — overtakes killSession without serialization
+        writeOrder.push(`revive:${id}`);
+      },
+      killAgent: async () => {},
+      reviveAgent: async () => {},
+      resetAll: async () => {},
+      close: async () => {},
+    };
+
+    const mgr = new RedisKillSwitchManager(client, logger, {
+      refreshIntervalMs: 0,
+      persistenceBackend: pg,
+    });
+    await mgr.start();
+
+    mgr.killSession('target');
+    mgr.reviveSession('target');
+
+    // Wait long enough for both writes to settle (kill takes 20 ms)
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    // With serialization: kill arrives in Postgres before revive.
+    // Without serialization: revive would arrive first, leaving a
+    // stale kill row after revive completes.
+    const killIdx = writeOrder.indexOf('kill:target');
+    const reviveIdx = writeOrder.indexOf('revive:target');
+    expect(killIdx).toBeGreaterThanOrEqual(0);
+    expect(reviveIdx).toBeGreaterThanOrEqual(0);
+    expect(killIdx).toBeLessThan(reviveIdx);
+
+    await mgr.close();
   });
 });

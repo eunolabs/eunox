@@ -85,6 +85,20 @@ export interface RedisCallCounterOptions {
   /** Optional callback invoked on every Redis error, e.g. to increment a Prometheus counter. */
   onError?: () => void;
   /**
+   * Optional callback invoked every time the counter falls back to the
+   * `localFallback` store — whether because of a Redis error or because the
+   * circuit breaker is open.  Distinct from `onError` (which fires only on
+   * actual Redis errors, not on circuit-open).  Use to increment a dedicated
+   * Prometheus counter (e.g. `euno_gateway_counter_fallback_total`) so
+   * operators can distinguish "counter degraded" from "general Redis error".
+   *
+   * The callback fires before the `localFallback` store is consulted, so it
+   * is emitted even when the fallback eventually succeeds (which is the
+   * common case — the agent still gets a 200, just against a per-replica
+   * counter rather than the shared Redis counter).
+   */
+  onFallback?: () => void;
+  /**
    * Optional circuit breaker.  When provided, `incrementAndGet` calls are
    * wrapped so that repeated Redis failures trip the circuit to "open" and
    * subsequent requests fail immediately, avoiding TCP timeout latency on
@@ -126,6 +140,7 @@ export class RedisCallCounterStore implements CallCounterStore {
   private readonly keyPrefix: string;
   private readonly failClosedOnError: boolean;
   private readonly onError?: () => void;
+  private readonly onFallback?: () => void;
   private readonly circuitBreaker?: RedisCircuitBreaker;
   private readonly localFallback?: InMemoryCallCounterStore;
 
@@ -139,6 +154,7 @@ export class RedisCallCounterStore implements CallCounterStore {
     this.keyPrefix = options.keyPrefix ?? DEFAULT_COUNTER_KEY_PREFIX;
     this.failClosedOnError = options.failClosedOnError ?? true;
     this.onError = options.onError;
+    this.onFallback = options.onFallback;
     this.circuitBreaker = options.circuitBreaker;
     this.localFallback = options.localFallback;
     this.client.on('error', (err: unknown) => {
@@ -185,6 +201,11 @@ export class RedisCallCounterStore implements CallCounterStore {
       }
       // Local fallback: degrade to per-replica counting rather than denying all.
       if (this.localFallback) {
+        // Fire the fallback callback on every degradation, whether caused by
+        // a Redis error or a circuit-open. This lets the caller emit a
+        // dedicated metric (e.g. euno_gateway_counter_fallback_total) even
+        // when no TCP error occurred (circuit already open → no error event).
+        this.onFallback?.();
         if (!isCircuitOpen) {
           this.logger?.warn('Redis call-counter unavailable — falling back to local in-memory counter', {
             key: fullKey,
@@ -251,6 +272,14 @@ export async function createCallCounterStoreFromEnv(
   onError?: () => void,
   /** Optional externally-created circuit breaker so the caller can read its state for metrics. */
   circuitBreaker?: RedisCircuitBreaker,
+  /**
+   * Optional callback invoked every time the store falls back to the local
+   * in-memory counter — whether due to a Redis error or circuit-open.  Fires
+   * even when the fallback succeeds (the request returns 200); use to
+   * increment `euno_gateway_counter_fallback_total` so operators can detect
+   * Redis degradation on the counter surface without watching for errors.
+   */
+  onFallback?: () => void,
 ): Promise<CallCounterStore> {
   const redisUrl = env.CALL_COUNTER_REDIS_URL || env.REDIS_URL;
   if (!redisUrl) {
@@ -319,6 +348,7 @@ export async function createCallCounterStoreFromEnv(
   return new RedisCallCounterStore(client, logger, {
     keyPrefix,
     onError,
+    onFallback,
     circuitBreaker,
     localFallback,
     // When a local fallback is configured, failClosedOnError is irrelevant

@@ -596,6 +596,9 @@ export async function initializeServices(
   let redisErrorsCounter: Counter<string> | undefined;
   // H-1: shard mis-route counter; also late-bound for the same reason.
   let shardMisroutedCounter: Counter | undefined;
+  // Late-bound counters for per-surface degradation signals.
+  let revocationUnavailableCounter: Counter | undefined;
+  let counterFallbackCounter: Counter | undefined;
   const dpopReplayStore: DpopReplayStore = await createDpopReplayStoreFromEnv(
     env,
     logger,
@@ -720,6 +723,7 @@ export async function initializeServices(
     logger,
     () => redisErrorsCounter?.inc({ store: 'revocation' }),
     revocationCircuitBreaker,
+    () => revocationUnavailableCounter?.inc(),
   );
 
   // Build the per-issuer epoch store from environment.  Defaults to in-memory;
@@ -766,6 +770,7 @@ export async function initializeServices(
         logger,
         () => redisErrorsCounter?.inc({ store: 'call_counter' }),
         callCounterCircuitBreaker,
+        () => counterFallbackCounter?.inc(),
       );
       callCounterStore = new ShardLocalCallCounterStore(
         new InMemoryCallCounterStore(),
@@ -783,6 +788,7 @@ export async function initializeServices(
         logger,
         () => redisErrorsCounter?.inc({ store: 'call_counter' }),
         callCounterCircuitBreaker,
+        () => counterFallbackCounter?.inc(),
       );
     }
   }
@@ -1123,6 +1129,37 @@ export async function initializeServices(
   redisErrorsCounter.inc({ store: 'revocation' }, 0);
   redisErrorsCounter.inc({ store: 'revocation_epoch' }, 0);
   redisErrorsCounter.inc({ store: 'call_counter' }, 0);
+
+  // Revocation-unavailability counter.  Incremented when the revocation store
+  // cannot complete a check because Redis is unreachable AND the configured
+  // unavailableMode is 'fail-closed' (→ 401) or '503' (→ 503 to caller).
+  // Distinct from redisErrorsCounter in that it fires on EVERY degraded check,
+  // not just on raw socket errors — once the circuit is open, errors stop but
+  // degraded responses continue until Redis recovers.  A non-zero rate here
+  // combined with zero redis_errors means the circuit is open.
+  revocationUnavailableCounter = new Counter({
+    name: 'euno_gateway_revocation_unavailable_total',
+    help: 'Revocation checks that could not be completed because the backing store (Redis) was unreachable. ' +
+      'Does not fire in stale-readable or fail-open mode (those serve from the local cache / allow through). ' +
+      'A non-zero rate means the gateway is either fail-closing (→ 401) or returning 503 on token checks.',
+    registers: [metricsRegistry],
+  });
+  revocationUnavailableCounter.inc(0);
+
+  // Counter-fallback counter.  Incremented every time the call-counter store
+  // falls back to the local in-memory counter (Redis error or circuit-open).
+  // Unlike redisErrorsCounter, this fires on EVERY fallback, including when the
+  // circuit is already open (no new errors, but counting locally).
+  // Agents still get a 200 in this mode; the counter fires as a signal that
+  // maxCalls enforcement has relaxed from fleet-wide to per-replica.
+  counterFallbackCounter = new Counter({
+    name: 'euno_gateway_counter_fallback_total',
+    help: 'Call-counter increments served from the local in-memory fallback because Redis was unavailable. ' +
+      'A non-zero rate means maxCalls enforcement is per-replica (effective cap = maxCalls × replicaCount). ' +
+      'Requests are not denied (counter loss → 200 with metric); use alongside redis_errors for root-cause.',
+    registers: [metricsRegistry],
+  });
+  counterFallbackCounter.inc(0);
 
   // Circuit-breaker state gauges.  0 = closed (healthy), 1 = half-open
   // (probing), 2 = open (failing fast — Redis unreachable).  A sustained

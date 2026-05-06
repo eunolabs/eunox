@@ -206,6 +206,53 @@ describe('RedisCallCounterStore local fallback', () => {
     expect(v).toBe(1);
     expect(v).not.toBe(Number.POSITIVE_INFINITY);
   });
+
+  it('onFallback fires on Redis error with localFallback', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const localFallback = new InMemoryCallCounterStore();
+    const onFallback = jest.fn();
+    const store = new RedisCallCounterStore(fake, logger, { localFallback, onFallback });
+
+    await store.incrementAndGet('cap', 60);
+    expect(onFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('onFallback fires on circuit-open even with no Redis error', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const { RedisCircuitBreaker } = await import('../src/redis-circuit-breaker');
+    const cb = new RedisCircuitBreaker({ failureThreshold: 2, windowMs: 5000, cooldownMs: 30000 });
+    const localFallback = new InMemoryCallCounterStore();
+    const onFallback = jest.fn();
+    const store = new RedisCallCounterStore(fake, logger, {
+      circuitBreaker: cb,
+      localFallback,
+      onFallback,
+    });
+
+    // Trip the circuit (fires onFallback for each of these calls too)
+    await store.incrementAndGet('a', 60);
+    await store.incrementAndGet('b', 60);
+    expect(cb.getState()).toBe('open');
+
+    onFallback.mockClear();
+    // Now circuit is open — no actual Redis error, just CircuitOpenError
+    await store.incrementAndGet('cap', 60);
+    // Should fire onFallback from the circuit-open path
+    expect(onFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('onFallback does NOT fire when there is no localFallback (fail-closed path)', async () => {
+    const fake = new FakeRedis();
+    fake.errorOn = 'incr';
+    const onFallback = jest.fn();
+    const store = new RedisCallCounterStore(fake, logger, { onFallback });
+
+    await store.incrementAndGet('cap', 60);
+    // No localFallback configured — goes to fail-closed (POSITIVE_INFINITY), not fallback
+    expect(onFallback).not.toHaveBeenCalled();
+  });
 });
 
 describe('createCallCounterStoreFromEnv', () => {

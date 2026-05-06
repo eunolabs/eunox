@@ -72,6 +72,240 @@
 import { randomUUID } from 'crypto';
 import { KillSwitchManager, KillSwitchConfig } from './types';
 import { Logger } from './logger';
+import type { PgPool } from './ledger-signer';
+
+/**
+ * Minimal Postgres pool interface required by {@link PostgresKillSwitchBackend}.
+ * Re-uses the {@link PgPool} definition from `ledger-signer.ts` (structural
+ * compatibility) but exposed here so callers don't need to import from that module.
+ */
+export type { PgPool as KillSwitchPgPool };
+
+/**
+ * Secondary persistence backend for the kill-switch manager.
+ *
+ * The kill-switch is a **safety control** — its state must survive a Redis
+ * outage.  When a {@link KillSwitchPersistenceBackend} is wired in, the
+ * {@link RedisKillSwitchManager} dual-writes every mutation to it (fire-and-
+ * forget after the Redis write succeeds) and falls back to it when a Redis
+ * refresh fails.  This ensures that:
+ *
+ *   - Kill operations issued before a Redis outage are not lost: they are
+ *     durable in Postgres and will be re-loaded on the next refresh.
+ *   - If Redis is unreachable for an extended period, each replica still
+ *     converges on the last known kill-switch state from Postgres rather
+ *     than starting with an empty "no kills" cache.
+ *
+ * Implementations are expected to be idempotent: writing the same entry
+ * twice (e.g. killing the same agent again) must not produce an error.
+ */
+export interface KillSwitchPersistenceBackend {
+  /**
+   * Load the current kill-switch state.  Called on startup when Redis is
+   * unreachable and during periodic refreshes when Redis returns an error.
+   * Implementations MUST be idempotent and safe to call concurrently.
+   */
+  load(): Promise<KillSwitchConfig>;
+
+  /** Persist the global kill activation. */
+  activateGlobalKill(): Promise<void>;
+  /** Persist the global kill deactivation. */
+  deactivateGlobalKill(): Promise<void>;
+  /** Persist a session kill. */
+  killSession(sessionId: string): Promise<void>;
+  /** Persist the revival of a session. */
+  reviveSession(sessionId: string): Promise<void>;
+  /** Persist an agent kill. */
+  killAgent(agentId: string): Promise<void>;
+  /** Persist the revival of an agent. */
+  reviveAgent(agentId: string): Promise<void>;
+  /** Persist a full reset (removes all kill entries). */
+  resetAll(): Promise<void>;
+
+  /**
+   * Create the schema if it does not already exist.
+   * Safe to call multiple times (idempotent).
+   */
+  migrate?(): Promise<void>;
+
+  /** Release resources. */
+  close(): Promise<void>;
+}
+
+/** Entry type constants used in the Postgres table. */
+const KS_TYPE_GLOBAL = 'global';
+const KS_TYPE_SESSION = 'session';
+const KS_TYPE_AGENT = 'agent';
+
+/**
+ * Validate that a table name is a safe SQL identifier before it is
+ * interpolated into queries.  Accepts simple identifiers and one-dot
+ * schema-qualified names (e.g. `"public.euno_kill_switch_entries"`).
+ *
+ * This mirrors the identical helper in `ledger-signer.ts` — any
+ * change to the regex should be applied to both.
+ */
+function validateKillSwitchTableName(name: string): string {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/.test(name)) {
+    throw new Error(
+      `PostgresKillSwitchBackend: invalid table name "${name}". ` +
+        'Table name must be a safe SQL identifier (letters, digits, underscores; ' +
+        'one dot allowed for schema-qualified names, e.g. "public.euno_kill_switch_entries").',
+    );
+  }
+  return name;
+}
+
+/**
+ * Postgres-backed {@link KillSwitchPersistenceBackend}.
+ *
+ * ## Schema
+ *
+ * ```sql
+ * CREATE TABLE euno_kill_switch_entries (
+ *   entry_type TEXT NOT NULL,  -- 'global' | 'session' | 'agent'
+ *   entry_id   TEXT NOT NULL,  -- '' for global; session/agent ID otherwise
+ *   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ *   PRIMARY KEY (entry_type, entry_id)
+ * );
+ * ```
+ *
+ * - **Active kill** → a row is present.
+ * - **Revived / reset** → the row is deleted.
+ *
+ * The table deliberately has no "active" boolean — the row's presence IS the
+ * state.  This keeps reads simple (SELECT * → all active kills) and updates
+ * atomic (INSERT ON CONFLICT DO NOTHING / DELETE).
+ *
+ * ## Operational notes
+ *
+ * - The table should be in a dedicated low-traffic database (or schema) with
+ *   appropriate backups.  It is tiny (tens of rows at most) but must be
+ *   readable during a Redis outage.
+ * - Grant the gateway role INSERT/DELETE/SELECT on the table (no DDL needed
+ *   once `migrate()` has been run from a privileged role).
+ */
+export class PostgresKillSwitchBackend implements KillSwitchPersistenceBackend {
+  private readonly pool: PgPool;
+  private readonly table: string;
+  private readonly logger?: Logger;
+
+  constructor(pool: PgPool, options: { table?: string; logger?: Logger } = {}) {
+    this.pool = pool;
+    this.table = validateKillSwitchTableName(options.table ?? 'euno_kill_switch_entries');
+    this.logger = options.logger;
+  }
+
+  async migrate(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.table} (
+          entry_type TEXT NOT NULL,
+          entry_id   TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (entry_type, entry_id)
+        )
+      `);
+    } finally {
+      client.release();
+    }
+  }
+
+  async load(): Promise<KillSwitchConfig> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ entry_type: string; entry_id: string }>(
+        `SELECT entry_type, entry_id FROM ${this.table}`,
+      );
+      const config: KillSwitchConfig = {
+        globalKillSwitch: false,
+        killedSessions: new Set<string>(),
+        killedAgents: new Set<string>(),
+      };
+      for (const row of result.rows) {
+        if (row.entry_type === KS_TYPE_GLOBAL) {
+          config.globalKillSwitch = true;
+        } else if (row.entry_type === KS_TYPE_SESSION) {
+          config.killedSessions.add(row.entry_id);
+        } else if (row.entry_type === KS_TYPE_AGENT) {
+          config.killedAgents.add(row.entry_id);
+        }
+      }
+      return config;
+    } finally {
+      client.release();
+    }
+  }
+
+  async activateGlobalKill(): Promise<void> {
+    await this.upsert(KS_TYPE_GLOBAL, '');
+  }
+
+  async deactivateGlobalKill(): Promise<void> {
+    await this.delete(KS_TYPE_GLOBAL, '');
+  }
+
+  async killSession(sessionId: string): Promise<void> {
+    await this.upsert(KS_TYPE_SESSION, sessionId);
+  }
+
+  async reviveSession(sessionId: string): Promise<void> {
+    await this.delete(KS_TYPE_SESSION, sessionId);
+  }
+
+  async killAgent(agentId: string): Promise<void> {
+    await this.upsert(KS_TYPE_AGENT, agentId);
+  }
+
+  async reviveAgent(agentId: string): Promise<void> {
+    await this.delete(KS_TYPE_AGENT, agentId);
+  }
+
+  async resetAll(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`DELETE FROM ${this.table}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    try {
+      await this.pool.end();
+    } catch (error) {
+      this.logger?.warn?.('Error while closing PostgresKillSwitchBackend pool', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  private async upsert(type: string, id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO ${this.table} (entry_type, entry_id) VALUES ($1, $2)
+         ON CONFLICT (entry_type, entry_id) DO NOTHING`,
+        [type, id],
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  private async delete(type: string, id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `DELETE FROM ${this.table} WHERE entry_type = $1 AND entry_id = $2`,
+        [type, id],
+      );
+    } finally {
+      client.release();
+    }
+  }
+}
 
 /**
  * Minimal subset of the redis client surface the kill-switch depends on
@@ -140,12 +374,32 @@ export interface RedisKillSwitchOptions {
    */
   subscriber?: RedisKillSwitchSubscriber;
   /**
-   * Stable identifier for this manager instance, used to tag published
-   * events so the originating replica can ignore the echo of its own
-   * broadcast (it has already updated the local cache via write-through).
-   * Auto-generated when omitted; tests can pin a value for determinism.
+   * Optional stable identifier for this manager instance, used to tag
+   * published events so the originating replica can ignore the echo of
+   * its own broadcast. Auto-generated when omitted; tests can pin a
+   * value for determinism.
    */
   instanceId?: string;
+  /**
+   * Optional secondary persistence backend (e.g. Postgres).
+   *
+   * When provided the manager:
+   *   - **dual-writes** every mutation to the backend immediately after
+   *     the Redis write succeeds (fire-and-forget — write latency is not
+   *     affected).
+   *   - **falls back** to the backend for `refresh()` when Redis returns
+   *     an error, keeping the local cache fresh from Postgres even
+   *     during a Redis outage.
+   *   - **seeds** from the backend at startup when the initial Redis
+   *     refresh fails, so a freshly-started replica honours any kills
+   *     that are durably stored in Postgres.
+   *
+   * This makes the kill-switch resilient to a complete Redis outage: the
+   * last known kill state persists in Postgres and is served to every
+   * replica until Redis recovers, at which point the normal refresh
+   * re-takes over.
+   */
+  persistenceBackend?: KillSwitchPersistenceBackend;
 }
 
 const DEFAULT_KEY_PREFIX = 'killswitch:';
@@ -186,6 +440,7 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   private readonly failOpenOnWrite: boolean;
   private readonly subscriber?: RedisKillSwitchSubscriber;
   private readonly instanceId: string;
+  private readonly persistenceBackend?: KillSwitchPersistenceBackend;
 
   /**
    * Local snapshot – kept fresh by write-through (issuing pod), pub/sub
@@ -201,6 +456,17 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   private started = false;
   private closed = false;
   private subscribed = false;
+  /**
+   * Serialization tail for Postgres persistence writes.
+   *
+   * Every Postgres mirror write is chained through this promise so that
+   * mutations arrive in Postgres in the same order they succeed in Redis.
+   * Without serialization, back-to-back writes (e.g. `killSession` then
+   * `reviveSession`) can overtake each other and leave a stale row in
+   * Postgres.  The tail never rejects — each step swallows its own error
+   * after logging so the chain remains live.
+   */
+  private persistenceTail: Promise<void> = Promise.resolve();
 
   constructor(client: RedisKillSwitchClient, logger?: Logger, options: RedisKillSwitchOptions = {}) {
     this.client = client;
@@ -210,6 +476,7 @@ export class RedisKillSwitchManager implements KillSwitchManager {
     this.failOpenOnWrite = options.failOpenOnWrite ?? false;
     this.subscriber = options.subscriber;
     this.instanceId = options.instanceId ?? randomUUID();
+    this.persistenceBackend = options.persistenceBackend;
 
     this.client.on('error', (err: unknown) => {
       this.logger?.error('Redis kill-switch connection error', {
@@ -272,10 +539,30 @@ export class RedisKillSwitchManager implements KillSwitchManager {
     try {
       await this.refresh();
     } catch (error) {
-      this.logger?.error(
-        'Initial Redis kill-switch refresh failed; starting with empty cache and relying on pub/sub + periodic refresh',
-        { error: error instanceof Error ? error.message : 'Unknown error' }
-      );
+      if (this.persistenceBackend) {
+        this.logger?.warn(
+          'Initial Redis kill-switch refresh failed; trying persistence backend',
+          { error: error instanceof Error ? error.message : 'Unknown error' }
+        );
+        try {
+          await this.seedFromPersistenceBackend();
+          this.logger?.info('Kill-switch cache seeded from persistence backend');
+        } catch (pgError) {
+          this.logger?.error(
+            'Initial Redis kill-switch refresh failed and persistence backend also failed; ' +
+              'starting with empty cache and relying on pub/sub + periodic refresh',
+            {
+              redisError: error instanceof Error ? error.message : 'Unknown error',
+              pgError: pgError instanceof Error ? pgError.message : 'Unknown error',
+            }
+          );
+        }
+      } else {
+        this.logger?.error(
+          'Initial Redis kill-switch refresh failed; starting with empty cache and relying on pub/sub + periodic refresh',
+          { error: error instanceof Error ? error.message : 'Unknown error' }
+        );
+      }
     }
     if (this.refreshIntervalMs > 0) {
       this.refreshTimer = setInterval(() => {
@@ -292,20 +579,34 @@ export class RedisKillSwitchManager implements KillSwitchManager {
 
   /**
    * Pull the full kill-switch state from Redis and replace the local
-   * snapshot atomically.  Exposed primarily for tests / admin tooling –
-   * production code should rely on pub/sub propagation with the
-   * periodic timer as a safety net.
+   * snapshot atomically.  When Redis is unavailable and a
+   * {@link KillSwitchPersistenceBackend} is configured, falls back to
+   * loading from the persistence store.  Exposed primarily for tests /
+   * admin tooling — production code should rely on pub/sub propagation
+   * with the periodic timer as a safety net.
    */
   async refresh(): Promise<void> {
-    const [globalRaw, sessions, agents] = await Promise.all([
-      this.client.get(this.globalKey()),
-      this.client.smembers(this.sessionsKey()),
-      this.client.smembers(this.agentsKey()),
-    ]);
+    try {
+      const [globalRaw, sessions, agents] = await Promise.all([
+        this.client.get(this.globalKey()),
+        this.client.smembers(this.sessionsKey()),
+        this.client.smembers(this.agentsKey()),
+      ]);
 
-    this.cache.globalKillSwitch = globalRaw === '1';
-    this.cache.killedSessions = new Set(sessions);
-    this.cache.killedAgents = new Set(agents);
+      this.cache.globalKillSwitch = globalRaw === '1';
+      this.cache.killedSessions = new Set(sessions);
+      this.cache.killedAgents = new Set(agents);
+    } catch (error) {
+      if (this.persistenceBackend) {
+        this.logger?.warn(
+          'Redis kill-switch refresh failed; falling back to persistence backend',
+          { error: error instanceof Error ? error.message : 'Unknown error' }
+        );
+        await this.seedFromPersistenceBackend();
+        return;
+      }
+      throw error;
+    }
   }
 
   isGlobalKillActive(): boolean {
@@ -321,7 +622,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
       () => {
         this.cache.globalKillSwitch = previous;
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'activate_global' }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'activate_global' },
+      () => this.persistenceBackend!.activateGlobalKill(),
     );
     this.logger?.warn('Global kill switch activated - all agent requests will be blocked');
   }
@@ -335,7 +637,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
       () => {
         this.cache.globalKillSwitch = previous;
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'deactivate_global' }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'deactivate_global' },
+      () => this.persistenceBackend!.deactivateGlobalKill(),
     );
     this.logger?.info('Global kill switch deactivated - agent requests are now allowed');
   }
@@ -351,7 +654,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
           this.cache.killedSessions.delete(sessionId);
         }
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'kill_session', id: sessionId }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'kill_session', id: sessionId },
+      () => this.persistenceBackend!.killSession(sessionId),
     );
     this.logger?.warn('Session killed', { sessionId });
   }
@@ -367,7 +671,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
           this.cache.killedAgents.delete(agentId);
         }
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'kill_agent', id: agentId }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'kill_agent', id: agentId },
+      () => this.persistenceBackend!.killAgent(agentId),
     );
     this.logger?.warn('Agent killed', { agentId });
   }
@@ -404,7 +709,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
           this.cache.killedSessions.add(sessionId);
         }
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'revive_session', id: sessionId }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'revive_session', id: sessionId },
+      () => this.persistenceBackend!.reviveSession(sessionId),
     );
     this.logger?.info('Session revived', { sessionId });
   }
@@ -420,7 +726,8 @@ export class RedisKillSwitchManager implements KillSwitchManager {
           this.cache.killedAgents.add(agentId);
         }
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'revive_agent', id: agentId }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'revive_agent', id: agentId },
+      () => this.persistenceBackend!.reviveAgent(agentId),
     );
     this.logger?.info('Agent revived', { agentId });
   }
@@ -454,14 +761,16 @@ export class RedisKillSwitchManager implements KillSwitchManager {
         this.cache.killedSessions = previousSessions;
         this.cache.killedAgents = previousAgents;
       },
-      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'reset_all' }
+      { v: EVENT_SCHEMA_VERSION, src: this.instanceId, op: 'reset_all' },
+      () => this.persistenceBackend!.resetAll(),
     );
     this.logger?.warn('All kill switches reset');
   }
 
   /**
    * Stop the background refresh timer, unsubscribe from the event
-   * channel, and close both Redis connections.  Idempotent.
+   * channel, and close all Redis connections and the persistence backend
+   * (if any).  Idempotent.
    */
   async close(): Promise<void> {
     this.closed = true;
@@ -494,6 +803,15 @@ export class RedisKillSwitchManager implements KillSwitchManager {
       this.logger?.warn('Error while closing Redis kill-switch client', {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+    }
+    if (this.persistenceBackend) {
+      try {
+        await this.persistenceBackend.close();
+      } catch (error) {
+        this.logger?.warn('Error while closing kill-switch persistence backend', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
     }
   }
 
@@ -537,10 +855,28 @@ export class RedisKillSwitchManager implements KillSwitchManager {
     op: string,
     redisOp: () => Promise<unknown>,
     revertCache: () => void,
-    event: KillSwitchEvent
+    event: KillSwitchEvent,
+    persistenceOp?: () => Promise<void>,
   ): void {
     redisOp()
       .then(() => {
+        // Dual-write to the persistence backend via a SERIALIZED promise
+        // chain.  All persistence writes are enqueued on `this.persistenceTail`
+        // so they execute in the same order as the Redis writes, preventing
+        // overtaking (e.g. killSession then reviveSession landing in Postgres
+        // as revive-then-kill, which would leave a stale row).  Each step in
+        // the chain swallows its own error after logging so the tail remains
+        // live for subsequent writes.
+        if (persistenceOp && this.persistenceBackend) {
+          this.persistenceTail = this.persistenceTail.then(() =>
+            persistenceOp().catch((error: unknown) => {
+              this.logger?.warn('Kill-switch persistence backend write failed; state is in Redis but not Postgres', {
+                op,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              });
+            }),
+          );
+        }
         // Only publish when pub/sub is enabled (i.e. a subscriber
         // connection was wired in).  When KILL_SWITCH_PUBSUB_ENABLED=false
         // the subscriber is undefined, which means no pod is listening
@@ -658,6 +994,18 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   private eventsChannel(): string {
     return `${this.keyPrefix}${DEFAULT_EVENTS_SUFFIX}`;
   }
+
+  /**
+   * Load kill-switch state from the persistence backend and apply it to the
+   * local cache.  Called at startup and during periodic refresh when Redis
+   * is unavailable.  Throws if the persistence backend also fails.
+   */
+  private async seedFromPersistenceBackend(): Promise<void> {
+    const state = await this.persistenceBackend!.load();
+    this.cache.globalKillSwitch = state.globalKillSwitch;
+    this.cache.killedSessions = state.killedSessions;
+    this.cache.killedAgents = state.killedAgents;
+  }
 }
 
 /**
@@ -758,11 +1106,44 @@ export async function createKillSwitchManagerFromEnv(
     }
   }
 
+  // Construct the optional Postgres persistence backend for kill-switch
+  // durability.  When KILL_SWITCH_POSTGRES_URL is set, every Redis write is
+  // mirrored to Postgres (fire-and-forget) and periodic refreshes fall back
+  // to Postgres when Redis is unavailable.  This makes the kill-switch
+  // resilient to a complete Redis outage without requiring operators to
+  // manage a separate Redis sentinel or cluster for this single control surface.
+  let persistenceBackend: KillSwitchPersistenceBackend | undefined;
+  const pgUrl = env.KILL_SWITCH_POSTGRES_URL;
+  if (pgUrl) {
+    // KILL_SWITCH_POSTGRES_URL is set: the operator explicitly opted into
+    // the Postgres fallback safety net.  Failing silently here would make
+    // the deployment APPEAR protected while the Postgres backend is absent,
+    // so a later Redis outage could lose kill-switch state undetected.
+    // We therefore fail fast — the gateway must not start without the
+    // fallback that the operator explicitly configured.
+    // Dynamically require pg to avoid a hard dependency in @euno/common.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-explicit-any
+    const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => PgPool };
+    const pgPool = new Pool({ connectionString: pgUrl });
+    const pgTable = env.KILL_SWITCH_PG_TABLE || 'euno_kill_switch_entries';
+    const pgBackend = new PostgresKillSwitchBackend(pgPool, { table: pgTable, logger });
+    if (env.KILL_SWITCH_PG_RUN_MIGRATIONS === 'true') {
+      await pgBackend.migrate();
+      logger?.info('Kill-switch Postgres migration completed', { table: pgTable });
+    }
+    persistenceBackend = pgBackend;
+    logger?.info('Kill-switch Postgres persistence backend configured', {
+      table: pgTable,
+      runMigrations: env.KILL_SWITCH_PG_RUN_MIGRATIONS === 'true',
+    });
+  }
+
   const manager = new RedisKillSwitchManager(client, logger, {
     keyPrefix,
     refreshIntervalMs,
     failOpenOnWrite,
     subscriber,
+    persistenceBackend,
   });
   await manager.start();
 
@@ -772,6 +1153,7 @@ export async function createKillSwitchManagerFromEnv(
     failOpenOnWrite,
     pubsubEnabled: !!subscriber,
     dedicatedUrl: !!env.KILL_SWITCH_REDIS_URL,
+    postgresBackend: !!persistenceBackend,
   });
 
   return manager;

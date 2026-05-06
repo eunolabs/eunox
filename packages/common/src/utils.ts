@@ -558,6 +558,18 @@ export enum ErrorCode {
    * `docs/sprint-3-4-gaps/03-conditional-access.md`.
    */
   CONDITIONAL_ACCESS_REQUIRED = 'CONDITIONAL_ACCESS_REQUIRED',
+  /**
+   * The revocation check could not be completed because the backing
+   * store (typically Redis) is temporarily unreachable.  The gateway
+   * returns HTTP 503 so the agent runtime knows to retry later rather
+   * than treating the failure as a token problem.
+   *
+   * This code is only emitted when `REVOCATION_UNAVAILABLE_MODE=503` is
+   * configured on the gateway.  The default (`fail-closed`) continues to
+   * return HTTP 401 (`TOKEN_REVOKED`) to preserve backward-compatible
+   * fail-closed semantics.
+   */
+  REVOCATION_UNAVAILABLE = 'REVOCATION_UNAVAILABLE',
 }
 
 /**
