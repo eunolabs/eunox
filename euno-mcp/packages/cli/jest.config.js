@@ -7,17 +7,17 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         paths: {
-          '@euno/common': ['../common/src'],
-          '@euno/common/wire': ['../common/src/wire'],
-          '@euno/common/runtime': ['../common/src/runtime'],
+          '@euno/common': ['../../../euno-platform/packages/common/src'],
+          '@euno/common/wire': ['../../../euno-platform/packages/common/src/wire'],
+          '@euno/common/runtime': ['../../../euno-platform/packages/common/src/runtime'],
         },
       },
     }],
   },
   moduleNameMapper: {
-    '^@euno/common$': '<rootDir>/../common/src',
-    '^@euno/common/wire$': '<rootDir>/../common/src/wire',
-    '^@euno/common/runtime$': '<rootDir>/../common/src/runtime',
+    '^@euno/common$': '<rootDir>/../../../euno-platform/packages/common/src',
+    '^@euno/common/wire$': '<rootDir>/../../../euno-platform/packages/common/src/wire',
+    '^@euno/common/runtime$': '<rootDir>/../../../euno-platform/packages/common/src/runtime',
   },
   // Spawning the CLI as a subprocess can take a few seconds on cold caches.
   testTimeout: 30000,

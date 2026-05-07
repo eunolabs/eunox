@@ -16,7 +16,7 @@ const path = require('path');
 // Resolve from the repo root so the test runs regardless of cwd.
 const authorizerPath = path.resolve(
   __dirname,
-  '../../../infra/aws/api-gateway/lambda-authorizer.js'
+  '../../../../infra/aws/api-gateway/lambda-authorizer.js'
 );
 
 // Set required env vars BEFORE requiring the module — its module-level
