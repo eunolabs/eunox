@@ -1,34 +1,6 @@
-export * from './types';
-export * from './utils';
-export * from './min-heap';
-export * from './logger';
-export * from './evidence';
-export * from './ledger-signer';
-export * from './kill-switch';
-export * from './redis-kill-switch';
-export * from './adapters';
-export * from './capability-validators';
-export * from './argument-validator';
-export * from './role-mapping';
-export * from './log-transports';
-export * from './condition-registry';
-export * from './policy-backends';
-export * from './call-counter-store';
-export * from './issuance-rate-limiter';
-export * from './config';
-export * from './jwks';
-export * from './metrics';
-export * from './tracing';
-export * from './verify-evidence-job';
-export * from './audit-pipeline';
-export * from './action-resolver';
-export * from './dpop';
-export * from './ocsf';
-export * from './issuance-proofs';
-export * from './cosigner';
-export * from './transparency-log';
-export * from './shard';
-export * from './tool-transport';
-export * from './redis-circuit-breaker';
-export * from './gateway-quota';
-export * from './key-utils';
+/**
+ * @deprecated Use @euno/common-core (Apache-2.0) or @euno/common-infra (BSL 1.1) directly.
+ * This package is a compatibility shim and will be removed after Stage 1 ships.
+ */
+export * from '@euno/common-core';
+export * from '@euno/common-infra';

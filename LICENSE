@@ -4,8 +4,8 @@ This repository is mixed-license. The authoritative license for each package is 
 
 Current Stage-0 package boundary:
 
-- Apache-2.0: `packages/cli`
-- Business Source License 1.1 (BUSL-1.1): `packages/common`, `packages/tool-gateway`, `packages/capability-issuer`, `packages/agent-runtime`, `packages/framework-adapters`, `packages/partner-issuer-sim`, `packages/db-token-service`, `packages/storage-grant-service`, `packages/posture-emitter`, `packages/integration-tests`
+- Apache-2.0: `packages/cli`, `packages/common-core`
+- Business Source License 1.1 (BUSL-1.1): `packages/common` (compatibility shim — deprecated), `packages/common-infra`, `packages/tool-gateway`, `packages/capability-issuer`, `packages/agent-runtime`, `packages/framework-adapters`, `packages/partner-issuer-sim`, `packages/db-token-service`, `packages/storage-grant-service`, `packages/posture-emitter`, `packages/integration-tests`
 
 If there is any conflict between this root file and a package-level `LICENSE`, the package-level `LICENSE` controls for that package.
 

@@ -6,7 +6,7 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
-        // Let ts-jest resolve @euno/common sub-path imports from source so
+        // Let ts-jest resolve @euno/common* sub-path imports from source so
         // the wire-runtime-split tests can import @euno/common/wire etc. without
         // a pre-built dist/.  Mirrors the same pattern used in tool-gateway.
         baseUrl: '.',
@@ -15,6 +15,8 @@ module.exports = {
           '@euno/common/wire': ['src/wire'],
           '@euno/common/runtime': ['src/runtime'],
           '@euno/common/types': ['src/types'],
+          '@euno/common-core': ['../common-core/src'],
+          '@euno/common-infra': ['../common-infra/src'],
         },
       },
     }],
@@ -30,5 +32,7 @@ module.exports = {
     '^@euno/common/wire$': '<rootDir>/../common/src/wire',
     '^@euno/common/runtime$': '<rootDir>/../common/src/runtime',
     '^@euno/common/types$': '<rootDir>/../common/src/types',
+    '^@euno/common-core$': '<rootDir>/../common-core/src',
+    '^@euno/common-infra$': '<rootDir>/../common-infra/src',
   },
 };

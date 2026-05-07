@@ -74,6 +74,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@euno/common-core": "*",
+    "@euno/common-infra": "*",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-async-hooks": "^1.30.1",
     "@opentelemetry/core": "^1.30.1",

@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @euno/common && npm run build -w @euno/posture-emitter && npm run build --workspaces",
+    "build": "npm run build -w @euno/common-core && npm run build -w @euno/common-infra && npm run build -w @euno/common && npm run build -w @euno/posture-emitter && npm run build --workspaces",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules",

@@ -1,6 +1,32 @@
-# `@euno/common`
+# `@euno/common` — Compatibility Shim
 
-Shared types, interfaces, and utilities consumed by every Euno service.
+> **⚠️ DEPRECATED** — This package is now a thin compatibility shim that
+> re-exports everything from `@euno/common-core` and `@euno/common-infra`.
+> It will be removed after Stage 1 ships.
+
+## Migration
+
+Replace your `@euno/common` imports with the appropriate package:
+
+| What you need | New package | License |
+|---|---|---|
+| Types, interfaces, in-memory stores, config schema | `@euno/common-core` | Apache-2.0 |
+| Redis, Postgres, KMS-backed implementations | `@euno/common-infra` | BSL 1.1 |
+
+### Example
+
+```typescript
+// Before
+import { Logger, RedisCallCounterStore } from '@euno/common';
+
+// After
+import { Logger } from '@euno/common-core';
+import { RedisCallCounterStore } from '@euno/common-infra';
+```
+
+---
+
+Original documentation below (historical reference only):
 
 ## Entry points
 
