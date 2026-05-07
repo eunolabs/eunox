@@ -30,7 +30,7 @@ import openapiTS, { astToString } from 'openapi-typescript';
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), '..');
 const specsDir = path.join(repoRoot, 'docs', 'openapi');
-const outDir = path.join(repoRoot, 'packages', 'common', 'src', 'generated');
+const outDir = path.join(repoRoot, 'euno-platform', 'packages', 'common', 'src', 'generated');
 
 const HEADER_LINES = [
   '/**',

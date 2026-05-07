@@ -1,59 +1,62 @@
-# Repository Split Strategy: Public + Private
+# Repository Structure: Public + Private Folders
 
-**Status:** Decided, documented, and scaffolded (Substage 0.4). Top-level
+**Status:** Implemented (Substage 0.4 / Stage 1). Top-level
 [`euno-mcp/`](../euno-mcp/) and [`euno-platform/`](../euno-platform/)
-folders are initialised in this monorepo with `LICENSE`, `README.md`,
-and `MANIFEST.md` declaring scope and ownership. Physical GitHub repo
-creation and the actual package moves are Stage 1 follow-ups.
+folders contain the actual packages under their respective `packages/`
+subdirectories. Both are declared as npm workspaces in the root
+`package.json`.
 
-This document records the two-repo strategy introduced in
+This document records the two-folder strategy introduced in
 [`docs/mvp.md § Repository structure`](./mvp.md#repository-structure-public--private),
-lists which packages belong to each repo, defines the `common-core` release
+lists which packages belong to each folder, defines the `common-core` release
 checklist, and flags the known dependency violations that must be resolved
 before any public npm publish.
 
 ---
 
-## Target structure
+## Current structure
 
 ```
-github.com/edgeobs/euno-mcp          # public -- Apache-2.0
-  packages/common-core/              # types, interfaces, in-memory fakes
-  packages/cli/                      # developer CLI
-  packages/euno-mcp/                 # (Stage 1 -- not yet created)
-  packages/langchain/                # (Stage 2 -- not yet created)
-
-github.com/edgeobs/euno-platform     # private -- BUSL-1.1
-  packages/common-infra/             # Redis / Postgres / KMS implementations
-  packages/common/                   # compat shim (re-exports both above)
-  packages/tool-gateway/
-  packages/capability-issuer/
-  packages/agent-runtime/
-  packages/framework-adapters/
-  packages/posture-emitter/
-  packages/partner-issuer-sim/
-  packages/db-token-service/
-  packages/storage-grant-service/
-  packages/integration-tests/
+edgeobs/euno  (this monorepo)
+│
+├── euno-mcp/packages/              # public surface — Apache-2.0
+│     common-core/                  # types, interfaces, in-memory fakes
+│     cli/                          # developer CLI
+│     euno-mcp/                     # MCP proxy (@euno/mcp)
+│
+└── euno-platform/packages/         # private surface — BUSL-1.1
+      common-infra/                 # Redis / Postgres / KMS implementations
+      common/                       # compat shim (re-exports both above)
+      tool-gateway/
+      capability-issuer/
+      agent-runtime/
+      framework-adapters/
+      posture-emitter/
+      partner-issuer-sim/
+      db-token-service/
+      storage-grant-service/
+      integration-tests/
 ```
 
-**How the dependency works.** `common-core` is published to npm from the
-public repo. The private repo installs it as a regular npm dependency and
-adds BUSL-1.1 implementations on top. The interface seams in `common-core` become
-the published API contract; private implementations are completely invisible.
+**How the dependency works.** `common-core` lives in `euno-mcp/packages/`
+and is consumed by the platform packages in `euno-platform/packages/` as a
+workspace dependency. When published to npm, `common-core` becomes the public
+API contract that external consumers install as a regular npm dependency. The
+interface seams in `common-core` are the published contract; platform
+implementations are completely invisible.
 
 ---
 
-## Packages moving to the public repo
+## Packages in the public surface (`euno-mcp/`)
 
 | Package | License | Notes |
 |---|---|---|
 | `@euno/common-core` | Apache-2.0 | Core types, interfaces, in-memory stores. Published to npm. |
 | `@euno/cli` | Apache-2.0 | Developer CLI. Published to npm. **Blocker: must remove `@euno/common` dep (see below).** |
-| `@euno/mcp` | Apache-2.0 | Stage 1 -- greenfield, not yet created. |
-| `@euno/langchain` | Apache-2.0 | Stage 2 -- greenfield, not yet created. |
+| `@euno/mcp` | Apache-2.0 | MCP proxy with local policy enforcement. |
+| `@euno/langchain` | Apache-2.0 | Stage 2 — not yet created. |
 
-All other packages remain in the private repo.
+All other packages live in the platform surface.
 
 ---
 
@@ -76,13 +79,13 @@ still passes, the CLI is safe to publish.
 ## `common-core` npm release checklist
 
 Run this checklist before every `@euno/common-core` npm publish. Because
-`common-core` is the shared API contract between the public and private repos,
-a bad release causes breakage in the private repo that can only be fixed by
-another publish.
+`common-core` is the shared API contract between the public and platform
+surfaces, a bad release causes breakage in the platform packages that can only
+be fixed by another publish.
 
 ### Pre-release
 
-- [ ] All tests pass in the private repo against the candidate version of
+- [ ] All platform-layer tests pass against the candidate version of
       `common-core` (bump the version in `package.json`, run `npm install`,
       run `npm run test`).
 - [ ] No interface seams in `common-core` have been removed or renamed without
@@ -95,41 +98,41 @@ another publish.
   - **major** -- any breaking change to existing exports.
 - [ ] `CHANGELOG.md` has an entry for this version with a migration note for
       any interface changes.
-- [ ] `packages/common-core/package.json` `"version"` field is bumped.
+- [ ] `euno-mcp/packages/common-core/package.json` `"version"` field is bumped.
 
 ### Publish
 
 ```sh
-# From the public repo root
-cd packages/common-core
+# From the repo root
+cd euno-mcp/packages/common-core
 npm run build
 npm publish --access public
 ```
 
 ### Post-release
 
-- [ ] Update `packages/common-infra/package.json` (private repo) to pin the
+- [ ] Update `euno-platform/packages/common-infra/package.json` to pin the
       new `@euno/common-core` version.
-- [ ] Run `npm install && npm run build && npm run test` in the private repo.
-- [ ] Tag the public repo: `git tag common-core@<version> && git push --tags`.
+- [ ] Run `npm install && npm run build && npm run test` from the repo root.
+- [ ] Tag the release: `git tag common-core@<version> && git push --tags`.
 
 ---
 
-## Rules for the public repo
+## Rules for the public surface (`euno-mcp/`)
 
-The following rules apply to every PR merged into `edgeobs/euno-mcp`:
+The following rules apply to every PR that touches `euno-mcp/`:
 
-1. **No references to the private repo.** No comments, no README text, no
-   `package.json` peer-dependency ranges pointing at private packages. The
-   public repo must read as complete and self-contained.
+1. **No references to the platform layer.** No comments, no README text, no
+   `package.json` peer-dependency ranges pointing at BUSL-1.1 packages. The
+   public surface must read as complete and self-contained.
 2. **No BUSL-licensed code.** Every file must be either Apache-2.0 or a
    non-code asset (docs, config). The `lint:license-boundary` CI step enforces
    this mechanically.
 3. **In-memory-only implementations.** Any interface from `common-core` that
-   needs a concrete implementation in the public repo must use the in-memory
+   needs a concrete implementation in the public surface must use the in-memory
    fakes already in `common-core`. No Redis, no Postgres, no KMS.
 4. **No `@euno/common` dependency.** That package is the BUSL compat shim and
-   will not exist in the public repo. Depend on `@euno/common-core` directly.
+   belongs to the platform surface. Depend on `@euno/common-core` directly.
 
 ---
 
@@ -137,7 +140,6 @@ The following rules apply to every PR merged into `edgeobs/euno-mcp`:
 
 | Milestone | When |
 |---|---|
-| `common-core` and `cli` fully migrated off `@euno/common` | Before Stage 1 begins |
-| `euno-mcp` package created and published | Stage 1 gate |
-| `euno-mcp` repo physically created on GitHub | Stage 1 (follow-up PR after this one) |
-| `langchain` package created | Stage 2 |
+| `common-core` and `cli` fully migrated off `@euno/common` | Before Stage 1 publish |
+| `@euno/mcp` package published to npm | Stage 1 gate |
+| `@euno/langchain` package created | Stage 2 |

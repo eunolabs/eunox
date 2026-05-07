@@ -101,18 +101,18 @@ function readEnvVar(envFilePath, key) {
 }
 
 if (issuerFile === undefined) {
-  const envPath = join(repoRoot, 'packages', 'capability-issuer', '.env');
+  const envPath = join(repoRoot, 'euno-platform', 'packages', 'capability-issuer', '.env');
   const val = readEnvVar(envPath, 'ACTION_RESOLVER_FILE');
   if (val) {
-    issuerFile = resolve(join(repoRoot, 'packages', 'capability-issuer'), val);
+    issuerFile = resolve(join(repoRoot, 'euno-platform', 'packages', 'capability-issuer'), val);
   }
 }
 
 if (gatewayFile === undefined) {
-  const envPath = join(repoRoot, 'packages', 'tool-gateway', '.env');
+  const envPath = join(repoRoot, 'euno-platform', 'packages', 'tool-gateway', '.env');
   const val = readEnvVar(envPath, 'ACTION_RESOLVER_FILE');
   if (val) {
-    gatewayFile = resolve(join(repoRoot, 'packages', 'tool-gateway'), val);
+    gatewayFile = resolve(join(repoRoot, 'euno-platform', 'packages', 'tool-gateway'), val);
   }
 }
 

@@ -106,12 +106,47 @@ const ALLOWLIST = new Map([
 // Load workspace package metadata
 // ---------------------------------------------------------------------------
 
-const packagesDir = join(workspaceRoot, 'packages');
+/**
+ * Resolve the list of package directories from the workspace root.
+ *
+ * Reads the "workspaces" field in the root package.json (if present) and
+ * expands each glob of the form "<dir>/*" into a listing of subdirectories
+ * under <dir>.  Falls back to a single "packages/" directory when the
+ * root package.json is absent, unreadable, or has no workspaces field.
+ */
+function resolvePackageDirs(root) {
+  const rootPkgPath = join(root, 'package.json');
+  let workspaceGlobs = null;
+  if (existsSync(rootPkgPath)) {
+    try {
+      const rootPkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'));
+      if (Array.isArray(rootPkg.workspaces)) {
+        workspaceGlobs = rootPkg.workspaces;
+      }
+    } catch (_) { /* ignore parse errors */ }
+  }
 
-if (!existsSync(packagesDir)) {
-  process.stderr.write('ERROR packages directory not found: ' + packagesDir + '\n');
-  process.exit(1);
+  // Fall back to the legacy single packages/ directory.
+  if (!workspaceGlobs) {
+    workspaceGlobs = ['packages/*'];
+  }
+
+  const dirs = [];
+  for (const glob of workspaceGlobs) {
+    // We only handle the simple "<dir>/*" pattern used in this repo.
+    if (!glob.endsWith('/*')) continue;
+    const parentDir = join(root, glob.slice(0, -2)); // strip trailing /*
+    if (!existsSync(parentDir)) continue;
+    const entries = readdirSync(parentDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => join(parentDir, e.name))
+      .sort();
+    dirs.push(...entries);
+  }
+  return dirs;
 }
+
+const packageDirsAbsolute = resolvePackageDirs(workspaceRoot);
 
 const packageMap = new Map(); // name -> { name, license, deps, pkgPath }
 
@@ -122,13 +157,8 @@ function reportError(msg) {
   exitCode = 1;
 }
 
-const packageDirs = readdirSync(packagesDir, { withFileTypes: true })
-  .filter((e) => e.isDirectory())
-  .map((e) => e.name)
-  .sort(); // deterministic ordering across platforms/filesystems
-
-for (const dir of packageDirs) {
-  const pkgPath = join(packagesDir, dir, 'package.json');
+for (const pkgDir of packageDirsAbsolute) {
+  const pkgPath = join(pkgDir, 'package.json');
   if (!existsSync(pkgPath)) continue;
 
   let pkg;

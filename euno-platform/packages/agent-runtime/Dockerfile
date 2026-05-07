@@ -10,15 +10,15 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/agent-runtime/package*.json ./packages/agent-runtime/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/agent-runtime/package*.json ./euno-platform/packages/agent-runtime/
 
 # Install dependencies (including devDependencies for build)
 RUN npm ci --workspace=@euno/common --workspace=@euno/agent-runtime
 
 # Copy source code
-COPY packages/common ./packages/common
-COPY packages/agent-runtime ./packages/agent-runtime
+COPY euno-platform/packages/common ./euno-platform/packages/common
+COPY euno-platform/packages/agent-runtime ./euno-platform/packages/agent-runtime
 COPY tsconfig.json ./
 
 # Build
@@ -36,22 +36,22 @@ WORKDIR /app
 
 # Copy only production package files
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/agent-runtime/package*.json ./packages/agent-runtime/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/agent-runtime/package*.json ./euno-platform/packages/agent-runtime/
 
 # Install production dependencies only
 RUN npm ci --omit=dev --workspace=@euno/common --workspace=@euno/agent-runtime
 
 # Copy built artifacts from builder stage
-COPY --from=builder /app/packages/common/dist ./packages/common/dist
-COPY --from=builder /app/packages/agent-runtime/dist ./packages/agent-runtime/dist
+COPY --from=builder /app/euno-platform/packages/common/dist ./euno-platform/packages/common/dist
+COPY --from=builder /app/euno-platform/packages/agent-runtime/dist ./euno-platform/packages/agent-runtime/dist
 
 # Create writable directories for runtime
 RUN mkdir -p /app/tmp /app/logs && \
     chown -R agent:agent /app/tmp /app/logs
 
 # Set working directory to agent-runtime
-WORKDIR /app/packages/agent-runtime
+WORKDIR /app/euno-platform/packages/agent-runtime
 
 # Switch to non-root user
 USER agent

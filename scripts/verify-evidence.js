@@ -31,7 +31,7 @@ try {
     throw err;
   }
   // eslint-disable-next-line node/no-missing-require
-  job = require('../packages/common/dist/verify-evidence-job');
+  job = require('../euno-platform/packages/common/dist/verify-evidence-job');
 }
 
 job

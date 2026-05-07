@@ -36,7 +36,7 @@ import path from 'node:path';
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), '..');
-const commonDist = path.join(repoRoot, 'packages', 'common', 'dist');
+const commonDist = path.join(repoRoot, 'euno-platform', 'packages', 'common', 'dist');
 
 // ---------------------------------------------------------------------------
 // Argument handling

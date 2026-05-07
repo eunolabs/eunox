@@ -38,6 +38,13 @@ function makeFixture(pkgs) {
   const packagesDir = join(root, 'packages');
   mkdirSync(packagesDir);
 
+  // Write a root package.json so the script discovers packages via the
+  // "workspaces" field rather than falling back to a hardcoded path.
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'test-workspace', workspaces: ['packages/*'] }, null, 2),
+  );
+
   for (const p of pkgs) {
     const pkgDir = join(packagesDir, p.name.replace(/^@[^/]+\//, ''));
     mkdirSync(pkgDir, { recursive: true });
@@ -187,6 +194,10 @@ test('passes when packages directory is empty', () => {
   const root = mkdtempSync(join(tmpdir(), 'euno-license-test-'));
   const packagesDir = join(root, 'packages');
   mkdirSync(packagesDir);
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'test-workspace', workspaces: ['packages/*'] }, null, 2),
+  );
   try {
     const { exitCode, stdout } = run(root);
     assert.equal(exitCode, 0);

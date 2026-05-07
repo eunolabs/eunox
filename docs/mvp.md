@@ -6,7 +6,7 @@
 > Reviewed against the actual state of `packages/` and the rest of
 > `docs/` (April 2026). A second pass (May 2026) identified four additional
 > problems — `packages/common` split, dependency-direction enforcement,
-> minter threat model, and the two-repo structure — addressed in this
+> minter threat model, and the two-folder structure — addressed in this
 > revision. See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
 > for what changed and why.
 
@@ -140,7 +140,7 @@ during Stage 1** ([§ Stage 0](#stage-0-stop-the-bleeding-on-the-existing-codeba
 **what the business model actually is at Stage 3+** ([§ Pricing](#pricing--business-model-sketch)),
 and **competitive timing** ([§ Critical risks](#critical-risks)).
 
-The May 2026 revision also adds the two-repo structure (public / private)
+The May 2026 revision also adds the two-folder structure (public / private)
 that follows from the decision to keep BSL code entirely invisible, not
 just differently licensed. See [§ Repository structure](#repository-structure-public--private).
 
@@ -190,12 +190,12 @@ strategy.
 >   Apache-2.0 -> BUSL-1.1 edge, and is wired into `npm run lint` and the
 >   GitHub Actions CI workflow (`.github/workflows/ci.yml`). Two known
 >   violations involving `@euno/cli` are allowlisted with a migration plan;
->   see [`docs/repo-split.md`](./repo-split.md). Two-repo strategy is decided
->   and documented (Option A); scaffolding folders [`euno-mcp/`](../euno-mcp/)
->   and [`euno-platform/`](../euno-platform/) are now initialised at the repo
->   root with `LICENSE`, `README.md`, and `MANIFEST.md` declaring scope and
->   ownership for each future repo. Physical repo creation on GitHub and the
->   actual package moves remain a Stage 1 follow-up.
+>   see [`docs/repo-split.md`](./repo-split.md). Two-folder strategy is decided
+>   and documented (Option A); top-level folders [`euno-mcp/`](../euno-mcp/)
+>   and [`euno-platform/`](../euno-platform/) now contain the actual packages
+>   under their respective `packages/` subdirectories. Apache-2.0 packages live
+>   under `euno-mcp/packages/` and BUSL-1.1 packages live under
+>   `euno-platform/packages/`.
 >
 > **All six Stage 0 gate conditions are now met. Stage 1 may begin.**
 
@@ -211,12 +211,12 @@ default behavior is to keep building outwards.
 - **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
 - **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
 - **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision, and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage. Decision recorded in [`docs/mcp-support.md`](./mcp-support.md).
-- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and initialising the two-repo structure described in [§ Repository structure](#repository-structure-public--private).
+- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and organising packages into the two-folder structure described in [§ Repository structure](#repository-structure-public--private).
 
 **Gate to Stage 1:** the freeze is announced (internal note is fine),
 the Stage-1 package layout is approved, the license boundary is in
 the tree, the `common-core` / `common-infra` split is done, and the
-two-repo structure is initialised.
+two-folder structure is in place.
 
 ---
 
@@ -226,11 +226,11 @@ two-repo structure is initialised.
 |---|---|---|
 | `@euno/mcp` (new) | Apache-2.0 | Wedge. Must be trivially adoptable, redistributable, embeddable in commercial products. Apache-2.0 (not MIT) for the patent grant. |
 | `@euno/langchain` (new) | Apache-2.0 | Same reason. |
-| `packages/common-core` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
-| `packages/cli` | Apache-2.0 | Developer surface. |
-| `packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
-| `packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
-| `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
+| `euno-mcp/packages/common-core` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
+| `euno-mcp/packages/cli` | Apache-2.0 | Developer surface. |
+| `euno-platform/packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
+| `euno-platform/packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
+| `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
 
 **Dependency direction rule.** BSL packages may depend on Apache-2.0
 packages. Apache-2.0 packages must never depend on BSL packages.
@@ -252,48 +252,56 @@ model see [§ The Staged Approach](#the-staged-approach).
 ## Repository structure: public + private
 
 Licensing code under BSL does not hide it — source is still visible to
-anyone who reads the repo. After reviewing the tradeoffs the decision is
-to keep BSL code and the private roadmap entirely out of the public repo.
+anyone who reads the repo. The public/private boundary is enforced by
+organising packages into two top-level folders within this single
+monorepo, mirroring the logical separation without requiring a second
+repository.
 
-**Two repositories:**
+**Two top-level folders:**
 
 ```
-github.com/euno/euno-mcp          # public — Apache-2.0
-  packages/common-core/
-  packages/euno-mcp/
-  packages/langchain/
-  packages/cli/
+euno-mcp/                          # public — Apache-2.0
+  packages/
+    common-core/
+    euno-mcp/
+    cli/
 
-github.com/euno/euno-platform     # private
-  packages/tool-gateway/
-  packages/capability-issuer/
-  packages/common-infra/
-  packages/agent-runtime/
-  packages/framework-adapters/
-  packages/partner-issuer-sim/
-  ... etc
+euno-platform/                     # private — BUSL-1.1
+  packages/
+    common-infra/
+    common/
+    tool-gateway/
+    capability-issuer/
+    agent-runtime/
+    framework-adapters/
+    partner-issuer-sim/
+    ... etc
 ```
 
-**How the dependency works.** `common-core` is published to npm from
-the public repo. The private repo installs it as a normal npm
-dependency and adds implementations on top. The interface seams in
-`common-core` become the published API contract. Private
-implementations are completely invisible.
+Both folder trees are npm workspaces declared in the root `package.json`
+(`euno-mcp/packages/*` and `euno-platform/packages/*`).
+
+**How the dependency works.** `common-core` lives in `euno-mcp/packages/`
+and is consumed by the platform packages in `euno-platform/packages/` as
+a normal workspace dependency. When published to npm, `common-core`
+becomes the public API contract that external consumers (and the future
+hosted platform) install as a regular npm dependency. The interface seams
+in `common-core` are the published contract. Platform implementations are
+completely invisible to consumers of the public surface.
 
 **Tradeoffs introduced by this structure:**
 
 | Concern | Implication |
 |---|---|
-| Versioning discipline | A breaking change to `common-core` requires coordinated updates in both repos. Treat it like a public API contract: proper semver, a CHANGELOG entry, and a migration note before merging. |
-| Integration testing | Unit tests in the public repo run against interfaces and in-memory fakes. Integration tests against the real gateway run only in the private repo. There is no unified test suite that can run in public CI without leaking private packages. |
-| External contributor coverage | Contributors to the public repo cannot validate that their `common-core` changes don't break the gateway. That review is owned internally; it must happen before every `common-core` release. |
+| Versioning discipline | A breaking change to `common-core` requires coordinated updates across the platform packages. Treat it like a public API contract: proper semver, a CHANGELOG entry, and a migration note before merging. |
+| External contributor coverage | Contributors working only in `euno-mcp/` cannot validate that their `common-core` changes don't break the platform layer. That review is owned internally and must happen before every `common-core` release. |
 
-**The one thing to avoid.** No comments in the public repo pointing
-at the private one — no `// see tool-gateway for the production
-implementation`, no `// Stage 3 replaces this`, no TODOs naming a
-private package. The public repo must read as complete and
-self-contained. Local enforcement is the product, not a stepping
-stone to something hidden.
+**The one thing to avoid.** No comments in the `euno-mcp/` subtree
+pointing at the platform layer — no `// see tool-gateway for the
+production implementation`, no `// Stage 3 replaces this`, no TODOs
+naming a BUSL-1.1 package. The public surface must read as complete and
+self-contained. Local enforcement is the product, not a stepping stone
+to something hidden.
 
 ---
 
@@ -320,11 +328,11 @@ escape route.
 MCP code there. The MCP transport, JSON-RPC framing, and request
 routing are new code. What *can* be reused from the repository:
 
-- `CapabilityCondition` discriminated union and `condition-registry` from `packages/common-core`
-- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `packages/common-core`
-- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `packages/common-core/src/call-counter-store.ts`
-- `KillSwitchManager` in-memory backend from `packages/common-core/src/kill-switch.ts`
-- `AgentCapabilityManifest` types and the `euno validate` codepath from `packages/cli`
+- `CapabilityCondition` discriminated union and `condition-registry` from `euno-mcp/packages/common-core`
+- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `euno-mcp/packages/common-core`
+- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `euno-mcp/packages/common-core/src/call-counter-store.ts`
+- `KillSwitchManager` in-memory backend from `euno-mcp/packages/common-core/src/kill-switch.ts`
+- `AgentCapabilityManifest` types and the `euno validate` codepath from `euno-mcp/packages/cli`
 
 That reuse is the keystone of [§ Schema parity](#policy-and-audit-schema-parity-non-negotiable).
 
@@ -388,7 +396,7 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 **`CapabilityCondition` variants supported in v0** (a strict subset of
 the production `CapabilityCondition` discriminated union in
-`packages/common-core/src/wire.ts`, so policies upgrade without rewriting):
+`euno-mcp/packages/common-core/src/wire.ts`, so policies upgrade without rewriting):
 
 - `maxCalls` (sliding window — the `CallCounterStore` already supports both per-session and per-window)
 - `timeWindow` (`notBefore` / `notAfter`)
@@ -438,7 +446,7 @@ say it for you.
 ### Execution plan
 
 **Weeks 1–2 — Skeleton + transport.**
-- Create `packages/euno-mcp` (publishes as `@euno/mcp`).
+- Create `euno-mcp/packages/euno-mcp` (publishes as `@euno/mcp`).
 - Implement stdio and HTTP MCP transports with `tools/list` / `resources/list` / `prompts/list` passthrough and `tools/call` interception. Do not reimplement JSON-RPC; use `@modelcontextprotocol/sdk`.
 - Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common-core` (no Redis, no Postgres).
 - Local jsonl audit log (`~/.euno/audit.jsonl`), OCSF-shaped, locally HMAC-signed (key generated at first run, stored in `~/.euno/key`). Format identical to the Stage-3+ signed evidence; signer is the only thing that changes.
@@ -446,7 +454,7 @@ say it for you.
 **Weeks 3–4 — Policy engine + CLI.**
 - Implement YAML/JSON policy loader producing the existing `AgentCapabilityManifest` in memory (one isomorphic shape, see [§ schema parity](#policy-and-audit-schema-parity-non-negotiable)).
 - Wire the `CapabilityCondition` types listed above through `condition-registry`.
-- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `packages/cli` so a manifest validates identically locally and in the issuer.
+- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `euno-mcp/packages/cli` so a manifest validates identically locally and in the issuer.
 - Lightweight integration test using a mock upstream MCP server (a 30-line stdio echo server is enough).
 
 **Weeks 5–6 — Ship and distribute.**
@@ -476,7 +484,7 @@ entire staged plan. Get it wrong and every later stage compounds the
 mistake.
 
 **Rule.** The policy file `@euno/mcp` consumes is a literal subset of
-`AgentCapabilityManifest` (`packages/common-core/src/types.ts`). The
+`AgentCapabilityManifest` (`euno-mcp/packages/common-core/src/types.ts`). The
 condition types it understands are a literal subset of
 `CapabilityCondition`. The audit records it writes are
 OCSF-formatted, identical in shape to what the gateway writes to
@@ -493,11 +501,11 @@ SIEM. The only differences across stages are:
 
 That is the entire Stage 3 migration: swap the implementations of
 four interfaces that already exist as seams in `@euno/common-core` —
-[`TokenVerifier`](../packages/common-core/src/runtime.ts),
-[`CallCounterStore`](../packages/common-core/src/condition-registry.ts),
-[`EvidenceSigner`](../packages/common-core/src/runtime.ts), and
-[`KillSwitchManager`](../packages/common-core/src/runtime.ts) (with its
-optional [`KillSwitchPersistenceBackend`](../packages/common-infra/src/redis-kill-switch.ts)
+[`TokenVerifier`](../euno-mcp/packages/common-core/src/runtime.ts),
+[`CallCounterStore`](../euno-mcp/packages/common-core/src/condition-registry.ts),
+[`EvidenceSigner`](../euno-mcp/packages/common-core/src/runtime.ts), and
+[`KillSwitchManager`](../euno-mcp/packages/common-core/src/runtime.ts) (with its
+optional [`KillSwitchPersistenceBackend`](../euno-platform/packages/common-infra/src/redis-kill-switch.ts)
 for Postgres dual-write). Policy storage is the only seam that is
 genuinely new in Stage 3: in Stage 1 the policy is a local file read
 once at startup; in Stage 3 it's a signed JWT verified per request via
@@ -533,7 +541,7 @@ handles richer conditions unchanged because enforcement is still at
 - Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
 - `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
 - `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `packages/agent-runtime`, just with a local-only backend.**
-- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `packages/euno-mcp/policies/` directory. This is what makes the 5-minute pitch real.
+- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `euno-mcp/packages/euno-mcp/policies/` directory. This is what makes the 5-minute pitch real.
 - Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
 ### Gate to Stage 3 — measurable
@@ -705,7 +713,7 @@ constraints, in priority order:
 2. **No payload contents, ever.** No tool names, no argument values,
    no file paths, no SQL fragments. Counts only. The schema is
    public and small enough to fit in the README.
-3. **Documented schema** in `packages/euno-mcp/TELEMETRY.md`. What's
+3. **Documented schema** in `euno-mcp/packages/euno-mcp/TELEMETRY.md`. What's
    sent, where, why, how to disable.
 4. **Anonymous install ID** (random UUID, regenerated per install).
    No machine fingerprint. No IP retention beyond aggregation.
@@ -829,10 +837,10 @@ threat model (see [§ above](#minter-threat-model-required-before-stage-3-ships)
 must be completed before Stage 3 ships. Shipping without it is the
 security equivalent of running a certificate authority with no HSM.
 
-**`common-core` breaking changes.** With a two-repo setup, a breaking
+**`common-core` breaking changes.** With the two-folder monorepo setup, a breaking
 change to `common-core` silently breaks the private platform until a
 coordinated update is done. Treat every `common-core` release like a
-public library release: semver, CHANGELOG, migration note, and a private-repo
+public library release: semver, CHANGELOG, migration note, and a platform-layer
 upgrade PR opened before the public release is tagged.
 
 **Quarantined packages becoming maintenance debt.** `partner-issuer-sim`,

@@ -4,15 +4,15 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/capability-issuer/package*.json ./packages/capability-issuer/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/capability-issuer/package*.json ./euno-platform/packages/capability-issuer/
 
 # Install dependencies (including devDependencies for build)
 RUN npm ci --workspace=@euno/common --workspace=@euno/capability-issuer
 
 # Copy source code
-COPY packages/common ./packages/common
-COPY packages/capability-issuer ./packages/capability-issuer
+COPY euno-platform/packages/common ./euno-platform/packages/common
+COPY euno-platform/packages/capability-issuer ./euno-platform/packages/capability-issuer
 COPY tsconfig.json ./
 
 # Build
@@ -30,18 +30,18 @@ WORKDIR /app
 
 # Copy only production package files
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/capability-issuer/package*.json ./packages/capability-issuer/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/capability-issuer/package*.json ./euno-platform/packages/capability-issuer/
 
 # Install production dependencies only
 RUN npm ci --omit=dev --workspace=@euno/common --workspace=@euno/capability-issuer
 
 # Copy built artifacts from builder stage
-COPY --from=builder /app/packages/common/dist ./packages/common/dist
-COPY --from=builder /app/packages/capability-issuer/dist ./packages/capability-issuer/dist
+COPY --from=builder /app/euno-platform/packages/common/dist ./euno-platform/packages/common/dist
+COPY --from=builder /app/euno-platform/packages/capability-issuer/dist ./euno-platform/packages/capability-issuer/dist
 
 # Set working directory to capability-issuer
-WORKDIR /app/packages/capability-issuer
+WORKDIR /app/euno-platform/packages/capability-issuer
 
 # Switch to non-root user
 USER issuer

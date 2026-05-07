@@ -1,32 +1,39 @@
-# euno-platform -- private BUSL-1.1 surface (scaffold)
+# euno-platform — private BUSL-1.1 surface
 
-**Status:** Scaffold initialised in Substage 0.4. Physical repo
-(`github.com/edgeobs/euno-platform`) and package moves are a Stage 1
-follow-up.
+This directory contains the BUSL-1.1 packages that form the private
+operational layer of Euno: Redis/Postgres/KMS implementations, the
+tool gateway, the capability issuer, the agent runtime, and supporting
+services.
 
-This directory exists so the two-repo split documented in
-[`docs/mvp.md § Repository structure`](../docs/mvp.md#repository-structure-public--private)
-and [`docs/repo-split.md`](../docs/repo-split.md) is **physically present
-in the tree**, not just on paper. The Stage 0 gate requires the two-repo
-structure to be initialised; this folder satisfies that requirement.
+All packages here are registered as npm workspaces via the root
+`package.json` glob `euno-platform/packages/*`.
 
-It is not a workspace -- the root `package.json` only globs
-`packages/*` -- so nothing here is built, linted, or tested yet. When
-Stage 1 begins, this monorepo will either be renamed/repurposed as the
-private repo with `packages/` already in place, or the packages listed
-in [`MANIFEST.md`](./MANIFEST.md) will be moved under this folder. Either
-way, the contents of this directory are the authoritative inventory of
-what belongs in the private repo.
+## Packages
+
+| Package | npm name | Notes |
+|---|---|---|
+| `packages/common-infra/` | `@euno/common-infra` | Redis / Postgres / KMS implementations. |
+| `packages/common/` | `@euno/common` | Compat shim (re-exports `common-core` + `common-infra`). Deprecated. |
+| `packages/tool-gateway/` | `@euno/tool-gateway` | JWT verification, policy enforcement gateway. |
+| `packages/capability-issuer/` | `@euno/capability-issuer` | Capability token issuance service. |
+| `packages/agent-runtime/` | `@euno/agent-runtime` | Sandboxed agent execution runtime. |
+| `packages/framework-adapters/` | `@euno/framework-adapters` | LangChain, AutoGen, and other framework adapters. |
+| `packages/posture-emitter/` | `@euno/posture-emitter` | Posture inventory emitter. |
+| `packages/partner-issuer-sim/` | `@euno/partner-issuer-sim` | Partner issuer simulator for testing. |
+| `packages/db-token-service/` | `@euno/db-token-service` | Database token service. |
+| `packages/storage-grant-service/` | `@euno/storage-grant-service` | Storage grant service. |
+| `packages/integration-tests/` | `@euno/integration-tests` | Integration test suite. |
+
+See [`MANIFEST.md`](./MANIFEST.md) for the full inventory.
 
 ## Scope
 
-BUSL-1.1 only. Every package listed in [`MANIFEST.md`](./MANIFEST.md) is
-licensed under Business Source License 1.1 with a four-year change date
-to Apache-2.0 (see [`docs/mvp.md § License boundary`](../docs/mvp.md#license-boundary)).
+BUSL-1.1 only. Every package listed above is licensed under Business
+Source License 1.1 with a four-year change date to Apache-2.0 (see
+[`docs/mvp.md § License boundary`](../docs/mvp.md#license-boundary)).
 
 ## Rules
 
-This is the operational layer. It is allowed to depend on any
-`Apache-2.0` package from the public repo (most importantly
-`@euno/common-core`). The reverse direction is forbidden and is
-enforced mechanically by `scripts/check-license-boundary.mjs`.
+This is the operational layer. It may depend on any Apache-2.0 package
+from `euno-mcp/` (most importantly `@euno/common-core`). The reverse
+direction is forbidden and enforced by `scripts/check-license-boundary.mjs`.

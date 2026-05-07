@@ -4,7 +4,8 @@
   "private": true,
   "description": "Capability-Native Agent Governance System with Azure Integration",
   "workspaces": [
-    "packages/*"
+    "euno-mcp/packages/*",
+    "euno-platform/packages/*"
   ],
   "scripts": {
     "build": "npm run build -w @euno/common-core && npm run build -w @euno/common-infra && npm run build -w @euno/common && npm run build -w @euno/posture-emitter && npm run build -w @euno/mcp && npm run build --workspaces",

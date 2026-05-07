@@ -4,15 +4,15 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/tool-gateway/package*.json ./packages/tool-gateway/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/tool-gateway/package*.json ./euno-platform/packages/tool-gateway/
 
 # Install dependencies (including devDependencies for build)
 RUN npm ci --workspace=@euno/common --workspace=@euno/tool-gateway
 
 # Copy source code
-COPY packages/common ./packages/common
-COPY packages/tool-gateway ./packages/tool-gateway
+COPY euno-platform/packages/common ./euno-platform/packages/common
+COPY euno-platform/packages/tool-gateway ./euno-platform/packages/tool-gateway
 COPY tsconfig.json ./
 
 # Build
@@ -30,18 +30,18 @@ WORKDIR /app
 
 # Copy only production package files and built artifacts
 COPY package*.json ./
-COPY packages/common/package*.json ./packages/common/
-COPY packages/tool-gateway/package*.json ./packages/tool-gateway/
+COPY euno-platform/packages/common/package*.json ./euno-platform/packages/common/
+COPY euno-platform/packages/tool-gateway/package*.json ./euno-platform/packages/tool-gateway/
 
 # Install production dependencies only
 RUN npm ci --omit=dev --workspace=@euno/common --workspace=@euno/tool-gateway
 
 # Copy built artifacts from builder stage
-COPY --from=builder /app/packages/common/dist ./packages/common/dist
-COPY --from=builder /app/packages/tool-gateway/dist ./packages/tool-gateway/dist
+COPY --from=builder /app/euno-platform/packages/common/dist ./euno-platform/packages/common/dist
+COPY --from=builder /app/euno-platform/packages/tool-gateway/dist ./euno-platform/packages/tool-gateway/dist
 
 # Set working directory to tool-gateway
-WORKDIR /app/packages/tool-gateway
+WORKDIR /app/euno-platform/packages/tool-gateway
 
 # Switch to non-root user
 USER gateway

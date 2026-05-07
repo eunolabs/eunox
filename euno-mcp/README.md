@@ -1,46 +1,35 @@
-# euno-mcp -- public Apache-2.0 surface (scaffold)
+# euno-mcp — public Apache-2.0 surface
 
-**Status:** Scaffold initialised in Substage 0.4. Physical repo
-(`github.com/edgeobs/euno-mcp`) and package moves are a Stage 1 follow-up.
+This directory contains the Apache-2.0 packages that form the public
+surface of Euno: the types and interfaces (`@euno/common-core`), the
+MCP proxy (`@euno/mcp`), and the developer CLI (`@euno/cli`).
 
-This directory exists so the two-repo split documented in
-[`docs/mvp.md § Repository structure`](../docs/mvp.md#repository-structure-public--private)
-and [`docs/repo-split.md`](../docs/repo-split.md) is **physically present
-in the tree**, not just on paper. The Stage 0 gate requires the two-repo
-structure to be initialised; this folder satisfies that requirement.
+All packages here are registered as npm workspaces via the root
+`package.json` glob `euno-mcp/packages/*`.
 
-It is not a workspace -- the root `package.json` only globs
-`packages/*` -- so nothing here is built, linted, or tested yet. When
-Stage 1 begins, the packages listed in [`MANIFEST.md`](./MANIFEST.md) will
-either move under this folder (if the public repo is bootstrapped via
-`git subtree split`/`git filter-repo` from this monorepo) or be copied
-into a freshly created `github.com/edgeobs/euno-mcp` repository. Either
-way, the contents of this directory are the authoritative inventory of
-what belongs in the public repo.
+## Packages
+
+| Package | npm name | Notes |
+|---|---|---|
+| `packages/common-core/` | `@euno/common-core` | Core types, interfaces, in-memory stores. The published API contract consumed by the platform layer. |
+| `packages/euno-mcp/` | `@euno/mcp` | MCP proxy with local policy enforcement. |
+| `packages/cli/` | `@euno/cli` | Developer CLI. |
+
+See [`MANIFEST.md`](./MANIFEST.md) for the full inventory including planned packages.
 
 ## Scope
 
-Apache-2.0 only. Every file under this folder, and every package listed
-in [`MANIFEST.md`](./MANIFEST.md), is or will be Apache-2.0 licensed.
+Apache-2.0 only. Every file and package under this directory is or will
+be Apache-2.0 licensed.
 
 ## Rules
 
-The rules in [`docs/repo-split.md § Rules for the public repo`](../docs/repo-split.md#rules-for-the-public-repo)
-apply to anything that lands here:
-
-1. No references to the private repo (no comments, no README text, no
-   `package.json` peer-dependency ranges pointing at private packages).
+1. No references to the platform layer (`euno-platform/`): no comments,
+   no README text, no `package.json` peer-dependency ranges pointing at
+   BUSL-1.1 packages.
 2. No BUSL-licensed code.
-3. In-memory-only implementations -- no Redis, no Postgres, no KMS.
+3. In-memory-only implementations — no Redis, no Postgres, no KMS.
 4. No `@euno/common` dependency. Depend on `@euno/common-core` directly.
 
-## Why a scaffold and not the actual move?
-
-The license-boundary lint allowlist in
-`scripts/check-license-boundary.mjs` still has two `@euno/cli` →
-`@euno/common` violations. Those are tracked in
-[`docs/repo-split.md § Dependency violations to fix before public publish`](../docs/repo-split.md#dependency-violations-to-fix-before-public-publish)
-and must be resolved before any package physically moves into this
-folder or before the public repo is created on GitHub. Until then, the
-scaffold makes the target structure unambiguous and gives the boundary
-check a stable target.
+These rules are enforced mechanically by
+`scripts/check-license-boundary.mjs` (`npm run lint:license-boundary`).
