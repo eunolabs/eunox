@@ -175,6 +175,30 @@ strategy.
 
 ## Stage 0: Stop the bleeding on the existing codebase
 
+> **Stage 0 status** (updated Substage 0.4, May 2026)
+>
+> - [x] **Substage 0.1** -- Feature-freeze and quarantine policy written;
+>   [`docs/stage-0-freeze.md`](./stage-0-freeze.md) merged.
+> - [x] **Substage 0.2** -- MCP SDK version pinned; support window recorded in
+>   [`docs/mcp-support.md`](./mcp-support.md).
+> - [x] **Substage 0.3** -- `packages/common` split into `common-core`
+>   (Apache-2.0) and `common-infra` (BUSL-1.1); package-level `LICENSE` files
+>   added; compat shim kept as `@euno/common` (BUSL-1.1) for back-compat.
+> - [x] **Substage 0.4** -- CI dependency-direction enforcement landed:
+>   `scripts/check-license-boundary.mjs` walks the full workspace dependency
+>   graph (including transitive edges and all dep fields), fails on any
+>   Apache-2.0 -> BUSL-1.1 edge, and is wired into `npm run lint` and the
+>   GitHub Actions CI workflow (`.github/workflows/ci.yml`). Two known
+>   violations involving `@euno/cli` are allowlisted with a migration plan;
+>   see [`docs/repo-split.md`](./repo-split.md). Two-repo strategy is decided
+>   and documented (Option A); scaffolding folders [`euno-mcp/`](../euno-mcp/)
+>   and [`euno-platform/`](../euno-platform/) are now initialised at the repo
+>   root with `LICENSE`, `README.md`, and `MANIFEST.md` declaring scope and
+>   ownership for each future repo. Physical repo creation on GitHub and the
+>   actual package moves remain a Stage 1 follow-up.
+>
+> **All six Stage 0 gate conditions are now met. Stage 1 may begin.**
+
 **Why this stage exists.** The repository today contains ~37k LOC of
 Stage-5 infrastructure with no Stage-1 buyers using it. Every
 maintenance hour spent on `partner-issuer-sim`, the cross-chain

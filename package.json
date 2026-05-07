@@ -9,7 +9,9 @@
   "scripts": {
     "build": "npm run build -w @euno/common-core && npm run build -w @euno/common-infra && npm run build -w @euno/common && npm run build -w @euno/posture-emitter && npm run build --workspaces",
     "test": "npm run test --workspaces",
-    "lint": "npm run lint --workspaces",
+    "lint": "npm run lint:license-boundary && npm run lint --workspaces",
+    "lint:license-boundary": "node scripts/check-license-boundary.mjs",
+    "test:scripts": "node --test scripts/__tests__/check-license-boundary.test.mjs",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
     "verify-evidence": "node scripts/verify-evidence.js",
     "lint:action-resolver": "node scripts/check-action-resolver-parity.mjs",
