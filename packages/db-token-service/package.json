@@ -1,7 +1,7 @@
 {
   "name": "@euno/db-token-service",
   "version": "1.0.0",
-  "description": "Standalone DB-token microservice — mints short-lived database IAM credentials from a verified capability JWT",
+  "description": "Standalone DB-token microservice \u2014 mints short-lived database IAM credentials from a verified capability JWT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -41,5 +41,6 @@
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
-  }
+  },
+  "license": "BUSL-1.1"
 }

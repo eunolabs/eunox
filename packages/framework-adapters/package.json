@@ -18,7 +18,7 @@
     "governance"
   ],
   "author": "EdgeObs",
-  "license": "ISC",
+  "license": "BUSL-1.1",
   "dependencies": {
     "@euno/agent-runtime": "^1.0.0"
   },

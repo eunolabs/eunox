@@ -16,7 +16,7 @@
     "runtime"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "dependencies": {
     "@euno/common": "^1.0.0",
     "axios": "^1.6.0",
