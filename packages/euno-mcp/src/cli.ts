@@ -12,6 +12,7 @@
 import { Command } from 'commander';
 import { version } from '../package.json';
 import { StdioProxy } from './transport/stdio';
+import { createLocalAuditSink, McpAuditSink } from './audit';
 
 const program = new Command();
 
@@ -30,7 +31,11 @@ program
   )
   .option(
     '--audit-log <path>',
-    'Path to the OCSF audit log file (Phase B — not yet active)',
+    'Path to the OCSF audit JSONL file (default: ~/.euno/audit.jsonl)',
+  )
+  .option(
+    '--audit-rotate-size <bytes>',
+    'Rotate the audit log when it reaches this size in bytes (default: 104857600 = 100 MiB)',
   )
   .option(
     '--session-id <id>',
@@ -51,8 +56,8 @@ Examples:
   # Proxy the filesystem MCP server (from Claude Desktop config)
   euno-mcp proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
 
-  # With a policy file
-  euno-mcp proxy --policy ./policy.yaml -- node ./my-mcp-server.js
+  # With a policy file and custom audit log path
+  euno-mcp proxy --policy ./policy.yaml --audit-log /var/log/euno/audit.jsonl -- node ./my-mcp-server.js
 `,
   )
   .action(async (upstreamCommand: string, upstreamArgs: string[], options) => {
@@ -69,20 +74,57 @@ Examples:
       shutdownTimeoutMs = parsed;
     }
 
+    let rotateSizeBytes: number | undefined;
+    if (options.auditRotateSize !== undefined) {
+      const parsed = parseInt(options.auditRotateSize, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        process.stderr.write(
+          `[euno-mcp] Invalid --audit-rotate-size value "${options.auditRotateSize}": ` +
+            `must be a positive integer (bytes).\n`,
+        );
+        process.exit(1);
+      }
+      rotateSizeBytes = parsed;
+    }
+
+    // Initialise the audit sink. Errors here are fatal — we want operators
+    // to know early if the key or log path is misconfigured.
+    let auditSink: McpAuditSink;
+    try {
+      auditSink = await createLocalAuditSink({
+        logPath: options.auditLog,
+        rotateSizeBytes,
+      });
+    } catch (err) {
+      process.stderr.write(
+        `[euno-mcp] Failed to initialise audit log: ${String(err)}\n`,
+      );
+      process.exit(1);
+    }
+
+    const sessionId: string | undefined = options.sessionId;
+
     const proxy = new StdioProxy({
       command: upstreamCommand,
       args: upstreamArgs,
-      sessionId: options.sessionId,
+      sessionId,
       shutdownTimeoutMs,
+      auditSink,
     });
 
+    let exitCode = 0;
     try {
       await proxy.start();
     } catch (err) {
       process.stderr.write(
         `[euno-mcp] Fatal error starting proxy: ${String(err)}\n`,
       );
-      process.exit(1);
+      exitCode = 1;
+    } finally {
+      await auditSink.close();
+    }
+    if (exitCode !== 0) {
+      process.exitCode = exitCode;
     }
   });
 

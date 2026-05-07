@@ -58,6 +58,7 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_SUPPORTED_PROTOCOL_VERSIONS,
 } from '../protocol';
+import { McpAuditSink, NullAuditSink } from '../audit';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -93,6 +94,14 @@ export interface StdioProxyOptions {
    * supplied.
    */
   pdp?: PolicyDecisionPoint;
+  /**
+   * Audit sink for recording every `tools/call` enforcement decision.
+   * Defaults to {@link NullAuditSink} (no-op) when not supplied.
+   *
+   * The sink's {@link McpAuditSink.record} is called fire-and-forget after
+   * every allow/deny decision so audit I/O never blocks enforcement.
+   */
+  auditSink?: McpAuditSink;
   /**
    * The session ID for this proxy session.  For stdio, the session is the
    * lifetime of the proxy process.  Defaults to a random UUID.
@@ -180,6 +189,7 @@ export class StdioProxy {
       env: opts.env,
       cwd: opts.cwd,
       pdp: opts.pdp ?? new AlwaysAllowPDP(),
+      auditSink: opts.auditSink ?? new NullAuditSink(),
       sessionId: opts.sessionId ?? crypto.randomUUID(),
       shutdownTimeoutMs: opts.shutdownTimeoutMs ?? 5_000,
       hostStdin: opts.hostStdin,
@@ -297,6 +307,16 @@ export class StdioProxy {
       // Consult the PDP.
       const decision = await this._opts.pdp.decide(req, {
         sessionId: this._opts.sessionId,
+      });
+
+      // Record the enforcement decision — fire-and-forget so audit I/O never
+      // blocks the response to the MCP client.  `_writeRecord` swallows its
+      // own errors; failures are emitted to stderr by the sink.
+      void this._opts.auditSink.record({
+        sessionId: this._opts.sessionId,
+        toolName: req.params.name,
+        decision: decision.allow ? 'allow' : 'deny',
+        denialCode: decision.denialCode,
       });
 
       if (!decision.allow) {

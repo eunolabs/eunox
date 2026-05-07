@@ -15,3 +15,4 @@ export type { PolicyDecisionPoint, PdpContext, PdpDecision } from './pdp';
 export { AlwaysAllowPDP } from './pdp';
 export { StdioProxy } from './transport/stdio';
 export type { StdioProxyOptions } from './transport/stdio';
+export * from './audit';
