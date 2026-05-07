@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { CallToolRequest } from '@modelcontextprotocol/sdk/dist/cjs/types';
+import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 
 /**
  * Context supplied to every PDP decision call.

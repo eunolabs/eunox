@@ -40,10 +40,10 @@
  */
 
 import { Readable, Writable } from 'node:stream';
-import { Client } from '@modelcontextprotocol/sdk/dist/cjs/client/index';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/dist/cjs/client/stdio';
-import { Server } from '@modelcontextprotocol/sdk/dist/cjs/server/index';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/dist/cjs/server/stdio';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   CompatibilityCallToolResultSchema,
@@ -51,8 +51,10 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ResultSchema,
+  type ClientNotification,
   type Notification,
-} from '@modelcontextprotocol/sdk/dist/cjs/types';
+  type ServerNotification,
+} from '@modelcontextprotocol/sdk/types.js';
 import { PolicyDecisionPoint, AlwaysAllowPDP } from '../pdp';
 import {
   MCP_PROTOCOL_VERSION,
@@ -292,15 +294,19 @@ export class StdioProxy {
       return await client.listTools(req.params);
     });
 
-    // resources/list — passthrough
-    server.setRequestHandler(ListResourcesRequestSchema, async (req) => {
-      return await client.listResources(req.params);
-    });
+    // resources/list — passthrough (only if upstream supports resources)
+    if (upstreamCaps.resources !== undefined) {
+      server.setRequestHandler(ListResourcesRequestSchema, async (req) => {
+        return await client.listResources(req.params);
+      });
+    }
 
-    // prompts/list — passthrough
-    server.setRequestHandler(ListPromptsRequestSchema, async (req) => {
-      return await client.listPrompts(req.params);
-    });
+    // prompts/list — passthrough (only if upstream supports prompts)
+    if (upstreamCaps.prompts !== undefined) {
+      server.setRequestHandler(ListPromptsRequestSchema, async (req) => {
+        return await client.listPrompts(req.params);
+      });
+    }
 
     // ── 4. Intercept tools/call ─────────────────────────────────────────────
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -354,19 +360,13 @@ export class StdioProxy {
     // Upstream → host: notifications emitted by the upstream server (e.g.
     //   notifications/tools/list_changed) are forwarded to the MCP host.
     client.fallbackNotificationHandler = async (notification: Notification) => {
-      await server.notification(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        notification as any,
-      );
+      await server.notification(notification as ServerNotification);
     };
 
     // Host → upstream: notifications from the host (e.g. cancelled) are
     // forwarded to the upstream so it can react accordingly.
     server.fallbackNotificationHandler = async (notification: Notification) => {
-      await client.notification(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        notification as any,
-      );
+      await client.notification(notification as ClientNotification);
     };
 
     await server.connect(serverTransport);
