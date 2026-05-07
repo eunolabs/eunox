@@ -18,6 +18,8 @@ import { version } from '../package.json';
 import { StdioProxy } from './transport/stdio';
 import { HttpProxy } from './transport/http';
 import { createLocalAuditSink, McpAuditSink } from './audit';
+import { FilePolicySource } from './policy/source';
+import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 
 const program = new Command();
 
@@ -52,7 +54,7 @@ program
   )
   .option(
     '--policy <file>',
-    'Path to a YAML/JSON capability policy file (Phase B — not yet enforced)',
+    'Path to a YAML/JSON capability policy file (enforces conditions on tools/call)',
   )
   .option(
     '--audit-log <path>',
@@ -124,6 +126,17 @@ Examples:
       rotateSizeBytes = parsed;
     }
 
+    // ── Build PDP ─────────────────────────────────────────────────────────
+    let pdp: PolicyDecisionPoint;
+    let conditionPdp: ConditionEnforcerPDP | undefined;
+    if (options.policy) {
+      const policySource = new FilePolicySource({ filePath: options.policy as string });
+      conditionPdp = new ConditionEnforcerPDP({ policySource });
+      pdp = conditionPdp;
+    } else {
+      pdp = new AlwaysAllowPDP();
+    }
+
     // ── stdio transport ───────────────────────────────────────────────────
     if (transport === 'stdio') {
       // Initialise the audit sink. Errors here are fatal — we want operators
@@ -147,6 +160,7 @@ Examples:
         sessionId: options.sessionId as string | undefined,
         shutdownTimeoutMs,
         auditSink,
+        pdp,
       });
 
       let exitCode = 0;
@@ -159,6 +173,7 @@ Examples:
         exitCode = 1;
       } finally {
         await auditSink.close();
+        conditionPdp?.dispose();
       }
       if (exitCode !== 0) {
         process.exitCode = exitCode;
@@ -185,6 +200,7 @@ Examples:
 
     const proxy = new HttpProxy({
       command: upstreamCommand,
+      pdp,
       args: upstreamArgs,
       port,
       bind,
@@ -201,13 +217,15 @@ Examples:
       // Keep the process alive until interrupted.
       const shutdown = async () => {
         process.stderr.write('[euno-mcp] Shutting down HTTP proxy.\n');
+        let exitCode = 0;
         try {
           await proxy.close();
         } catch (err) {
           process.stderr.write(`[euno-mcp] Error during shutdown: ${String(err)}\n`);
-          process.exit(1);
+          exitCode = 1;
         }
-        process.exit(0);
+        conditionPdp?.dispose();
+        process.exit(exitCode);
       };
       process.once('SIGINT', shutdown);
       process.once('SIGTERM', shutdown);
