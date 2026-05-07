@@ -21,17 +21,19 @@ visible and auditable.
 | Artefact | Value |
 |---|---|
 | npm package | `@modelcontextprotocol/sdk` |
-| **Pinned version** | **`1.11.0`** |
+| **Pinned version** | **`1.26.0`** |
 | Protocol revision string | `2025-03-26` |
 
-Stage 1 will install `@modelcontextprotocol/sdk@1.11.0` (exact pin, not a
+Stage 1 installs `@modelcontextprotocol/sdk@1.26.0` (exact pin, not a
 range) in `packages/euno-mcp/package.json`.  No other package in the workspace
 should add a direct dependency on `@modelcontextprotocol/sdk` without a
 corresponding update to this document.
 
-> **Note:** The pin reflects the latest stable release at the time of Stage 0
-> completion (May 2026).  Stage 1 owns the install; Stage 0 records the
-> decision.
+> **Note:** The original Stage 0 decision recorded `1.11.0`.  That version is
+> affected by three published CVEs (ReDoS, DNS-rebinding, cross-client data
+> leak — all patched in `1.26.0`).  The pin was advanced to `1.26.0` during
+> the Stage 1 scaffold (May 2026) to ship a clean baseline.  The protocol
+> revision string (`2025-03-26`) is unchanged.
 
 ---
 
