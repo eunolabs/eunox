@@ -2,6 +2,21 @@
 
 A production-quality capability-based agent governance system with Azure integration.
 
+## Project status
+
+Euno is in **Stage 0** of a [staged execution plan](docs/mvp.md).  The
+codebase contains a substantial Stage-5 infrastructure (multi-cloud KMS,
+Redis-backed kill switches, cross-chain audit anchors, partner DID
+resolution) built ahead of Stage-1 buyers.  Stage 0 exists to stop that
+drift: core packages (`tool-gateway`, `capability-issuer`, `common`,
+`agent-runtime`, `framework-adapters`) are **feature-frozen** — accepting
+only security fixes, dependency bumps, and design-partner-driven changes —
+while engineering focus shifts to building the lightweight MCP-based wedge
+product targeted at individual developers.  See
+[`docs/stage-0-freeze.md`](docs/stage-0-freeze.md) for the freeze policy
+and PR-review checklist, and [`docs/mvp.md`](docs/mvp.md) for the full
+staged plan.
+
 ## Overview
 
 Euno provides a zero-trust security framework for AI agents, combining decentralized identity (DID) with capability-based authorization. The system ensures that AI agents operate with explicitly granted, time-limited, and cryptographically verifiable permissions.

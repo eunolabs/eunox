@@ -184,9 +184,9 @@ default behavior is to keep building outwards.
 
 **Decisions to make and write down before Stage 1 begins:**
 
-- **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user.
-- **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Add a `STATUS.md` to each marking it "design-partner driven, not on the roadmap."
-- **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision (e.g. `2025-06-18`), and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage.
+- **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
+- **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
+- **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision, and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage. Decision recorded in [`docs/mcp-support.md`](./mcp-support.md).
 - **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and initialising the two-repo structure described in [§ Repository structure](#repository-structure-public--private).
 
 **Gate to Stage 1:** the freeze is announced (internal note is fine),
