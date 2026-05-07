@@ -116,7 +116,10 @@ function makeMockPerReplicaPool(): {
           row_hmac: rowHmac,
           created_at: new Date(),
         });
-        return Promise.resolve({ rows: [], rowCount: 1 }) as unknown as Promise<PgQueryResult<R>>;
+        return Promise.resolve({
+          rows: [{ record_hash: recordHash, payload: JSON.parse(payloadJson) }],
+          rowCount: 1,
+        }) as unknown as Promise<PgQueryResult<R>>;
       }
 
       // SELECT tip for a single replica (initialize / getChainTip)

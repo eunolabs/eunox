@@ -214,7 +214,7 @@ export async function startServer(): Promise<void> {
           ? [
               closeWithTimeout('call-counter store', () =>
                 Promise.resolve(
-                  (callCounterStore as { close(): Promise<void> | void }).close(),
+                  (callCounterStore as unknown as { close(): Promise<void> | void }).close(),
                 ),
               ),
             ]

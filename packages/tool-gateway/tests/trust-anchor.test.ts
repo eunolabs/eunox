@@ -346,7 +346,7 @@ describe('PartnerDidTrustAnchor', () => {
       // for any non-empty DID even if it's not in the in-memory set, deferring
       // the definitive trust decision to the async getKey() call.
       const resolver: jest.Mocked<Pick<PartnerIssuerResolver, 'mightTrust' | 'getKey' | 'invalidate'>> = {
-        mightTrust: jest.fn(() => true), // registry path: all non-empty DIDs pass owns()
+        mightTrust: jest.fn((_did: string) => true), // registry path: all non-empty DIDs pass owns()
         getKey: jest.fn(),
         invalidate: jest.fn(),
       };
