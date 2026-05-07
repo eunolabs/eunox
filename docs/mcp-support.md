@@ -22,33 +22,50 @@ visible and auditable.
 |---|---|
 | npm package | `@modelcontextprotocol/sdk` |
 | **Pinned version** | **`1.26.0`** |
-| Protocol revision string | `2025-03-26` |
+| Primary protocol revision | `2025-11-25` |
+| Constant | `MCP_PROTOCOL_VERSION` in `packages/euno-mcp/src/protocol.ts` |
 
 Stage 1 installs `@modelcontextprotocol/sdk@1.26.0` (exact pin, not a
 range) in `packages/euno-mcp/package.json`.  No other package in the workspace
 should add a direct dependency on `@modelcontextprotocol/sdk` without a
 corresponding update to this document.
 
-> **Note:** The original Stage 0 decision recorded `1.11.0`.  That version is
-> affected by three published CVEs (ReDoS, DNS-rebinding, cross-client data
-> leak — all patched in `1.26.0`).  The pin was advanced to `1.26.0` during
-> the Stage 1 scaffold (May 2026) to ship a clean baseline.  The protocol
-> revision string (`2025-03-26`) is unchanged.
+`@euno/mcp` targets the `2025-11-25` revision (SDK 1.26.0 `LATEST_PROTOCOL_VERSION`).
+It also accepts connections from clients advertising any revision in the SDK's
+`SUPPORTED_PROTOCOL_VERSIONS` list (`2025-06-18`, `2025-03-26`, `2024-11-05`,
+`2024-10-07`) so users on older hosts are not locked out.  The proxy's
+`initialize` handshake validates the revision and rejects unknown strings.
+
+> **Note:** The original Stage 0 decision recorded `1.11.0` and protocol
+> revision `2025-03-26`.  `1.11.0` is affected by three published CVEs
+> (ReDoS, DNS-rebinding, cross-client data leak — all patched in `1.26.0`).
+> The pin was advanced to `1.26.0` during the Stage 1 scaffold (May 2026).
+> SDK 1.26.0 promotes `2025-11-25` as `LATEST_PROTOCOL_VERSION`; this
+> document was updated to match.
 
 ---
 
 ## Protocol revision
 
 MCP uses a date-based revision string in the `protocolVersion` field of the
-`initialize` / `initialized` handshake.  The revision string for Stage 1 is:
+`initialize` / `initialized` handshake.  The **primary** revision for Stage 1 is:
 
 ```
-2025-03-26
+2025-11-25
 ```
 
-`@euno/mcp` will advertise this revision in its server `initialize` response
-and will reject client `initialize` requests that advertise a revision the
-package does not recognise (hard-fail, not silent downgrade).
+This is exported as `MCP_PROTOCOL_VERSION` from `packages/euno-mcp/src/protocol.ts`
+and referenced at proxy startup.  `@euno/mcp` also negotiates downward to any
+revision in `MCP_SUPPORTED_PROTOCOL_VERSIONS` (also exported from that file) so
+older hosts continue to work within the support window.
+
+`@euno/mcp` will:
+- advertise `2025-11-25` as its preferred revision in the `initialize` response.
+- accept any revision from `MCP_SUPPORTED_PROTOCOL_VERSIONS` in an incoming
+  `initialize` request.
+- reject `initialize` requests carrying an unrecognised revision string (hard-fail,
+  not silent downgrade) — the error message names the offending revision and lists
+  the accepted ones.
 
 ---
 
