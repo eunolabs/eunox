@@ -1,0 +1,655 @@
+/**
+ * Unit tests for FilePolicySource and the manifest validation pipeline
+ * (Task 7 acceptance criteria).
+ *
+ * Test matrix
+ * -----------
+ * ✓ Happy path — valid YAML manifest → loads as AgentCapabilityManifest
+ * ✓ Happy path — valid JSON manifest → loads as AgentCapabilityManifest
+ * ✓ All Stage-1 condition types accepted (maxCalls, timeWindow,
+ *     allowedOperations, allowedExtensions, allowedTables)
+ * ✓ Unknown condition type → ManifestValidationError (names JSON path)
+ * ✓ Deferred condition types (ipRange, recipientDomain, redactFields,
+ *     policy, custom) → ManifestValidationError mentioning Stage 2
+ * ✓ Semantic error: notAfter before notBefore → ManifestValidationError
+ * ✓ Missing required top-level field → ManifestValidationError
+ * ✓ Unknown top-level field → ManifestValidationError
+ * ✓ YAML syntax error → Error (parse error)
+ * ✓ JSON syntax error → Error (parse error)
+ * ✓ watch() invokes callback on file change and returns working unsubscribe
+ */
+
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { FilePolicySource } from '../policy/source';
+import { ManifestValidationError } from '@euno/common-core';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Tracks temp dirs created during each test for cleanup. */
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  // Clean up all temp directories created during the test.
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** Write a temp file and return its path. Cleaned up after each test. */
+function writeTempFile(ext: 'yaml' | 'json', content: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'euno-mcp-test-'));
+  tempDirs.push(dir);
+  const filePath = path.join(dir, `manifest.${ext}`);
+  fs.writeFileSync(filePath, content, 'utf8');
+  return filePath;
+}
+
+const VALID_YAML = `
+agentId: test-agent-1
+name: Test Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://service/endpoint"
+    actions: [read]
+`.trim();
+
+const VALID_JSON = JSON.stringify({
+  agentId: 'test-agent-json',
+  name: 'Test Agent JSON',
+  version: '2.0.0',
+  requiredCapabilities: [
+    { resource: 'storage://bucket/objects', actions: ['write', 'delete'] },
+  ],
+});
+
+const VALID_ALL_STAGE1_CONDITIONS_YAML = `
+agentId: full-agent
+name: Full Stage-1 Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "db://postgres/reports"
+    actions: [execute]
+    conditions:
+      - type: maxCalls
+        count: 100
+        windowSeconds: 60
+      - type: timeWindow
+        notBefore: "2025-01-01T00:00:00Z"
+        notAfter: "2030-01-01T00:00:00Z"
+      - type: allowedOperations
+        operations: [SELECT, EXPLAIN]
+      - type: allowedExtensions
+        extensions: [.csv, .json]
+      - type: allowedTables
+        tables: [reports, metrics]
+        columns:
+          reports: [id, name, value]
+`.trim();
+
+// ---------------------------------------------------------------------------
+// Happy-path tests
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — happy paths', () => {
+  it('loads a valid YAML manifest', async () => {
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', VALID_YAML) });
+    const manifest = await src.load();
+    expect(manifest.agentId).toBe('test-agent-1');
+    expect(manifest.name).toBe('Test Agent');
+    expect(manifest.version).toBe('1.0.0');
+    expect(manifest.requiredCapabilities).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(manifest.requiredCapabilities[0]!.resource).toBe('api://service/endpoint');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(manifest.requiredCapabilities[0]!.actions).toEqual(['read']);
+  });
+
+  it('loads a valid JSON manifest', async () => {
+    const src = new FilePolicySource({ filePath: writeTempFile('json', VALID_JSON) });
+    const manifest = await src.load();
+    expect(manifest.agentId).toBe('test-agent-json');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(manifest.requiredCapabilities[0]!.actions).toEqual(['write', 'delete']);
+  });
+
+  it('accepts all Stage-1 condition types', async () => {
+    const src = new FilePolicySource({
+      filePath: writeTempFile('yaml', VALID_ALL_STAGE1_CONDITIONS_YAML),
+    });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(5);
+    expect(conditions.map((c) => c.type)).toEqual([
+      'maxCalls',
+      'timeWindow',
+      'allowedOperations',
+      'allowedExtensions',
+      'allowedTables',
+    ]);
+    const maxCalls = conditions[0] as { type: 'maxCalls'; count: number; windowSeconds: number };
+    expect(maxCalls.count).toBe(100);
+    expect(maxCalls.windowSeconds).toBe(60);
+  });
+
+  it('accepts optional metadata fields', async () => {
+    const content = `
+agentId: meta-agent
+name: Meta Agent
+version: 3.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+metadata:
+  description: "An agent with metadata"
+  owner: team-platform
+  tags: [finance, reporting]
+  runtime: node:20
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    expect(manifest.metadata?.owner).toBe('team-platform');
+    expect(manifest.metadata?.tags).toEqual(['finance', 'reporting']);
+    expect(manifest.metadata?.runtime).toBe('node:20');
+  });
+
+  it('accepts optional capabilities', async () => {
+    const content = `
+agentId: opt-agent
+name: Optional Caps Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://core"
+    actions: [read]
+optionalCapabilities:
+  - resource: "api://analytics"
+    actions: [read]
+    conditions:
+      - type: maxCalls
+        count: 10
+        windowSeconds: 3600
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    expect(manifest.optionalCapabilities).toHaveLength(1);
+  });
+
+  it('accepts an argumentSchema on a constraint', async () => {
+    const content = `
+agentId: schema-agent
+name: Schema Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://exec"
+    actions: [execute]
+    argumentSchema:
+      type: object
+      properties:
+        query:
+          type: string
+          maxLength: 500
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+      required: [query]
+      additionalProperties: false
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(manifest.requiredCapabilities[0]!.argumentSchema?.type).toBe('object');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unknown condition type
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — unknown condition type', () => {
+  it('rejects an unknown condition type and names the JSON path', async () => {
+    const content = `
+agentId: bad-agent
+name: Bad Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: maxcalls
+        count: 5
+        windowSeconds: 60
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/condition/i);
+  });
+
+  it('names the precise JSON path when a nested condition has an unknown type', async () => {
+    const content = `
+agentId: deep-agent
+name: Deep Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: timeWindow
+        notBefore: "2025-01-01T00:00:00Z"
+      - type: unknownFutureCondition
+        someField: value
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    let err: ManifestValidationError | undefined;
+    try {
+      await src.load();
+    } catch (e) {
+      err = e as ManifestValidationError;
+    }
+    expect(err).toBeInstanceOf(ManifestValidationError);
+    // The error message should indicate the condition index
+    expect(err!.message).toContain('conditions[1]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred Stage-2 condition types
+// ---------------------------------------------------------------------------
+
+const DEFERRED_TYPES = [
+  {
+    type: 'ipRange',
+    yaml: 'type: ipRange\ncidrs: ["10.0.0.0/8"]',
+  },
+  {
+    type: 'recipientDomain',
+    yaml: 'type: recipientDomain\ndomains: [example.com]',
+  },
+  {
+    type: 'redactFields',
+    yaml: 'type: redactFields\nfields: [ssn, dob]',
+  },
+  {
+    type: 'policy',
+    yaml: 'type: policy\nbackend: opa-http',
+  },
+  {
+    type: 'custom',
+    yaml: 'type: custom\nname: my-handler\nconfig: {}',
+  },
+] as const;
+
+describe('FilePolicySource — deferred Stage-2 condition types', () => {
+  for (const { type, yaml: conditionYaml } of DEFERRED_TYPES) {
+    it(`rejects '${type}' condition type with a Stage-2 error message`, async () => {
+      const content = `
+agentId: deferred-agent
+name: Deferred Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - ${conditionYaml.split('\n').join('\n        ')}
+`.trim();
+      const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+      let err: ManifestValidationError | undefined;
+      try {
+        await src.load();
+      } catch (e) {
+        err = e as ManifestValidationError;
+      }
+      expect(err).toBeInstanceOf(ManifestValidationError);
+      // Error must explicitly mention Stage 2
+      expect(err!.message).toMatch(/stage 2/i);
+      // Error must name the condition type
+      expect(err!.message).toContain(type);
+      // Path must appear in the message exactly once (no double-prefix)
+      const pathInMessage = (err!.message.match(/conditions\[0\]/g) ?? []).length;
+      expect(pathInMessage).toBe(1);
+      // .path field must also point to the condition
+      expect(err!.path).toContain('conditions[0]');
+    });
+  }
+
+  it('rejects a deferred type in optionalCapabilities too', async () => {
+    const content = `
+agentId: opt-deferred-agent
+name: Opt Deferred Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://core"
+    actions: [read]
+optionalCapabilities:
+  - resource: "api://extras"
+    actions: [read]
+    conditions:
+      - type: ipRange
+        cidrs: ["192.168.0.0/16"]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/stage 2/i);
+  });
+
+  it('path correctly identifies deferred condition index > 0', async () => {
+    const content = `
+agentId: idx-agent
+name: Index Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: maxCalls
+        count: 10
+        windowSeconds: 60
+      - type: policy
+        backend: opa-http
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    let err: ManifestValidationError | undefined;
+    try {
+      await src.load();
+    } catch (e) {
+      err = e as ManifestValidationError;
+    }
+    expect(err).toBeInstanceOf(ManifestValidationError);
+    expect(err!.path).toContain('conditions[1]');
+    expect(err!.message).toMatch(/stage 2/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Semantic errors
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — semantic errors', () => {
+  it('rejects a timeWindow where notAfter is before notBefore', async () => {
+    const content = `
+agentId: semantic-agent
+name: Semantic Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: timeWindow
+        notBefore: "2030-01-01T00:00:00Z"
+        notAfter:  "2025-01-01T00:00:00Z"
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/notAfter/);
+  });
+
+  it('rejects a timeWindow with neither notBefore nor notAfter', async () => {
+    const content = `
+agentId: empty-tw-agent
+name: Empty TW Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: timeWindow
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/notBefore.*notAfter/);
+  });
+
+  it('rejects maxCalls with count < 1', async () => {
+    const content = `
+agentId: mc-agent
+name: MaxCalls Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: maxCalls
+        count: 0
+        windowSeconds: 60
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+
+  it('rejects maxCalls with windowSeconds < 1', async () => {
+    const content = `
+agentId: mc2-agent
+name: MaxCalls2 Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: maxCalls
+        count: 10
+        windowSeconds: 0
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+
+  it('rejects allowedOperations with an empty operations array', async () => {
+    const content = `
+agentId: ops-agent
+name: Ops Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "db://pg"
+    actions: [execute]
+    conditions:
+      - type: allowedOperations
+        operations: []
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural / schema errors
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — structural errors', () => {
+  it('rejects a manifest missing the agentId field', async () => {
+    const content = `
+name: No ID Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/agentId/);
+  });
+
+  it('rejects a manifest missing requiredCapabilities', async () => {
+    const content = `
+agentId: no-caps
+name: No Caps Agent
+version: 1.0.0
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/requiredCapabilities/);
+  });
+
+  it('rejects a manifest with an empty requiredCapabilities array', async () => {
+    const content = `
+agentId: empty-caps
+name: Empty Caps
+version: 1.0.0
+requiredCapabilities: []
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+
+  it('rejects a capability with no actions', async () => {
+    const content = `
+agentId: no-actions
+name: No Actions
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: []
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+
+  it('rejects unknown top-level fields', async () => {
+    const content = `
+agentId: extra-field-agent
+name: Extra Field
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+unknownTopLevelField: should-be-rejected
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/unknownTopLevelField/);
+  });
+
+  it('rejects unknown fields in a condition', async () => {
+    const content = `
+agentId: extra-cond-agent
+name: Extra Cond
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: maxCalls
+        count: 5
+        windowSeconds: 60
+        unexpectedField: true
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+  });
+
+  it('rejects a non-ISO-8601 notBefore value (date only, no T)', async () => {
+    const content = `
+agentId: bad-date-agent
+name: Bad Date
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://svc"
+    actions: [read]
+    conditions:
+      - type: timeWindow
+        notBefore: "2026-01-01"
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(ManifestValidationError);
+    await expect(src.load()).rejects.toThrow(/ISO 8601/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parse errors
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — parse errors', () => {
+  it('throws a parse error for invalid YAML', async () => {
+    const content = `
+agentId: [unclosed bracket
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    await expect(src.load()).rejects.toThrow(/parse/i);
+  });
+
+  it('throws a parse error for invalid JSON', async () => {
+    const content = `{ "agentId": "bad", `;
+    const src = new FilePolicySource({ filePath: writeTempFile('json', content) });
+    await expect(src.load()).rejects.toThrow(/parse/i);
+  });
+
+  it('throws ENOENT for a missing file', async () => {
+    const src = new FilePolicySource({
+      filePath: '/tmp/euno-nonexistent-manifest-12345.yaml',
+    });
+    await expect(src.load()).rejects.toThrow(/ENOENT/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// watch()
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — watch()', () => {
+  it('invokes the onChange callback when the file is modified', async () => {
+    const filePath = writeTempFile('yaml', VALID_YAML);
+    const src = new FilePolicySource({ filePath, watchDebounceMs: 50 });
+
+    const received: string[] = [];
+    const unsubscribe = src.watch!((manifest) => {
+      received.push(manifest.agentId);
+    });
+
+    // Modify the file
+    const updated = VALID_YAML.replace('agentId: test-agent-1', 'agentId: updated-agent');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    fs.writeFileSync(filePath, updated, 'utf8');
+
+    // Wait for the debounce + reload
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    unsubscribe();
+
+    expect(received).toContain('updated-agent');
+  });
+
+  it('does NOT invoke onChange for an invalid update; calls onError instead', async () => {
+    const filePath = writeTempFile('yaml', VALID_YAML);
+    const src = new FilePolicySource({ filePath, watchDebounceMs: 50 });
+
+    const received: string[] = [];
+    const errors: Error[] = [];
+    const unsubscribe = src.watch!(
+      (manifest) => received.push(manifest.agentId),
+      (err) => errors.push(err),
+    );
+
+    // Write an invalid manifest (missing requiredCapabilities)
+    const invalid = `agentId: bad\nname: Bad\nversion: 1.0.0\n`;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    fs.writeFileSync(filePath, invalid, 'utf8');
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    unsubscribe();
+
+    expect(received).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(ManifestValidationError);
+  });
+
+  it('unsubscribe stops further change callbacks', async () => {
+    const filePath = writeTempFile('yaml', VALID_YAML);
+    const src = new FilePolicySource({ filePath, watchDebounceMs: 50 });
+
+    const received: string[] = [];
+    const unsubscribe = src.watch!((manifest) => received.push(manifest.agentId));
+
+    unsubscribe(); // Stop watching immediately
+
+    const updated = VALID_YAML.replace('agentId: test-agent-1', 'agentId: post-unsub');
+    fs.writeFileSync(filePath, updated, 'utf8');
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(received).toHaveLength(0);
+  });
+});

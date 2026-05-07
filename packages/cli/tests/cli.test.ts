@@ -355,7 +355,7 @@ describe('euno validate', () => {
     const file = writeManifest({ name: 'No Id' });
     const r = runCli(['validate', file]);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('missing required fields');
+    expect(r.stderr).toContain('Validation failed');
     expect(r.stderr).toContain('agentId');
   });
 

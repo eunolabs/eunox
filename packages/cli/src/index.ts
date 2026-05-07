@@ -13,6 +13,8 @@ import {
   dumpEnvTemplate,
   EUNO_SERVICE_NAMES,
   EunoServiceName,
+  validateManifest,
+  ManifestValidationError,
 } from '@euno/common';
 
 const program = new Command();
@@ -452,24 +454,19 @@ program
   .action((file) => {
     try {
       const content = fs.readFileSync(file, 'utf8');
-      const manifest = yaml.load(content) as Record<string, unknown>;
-
-      // Basic validation
-      const required = ['agentId', 'name', 'version', 'requiredCapabilities'];
-      const missing = required.filter(field => !manifest[field]);
-
-      if (missing.length > 0) {
-        console.error(`✗ Validation failed: missing required fields: ${missing.join(', ')}`);
-        process.exit(1);
-      }
+      const raw = yaml.load(content);
+      const manifest = validateManifest(raw);
 
       console.log(`✓ Manifest is valid`);
       console.log(`  Agent: ${manifest.name} (${manifest.agentId})`);
       console.log(`  Version: ${manifest.version}`);
-      const reqCapabilities = manifest.requiredCapabilities;
-      console.log(`  Required capabilities: ${Array.isArray(reqCapabilities) ? reqCapabilities.length : 0}`);
+      console.log(`  Required capabilities: ${manifest.requiredCapabilities.length}`);
     } catch (error) {
-      console.error(`✗ Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (error instanceof ManifestValidationError) {
+        console.error(`✗ Validation failed: ${error.message}`);
+      } else {
+        console.error(`✗ Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
       process.exit(1);
     }
   });
