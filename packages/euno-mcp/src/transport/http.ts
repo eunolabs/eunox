@@ -68,6 +68,20 @@ const UNSAFE_BIND_ADDRESSES = new Set(['0.0.0.0', '::']);
 // ---------------------------------------------------------------------------
 
 /**
+ * Minimal interface for activating the kill switch from an external command.
+ *
+ * Implemented by {@link ConditionEnforcerPDP} — pass a `ConditionEnforcerPDP`
+ * instance here when you want the {@link HttpProxy} to expose the
+ * `POST /control/kill` endpoint.
+ */
+export interface KillController {
+  /** Deny all subsequent `tools/call` requests for the given session. */
+  killSession(sessionId: string): void;
+  /** Deny all subsequent `tools/call` requests across every session. */
+  killAll(): void;
+}
+
+/**
  * Options for {@link HttpProxy}.
  */
 export interface HttpProxyOptions {
@@ -90,6 +104,16 @@ export interface HttpProxyOptions {
    * Defaults to {@link AlwaysAllowPDP} when not supplied.
    */
   pdp?: PolicyDecisionPoint;
+  /**
+   * Optional kill controller that enables the `POST /control/kill` endpoint.
+   *
+   * When provided, the proxy exposes:
+   *   `POST /control/kill`  — body `{ sessionId: "<id>" }` or `{ all: true }`
+   *
+   * Use `euno-mcp kill <sessionId|all> --port <n>` to invoke it.
+   * Primarily a testing helper; the kill state is in-memory only.
+   */
+  killController?: KillController;
   /**
    * TCP port to listen on.  `0` picks an ephemeral port — useful for tests.
    * @default 3000
@@ -186,8 +210,8 @@ function buildDenialResult(
  * ```
  */
 export class HttpProxy {
-  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd'>> &
-    Pick<HttpProxyOptions, 'env' | 'cwd'>;
+  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd' | 'killController'>> &
+    Pick<HttpProxyOptions, 'env' | 'cwd' | 'killController'>;
 
   private _httpServer?: http.Server;
   private _sessions = new Map<string, HttpProxySession>();
@@ -201,6 +225,7 @@ export class HttpProxy {
       env: opts.env,
       cwd: opts.cwd,
       pdp: opts.pdp ?? new AlwaysAllowPDP(),
+      killController: opts.killController,
       port: opts.port ?? 3000,
       bind: opts.bind ?? '127.0.0.1',
       unsafeBindAll: opts.unsafeBindAll ?? false,
@@ -315,6 +340,12 @@ export class HttpProxy {
     res: http.ServerResponse,
   ): Promise<void> {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    // ── Control endpoint ──────────────────────────────────────────────────
+    if (url.pathname === '/control/kill') {
+      await this._handleControlKill(req, res);
+      return;
+    }
 
     if (url.pathname !== '/mcp') {
       res.writeHead(404);
@@ -593,5 +624,175 @@ export class HttpProxy {
       session.server.close(),
       session.upstreamClient.close(),
     ]);
+  }
+
+  // ── Control endpoint ──────────────────────────────────────────────────────
+
+  /**
+   * Maximum allowed body size for `POST /control/kill` in bytes (16 KiB).
+   *
+   * A valid kill request body is at most a few tens of bytes
+   * (`{"sessionId":"<uuid>"}` or `{"all":true}`).  This limit is deliberately
+   * large to be permissive but still prevent memory exhaustion from an
+   * attacker who manages to reach the endpoint.
+   */
+  private static readonly _CONTROL_KILL_MAX_BODY_BYTES = 16 * 1024;
+
+  /**
+   * Handles `POST /control/kill` — activates the kill switch for a session or
+   * for all sessions.
+   *
+   * Expected request body (JSON):
+   *   `{ "sessionId": "<id>" }` — kill a specific session
+   *   `{ "all": true }`         — kill all active sessions
+   *
+   * Requires {@link HttpProxyOptions.killController} to be set; responds with
+   * 503 Service Unavailable when no kill controller is configured.
+   *
+   * **Loopback-only**: This endpoint always rejects requests that do not
+   * originate from the loopback interface (127.0.0.1 or ::1), regardless of
+   * the `bind` address.  This provides defence-in-depth when the proxy is
+   * started with `--unsafe-bind-all`: even if the HTTP port is reachable from
+   * the network, the control endpoint is not.
+   */
+  private async _handleControlKill(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    // ── 1. Loopback-only gate ─────────────────────────────────────────────
+    const remoteAddr = req.socket.remoteAddress ?? '';
+    const isLoopback =
+      remoteAddr === '127.0.0.1' ||
+      remoteAddr === '::1' ||
+      remoteAddr === '::ffff:127.0.0.1';
+    if (!isLoopback) {
+      res.writeHead(403);
+      res.end(
+        JSON.stringify({
+          error: 'Forbidden: /control/kill is only accessible from localhost',
+        }),
+      );
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.writeHead(405, { Allow: 'POST' });
+      res.end(JSON.stringify({ error: 'Method Not Allowed: /control/kill requires POST' }));
+      return;
+    }
+
+    const killController = this._opts.killController;
+    if (!killController) {
+      res.writeHead(503);
+      res.end(
+        JSON.stringify({
+          error:
+            'Kill switch not available: start the proxy with a policy file ' +
+            '(--policy <file>) to enable the kill controller.',
+        }),
+      );
+      return;
+    }
+
+    // ── 2. Read body with size limit ──────────────────────────────────────
+    const maxBytes = HttpProxy._CONTROL_KILL_MAX_BODY_BYTES;
+
+    // Reject early when Content-Length already signals an oversized request.
+    const clHeader = req.headers['content-length'];
+    if (clHeader !== undefined) {
+      const cl = parseInt(clHeader, 10);
+      if (Number.isFinite(cl) && cl > maxBytes) {
+        res.writeHead(413);
+        res.end(
+          JSON.stringify({
+            error: `Request Entity Too Large: /control/kill body must be ≤ ${maxBytes} bytes`,
+          }),
+        );
+        return;
+      }
+    }
+
+    let bodyRaw: string;
+    let bodyTooLarge = false;
+    try {
+      bodyRaw = await new Promise<string>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        let bytesRead = 0;
+        req.on('data', (chunk: Buffer) => {
+          bytesRead += chunk.length;
+          if (bytesRead <= maxBytes) {
+            chunks.push(chunk);
+          } else {
+            // Flag the oversize condition and stop accumulating.
+            bodyTooLarge = true;
+          }
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        req.on('error', reject);
+      });
+    } catch {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Bad Request: error reading request body' }));
+      return;
+    }
+
+    if (bodyTooLarge) {
+      res.writeHead(413);
+      res.end(
+        JSON.stringify({
+          error: `Request Entity Too Large: /control/kill body must be ≤ ${maxBytes} bytes`,
+        }),
+      );
+      return;
+    }
+
+    // ── 3. Parse and dispatch ─────────────────────────────────────────────
+    let body: unknown;
+    try {
+      body = JSON.parse(bodyRaw);
+    } catch {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Bad Request: expected a JSON body' }));
+      return;
+    }
+
+    if (
+      body === null ||
+      typeof body !== 'object' ||
+      Array.isArray(body)
+    ) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Bad Request: body must be a JSON object' }));
+      return;
+    }
+
+    const payload = body as Record<string, unknown>;
+
+    if (payload['all'] === true) {
+      killController.killAll();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ killed: 'all' }));
+      process.stderr.write('[euno-mcp] Global kill switch activated via /control/kill.\n');
+      return;
+    }
+
+    if (typeof payload['sessionId'] === 'string' && payload['sessionId'].length > 0) {
+      const sessionId = payload['sessionId'];
+      killController.killSession(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ killed: sessionId }));
+      // JSON.stringify prevents log injection if sessionId contains control characters.
+      process.stderr.write(
+        `[euno-mcp] Kill switch activated for session ${JSON.stringify(sessionId)} via /control/kill.\n`,
+      );
+      return;
+    }
+
+    res.writeHead(400);
+    res.end(
+      JSON.stringify({
+        error: 'Bad Request: body must contain either { "sessionId": "<id>" } or { "all": true }',
+      }),
+    );
   }
 }

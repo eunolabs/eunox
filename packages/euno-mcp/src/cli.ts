@@ -201,6 +201,9 @@ Examples:
     const proxy = new HttpProxy({
       command: upstreamCommand,
       pdp,
+      // Wire the conditionPdp as the kill controller so `euno-mcp kill`
+      // can activate the kill switch via POST /control/kill.
+      killController: conditionPdp,
       args: upstreamArgs,
       port,
       bind,
@@ -240,13 +243,149 @@ Examples:
 // ── validate ───────────────────────────────────────────────────────────────
 program
   .command('validate')
-  .description('Validate a capability policy file (Phase B)')
+  .description('Validate a capability policy file against the Stage-1 policy schema')
   .argument('<policy-file>', 'Path to the YAML/JSON policy file to validate')
-  .action((_policyFile: string) => {
-    process.stderr.write(
-      'euno-mcp validate is not yet implemented (Phase B — Task 9).\n',
-    );
-    process.exit(1);
+  .addHelpText(
+    'after',
+    `
+Examples:
+  # Validate a policy file — exits 0 on success, non-zero on failure
+  euno-mcp validate ./euno.policy.yaml
+
+  # Use with npx
+  npx -y @euno/mcp validate ./euno.policy.yaml
+`,
+  )
+  .action(async (policyFile: string) => {
+    const source = new FilePolicySource({ filePath: policyFile });
+    try {
+      const manifest = await source.load();
+      // Output format matches `euno validate` for consistent UX.
+      console.log('✓ Manifest is valid');
+      console.log(`  Agent: ${manifest.name} (${manifest.agentId})`);
+      console.log(`  Version: ${manifest.version}`);
+      console.log(`  Required capabilities: ${manifest.requiredCapabilities.length}`);
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(`✗ Validation failed: ${err.message}`);
+      } else {
+        console.error(`✗ Validation failed: ${String(err)}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// ── kill ───────────────────────────────────────────────────────────────────
+program
+  .command('kill')
+  .description(
+    'Activate the kill switch for a session (or all sessions) in a running HTTP proxy.\n' +
+    'This is a testing helper — it sends a POST to the proxy\'s /control/kill endpoint.\n' +
+    'Only available when the proxy is running with --transport http.',
+  )
+  .argument('<target>', 'Session ID to kill, or "all" to kill every active session')
+  .option(
+    '--port <n>',
+    'Port the HTTP proxy is listening on',
+    '3000',
+  )
+  .option(
+    '--host <addr>',
+    'Host the HTTP proxy is bound to',
+    '127.0.0.1',
+  )
+  .addHelpText(
+    'after',
+    `
+Examples:
+  # Kill a specific session
+  euno-mcp kill abc123 --port 3000
+
+  # Kill all active sessions
+  euno-mcp kill all --port 3000
+`,
+  )
+  .action(async (target: string, options) => {
+    const port = parseInt(options.port as string, 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      process.stderr.write(
+        `[euno-mcp] Invalid --port value "${options.port}": must be an integer in [1, 65535].\n`,
+      );
+      process.exit(1);
+    }
+
+    const host: string = options.host as string;
+    const url = `http://${host}:${port}/control/kill`;
+
+    const body =
+      target === 'all'
+        ? JSON.stringify({ all: true })
+        : JSON.stringify({ sessionId: target });
+
+    /** Fail-fast timeout for the kill request (ms). */
+    const KILL_REQUEST_TIMEOUT_MS = 10_000;
+
+    try {
+      const http = await import('node:http');
+      const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = http.request(
+          url,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+            },
+          },
+          (incoming) => {
+            const chunks: Buffer[] = [];
+            incoming.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+            incoming.on('end', () => resolve({
+              status: incoming.statusCode ?? 0,
+              body: Buffer.concat(chunks).toString('utf8'),
+            }));
+          },
+        );
+        // Fail fast if the proxy accepts the connection but stops responding.
+        req.setTimeout(KILL_REQUEST_TIMEOUT_MS, () => {
+          req.destroy(
+            new Error(
+              `request timed out after ${KILL_REQUEST_TIMEOUT_MS / 1000}s — ` +
+              `the proxy is connected but not responding`,
+            ),
+          );
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+
+      if (result.status >= 200 && result.status < 300) {
+        try {
+          const json = JSON.parse(result.body) as Record<string, unknown>;
+          if (json['killed'] === 'all') {
+            console.log('✓ Global kill switch activated — all sessions will be denied');
+          } else if (typeof json['killed'] === 'string') {
+            console.log(`✓ Kill switch activated for session ${json['killed']}`);
+          } else {
+            console.log(`✓ Kill switch activated (${result.body})`);
+          }
+        } catch {
+          console.log('✓ Kill switch activated');
+        }
+      } else {
+        process.stderr.write(
+          `[euno-mcp] Kill request failed (HTTP ${result.status}): ${result.body}\n`,
+        );
+        process.exit(1);
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[euno-mcp] Could not reach the proxy at ${url}: ${String(err)}\n` +
+        `  Make sure the proxy is running with --transport http on port ${port}.\n`,
+      );
+      process.exit(1);
+    }
   });
 
 program.parse(process.argv);
