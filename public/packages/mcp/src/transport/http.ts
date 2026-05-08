@@ -53,6 +53,7 @@ import {
   MCP_SUPPORTED_PROTOCOL_VERSIONS,
 } from '../protocol';
 import type { TelemetryHooks } from '../telemetry/types';
+import { NullAuditSink, type McpAuditSink } from '../audit/audit-sink';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -149,6 +150,16 @@ export interface HttpProxyOptions {
    * tool-call enforcement decisions.  No-op when not supplied.
    */
   telemetryHooks?: TelemetryHooks;
+  /**
+   * Audit sink that receives one record per `tools/call` enforcement decision.
+   *
+   * Defaults to {@link NullAuditSink} (no-op) when not supplied.  Pass a
+   * {@link LocalAuditSink} to write OCSF+HMAC-signed records to disk.
+   *
+   * The sink's `close()` method is called when the proxy shuts down via
+   * {@link HttpProxy.close}.
+   */
+  auditSink?: McpAuditSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,23 +180,32 @@ interface HttpProxySession {
 /**
  * Builds an MCP tool-call result payload with `isError: true` carrying a
  * structured `CapabilityDenied` payload in its text content.
+ *
+ * When `details` is provided (e.g. for `argumentSchema` denials), it is
+ * included in the JSON payload under the `details` key so MCP clients can
+ * react programmatically without parsing the human-readable `message` string.
  */
 function buildDenialResult(
   toolName: string,
   reason: string | undefined,
   denialCode: string | undefined,
+  details?: Record<string, unknown>,
 ) {
   const message = reason ?? 'Tool call denied by euno policy';
+  const payload: Record<string, unknown> = {
+    error: 'CapabilityDenied',
+    tool: toolName,
+    code: denialCode ?? 'CAPABILITY_DENIED',
+    message,
+  };
+  if (details !== undefined) {
+    payload['details'] = details;
+  }
   return {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify({
-          error: 'CapabilityDenied',
-          tool: toolName,
-          code: denialCode ?? 'CAPABILITY_DENIED',
-          message,
-        }),
+        text: JSON.stringify(payload),
       },
     ],
     isError: true,
@@ -231,6 +251,7 @@ export class HttpProxy {
       env: opts.env,
       cwd: opts.cwd,
       pdp: opts.pdp ?? new AlwaysAllowPDP(),
+      auditSink: opts.auditSink ?? new NullAuditSink(),
       killController: opts.killController,
       port: opts.port ?? 3000,
       bind: opts.bind ?? '127.0.0.1',
@@ -323,6 +344,10 @@ export class HttpProxy {
         this._httpServer!.close(() => resolve());
       });
     }
+
+    // Flush and close the audit sink after all sessions have been torn down so
+    // the sink receives every record before it is closed.
+    await this._opts.auditSink.close();
   }
 
   /**
@@ -540,6 +565,17 @@ export class HttpProxy {
       const sessionId = registeredSessionId ?? 'pending';
       const decision = await pdp.decide(reqMsg, { sessionId });
 
+      // Record the enforcement decision — fire-and-forget so audit I/O never
+      // blocks the response to the MCP client.
+      void this._opts.auditSink.record({
+        sessionId,
+        toolName: reqMsg.params.name,
+        decision: decision.allow ? 'allow' : 'deny',
+        denialCode: decision.denialCode,
+        conditionType: decision.conditionType,
+        details: decision.details,
+      });
+
       // Notify telemetry hooks about this enforcement decision.
       sessionTelemetry?.onDecision?.(decision.allow, decision.conditionType);
 
@@ -548,6 +584,7 @@ export class HttpProxy {
           reqMsg.params.name,
           decision.reason,
           decision.denialCode,
+          decision.details,
         );
       }
 

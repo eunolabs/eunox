@@ -141,23 +141,32 @@ export interface StdioProxyOptions {
  * Intentionally returns a tool-call *result* (not a transport-level JSON-RPC
  * error) so the host presents the denial as structured output rather than
  * treating it as a connection failure.
+ *
+ * When `details` is provided (e.g. for `argumentSchema` denials), it is
+ * included in the JSON payload under the `details` key so MCP clients can
+ * react programmatically without parsing the human-readable `message` string.
  */
 function buildDenialResult(
   toolName: string,
   reason: string | undefined,
   denialCode: string | undefined,
+  details?: Record<string, unknown>,
 ) {
   const message = reason ?? 'Tool call denied by euno policy';
+  const payload: Record<string, unknown> = {
+    error: 'CapabilityDenied',
+    tool: toolName,
+    code: denialCode ?? 'CAPABILITY_DENIED',
+    message,
+  };
+  if (details !== undefined) {
+    payload['details'] = details;
+  }
   return {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify({
-          error: 'CapabilityDenied',
-          tool: toolName,
-          code: denialCode ?? 'CAPABILITY_DENIED',
-          message,
-        }),
+        text: JSON.stringify(payload),
       },
     ],
     isError: true,
@@ -349,6 +358,7 @@ export class StdioProxy {
         decision: decision.allow ? 'allow' : 'deny',
         denialCode: decision.denialCode,
         conditionType: decision.conditionType,
+        details: decision.details,
       });
 
       // Notify telemetry hooks (fire-and-forget, no await).
@@ -361,6 +371,7 @@ export class StdioProxy {
           req.params.name,
           decision.reason,
           decision.denialCode,
+          decision.details,
         );
       }
 

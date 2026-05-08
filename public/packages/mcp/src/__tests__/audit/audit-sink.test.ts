@@ -586,3 +586,111 @@ describe('LocalAuditSink — rotation error handling', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// details field — argumentSchema structured error reporting (Task 1)
+// ---------------------------------------------------------------------------
+
+describe('LocalAuditSink — details field in unmapped', () => {
+  let dir: string;
+
+  beforeEach(() => { dir = tmpDir(); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('writes details into unmapped when provided on a deny record', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-details',
+      toolName: 'query_db',
+      decision: 'deny',
+      denialCode: 'ARGUMENT_VALIDATION_FAILED',
+      conditionType: 'argumentSchema',
+      details: { path: 'args.sql', expected: 'type:string', got: 'number' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).toMatchObject({
+      denialCode: 'ARGUMENT_VALIDATION_FAILED',
+      conditionType: 'argumentSchema',
+      details: { path: 'args.sql', expected: 'type:string', got: 'number' },
+    });
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+
+  it('omits details from unmapped when not provided', async () => {
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-no-details',
+      toolName: 'echo',
+      decision: 'deny',
+      denialCode: 'MAX_CALLS_EXCEEDED',
+      conditionType: 'maxCalls',
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('details');
+  });
+
+  it('does not include details on allow records even if supplied', async () => {
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-allow',
+      toolName: 'echo',
+      decision: 'allow',
+      // details should be ignored for allow decisions
+      details: { path: 'args', expected: 'string', got: 'number' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('details');
+    expect(event!.unmapped).not.toHaveProperty('denialCode');
+  });
+
+  it('HMAC covers the details in unmapped (tampered details fails verify)', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-hmac',
+      toolName: 'query_db',
+      decision: 'deny',
+      denialCode: 'ARGUMENT_VALIDATION_FAILED',
+      conditionType: 'argumentSchema',
+      details: { path: 'args.x', expected: 'string', got: 'number' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    // Verify original is valid.
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+
+    // Tamper with details and verify that it now fails.
+    const tampered = JSON.parse(JSON.stringify(event)) as SignedMcpAuditEvent;
+    (tampered.unmapped as Record<string, unknown>)['details'] = { path: 'TAMPERED' };
+    expect(verifyAuditEvent(tampered, signer)).toBe(false);
+  });
+
+  it('preserves arbitrary nested details structure', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    const nestedDetails = {
+      path: 'args.body.items[0].id',
+      expected: 'type:string',
+      got: 42,
+      extra: { nested: true },
+    };
+    await sink.record({
+      sessionId: 'sess-nested',
+      toolName: 'create_order',
+      decision: 'deny',
+      denialCode: 'ARGUMENT_VALIDATION_FAILED',
+      conditionType: 'argumentSchema',
+      details: nestedDetails,
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped['details']).toEqual(nestedDetails);
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+});

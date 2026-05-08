@@ -3,7 +3,7 @@
  * argument-level enforcement in the tool gateway.
  */
 
-import { validateArguments, CapabilityError, ArgumentSchema } from '../src';
+import { validateArguments, CapabilityError, ArgumentValidationError, ArgumentSchema } from '../src';
 
 describe('validateArguments', () => {
   it('is a no-op when no schema is supplied', () => {
@@ -38,7 +38,7 @@ describe('validateArguments', () => {
 
     it('rejects missing required properties', () => {
       expect(() => validateArguments({ fields: ['name'] }, schema)).toThrow(
-        /missing required property "customerId"/
+        /args\.customerId is missing/
       );
     });
 
@@ -315,5 +315,275 @@ describe('validateArguments', () => {
       ).toThrow(/disallowed property "extra"/);
       expect(() => validateArguments([{ id: 'abc' }], schema)).not.toThrow();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ArgumentValidationError — structured error fields
+// ---------------------------------------------------------------------------
+
+describe('ArgumentValidationError', () => {
+  it('is thrown (not just a generic CapabilityError) when validation fails', () => {
+    expect(() =>
+      validateArguments({ num: 'not-a-number' }, { type: 'object', properties: { num: { type: 'number' } } })
+    ).toThrow(ArgumentValidationError);
+  });
+
+  it('is also instanceof CapabilityError for backwards-compatible catch-sites', () => {
+    let thrown: unknown;
+    try {
+      validateArguments('hello', { type: 'number' });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ArgumentValidationError);
+    expect(thrown).toBeInstanceOf(CapabilityError);
+  });
+
+  it('has a human-readable message compatible with the previous format', () => {
+    let thrown: unknown;
+    try {
+      validateArguments({}, { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ArgumentValidationError);
+    expect((thrown as Error).message).toMatch(/^Argument validation failed:/);
+  });
+
+  it('exposes path for a type mismatch at the root', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('hello', { type: 'number' });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('number');
+    expect(err!.got).toBe('string');
+  });
+
+  it('exposes path for a nested property type mismatch', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(
+        { user: { age: 'not-a-number' } },
+        {
+          type: 'object',
+          properties: {
+            user: {
+              type: 'object',
+              properties: { age: { type: 'integer' } },
+            },
+          },
+        },
+      );
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args.user.age');
+    expect(err!.expected).toContain('integer');
+    expect(err!.got).toBe('string');
+  });
+
+  it('exposes path for a missing required property', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(
+        {},
+        { type: 'object', properties: { email: { type: 'string' } }, required: ['email'] },
+      );
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args.email');
+    expect(err!.expected).toBe('present');
+    expect(err!.got).toBe('absent');
+  });
+
+  it('exposes path for a disallowed additional property', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(
+        { allowed: 'ok', forbidden: 'bad' },
+        {
+          type: 'object',
+          properties: { allowed: { type: 'string' } },
+          additionalProperties: false,
+        },
+      );
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args.forbidden');
+    expect(err!.expected).toBe('absent');
+    expect(err!.got).toBe('present');
+  });
+
+  it('exposes path for an enum mismatch', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('bad', { enum: ['a', 'b', 'c'] });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('"a"');
+    expect(err!.got).toBe('bad');
+  });
+
+  it('exposes path for a minLength violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('hi', { type: 'string', minLength: 5 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('>= 5');
+    expect(err!.got).toBe(2);
+  });
+
+  it('exposes path for a maxLength violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('toolong', { type: 'string', maxLength: 3 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('<= 3');
+    expect(err!.got).toBe(7);
+  });
+
+  it('exposes path for a minimum violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(3, { type: 'number', minimum: 10 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('>= 10');
+    expect(err!.got).toBe(3);
+  });
+
+  it('exposes path for a maximum violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(20, { type: 'number', maximum: 10 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('<= 10');
+    expect(err!.got).toBe(20);
+  });
+
+  it('exposes path for a pattern mismatch', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('bad value!', { type: 'string', pattern: '[a-z]+' });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('[a-z]+');
+    expect(err!.got).toBe('bad value!');
+  });
+
+  it('exposes path for a maxItems violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments([1, 2, 3, 4], { type: 'array', maxItems: 3 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('at most 3');
+    expect(err!.got).toBe(4);
+  });
+
+  it('exposes path for a minItems violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments([1], { type: 'array', minItems: 3 });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('at least 3');
+    expect(err!.got).toBe(1);
+  });
+
+  it('exposes the nested array item path for an array item type violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments(
+        ['ok', 123],
+        { type: 'array', items: { type: 'string' } },
+      );
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args[1]');
+    expect(err!.expected).toContain('string');
+    expect(err!.got).toBe('number');
+  });
+
+  it('exposes path for a null-byte violation', () => {
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments('foo\0bar', { type: 'string' });
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args');
+    expect(err!.expected).toContain('without null bytes');
+    expect(err!.got).toBe('foo\0bar');
+  });
+
+  it('exposes structured fields for a deeply nested failure (3 levels)', () => {
+    const schema: ArgumentSchema = {
+      type: 'object',
+      properties: {
+        body: {
+          type: 'object',
+          properties: {
+            recipient: {
+              type: 'object',
+              properties: { email: { type: 'string' } },
+              required: ['email'],
+            },
+          },
+          required: ['recipient'],
+        },
+      },
+      required: ['body'],
+    };
+    let err: ArgumentValidationError | undefined;
+    try {
+      validateArguments({ body: { recipient: {} } }, schema);
+    } catch (e) {
+      if (e instanceof ArgumentValidationError) err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err!.path).toBe('args.body.recipient.email');
+    expect(err!.expected).toBe('present');
+    expect(err!.got).toBe('absent');
   });
 });

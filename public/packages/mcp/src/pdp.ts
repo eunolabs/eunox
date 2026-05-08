@@ -60,6 +60,7 @@ import {
   DefaultKillSwitchManager,
   enforceCondition,
   validateArguments,
+  ArgumentValidationError,
   findMatchingCapability,
   type CallCounterStore,
   type KillSwitchManager,
@@ -106,6 +107,26 @@ export interface PdpDecision {
    * Only set when `allow` is `false`.
    */
   readonly conditionType?: string;
+  /**
+   * Structured details about the denial cause.  Currently populated only for
+   * `argumentSchema` denials and contains the machine-readable fields from
+   * {@link ArgumentValidationError}:
+   *
+   * ```json
+   * {
+   *   "path": "args.body.email",
+   *   "expected": "string matching /^[^@]+@[^@]+$/",
+   *   "got": "not-an-email"
+   * }
+   * ```
+   *
+   * MCP transports serialise this into the `details` field of the
+   * `CapabilityDenied` result object so clients can react programmatically
+   * without parsing the human-readable `reason` string.
+   *
+   * Only set when `allow` is `false` and structured information is available.
+   */
+  readonly details?: Record<string, unknown>;
 }
 
 /**
@@ -554,11 +575,16 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
       } catch (err) {
         const reason =
           err instanceof Error ? err.message : 'Argument validation failed';
+        const details: Record<string, unknown> | undefined =
+          err instanceof ArgumentValidationError
+            ? { path: err.path, expected: err.expected, got: err.got }
+            : undefined;
         return {
           allow: false,
           reason,
           denialCode: 'ARGUMENT_VALIDATION_FAILED',
           conditionType: 'argumentSchema',
+          details,
         };
       }
     }

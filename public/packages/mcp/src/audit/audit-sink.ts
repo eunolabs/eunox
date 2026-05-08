@@ -91,6 +91,17 @@ export interface McpAuditRecord {
    */
   conditionType?: string;
   /**
+   * Structured details about the denial cause.  Currently populated for
+   * `argumentSchema` denials and carries the machine-readable fields from
+   * `ArgumentValidationError` (`path`, `expected`, `got`).  Stored in the
+   * `unmapped` block of the OCSF record alongside `denialCode` and
+   * `conditionType`.
+   *
+   * Only set when `decision` is `'deny'` and structured information is
+   * available.
+   */
+  details?: Record<string, unknown>;
+  /**
    * Optional request identifier for correlation with upstream logs.
    * Stored in `metadata.uid` when provided; a UUID is generated otherwise.
    */
@@ -266,6 +277,7 @@ export class LocalAuditSink implements McpAuditSink {
     if (!isAllow) {
       if (entry.denialCode) unmapped['denialCode'] = entry.denialCode;
       if (entry.conditionType) unmapped['conditionType'] = entry.conditionType;
+      if (entry.details) unmapped['details'] = entry.details;
     }
 
     // Build the unsigned OCSF event body (no enrichments yet).

@@ -11,6 +11,7 @@
  * ✓ allowedExtensions — allows .csv, denies .exe
  * ✓ allowedTables — allows reports table, denies users table
  * ✓ argumentSchema — allows conforming args, denies non-conforming args
+ * ✓ argumentSchema — structured error: details.path, details.expected, details.got (Task 1)
  * ✓ unknown condition type injected at runtime → deny (defence-in-depth)
  * ✓ kill switch (session) flipped mid-session → denies all subsequent calls
  * ✓ kill switch (global) → denies all calls in all sessions
@@ -770,6 +771,286 @@ describe('ConditionEnforcerPDP — policy source lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
+// argumentSchema — structured error reporting (Task 1)
+// ---------------------------------------------------------------------------
+
+describe('ConditionEnforcerPDP — argumentSchema structured error reporting', () => {
+  it('returns details.path, details.expected, details.got for a type mismatch', async () => {
+    const manifest = singleToolManifest('echo', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { count: { type: 'integer' } },
+        required: ['count'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('echo', { count: 'not-a-number' }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('ARGUMENT_VALIDATION_FAILED');
+    expect(d.conditionType).toBe('argumentSchema');
+    expect(d.details).toBeDefined();
+    expect(d.details!['path']).toBe('args.count');
+    expect(d.details!['expected']).toContain('integer');
+    expect(d.details!['got']).toBe('string');
+  });
+
+  it('returns details for a missing required property', async () => {
+    const manifest = singleToolManifest('create_user', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { email: { type: 'string' } },
+        required: ['email'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('create_user', {}), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.email');
+    expect(d.details!['expected']).toBe('present');
+    expect(d.details!['got']).toBe('absent');
+  });
+
+  it('returns details for a disallowed additional property', async () => {
+    const manifest = singleToolManifest('echo', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { text: { type: 'string' } },
+        required: ['text'],
+        additionalProperties: false,
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(
+      makeRequest('echo', { text: 'hello', secret: 'bad' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.secret');
+    expect(d.details!['expected']).toBe('absent');
+    expect(d.details!['got']).toBe('present');
+  });
+
+  it('returns details for an enum mismatch', async () => {
+    const manifest = singleToolManifest('set_mode', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { mode: { enum: ['read', 'write'] } },
+        required: ['mode'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('set_mode', { mode: 'delete' }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.mode');
+    expect(d.details!['expected']).toContain('"read"');
+    expect(d.details!['got']).toBe('delete');
+  });
+
+  it('returns details for a string minLength violation', async () => {
+    const manifest = singleToolManifest('search', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { query: { type: 'string', minLength: 3 } },
+        required: ['query'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('search', { query: 'ab' }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.query');
+    expect(d.details!['expected']).toContain('>= 3');
+    expect(d.details!['got']).toBe(2);
+  });
+
+  it('returns details for a string maxLength violation', async () => {
+    const manifest = singleToolManifest('tag', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { name: { type: 'string', maxLength: 10 } },
+        required: ['name'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('tag', { name: 'a'.repeat(11) }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.name');
+    expect(d.details!['expected']).toContain('<= 10');
+    expect(d.details!['got']).toBe(11);
+  });
+
+  it('returns details for a number minimum violation', async () => {
+    const manifest = singleToolManifest('paginate', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { page: { type: 'integer', minimum: 1 } },
+        required: ['page'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('paginate', { page: 0 }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.page');
+    expect(d.details!['expected']).toContain('>= 1');
+    expect(d.details!['got']).toBe(0);
+  });
+
+  it('returns details for a number maximum violation', async () => {
+    const manifest = singleToolManifest('paginate', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { limit: { type: 'integer', maximum: 100 } },
+        required: ['limit'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('paginate', { limit: 200 }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.limit');
+    expect(d.details!['expected']).toContain('<= 100');
+    expect(d.details!['got']).toBe(200);
+  });
+
+  it('returns details for an array maxItems violation', async () => {
+    const manifest = singleToolManifest('batch', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { ids: { type: 'array', maxItems: 5 } },
+        required: ['ids'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('batch', { ids: [1, 2, 3, 4, 5, 6] }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.ids');
+    expect(d.details!['expected']).toContain('at most 5');
+    expect(d.details!['got']).toBe(6);
+  });
+
+  it('returns details for a pattern mismatch', async () => {
+    const manifest = singleToolManifest('send', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { code: { type: 'string', pattern: '[A-Z]{3}' } },
+        required: ['code'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('send', { code: 'abc' }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.code');
+    expect(d.details!['expected']).toContain('[A-Z]{3}');
+    expect(d.details!['got']).toBe('abc');
+  });
+
+  it('returns details with the nested path for array item type violations', async () => {
+    const manifest = singleToolManifest('process', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: {
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['tags'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('process', { tags: ['ok', 123] }), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.tags[1]');
+    expect(d.details!['expected']).toContain('string');
+    expect(d.details!['got']).toBe('number');
+  });
+
+  it('does NOT set details on allow decisions', async () => {
+    const manifest = singleToolManifest('echo', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { text: { type: 'string' } },
+        required: ['text'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('echo', { text: 'hello' }), makeCtx());
+    expect(d.allow).toBe(true);
+    expect(d.details).toBeUndefined();
+  });
+
+  it('does NOT set details on non-argumentSchema denials (e.g. maxCalls)', async () => {
+    const manifest = singleToolManifest('limited', [
+      { type: 'maxCalls', count: 0, windowSeconds: 60 } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('limited'), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).not.toBe('ARGUMENT_VALIDATION_FAILED');
+    expect(d.details).toBeUndefined();
+  });
+
+  it('details message is compatible with human-readable reason string', async () => {
+    const manifest = singleToolManifest('echo', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: { text: { type: 'string' } },
+        required: ['text'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('echo', {}), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.reason).toMatch(/Argument validation failed/);
+    expect(d.details).toBeDefined();
+    // The reason string should embed the same path as details.path
+    expect(d.reason).toContain('text');
+  });
+
+  it('handles deeply nested schema failures (3 levels deep)', async () => {
+    const manifest = singleToolManifest('nested_op', [], {
+      argumentSchema: {
+        type: 'object',
+        properties: {
+          body: {
+            type: 'object',
+            properties: {
+              user: {
+                type: 'object',
+                properties: { id: { type: 'integer' } },
+                required: ['id'],
+              },
+            },
+            required: ['user'],
+          },
+        },
+        required: ['body'],
+      },
+    });
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // Pass a string where integer is expected
+    const d = await pdp.decide(
+      makeRequest('nested_op', { body: { user: { id: 'not-an-int' } } }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.details!['path']).toBe('args.body.user.id');
+    expect(d.details!['expected']).toContain('integer');
+    expect(d.details!['got']).toBe('string');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // recipientDomain condition (Task 3)
 // ---------------------------------------------------------------------------
 
@@ -1181,4 +1462,3 @@ describe('extractRecipients (via ConditionEnforcerPDP)', () => {
     expect(d.allow).toBe(true);
   });
 });
-

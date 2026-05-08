@@ -22,11 +22,95 @@
 import { ArgumentSchema } from './types';
 import { CapabilityError, ErrorCode } from './utils';
 
+// ---------------------------------------------------------------------------
+// Structured validation result
+// ---------------------------------------------------------------------------
+
 /**
- * Sentinel returned alongside an error message by individual checks.
- * `null` means "valid"; a string is the human-readable failure reason.
+ * Structured failure descriptor returned by {@link checkAgainstSchema} when
+ * validation fails.  `null` means the value is valid.
+ *
+ * The three data fields – {@link path}, {@link expected}, {@link got} – are
+ * intentionally machine-readable so consumers such as the MCP proxy can
+ * forward them to clients as structured JSON without parsing the message
+ * string.
  */
-type ValidationResult = string | null;
+type ValidationResult = {
+  /**
+   * Human-readable message describing the failure.  Always includes `path`
+   * so the text is still useful when the structured fields are not read.
+   */
+  reason: string;
+  /**
+   * Dotted JSON path to the value that failed validation
+   * (e.g. `"args"`, `"args.body.email"`, `"args.tags[0]"`).
+   */
+  path: string;
+  /**
+   * Human-readable description of the constraint that was violated
+   * (e.g. `"type:string"`, `">= 5 characters"`, `"one of [\"a\",\"b\"]"`).
+   */
+  expected: string;
+  /**
+   * The actual value (or a descriptor of it) that caused the failure.
+   * For type mismatches this is the type name string; for value-level checks
+   * it is the offending value itself.
+   */
+  got: unknown;
+} | null;
+
+// ---------------------------------------------------------------------------
+// ArgumentValidationError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by {@link validateArguments} when the supplied arguments do not
+ * conform to the declared {@link ArgumentSchema}.
+ *
+ * Extends {@link CapabilityError} so existing catch-sites that check
+ * `instanceof CapabilityError` continue to work unchanged, while new
+ * consumers can distinguish this error and read the structured fields
+ * ({@link path}, {@link expected}, {@link got}) to produce machine-readable
+ * error responses.
+ *
+ * The `message` property keeps the same human-readable format as before
+ * (`"Argument validation failed: <reason>"`), preserving backwards
+ * compatibility for callers that only inspect `err.message`.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   validateArguments(args, schema);
+ * } catch (err) {
+ *   if (err instanceof ArgumentValidationError) {
+ *     // structured fields available
+ *     console.log(err.path, err.expected, err.got);
+ *   }
+ *   // err.message is always human-readable
+ *   console.error(err.message);
+ * }
+ * ```
+ */
+export class ArgumentValidationError extends CapabilityError {
+  /** Dotted JSON path to the value that failed validation. */
+  public readonly path: string;
+  /** Human-readable description of the constraint that was violated. */
+  public readonly expected: string;
+  /** The actual value (or type descriptor) that caused the failure. */
+  public readonly got: unknown;
+
+  constructor(path: string, expected: string, got: unknown, reason: string) {
+    super(
+      ErrorCode.INVALID_REQUEST,
+      `Argument validation failed: ${reason}`,
+      400,
+    );
+    this.name = 'ArgumentValidationError';
+    this.path = path;
+    this.expected = expected;
+    this.got = got;
+  }
+}
 
 const PRIMITIVE_TYPES = new Set([
   'object',
@@ -47,7 +131,9 @@ const MAX_PATTERN_LENGTH = 512;
 
 /**
  * Validate `value` against the supplied {@link ArgumentSchema}.
- * Throws a {@link CapabilityError} (HTTP 400, INVALID_REQUEST) on failure.
+ *
+ * Throws an {@link ArgumentValidationError} (which is also a
+ * {@link CapabilityError} with HTTP 400) on failure.
  *
  * If `schema` is undefined or null, this is a no-op — capabilities without
  * an `argumentSchema` impose no argument-level constraints (the (action,
@@ -69,12 +155,13 @@ export function validateArguments(
     return;
   }
 
-  const reason = checkAgainstSchema(value, schema, path, schema.strict ?? false);
-  if (reason !== null) {
-    throw new CapabilityError(
-      ErrorCode.INVALID_REQUEST,
-      `Argument validation failed: ${reason}`,
-      400
+  const failure = checkAgainstSchema(value, schema, path, schema.strict ?? false);
+  if (failure !== null) {
+    throw new ArgumentValidationError(
+      failure.path,
+      failure.expected,
+      failure.got,
+      failure.reason,
     );
   }
 }
@@ -92,7 +179,8 @@ function checkAgainstSchema(
   if (schema.enum !== undefined) {
     const matched = schema.enum.some((allowed) => deepEqual(allowed, value));
     if (!matched) {
-      return `${path} must be one of the allowed values`;
+      const expectedList = schema.enum.map((v) => JSON.stringify(v)).join(', ');
+      return fail(path, `one of [${expectedList}]`, safeGot(value), `${path} must be one of the allowed values`);
     }
   }
 
@@ -101,21 +189,21 @@ function checkAgainstSchema(
     const allowedTypes = Array.isArray(schema.type) ? schema.type : [schema.type];
     for (const t of allowedTypes) {
       if (!PRIMITIVE_TYPES.has(t)) {
-        return `${path} schema declares unsupported type "${t}"`;
+        return fail(path, 'supported type (object|string|number|integer|boolean|array|null)', t, `${path} schema declares unsupported type "${t}"`);
       }
     }
     if (!allowedTypes.some((t) => matchesType(value, t))) {
-      return `${path} must be of type ${allowedTypes.join('|')}`;
+      return fail(path, `type:${allowedTypes.join('|')}`, typeDescriptorOf(value), `${path} must be of type ${allowedTypes.join('|')}`);
     }
   }
 
   // 3. type-specific checks
   if (typeof value === 'string') {
     if (schema.minLength !== undefined && value.length < schema.minLength) {
-      return `${path} must be at least ${schema.minLength} characters`;
+      return fail(path, `string with length >= ${schema.minLength}`, value.length, `${path} must be at least ${schema.minLength} characters`);
     }
     if (schema.maxLength !== undefined && value.length > schema.maxLength) {
-      return `${path} must be at most ${schema.maxLength} characters`;
+      return fail(path, `string with length <= ${schema.maxLength}`, value.length, `${path} must be at most ${schema.maxLength} characters`);
     }
     if (schema.pattern !== undefined) {
       // Anchor the pattern so callers' regex expresses a *whole-value*
@@ -132,49 +220,49 @@ function checkAgainstSchema(
       // For belt-and-braces, callers can additionally bound `maxLength`
       // on the same string field to cap the input the regex sees.
       if (schema.pattern.length > MAX_PATTERN_LENGTH) {
-        return `${path} schema pattern exceeds maximum length of ${MAX_PATTERN_LENGTH}`;
+        return fail(path, `pattern with length <= ${MAX_PATTERN_LENGTH}`, schema.pattern.length, `${path} schema pattern exceeds maximum length of ${MAX_PATTERN_LENGTH}`);
       }
       if (hasCatastrophicBacktrackingShape(schema.pattern)) {
-        return `${path} schema pattern is rejected as potentially unsafe (nested quantifiers)`;
+        return fail(path, 'safe regex pattern (no nested quantifiers)', schema.pattern, `${path} schema pattern is rejected as potentially unsafe (nested quantifiers)`);
       }
       let re: RegExp;
       try {
         re = new RegExp(`^(?:${schema.pattern})$`);
       } catch {
-        return `${path} schema has an invalid pattern`;
+        return fail(path, 'valid regex pattern', schema.pattern, `${path} schema has an invalid pattern`);
       }
       if (!re.test(value)) {
-        return `${path} does not match the allowed pattern`;
+        return fail(path, `string matching /${schema.pattern}/`, safeGot(value), `${path} does not match the allowed pattern`);
       }
     }
     // Reject embedded null bytes universally — they are never legitimate in
     // tool arguments and frequently used for parser-confusion attacks.
     if (value.includes('\0')) {
-      return `${path} contains a null byte`;
+      return fail(path, 'string without null bytes', safeGot(value), `${path} contains a null byte`);
     }
   }
 
   if (typeof value === 'number') {
     if (schema.minimum !== undefined && value < schema.minimum) {
-      return `${path} must be >= ${schema.minimum}`;
+      return fail(path, `number >= ${schema.minimum}`, value, `${path} must be >= ${schema.minimum}`);
     }
     if (schema.maximum !== undefined && value > schema.maximum) {
-      return `${path} must be <= ${schema.maximum}`;
+      return fail(path, `number <= ${schema.maximum}`, value, `${path} must be <= ${schema.maximum}`);
     }
   }
 
   if (Array.isArray(value)) {
     if (schema.maxItems !== undefined && value.length > schema.maxItems) {
-      return `${path} must contain at most ${schema.maxItems} items`;
+      return fail(path, `array with at most ${schema.maxItems} items`, value.length, `${path} must contain at most ${schema.maxItems} items`);
     }
     if (schema.minItems !== undefined && value.length < schema.minItems) {
-      return `${path} must contain at least ${schema.minItems} items`;
+      return fail(path, `array with at least ${schema.minItems} items`, value.length, `${path} must contain at least ${schema.minItems} items`);
     }
     if (schema.items) {
       for (let i = 0; i < value.length; i++) {
-        const reason = checkAgainstSchema(value[i], schema.items, `${path}[${i}]`, effectiveStrict);
-        if (reason !== null) {
-          return reason;
+        const nested = checkAgainstSchema(value[i], schema.items, `${path}[${i}]`, effectiveStrict);
+        if (nested !== null) {
+          return nested;
         }
       }
     }
@@ -200,7 +288,12 @@ function checkAgainstSchema(
 
       for (const requiredKey of required) {
         if (!Object.prototype.hasOwnProperty.call(value, requiredKey)) {
-          return `${path} is missing required property "${requiredKey}"`;
+          return fail(
+            `${path}.${requiredKey}`,
+            'present',
+            'absent',
+            `${path}.${requiredKey} is missing (required)`,
+          );
         }
       }
 
@@ -208,24 +301,89 @@ function checkAgainstSchema(
         const propSchema = properties[key];
         if (propSchema === undefined) {
           if (!additionalProperties) {
-            return `${path} contains disallowed property "${key}"`;
+            return fail(`${path}.${key}`, 'absent', 'present', `${path} contains disallowed property "${key}"`);
           }
           continue;
         }
-        const reason = checkAgainstSchema(
+        const nested = checkAgainstSchema(
           (value as Record<string, unknown>)[key],
           propSchema,
           `${path}.${key}`,
           effectiveStrict
         );
-        if (reason !== null) {
-          return reason;
+        if (nested !== null) {
+          return nested;
         }
       }
     }
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a non-null {@link ValidationResult} — a shorthand to avoid repeating
+ * the full object shape at every failure site in {@link checkAgainstSchema}.
+ */
+function fail(path: string, expected: string, got: unknown, reason: string): ValidationResult {
+  return { path, expected, got, reason };
+}
+
+/**
+ * Maximum number of characters to include verbatim from a string value in the
+ * `got` field.  Strings longer than this are truncated and suffixed with `…`
+ * to prevent large tool arguments from being written to the audit log.
+ */
+const GOT_STRING_MAX_LEN = 120;
+
+/**
+ * Produce a safe, bounded representation of `value` for the `got` field.
+ *
+ * - Primitives (number, boolean, null) are returned as-is — they are always
+ *   compact.
+ * - Strings are truncated to {@link GOT_STRING_MAX_LEN} characters to prevent
+ *   large or sensitive argument values from being forwarded to clients or
+ *   persisted in the audit log.
+ * - Arrays are represented by their length descriptor (e.g. `"array(4)"`)
+ *   rather than being serialised in full.
+ * - Objects are represented by their key count descriptor (e.g. `"object{3}"`).
+ *
+ * This is intentionally lossy — the purpose of `got` is to give a developer a
+ * quick hint for debugging, not to reproduce the full input.
+ */
+function safeGot(value: unknown): unknown {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return value.length <= GOT_STRING_MAX_LEN
+      ? value
+      : `${value.slice(0, GOT_STRING_MAX_LEN)}…`;
+  }
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+  if (typeof value === 'object') {
+    return `object{${Object.keys(value as object).length}}`;
+  }
+  return typeof value;
+}
+
+/**
+ * Return a compact, human-readable type descriptor for `value`.
+ *
+ * Used in the `got` field of type-mismatch failures so MCP clients see
+ * a concise label rather than the raw value (which could be an arbitrarily
+ * large object).
+ */
+function typeDescriptorOf(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
 }
 
 function includesType(
