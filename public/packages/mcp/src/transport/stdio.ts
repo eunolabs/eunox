@@ -55,6 +55,9 @@ import {
   type Notification,
   type ServerNotification,
 } from '@modelcontextprotocol/sdk/types.js';
+import {
+  hasRedactObligation,
+} from '@euno/common-core';
 import { PolicyDecisionPoint, AlwaysAllowPDP } from '../pdp';
 import {
   MCP_PROTOCOL_VERSION,
@@ -62,6 +65,7 @@ import {
 } from '../protocol';
 import { McpAuditSink, NullAuditSink } from '../audit';
 import type { TelemetryHooks } from '../telemetry/types';
+import { applyRedactObligations, type ToolCallResult } from './obligations';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -349,22 +353,21 @@ export class StdioProxy {
         sessionId: this._opts.sessionId,
       });
 
-      // Record the enforcement decision — fire-and-forget so audit I/O never
-      // blocks the response to the MCP client.  `_writeRecord` swallows its
-      // own errors; failures are emitted to stderr by the sink.
-      void this._opts.auditSink.record({
-        sessionId: this._opts.sessionId,
-        toolName: req.params.name,
-        decision: decision.allow ? 'allow' : 'deny',
-        denialCode: decision.denialCode,
-        conditionType: decision.conditionType,
-        details: decision.details,
-      });
-
       // Notify telemetry hooks (fire-and-forget, no await).
       this._opts.telemetryHooks?.onDecision?.(decision.allow, decision.conditionType);
 
       if (!decision.allow) {
+        // Record the enforcement decision — fire-and-forget so audit I/O never
+        // blocks the response to the MCP client.  `_writeRecord` swallows its
+        // own errors; failures are emitted to stderr by the sink.
+        void this._opts.auditSink.record({
+          sessionId: this._opts.sessionId,
+          toolName: req.params.name,
+          decision: 'deny',
+          denialCode: decision.denialCode,
+          conditionType: decision.conditionType,
+          details: decision.details,
+        });
         // Return a structured CapabilityDenied result (not a transport-level
         // error) so the host can present a human-readable denial.
         return buildDenialResult(
@@ -375,8 +378,34 @@ export class StdioProxy {
         );
       }
 
-      // Allowed — forward to upstream.
-      return await client.callTool(req.params, CompatibilityCallToolResultSchema);
+      // Allowed — forward to upstream and apply any response-path obligations.
+      const upstreamResult = await client.callTool(
+        req.params,
+        CompatibilityCallToolResultSchema,
+      );
+
+      // Apply redactFields (and any other response-path) obligations when the
+      // matched constraint carries conditions that have a `redact` lobe.
+      const { matchedConditions } = decision;
+      const obligationsApplied: string[] = [];
+      let finalResult = upstreamResult;
+      if (matchedConditions && hasRedactObligation(matchedConditions)) {
+        finalResult = applyRedactObligations(
+          upstreamResult as ToolCallResult,
+          matchedConditions,
+        ) as typeof upstreamResult;
+        obligationsApplied.push('redactFields');
+      }
+
+      // Record the allow decision (with any obligations applied) fire-and-forget.
+      void this._opts.auditSink.record({
+        sessionId: this._opts.sessionId,
+        toolName: req.params.name,
+        decision: 'allow',
+        obligationsApplied: obligationsApplied.length > 0 ? obligationsApplied : undefined,
+      });
+
+      return finalResult;
     });
 
     // ── 5. Connect the server to host stdio ─────────────────────────────────

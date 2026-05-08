@@ -22,11 +22,19 @@
  *   Recipients are extracted from the tool call arguments (to, recipients,
  *   cc, bcc fields) and matched against the allowed-domains list.
  *
+ * Per stage2executionplan.md Task 4:
+ *
+ *   redactFields
+ *
+ *   Field stripping is applied to the upstream response on the response path.
+ *   The enforcement lobe always allows; the redact lobe strips the specified
+ *   dotted-path fields from JSON text content and structuredContent.
+ *
  * The following condition types are structurally valid in the production
  * gateway but are DEFERRED to a later Stage and therefore REJECTED by this
  * loader with an explicit error message:
  *
- *   redactFields | policy | custom
+ *   policy | custom
  *
  * Rejecting them (rather than silently accepting) ensures that users get
  * immediate, actionable feedback instead of deploying a manifest whose
@@ -56,11 +64,11 @@ import type { AgentCapabilityManifest, CapabilityCondition } from '@euno/common-
  * `conditions` array is rejected at load time with an error message that
  * names the offending JSON path.
  *
- * Stage-2 progress: both `ipRange` (Task 2) and `recipientDomain` (Task 3)
- * have been lifted from this set and are now fully enforced.
+ * Stage-2 progress: `ipRange` (Task 2), `recipientDomain` (Task 3), and
+ * `redactFields` (Task 4) have been lifted from this set and are now fully
+ * enforced.
  */
 const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set([
-  'redactFields',
   'policy',
   'custom',
 ]);
@@ -190,8 +198,9 @@ export interface FilePolicySourceOptions {
  * 3. Structural schema validation via {@link validateManifest} from
  *    `@euno/common-core` (unknown fields, wrong types, etc.)
  * 4. Stage gate — rejects deferred condition types
- *    (redactFields, policy, custom) with an explicit error message.
- *    Both `ipRange` (Task 2) and `recipientDomain` (Task 3) are now accepted.
+ *    (policy, custom) with an explicit error message.
+ *    `ipRange` (Task 2), `recipientDomain` (Task 3), and `redactFields`
+ *    (Task 4) are now accepted.
  */
 export class FilePolicySource implements LocalPolicySource {
   private readonly resolvedPath: string;

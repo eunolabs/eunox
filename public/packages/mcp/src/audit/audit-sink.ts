@@ -102,6 +102,15 @@ export interface McpAuditRecord {
    */
   details?: Record<string, unknown>;
   /**
+   * Names of response-path obligations that were applied to the upstream
+   * result before forwarding it to the MCP client (e.g. `['redactFields']`).
+   * Stored in the `unmapped` block of the OCSF record.
+   *
+   * Only set when `decision` is `'allow'` and at least one obligation was
+   * applied.
+   */
+  obligationsApplied?: string[];
+  /**
    * Optional request identifier for correlation with upstream logs.
    * Stored in `metadata.uid` when provided; a UUID is generated otherwise.
    */
@@ -272,12 +281,15 @@ export class LocalAuditSink implements McpAuditSink {
 
     const isAllow = entry.decision === 'allow';
 
-    // Build unmapped blob — always includes seq; denial fields only when denying.
+    // Build unmapped blob — always includes seq; denial fields only when denying;
+    // obligation fields only when obligations were applied on an allow path.
     const unmapped: Record<string, unknown> = { seq };
     if (!isAllow) {
       if (entry.denialCode) unmapped['denialCode'] = entry.denialCode;
       if (entry.conditionType) unmapped['conditionType'] = entry.conditionType;
       if (entry.details) unmapped['details'] = entry.details;
+    } else if (entry.obligationsApplied && entry.obligationsApplied.length > 0) {
+      unmapped['obligationsApplied'] = entry.obligationsApplied;
     }
 
     // Build the unsigned OCSF event body (no enrichments yet).

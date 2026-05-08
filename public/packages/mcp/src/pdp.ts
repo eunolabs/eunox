@@ -141,6 +141,17 @@ export interface PdpDecision {
    * Only set when `allow` is `false` and structured information is available.
    */
   readonly details?: Record<string, unknown>;
+  /**
+   * The conditions from the matched {@link CapabilityConstraint} when
+   * `allow` is `true` and a constraint was found.  Populated by
+   * {@link ConditionEnforcerPDP} so the transport layer can apply
+   * response-path obligations (e.g. `redactFields`) without re-running
+   * the capability match.
+   *
+   * `undefined` when `allow` is `false`, when no constraint matched the
+   * tool name, or when the matched constraint carries no conditions.
+   */
+  readonly matchedConditions?: readonly CapabilityCondition[];
 }
 
 /**
@@ -632,7 +643,15 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
       }
     }
 
-    return { allow: true };
+    // Expose the matched constraint's conditions so the transport layer can
+    // apply response-path obligations (e.g. redactFields) without re-matching.
+    return {
+      allow: true,
+      matchedConditions:
+        matched.conditions && matched.conditions.length > 0
+          ? matched.conditions
+          : undefined,
+    };
   }
 
   // --------------------------------------------------------------------------

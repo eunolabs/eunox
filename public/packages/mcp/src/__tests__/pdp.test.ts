@@ -1,6 +1,6 @@
 /**
  * Unit tests for ConditionEnforcerPDP (Task 8 acceptance criteria +
- * Task 3 recipientDomain condition).
+ * Task 3 recipientDomain condition + Task 4 redactFields condition).
  *
  * Test matrix
  * -----------
@@ -25,6 +25,12 @@
  * ✓ extractRecipients — recognises to (string), to (string[]), recipients, cc, bcc
  * ✓ extractRecipients — combines multiple recipient fields
  * ✓ extractRecipients — returns undefined when no recognised fields present
+ * ✓ redactFields — enforce lobe always allows (never denies)
+ * ✓ redactFields — matchedConditions populated on allow with conditions
+ * ✓ redactFields — matchedConditions undefined when no constraint matches
+ * ✓ redactFields — matchedConditions undefined when constraint has no conditions
+ * ✓ redactFields — matchedConditions carries all conditions (not just redactFields)
+ * ✓ redactFields — matchedConditions undefined on deny decisions
  */
 
 import { ConditionEnforcerPDP } from '../pdp';
@@ -1604,5 +1610,100 @@ describe('extractRecipients (via ConditionEnforcerPDP)', () => {
       makeCtx(),
     );
     expect(d.allow).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// redactFields condition (Task 4)
+// ---------------------------------------------------------------------------
+
+describe('ConditionEnforcerPDP — redactFields condition', () => {
+  it('allows a call when a redactFields condition is present (enforce always allows)', async () => {
+    const manifest = singleToolManifest('get_user', [
+      { type: 'redactFields', fields: ['ssn', 'dob'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('get_user', { userId: '123' }), makeCtx());
+    expect(d.allow).toBe(true);
+  });
+
+  it('populates matchedConditions on an allow decision when conditions are present', async () => {
+    const manifest = singleToolManifest('get_user', [
+      { type: 'redactFields', fields: ['ssn'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('get_user', {}), makeCtx());
+    expect(d.allow).toBe(true);
+    expect(d.matchedConditions).toBeDefined();
+    expect(d.matchedConditions).toHaveLength(1);
+    expect(d.matchedConditions![0]!.type).toBe('redactFields');
+  });
+
+  it('matchedConditions is undefined when no constraint matches the tool', async () => {
+    const manifest = singleToolManifest('restricted_tool', [
+      { type: 'redactFields', fields: ['secret'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // 'other_tool' is not constrained — no matchedConditions.
+    const d = await pdp.decide(makeRequest('other_tool'), makeCtx());
+    expect(d.allow).toBe(true);
+    expect(d.matchedConditions).toBeUndefined();
+  });
+
+  it('matchedConditions is undefined when the matched constraint has no conditions', async () => {
+    const manifest: AgentCapabilityManifest = {
+      agentId: 'no-cond-agent',
+      name: 'No Conditions',
+      version: '1.0.0',
+      requiredCapabilities: [{ resource: 'read_public', actions: ['call'] }],
+    };
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('read_public'), makeCtx());
+    expect(d.allow).toBe(true);
+    expect(d.matchedConditions).toBeUndefined();
+  });
+
+  it('matchedConditions carries ALL conditions (not just redactFields)', async () => {
+    // When a constraint has both maxCalls and redactFields, matchedConditions
+    // includes both so the transport can pass the full list to redactConditions.
+    const manifest = singleToolManifest('mixed_tool', [
+      { type: 'maxCalls', count: 10, windowSeconds: 60 } as CapabilityCondition,
+      { type: 'redactFields', fields: ['internal'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('mixed_tool'), makeCtx());
+    expect(d.allow).toBe(true);
+    expect(d.matchedConditions).toHaveLength(2);
+    expect(d.matchedConditions!.map((c) => c.type)).toContain('redactFields');
+    expect(d.matchedConditions!.map((c) => c.type)).toContain('maxCalls');
+  });
+
+  it('matchedConditions is undefined when the call is denied', async () => {
+    const manifest = singleToolManifest('locked', [
+      { type: 'maxCalls', count: 0, windowSeconds: 60 } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('locked'), makeCtx());
+    expect(d.allow).toBe(false);
+    expect(d.matchedConditions).toBeUndefined();
+  });
+
+  it('redactFields does not deny — a constraint with only redactFields allows the call', async () => {
+    const manifest = singleToolManifest('sensitive_query', [
+      { type: 'redactFields', fields: ['password', 'credit_card'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // Multiple calls all succeed (no call counter involved).
+    for (let i = 0; i < 5; i++) {
+      const d = await pdp.decide(makeRequest('sensitive_query', { id: i }), makeCtx());
+      expect(d.allow).toBe(true);
+    }
   });
 });

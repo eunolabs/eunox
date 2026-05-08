@@ -95,6 +95,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'get_user',
+      description: 'Returns a synthetic user record with sensitive fields',
+      inputSchema: {
+        type: 'object' as const,
+        properties: { id: { type: 'string', description: 'User ID' } },
+        required: ['id'],
+      },
+    },
   ],
 }));
 
@@ -134,6 +143,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         {
           type: 'text' as const,
           text: JSON.stringify({ rows: [{ id: 1, sql }] }),
+        },
+      ],
+    };
+  }
+
+  if (req.params.name === 'get_user') {
+    const id = typeof args['id'] === 'string' ? args['id'] : '0';
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({ id, name: 'Alice', ssn: '123-45-6789', credit: '4111-1111-1111-1111' }),
         },
       ],
     };

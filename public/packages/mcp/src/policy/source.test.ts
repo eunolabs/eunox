@@ -1,6 +1,7 @@
 /**
  * Unit tests for FilePolicySource and the manifest validation pipeline
- * (Task 7 acceptance criteria + Task 3 recipientDomain gate lift).
+ * (Task 7 acceptance criteria + Task 3 recipientDomain gate lift +
+ * Task 4 redactFields gate lift).
  *
  * Test matrix
  * -----------
@@ -9,9 +10,9 @@
  * ✓ All Stage-1 condition types accepted (maxCalls, timeWindow,
  *     allowedOperations, allowedExtensions, allowedTables)
  * ✓ recipientDomain condition type now accepted (Stage-2 Task 3 gate lifted)
+ * ✓ redactFields condition type now accepted (Stage-2 Task 4 gate lifted)
  * ✓ Unknown condition type → ManifestValidationError (names JSON path)
- * ✓ Deferred condition types (ipRange, redactFields,
- *     policy, custom) → ManifestValidationError mentioning Stage 2
+ * ✓ Deferred condition types (policy, custom) → ManifestValidationError mentioning Stage 2
  * ✓ Semantic error: notAfter before notBefore → ManifestValidationError
  * ✓ Missing required top-level field → ManifestValidationError
  * ✓ Unknown top-level field → ManifestValidationError
@@ -361,10 +362,6 @@ requiredCapabilities:
 
 const DEFERRED_TYPES = [
   {
-    type: 'redactFields',
-    yaml: 'type: redactFields\nfields: [ssn, dob]',
-  },
-  {
     type: 'policy',
     yaml: 'type: policy\nbackend: opa-http',
   },
@@ -419,8 +416,8 @@ optionalCapabilities:
   - resource: "api://extras"
     actions: [read]
     conditions:
-      - type: redactFields
-        fields: [ssn]
+      - type: policy
+        backend: opa-http
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toThrow(ManifestValidationError);
@@ -523,6 +520,102 @@ optionalCapabilities:
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const conditions = manifest.optionalCapabilities![0]!.conditions!;
     expect(conditions[0]!.type).toBe('ipRange');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage-2 Task 4 — redactFields condition accepted (gate lifted)
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — redactFields condition (Stage-2 Task 4)', () => {
+  it('accepts a redactFields condition (no longer deferred)', async () => {
+    const content = `
+agentId: redact-agent
+name: Redact Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "get_user"
+    actions: [call]
+    conditions:
+      - type: redactFields
+        fields: [ssn, dob]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.type).toBe('redactFields');
+  });
+
+  it('accepts redactFields alongside Stage-1 conditions', async () => {
+    const content = `
+agentId: mixed-redact-agent
+name: Mixed Redact Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "query_users"
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 100
+        windowSeconds: 3600
+      - type: redactFields
+        fields: [password_hash, api_key]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(2);
+    expect(conditions.map((c) => c.type)).toEqual(['maxCalls', 'redactFields']);
+  });
+
+  it('accepts redactFields in optionalCapabilities', async () => {
+    const content = `
+agentId: opt-redact-agent
+name: Opt Redact Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://core"
+    actions: [read]
+optionalCapabilities:
+  - resource: "export_data"
+    actions: [call]
+    conditions:
+      - type: redactFields
+        fields: [internal_id]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    expect(manifest.optionalCapabilities).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.optionalCapabilities![0]!.conditions!;
+    expect(conditions[0]!.type).toBe('redactFields');
+  });
+
+  it('accepts redactFields alongside ipRange and recipientDomain', async () => {
+    const content = `
+agentId: full-stage2-agent
+name: Full Stage-2 Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "send_report"
+    actions: [call]
+    conditions:
+      - type: ipRange
+        cidrs: ["10.0.0.0/8"]
+      - type: recipientDomain
+        domains: [example.com]
+      - type: redactFields
+        fields: [ssn, card_number]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(3);
+    expect(conditions.map((c) => c.type)).toEqual(['ipRange', 'recipientDomain', 'redactFields']);
   });
 });
 

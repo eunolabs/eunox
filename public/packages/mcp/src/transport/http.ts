@@ -48,6 +48,9 @@ import {
   type Notification,
   type ServerNotification,
 } from '@modelcontextprotocol/sdk/types.js';
+import {
+  hasRedactObligation,
+} from '@euno/common-core';
 import { AlwaysAllowPDP, type PolicyDecisionPoint } from '../pdp';
 import {
   MCP_PROTOCOL_VERSION,
@@ -55,6 +58,7 @@ import {
 } from '../protocol';
 import type { TelemetryHooks } from '../telemetry/types';
 import { NullAuditSink, type McpAuditSink } from '../audit/audit-sink';
+import { applyRedactObligations, type ToolCallResult } from './obligations';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -623,21 +627,20 @@ export class HttpProxy {
       const sourceIp = this._sourceIpStorage.getStore();
       const decision = await pdp.decide(reqMsg, { sessionId, sourceIp });
 
-      // Record the enforcement decision — fire-and-forget so audit I/O never
-      // blocks the response to the MCP client.
-      void this._opts.auditSink.record({
-        sessionId,
-        toolName: reqMsg.params.name,
-        decision: decision.allow ? 'allow' : 'deny',
-        denialCode: decision.denialCode,
-        conditionType: decision.conditionType,
-        details: decision.details,
-      });
-
       // Notify telemetry hooks about this enforcement decision.
       sessionTelemetry?.onDecision?.(decision.allow, decision.conditionType);
 
       if (!decision.allow) {
+        // Record the enforcement decision — fire-and-forget so audit I/O never
+        // blocks the response to the MCP client.
+        void this._opts.auditSink.record({
+          sessionId,
+          toolName: reqMsg.params.name,
+          decision: 'deny',
+          denialCode: decision.denialCode,
+          conditionType: decision.conditionType,
+          details: decision.details,
+        });
         return buildDenialResult(
           reqMsg.params.name,
           decision.reason,
@@ -646,10 +649,32 @@ export class HttpProxy {
         );
       }
 
-      return await upstreamClient.callTool(
+      // Allowed — forward to upstream and apply any response-path obligations.
+      const upstreamResult = await upstreamClient.callTool(
         reqMsg.params,
         CompatibilityCallToolResultSchema,
       );
+
+      const { matchedConditions } = decision;
+      const obligationsApplied: string[] = [];
+      let finalResult = upstreamResult;
+      if (matchedConditions && hasRedactObligation(matchedConditions)) {
+        finalResult = applyRedactObligations(
+          upstreamResult as ToolCallResult,
+          matchedConditions,
+        ) as typeof upstreamResult;
+        obligationsApplied.push('redactFields');
+      }
+
+      // Record the allow decision (with any obligations applied) fire-and-forget.
+      void this._opts.auditSink.record({
+        sessionId,
+        toolName: reqMsg.params.name,
+        decision: 'allow',
+        obligationsApplied: obligationsApplied.length > 0 ? obligationsApplied : undefined,
+      });
+
+      return finalResult;
     });
 
     proxyServer.fallbackRequestHandler = async (request) => {

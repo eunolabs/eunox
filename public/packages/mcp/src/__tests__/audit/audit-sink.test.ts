@@ -694,3 +694,90 @@ describe('LocalAuditSink — details field in unmapped', () => {
     expect(verifyAuditEvent(event!, signer)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// obligationsApplied field — redactFields response-path obligation (Task 4)
+// ---------------------------------------------------------------------------
+
+describe('LocalAuditSink — obligationsApplied field in unmapped', () => {
+  let dir: string;
+
+  beforeEach(() => { dir = tmpDir(); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('writes obligationsApplied into unmapped for an allow record when provided', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-oblig',
+      toolName: 'get_user',
+      decision: 'allow',
+      obligationsApplied: ['redactFields'],
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).toMatchObject({ obligationsApplied: ['redactFields'] });
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+
+  it('omits obligationsApplied from unmapped when not provided', async () => {
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({ sessionId: 'sess-no-oblig', toolName: 'echo', decision: 'allow' });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('obligationsApplied');
+  });
+
+  it('omits obligationsApplied on deny records even if supplied', async () => {
+    // The sink only records obligationsApplied on allow decisions.
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-deny',
+      toolName: 'echo',
+      decision: 'deny',
+      denialCode: 'MAX_CALLS_EXCEEDED',
+      conditionType: 'maxCalls',
+      obligationsApplied: ['redactFields'],
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('obligationsApplied');
+    expect(event!.unmapped).toHaveProperty('denialCode');
+  });
+
+  it('obligationsApplied is covered by HMAC (tampering fails verify)', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-tamper',
+      toolName: 'get_user',
+      decision: 'allow',
+      obligationsApplied: ['redactFields'],
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+
+    // Tamper: change the obligationsApplied list.
+    const tampered = JSON.parse(JSON.stringify(event)) as SignedMcpAuditEvent;
+    (tampered.unmapped as Record<string, unknown>)['obligationsApplied'] = ['TAMPERED'];
+    expect(verifyAuditEvent(tampered, signer)).toBe(false);
+  });
+
+  it('supports multiple obligation names in the array', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-multi',
+      toolName: 'export',
+      decision: 'allow',
+      obligationsApplied: ['redactFields', 'customObligation'],
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped['obligationsApplied']).toEqual(['redactFields', 'customObligation']);
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+});
