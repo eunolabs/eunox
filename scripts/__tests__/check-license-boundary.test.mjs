@@ -173,21 +173,18 @@ test('fails when a package uses an unrecognized license string', () => {
   }
 });
 
-test('reports ALLOW for allowlisted violations and still exits 0', () => {
-  // The ALLOWLIST in the script is keyed to real repo package names
-  // (e.g. @euno/cli -> @euno/common). Use those exact names in the fixture
-  // so the allowlist path is actually exercised: an Apache-2.0 -> BUSL-1.1
-  // edge that would otherwise be a violation is reported as ALLOW instead.
+test('@euno/cli with only @euno/common-core dependency passes (migration complete)', () => {
+  // Verifies the correct post-migration state: @euno/cli depends on the
+  // Apache-2.0 @euno/common-core, not the BUSL-1.1 @euno/common compat shim.
   const root = makeFixture([
-    { name: '@euno/common', license: 'BUSL-1.1' },
-    { name: '@euno/cli', license: 'Apache-2.0', deps: { '@euno/common': 'workspace:*' } },
+    { name: '@euno/common-core', license: 'Apache-2.0' },
+    { name: '@euno/cli', license: 'Apache-2.0', deps: { '@euno/common-core': 'workspace:*' } },
   ]);
   try {
-    const { exitCode, stdout, stderr } = run(root);
-    assert.equal(exitCode, 0, 'allowlisted violation should still exit 0');
-    assert.match(stdout, /ALLOW @euno\/cli -> @euno\/common/);
-    assert.match(stdout, /OK/);
-    assert.doesNotMatch(stderr, /LICENSE BOUNDARY VIOLATION/);
+    const { exitCode, stdout } = run(root);
+    assert.equal(exitCode, 0, '@euno/cli -> @euno/common-core (Apache-2.0) should pass');
+    assert.match(stdout, /OK\s+License boundary check passed/);
+    assert.doesNotMatch(stdout, /ALLOW/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -7,35 +7,76 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [1.0.0] — 2026-05-07 (Stage 1 scaffold)
+## [0.1.0] — 2026-05-08 (Stage 1 initial release)
+
+First public release of `@euno/mcp`. Published to GitHub Packages
+(`@euno` scope). Full Stage 1 feature set.
 
 ### Added
 
+**Transports**
+
+- **`src/transport/stdio.ts`** — `StdioProxy`: spawns an upstream MCP server
+  as a child process, bridges stdin/stdout, forwards `tools/list` /
+  `resources/list` / `prompts/list` verbatim, intercepts `tools/call` through
+  the PDP. Propagates upstream stderr. Handles SIGINT/SIGTERM. Drop-in
+  replacement for any upstream in `claude_desktop_config.json` / Cursor
+  `mcpServers` config.
+
+- **`src/transport/http.ts`** — `HttpProxy`: streamable HTTP transport for
+  LangChain.js and in-process clients. Binds to `127.0.0.1` by default;
+  rejects `0.0.0.0` unless `--unsafe-bind-all` is passed. One session per
+  MCP `initialize` / `shutdown` cycle, keyed by `clientInfo` + server-minted
+  session ID. Concurrent sessions fully isolated.
+
+**Policy engine**
+
+- **`src/policy/source.ts`** — `FilePolicySource` / `LocalPolicySource`
+  interface: loads YAML or JSON policy files and validates them against
+  `AgentCapabilityManifest` from `@euno/common-core`. Rejects deferred
+  Stage-2 types (`ipRange`, `recipientDomain`, `redactFields`, `policy`,
+  `custom`) with explicit error messages naming the Stage and JSON path.
+
+- **`src/pdp.ts`** — `ConditionEnforcerPDP`: real policy decision point
+  wiring `condition-registry` from `@euno/common-core`,
+  `InMemoryCallCounterStore`, and `DefaultKillSwitchManager`. Supported
+  conditions: `maxCalls`, `timeWindow`, `allowedOperations`,
+  `allowedExtensions`, `allowedTables`, `argumentSchema`. Unknown types
+  deny by default (fail-closed).
+
+**Audit log**
+
+- **`src/audit/`** — OCSF-shaped JSONL at `~/.euno/audit.jsonl`
+  (configurable). HMAC-SHA-256 signed with a key generated at first run,
+  stored at `~/.euno/key` (mode `0600`). Rotates at 100 MiB. Format
+  identical to the Stage-3 gateway evidence stream; only the signer differs.
+
+**Telemetry**
+
+- **`src/telemetry/`** — opt-in, off by default. First-run consent prompt,
+  persisted to `~/.euno/telemetry`. Counts only — no tool names, no argument
+  values, no file paths. Anonymous install ID regenerated per install.
+  `EUNO_TELEMETRY=0` disables outbound. `EUNO_TELEMETRY_LOCAL=1` writes to
+  `~/.euno/telemetry.jsonl` and sends nothing. Schema documented in
+  `TELEMETRY.md`.
+
+**CLI**
+
+- `euno-mcp proxy` — stdio or HTTP proxy with `--policy`, `--transport`,
+  `--port`, `--bind`, `--audit-log`, `--unsafe-bind-all` flags.
+  `-- <cmd> [args]` upstream syntax.
+- `euno-mcp validate <file>` — validates a policy file; reuses the same
+  `validateManifest` codepath as `@euno/cli` and the production issuer.
+- `euno-mcp kill <sessionId|all>` — flips the in-memory kill switch.
+
+**Protocol**
+
 - **`src/protocol.ts`** — `MCP_PROTOCOL_VERSION` (`'2025-11-25'`) and
-  `MCP_SUPPORTED_PROTOCOL_VERSIONS` constants.  These are the single source of
-  truth for the protocol revision that `@euno/mcp` advertises and accepts.
-  See [docs/mcp-support.md](../../docs/mcp-support.md) for the full support
-  window policy.
-
-- **`src/pdp.ts`** — `PolicyDecisionPoint` interface, `PdpContext`,
-  `PdpDecision`, and `AlwaysAllowPDP` (transparent passthrough for Stage 1).
-  The PDP is the single enforcement seam; Phase B wires in the real
-  condition-registry backed enforcer here.
-
-- **`src/transport/stdio.ts`** — `StdioProxy` class.  Spawns an upstream MCP
-  server as a child process and bridges stdin/stdout, forwarding all MCP
-  requests.  Intercepts `tools/call` through the PDP.  Bridges notifications
-  in both directions.  Propagates upstream stderr.  Handles SIGINT/SIGTERM.
-
-- **`src/cli.ts`** — `euno-mcp proxy` command and `euno-mcp validate` stub.
+  `MCP_SUPPORTED_PROTOCOL_VERSIONS` constants.
 
 ### SDK pin
 
-`@modelcontextprotocol/sdk` pinned at `1.26.0` (exact).  Protocol revision:
+`@modelcontextprotocol/sdk` pinned at `1.26.0` (exact). Protocol revision:
 `2025-11-25` (primary); `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07`
 also accepted within the support window.
-
-> **Note:** The original Stage 0 decision recorded `1.11.0` and revision
-> `2025-03-26`.  `1.11.0` was affected by three CVEs (ReDoS, DNS-rebinding,
-> cross-client data leak).  The pin was advanced to `1.26.0` and the primary
-> revision updated to `2025-11-25` (SDK 1.26.0 `LATEST_PROTOCOL_VERSION`).
+See [docs/mcp-support.md](../../docs/mcp-support.md).

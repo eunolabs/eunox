@@ -73,8 +73,8 @@ rewrite agent business logic to adopt Euno:
 - **CrewAI** — `wrapAsCrewAITool`, `wrapAsCrewAITools`, `EunoCrewAITaskLifecycle`
 
 All three share a single correlation-ID and error-shape contract so
-observability is identical regardless of framework. See
-[`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md) for the design.
+observability is identical regardless of framework. See the package source at
+`euno-platform/packages/framework-adapters/src/` for the design. (Frozen in Stage 0; activation tracked in [docs/mvp.md](./mvp.md) Stage 3.)
 
 ### 6. **CLI** (`packages/cli`)
 Developer command-line tool: `euno init` (with `--framework` flag for

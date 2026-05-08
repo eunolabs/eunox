@@ -188,14 +188,13 @@ strategy.
 >   `scripts/check-license-boundary.mjs` walks the full workspace dependency
 >   graph (including transitive edges and all dep fields), fails on any
 >   Apache-2.0 -> BUSL-1.1 edge, and is wired into `npm run lint` and the
->   GitHub Actions CI workflow (`.github/workflows/ci.yml`). Two known
->   violations involving `@euno/cli` are allowlisted with a migration plan;
->   see [`docs/repo-split.md`](./repo-split.md). Two-folder strategy is decided
->   and documented (Option A); top-level folders [`euno-mcp/`](../euno-mcp/)
->   and [`euno-platform/`](../euno-platform/) now contain the actual packages
->   under their respective `packages/` subdirectories. Apache-2.0 packages live
->   under `euno-mcp/packages/` and BUSL-1.1 packages live under
->   `euno-platform/packages/`.
+>   GitHub Actions CI workflow (`.github/workflows/ci.yml`). The `@euno/cli`
+>   migration to `@euno/common-core` is complete; the allowlist is empty
+>   (zero violations). Two-folder strategy decided and documented; top-level
+>   folders [`euno-mcp/`](../euno-mcp/) and [`euno-platform/`](../euno-platform/)
+>   contain the actual packages under their respective `packages/`
+>   subdirectories. Apache-2.0 packages live under `euno-mcp/packages/` and
+>   BUSL-1.1 packages live under `euno-platform/packages/`.
 >
 > **All six Stage 0 gate conditions are now met. Stage 1 may begin.**
 
@@ -306,6 +305,26 @@ to something hidden.
 ---
 
 ## Stage 1: MCP Proxy MVP
+
+> **Stage 1 status** (May 2026)
+>
+> - [x] Task 1 — `packages/euno-mcp` scaffolded; build, lint, test all pass
+> - [x] Task 2 — `MCP_PROTOCOL_VERSION` constant; `docs/mcp-support.md` updated
+> - [x] Task 3 — `StdioProxy` with full passthrough + `tools/call` interception
+> - [x] Task 4 — Mock upstream + stdio integration tests (transport-stdio.test.ts)
+> - [x] Task 5 — `HttpProxy` streamable HTTP transport + integration tests
+> - [x] Task 6 — OCSF audit log, HMAC-SHA-256 signer, key at `~/.euno/key` (0600)
+> - [x] Task 7 — `FilePolicySource` loading YAML/JSON; Stage-2 types rejected
+> - [x] Task 8 — `ConditionEnforcerPDP` wiring condition-registry; in-memory counters + kill-switch
+> - [x] Task 9 — `euno-mcp proxy`, `euno-mcp validate`, `euno-mcp kill` CLI commands
+> - [x] Task 10 — Opt-in telemetry (off by default; counts only; `EUNO_TELEMETRY=0` disables)
+> - [x] Task 11 — e2e test: destructive SQL blocked before upstream is called
+> - [x] Task 12 — Apache→BSL dependency lint covers `@euno/mcp`; `@euno/cli` migration complete
+> - [x] Task 13 — `release-mcp.yml` workflow; `publishConfig` to GitHub Packages
+> - [x] Task 14 — `@euno/mcp` README with before/after, drop-in config, enforcement guarantee
+> - [x] Task 15 — `scripts/stage2-readiness.ts`; `.github/ISSUE_TEMPLATE/feature-ask.md`
+>
+> **All 15 Stage 1 tasks are complete. `@euno/mcp` 0.1.0 is ready to publish.**
 
 **The pitch:** *"Add guardrails to any MCP server in 5 minutes.
 No infrastructure required."*

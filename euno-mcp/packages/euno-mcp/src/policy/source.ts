@@ -8,7 +8,8 @@
  *
  * Supported Stage-1 condition types
  * ----------------------------------
- * Per the Stage-1 execution plan (docs/stage1executionplan.md line 14):
+ * Per docs/mvp.md §"What ships / Stage 1" and the condition-registry in
+ * @euno/common-core:
  *
  *   maxCalls | timeWindow | allowedOperations | allowedExtensions | allowedTables
  *

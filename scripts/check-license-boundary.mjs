@@ -94,12 +94,9 @@ const ALL_RECOGNIZED = new Set([...OPEN_LICENSES, ...RESTRICTED_LICENSES]);
 // Remove the entry as soon as the dependency is fixed.
 // ---------------------------------------------------------------------------
 const ALLOWLIST = new Map([
-  // @euno/cli (Apache-2.0) currently imports @euno/common (BUSL-1.1), the
-  // substage-0.3 compat shim that re-exports common-core + common-infra.
-  // Tracked in docs/repo-split.md -- cli must be migrated to depend on
-  // @euno/common-core directly before @euno/cli is published to npm.
-  ['@euno/cli->@euno/common', 'cli uses the 0.3 compat shim; migrate to common-core before publishing'],
-  ['@euno/cli->@euno/common-infra', 'transitive via @euno/common (0.3 compat shim)'],
+  // No current violations — all Apache-2.0 packages depend only on other
+  // Apache-2.0 packages.  Add entries here only when a violation is
+  // intentional, tracked, and scheduled for removal.
 ]);
 
 // ---------------------------------------------------------------------------

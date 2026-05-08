@@ -15,7 +15,7 @@ import {
   EunoServiceName,
   validateManifest,
   ManifestValidationError,
-} from '@euno/common';
+} from '@euno/common-core';
 
 const program = new Command();
 
@@ -590,9 +590,7 @@ program
  * `euno config` (no subcommand) preserves the long-standing UX of
  * printing the CLI's current environment variables. The new
  * `dump-template` subcommand emits a `.env.example` for one of the
- * services from the typed `EunoConfig` Zod schema in
- * `@euno/common` — see R-5 in
- * `docs/IMPROVEMENTS_AND_REFACTORING.md`.
+ * services from the typed `EunoConfig` Zod schema in `@euno/common-core`.
  */
 const configCmd = program
   .command('config')
@@ -614,7 +612,7 @@ configCmd
 configCmd
   .command('dump-template')
   .description(
-    'Print a `.env.example` for the named service, generated from the EunoConfig Zod schema in @euno/common. The output is the canonical replacement for the per-service hand-curated .env.example / .env.template files.',
+    'Print a `.env.example` for the named service, generated from the EunoConfig Zod schema in @euno/common-core. The output is the canonical replacement for the per-service hand-curated .env.example / .env.template files.',
   )
   .requiredOption(
     '-s, --service <name>',

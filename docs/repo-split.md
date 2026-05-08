@@ -51,28 +51,23 @@ implementations are completely invisible.
 
 | Package | License | Notes |
 |---|---|---|
-| `@euno/common-core` | Apache-2.0 | Core types, interfaces, in-memory stores. Published to npm. |
-| `@euno/cli` | Apache-2.0 | Developer CLI. Published to npm. **Blocker: must remove `@euno/common` dep (see below).** |
-| `@euno/mcp` | Apache-2.0 | MCP proxy with local policy enforcement. |
+| `@euno/common-core` | Apache-2.0 | Core types, interfaces, in-memory stores. Published to GitHub Packages. |
+| `@euno/cli` | Apache-2.0 | Developer CLI. Published to GitHub Packages. |
+| `@euno/mcp` | Apache-2.0 | MCP proxy with local policy enforcement. Published to GitHub Packages. |
 | `@euno/langchain` | Apache-2.0 | Stage 2 — not yet created. |
 
 All other packages live in the platform surface.
 
 ---
 
-## Dependency violations to fix before public publish
+## License boundary — current status
 
 The `lint:license-boundary` script (`scripts/check-license-boundary.mjs`)
-currently has two allowlisted violations that must be resolved before any
-Apache-2.0 package is published to npm:
+currently reports **zero violations**. The allowlist is empty.
 
-| Violation | Allowlist key | Fix |
-|---|---|---|
-| `@euno/cli` depends on `@euno/common` (BUSL-1.1) | `@euno/cli->@euno/common` | Update `cli/package.json` to depend on `@euno/common-core` instead. Update all `import` statements that currently pull from `@euno/common` to use `@euno/common-core`. |
-| `@euno/cli` transitively reaches `@euno/common-infra` via `@euno/common` | `@euno/cli->@euno/common-infra` | Resolved automatically when the above fix is applied. |
-
-Once both allowlist entries are removed and `npm run lint:license-boundary`
-still passes, the CLI is safe to publish.
+The historical violation (`@euno/cli` depending on `@euno/common` (BUSL-1.1))
+has been resolved: `@euno/cli` now imports directly from `@euno/common-core`
+(Apache-2.0). The allowlist entries were removed.
 
 ---
 
@@ -106,7 +101,7 @@ be fixed by another publish.
 # From the repo root
 cd euno-mcp/packages/common-core
 npm run build
-npm publish --access public
+npm publish --access public --registry https://npm.pkg.github.com
 ```
 
 ### Post-release
@@ -140,6 +135,6 @@ The following rules apply to every PR that touches `euno-mcp/`:
 
 | Milestone | When |
 |---|---|
-| `common-core` and `cli` fully migrated off `@euno/common` | Before Stage 1 publish |
-| `@euno/mcp` package published to npm | Stage 1 gate |
+| `common-core` and `cli` migrated off `@euno/common` | ✅ Done (Stage 1) |
+| `@euno/mcp` and `@euno/common-core` published to GitHub Packages | Stage 1 gate |
 | `@euno/langchain` package created | Stage 2 |

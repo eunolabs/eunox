@@ -722,7 +722,6 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Understand *why* the design looks like this               | [`capability-model.md`](./capability-model.md), [`enforcement.md`](./enforcement.md)        |
 | See abstract / executive-friendly diagrams                | [`diagrams.md`](./diagrams.md)                                                              |
-| Adopt Euno from a specific framework                      | [`FRAMEWORK_ADAPTERS.md`](./FRAMEWORK_ADAPTERS.md)                                          |
-| Deploy it                                                 | [`DEPLOYMENT.md`](./DEPLOYMENT.md), [`PRODUCTION_DEPLOYMENT_CHECKLIST.md`](./PRODUCTION_DEPLOYMENT_CHECKLIST.md) |
-| Operate it                                                | [`PILOT_PLAYBOOK.md`](./PILOT_PLAYBOOK.md), [`INCIDENT_RESPONSE_RUNBOOK.md`](./INCIDENT_RESPONSE_RUNBOOK.md) |
+| Use the MCP proxy (Stage 1)                               | [`../euno-mcp/packages/euno-mcp/README.md`](../euno-mcp/packages/euno-mcp/README.md)       |
+| Deploy Stage 5 infrastructure                             | [`DEPLOYMENT.md`](./DEPLOYMENT.md)                                                         |
 | Find the gaps and the proposed work to close them         | [`capability-model.md`](./capability-model.md)                                                              |

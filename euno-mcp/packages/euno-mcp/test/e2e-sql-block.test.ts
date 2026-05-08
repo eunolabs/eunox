@@ -40,8 +40,8 @@
  *
  * References
  * ──────────
- * - docs/stage1executionplan.md: Task 11
- * - docs/mvp.md §"Enforcement guarantee" lines 404-412
+ * - docs/mvp.md §"Enforcement guarantee" (Stage 1)
+ * - docs/mvp.md §"Enforcement guarantee — document explicitly" lines 404-412
  */
 
 import * as fs from 'node:fs';
