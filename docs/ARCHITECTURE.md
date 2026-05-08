@@ -80,7 +80,7 @@ flowchart LR
 ## 3. C4 Level 2 — Container / package view
 
 The repository is a TypeScript monorepo with two workspace roots:
-`euno-mcp/packages/*` for Apache-2.0 developer-facing packages and
+`public/packages/*` for Apache-2.0 developer-facing packages and
 `euno-platform/packages/*` for BUSL-1.1 platform packages.
 
 ```mermaid
@@ -97,10 +97,10 @@ flowchart TB
     end
 
     subgraph Shared["Shared platform"]
-        CommonCore["common-core<br/>types, conditions,<br/>in-memory seams"]
+        CommonCore["common (common-core)<br/>types, conditions,<br/>in-memory seams"]
         CommonInfra["common-infra/common<br/>Redis/Postgres/KMS + compat shim"]
         CLI["cli<br/>euno init / validate / request / ..."]
-        MCP["euno-mcp<br/>MCP proxy"]
+        MCP["mcp<br/>MCP proxy"]
     end
 
     subgraph External["External (per env)"]
@@ -144,9 +144,9 @@ flowchart TB
 
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `euno-mcp/packages/common-core` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
-| `euno-mcp/packages/euno-mcp` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
-| `euno-mcp/packages/cli` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
+| `public/packages/common` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
+| `public/packages/mcp` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
+| `public/packages/cli` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
 | `euno-platform/packages/common-infra` | platform shared | BUSL Redis/Postgres/KMS implementations for the interfaces exported by `common-core`. |
 | `euno-platform/packages/common` | compat shim | BUSL back-compat package re-exporting `common-core` and `common-infra`. New public code must not depend on it. |
 | `euno-platform/packages/capability-issuer` | service | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services. |
@@ -732,6 +732,6 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Understand *why* the design looks like this               | [`capability-model.md`](./capability-model.md), [`enforcement.md`](./enforcement.md)        |
 | See abstract / executive-friendly diagrams                | [`diagrams.md`](./diagrams.md)                                                              |
-| Use the MCP proxy (Stage 1)                               | [`../euno-mcp/packages/euno-mcp/README.md`](../euno-mcp/packages/euno-mcp/README.md)       |
+| Use the MCP proxy (Stage 1)                               | [`../public/packages/mcp/README.md`](../public/packages/mcp/README.md)       |
 | Deploy Stage 5 infrastructure                             | [`DEPLOYMENT.md`](./DEPLOYMENT.md)                                                         |
 | Find the gaps and the proposed work to close them         | [`capability-model.md`](./capability-model.md)                                                              |

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Capability-Native Agent Governance System with Azure Integration",
   "workspaces": [
-    "euno-mcp/packages/*",
+    "public/packages/*",
     "euno-platform/packages/*"
   ],
   "scripts": {

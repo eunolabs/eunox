@@ -156,7 +156,7 @@ const AUDIT_PRODUCT = {
   feature: { name: 'capability-audit' },
 } as const;
 
-/** OCSF schema version. Must match the constant in common-core/src/ocsf.ts. */
+/** OCSF schema version. Must match the constant in common/src/ocsf.ts. */
 const OCSF_SCHEMA_VERSION = '1.1.0';
 
 export interface LocalAuditSinkOptions {

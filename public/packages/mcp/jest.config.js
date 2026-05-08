@@ -7,7 +7,7 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         paths: {
-          '@euno/common-core': ['../common-core/src'],
+          '@euno/common-core': ['../common/src'],
           '@modelcontextprotocol/sdk/client/index.js': ['../../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/index.d.ts'],
           '@modelcontextprotocol/sdk/client/stdio.js': ['../../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/stdio.d.ts'],
           '@modelcontextprotocol/sdk/client/streamableHttp.js': ['../../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/streamableHttp.d.ts'],
@@ -20,7 +20,7 @@ module.exports = {
     }],
   },
   moduleNameMapper: {
-    '^@euno/common-core$': '<rootDir>/../common-core/src',
+    '^@euno/common-core$': '<rootDir>/../common/src',
     // Map SDK public-API subpath imports (with .js) to their actual CJS files.
     // Using the exports-map-compatible paths (without dist/cjs prefix) + .js
     // extension avoids Node.js v24's wildcard exports double-expansion bug.

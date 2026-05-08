@@ -8,7 +8,7 @@ module.exports = {
       tsconfig: {
         baseUrl: '.',
         paths: {
-          '@euno/common-core': ['../../../euno-mcp/packages/common-core/src'],
+          '@euno/common-core': ['../../../public/packages/common/src'],
         },
       },
     }],
@@ -20,6 +20,6 @@ module.exports = {
     '!src/**/index.ts',
   ],
   moduleNameMapper: {
-    '^@euno/common-core$': '<rootDir>/../../../euno-mcp/packages/common-core/src',
+    '^@euno/common-core$': '<rootDir>/../../../public/packages/common/src',
   },
 };

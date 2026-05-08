@@ -1,18 +1,18 @@
-# euno-mcp — public Apache-2.0 surface
+# public — public Apache-2.0 surface
 
 This directory contains the Apache-2.0 packages that form the public
 surface of Euno: the types and interfaces (`@euno/common-core`), the
 MCP proxy (`@euno/mcp`), and the developer CLI (`@euno/cli`).
 
 All packages here are registered as npm workspaces via the root
-`package.json` glob `euno-mcp/packages/*`.
+`package.json` glob `public/packages/*`.
 
 ## Packages
 
 | Package | npm name | Notes |
 |---|---|---|
-| `packages/common-core/` | `@euno/common-core` | Core types, interfaces, in-memory stores. The published API contract consumed by the platform layer. |
-| `packages/euno-mcp/` | `@euno/mcp` | MCP proxy with local policy enforcement. |
+| `packages/common/` | `@euno/common-core` | Core types, interfaces, in-memory stores. The published API contract consumed by the platform layer. |
+| `packages/mcp/` | `@euno/mcp` | MCP proxy with local policy enforcement. |
 | `packages/cli/` | `@euno/cli` | Developer CLI. |
 
 See [`MANIFEST.md`](./MANIFEST.md) for the full inventory including planned packages.

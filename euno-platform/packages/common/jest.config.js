@@ -15,7 +15,7 @@ module.exports = {
           '@euno/common/wire': ['src/wire'],
           '@euno/common/runtime': ['src/runtime'],
           '@euno/common/types': ['src/types'],
-          '@euno/common-core': ['../../../euno-mcp/packages/common-core/src'],
+          '@euno/common-core': ['../../../public/packages/common/src'],
           '@euno/common-infra': ['../common-infra/src'],
         },
       },
@@ -32,7 +32,7 @@ module.exports = {
     '^@euno/common/wire$': '<rootDir>/../common/src/wire',
     '^@euno/common/runtime$': '<rootDir>/../common/src/runtime',
     '^@euno/common/types$': '<rootDir>/../common/src/types',
-    '^@euno/common-core$': '<rootDir>/../../../euno-mcp/packages/common-core/src',
+    '^@euno/common-core$': '<rootDir>/../../../public/packages/common/src',
     '^@euno/common-infra$': '<rootDir>/../common-infra/src',
   },
 };

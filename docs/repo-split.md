@@ -1,7 +1,7 @@
 # Repository Structure: Public + Private Folders
 
 **Status:** Implemented (Substage 0.4 / Stage 1). Top-level
-[`euno-mcp/`](../euno-mcp/) and [`euno-platform/`](../euno-platform/)
+[`public/`](../public/) and [`euno-platform/`](../euno-platform/)
 folders contain the actual packages under their respective `packages/`
 subdirectories. Both are declared as npm workspaces in the root
 `package.json`.
@@ -19,10 +19,10 @@ before any public GitHub Packages publish.
 ```
 edgeobs/euno  (this monorepo)
 │
-├── euno-mcp/packages/              # public surface — Apache-2.0
-│     common-core/                  # types, interfaces, in-memory fakes
+├── public/packages/              # public surface — Apache-2.0
+│     common/                       # types, interfaces, in-memory fakes
 │     cli/                          # developer CLI
-│     euno-mcp/                     # MCP proxy (@euno/mcp)
+│     mcp/                          # MCP proxy (@euno/mcp)
 │
 └── euno-platform/packages/         # private surface — BUSL-1.1
       common-infra/                 # Redis / Postgres / KMS implementations
@@ -38,16 +38,16 @@ edgeobs/euno  (this monorepo)
       integration-tests/
 ```
 
-**How the dependency works.** `common-core` lives in `euno-mcp/packages/`
+**How the dependency works.** The `common` package (`@euno/common-core`) lives in `public/packages/`
 and is consumed by the platform packages in `euno-platform/packages/` as a
-workspace dependency. When published to npm, `common-core` becomes the public
+workspace dependency. When published to npm, `@euno/common-core` becomes the public
 API contract that external consumers install as a regular npm dependency. The
 interface seams in `common-core` are the published contract; platform
 implementations are completely invisible.
 
 ---
 
-## Packages in the public surface (`euno-mcp/`)
+## Packages in the public surface (`public/`)
 
 | Package | License | Notes |
 |---|---|---|
@@ -93,13 +93,13 @@ be fixed by another publish.
   - **major** -- any breaking change to existing exports.
 - [ ] `CHANGELOG.md` has an entry for this version with a migration note for
       any interface changes.
-- [ ] `euno-mcp/packages/common-core/package.json` `"version"` field is bumped.
+- [ ] `public/packages/common/package.json` `"version"` field is bumped.
 
 ### Publish
 
 ```sh
 # From the repo root
-cd euno-mcp/packages/common-core
+cd public/packages/common
 npm run build
 npm publish
 ```
@@ -118,9 +118,9 @@ GitHub Packages.
 
 ---
 
-## Rules for the public surface (`euno-mcp/`)
+## Rules for the public surface (`public/`)
 
-The following rules apply to every PR that touches `euno-mcp/`:
+The following rules apply to every PR that touches `public/`:
 
 1. **No references to the platform layer.** No comments, no README text, no
    `package.json` peer-dependency ranges pointing at BUSL-1.1 packages. The

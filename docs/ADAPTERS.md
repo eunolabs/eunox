@@ -11,7 +11,7 @@ Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
 
 ## Architecture
 
-### Core components (`euno-mcp/packages/common-core/src/adapters.ts`)
+### Core components (`public/packages/common/src/adapters.ts`)
 
 - `IdentityAdapter` — abstract base class for identity providers
 - `SigningAdapter` — abstract base class for token signers

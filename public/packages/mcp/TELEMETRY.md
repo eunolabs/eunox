@@ -18,7 +18,7 @@ one-time prompt:
   What's collected: version, OS, Node.js major, session counts,
   and denial-type counts (e.g. "maxCalls: 2").  No tool names,
   argument values, file paths, or any payload content — ever.
-  Full schema: https://github.com/edgeobs/euno/blob/main/euno-mcp/packages/euno-mcp/TELEMETRY.md
+  Full schema: https://github.com/edgeobs/euno/blob/main/public/packages/mcp/TELEMETRY.md
   Disable any time: EUNO_TELEMETRY=0
 Enable anonymous telemetry? [y/N]
 ```

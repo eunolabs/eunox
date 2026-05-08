@@ -9,7 +9,7 @@
 > minter threat model, and the two-folder structure — addressed in this
 > revision. See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
 > for what changed and why.
-> Current package workspaces live under `euno-mcp/packages/*` and
+> Current package workspaces live under `public/packages/*` and
 > `euno-platform/packages/*`; there is no root `packages/` workspace.
 
 ---
@@ -193,9 +193,9 @@ strategy.
 >   GitHub Actions CI workflow (`.github/workflows/ci.yml`). The `@euno/cli`
 >   migration to `@euno/common-core` is complete; the allowlist is empty
 >   (zero violations). Two-folder strategy decided and documented; top-level
->   folders [`euno-mcp/`](../euno-mcp/) and [`euno-platform/`](../euno-platform/)
+>   folders [`public/`](../public/) and [`euno-platform/`](../euno-platform/)
 >   contain the actual packages under their respective `packages/`
->   subdirectories. Apache-2.0 packages live under `euno-mcp/packages/` and
+>   subdirectories. Apache-2.0 packages live under `public/packages/` and
 >   BUSL-1.1 packages live under `euno-platform/packages/`.
 >
 > **All six Stage 0 gate conditions are now met. Stage 1 may begin.**
@@ -227,8 +227,8 @@ two-folder structure is in place.
 |---|---|---|
 | `@euno/mcp` (new) | Apache-2.0 | Wedge. Must be trivially adoptable, redistributable, embeddable in commercial products. Apache-2.0 (not MIT) for the patent grant. |
 | `@euno/langchain` (new) | Apache-2.0 | Same reason. |
-| `euno-mcp/packages/common-core` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
-| `euno-mcp/packages/cli` | Apache-2.0 | Developer surface. |
+| `public/packages/common` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
+| `public/packages/cli` | Apache-2.0 | Developer surface. |
 | `euno-platform/packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
 | `euno-platform/packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
 | `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
@@ -261,10 +261,10 @@ repository.
 **Two top-level folders:**
 
 ```
-euno-mcp/                          # public — Apache-2.0
+public/                          # public — Apache-2.0
   packages/
-    common-core/
-    euno-mcp/
+    common/
+    mcp/
     cli/
 
 euno-platform/                     # private — BUSL-1.1
@@ -280,11 +280,11 @@ euno-platform/                     # private — BUSL-1.1
 ```
 
 Both folder trees are npm workspaces declared in the root `package.json`
-(`euno-mcp/packages/*` and `euno-platform/packages/*`).
+(`public/packages/*` and `euno-platform/packages/*`).
 
-**How the dependency works.** `common-core` lives in `euno-mcp/packages/`
+**How the dependency works.** The `common` package (`@euno/common-core`) lives in `public/packages/`
 and is consumed by the platform packages in `euno-platform/packages/` as
-a normal workspace dependency. When published to npm, `common-core`
+a normal workspace dependency. When published to npm, `@euno/common-core`
 becomes the public API contract that external consumers (and the future
 hosted platform) install as a regular npm dependency. The interface seams
 in `common-core` are the published contract. Platform implementations are
@@ -295,9 +295,9 @@ completely invisible to consumers of the public surface.
 | Concern | Implication |
 |---|---|
 | Versioning discipline | A breaking change to `common-core` requires coordinated updates across the platform packages. Treat it like a public API contract: proper semver, a CHANGELOG entry, and a migration note before merging. |
-| External contributor coverage | Contributors working only in `euno-mcp/` cannot validate that their `common-core` changes don't break the platform layer. That review is owned internally and must happen before every `common-core` release. |
+| External contributor coverage | Contributors working only in `public/` cannot validate that their `common-core` changes don't break the platform layer. That review is owned internally and must happen before every `common-core` release. |
 
-**The one thing to avoid.** No comments in the `euno-mcp/` subtree
+**The one thing to avoid.** No comments in the `public/` subtree
 pointing at the platform layer — no `// see tool-gateway for the
 production implementation`, no `// Stage 3 replaces this`, no TODOs
 naming a BUSL-1.1 package. The public surface must read as complete and
@@ -310,7 +310,7 @@ to something hidden.
 
 > **Stage 1 status** (May 2026)
 >
-> - [x] Task 1 — `euno-mcp/packages/euno-mcp` scaffolded; build, lint, test all pass
+> - [x] Task 1 — `public/packages/mcp` scaffolded; build, lint, test all pass
 > - [x] Task 2 — `MCP_PROTOCOL_VERSION` constant; `docs/mcp-support.md` updated
 > - [x] Task 3 — `StdioProxy` with full passthrough + `tools/call` interception
 > - [x] Task 4 — Mock upstream + stdio integration tests (transport-stdio.test.ts)
@@ -349,11 +349,11 @@ escape route.
 MCP code there. The MCP transport, JSON-RPC framing, and request
 routing are new code. What *can* be reused from the repository:
 
-- `CapabilityCondition` discriminated union and `condition-registry` from `euno-mcp/packages/common-core`
-- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `euno-mcp/packages/common-core`
-- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `euno-mcp/packages/common-core/src/call-counter-store.ts`
-- `KillSwitchManager` in-memory backend from `euno-mcp/packages/common-core/src/kill-switch.ts`
-- `AgentCapabilityManifest` types and the `euno validate` codepath from `euno-mcp/packages/cli`
+- `CapabilityCondition` discriminated union and `condition-registry` from `public/packages/common`
+- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `public/packages/common`
+- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `public/packages/common/src/call-counter-store.ts`
+- `KillSwitchManager` in-memory backend from `public/packages/common/src/kill-switch.ts`
+- `AgentCapabilityManifest` types and the `euno validate` codepath from `public/packages/cli`
 
 That reuse is the keystone of [§ Schema parity](#policy-and-audit-schema-parity-non-negotiable).
 
@@ -417,7 +417,7 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 **`CapabilityCondition` variants supported in v0** (a strict subset of
 the production `CapabilityCondition` discriminated union in
-`euno-mcp/packages/common-core/src/wire.ts`, so policies upgrade without rewriting):
+`public/packages/common/src/wire.ts`, so policies upgrade without rewriting):
 
 - `maxCalls` (sliding window — the `CallCounterStore` already supports both per-session and per-window)
 - `timeWindow` (`notBefore` / `notAfter`)
@@ -427,7 +427,7 @@ the production `CapabilityCondition` discriminated union in
 
 **Plus the `argumentSchema` field on `CapabilityConstraint`** (not a
 condition variant — a sibling field on the constraint itself, defined
-as the `ArgumentSchema` type in `common-core/src/wire.ts`). v0 honours it for the same
+as the `ArgumentSchema` type in `common/src/wire.ts`). v0 honours it for the same
 reason the production gateway does: it's the structural argument
 allowlist for a capability and is the natural carrier for the kind of
 "only these arg shapes" enforcement the MCP wedge needs.
@@ -467,7 +467,7 @@ say it for you.
 ### Execution plan
 
 **Weeks 1–2 — Skeleton + transport.**
-- Create `euno-mcp/packages/euno-mcp` (publishes as `@euno/mcp`).
+- Create `public/packages/mcp` (publishes as `@euno/mcp`).
 - Implement stdio and HTTP MCP transports with `tools/list` / `resources/list` / `prompts/list` passthrough and `tools/call` interception. Do not reimplement JSON-RPC; use `@modelcontextprotocol/sdk`.
 - Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common-core` (no Redis, no Postgres).
 - Local jsonl audit log (`~/.euno/audit.jsonl`), OCSF-shaped, locally HMAC-signed (key generated at first run, stored in `~/.euno/key`). Format identical to the Stage-3+ signed evidence; signer is the only thing that changes.
@@ -475,7 +475,7 @@ say it for you.
 **Weeks 3–4 — Policy engine + CLI.**
 - Implement YAML/JSON policy loader producing the existing `AgentCapabilityManifest` in memory (one isomorphic shape, see [§ schema parity](#policy-and-audit-schema-parity-non-negotiable)).
 - Wire the `CapabilityCondition` types listed above through `condition-registry`.
-- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `euno-mcp/packages/cli` so a manifest validates identically locally and in the issuer.
+- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `public/packages/cli` so a manifest validates identically locally and in the issuer.
 - Lightweight integration test using a mock upstream MCP server (a 30-line stdio echo server is enough).
 
 **Weeks 5–6 — Ship and distribute.**
@@ -505,7 +505,7 @@ entire staged plan. Get it wrong and every later stage compounds the
 mistake.
 
 **Rule.** The policy file `@euno/mcp` consumes is a literal subset of
-`AgentCapabilityManifest` (`euno-mcp/packages/common-core/src/types.ts`). The
+`AgentCapabilityManifest` (`public/packages/common/src/types.ts`). The
 condition types it understands are a literal subset of
 `CapabilityCondition`. The audit records it writes are
 OCSF-formatted, identical in shape to what the gateway writes to
@@ -522,10 +522,10 @@ SIEM. The only differences across stages are:
 
 That is the entire Stage 3 migration: swap the implementations of
 four interfaces that already exist as seams in `@euno/common-core` —
-[`TokenVerifier`](../euno-mcp/packages/common-core/src/runtime.ts),
-[`CallCounterStore`](../euno-mcp/packages/common-core/src/condition-registry.ts),
-[`EvidenceSigner`](../euno-mcp/packages/common-core/src/runtime.ts), and
-[`KillSwitchManager`](../euno-mcp/packages/common-core/src/runtime.ts) (with its
+[`TokenVerifier`](../public/packages/common/src/runtime.ts),
+[`CallCounterStore`](../public/packages/common/src/condition-registry.ts),
+[`EvidenceSigner`](../public/packages/common/src/runtime.ts), and
+[`KillSwitchManager`](../public/packages/common/src/runtime.ts) (with its
 optional [`KillSwitchPersistenceBackend`](../euno-platform/packages/common-infra/src/redis-kill-switch.ts)
 for Postgres dual-write). Policy storage is the only seam that is
 genuinely new in Stage 3: in Stage 1 the policy is a local file read
@@ -562,7 +562,7 @@ handles richer conditions unchanged because enforcement is still at
 - Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
 - `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
 - `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `euno-platform/packages/agent-runtime`, just with a local-only backend.**
-- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `euno-mcp/packages/euno-mcp/policies/` directory. This is what makes the 5-minute pitch real.
+- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `public/packages/mcp/policies/` directory. This is what makes the 5-minute pitch real.
 - Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
 ### Gate to Stage 3 — measurable
@@ -734,7 +734,7 @@ constraints, in priority order:
 2. **No payload contents, ever.** No tool names, no argument values,
    no file paths, no SQL fragments. Counts only. The schema is
    public and small enough to fit in the README.
-3. **Documented schema** in `euno-mcp/packages/euno-mcp/TELEMETRY.md`. What's
+3. **Documented schema** in `public/packages/mcp/TELEMETRY.md`. What's
    sent, where, why, how to disable.
 4. **Anonymous install ID** (random UUID, regenerated per install).
    No machine fingerprint. No IP retention beyond aggregation.

@@ -4,8 +4,8 @@
 > document have landed in code. See:
 >
 > - **Typed conditions:** `CapabilityCondition` discriminated union in
->   `euno-mcp/packages/common-core/src/types.ts` and the shared validate / enforce
->   pipeline in `euno-mcp/packages/common-core/src/condition-registry.ts`.
+>   `public/packages/common/src/types.ts` and the shared validate / enforce
+>   pipeline in `public/packages/common/src/condition-registry.ts`.
 > - **Issuance-time validation:** `CapabilityIssuerService.issueCapability`
 >   and `attenuateCapability` reject malformed or unknown conditions
 >   before signing (`euno-platform/packages/capability-issuer/src/issuer-service.ts`).
@@ -14,11 +14,11 @@
 >   condition; unknown types deny by default.
 > - **Distributed `maxCalls`:** `CallCounterStore` with in-memory and
 >   Redis-backed implementations in
->   `euno-mcp/packages/common-core/src/call-counter-store.ts`, wired into the gateway
+>   `public/packages/common/src/call-counter-store.ts`, wired into the gateway
 >   entrypoint via `createCallCounterStoreFromEnv` (reuses the same
 >   `REDIS_URL` as the kill-switch / revocation-store wiring).
 > - **Wildcard fix:** segment-aware `matchesResource` with scheme
->   equality enforcement in `euno-mcp/packages/common-core/src/utils.ts`.
+>   equality enforcement in `public/packages/common/src/utils.ts`.
 > - **Action widening:** `Action = string` (legacy verbs preserved as
 >   `LEGACY_ACTIONS`) so resource-specific verbs (`db:select`,
 >   `s3:putObject`) are first-class.

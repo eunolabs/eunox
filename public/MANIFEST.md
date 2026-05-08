@@ -1,16 +1,16 @@
-# euno-mcp package manifest
+# public package manifest
 
 This file is the authoritative list of packages that belong to the
-public Apache-2.0 surface, living under `euno-mcp/packages/` in this
+public Apache-2.0 surface, living under `public/packages/` in this
 monorepo.
 
 ## Packages
 
 | Package | License | Path | Notes |
 |---|---|---|---|
-| `@euno/common-core` | Apache-2.0 | `euno-mcp/packages/common-core/` | Core types, interfaces, in-memory stores. Published to GitHub Packages. |
-| `@euno/mcp` | Apache-2.0 | `euno-mcp/packages/euno-mcp/` | MCP proxy with local policy enforcement. |
-| `@euno/cli` | Apache-2.0 | `euno-mcp/packages/cli/` | Developer CLI. Migrated to `@euno/common-core`; no BUSL dependency blocker remains. |
+| `@euno/common-core` | Apache-2.0 | `public/packages/common/` | Core types, interfaces, in-memory stores. Published to GitHub Packages. |
+| `@euno/mcp` | Apache-2.0 | `public/packages/mcp/` | MCP proxy with local policy enforcement. |
+| `@euno/cli` | Apache-2.0 | `public/packages/cli/` | Developer CLI. Migrated to `@euno/common-core`; no BUSL dependency blocker remains. |
 
 ## Planned packages (not yet created)
 

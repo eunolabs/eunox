@@ -128,7 +128,7 @@ export function promptForConsent(): Promise<boolean | null> {
       '  What\'s collected: version, OS, Node.js major, session counts,\n' +
       '  and denial-type counts (e.g. "maxCalls: 2").  No tool names,\n' +
       '  argument values, file paths, or any payload content — ever.\n' +
-      '  Full schema: https://github.com/edgeobs/euno/blob/main/euno-mcp/packages/euno-mcp/TELEMETRY.md\n' +
+      '  Full schema: https://github.com/edgeobs/euno/blob/main/public/packages/mcp/TELEMETRY.md\n' +
       '  Disable any time: EUNO_TELEMETRY=0\n' +
       'Enable anonymous telemetry? [y/N] ';
 

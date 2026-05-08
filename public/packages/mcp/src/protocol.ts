@@ -7,7 +7,7 @@
  * Updating this constant requires:
  *   1. A corresponding PR to docs/mcp-support.md documenting the new revision
  *      and the rationale for the bump.
- *   2. A CHANGELOG entry in packages/euno-mcp/CHANGELOG.md.
+ *   2. A CHANGELOG entry in packages/mcp/CHANGELOG.md.
  *   3. CI passing (the integration test suite exercises the MCP handshake).
  *
  * See docs/mcp-support.md for the full support-window policy.

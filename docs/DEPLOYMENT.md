@@ -12,7 +12,7 @@ internal design partner, use the current workspace paths:
 | Capability Issuer | `euno-platform/packages/capability-issuer` | 3001 |
 | Tool Gateway | `euno-platform/packages/tool-gateway` | 3002 |
 | Shared infra implementations | `euno-platform/packages/common-infra` | n/a |
-| Public shared contract | `euno-mcp/packages/common-core` | n/a |
+| Public shared contract | `public/packages/common` | n/a |
 
 ## Build and validation
 
@@ -38,7 +38,7 @@ euno config dump-template --service gateway > euno-platform/packages/tool-gatewa
 Production deployments need an issuer signing key, a gateway verifier
 configuration, a protected backend URL, and the selected optional backing stores
 (Redis/Postgres/KMS) configured through the typed config schema in
-`euno-mcp/packages/common-core/src/config/schema.ts` and the implementations in
+`public/packages/common/src/config/schema.ts` and the implementations in
 `euno-platform/packages/common-infra`.
 
 ## Containerization

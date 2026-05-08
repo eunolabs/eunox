@@ -5,7 +5,7 @@ things they shouldn't — before the tool call reaches your backend.
 
 ## Stage 1: `@euno/mcp` is available now
 
-The entry point for individual developers is [`@euno/mcp`](euno-mcp/packages/euno-mcp/README.md):
+The entry point for individual developers is [`@euno/mcp`](public/packages/mcp/README.md):
 a drop-in policy proxy for any [Model Context Protocol](https://spec.modelcontextprotocol.io/)
 server. No infrastructure required. For now, `@euno/*` packages publish to
 GitHub Packages rather than the public npm registry; see the package README for
@@ -23,7 +23,7 @@ the upstream is called — if the constraint says `allowedOperations: [SELECT]`,
 the upstream is never contacted and the agent receives a structured denial.
 One YAML file. No code changes to your agent or server.
 
-See the [**`@euno/mcp` README**](euno-mcp/packages/euno-mcp/README.md) for
+See the [**`@euno/mcp` README**](public/packages/mcp/README.md) for
 quickstart, policy authoring, and drop-in Claude Desktop / Cursor / LangChain.js usage.
 
 ## Project status
@@ -46,10 +46,10 @@ only security fixes and dependency bumps. See [`docs/stage-0-freeze.md`](docs/st
 
 ```
 edgeobs/euno
-├── euno-mcp/packages/       Apache-2.0 — ships to GitHub Packages
-│     common-core/           Core types, interfaces, in-memory implementations
+├── public/packages/       Apache-2.0 — ships to GitHub Packages
+│     common/               Core types, interfaces, in-memory implementations
 │     cli/                   Developer CLI  (`euno` binary)
-│     euno-mcp/              MCP proxy      (`euno-mcp` binary)  ← Stage 1 product
+│     mcp/                  MCP proxy      (`euno-mcp` binary)  ← Stage 1 product
 │
 └── euno-platform/packages/  BUSL-1.1 — self-host and hosted product
       common-infra/          Redis / Postgres / KMS implementations
@@ -116,7 +116,7 @@ Code ownership is in [`CODEOWNERS`](CODEOWNERS).
 
 ## License
 
-- `euno-mcp/` (public surface): **Apache-2.0**
+- `public/` (public surface): **Apache-2.0**
 - `euno-platform/` (platform surface): **BUSL-1.1**
 
 See [`LICENSE`](LICENSE) and [`docs/repo-split.md`](docs/repo-split.md) for details.

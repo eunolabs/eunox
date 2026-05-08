@@ -9,7 +9,7 @@ Design and operational documentation for Euno. Docs are organized by purpose.
 | Doc | What it is |
 | --- | ---------- |
 | [../README.md](../README.md) | Root README: project status, quickstart, development setup. |
-| [euno-mcp README](../euno-mcp/packages/euno-mcp/README.md) | Stage 1 developer product: @euno/mcp quickstart. |
+| [euno-mcp README](../public/packages/mcp/README.md) | Stage 1 developer product: @euno/mcp quickstart. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 
 ## 2. Architecture
@@ -51,7 +51,7 @@ Design and operational documentation for Euno. Docs are organized by purpose.
 | Doc | What it is |
 | --- | ---------- |
 | [promotion.md](./promotion.md) | Launch copy and messaging for @euno/mcp. |
-| [launch-post.md](../euno-mcp/packages/euno-mcp/docs/launch-post.md) | Draft Show HN post. |
+| [launch-post.md](../public/packages/mcp/docs/launch-post.md) | Draft Show HN post. |
 
 ---
 

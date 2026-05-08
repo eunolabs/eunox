@@ -98,12 +98,12 @@ jobs:
         # @euno/common-core is a runtime dependency of @euno/mcp.  Publishing it
         # here ensures consumers can resolve it from the same registry without
         # needing a local workspace or a separate manual step.
-        run: npm publish --workspace euno-mcp/packages/common-core
+        run: npm publish --workspace public/packages/common
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish @euno/mcp to GitHub Packages
-        run: npm publish --workspace euno-mcp/packages/euno-mcp
+        run: npm publish --workspace public/packages/mcp
         env:
           # GITHUB_TOKEN is automatically injected by Actions; packages: write
           # permission above allows publishing to https://npm.pkg.github.com.

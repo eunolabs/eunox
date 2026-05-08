@@ -3,7 +3,7 @@
 > Patterns for writing capability manifests that work the first time,
 > age well, and survive Sentinel scrutiny. This guide is the canonical
 > companion to `euno init` / `euno validate` / `euno plan` in
-> `euno-mcp/packages/cli`.
+> `public/packages/cli`.
 
 A **capability manifest** is the YAML / JSON document that the
 [`Capability Issuer`](../euno-platform/packages/capability-issuer) consumes to
@@ -16,7 +16,7 @@ mechanically.
 ## 1. Required structure
 
 Every manifest must match the `AgentCapabilityManifest` interface in
-`euno-mcp/packages/common-core/src/types.ts`. The required top-level fields are
+`public/packages/common/src/types.ts`. The required top-level fields are
 `agentId`, `name`, `version`, and `requiredCapabilities`. The
 optional fields are `optionalCapabilities` and `metadata`. Anything
 missing or shaped differently is rejected by `euno validate`.
@@ -104,7 +104,7 @@ requiredCapabilities:
 - Use `execute` for RPC-style endpoints.
 - Apply typed conditions instead of relying on TTL alone.
 - Each entry is one of the typed shapes in
-  `euno-mcp/packages/common-core/src/types.ts` (`CapabilityCondition` discriminated
+  `public/packages/common/src/types.ts` (`CapabilityCondition` discriminated
   union); the gateway enforces them through the
   `ConditionRegistry` — no new validator code is needed if the type
   already exists.
@@ -132,7 +132,7 @@ ttl: 120                                     # seconds; must be ≤ parent TTL
 
 ## 3. Resource pattern do's and don'ts
 
-The wildcard semantics are **segment-aware** (`euno-mcp/packages/common-core/src/utils.ts::matchesResource`).
+The wildcard semantics are **segment-aware** (`public/packages/common/src/utils.ts::matchesResource`).
 Internalize the table below.
 
 | Pattern                      | Matches                                             | Does **not** match                          |
@@ -156,7 +156,7 @@ Rules:
 
 `conditions` is an array of typed shapes from the
 `CapabilityCondition` discriminated union in
-`euno-mcp/packages/common-core/src/types.ts`. Every entry has a `type` discriminator
+`public/packages/common/src/types.ts`. Every entry has a `type` discriminator
 and is enforced by the shared `ConditionRegistry`. Unknown types are
 denied at both issuance and at the gateway, so spelling matters.
 
@@ -203,9 +203,9 @@ The full list of shipped condition types is `timeWindow`, `ipRange`,
 `ConditionRegistry`).
 
 > If a condition you need is not in the union, **add a new typed
-> shape to `euno-mcp/packages/common-core/src/types.ts` first**, register its
-> handler in `euno-mcp/packages/common-core/src/condition-registry.ts`, and ship a
-> validator with tests under `euno-mcp/packages/common-core/src/capability-validators.ts`.
+> shape to `public/packages/common/src/types.ts` first**, register its
+> handler in `public/packages/common/src/condition-registry.ts`, and ship a
+> validator with tests under `public/packages/common/src/capability-validators.ts`.
 > Free-form conditions are denied at the gateway, which is the correct
 > behaviour but a policy regression for the manifest author.
 
