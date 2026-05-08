@@ -1,5 +1,6 @@
 /**
- * Unit tests for ConditionEnforcerPDP (Task 8 acceptance criteria).
+ * Unit tests for ConditionEnforcerPDP (Task 8 acceptance criteria +
+ * Task 3 recipientDomain condition).
  *
  * Test matrix
  * -----------
@@ -17,6 +18,12 @@
  * ✓ policy source with multiple constraints — matches correct one
  * ✓ mcp-tool:// scheme normalization — plain tool name matches scheme-qualified pattern
  * ✓ different-scheme pattern does not match plain tool names
+ * ✓ recipientDomain — allows calls when all recipient domains are in allowlist
+ * ✓ recipientDomain — denies when any recipient domain is outside the allowlist
+ * ✓ recipientDomain — denies when no recipients are provided in the args
+ * ✓ extractRecipients — recognises to (string), to (string[]), recipients, cc, bcc
+ * ✓ extractRecipients — combines multiple recipient fields
+ * ✓ extractRecipients — returns undefined when no recognised fields present
  */
 
 import { ConditionEnforcerPDP } from '../pdp';
@@ -761,3 +768,417 @@ describe('ConditionEnforcerPDP — policy source lifecycle', () => {
     pdp.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// recipientDomain condition (Task 3)
+// ---------------------------------------------------------------------------
+
+describe('ConditionEnforcerPDP — recipientDomain condition', () => {
+  function makeRecipientManifest(domains: string[]): AgentCapabilityManifest {
+    return singleToolManifest('send_email', [
+      { type: 'recipientDomain', domains } as CapabilityCondition,
+    ]);
+  }
+
+  it('allows a call when the to field contains an address in the allowed domain', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: 'alice@example.com' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('denies a call when the to field contains an address outside the allowed domain', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: 'evil@attacker.example' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('RECIPIENT_DOMAIN_DENIED');
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('denies when no recipient arguments are present', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { subject: 'Hello', body: 'World' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('RECIPIENT_DOMAIN_DENIED');
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('denies when the to field is an empty string', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: '' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('allows when all addresses in a to array are in the allowed domain', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: ['alice@example.com', 'bob@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('denies when one address in a to array is outside the allowed domain', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: ['alice@example.com', 'spy@attacker.example'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('RECIPIENT_DOMAIN_DENIED');
+  });
+
+  it('uses the recipients field when to is absent', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['trusted.org'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { recipients: 'user@trusted.org' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('collects cc addresses and enforces the domain check', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', {
+        to: 'alice@example.com',
+        cc: 'external@outsider.io',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('collects bcc addresses and enforces the domain check', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', {
+        to: 'alice@example.com',
+        bcc: 'hidden@leak.example',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('allows when to, cc, and bcc are all in the allowed domains', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com', 'partner.org'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', {
+        to: ['alice@example.com', 'bob@partner.org'],
+        cc: 'carol@example.com',
+        bcc: 'dave@partner.org',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('is case-insensitive on domain names', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['EXAMPLE.COM'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: 'alice@example.com' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('allows multiple domains in the allow list', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com', 'trusted.org'])),
+    });
+    const allowed1 = await pdp.decide(
+      makeRequest('send_email', { to: 'alice@example.com' }),
+      makeCtx('s1'),
+    );
+    const allowed2 = await pdp.decide(
+      makeRequest('send_email', { to: 'bob@trusted.org' }),
+      makeCtx('s2'),
+    );
+    expect(allowed1.allow).toBe(true);
+    expect(allowed2.allow).toBe(true);
+  });
+
+  it('denies an address without an @ sign', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { to: 'notanemail' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('recipientDomain condition does not block an unrelated tool', async () => {
+    // The constraint is only on send_email; calling another tool is allowed.
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('query_db', { sql: 'SELECT * FROM users' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('recipientDomain combined with maxCalls: both are enforced', async () => {
+    const counterStore = new InMemoryCallCounterStore();
+    const manifest = singleToolManifest('send_email', [
+      { type: 'recipientDomain', domains: ['example.com'] } as CapabilityCondition,
+      { type: 'maxCalls', count: 2, windowSeconds: 60 } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(manifest),
+      counterStore,
+    });
+
+    const req = makeRequest('send_email', { to: 'alice@example.com' });
+    const ctx = makeCtx('combined-session');
+
+    const first = await pdp.decide(req, ctx);
+    expect(first.allow).toBe(true);
+
+    const second = await pdp.decide(req, ctx);
+    expect(second.allow).toBe(true);
+
+    // Third call exceeds maxCalls.
+    const third = await pdp.decide(req, ctx);
+    expect(third.allow).toBe(false);
+    expect(third.conditionType).toBe('maxCalls');
+
+    // Domain violation is caught even before maxCalls check.
+    counterStore.reset();
+    const domainDenied = await pdp.decide(
+      makeRequest('send_email', { to: 'evil@attacker.example' }),
+      ctx,
+    );
+    expect(domainDenied.allow).toBe(false);
+    expect(domainDenied.conditionType).toBe('recipientDomain');
+  });
+
+  it('recipients field as an array of strings all in allowlist → allow', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { recipients: ['a@example.com', 'b@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('cc field as array with one blocked domain → deny', async () => {
+    const pdp = new ConditionEnforcerPDP({
+      policySource: staticPolicySource(makeRecipientManifest(['example.com'])),
+    });
+    const d = await pdp.decide(
+      makeRequest('send_email', { cc: ['good@example.com', 'bad@external.io'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+  });
+
+  it('a domain entry containing @ is treated as a literal domain string at enforcement time', async () => {
+    // The condition handler's validate() phase (called via validateCondition())
+    // rejects '@' in domain entries. However, enforceCondition() skips validate()
+    // and calls enforce() directly. At enforcement time the malformed entry is
+    // therefore treated as the literal string 'user@example.com' in the allowed-
+    // domains set — so a legitimate recipient whose domain is 'example.com'
+    // will be denied because 'example.com' ≠ 'user@example.com'.
+    const manifest = singleToolManifest('send_email', [
+      { type: 'recipientDomain', domains: ['user@example.com'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // 'example.com' is NOT in the allowed set (only 'user@example.com' is).
+    const denied = await pdp.decide(
+      makeRequest('send_email', { to: 'alice@example.com' }),
+      makeCtx(),
+    );
+    expect(denied.allow).toBe(false);
+    expect(denied.conditionType).toBe('recipientDomain');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractRecipients helper (tested via ConditionEnforcerPDP.decide)
+// ---------------------------------------------------------------------------
+
+describe('extractRecipients (via ConditionEnforcerPDP)', () => {
+  // We test the helper indirectly through the PDP to avoid exporting
+  // an internal module-level function, while still getting full coverage.
+
+  const allowedManifest = singleToolManifest('notify', [
+    { type: 'recipientDomain', domains: ['example.com'] } as CapabilityCondition,
+  ]);
+
+  function buildPdp(): ConditionEnforcerPDP {
+    return new ConditionEnforcerPDP({ policySource: staticPolicySource(allowedManifest) });
+  }
+
+  it('extracts a single string from "to"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(makeRequest('notify', { to: 'user@example.com' }), makeCtx());
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts an array from "to"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { to: ['a@example.com', 'b@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts a single string from "recipients"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { recipients: 'r@example.com' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts an array from "recipients"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { recipients: ['r1@example.com', 'r2@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts a single string from "cc"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { cc: 'cc@example.com' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts an array from "cc"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { cc: ['cc1@example.com', 'cc2@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts a single string from "bcc"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { bcc: 'bcc@example.com' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('extracts an array from "bcc"', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { bcc: ['bcc1@example.com', 'bcc2@example.com'] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('combines to + recipients + cc + bcc when all present', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', {
+        to: 'a@example.com',
+        recipients: 'b@example.com',
+        cc: 'c@example.com',
+        bcc: 'd@example.com',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('denies if any combined field contains a blocked domain', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', {
+        to: 'a@example.com',
+        bcc: 'spy@attacker.example',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('returns undefined (no recipients) when none of the recognised fields are present', async () => {
+    const pdp = buildPdp();
+    // No to/recipients/cc/bcc — the condition should deny due to missing context.
+    const d = await pdp.decide(
+      makeRequest('notify', { subject: 'test', body: 'hello' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('recipientDomain');
+  });
+
+  it('ignores non-string array entries in "to"', async () => {
+    const pdp = buildPdp();
+    // Mixed array — only the string entries should be extracted.
+    // The valid entry is in allowlist; invalid entries are ignored.
+    const d = await pdp.decide(
+      makeRequest('notify', { to: ['user@example.com', 42, null, true] }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
+  it('trims whitespace from extracted addresses', async () => {
+    const pdp = buildPdp();
+    const d = await pdp.decide(
+      makeRequest('notify', { to: '  user@example.com  ' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+});
+

@@ -1,6 +1,6 @@
 /**
  * Unit tests for FilePolicySource and the manifest validation pipeline
- * (Task 7 acceptance criteria).
+ * (Task 7 acceptance criteria + Task 3 recipientDomain gate lift).
  *
  * Test matrix
  * -----------
@@ -8,8 +8,9 @@
  * ✓ Happy path — valid JSON manifest → loads as AgentCapabilityManifest
  * ✓ All Stage-1 condition types accepted (maxCalls, timeWindow,
  *     allowedOperations, allowedExtensions, allowedTables)
+ * ✓ recipientDomain condition type now accepted (Stage-2 Task 3 gate lifted)
  * ✓ Unknown condition type → ManifestValidationError (names JSON path)
- * ✓ Deferred condition types (ipRange, recipientDomain, redactFields,
+ * ✓ Deferred condition types (ipRange, redactFields,
  *     policy, custom) → ManifestValidationError mentioning Stage 2
  * ✓ Semantic error: notAfter before notBefore → ManifestValidationError
  * ✓ Missing required top-level field → ManifestValidationError
@@ -207,8 +208,102 @@ requiredCapabilities:
 });
 
 // ---------------------------------------------------------------------------
-// Unknown condition type
+// Stage-2 Task 3 — recipientDomain condition accepted (gate lifted)
 // ---------------------------------------------------------------------------
+
+describe('FilePolicySource — recipientDomain condition (Stage-2 Task 3)', () => {
+  it('accepts a recipientDomain condition (no longer deferred)', async () => {
+    const content = `
+agentId: recipient-agent
+name: Recipient Domain Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "messaging://send_email"
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: [example.com, trusted.org]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.type).toBe('recipientDomain');
+  });
+
+  it('accepts recipientDomain alongside Stage-1 conditions', async () => {
+    const content = `
+agentId: mixed-agent
+name: Mixed Conditions Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "messaging://send_email"
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 50
+        windowSeconds: 3600
+      - type: recipientDomain
+        domains: [company.com]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(2);
+    expect(conditions.map((c) => c.type)).toEqual(['maxCalls', 'recipientDomain']);
+  });
+
+  it('accepts recipientDomain in optionalCapabilities', async () => {
+    const content = `
+agentId: opt-recipient-agent
+name: Optional Recipient Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://core"
+    actions: [read]
+optionalCapabilities:
+  - resource: "messaging://notify"
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: [notify.example.com]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    expect(manifest.optionalCapabilities).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.optionalCapabilities![0]!.conditions!;
+    expect(conditions[0]!.type).toBe('recipientDomain');
+  });
+
+  it('loader accepts a recipientDomain manifest where a domain entry contains @', async () => {
+    // FilePolicySource only calls validateManifest() (Zod structural validation).
+    // The condition handler's validate() phase — which rejects '@' in domain entries —
+    // is invoked via validateCondition() at issuance/condition-validation time, not
+    // during manifest loading. The loader therefore accepts this manifest as
+    // structurally valid even though the condition configuration is semantically wrong.
+    const content = `
+agentId: bad-recipient-agent
+name: Bad Recipient Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "messaging://send"
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: [user@example.com]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    // The loader accepts this structurally valid manifest.
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(manifest.requiredCapabilities[0]!.conditions![0]!.type).toBe('recipientDomain');
+  });
+});
+
+
 
 describe('FilePolicySource — unknown condition type', () => {
   it('rejects an unknown condition type and names the JSON path', async () => {
@@ -264,10 +359,6 @@ const DEFERRED_TYPES = [
   {
     type: 'ipRange',
     yaml: 'type: ipRange\ncidrs: ["10.0.0.0/8"]',
-  },
-  {
-    type: 'recipientDomain',
-    yaml: 'type: recipientDomain\ndomains: [example.com]',
   },
   {
     type: 'redactFields',

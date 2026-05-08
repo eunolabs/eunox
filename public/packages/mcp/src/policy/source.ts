@@ -13,8 +13,17 @@
  *
  *   maxCalls | timeWindow | allowedOperations | allowedExtensions | allowedTables
  *
+ * Stage-2 lifted condition types (also supported)
+ * ------------------------------------------------
+ * Per stage2executionplan.md Task 3:
+ *
+ *   recipientDomain
+ *
+ *   Recipients are extracted from the tool call arguments (to, recipients,
+ *   cc, bcc fields) and matched against the allowed-domains list.
+ *
  * The following condition types are structurally valid in the production
- * gateway but are DEFERRED to Stage 2 and therefore REJECTED by this loader
+ * gateway but are DEFERRED and therefore REJECTED by this loader
  * with an explicit error message:
  *
  *   ipRange | recipientDomain | redactFields | policy | custom
@@ -46,10 +55,11 @@ import type { AgentCapabilityManifest, CapabilityCondition } from '@euno/common-
  * A manifest that contains any of these types in any capability's
  * `conditions` array is rejected at load time with an error message that
  * names the offending JSON path and explicitly mentions Stage 2.
+ *
+ * Stage-2 progress: `recipientDomain` has been lifted from this set (Task 3).
  */
 const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set([
   'ipRange',
-  'recipientDomain',
   'redactFields',
   'policy',
   'custom',
@@ -179,8 +189,8 @@ export interface FilePolicySourceOptions {
  * 2. YAML / JSON parse (syntax error → parse error)
  * 3. Structural schema validation via {@link validateManifest} from
  *    `@euno/common-core` (unknown fields, wrong types, etc.)
- * 4. Stage-1 condition gate — rejects deferred condition types
- *    (ipRange, recipientDomain, redactFields, policy, custom) with an
+ * 4. Stage condition gate — rejects deferred condition types
+ *    (ipRange, redactFields, policy, custom) with an
  *    explicit error message that mentions Stage 2.
  */
 export class FilePolicySource implements LocalPolicySource {

@@ -194,6 +194,46 @@ function extractFilePath(args: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * Attempt to extract a list of recipient addresses from the tool call arguments.
+ *
+ * Recognises the common shapes tool authors use for message-routing arguments:
+ *   - `to`         — a single address string or an array of address strings
+ *   - `recipients` — a single address string or an array of address strings
+ *   - `cc`         — a single address string or an array of address strings
+ *   - `bcc`        — a single address string or an array of address strings
+ *
+ * All four fields are combined when present so that a `recipientDomain`
+ * condition is enforced against every delivery target, not only the `to` list.
+ *
+ * Non-string values and empty/whitespace-only strings are silently ignored.
+ * Returns `undefined` when no non-empty recipient strings are found across
+ * all recognised fields (whether the fields are absent, empty strings,
+ * arrays of non-strings, or any combination thereof).
+ */
+function extractRecipients(args: Record<string, unknown>): string[] | undefined {
+  const recipients: string[] = [];
+
+  const addField = (value: unknown): void => {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      recipients.push(value.trim());
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string' && item.trim().length > 0) {
+          recipients.push(item.trim());
+        }
+      }
+    }
+  };
+
+  addField(args['to']);
+  addField(args['recipients']);
+  addField(args['cc']);
+  addField(args['bcc']);
+
+  return recipients.length > 0 ? recipients : undefined;
+}
+
+/**
  * Attempt to extract a list of table references from the tool call arguments.
  *
  * Looks for `table` (string) or `tables` (string | string[]) arguments.
@@ -536,6 +576,7 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
         operation: extractSqlOperation(rawArgs),
         filePath: extractFilePath(rawArgs),
         tables: extractTables(rawArgs),
+        recipients: extractRecipients(rawArgs),
       };
 
       const result = await enforceConditionsWithType(matched.conditions, conditionCtx);
