@@ -207,11 +207,25 @@ export class StdioProxy {
   }
 
   /**
-   * Starts the proxy.  Connects to the upstream, sets up request handlers on
-   * the server side, and begins listening on stdin/stdout.
+   * Starts the proxy and blocks until the host-side session ends.
    *
-   * Resolves once the upstream `initialize` handshake has completed.  The
-   * proxy runs until `close()` is called or the upstream exits.
+   * What happens inside:
+   *   1. Spawns the upstream MCP server process.
+   *   2. Connects a client to the upstream (completes the upstream `initialize`
+   *      handshake).
+   *   3. Builds the proxy `Server` that listens on stdin/stdout and registers
+   *      all forwarding and enforcement handlers.
+   *   4. Waits until the host closes the connection (stdin EOF or an explicit
+   *      `server.close()` call from the SIGTERM handler).
+   *
+   * Callers (the CLI) rely on the returned Promise staying pending for the
+   * entire session lifetime so that cleanup code in a `finally` block (e.g.
+   * `auditSink.close()`) only runs after all requests have been processed.
+   * Do NOT change this to resolve at the `server.connect()` point — doing so
+   * silently discards every audit record written after the Promise resolves.
+   *
+   * @throws if the upstream connection or server setup fails.  Safe to retry
+   *   after a throw because `_started` is reset on error.
    */
   async start(): Promise<void> {
     if (this._started) {
@@ -435,6 +449,31 @@ export class StdioProxy {
 
     process.once('SIGINT', () => shutdown('SIGINT'));
     process.once('SIGTERM', () => shutdown('SIGTERM'));
+
+    // ── 8. Wait for the host-side session to end ─────────────────────────────
+    // `server.connect()` returns as soon as the MCP transport is set up, but
+    // the session is still active.  We wait here until the server transport
+    // closes (stdin EOF from the host or an explicit `server.close()` call
+    // from the SIGTERM shutdown handler).
+    //
+    // Without this await, `start()` would return immediately and the CLI's
+    // `finally` block would call `auditSink.close()` before any `tools/call`
+    // requests are processed — silently discarding every audit record.
+    await new Promise<void>((resolve) => {
+      // `server.connect()` already installed the SDK's own onclose handler on
+      // `serverTransport`.  Wrap it so we are notified when the session ends,
+      // while preserving the SDK's cleanup logic.  `resolve()` is placed in a
+      // `finally` block so that a throw inside `sdkOnclose` can never leave
+      // this Promise pending indefinitely.
+      const sdkOnclose = serverTransport.onclose;
+      serverTransport.onclose = () => {
+        try {
+          sdkOnclose?.();
+        } finally {
+          resolve();
+        }
+      };
+    });
   }
 
   /**

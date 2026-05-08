@@ -11,6 +11,7 @@ build/
 *.d.ts
 *.d.ts.map
 !jest.config.js
+!jest.globalSetup.js
 # Operational scripts checked into source (e.g. F-9 verify-evidence.js).
 # The blanket `*.js` rule above would otherwise hide these hand-written
 # entry points alongside compiled TypeScript output.
