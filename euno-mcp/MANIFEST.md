@@ -8,9 +8,9 @@ monorepo.
 
 | Package | License | Path | Notes |
 |---|---|---|---|
-| `@euno/common-core` | Apache-2.0 | `euno-mcp/packages/common-core/` | Core types, interfaces, in-memory stores. Published to npm. |
+| `@euno/common-core` | Apache-2.0 | `euno-mcp/packages/common-core/` | Core types, interfaces, in-memory stores. Published to GitHub Packages. |
 | `@euno/mcp` | Apache-2.0 | `euno-mcp/packages/euno-mcp/` | MCP proxy with local policy enforcement. |
-| `@euno/cli` | Apache-2.0 | `euno-mcp/packages/cli/` | Developer CLI. **Blocker: must drop `@euno/common` dependency before public npm publish.** |
+| `@euno/cli` | Apache-2.0 | `euno-mcp/packages/cli/` | Developer CLI. Migrated to `@euno/common-core`; no BUSL dependency blocker remains. |
 
 ## Planned packages (not yet created)
 
@@ -20,13 +20,15 @@ monorepo.
 
 ## Move checklist
 
-Before publishing any package from this surface to npm:
+Before publishing any package from this surface to GitHub Packages:
 
-- [ ] `@euno/cli` no longer depends on `@euno/common` (uses
+- [x] `@euno/cli` no longer depends on `@euno/common` (uses
       `@euno/common-core` directly).
-- [ ] `npm run lint:license-boundary` is green with **zero**
+- [x] `npm run lint:license-boundary` is green with **zero**
       allowlisted violations involving the package being published.
 - [ ] The package's `package.json` `"license"` field is `Apache-2.0`.
+- [ ] The package's `package.json` `publishConfig.registry` is
+      `https://npm.pkg.github.com`.
 - [ ] No file in the package contains a comment, TODO, or string
       literal naming a BUSL-1.1 package or referring to the private
       surface (see [§ Rules](./README.md#rules)).

@@ -7,7 +7,9 @@ things they shouldn't — before the tool call reaches your backend.
 
 The entry point for individual developers is [`@euno/mcp`](euno-mcp/packages/euno-mcp/README.md):
 a drop-in policy proxy for any [Model Context Protocol](https://spec.modelcontextprotocol.io/)
-server. No infrastructure required.
+server. No infrastructure required. For now, `@euno/*` packages publish to
+GitHub Packages rather than the public npm registry; see the package README for
+the scoped `.npmrc` setup.
 
 ```bash
 npx -y @euno/mcp proxy \
@@ -98,7 +100,6 @@ npm test -w @euno/mcp  # single workspace
 |-----|-----------|
 | [`docs/mvp.md`](docs/mvp.md) | Staged execution plan, gate criteria, business model |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | C4 views, sequence diagrams, cross-cutting concerns |
-| [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | Package-by-package implementation overview |
 | [`docs/capability-model.md`](docs/capability-model.md) | Security model and capability design |
 | [`docs/enforcement.md`](docs/enforcement.md) | Policy decision point design, enforcement guarantees |
 | [`docs/CAPABILITY_MANIFEST_GUIDE.md`](docs/CAPABILITY_MANIFEST_GUIDE.md) | Policy authoring guide |

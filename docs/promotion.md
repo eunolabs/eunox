@@ -66,8 +66,8 @@ HMAC-signed. Same format the enterprise gateway writes to SIEM — same schema,
 different signer — so policies and records are portable if you ever move to the
 hosted version.
 
-Repo: https://github.com/euno/euno-mcp
-npm: @euno/mcp
+Repo: https://github.com/edgeobs/euno
+Package: @euno/mcp on GitHub Packages
 ```
 
 ---
@@ -101,7 +101,7 @@ actually being used before I write more code.
 
 ```
 We ran into this too. The solution we've been using is a proxy MCP server
-(https://github.com/euno/euno-mcp) — it intercepts tools/call before the
+(https://github.com/edgeobs/euno) — it intercepts tools/call before the
 upstream server sees it and evaluates a typed policy (SELECT-only SQL, file
 extension allowlists, per-session call limits, time windows). No backend
 required; installs with npx and a YAML file.
@@ -145,7 +145,7 @@ The right answer is to enforce at the boundary, not in the language model.
 
 **What I'm using now**
 
-[`@euno/mcp`](https://github.com/euno/euno-mcp) is a proxy MCP server. It
+[`@euno/mcp`](https://github.com/edgeobs/euno) is a proxy MCP server. It
 sits between your MCP client and your upstream MCP server, intercepts every
 `tools/call`, evaluates a policy file, and either forwards the call or returns
 a structured denial — before the upstream server is ever contacted.
@@ -156,8 +156,10 @@ signing keys.
 **Install**
 
 ```bash
+npm config set @euno:registry https://npm.pkg.github.com
+npm login --registry=https://npm.pkg.github.com
 npm install -g @euno/mcp
-# or just use npx inline — nothing to install permanently
+# or use npx inline after the scoped registry is configured
 ```
 
 **Policy file** (`euno.policy.yaml`):
@@ -256,7 +258,7 @@ exactly what it's trying to do.
 You should do that too. Defense in depth. But sandbox setup is
 infrastructure work; this is a five-minute policy file. Both have a place.
 
-**Repo:** https://github.com/euno/euno-mcp
+**Repo:** https://github.com/edgeobs/euno
 
 ---
 
@@ -344,7 +346,7 @@ the sink.
 
 **References**
 
-- `@euno/mcp`: https://github.com/euno/euno-mcp
+- `@euno/mcp`: https://github.com/edgeobs/euno
 - MCP spec: https://spec.modelcontextprotocol.io
 - OCSF: https://schema.ocsf.io
 
@@ -406,7 +408,7 @@ These are things you would want whether or not you were worried about security.
 
 **Where to start**
 
-[`@euno/mcp`](https://github.com/euno/euno-mcp) is an open-source proxy MCP
+[`@euno/mcp`](https://github.com/edgeobs/euno) is an open-source proxy MCP
 server. `npx @euno/mcp proxy --policy ./euno.policy.yaml -- <your-mcp-server-command>`.
 No infrastructure. Five minutes. One policy file.
 
@@ -451,7 +453,7 @@ disallows. That's a large and important class.
 
 7/ Open source, Apache-2.0.
    npm: npx @euno/mcp proxy --policy ./euno.policy.yaml -- <your-mcp-server>
-   Repo: https://github.com/euno/euno-mcp
+   Repo: https://github.com/edgeobs/euno
 ```
 
 ---
@@ -466,7 +468,7 @@ npx @euno/mcp proxy \
   -- npx @modelcontextprotocol/server-postgres $DATABASE_URL
 
 5 minutes. No backend. Works with Claude Desktop, Cursor, LangChain.js.
-https://github.com/euno/euno-mcp
+https://github.com/edgeobs/euno
 ```
 
 ---
@@ -476,7 +478,7 @@ https://github.com/euno/euno-mcp
 ```
 Classic. If you're using MCP, @euno/mcp is a proxy that evaluates
 allowedOperations: [SELECT] before the DB server sees the call.
-Not foolproof but stops the obvious cases: https://github.com/euno/euno-mcp
+Not foolproof but stops the obvious cases: https://github.com/edgeobs/euno
 ```
 
 ---
@@ -512,7 +514,7 @@ Setup is one command and a YAML file. It works with Claude Desktop, Cursor,
 and LangChain.js out of the box. Every call — allowed or denied — is logged
 to a local audit file.
 
-It's open source: https://github.com/euno/euno-mcp
+It's open source: https://github.com/edgeobs/euno
 
 If you're deploying agents against databases, filesystems, or APIs and relying
 on prompting to keep them in lane — I'd suggest adding a hard enforcement
@@ -564,8 +566,8 @@ is a stronger option.
 Audit log: ~/.euno/audit.jsonl. Every call, allowed or denied, OCSF-shaped,
 locally HMAC-signed.
 
-Repo: https://github.com/euno/euno-mcp
-npm: @euno/mcp (Apache-2.0, no cloud account needed)
+Repo: https://github.com/edgeobs/euno
+GitHub Packages: @euno/mcp (Apache-2.0, no cloud account needed)
 
 Happy to answer questions about how the enforcement model works.
 ```
@@ -578,7 +580,7 @@ Happy to answer questions about how the enforcement model works.
 For anyone running MCP-based agents against real data: npx @euno/mcp wraps
 any MCP server and enforces typed conditions (SQL allowlists, path
 restrictions, call rate limits) on tools/call before forwarding. Local, no
-backend, Apache-2.0. https://github.com/euno/euno-mcp
+backend, Apache-2.0. https://github.com/edgeobs/euno
 ```
 
 ---
@@ -594,7 +596,7 @@ For folks running agents against MCP servers — just published @euno/mcp, a
 proxy that enforces typed policy (allowedOperations, allowedTables,
 allowedExtensions, maxCalls) on tools/call before forwarding to upstream.
 Works as a stdio wrapper for Claude Desktop/Cursor or in HTTP mode for
-LangChain.js. No backend needed. https://github.com/euno/euno-mcp
+LangChain.js. No backend needed. https://github.com/edgeobs/euno
 ```
 
 **Longer drop with context:**
@@ -623,7 +625,7 @@ Honest about the limits: enforcement is on what the agent sent, not on what
 the DB does with it. But for the "agent ran a mutation during what was supposed
 to be a read-only session" class of problem, it works well.
 
-Open source (Apache-2.0): https://github.com/euno/euno-mcp
+Open source (Apache-2.0): https://github.com/edgeobs/euno
 ```
 
 ---
@@ -635,7 +637,7 @@ Open source (Apache-2.0): https://github.com/euno/euno-mcp
 Add to the "Proxy / gateway" section of the MCP servers list:
 
 ```markdown
-- **[Euno MCP Proxy](https://github.com/euno/euno-mcp)** (`@euno/mcp`) —
+- **[Euno MCP Proxy](https://github.com/edgeobs/euno)** (`@euno/mcp`) —
   Policy-enforcing proxy. Intercepts `tools/call`, evaluates typed conditions
   (SQL verb allowlists, path restrictions, call rate limits, argument schemas),
   and returns a structured denial before the upstream server is contacted.
@@ -645,7 +647,7 @@ Add to the "Proxy / gateway" section of the MCP servers list:
 ### awesome-mcp-servers (if it exists)
 
 ```markdown
-- [euno/euno-mcp](https://github.com/euno/euno-mcp) — Runtime enforcement
+- [edgeobs/euno](https://github.com/edgeobs/euno) — Runtime enforcement
   proxy for MCP tool calls. Typed policy engine (allowedOperations, allowedTables,
   maxCalls, argumentSchema), local audit log, stdio + HTTP transports.
 ```

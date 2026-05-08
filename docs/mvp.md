@@ -3,12 +3,14 @@
 ## Strategic Summary & Staged Execution Plan
 
 > **Status of this document:** strategy / planning. Not implementation.
-> Reviewed against the actual state of `packages/` and the rest of
+> Reviewed against the actual state of the workspace packages and the rest of
 > `docs/` (April 2026). A second pass (May 2026) identified four additional
-> problems — `packages/common` split, dependency-direction enforcement,
+> problems — `euno-platform/packages/common` split, dependency-direction enforcement,
 > minter threat model, and the two-folder structure — addressed in this
 > revision. See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
 > for what changed and why.
+> Current package workspaces live under `euno-mcp/packages/*` and
+> `euno-platform/packages/*`; there is no root `packages/` workspace.
 
 ---
 
@@ -24,8 +26,8 @@ support (`did:web`, `did:ion`, `did:key`), pluggable identity
 providers (Entra ID, AWS Cognito, GCP Cloud Identity), pluggable
 signers (Azure Key Vault, AWS KMS, GCP Cloud KMS), framework adapters
 for LangChain / MAF / CrewAI, and ~37k LOC across 11 packages. See
-[`ARCHITECTURE.md`](./ARCHITECTURE.md), [`IMPLEMENTATION.md`](./IMPLEMENTATION.md),
-and [`capability-model.md`](./capability-model.md) for the authoritative
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) and
+[`capability-model.md`](./capability-model.md) for the authoritative
 implementation reference.
 
 **The problem with the current state.** The system is architected for
@@ -68,13 +70,13 @@ operational layer). It had four substantive problems and one
 material factual error that this revision fixes.
 
 1. **Factual error.** The prior plan said Stage 1 would *extract* MCP
-   interception logic from `packages/framework-adapters`. There is no
-   MCP code in `packages/framework-adapters` — only LangChain, MAF,
+   interception logic from `euno-platform/packages/framework-adapters`. There is no
+   MCP code in `euno-platform/packages/framework-adapters` — only LangChain, MAF,
    and CrewAI adapters. Stage 1 is **greenfield**, not extraction.
    What can be extracted is the `CapabilityCondition` discriminated
    union, `condition-registry`, `capability-validators`,
    `argument-validator`, the in-memory `CallCounterStore`, and the
-   in-memory `KillSwitchManager` from `packages/common`. The MCP
+   in-memory `KillSwitchManager` from `euno-platform/packages/common`. The MCP
    protocol layer itself has to be built.
 
 2. **The Stage 3 upgrade is not "a single config change."** The prior
@@ -114,7 +116,7 @@ material factual error that this revision fixes.
    design decision: it cannot be retrofitted into a security tool
    without burning trust. See [§ Telemetry & gate instrumentation](#telemetry--gate-instrumentation).
 
-6. **`packages/common` mixes open and operational code.** The package
+6. **`euno-platform/packages/common` mixes open and operational code.** The package
    currently contains both Apache-2.0-compatible things (types,
    interfaces, in-memory stores, the four interface seams) and
    operational things (Redis/Postgres/KMS-backed implementations).
@@ -181,7 +183,7 @@ strategy.
 >   [`docs/stage-0-freeze.md`](./stage-0-freeze.md) merged.
 > - [x] **Substage 0.2** -- MCP SDK version pinned; support window recorded in
 >   [`docs/mcp-support.md`](./mcp-support.md).
-> - [x] **Substage 0.3** -- `packages/common` split into `common-core`
+> - [x] **Substage 0.3** -- `euno-platform/packages/common` split into `common-core`
 >   (Apache-2.0) and `common-infra` (BUSL-1.1); package-level `LICENSE` files
 >   added; compat shim kept as `@euno/common` (BUSL-1.1) for back-compat.
 > - [x] **Substage 0.4** -- CI dependency-direction enforcement landed:
@@ -207,10 +209,10 @@ default behavior is to keep building outwards.
 
 **Decisions to make and write down before Stage 1 begins:**
 
-- **Feature-freeze** `packages/{tool-gateway, capability-issuer, common, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
-- **Quarantine** `packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
+- **Feature-freeze** `euno-platform/packages/{tool-gateway, capability-issuer, common, common-infra, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
+- **Quarantine** `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
 - **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision, and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage. Decision recorded in [`docs/mcp-support.md`](./mcp-support.md).
-- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and organising packages into the two-folder structure described in [§ Repository structure](#repository-structure-public--private).
+- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `euno-platform/packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and organising packages into the two-folder structure described in [§ Repository structure](#repository-structure-public--private).
 
 **Gate to Stage 1:** the freeze is announced (internal note is fine),
 the Stage-1 package layout is approved, the license boundary is in
@@ -308,7 +310,7 @@ to something hidden.
 
 > **Stage 1 status** (May 2026)
 >
-> - [x] Task 1 — `packages/euno-mcp` scaffolded; build, lint, test all pass
+> - [x] Task 1 — `euno-mcp/packages/euno-mcp` scaffolded; build, lint, test all pass
 > - [x] Task 2 — `MCP_PROTOCOL_VERSION` constant; `docs/mcp-support.md` updated
 > - [x] Task 3 — `StdioProxy` with full passthrough + `tools/call` interception
 > - [x] Task 4 — Mock upstream + stdio integration tests (transport-stdio.test.ts)
@@ -343,7 +345,7 @@ not just one framework. The enforcement boundary is the protocol
 itself — the agent has no import path, no function reference, no
 escape route.
 
-**Why not extract from `packages/framework-adapters`.** There is no
+**Why not extract from `euno-platform/packages/framework-adapters`.** There is no
 MCP code there. The MCP transport, JSON-RPC framing, and request
 routing are new code. What *can* be reused from the repository:
 
@@ -559,7 +561,7 @@ handles richer conditions unchanged because enforcement is still at
 
 - Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
 - `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
-- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `packages/agent-runtime`, just with a local-only backend.**
+- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `euno-platform/packages/agent-runtime`, just with a local-only backend.**
 - A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `euno-mcp/packages/euno-mcp/policies/` directory. This is what makes the 5-minute pitch real.
 - Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
@@ -574,7 +576,7 @@ handles richer conditions unchanged because enforcement is still at
 ## Stage 3: The Gateway as Managed Boundary
 
 **What changes.** Move enforcement out of the local proxy process
-into a persistent service. `packages/tool-gateway` stops being
+into a persistent service. `euno-platform/packages/tool-gateway` stops being
 overengineered and starts being exactly right for the population
 that's pulled this far.
 
@@ -607,12 +609,12 @@ perspective the upgrade really is one config change:
 
 From the operator's perspective the API-key minter is the new
 service. The Stage-3 gateway code is the existing
-`packages/tool-gateway` with its existing verifier path; nothing
+`euno-platform/packages/tool-gateway` with its existing verifier path; nothing
 about the security model has to be relaxed.
 
 ### What ships
 
-- `packages/tool-gateway` exposed as a hosted service and as a
+- `euno-platform/packages/tool-gateway` exposed as a hosted service and as a
   self-hosted Docker image (the latter under BSL).
 - The API-key minter described above (lives in the hosted offering;
   not part of the self-host bundle initially — that decision can flip
@@ -678,7 +680,7 @@ an internal API-key minter.
 
 ### What ships
 
-- `packages/capability-issuer` shipped as part of the hosted product
+- `euno-platform/packages/capability-issuer` shipped as part of the hosted product
   and self-host bundle.
 - Entra ID + at minimum one other identity provider (AWS Cognito or
   GCP Cloud Identity — pick whichever the design partners ask for).

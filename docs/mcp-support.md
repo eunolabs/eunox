@@ -23,10 +23,10 @@ visible and auditable.
 | npm package | `@modelcontextprotocol/sdk` |
 | **Pinned version** | **`1.26.0`** |
 | Primary protocol revision | `2025-11-25` |
-| Constant | `MCP_PROTOCOL_VERSION` in `packages/euno-mcp/src/protocol.ts` |
+| Constant | `MCP_PROTOCOL_VERSION` in `euno-mcp/packages/euno-mcp/src/protocol.ts` |
 
 Stage 1 installs `@modelcontextprotocol/sdk@1.26.0` (exact pin, not a
-range) in `packages/euno-mcp/package.json`.  No other package in the workspace
+range) in `euno-mcp/packages/euno-mcp/package.json`.  No other package in the workspace
 should add a direct dependency on `@modelcontextprotocol/sdk` without a
 corresponding update to this document.
 
@@ -54,7 +54,7 @@ MCP uses a date-based revision string in the `protocolVersion` field of the
 2025-11-25
 ```
 
-This is exported as `MCP_PROTOCOL_VERSION` from `packages/euno-mcp/src/protocol.ts`
+This is exported as `MCP_PROTOCOL_VERSION` from `euno-mcp/packages/euno-mcp/src/protocol.ts`
 and referenced at proxy startup.  `@euno/mcp` also negotiates downward to any
 revision in `MCP_SUPPORTED_PROTOCOL_VERSIONS` (also exported from that file) so
 older hosts continue to work within the support window.
@@ -73,7 +73,7 @@ older hosts continue to work within the support window.
 
 | Event | Action |
 |---|---|
-| New MCP SDK **patch** release (`1.11.x`) | Update within 2 weeks; no breaking changes expected. |
+| New MCP SDK **patch** release (`1.26.x`) | Update within 2 weeks; no breaking changes expected. |
 | New MCP SDK **minor** release (`1.x.0`) | Evaluate within 4 weeks; adopt if protocol revision is unchanged and no breaking surface changes. |
 | New MCP **protocol revision** published | Requires a named Stage gate or explicit `@edgeobs/euno-leads` approval; update this document before merging. |
 | New MCP SDK **major** release (`2.0.0`) | Treat as a new protocol revision; requires full compatibility review and a new entry in this table. |
@@ -100,7 +100,7 @@ Any of the following:
 All bumps require:
 
 - A PR updating this file (new pinned version + new revision string).
-- A corresponding `CHANGELOG` entry in `packages/euno-mcp/CHANGELOG.md`.
+- A corresponding `CHANGELOG` entry in `euno-mcp/packages/euno-mcp/CHANGELOG.md`.
 - CI passing (the integration test suite exercises the MCP handshake).
 
 ---

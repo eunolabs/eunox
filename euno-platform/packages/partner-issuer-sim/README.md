@@ -5,7 +5,7 @@ trust harness.
 
 This package is **not** published to any registry. It exists in the
 monorepo solely to drive the cross-org integration tests in
-`packages/integration-tests/tests/cross-org.test.ts` and the
+`euno-platform/packages/integration-tests/tests/cross-org.test.ts` and the
 `infra/docker-compose.cross-org.yml` harness.
 
 ## Endpoints

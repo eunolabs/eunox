@@ -137,7 +137,7 @@ be investigated.
 ## Running
 
 ```bash
-cd packages/integration-tests
+cd euno-platform/packages/integration-tests
 
 # All scenarios, default load profile (5 s × 20 connections each).
 npm run perf

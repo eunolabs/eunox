@@ -11,7 +11,7 @@ Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
 
 ## Architecture
 
-### Core components (`packages/common/src/adapters.ts`)
+### Core components (`euno-mcp/packages/common-core/src/adapters.ts`)
 
 - `IdentityAdapter` — abstract base class for identity providers
 - `SigningAdapter` — abstract base class for token signers
@@ -39,7 +39,7 @@ Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
 | `did` | DID-bound local/private-key signing; public key via `/.well-known/did.json` | `did-signer.ts` |
 
 **Implementation references:** the built-in registry is in
-`packages/capability-issuer/src/default-registries.ts`.
+`euno-platform/packages/capability-issuer/src/default-registries.ts`.
 
 ### Registry system
 

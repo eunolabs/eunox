@@ -2,7 +2,7 @@
 
 ## `verify-evidence.js` — F-9 continuous evidence-chain verification
 
-Wraps `AuditEvidenceSigner.verifyEvidence` from `packages/common/src/evidence.ts`
+Wraps `AuditEvidenceSigner.verifyEvidence` from `euno-mcp/packages/common-core/src/evidence.ts`
 in a batch-oriented entry point so the previous interval's signed audit
 evidence can be re-checked on a schedule. Running this on a daily cron
 catches log tampering automatically.

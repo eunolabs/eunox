@@ -3,7 +3,7 @@
 This directory contains the **AWS API Gateway** profile that is the AWS
 parity of the Azure APIM `validate-jwt` policy referenced in the Sprint-1
 plan. It is the cloud-edge front door for the in-cluster Tool Gateway
-service (`packages/tool-gateway`).
+service (`euno-platform/packages/tool-gateway`).
 
 | File                 | Purpose                                                                                             |
 |----------------------|-----------------------------------------------------------------------------------------------------|
@@ -20,7 +20,7 @@ client ──HTTPS──▶ API Gateway (REST)
                       │
                       └──▶ VPC Link ──▶ Tool Gateway pod (EKS)
                                           └─ scope-based payload validation
-                                              (packages/tool-gateway/src/enforcement.ts)
+                                              (euno-platform/packages/tool-gateway/src/enforcement.ts)
 ```
 
 This mirrors the Sprint-1 Azure pipeline (APIM `validate-jwt` + tool-gateway

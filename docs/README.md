@@ -8,9 +8,9 @@ Design and operational documentation for Euno. Docs are organized by purpose.
 
 | Doc | What it is |
 | --- | ---------- |
-| [IMPLEMENTATION.md](./IMPLEMENTATION.md) | What is Euno, what is in each package. Fastest overview. |
 | [../README.md](../README.md) | Root README: project status, quickstart, development setup. |
 | [euno-mcp README](../euno-mcp/packages/euno-mcp/README.md) | Stage 1 developer product: @euno/mcp quickstart. |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 
 ## 2. Architecture
 
@@ -36,7 +36,7 @@ Design and operational documentation for Euno. Docs are organized by purpose.
 
 | Doc | What it is |
 | --- | ---------- |
-| [DEPLOYMENT.md](./DEPLOYMENT.md) | Azure deployment guide (Stage 5). |
+| [DEPLOYMENT.md](./DEPLOYMENT.md) | Current deployment notes and platform service paths. |
 
 ## 5. Repository conventions
 

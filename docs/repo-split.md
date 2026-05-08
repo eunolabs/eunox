@@ -10,7 +10,7 @@ This document records the two-folder strategy introduced in
 [`docs/mvp.md § Repository structure`](./mvp.md#repository-structure-public--private),
 lists which packages belong to each folder, defines the `common-core` release
 checklist, and flags the known dependency violations that must be resolved
-before any public npm publish.
+before any public GitHub Packages publish.
 
 ---
 
@@ -71,9 +71,9 @@ has been resolved: `@euno/cli` now imports directly from `@euno/common-core`
 
 ---
 
-## `common-core` npm release checklist
+## `common-core` GitHub Packages release checklist
 
-Run this checklist before every `@euno/common-core` npm publish. Because
+Run this checklist before every `@euno/common-core` publish. Because
 `common-core` is the shared API contract between the public and platform
 surfaces, a bad release causes breakage in the platform packages that can only
 be fixed by another publish.
@@ -101,8 +101,13 @@ be fixed by another publish.
 # From the repo root
 cd euno-mcp/packages/common-core
 npm run build
-npm publish --access public --registry https://npm.pkg.github.com
+npm publish
 ```
+
+The package's `publishConfig.registry` points to
+`https://npm.pkg.github.com`; configure `//npm.pkg.github.com/:_authToken`
+or use the release workflow so publishing and installs resolve through
+GitHub Packages.
 
 ### Post-release
 

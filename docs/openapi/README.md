@@ -6,8 +6,8 @@ the corresponding `src/index.ts` / `src/admin-api.ts` files.
 
 | File | Service | Source |
 | ---- | ------- | ------ |
-| [`capability-issuer.yaml`](./capability-issuer.yaml) | Capability Issuer (default port 3001) | `packages/capability-issuer/src/index.ts` |
-| [`tool-gateway.yaml`](./tool-gateway.yaml)           | Tool Gateway (default port 3002)      | `packages/tool-gateway/src/index.ts` and `src/admin-api.ts` |
+| [`capability-issuer.yaml`](./capability-issuer.yaml) | Capability Issuer (default port 3001) | `euno-platform/packages/capability-issuer/src/index.ts` |
+| [`tool-gateway.yaml`](./tool-gateway.yaml)           | Tool Gateway (default port 3002)      | `euno-platform/packages/tool-gateway/src/index.ts` and `src/admin-api.ts` |
 
 ## Viewing the specs
 

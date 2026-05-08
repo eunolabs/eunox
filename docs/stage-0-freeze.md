@@ -1,22 +1,22 @@
 # Stage 0 Feature Freeze
 
-> **Status:** Active — effective immediately.  
+> **Status:** Active for platform packages during Stages 1–2.  
 > **Context:** See [docs/mvp.md § Stage 0](./mvp.md#stage-0-stop-the-bleeding-on-the-existing-codebase) for the full rationale.
 
 ---
 
 ## What is frozen
 
-The following packages are **feature-frozen** for the duration of Stage 0 and
-until the gate to Stage 1 is cleared:
+The following packages are **feature-frozen** during Stages 1–2:
 
 | Package | Owner team |
 |---|---|
-| `packages/tool-gateway` | `@edgeobs/euno-dp` |
-| `packages/capability-issuer` | `@edgeobs/euno-cp` |
-| `packages/common` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
-| `packages/agent-runtime` | `@edgeobs/euno-dp` |
-| `packages/framework-adapters` | `@edgeobs/euno-dx` |
+| `euno-platform/packages/tool-gateway` | `@edgeobs/euno-dp` |
+| `euno-platform/packages/capability-issuer` | `@edgeobs/euno-cp` |
+| `euno-platform/packages/common` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
+| `euno-platform/packages/common-infra` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
+| `euno-platform/packages/agent-runtime` | `@edgeobs/euno-dp` |
+| `euno-platform/packages/framework-adapters` | `@edgeobs/euno-dx` |
 
 ## What the freeze means
 
@@ -31,7 +31,7 @@ these three categories:
    description).
 
 Anything else — new features, refactors, additional abstractions, "while
-I'm in here" cleanups — must wait until Stage 1 is green-lit or until the
+I'm in here" cleanups — must wait until the freeze is lifted or until the
 freeze is explicitly lifted by `@edgeobs/euno-leads`.
 
 ## Why this freeze exists
@@ -69,10 +69,10 @@ Four packages are additionally quarantined — they are kept building in CI
 but receive no further investment until a Stage-4 customer pays for them.
 Each carries a `STATUS.md` explaining this.  See:
 
-- [`packages/partner-issuer-sim/STATUS.md`](../packages/partner-issuer-sim/STATUS.md)
-- [`packages/db-token-service/STATUS.md`](../packages/db-token-service/STATUS.md)
-- [`packages/storage-grant-service/STATUS.md`](../packages/storage-grant-service/STATUS.md)
-- [`packages/posture-emitter/STATUS.md`](../packages/posture-emitter/STATUS.md)
+- [`euno-platform/packages/partner-issuer-sim/STATUS.md`](../euno-platform/packages/partner-issuer-sim/STATUS.md)
+- [`euno-platform/packages/db-token-service/STATUS.md`](../euno-platform/packages/db-token-service/STATUS.md)
+- [`euno-platform/packages/storage-grant-service/STATUS.md`](../euno-platform/packages/storage-grant-service/STATUS.md)
+- [`euno-platform/packages/posture-emitter/STATUS.md`](../euno-platform/packages/posture-emitter/STATUS.md)
 
 ## MCP SDK pin
 
@@ -81,8 +81,7 @@ Stage 1 will target are recorded in [`docs/mcp-support.md`](./mcp-support.md).
 
 ## Lifting the freeze
 
-The freeze is lifted automatically when the Stage 1 gate is cleared (see
-[docs/mvp.md § Stage 0](./mvp.md#stage-0-stop-the-bleeding-on-the-existing-codebase)).
-`@edgeobs/euno-leads` may also lift the freeze on a per-package basis by
+The Stage 0 gate is already cleared; the freeze remains in force until the
+Stage 2 gate is cleared or `@edgeobs/euno-leads` lifts it on a per-package basis by
 updating this file and merging the change through the normal CODEOWNERS
 review process.

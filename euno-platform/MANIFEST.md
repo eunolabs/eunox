@@ -9,7 +9,7 @@ this monorepo.
 | Package | License | Path | Notes |
 |---|---|---|---|
 | `@euno/common-infra` | BUSL-1.1 | `euno-platform/packages/common-infra/` | Redis / Postgres / KMS implementations. |
-| `@euno/common` | BUSL-1.1 | `euno-platform/packages/common/` | Compat shim re-exporting `common-core` + `common-infra`. Deprecated; will be removed once `@euno/cli` no longer depends on it. |
+| `@euno/common` | BUSL-1.1 | `euno-platform/packages/common/` | Compat shim re-exporting `common-core` + `common-infra` for platform back-compat. New public packages must depend on `@euno/common-core` directly. |
 | `@euno/tool-gateway` | BUSL-1.1 | `euno-platform/packages/tool-gateway/` | |
 | `@euno/capability-issuer` | BUSL-1.1 | `euno-platform/packages/capability-issuer/` | |
 | `@euno/agent-runtime` | BUSL-1.1 | `euno-platform/packages/agent-runtime/` | |

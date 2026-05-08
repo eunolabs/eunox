@@ -1,11 +1,10 @@
 # Euno — Architecture Overview
 
-> **Status:** ✅ Reflects current code in `packages/` as of April 2026.
+> **Status:** ✅ Reflects the current two-folder workspace layout as of May 2026.
 >
 > This document is the consolidated architecture reference for Euno
 > *as implemented in this repository*. It complements (not replaces):
 >
-> - [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) — package-by-package summary.
 > - [`diagrams.md`](./diagrams.md) — abstract / engineering / executive
 >   diagram set framed around the **design pattern** (capability-native
 >   agent governance), not this specific code base.
@@ -80,8 +79,9 @@ flowchart LR
 
 ## 3. C4 Level 2 — Container / package view
 
-The repository is a TypeScript monorepo (`packages/*`). Each container
-maps 1:1 to a workspace under `packages/`.
+The repository is a TypeScript monorepo with two workspace roots:
+`euno-mcp/packages/*` for Apache-2.0 developer-facing packages and
+`euno-platform/packages/*` for BUSL-1.1 platform packages.
 
 ```mermaid
 flowchart TB
@@ -97,8 +97,10 @@ flowchart TB
     end
 
     subgraph Shared["Shared platform"]
-        Common["common<br/>types, conditions,<br/>kill-switch, evidence,<br/>adapters"]
+        CommonCore["common-core<br/>types, conditions,<br/>in-memory seams"]
+        CommonInfra["common-infra/common<br/>Redis/Postgres/KMS + compat shim"]
         CLI["cli<br/>euno init / validate / request / ..."]
+        MCP["euno-mcp<br/>MCP proxy"]
     end
 
     subgraph External["External (per env)"]
@@ -123,11 +125,15 @@ flowchart TB
     Gateway --> Resolver
     Gateway --> Redis
     Gateway --> Backend
-    Issuer --> Common
-    Gateway --> Common
-    Runtime --> Common
-    Adapters --> Common
-    CLI --> Common
+    Issuer --> CommonCore
+    Gateway --> CommonCore
+    Runtime --> CommonCore
+    Adapters --> CommonCore
+    CLI --> CommonCore
+    MCP --> CommonCore
+    CommonInfra --> CommonCore
+    Issuer --> CommonInfra
+    Gateway --> CommonInfra
     Integ --> Issuer
     Integ --> Gateway
     Integ --> Runtime
@@ -138,24 +144,28 @@ flowchart TB
 
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `packages/common`                    | shared       | Types split into two opt-in subpaths — `@euno/common/wire` (JWT/HTTP shapes: `CapabilityTokenPayload`, `CapabilityCondition` discriminated union, issue/validate/audit/storage/db payloads) and `@euno/common/runtime` (in-process surfaces: `UserContext`, `ResolvedRole`, `AgentInventoryRecord`, `EvidenceSigner`, `IdentityProvider`, `TokenSigner/Verifier`, `KillSwitchManager`, `ServiceConfig` and friends) — plus `ConditionRegistry`, `KillSwitchManager` (in-mem + Redis), `EvidenceSigner`, `CallCounterStore`, role mapping, validators. The bare `@euno/common` entry point still re-exports the union of both subpaths for back-compat. |
-| `packages/capability-issuer`         | ~1.6k (service) | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services |
-| `packages/tool-gateway`              | ~0.7k (service) | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store |
-| `packages/agent-runtime`             | small        | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway |
-| `packages/framework-adapters`        | small        | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape |
-| `packages/posture-emitter`           | small        | Emits `AgentInventoryRecord`s on issuance / revocation for SIEM-side posture inventory |
-| `packages/cli`                       | small        | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token` |
-| `packages/integration-tests`         | tests        | E2E issuer ↔ gateway ↔ runtime harness |
-| `packages/partner-issuer-sim`        | tests        | Stand-in foreign issuer for cross-org tests |
+| `euno-mcp/packages/common-core` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
+| `euno-mcp/packages/euno-mcp` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
+| `euno-mcp/packages/cli` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
+| `euno-platform/packages/common-infra` | platform shared | BUSL Redis/Postgres/KMS implementations for the interfaces exported by `common-core`. |
+| `euno-platform/packages/common` | compat shim | BUSL back-compat package re-exporting `common-core` and `common-infra`. New public code must not depend on it. |
+| `euno-platform/packages/capability-issuer` | service | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services. |
+| `euno-platform/packages/tool-gateway` | service | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store. |
+| `euno-platform/packages/agent-runtime` | library | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway. |
+| `euno-platform/packages/framework-adapters` | library | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape. |
+| `euno-platform/packages/posture-emitter` | library | Emits `AgentInventoryRecord`s on issuance / revocation for SIEM-side posture inventory. |
+| `euno-platform/packages/integration-tests` | tests | E2E issuer ↔ gateway ↔ runtime harness. |
+| `euno-platform/packages/partner-issuer-sim` | tests | Stand-in foreign issuer for cross-org tests. |
 
-Total source ≈ **19.5k LOC**, tests ≈ **13.8k LOC** (≈ 0.7 ratio), nine
-workspaces.
+The root `package.json` declares both workspace globs and the
+`scripts/check-license-boundary.mjs` lint step prevents Apache-2.0 packages
+from depending on BUSL-1.1 packages.
 
 ---
 
 ## 4. C4 Level 3 — Internal structure of the two services
 
-### 4.1 Capability Issuer (`packages/capability-issuer/src/`)
+### 4.1 Capability Issuer (`euno-platform/packages/capability-issuer/src/`)
 
 ```mermaid
 flowchart LR
@@ -222,7 +232,7 @@ Notable design choices visible in the code:
   endpoint remains operational (returns the active key's SPKI PEM with
   a `Deprecation` response header) for one deprecation cycle.
 
-### 4.2 Tool Gateway (`packages/tool-gateway/src/`)
+### 4.2 Tool Gateway (`euno-platform/packages/tool-gateway/src/`)
 
 ```mermaid
 flowchart LR
@@ -681,10 +691,10 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Key rotation (R-6)  | `GET /.well-known/jwks.json` (issuer); `JwksClient` (gateway) | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default). |
 | Audit               | `evidence.ts` + `createAuditLogger` + `EvidenceSigner`        | Fail-closed: cannot enable crypto-audit without a signer             |
 | Observability       | `logger.ts` + `log-transports.ts` + Sentinel rules             | OpenTelemetry not yet wired                                          |
-| Rate limiting       | Issuer: per-(tenantId, userId, agentId) `IssuanceRateLimiter` (Redis-backed); express-rate-limit per-IP as a pre-auth guard. Gateway: `CallCounterBackedGatewayQuotaEngine` per-(jti, action, resource) (opt-in via `GATEWAY_QUOTA_ENABLED=true`). | Issuer limiter uses a three-component key so issue/attenuate/renew all share the same per-identity KMS budget — a misbehaving agent cannot bypass the cap by alternating mint paths or rotating IPs. Gateway quota protects the enforcement hot-path from token-flooding regardless of `maxCalls` conditions; each gateway request passes `agentSub` to the counter store so sharded deployments stay on the shard-local fast path. |
+| Rate limiting       | Issuer: `IssuanceRateLimiter` backed by the shared call-counter store. Gateway: `CallCounterBackedGatewayQuotaEngine` per token/action/resource when `GATEWAY_QUOTA_ENABLED=true`. | The issuer and gateway share counter abstractions from `@euno/common-core`; Redis-backed production implementations live in `@euno/common-infra`. |
 | Schema evolution    | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`| Fail-closed on unknown versions                                      |
-| Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`) |
-| Tests               | Per-package `tests/` + `packages/integration-tests`           | ≈0.7 test:src LOC ratio                                              |
+| Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common-core`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`) |
+| Tests               | Per-package `tests/` + `euno-platform/packages/integration-tests` | Workspace tests exercise package and cross-service behaviour.        |
 
 ---
 
@@ -701,8 +711,8 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
   kill switch (operator-controlled). Compromise of any single layer
   does not collapse the system.
 - **Pluggable everywhere it matters.** Identity, signing, and DID
-  resolution are all behind adapter interfaces in
-  `packages/common/src/adapters.ts` with cloud-specific concretes.
+  resolution are all behind adapter interfaces in `@euno/common-core`
+  with cloud-specific concretes in the platform packages.
 - **Fail-closed by default.** Unknown condition `type`, unknown
   `schemaVersion`, missing call-counter store with a `maxCalls`
   capability, missing evidence signer with crypto-audit on — all hard
