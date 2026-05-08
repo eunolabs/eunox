@@ -400,9 +400,8 @@ export class AuditEvidenceSigner implements EvidenceSigner {
     }
     const canonical = canonicalize(commitment);
     const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest();
-    const verify = this.cryptoSigner.verifyDigest;
     try {
-      return await verify(digest, signatureBuffer, keyId, algorithm);
+      return await this.cryptoSigner.verifyDigest(digest, signatureBuffer, keyId, algorithm);
     } catch {
       return false;
     }
