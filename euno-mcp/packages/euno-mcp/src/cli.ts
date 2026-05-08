@@ -20,6 +20,7 @@ import { HttpProxy } from './transport/http';
 import { createLocalAuditSink, McpAuditSink } from './audit';
 import { FilePolicySource } from './policy/source';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
+import { createTelemetry } from './telemetry';
 
 const program = new Command();
 
@@ -137,6 +138,19 @@ Examples:
       pdp = new AlwaysAllowPDP();
     }
 
+    // ── Create telemetry collector ────────────────────────────────────────
+    // Must be called before proxy.start() so the consent prompt (if any) is
+    // shown while stdin is still available for user input.
+    const telemetry = await createTelemetry({
+      subcommand: 'proxy',
+      upstreamCommand: upstreamCommand,
+      upstreamArgs: upstreamArgs,
+    });
+
+    // Register beforeExit to flush telemetry once the event loop drains.
+    // This fires after the proxy session ends and all I/O has settled.
+    process.once('beforeExit', () => { void telemetry.flush(); });
+
     // ── stdio transport ───────────────────────────────────────────────────
     if (transport === 'stdio') {
       // Initialise the audit sink. Errors here are fatal — we want operators
@@ -161,6 +175,7 @@ Examples:
         shutdownTimeoutMs,
         auditSink,
         pdp,
+        telemetryHooks: telemetry.sessionHooks(),
       });
 
       let exitCode = 0;
@@ -209,6 +224,7 @@ Examples:
       bind,
       unsafeBindAll,
       shutdownTimeoutMs,
+      telemetryHooks: telemetry.sessionHooks(),
     });
 
     try {
@@ -228,6 +244,7 @@ Examples:
           exitCode = 1;
         }
         conditionPdp?.dispose();
+        await telemetry.flush();
         process.exit(exitCode);
       };
       process.once('SIGINT', shutdown);
@@ -257,6 +274,7 @@ Examples:
 `,
   )
   .action(async (policyFile: string) => {
+    const telemetry = await createTelemetry({ subcommand: 'validate' });
     const source = new FilePolicySource({ filePath: policyFile });
     try {
       const manifest = await source.load();
@@ -265,12 +283,14 @@ Examples:
       console.log(`  Agent: ${manifest.name} (${manifest.agentId})`);
       console.log(`  Version: ${manifest.version}`);
       console.log(`  Required capabilities: ${manifest.requiredCapabilities.length}`);
+      await telemetry.flush();
     } catch (err) {
       if (err instanceof Error) {
         console.error(`✗ Validation failed: ${err.message}`);
       } else {
         console.error(`✗ Validation failed: ${String(err)}`);
       }
+      await telemetry.flush();
       process.exit(1);
     }
   });
@@ -306,6 +326,7 @@ Examples:
 `,
   )
   .action(async (target: string, options) => {
+    const telemetry = await createTelemetry({ subcommand: 'kill' });
     const port = parseInt(options.port as string, 10);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       process.stderr.write(
@@ -373,10 +394,12 @@ Examples:
         } catch {
           console.log('✓ Kill switch activated');
         }
+        await telemetry.flush();
       } else {
         process.stderr.write(
           `[euno-mcp] Kill request failed (HTTP ${result.status}): ${result.body}\n`,
         );
+        await telemetry.flush();
         process.exit(1);
       }
     } catch (err) {
@@ -384,6 +407,7 @@ Examples:
         `[euno-mcp] Could not reach the proxy at ${url}: ${String(err)}\n` +
         `  Make sure the proxy is running with --transport http on port ${port}.\n`,
       );
+      await telemetry.flush();
       process.exit(1);
     }
   });

@@ -9,6 +9,8 @@
  *     / {@link PdpDecision} — enforcement seam (Task 3).
  *   - {@link StdioProxy} / {@link StdioProxyOptions} — stdio transport (Task 3).
  *   - {@link HttpProxy} / {@link HttpProxyOptions} — streamable HTTP transport (Task 5).
+ *   - {@link createTelemetry} / {@link TelemetryCollector} — opt-in anonymous
+ *     usage telemetry (Task 10).
  */
 
 export { MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS } from './protocol';
@@ -21,3 +23,24 @@ export type { HttpProxyOptions, KillController } from './transport/http';
 export type { LocalPolicySource, FilePolicySourceOptions } from './policy/source';
 export { FilePolicySource } from './policy/source';
 export * from './audit';
+export {
+  createTelemetry,
+  TelemetryCollector,
+  TELEMETRY_EVENT_KEYS,
+  sanitizeUpstreamServerName,
+  DEFAULT_TELEMETRY_ENDPOINT,
+  DEFAULT_LOCAL_TELEMETRY_PATH,
+  DEFAULT_TELEMETRY_STATE_PATH,
+  NoopTelemetryEmitter,
+  LocalFileTelemetryEmitter,
+  HttpTelemetryEmitter,
+} from './telemetry';
+export type {
+  TelemetryEvent,
+  TelemetryHooks,
+  OsFamily,
+  TelemetryState,
+  TelemetryEmitter,
+  TelemetryEventBase,
+  CreateTelemetryOptions,
+} from './telemetry';

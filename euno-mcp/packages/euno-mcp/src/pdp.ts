@@ -98,6 +98,14 @@ export interface PdpDecision {
    * `MAX_CALLS_EXCEEDED`).  Only set when `allow` is `false`.
    */
   readonly denialCode?: string;
+  /**
+   * The `CapabilityCondition.type` that triggered the denial (e.g. `'maxCalls'`,
+   * `'timeWindow'`, `'argumentSchema'`, `'kill'`).
+   *
+   * Populated by {@link ConditionEnforcerPDP} for telemetry and audit enrichment.
+   * Only set when `allow` is `false`.
+   */
+  readonly conditionType?: string;
 }
 
 /**
@@ -463,6 +471,7 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
         allow: false,
         reason: 'Session has been terminated by a kill-switch command',
         denialCode: 'KILL_SWITCH',
+        conditionType: 'kill',
       };
     }
 
@@ -509,6 +518,7 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
           allow: false,
           reason,
           denialCode: 'ARGUMENT_VALIDATION_FAILED',
+          conditionType: 'argumentSchema',
         };
       }
     }
@@ -534,6 +544,7 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
           allow: false,
           reason: result.reason,
           denialCode: conditionTypeToDenialCode(result.conditionType),
+          conditionType: result.conditionType,
         };
       }
     }

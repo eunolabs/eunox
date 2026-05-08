@@ -61,6 +61,7 @@ import {
   MCP_SUPPORTED_PROTOCOL_VERSIONS,
 } from '../protocol';
 import { McpAuditSink, NullAuditSink } from '../audit';
+import type { TelemetryHooks } from '../telemetry/types';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -126,6 +127,11 @@ export interface StdioProxyOptions {
    * testing).  Defaults to `process.stdout`.
    */
   hostStdout?: Writable;
+  /**
+   * Optional telemetry hooks for recording session lifecycle events and
+   * tool-call enforcement decisions.  No-op when not supplied.
+   */
+  telemetryHooks?: TelemetryHooks;
 }
 
 /**
@@ -175,9 +181,9 @@ function buildDenialResult(
  */
 export class StdioProxy {
   private readonly _opts: Required<
-    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout'>
+    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>
   > &
-    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout'>;
+    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>;
 
   private _server?: Server;
   private _client?: Client;
@@ -196,6 +202,7 @@ export class StdioProxy {
       shutdownTimeoutMs: opts.shutdownTimeoutMs ?? 5_000,
       hostStdin: opts.hostStdin,
       hostStdout: opts.hostStdout,
+      telemetryHooks: opts.telemetryHooks,
     };
   }
 
@@ -250,6 +257,10 @@ export class StdioProxy {
     this._client = client;
 
     await client.connect(clientTransport);
+
+    // Upstream connected successfully — now the session is truly established.
+    // Notify telemetry after the connect so failed connections aren't counted.
+    this._opts.telemetryHooks?.onSessionStart?.();
 
     // Retrieve upstream server capabilities to advertise them verbatim to the
     // host.
@@ -323,7 +334,11 @@ export class StdioProxy {
         toolName: req.params.name,
         decision: decision.allow ? 'allow' : 'deny',
         denialCode: decision.denialCode,
+        conditionType: decision.conditionType,
       });
+
+      // Notify telemetry hooks (fire-and-forget, no await).
+      this._opts.telemetryHooks?.onDecision?.(decision.allow, decision.conditionType);
 
       if (!decision.allow) {
         // Return a structured CapabilityDenied result (not a transport-level
@@ -377,6 +392,8 @@ export class StdioProxy {
     let upstreamExited = false;
     clientTransport.onclose = () => {
       upstreamExited = true;
+      // Notify telemetry that the session has ended.
+      this._opts.telemetryHooks?.onSessionEnd?.();
     };
 
     const shutdown = (signal: NodeJS.Signals) => {

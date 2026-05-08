@@ -48,6 +48,19 @@ The pinned version constant is exported as `MCP_PROTOCOL_VERSION` from the packa
 import { MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS } from '@euno/mcp';
 ```
 
+## Telemetry
+
+`@euno/mcp` optionally collects anonymous, aggregate usage counts to help
+prioritize improvements.  **Telemetry is off by default.**  On the first
+interactive run you are asked:
+
+```
+Enable anonymous telemetry? [y/N]
+```
+
+Disable at any time with `EUNO_TELEMETRY=0`.  See [TELEMETRY.md](./TELEMETRY.md)
+for the full schema, where data goes, and all opt-out mechanisms.
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).

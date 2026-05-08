@@ -52,6 +52,7 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_SUPPORTED_PROTOCOL_VERSIONS,
 } from '../protocol';
+import type { TelemetryHooks } from '../telemetry/types';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -143,6 +144,11 @@ export interface HttpProxyOptions {
    * @default 5000
    */
   shutdownTimeoutMs?: number;
+  /**
+   * Optional telemetry hooks for recording session lifecycle events and
+   * tool-call enforcement decisions.  No-op when not supplied.
+   */
+  telemetryHooks?: TelemetryHooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,8 +216,8 @@ function buildDenialResult(
  * ```
  */
 export class HttpProxy {
-  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd' | 'killController'>> &
-    Pick<HttpProxyOptions, 'env' | 'cwd' | 'killController'>;
+  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks'>> &
+    Pick<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks'>;
 
   private _httpServer?: http.Server;
   private _sessions = new Map<string, HttpProxySession>();
@@ -230,6 +236,7 @@ export class HttpProxy {
       bind: opts.bind ?? '127.0.0.1',
       unsafeBindAll: opts.unsafeBindAll ?? false,
       shutdownTimeoutMs: opts.shutdownTimeoutMs ?? 5_000,
+      telemetryHooks: opts.telemetryHooks,
     };
   }
 
@@ -451,6 +458,12 @@ export class HttpProxy {
     // ── 3. Create the HTTP session transport ──────────────────────────────
     let registeredSessionId: string | undefined;
 
+    // Create a fresh per-session hook set so that concurrent sessions do not
+    // share state (e.g. hadEnforcement flags are independent per session).
+    const sessionTelemetry =
+      this._opts.telemetryHooks?.createSessionHooks?.() ??
+      this._opts.telemetryHooks;
+
     const serverTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sid) => {
@@ -466,6 +479,8 @@ export class HttpProxy {
           `[euno-mcp] HTTP session ${sid} initialized. ` +
             `Active sessions: ${this._sessions.size}.\n`,
         );
+        // Notify telemetry that a new session has started.
+        sessionTelemetry?.onSessionStart?.();
       },
       onsessionclosed: (sid) => {
         const session = this._sessions.get(sid);
@@ -474,6 +489,8 @@ export class HttpProxy {
           `[euno-mcp] HTTP session ${sid} closed. ` +
             `Active sessions: ${this._sessions.size}.\n`,
         );
+        // Notify telemetry that the session has ended.
+        sessionTelemetry?.onSessionEnd?.();
         if (session !== undefined) {
           // Tear down the upstream process and both transports so the child
           // process doesn't linger after the HTTP client ends the session.
@@ -522,6 +539,9 @@ export class HttpProxy {
     proxyServer.setRequestHandler(CallToolRequestSchema, async (reqMsg) => {
       const sessionId = registeredSessionId ?? 'pending';
       const decision = await pdp.decide(reqMsg, { sessionId });
+
+      // Notify telemetry hooks about this enforcement decision.
+      sessionTelemetry?.onDecision?.(decision.allow, decision.conditionType);
 
       if (!decision.allow) {
         return buildDenialResult(

@@ -30,6 +30,7 @@
   "files": [
     "dist",
     "README.md",
+    "TELEMETRY.md",
     "LICENSE"
   ],
   "license": "Apache-2.0"
