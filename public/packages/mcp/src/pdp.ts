@@ -81,6 +81,20 @@ export interface PdpContext {
    * `initialize` → `shutdown` cycle (see Task 5).
    */
   readonly sessionId: string;
+
+  /**
+   * The source IP address of the MCP client making the request.
+   *
+   * For HTTP transport this is the IP captured from the incoming HTTP
+   * request (see {@link HttpProxy}).  For stdio transport this is always
+   * `undefined` — there is no network peer in stdio mode, so manifests that
+   * include an `ipRange` condition and are used over stdio will be denied
+   * with the reason "ipRange requires sourceIp in request context".
+   *
+   * The value is already stripped of the `::ffff:` IPv4-mapped prefix so
+   * handlers always receive a bare IPv4 or IPv6 address.
+   */
+  readonly sourceIp?: string;
 }
 
 /**
@@ -602,6 +616,8 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
         operation: extractSqlOperation(rawArgs),
         filePath: extractFilePath(rawArgs),
         tables: extractTables(rawArgs),
+        // Network-level context (populated by the HTTP transport; undefined for stdio)
+        sourceIp: ctx.sourceIp,
         recipients: extractRecipients(rawArgs),
       };
 

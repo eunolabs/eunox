@@ -771,6 +771,150 @@ describe('ConditionEnforcerPDP — policy source lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ipRange condition (Stage 2)
+// ---------------------------------------------------------------------------
+
+describe('ConditionEnforcerPDP — ipRange condition', () => {
+  /** Build a PdpContext with an optional sourceIp. */
+  function makeCtxWithIp(sourceIp?: string, sessionId = 'ip-session') {
+    return { sessionId, sourceIp };
+  }
+
+  it('allows a request when sourceIp matches an allowed CIDR', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'ipRange', cidrs: ['127.0.0.0/8', '10.0.0.0/8'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('127.0.0.1'));
+    expect(d.allow).toBe(true);
+  });
+
+  it('allows a request when sourceIp matches the second CIDR in the list', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'ipRange', cidrs: ['192.168.0.0/16', '10.0.0.0/8'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('10.1.2.3'));
+    expect(d.allow).toBe(true);
+  });
+
+  it('denies a request when sourceIp is not in any allowed CIDR', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'ipRange', cidrs: ['192.168.0.0/16'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('198.51.100.1'));
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('IP_RANGE_DENIED');
+    expect(d.conditionType).toBe('ipRange');
+    expect(d.reason).toMatch(/198\.51\.100\.1/);
+  });
+
+  it('denies when sourceIp is undefined (no IP available — e.g. stdio transport)', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'ipRange', cidrs: ['127.0.0.0/8'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // No sourceIp in context — mirrors stdio transport behaviour.
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp(undefined));
+    expect(d.allow).toBe(false);
+    expect(d.denialCode).toBe('IP_RANGE_DENIED');
+    expect(d.reason).toMatch(/sourceIp/i);
+  });
+
+  it('allows an exact /32 CIDR match', async () => {
+    const manifest = singleToolManifest('admin_tool', [
+      { type: 'ipRange', cidrs: ['10.0.0.5/32'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    const allowed = await pdp.decide(makeRequest('admin_tool'), makeCtxWithIp('10.0.0.5'));
+    expect(allowed.allow).toBe(true);
+
+    const denied = await pdp.decide(makeRequest('admin_tool'), makeCtxWithIp('10.0.0.6'));
+    expect(denied.allow).toBe(false);
+  });
+
+  it('is evaluated before maxCalls (cheaper stateless condition wins first)', async () => {
+    // ipRange has priority 1, maxCalls has priority 5 — ipRange runs first.
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'maxCalls', count: 100, windowSeconds: 60 } as CapabilityCondition,
+      { type: 'ipRange', cidrs: ['192.168.0.0/16'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // Disallowed IP → denied with ipRange code, not maxCalls.
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('8.8.8.8'));
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('ipRange');
+    expect(d.denialCode).toBe('IP_RANGE_DENIED');
+  });
+
+  it('allows when both ipRange and maxCalls are satisfied', async () => {
+    const counterStore = new InMemoryCallCounterStore();
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'maxCalls', count: 3, windowSeconds: 60 } as CapabilityCondition,
+      { type: 'ipRange', cidrs: ['10.0.0.0/8'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest), counterStore });
+
+    for (let i = 0; i < 3; i++) {
+      const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('10.1.2.3'));
+      expect(d.allow).toBe(true);
+    }
+    // 4th call is denied by maxCalls (ipRange still passes).
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('10.1.2.3'));
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('maxCalls');
+  });
+
+  it('denies with ipRange even when maxCalls quota is not yet exhausted', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'maxCalls', count: 10, windowSeconds: 60 } as CapabilityCondition,
+      { type: 'ipRange', cidrs: ['10.0.0.0/8'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // Wrong IP — denied before maxCalls counter is checked.
+    const d = await pdp.decide(makeRequest('secure_tool'), makeCtxWithIp('1.2.3.4'));
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('ipRange');
+  });
+
+  it('tools not covered by the manifest are allowed regardless of IP', async () => {
+    const manifest = singleToolManifest('secure_tool', [
+      { type: 'ipRange', cidrs: ['192.168.0.0/16'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // 'unrestricted_tool' is not in the manifest → allowed with any IP.
+    const d = await pdp.decide(makeRequest('unrestricted_tool'), makeCtxWithIp('1.2.3.4'));
+    expect(d.allow).toBe(true);
+  });
+
+  it('passes sourceIp into the condition context from PdpContext', async () => {
+    // Verify that PdpContext.sourceIp is the field used by the condition registry.
+    const manifest = singleToolManifest('t', [
+      { type: 'ipRange', cidrs: ['172.16.0.0/12'] } as CapabilityCondition,
+    ]);
+    const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
+
+    // 172.31.255.255 is the last address in 172.16.0.0/12.
+    const last = await pdp.decide(makeRequest('t'), { sessionId: 's', sourceIp: '172.31.255.255' });
+    expect(last.allow).toBe(true);
+
+    // 172.32.0.0 is one beyond the /12 range.
+    const beyond = await pdp.decide(makeRequest('t'), { sessionId: 's', sourceIp: '172.32.0.0' });
+    expect(beyond.allow).toBe(false);
+    expect(beyond.denialCode).toBe('IP_RANGE_DENIED');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // argumentSchema — structured error reporting (Task 1)
 // ---------------------------------------------------------------------------
 

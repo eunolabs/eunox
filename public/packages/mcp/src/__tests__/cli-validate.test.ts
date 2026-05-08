@@ -6,7 +6,9 @@
  * ✓ Valid YAML manifest → exits 0, output matches `euno validate` format
  * ✓ Valid JSON manifest → exits 0, output matches `euno validate` format
  * ✓ Unknown condition type → exits 1, error message names the JSON path
- * ✓ Deferred Stage-2 condition type → exits 1, message mentions Stage 2
+ * ✓ Deferred condition type (recipientDomain, etc.) → exits 1, message mentions stage
+ * ✓ ipRange condition → exits 0 (lifted from deferred set in Stage 2)
+ * ✓ ipRange with invalid CIDR → exits 1, validation error
  * ✓ Missing required field → exits 1, validation error
  * ✓ Non-existent file → exits 1, ENOENT-style error
  * ✓ Malformed YAML → exits 1, parse error
@@ -185,17 +187,6 @@ requiredCapabilities:
 
 /** Minimal valid YAML for each deferred condition type (with required fields). */
 const DEFERRED_CONDITION_YAMLS: Record<string, string> = {
-  ipRange: `
-agentId: test-agent
-name: Test
-version: 1.0.0
-requiredCapabilities:
-  - resource: "tool://foo"
-    actions: [call]
-    conditions:
-      - type: ipRange
-        cidrs: ["10.0.0.0/8"]
-`.trim(),
   recipientDomain: `
 agentId: test-agent
 name: Test
@@ -243,17 +234,61 @@ requiredCapabilities:
 `.trim(),
 };
 
-describe('euno-mcp validate — deferred Stage-2 conditions', () => {
+describe('euno-mcp validate — deferred condition types', () => {
   for (const [deferredType, yaml] of Object.entries(DEFERRED_CONDITION_YAMLS)) {
-    it(`exits 1 for condition type "${deferredType}" and mentions Stage 2`, () => {
+    it(`exits 1 for condition type "${deferredType}" and mentions stage`, () => {
       const filePath = writeTempFile('yaml', yaml);
       const { exitCode, stderr } = runValidate(filePath);
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain('✗ Validation failed');
-      expect(stderr.toLowerCase()).toContain('stage 2');
+      expect(stderr.toLowerCase()).toMatch(/stage/);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Stage-2 ipRange condition (accepted from Stage 2 onwards)
+// ---------------------------------------------------------------------------
+
+describe('euno-mcp validate — Stage-2 ipRange condition', () => {
+  it('exits 0 for a manifest with a valid ipRange condition', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "echo"
+    actions: [call]
+    conditions:
+      - type: ipRange
+        cidrs: ["127.0.0.0/8", "10.0.0.0/8"]
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stdout } = runValidate(filePath);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
+  });
+
+  it('exits 1 for an ipRange condition with an invalid CIDR', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "echo"
+    actions: [call]
+    conditions:
+      - type: ipRange
+        cidrs: ["not-a-cidr"]
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stderr } = runValidate(filePath);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('✗ Validation failed');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -355,11 +355,11 @@ requiredCapabilities:
 // Deferred Stage-2 condition types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Deferred Stage-2+ condition types
+// ---------------------------------------------------------------------------
+
 const DEFERRED_TYPES = [
-  {
-    type: 'ipRange',
-    yaml: 'type: ipRange\ncidrs: ["10.0.0.0/8"]',
-  },
   {
     type: 'redactFields',
     yaml: 'type: redactFields\nfields: [ssn, dob]',
@@ -374,9 +374,9 @@ const DEFERRED_TYPES = [
   },
 ] as const;
 
-describe('FilePolicySource — deferred Stage-2 condition types', () => {
+describe('FilePolicySource — deferred Stage-2+ condition types', () => {
   for (const { type, yaml: conditionYaml } of DEFERRED_TYPES) {
-    it(`rejects '${type}' condition type with a Stage-2 error message`, async () => {
+    it(`rejects '${type}' condition type with a deferred-stage error message`, async () => {
       const content = `
 agentId: deferred-agent
 name: Deferred Agent
@@ -395,8 +395,8 @@ requiredCapabilities:
         err = e as ManifestValidationError;
       }
       expect(err).toBeInstanceOf(ManifestValidationError);
-      // Error must explicitly mention Stage 2
-      expect(err!.message).toMatch(/stage 2/i);
+      // Error must explicitly mention a later stage
+      expect(err!.message).toMatch(/stage/i);
       // Error must name the condition type
       expect(err!.message).toContain(type);
       // Path must appear in the message exactly once (no double-prefix)
@@ -419,12 +419,12 @@ optionalCapabilities:
   - resource: "api://extras"
     actions: [read]
     conditions:
-      - type: ipRange
-        cidrs: ["192.168.0.0/16"]
+      - type: redactFields
+        fields: [ssn]
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toThrow(ManifestValidationError);
-    await expect(src.load()).rejects.toThrow(/stage 2/i);
+    await expect(src.load()).rejects.toThrow(/stage/i);
   });
 
   it('path correctly identifies deferred condition index > 0', async () => {
@@ -451,7 +451,78 @@ requiredCapabilities:
     }
     expect(err).toBeInstanceOf(ManifestValidationError);
     expect(err!.path).toContain('conditions[1]');
-    expect(err!.message).toMatch(/stage 2/i);
+    expect(err!.message).toMatch(/stage/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage-2 condition types (accepted from Stage 2 onwards)
+// ---------------------------------------------------------------------------
+
+describe('FilePolicySource — Stage-2 ipRange condition', () => {
+  it('accepts ipRange condition type (lifted from deferred set in Stage 2)', async () => {
+    const content = `
+agentId: ip-agent
+name: IP Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "mcp-tool://secure_tool"
+    actions: [call]
+    conditions:
+      - type: ipRange
+        cidrs: ["127.0.0.0/8", "10.0.0.0/8"]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.type).toBe('ipRange');
+  });
+
+  it('accepts ipRange alongside Stage-1 conditions', async () => {
+    const content = `
+agentId: mixed-agent
+name: Mixed Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "query_db"
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 100
+        windowSeconds: 60
+      - type: ipRange
+        cidrs: ["192.168.0.0/16"]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions).toHaveLength(2);
+    expect(conditions.map((c) => c.type)).toEqual(['maxCalls', 'ipRange']);
+  });
+
+  it('accepts ipRange in optionalCapabilities', async () => {
+    const content = `
+agentId: opt-ip-agent
+name: Opt IP Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "api://core"
+    actions: [read]
+optionalCapabilities:
+  - resource: "admin_tool"
+    actions: [call]
+    conditions:
+      - type: ipRange
+        cidrs: ["172.16.0.0/12"]
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const conditions = manifest.optionalCapabilities![0]!.conditions!;
+    expect(conditions[0]!.type).toBe('ipRange');
   });
 });
 

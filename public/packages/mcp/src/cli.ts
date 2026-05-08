@@ -74,6 +74,12 @@ program
     'Milliseconds to wait for the upstream to exit before SIGKILL',
     '5000',
   )
+  .option(
+    '--trust-forwarded-for',
+    'Trust the X-Forwarded-For header for ipRange enforcement (HTTP transport + loopback bind only). ' +
+      'Enable only when a trusted reverse proxy sits in front of the euno-mcp proxy.',
+    false,
+  )
   .allowUnknownOption(false)
   .argument('<command>', 'Upstream MCP server command (after --)')
   .argument('[args...]', 'Arguments for the upstream MCP server command')
@@ -212,6 +218,7 @@ Examples:
 
     const bind: string = options.bind as string;
     const unsafeBindAll: boolean = options.unsafeBindAll as boolean;
+    const trustForwardedFor: boolean = options.trustForwardedFor as boolean;
 
     const proxy = new HttpProxy({
       command: upstreamCommand,
@@ -225,6 +232,7 @@ Examples:
       unsafeBindAll,
       shutdownTimeoutMs,
       telemetryHooks: telemetry.sessionHooks(),
+      trustForwardedFor,
     });
 
     try {

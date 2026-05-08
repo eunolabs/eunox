@@ -6,12 +6,12 @@
  * (signed capability token → AgentCapabilityManifest) without changing the
  * consumer interface ({@link LocalPolicySource}).
  *
- * Supported Stage-1 condition types
- * ----------------------------------
- * Per docs/mvp.md §"What ships / Stage 1" and the condition-registry in
- * @euno/common-core:
+ * Supported condition types
+ * -------------------------
+ * Per docs/mvp.md §"What ships / Stage 1–2":
  *
- *   maxCalls | timeWindow | allowedOperations | allowedExtensions | allowedTables
+ *   Stage 1: maxCalls | timeWindow | allowedOperations | allowedExtensions | allowedTables
+ *   Stage 2: ipRange (requires HTTP transport; sourceIp is populated by the HTTP layer)
  *
  * Stage-2 lifted condition types (also supported)
  * ------------------------------------------------
@@ -23,10 +23,10 @@
  *   cc, bcc fields) and matched against the allowed-domains list.
  *
  * The following condition types are structurally valid in the production
- * gateway but are DEFERRED and therefore REJECTED by this loader
- * with an explicit error message:
+ * gateway but are DEFERRED to a later Stage and therefore REJECTED by this
+ * loader with an explicit error message:
  *
- *   ipRange | recipientDomain | redactFields | policy | custom
+ *   redactFields | policy | custom
  *
  * Rejecting them (rather than silently accepting) ensures that users get
  * immediate, actionable feedback instead of deploying a manifest whose
@@ -50,16 +50,16 @@ import type { AgentCapabilityManifest, CapabilityCondition } from '@euno/common-
 
 /**
  * Condition types that are recognised by the production gateway but are
- * deferred to Stage 2 in the euno-mcp local-proxy context.
+ * deferred to a later Stage in the euno-mcp local-proxy context.
  *
  * A manifest that contains any of these types in any capability's
  * `conditions` array is rejected at load time with an error message that
- * names the offending JSON path and explicitly mentions Stage 2.
+ * names the offending JSON path.
  *
- * Stage-2 progress: `recipientDomain` has been lifted from this set (Task 3).
+ * Stage-2 progress: both `ipRange` (Task 2) and `recipientDomain` (Task 3)
+ * have been lifted from this set and are now fully enforced.
  */
 const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set([
-  'ipRange',
   'redactFields',
   'policy',
   'custom',
@@ -93,8 +93,8 @@ function rejectDeferredConditions(manifest: AgentCapabilityManifest): void {
       if (DEFERRED_CONDITION_TYPES.has(condition.type)) {
         const jsonPath = `${capArray}[${capIdx}].conditions[${di}].type`;
         throw new ManifestValidationError(
-          `${jsonPath}: condition type '${condition.type}' is not supported in Stage 1 — ` +
-            `it is deferred to Stage 2. Remove this condition or upgrade to a ` +
+          `${jsonPath}: condition type '${condition.type}' is not supported in this Stage — ` +
+            `it is deferred to a later Stage. Remove this condition or upgrade to a ` +
             `gateway that supports it.`,
           jsonPath,
         );
@@ -189,9 +189,9 @@ export interface FilePolicySourceOptions {
  * 2. YAML / JSON parse (syntax error → parse error)
  * 3. Structural schema validation via {@link validateManifest} from
  *    `@euno/common-core` (unknown fields, wrong types, etc.)
- * 4. Stage condition gate — rejects deferred condition types
- *    (ipRange, redactFields, policy, custom) with an
- *    explicit error message that mentions Stage 2.
+ * 4. Stage gate — rejects deferred condition types
+ *    (redactFields, policy, custom) with an explicit error message.
+ *    Both `ipRange` (Task 2) and `recipientDomain` (Task 3) are now accepted.
  */
 export class FilePolicySource implements LocalPolicySource {
   private readonly resolvedPath: string;

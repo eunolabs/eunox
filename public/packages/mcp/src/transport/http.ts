@@ -30,6 +30,7 @@
  * @module
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -151,6 +152,29 @@ export interface HttpProxyOptions {
    */
   telemetryHooks?: TelemetryHooks;
   /**
+   * When `true` and the proxy is bound to a loopback address (`127.0.0.1` or
+   * `::1`), the `X-Forwarded-For` header is trusted and its first value is
+   * used as the source IP passed to the PDP for `ipRange` enforcement.  When
+   * the first `X-Forwarded-For` value is absent the source IP falls back to
+   * `req.socket.remoteAddress`.
+   *
+   * When `false` (the default) or when the proxy is **not** bound to loopback,
+   * the source IP is always taken from `req.socket.remoteAddress` and
+   * `X-Forwarded-For` is ignored.  A startup warning is emitted to stderr if
+   * the flag is `true` but the bind address is not loopback, to alert operators
+   * that the flag has no effect in that configuration.
+   * This protects against IP spoofing when the
+   * proxy is directly reachable from the network.
+   *
+   * Enable this flag only when a trusted reverse proxy (e.g. nginx or a cloud
+   * load balancer) sits in front of the euno-mcp proxy on the same host and
+   * forwards the real client IP in `X-Forwarded-For`.  A warning is emitted to
+   * stderr at startup when this flag is set.
+   *
+   * @default false
+   */
+  trustForwardedFor?: boolean;
+  /**
    * Audit sink that receives one record per `tools/call` enforcement decision.
    *
    * Defaults to {@link NullAuditSink} (no-op) when not supplied.  Pass a
@@ -243,6 +267,13 @@ export class HttpProxy {
   private _sessions = new Map<string, HttpProxySession>();
   private _started = false;
   private _port?: number;
+  /**
+   * Carries the source IP of the active HTTP request into the
+   * `CallToolRequestSchema` handler without shared mutable state.  Each call
+   * to `serverTransport.handleRequest` is wrapped in `_sourceIpStorage.run()`
+   * so concurrent requests for the same session each see their own IP.
+   */
+  private readonly _sourceIpStorage = new AsyncLocalStorage<string | undefined>();
 
   constructor(opts: HttpProxyOptions) {
     this._opts = {
@@ -258,6 +289,7 @@ export class HttpProxy {
       unsafeBindAll: opts.unsafeBindAll ?? false,
       shutdownTimeoutMs: opts.shutdownTimeoutMs ?? 5_000,
       telemetryHooks: opts.telemetryHooks,
+      trustForwardedFor: opts.trustForwardedFor ?? false,
     };
   }
 
@@ -292,6 +324,23 @@ export class HttpProxy {
         `[euno-mcp] WARNING: HTTP proxy is binding to ${bind} (all interfaces). ` +
           `This is potentially unsafe — only do this in controlled environments.\n`,
       );
+    }
+
+    const { trustForwardedFor } = this._opts;
+    const isLoopbackBind = bind === '127.0.0.1' || bind === '::1';
+    if (trustForwardedFor) {
+      if (!isLoopbackBind) {
+        process.stderr.write(
+          `[euno-mcp] WARNING: --trust-forwarded-for is set but the proxy is not bound to ` +
+            `loopback (bind=${bind}). X-Forwarded-For will NOT be trusted — ` +
+            `trusting XFF on a non-loopback bind address is a security risk.\n`,
+        );
+      } else {
+        process.stderr.write(
+          `[euno-mcp] INFO: --trust-forwarded-for is set. X-Forwarded-For headers will be ` +
+            `trusted for ipRange enforcement (loopback bind only).\n`,
+        );
+      }
     }
 
     return new Promise<number>((resolve, reject) => {
@@ -399,7 +448,12 @@ export class HttpProxy {
         );
         return;
       }
-      await session.serverTransport.handleRequest(req, res);
+      // Wrap handleRequest in AsyncLocalStorage so the CallToolRequestSchema
+      // handler sees this request's source IP regardless of concurrency.
+      const sourceIp = this._extractSourceIp(req);
+      await this._sourceIpStorage.run(sourceIp, () =>
+        session.serverTransport.handleRequest(req, res),
+      );
       return;
     }
 
@@ -563,7 +617,11 @@ export class HttpProxy {
 
     proxyServer.setRequestHandler(CallToolRequestSchema, async (reqMsg) => {
       const sessionId = registeredSessionId ?? 'pending';
-      const decision = await pdp.decide(reqMsg, { sessionId });
+      // Read the source IP from AsyncLocalStorage — populated by the
+      // _handleRequest wrapper for this specific HTTP request, safe under
+      // concurrency since each request has its own async context.
+      const sourceIp = this._sourceIpStorage.getStore();
+      const decision = await pdp.decide(reqMsg, { sessionId, sourceIp });
 
       // Record the enforcement decision — fire-and-forget so audit I/O never
       // blocks the response to the MCP client.
@@ -681,6 +739,40 @@ export class HttpProxy {
       session.server.close(),
       session.upstreamClient.close(),
     ]);
+  }
+
+  // ── Source IP extraction ──────────────────────────────────────────────────
+
+  /**
+   * Extracts the client source IP from an incoming HTTP request.
+   *
+   * When {@link HttpProxyOptions.trustForwardedFor} is `true` **and** the
+   * proxy is bound to a loopback address (`127.0.0.1` or `::1`), the first
+   * value of the `X-Forwarded-For` header is used.  In all other cases the
+   * source IP is taken from `req.socket.remoteAddress`.
+   *
+   * The `::ffff:` IPv4-mapped prefix is stripped so that condition handlers
+   * always receive a bare IPv4 or IPv6 address.  Returns `undefined` when no
+   * address can be determined.
+   */
+  private _extractSourceIp(req: http.IncomingMessage): string | undefined {
+    const { trustForwardedFor, bind } = this._opts;
+    const isLoopbackBind = bind === '127.0.0.1' || bind === '::1';
+
+    if (trustForwardedFor && isLoopbackBind) {
+      const xffHeader = req.headers['x-forwarded-for'];
+      const xff = Array.isArray(xffHeader) ? xffHeader[0] : xffHeader;
+      if (xff) {
+        const ip = xff.split(',')[0]?.trim();
+        if (ip) {
+          return ip.replace(/^::ffff:/i, '');
+        }
+      }
+    }
+
+    const raw = req.socket.remoteAddress ?? '';
+    const stripped = raw.replace(/^::ffff:/i, '');
+    return stripped.length > 0 ? stripped : undefined;
   }
 
   // ── Control endpoint ──────────────────────────────────────────────────────
