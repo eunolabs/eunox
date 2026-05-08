@@ -51,6 +51,9 @@ function makeFixture(pkgs) {
     const manifest = { name: p.name };
     if (p.license !== undefined) manifest.license = p.license;
     if (p.deps) manifest.dependencies = p.deps;
+    if (p.devDeps) manifest.devDependencies = p.devDeps;
+    if (p.peerDeps) manifest.peerDependencies = p.peerDeps;
+    if (p.optionalDeps) manifest.optionalDependencies = p.optionalDeps;
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest, null, 2));
   }
 
@@ -221,6 +224,97 @@ test('error message names all three parts: from package, to package, and path', 
     assert.match(stderr, /@test\/c/);
     // The intermediate hop should appear in the path
     assert.match(stderr, /@test\/b/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// @euno/mcp-specific coverage (Task 12)
+//
+// These tests ensure that the script catches the exact edge that Task 12
+// guards against: @euno/mcp (Apache-2.0) depending on @euno/common-infra
+// (BUSL-1.1) in any dependency field.
+// ---------------------------------------------------------------------------
+
+test('@euno/mcp -> @euno/common-infra in dependencies is caught', () => {
+  const root = makeFixture([
+    { name: '@euno/mcp', license: 'Apache-2.0', deps: { '@euno/common-infra': 'workspace:*' } },
+    { name: '@euno/common-infra', license: 'BUSL-1.1' },
+  ]);
+  try {
+    const { exitCode, stderr } = run(root);
+    assert.equal(exitCode, 1, 'should exit 1 when @euno/mcp depends on @euno/common-infra');
+    assert.match(stderr, /LICENSE BOUNDARY VIOLATION/);
+    assert.match(stderr, /@euno\/mcp/);
+    assert.match(stderr, /@euno\/common-infra/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('@euno/mcp -> @euno/common-infra in devDependencies is caught', () => {
+  const root = makeFixture([
+    {
+      name: '@euno/mcp',
+      license: 'Apache-2.0',
+      devDeps: { '@euno/common-infra': 'workspace:*' },
+    },
+    { name: '@euno/common-infra', license: 'BUSL-1.1' },
+  ]);
+  try {
+    const { exitCode, stderr } = run(root);
+    assert.equal(exitCode, 1, 'devDependencies edge should also be caught');
+    assert.match(stderr, /LICENSE BOUNDARY VIOLATION/);
+    assert.match(stderr, /@euno\/mcp/);
+    assert.match(stderr, /@euno\/common-infra/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('@euno/mcp -> @euno/common-infra transitive via an Apache-2.0 shim is caught', () => {
+  // Uses @euno/mcp as the origin (rather than @euno/cli) to verify the scan
+  // root is not limited to packages already in the ALLOWLIST.
+  // Transitive path: @euno/mcp -> @euno/some-shared -> @euno/common-infra
+  const root = makeFixture([
+    {
+      name: '@euno/mcp',
+      license: 'Apache-2.0',
+      deps: { '@euno/some-shared': 'workspace:*' },
+    },
+    {
+      name: '@euno/some-shared',
+      license: 'Apache-2.0',
+      deps: { '@euno/common-infra': 'workspace:*' },
+    },
+    { name: '@euno/common-infra', license: 'BUSL-1.1' },
+  ]);
+  try {
+    const { exitCode, stderr } = run(root);
+    assert.equal(exitCode, 1, 'transitive edge through Apache-2.0 shim should be caught');
+    assert.match(stderr, /LICENSE BOUNDARY VIOLATION/);
+    assert.match(stderr, /@euno\/mcp/);
+    assert.match(stderr, /@euno\/common-infra/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('@euno/mcp with only @euno/common-core dependency passes', () => {
+  // Confirms the healthy production dependency direction clears the lint.
+  const root = makeFixture([
+    {
+      name: '@euno/mcp',
+      license: 'Apache-2.0',
+      deps: { '@euno/common-core': 'workspace:*' },
+    },
+    { name: '@euno/common-core', license: 'Apache-2.0' },
+  ]);
+  try {
+    const { exitCode, stdout } = run(root);
+    assert.equal(exitCode, 0, '@euno/mcp -> @euno/common-core (Apache) should pass');
+    assert.match(stdout, /OK\s+License boundary check passed/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,20 +1,46 @@
 # @euno/mcp
 
-> **Status:** Stage 1 — stdio proxy transport is live.
+**Add guardrails to any MCP server in 5 minutes. No infrastructure required.**
 
-`@euno/mcp` is the [Model Context Protocol](https://spec.modelcontextprotocol.io/) bridge for [Euno](https://github.com/edgeobs/euno).  It lets MCP hosts (Claude Desktop, Cursor, Windsurf, …) talk to Euno-governed tool registries without any BUSL-licensed server-side components.
+`@euno/mcp` is a policy proxy for the [Model Context Protocol](https://spec.modelcontextprotocol.io/).
+It sits between your MCP host (Claude Desktop, Cursor, Windsurf, LangChain.js, …) and your upstream
+MCP server, enforcing a declarative capability policy before any tool call reaches your backend.
+Apache-2.0 licensed, zero cloud dependencies, runs entirely on your machine.
 
-## Quick start
+---
 
-```sh
-# Drop euno-mcp in front of the filesystem MCP server:
-npx @euno/mcp proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
+## Before / After
 
-# Or with a capability policy (Phase B):
-npx @euno/mcp proxy --policy ./policy.yaml -- node ./my-mcp-server.js
+**Without `@euno/mcp`** — the agent sends whatever arguments it likes:
+
+```
+Agent  →  tools/call: query_db { query: "DROP TABLE users" }
+                                     ↓
+                          Upstream MCP server executes it
+                                     ↓
+Agent  ←  result: OK  (table is gone)
 ```
 
-Add it to your Claude Desktop `claude_desktop_config.json`:
+**With `@euno/mcp`** — the policy fires before the upstream is ever contacted:
+
+```
+Agent  →  tools/call: query_db { query: "DROP TABLE users" }
+                                     ↓
+                          @euno/mcp: policy says SELECT only
+                          upstream never called
+                                     ↓
+Agent  ←  CapabilityDenied: operation not permitted
+```
+
+One YAML file. No code changes to your agent or your server.
+
+---
+
+## Drop-in usage
+
+### stdio — Claude Desktop / Cursor / Windsurf
+
+Add `euno-mcp proxy` as a wrapper in your `claude_desktop_config.json`:
 
 ```json
 {
@@ -22,45 +48,162 @@ Add it to your Claude Desktop `claude_desktop_config.json`:
     "filesystem-governed": {
       "command": "npx",
       "args": [
-        "@euno/mcp", "proxy",
-        "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"
+        "-y", "@euno/mcp", "proxy",
+        "--policy", "/path/to/euno.policy.yaml",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
       ]
     }
   }
 }
 ```
 
+Without a policy file the proxy is transparent — useful for auditing before you add rules:
+
+```json
+{
+  "mcpServers": {
+    "filesystem-audited": {
+      "command": "npx",
+      "args": ["-y", "@euno/mcp", "proxy", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+### HTTP — LangChain.js / in-process clients
+
+```bash
+npx -y @euno/mcp proxy \
+  --transport http --port 7391 \
+  --policy ./euno.policy.yaml \
+  -- node ./my-mcp-server.js
+```
+
+Connect your LangChain.js agent to `http://127.0.0.1:7391/mcp`.
+
+### Validate a policy without running anything
+
+```bash
+npx -y @euno/mcp validate ./euno.policy.yaml
+```
+
+---
+
+## Example policy (`euno.policy.yaml`)
+
+```yaml
+agentId: my-db-agent
+name: My Database Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "tool://query_db"
+    actions: [call]
+    conditions:
+      - type: allowedOperations
+        operations: [SELECT]
+      - type: maxCalls
+        limit: 100
+        windowSeconds: 60
+```
+
+Supported condition types in v0: `maxCalls`, `timeWindow`, `allowedOperations`,
+`allowedExtensions`, `allowedTables`, plus the `argumentSchema` field on each constraint.
+
+---
+
+## Enforcement guarantee
+
+Enforcement runs on the arguments **the agent actually sent** — before the upstream is called.
+The guarantee is: "the agent sent this tool call with these arguments, and it was
+allowed/denied by this policy." It is not a guarantee about what the upstream server did
+internally. For the strongest guarantees, instrument the upstream as well.
+
+---
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `euno-mcp proxy -- <upstream-cmd> [args...]` | Start the stdio proxy |
-| `euno-mcp validate <policy-file>` | Validate a policy file (Phase B) |
+| `euno-mcp proxy [--policy <file>] [--transport stdio\|http] [--port <n>] -- <upstream-cmd>` | Start the proxy |
+| `euno-mcp validate <policy-file>` | Validate a policy file — exits 0 on success |
+| `euno-mcp kill <sessionId\|all> [--port <n>]` | Activate the kill switch in a running HTTP proxy |
 | `euno-mcp --help` | Show all options |
 
-## Protocol compatibility
+---
 
-`@euno/mcp` targets the `2025-11-25` MCP protocol revision and accepts connections from hosts advertising any revision within the support window.  See [docs/mcp-support.md](../../docs/mcp-support.md) for the full version policy, upgrade procedure, and the list of accepted revisions.
+## Installation
 
-The pinned version constant is exported as `MCP_PROTOCOL_VERSION` from the package:
+`@euno/mcp` is published to [GitHub Packages](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry).
+
+GitHub Packages requires authentication even for public packages.
+You will need a [Personal Access Token](https://github.com/settings/tokens) (classic or fine-grained)
+with at least **read:packages** scope.
+
+Configure the `@euno` scope to use GitHub Packages — this keeps the default npm registry in place
+for all other dependencies (`commander`, `js-yaml`, etc.):
+
+```bash
+# Point the @euno scope at GitHub Packages (one-time, per machine or project)
+npm config set @euno:registry https://npm.pkg.github.com
+
+# Authenticate for the GitHub Packages host
+npm login --registry=https://npm.pkg.github.com
+# Username: your GitHub username
+# Password: your GitHub PAT (read:packages scope)
+# Email: your GitHub email
+
+# Install globally
+npm install -g @euno/mcp
+
+# Or use with npx
+npx @euno/mcp --help
+```
+
+For CI or project-level use, add an `.npmrc` file instead of running the above commands:
+
+```
+@euno:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+---
+
+## Compatibility
+
+| | Version |
+|---|---|
+| `@modelcontextprotocol/sdk` pin | `1.26.0` (exact) |
+| MCP protocol (primary) | `2025-11-25` |
+| MCP protocol (also accepted) | `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07` |
+| Node.js | ≥ 18 |
+
+The pinned version constant is exported from the package:
 
 ```ts
 import { MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS } from '@euno/mcp';
 ```
 
+See [docs/mcp-support.md](../../docs/mcp-support.md) for the full version policy, support window,
+and upgrade procedure.
+
+---
+
 ## Telemetry
 
-`@euno/mcp` optionally collects anonymous, aggregate usage counts to help
-prioritize improvements.  **Telemetry is off by default.**  On the first
-interactive run you are asked:
+`@euno/mcp` optionally collects anonymous, aggregate usage counts to help prioritize improvements.
+**Telemetry is off by default.** On the first interactive run you are asked:
 
 ```
 Enable anonymous telemetry? [y/N]
 ```
 
-Disable at any time with `EUNO_TELEMETRY=0`.  See [TELEMETRY.md](./TELEMETRY.md)
-for the full schema, where data goes, and all opt-out mechanisms.
+Disable at any time with `EUNO_TELEMETRY=0`. See [TELEMETRY.md](./TELEMETRY.md) for the full
+schema, where data goes, and all opt-out mechanisms.
+
+---
 
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
+

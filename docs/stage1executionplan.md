@@ -228,20 +228,24 @@ Dependencies. Task 1.
 
 References. mvp.md lines 211-225.
 
-Task 13. Publish @euno/mcp to npm
-Goal. First public release.
+Task 13. Publish @euno/mcp to GitHub Packages
+Goal. First public release, distributed via the GitHub npm registry so that provenance, permissions, and access controls stay within the GitHub ecosystem.
 
 Scope.
 
-packages/euno-mcp/package.json: "publishConfig": { "access": "public" }, files whitelist (dist, README.md, LICENSE, TELEMETRY.md), correct main, types, bin paths.
-Add a release script (or extend the existing one in the public repo's CI) that runs npm run build, npm test, then npm publish from packages/euno-mcp.
+packages/euno-mcp/package.json: "publishConfig": { "registry": "https://npm.pkg.github.com", "access": "public" }, files whitelist (dist, README.md, LICENSE, TELEMETRY.md), correct main, types, bin paths.
+Add .github/workflows/release-mcp.yml: a workflow triggered on a tag push matching "v*" (and manually via workflow_dispatch). Steps:
+  1. Checkout + set up Node.js with the github npm registry (node-version matrix: 18, 20, 22).
+  2. npm install && npm run build -w @euno/mcp.
+  3. npm test -w @euno/mcp.
+  4. On the Node 20 runner only: npm publish --workspace euno-mcp/packages/euno-mcp, authenticated via GITHUB_TOKEN (permissions: packages: write, contents: read).
 Tag v0.1.0.
-Verify npx -y @euno/mcp@0.1.0 --help works against a freshly-installed package on a clean machine (CI matrix: Node 18, 20, 22 on Linux + macOS; Windows is best-effort for v0).
-Acceptance. Package is installable; smoke test from a fresh npm init in /tmp succeeds.
+Verify installation from the GitHub Packages registry: configure the `@euno` scope (`npm config set @euno:registry https://npm.pkg.github.com` or an `.npmrc` entry) then `npm install @euno/mcp` works; euno-mcp --help succeeds (CI smoke step on Node 20 Linux).
+Acceptance. Package appears in https://github.com/orgs/edgeobs/packages (or the repo's Packages sidebar). A consumer project can install it by pointing the `@euno` scope at GitHub Packages and running `npm install @euno/mcp`.
 
 Dependencies. All previous tasks.
 
-References. mvp.md lines 428-434.
+References. mvp.md lines 428-434. GitHub Packages npm documentation: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry.
 
 Task 14. README + distribution copy
 Goal. The README is the conversion surface. mvp.md is prescriptive: lead with a 15-line before/after, include the exact paste-into-claude_desktop_config.json line.
@@ -301,7 +305,7 @@ Tasks 4 and 5 can run in parallel after Task 3.
 Tasks 10, 11, 12 can run in parallel after Task 9.
 Task 13 (publish) is the last gate.
 Definition of done for Stage 1
-@euno/mcp v0.1.0 published to npm and installable via npx -y @euno/mcp (Task 13).
+@euno/mcp v0.1.0 published to GitHub Packages and installable by pointing the `@euno` scope at `https://npm.pkg.github.com` then running `npm install @euno/mcp` (Task 13).
 Both transports work end-to-end against a real MCP client (Cursor or Claude Desktop) and the LangChain.js MCP integration (Tasks 3, 5, manual smoke).
 The five v0 condition types + argumentSchema are enforced via the production condition-registry, not a parallel implementation (Task 8).
 Policy-shape and audit-record-shape parity with the gateway is locked: a Stage-1 manifest validates with euno validate and a Stage-1 audit record schema-matches common-core/src/ocsf.ts (Tasks 6, 7, 9).

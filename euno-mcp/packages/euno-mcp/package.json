@@ -1,6 +1,6 @@
 {
   "name": "@euno/mcp",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Model Context Protocol bridge for Euno capability-native agent governance (Apache-2.0)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,5 +34,9 @@
     "TELEMETRY.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
   "license": "Apache-2.0"
 }
