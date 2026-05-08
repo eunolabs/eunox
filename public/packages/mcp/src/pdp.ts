@@ -334,6 +334,7 @@ function conditionTypeToDenialCode(conditionType: string): string {
     allowedValues: 'VALUE_NOT_ALLOWED',
     ipRange: 'IP_RANGE_DENIED',
     recipientDomain: 'RECIPIENT_DOMAIN_DENIED',
+    policy: 'POLICY_BACKEND_DENIED',
   };
   return MAP[conditionType] ?? 'CONDITION_NOT_SATISFIED';
 }

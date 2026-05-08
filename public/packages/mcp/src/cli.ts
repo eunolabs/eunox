@@ -19,6 +19,7 @@ import { StdioProxy } from './transport/stdio';
 import { HttpProxy } from './transport/http';
 import { createLocalAuditSink, McpAuditSink } from './audit';
 import { FilePolicySource } from './policy/source';
+import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 import { createTelemetry } from './telemetry';
 
@@ -79,6 +80,15 @@ program
     'Trust the X-Forwarded-For header for ipRange enforcement (HTTP transport + loopback bind only). ' +
       'Enable only when a trusted reverse proxy sits in front of the euno-mcp proxy.',
     false,
+  )
+  .option(
+    '--policy-backend <module>',
+    'Load a policy backend module (repeatable). Each module must export a default function ' +
+      '(api: { registerPolicyBackend }) => void. ' +
+      'Relative paths are resolved from the current working directory. ' +
+      'See docs/policy-backends.md for the module contract.',
+    (val: string, prev: string[]) => [...prev, val],
+    [] as string[],
   )
   .allowUnknownOption(false)
   .argument('<command>', 'Upstream MCP server command (after --)')
@@ -142,6 +152,19 @@ Examples:
       pdp = conditionPdp;
     } else {
       pdp = new AlwaysAllowPDP();
+    }
+
+    // ── Load policy backends ──────────────────────────────────────────────
+    // Must happen before the proxy starts serving requests so every policy
+    // condition is satisfied by a registered backend.  Errors here are fatal.
+    const policyBackendPaths: string[] = options.policyBackend as string[];
+    if (policyBackendPaths.length > 0) {
+      try {
+        await loadPolicyBackends(policyBackendPaths);
+      } catch {
+        // loadPolicyBackends already wrote a human-readable message to stderr.
+        process.exit(1);
+      }
     }
 
     // ── Create telemetry collector ────────────────────────────────────────

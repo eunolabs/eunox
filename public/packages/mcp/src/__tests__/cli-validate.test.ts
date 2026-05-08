@@ -6,9 +6,10 @@
  * ✓ Valid YAML manifest → exits 0, output matches `euno validate` format
  * ✓ Valid JSON manifest → exits 0, output matches `euno validate` format
  * ✓ Unknown condition type → exits 1, error message names the JSON path
- * ✓ Deferred condition type (recipientDomain, etc.) → exits 1, message mentions stage
- * ✓ ipRange condition → exits 0 (lifted from deferred set in Stage 2)
- * ✓ ipRange with invalid CIDR → exits 1, validation error
+ * ✓ Deferred condition types (redactFields, custom) → exits 1, message mentions stage
+ * ✓ ipRange condition → exits 0 (lifted from deferred set in Stage 2 Task 2)
+ * ✓ recipientDomain condition → exits 0 (lifted from deferred set in Stage 2 Task 3)
+ * ✓ policy condition → exits 0 (lifted from deferred set in Stage 2 Task 5)
  * ✓ Missing required field → exits 1, validation error
  * ✓ Non-existent file → exits 1, ENOENT-style error
  * ✓ Malformed YAML → exits 1, parse error
@@ -187,17 +188,6 @@ requiredCapabilities:
 
 /** Minimal valid YAML for each deferred condition type (with required fields). */
 const DEFERRED_CONDITION_YAMLS: Record<string, string> = {
-  recipientDomain: `
-agentId: test-agent
-name: Test
-version: 1.0.0
-requiredCapabilities:
-  - resource: "tool://foo"
-    actions: [call]
-    conditions:
-      - type: recipientDomain
-        domains: ["example.com"]
-`.trim(),
   redactFields: `
 agentId: test-agent
 name: Test
@@ -208,17 +198,6 @@ requiredCapabilities:
     conditions:
       - type: redactFields
         fields: ["ssn", "credit_card"]
-`.trim(),
-  policy: `
-agentId: test-agent
-name: Test
-version: 1.0.0
-requiredCapabilities:
-  - resource: "tool://foo"
-    actions: [call]
-    conditions:
-      - type: policy
-        backend: opa
 `.trim(),
   custom: `
 agentId: test-agent
@@ -245,6 +224,76 @@ describe('euno-mcp validate — deferred condition types', () => {
       expect(stderr.toLowerCase()).toMatch(/stage/);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Stage-2 accepted condition types (lifted from deferred set)
+// ---------------------------------------------------------------------------
+
+describe('euno-mcp validate — Stage-2 recipientDomain condition (Task 3)', () => {
+  it('exits 0 for a manifest with a valid recipientDomain condition', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "tool://send_email"
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: ["example.com", "trusted.org"]
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stdout } = runValidate(filePath);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
+  });
+});
+
+describe('euno-mcp validate — Stage-2 policy condition (Task 5)', () => {
+  it('exits 0 for a manifest with a valid policy condition', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "tool://governed_action"
+    actions: [call]
+    conditions:
+      - type: policy
+        backend: opa-http
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stdout } = runValidate(filePath);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
+  });
+
+  it('exits 0 for a policy condition with optional config and input fields', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "tool://governed_action"
+    actions: [call]
+    conditions:
+      - type: policy
+        backend: my-engine
+        config:
+          package: authz.payments
+          rule: allow
+        input:
+          environment: production
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stdout } = runValidate(filePath);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
+  });
 });
 
 // ---------------------------------------------------------------------------

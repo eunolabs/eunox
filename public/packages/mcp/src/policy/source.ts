@@ -15,12 +15,20 @@
  *
  * Stage-2 lifted condition types (also supported)
  * ------------------------------------------------
- * Per stage2executionplan.md Task 3:
+ * Per stage2executionplan.md Tasks 3 and 5:
  *
  *   recipientDomain
+ *     Recipients are extracted from the tool call arguments (to, recipients,
+ *     cc, bcc fields) and matched against the allowed-domains list.
  *
- *   Recipients are extracted from the tool call arguments (to, recipients,
- *   cc, bcc fields) and matched against the allowed-domains list.
+ *   policy
+ *     Delegates to a named backend registered via --policy-backend.  Backends
+ *     must be registered before the proxy starts (the loader in
+ *     {@link ../policy/backends} handles this via `--policy-backend`).  Note:
+ *     the manifest loader does *not* validate that the named backend is
+ *     registered — a manifest that references an unregistered backend is
+ *     structurally valid, but every matching tool call will be denied at
+ *     enforcement time with `POLICY_BACKEND_DENIED`.
  *
  * Per stage2executionplan.md Task 4:
  *
@@ -34,7 +42,7 @@
  * gateway but are DEFERRED to a later Stage and therefore REJECTED by this
  * loader with an explicit error message:
  *
- *   policy | custom
+ *   custom
  *
  * Rejecting them (rather than silently accepting) ensures that users get
  * immediate, actionable feedback instead of deploying a manifest whose
@@ -64,12 +72,11 @@ import type { AgentCapabilityManifest, CapabilityCondition } from '@euno/common-
  * `conditions` array is rejected at load time with an error message that
  * names the offending JSON path.
  *
- * Stage-2 progress: `ipRange` (Task 2), `recipientDomain` (Task 3), and
- * `redactFields` (Task 4) have been lifted from this set and are now fully
- * enforced.
+ * Stage-2 progress: `ipRange` (Task 2), `recipientDomain` (Task 3),
+ * `policy` (Task 5), and `redactFields` (Task 4) have been lifted from
+ * this set and are now fully enforced.
  */
 const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set([
-  'policy',
   'custom',
 ]);
 
@@ -197,10 +204,9 @@ export interface FilePolicySourceOptions {
  * 2. YAML / JSON parse (syntax error → parse error)
  * 3. Structural schema validation via {@link validateManifest} from
  *    `@euno/common-core` (unknown fields, wrong types, etc.)
- * 4. Stage gate — rejects deferred condition types
- *    (policy, custom) with an explicit error message.
- *    `ipRange` (Task 2), `recipientDomain` (Task 3), and `redactFields`
- *    (Task 4) are now accepted.
+ * 4. Stage gate — rejects deferred condition types (custom) with an explicit
+ *    error message.  `ipRange` (Task 2), `recipientDomain` (Task 3),
+ *    `redactFields` (Task 4), and `policy` (Task 5) are now accepted.
  */
 export class FilePolicySource implements LocalPolicySource {
   private readonly resolvedPath: string;

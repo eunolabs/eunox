@@ -107,8 +107,61 @@ requiredCapabilities:
         windowSeconds: 60
 ```
 
-Supported condition types in v0: `maxCalls`, `timeWindow`, `allowedOperations`,
-`allowedExtensions`, `allowedTables`, plus the `argumentSchema` field on each constraint.
+Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`,
+`allowedExtensions`, `allowedTables`, `ipRange`, `recipientDomain`, `policy`,
+plus the `argumentSchema` field on each constraint.
+
+---
+
+## Custom policy backends
+
+The `policy` condition type lets you delegate enforcement to an external policy
+engine (OPA, Cedar, a custom rules database, or any service callable from Node.js).
+
+Write a module that exports a default registrar function, then pass it with
+`--policy-backend`:
+
+```js
+// my-policy-backend.js
+module.exports = function register(api) {
+  api.registerPolicyBackend('my-engine', {
+    validate(config) { /* check config is valid */ },
+    async enforce(config, input, ctx) {
+      const allowed = await askMyEngine(config, input, ctx.sourceIp);
+      return allowed
+        ? { allow: true }
+        : { allow: false, reason: 'my-engine: request denied' };
+    },
+  });
+};
+```
+
+```yaml
+# euno.policy.yaml  (partial — required top-level fields omitted for brevity)
+agentId: my-agent
+name: My Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "mcp-tool://sensitive_tool"
+    actions: [call]
+    conditions:
+      - type: policy
+        backend: my-engine        # must match the name passed to registerPolicyBackend
+        config: { key: value }    # any static config your engine needs
+```
+
+```bash
+euno-mcp proxy \
+  --policy ./euno.policy.yaml \
+  --policy-backend ./my-policy-backend.js \
+  -- node ./upstream-server.js
+```
+
+The flag is **repeatable** — pass `--policy-backend` multiple times to load
+several modules.  Module errors fail fast before the proxy starts.
+
+See [docs/policy-backends.md](./docs/policy-backends.md) for the full interface
+reference, an OPA HTTP worked example, and Stage-3 compatibility notes.
 
 ---
 
@@ -126,6 +179,7 @@ internally. For the strongest guarantees, instrument the upstream as well.
 | Command | Description |
 |---------|-------------|
 | `euno-mcp proxy [--policy <file>] [--transport stdio\|http] [--port <n>] -- <upstream-cmd>` | Start the proxy |
+| `euno-mcp proxy --policy-backend <module>` | Load a policy backend module (repeatable) |
 | `euno-mcp validate <policy-file>` | Validate a policy file — exits 0 on success |
 | `euno-mcp kill <sessionId\|all> [--port <n>]` | Activate the kill switch in a running HTTP proxy |
 | `euno-mcp --help` | Show all options |

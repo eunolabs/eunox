@@ -1,7 +1,7 @@
 /**
  * Unit tests for FilePolicySource and the manifest validation pipeline
  * (Task 7 acceptance criteria + Task 3 recipientDomain gate lift +
- * Task 4 redactFields gate lift).
+ * Task 4 redactFields gate lift + Task 5 policy gate lift).
  *
  * Test matrix
  * -----------
@@ -10,9 +10,10 @@
  * ✓ All Stage-1 condition types accepted (maxCalls, timeWindow,
  *     allowedOperations, allowedExtensions, allowedTables)
  * ✓ recipientDomain condition type now accepted (Stage-2 Task 3 gate lifted)
+ * ✓ policy condition type now accepted (Stage-2 Task 5 gate lifted)
  * ✓ redactFields condition type now accepted (Stage-2 Task 4 gate lifted)
  * ✓ Unknown condition type → ManifestValidationError (names JSON path)
- * ✓ Deferred condition types (policy, custom) → ManifestValidationError mentioning Stage 2
+ * ✓ Deferred condition types (custom) → ManifestValidationError mentioning Stage 2
  * ✓ Semantic error: notAfter before notBefore → ManifestValidationError
  * ✓ Missing required top-level field → ManifestValidationError
  * ✓ Unknown top-level field → ManifestValidationError
@@ -362,10 +363,6 @@ requiredCapabilities:
 
 const DEFERRED_TYPES = [
   {
-    type: 'policy',
-    yaml: 'type: policy\nbackend: opa-http',
-  },
-  {
     type: 'custom',
     yaml: 'type: custom\nname: my-handler\nconfig: {}',
   },
@@ -416,8 +413,9 @@ optionalCapabilities:
   - resource: "api://extras"
     actions: [read]
     conditions:
-      - type: policy
-        backend: opa-http
+      - type: custom
+        name: my-handler
+        config: {}
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toThrow(ManifestValidationError);
@@ -436,8 +434,9 @@ requiredCapabilities:
       - type: maxCalls
         count: 10
         windowSeconds: 60
-      - type: policy
-        backend: opa-http
+      - type: custom
+        name: my-handler
+        config: {}
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     let err: ManifestValidationError | undefined;
