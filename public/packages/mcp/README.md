@@ -188,6 +188,65 @@ The guarantee is: "the agent sent this tool call with these arguments, and it wa
 allowed/denied by this policy." It is not a guarantee about what the upstream server did
 internally. For the strongest guarantees, instrument the upstream as well.
 
+### `allowedOperations` — first-word extraction, not SQL parsing
+
+The `allowedOperations` condition extracts the **first whitespace-delimited token** from
+the SQL argument and uppercases it (e.g. `"SELECT * FROM users"` → `"SELECT"`).  This
+catches the most common prompt injection shapes, but can be bypassed by adversaries who
+control the query string:
+
+| Bypass vector | Example |
+|---|---|
+| Semicolon-chained statements | `SELECT 1; DELETE FROM orders` — second statement may execute if the DB driver allows multi-statement queries |
+| Block comment before verb | `/* comment */ SELECT * FROM ...` — first token is `/*` which is not an allowed operation, so the call is **denied** (fail-closed). Note: this also blocks legitimate comment-prefixed queries. |
+
+**Recommended defense-in-depth** (stack all layers):
+1. `allowedOperations` — first-line gate on the SQL verb
+2. `argumentSchema` `pattern` — regex to anchor the verb and reject `;` and `/*`
+3. Disable multi-statement execution in the database driver
+4. Read-only database credentials matching your allowed operations
+5. Parameterized queries in the upstream MCP server
+
+See [`docs/prompt-injection-demo.md`](./docs/prompt-injection-demo.md) for a full
+walkthrough of the attack and all defense layers, including a step-by-step demo you can
+run yourself.
+
+### Prompt injection
+
+Prompt injection is the primary real-world motivation for `@euno/mcp`.  An attacker
+embeds a malicious instruction in content the agent reads (a PDF, a web page, a
+database record) and the LLM may execute it.  `@euno/mcp` blocks the resulting tool
+call before it reaches the upstream server, independent of what the LLM decided to do.
+
+See [`docs/prompt-injection-demo.md`](./docs/prompt-injection-demo.md) for a live demo.
+
+### HTTP transport — securing the proxy endpoint
+
+When running in `--transport http` mode, the `/mcp` endpoint listens on `127.0.0.1`
+by default.  Any process on the same machine can call it without authentication.  Use
+`--auth-token` to require a Bearer token:
+
+```bash
+TOKEN=$(openssl rand -hex 32)
+euno-mcp proxy --transport http --port 7391 --auth-token "$TOKEN" \
+  --policy ./euno.policy.yaml -- node ./my-mcp-server.js
+```
+
+Configure your MCP client to send `Authorization: Bearer $TOKEN`. Without this flag, a
+warning is printed at startup.
+
+### Upstream timeouts
+
+By default the proxy waits indefinitely for the upstream to respond to a `tools/call`.
+Pass `--upstream-timeout <ms>` to bound the wait:
+
+```bash
+euno-mcp proxy --upstream-timeout 30000 -- node ./my-mcp-server.js
+```
+
+On timeout the proxy returns a structured `CapabilityDenied` result with
+`code: "UPSTREAM_TIMEOUT"` rather than hanging the MCP host.
+
 ---
 
 ## Commands
@@ -195,6 +254,8 @@ internally. For the strongest guarantees, instrument the upstream as well.
 | Command | Description |
 |---------|-------------|
 | `euno-mcp proxy [--policy <file>] [--transport stdio\|http] [--port <n>] -- <upstream-cmd>` | Start the proxy |
+| `euno-mcp proxy --auth-token <token>` | Require Bearer token auth on /mcp (HTTP transport) |
+| `euno-mcp proxy --upstream-timeout <ms>` | Timeout for upstream tool calls |
 | `euno-mcp proxy --policy-backend <module>` | Load a policy backend module (repeatable) |
 | `euno-mcp validate <policy-file>` | Validate a policy file — exits 0 on success |
 | `euno-mcp kill <sessionId\|all> [--port <n>]` | Activate the kill switch in a running HTTP proxy |
@@ -243,7 +304,7 @@ For CI or project-level use, add an `.npmrc` file instead of running the above c
 
 | | Version |
 |---|---|
-| `@modelcontextprotocol/sdk` pin | `1.26.0` (exact) |
+| `@modelcontextprotocol/sdk` (dependency range) | `^1.26.0` (semver range) |
 | MCP protocol (primary) | `2025-11-25` |
 | MCP protocol (also accepted) | `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07` |
 | Node.js | ≥ 18 |

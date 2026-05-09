@@ -66,6 +66,7 @@ import {
 import { McpAuditSink, NullAuditSink } from '../audit';
 import type { TelemetryHooks } from '../telemetry/types';
 import { applyRedactObligations, type ToolCallResult } from './obligations';
+import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -136,6 +137,18 @@ export interface StdioProxyOptions {
    * tool-call enforcement decisions.  No-op when not supplied.
    */
   telemetryHooks?: TelemetryHooks;
+  /**
+   * Maximum time in milliseconds to wait for the upstream to respond to a
+   * `tools/call` request before the proxy returns a structured timeout error
+   * to the MCP host.  The upstream call is abandoned (though the upstream
+   * process itself is not killed — use {@link shutdownTimeoutMs} for that).
+   *
+   * When `undefined` (the default) no timeout is applied and the proxy waits
+   * indefinitely.  Pass a positive integer to bound the wait.
+   *
+   * @default undefined (no timeout)
+   */
+  upstreamTimeoutMs?: number;
 }
 
 /**
@@ -194,9 +207,9 @@ function buildDenialResult(
  */
 export class StdioProxy {
   private readonly _opts: Required<
-    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>
+    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks' | 'upstreamTimeoutMs'>
   > &
-    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>;
+    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks' | 'upstreamTimeoutMs'>;
 
   private _server?: Server;
   private _client?: Client;
@@ -216,6 +229,7 @@ export class StdioProxy {
       hostStdin: opts.hostStdin,
       hostStdout: opts.hostStdout,
       telemetryHooks: opts.telemetryHooks,
+      upstreamTimeoutMs: opts.upstreamTimeoutMs,
     };
   }
 
@@ -379,10 +393,28 @@ export class StdioProxy {
       }
 
       // Allowed — forward to upstream and apply any response-path obligations.
-      const upstreamResult = await client.callTool(
-        req.params,
-        CompatibilityCallToolResultSchema,
-      );
+      // Race the upstream call against the configurable timeout so a slow or
+      // unresponsive upstream doesn't hang the MCP host indefinitely.
+      let upstreamResult: Awaited<ReturnType<typeof client.callTool>>;
+      try {
+        upstreamResult = await withTimeout(
+          client.callTool(req.params, CompatibilityCallToolResultSchema),
+          this._opts.upstreamTimeoutMs,
+          req.params.name,
+        );
+      } catch (err) {
+        const isTimeout = err instanceof UpstreamTimeoutError;
+        process.stderr.write(
+          `[euno-mcp] ${isTimeout ? 'Upstream timeout' : 'Upstream error'} on tool "${req.params.name}": ${String(err)}\n`,
+        );
+        return buildDenialResult(
+          req.params.name,
+          isTimeout
+            ? `Upstream did not respond within ${this._opts.upstreamTimeoutMs} ms`
+            : `Upstream error: ${String(err)}`,
+          isTimeout ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_ERROR',
+        );
+      }
 
       // Apply redactFields (and any other response-path) obligations when the
       // matched constraint carries conditions that have a `redact` lobe.
