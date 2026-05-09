@@ -91,28 +91,26 @@ function rawRequest(opts: {
   });
 }
 
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForProcessExit(
-  pid: number,
+async function waitForNoTrackedSessions(
+  proxy: HttpProxy,
   timeoutMs = 5_000,
   intervalMs = 50,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!processExists(pid)) {
+    const internalProxy = proxy as unknown as {
+      _sessions: Map<string, unknown>;
+      _pendingSessions: Set<unknown>;
+    };
+    if (
+      internalProxy._sessions.size === 0 &&
+      internalProxy._pendingSessions.size === 0
+    ) {
       return;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error(`Timed out waiting for process ${pid} to exit`);
+  throw new Error('Timed out waiting for tracked HTTP sessions to be cleaned up');
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +230,7 @@ describe('HttpProxy authToken — /mcp endpoint enforcement', () => {
     expect(status).toBe(401);
   });
 
-  it('proxy.close terminates initialized upstream sessions', async () => {
+  it('invalid initialize requests do not leak pending upstream sessions', async () => {
     const { status } = await rawRequest({
       url: `http://127.0.0.1:${proxyPort}/mcp`,
       method: 'POST',
@@ -240,30 +238,14 @@ describe('HttpProxy authToken — /mcp endpoint enforcement', () => {
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'test-client', version: '0.0.1' },
-        },
+        method: 'tools/list',
+        params: {},
       }),
     });
+
     expect(status).not.toBe(401);
-
-    const sessions = Array.from(
-      (
-        proxy as unknown as {
-          _sessions: Map<string, { upstreamTransport: { pid: number | null } }>;
-        }
-      )._sessions.values(),
-    );
-    expect(sessions).toHaveLength(1);
-    const pid = sessions[0]?.upstreamTransport.pid;
-    expect(pid).not.toBeNull();
-
-    await proxy.close();
-    await waitForProcessExit(pid as number);
-  });
+    await waitForNoTrackedSessions(proxy);
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------

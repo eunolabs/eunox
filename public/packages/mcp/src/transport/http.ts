@@ -297,6 +297,7 @@ export class HttpProxy {
 
   private _httpServer?: http.Server;
   private _sessions = new Map<string, HttpProxySession>();
+  private _pendingSessions = new Set<HttpProxySession>();
   private _started = false;
   private _port?: number;
   /**
@@ -422,11 +423,14 @@ export class HttpProxy {
    */
   async close(): Promise<void> {
     // Close all active sessions.
-    const closures = Array.from(this._sessions.values()).map((s) =>
+    const closures = Array.from(
+      new Set([...this._sessions.values(), ...this._pendingSessions.values()]),
+    ).map((s) =>
       this._closeSession(s),
     );
     await Promise.allSettled(closures);
     this._sessions.clear();
+    this._pendingSessions.clear();
 
     if (this._httpServer) {
       await new Promise<void>((resolve) => {
@@ -437,6 +441,7 @@ export class HttpProxy {
     // Flush and close the audit sink after all sessions have been torn down so
     // the sink receives every record before it is closed.
     await this._opts.auditSink.close();
+    this._opts.pdp.dispose?.();
   }
 
   /**
@@ -611,12 +616,7 @@ export class HttpProxy {
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sid) => {
         registeredSessionId = sid;
-        const session: HttpProxySession = {
-          serverTransport,
-          server: proxyServer,
-          upstreamClient,
-          upstreamTransport,
-        };
+        this._pendingSessions.delete(session);
         this._sessions.set(sid, session);
         process.stderr.write(
           `[euno-mcp] HTTP session ${sid} initialized. ` +
@@ -627,6 +627,9 @@ export class HttpProxy {
       },
       onsessionclosed: (sid) => {
         const session = this._sessions.get(sid);
+        if (session !== undefined) {
+          this._pendingSessions.delete(session);
+        }
         this._sessions.delete(sid);
         process.stderr.write(
           `[euno-mcp] HTTP session ${sid} closed. ` +
@@ -645,6 +648,13 @@ export class HttpProxy {
         }
       },
     });
+    const session: HttpProxySession = {
+      serverTransport,
+      server: proxyServer,
+      upstreamClient,
+      upstreamTransport,
+    };
+    this._pendingSessions.add(session);
 
     const pdp = this._opts.pdp;
     const shutdownTimeoutMs = this._opts.shutdownTimeoutMs;
@@ -788,6 +798,7 @@ export class HttpProxy {
     let upstreamExited = false;
     upstreamTransport.onclose = () => {
       upstreamExited = true;
+      this._pendingSessions.delete(session);
       if (registeredSessionId !== undefined) {
         const session = this._sessions.get(registeredSessionId);
         this._sessions.delete(registeredSessionId);
@@ -832,7 +843,14 @@ export class HttpProxy {
     };
 
     // ── 8. Route the current request to the new transport ─────────────────
-    await serverTransport.handleRequest(req, res);
+    try {
+      await serverTransport.handleRequest(req, res);
+    } finally {
+      if (registeredSessionId === undefined) {
+        this._pendingSessions.delete(session);
+        await this._closeSession(session);
+      }
+    }
   }
 
   /**

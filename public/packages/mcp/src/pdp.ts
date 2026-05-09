@@ -173,6 +173,7 @@ export interface PolicyDecisionPoint {
     request: CallToolRequest,
     ctx: PdpContext,
   ): PdpDecision | Promise<PdpDecision>;
+  dispose?(): void;
 }
 
 /**
