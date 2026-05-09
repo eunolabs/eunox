@@ -90,6 +90,23 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 ---
 
+## Reference policies
+
+Pre-built policy files for the most popular upstream MCP servers are in
+[`public/packages/mcp/policies/`](./policies/). Drop one in your project and run it immediately.
+
+| Policy file | Upstream server | What it blocks |
+|-------------|-----------------|----------------|
+| [`filesystem.policy.yaml`](./policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes outside `/data/`; executable file types |
+| [`postgres.policy.yaml`](./policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT operations; credential and audit tables |
+| [`github.policy.yaml`](./policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Runaway write automation; branch delete; secrets management |
+| [`slack.policy.yaml`](./policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Messages to external domains; file uploads; workspace admin |
+| [`fetch.policy.yaml`](./policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP (non-HTTPS) URLs; private RFC-1918 ranges; cloud metadata endpoint (SSRF guard) |
+
+See [`policies/README.md`](./policies/README.md) for quick-start instructions and adaptation guidance.
+
+---
+
 ## Example policy (`euno.policy.yaml`)
 
 ```yaml

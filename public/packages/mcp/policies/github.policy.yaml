@@ -1,0 +1,109 @@
+# ─── euno Reference Policy — GitHub MCP Server ───────────────────────────────
+#
+# Upstream:  @modelcontextprotocol/server-github ^0.4.0
+#            https://github.com/modelcontextprotocol/servers/tree/main/src/github
+#
+# Blocks:
+#   • All tools not listed below are implicitly denied (no matching constraint)
+#   • Branch deletion, force-push, secrets management, repository deletion
+#     (omitted from allowlist — any call to these tools is denied)
+#   • Runaway automation on write tools (per-tool maxCalls rate limits)
+#
+# Allows:
+#   • All read operations: get_file_contents, list_branches, search_code,
+#     get_pull_request, list_commits, search_issues, get_issue (no limits)
+#   • Capped write operations: create_issue, add_issue_comment,
+#     create_pull_request, create_or_update_file
+#
+# README: public/packages/mcp/policies/README.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+agentId: github-agent
+name: "GitHub Agent — Reference Policy (Read-Heavy)"
+version: 1.0.0
+metadata:
+  description: >-
+    Read-heavy GitHub access policy. All read tools are unrestricted (subject
+    only to GitHub API rate limits). Write tools (issue creation, PR creation,
+    file commits) are allowed with conservative per-hour call budgets.
+    Branch deletion, force-push, secrets management, and repository destruction
+    are blocked by omission — they are not listed in the allowlist, so any
+    call to those tools is denied by the manifest-not-matched default.
+  tags: [github, read-heavy, write-rate-limited, no-destructive-ops]
+
+requiredCapabilities:
+  # ── Read tools — unrestricted ────────────────────────────────────────────────
+  - resource: get_file_contents
+    actions: [call]
+
+  - resource: list_branches
+    actions: [call]
+
+  - resource: list_commits
+    actions: [call]
+
+  - resource: get_issue
+    actions: [call]
+
+  - resource: get_pull_request
+    actions: [call]
+
+  - resource: list_pull_requests
+    actions: [call]
+
+  - resource: get_commit
+    actions: [call]
+
+  - resource: search_issues
+    actions: [call]
+
+  # ── Search — light rate limit to prevent cost overruns ──────────────────────
+  - resource: search_code
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 30
+        windowSeconds: 60
+
+  - resource: search_repositories
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 30
+        windowSeconds: 60
+
+  # ── Write tools — conservative hourly budgets ────────────────────────────────
+  - resource: create_issue
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 10
+        windowSeconds: 3600
+
+  - resource: add_issue_comment
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 20
+        windowSeconds: 3600
+
+  - resource: create_pull_request
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 5
+        windowSeconds: 3600
+
+  - resource: create_or_update_file
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 20
+        windowSeconds: 3600
+
+  - resource: update_issue
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 10
+        windowSeconds: 3600

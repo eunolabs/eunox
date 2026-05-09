@@ -1,0 +1,71 @@
+# ─── euno Reference Policy — Slack MCP Server ────────────────────────────────
+#
+# Upstream:  @modelcontextprotocol/server-slack ^0.3.0
+#            https://github.com/modelcontextprotocol/servers/tree/main/src/slack
+#
+# Blocks:
+#   • Messages to external email domains (outside company.com) — blocked by
+#     recipientDomain on post_message and send_dm
+#   • File uploads, workspace administration, channel management (omitted
+#     from allowlist — calls to those tools are denied)
+#   • Runaway message bursts (maxCalls per-tool)
+#
+# Allows:
+#   • post_message to internal Slack channels (no domain check required for
+#     channels — use channel-ID argument schema instead)
+#   • send_dm to users whose address ends in @company.com
+#   • list_channels, get_channel_history, list_users — read-only, unrestricted
+#
+# Note on recipientDomain:
+#   The recipientDomain condition extracts `to`, `recipients`, `cc`, and `bcc`
+#   fields from the tool arguments. Slack tools that accept a channel ID or
+#   user ID string in `to` / `recipients` should be handled via channel-name
+#   allowlists in the custom condition layer rather than domain matching.
+#   This policy applies recipientDomain to the send_dm tool, where the `to`
+#   field contains an email-style user address (user@company.com).
+#
+# README: public/packages/mcp/policies/README.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+agentId: slack-agent
+name: "Slack Agent — Reference Policy (Internal Only)"
+version: 1.0.0
+metadata:
+  description: >-
+    Restricts outbound Slack messages so only internal company.com users can be
+    direct-messaged. Channel posting is allowed with a burst guard. File uploads,
+    channel deletion, and workspace admin operations are blocked by omission.
+  tags: [slack, internal-only, recipient-domain-allowlist, rate-limited]
+
+requiredCapabilities:
+  # ── Direct messages — internal addresses only ────────────────────────────────
+  - resource: send_dm
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: [company.com]
+      - type: maxCalls
+        count: 20
+        windowSeconds: 3600
+
+  # ── Channel posting — rate-limited, no domain gate (channel-ID addressed) ──
+  - resource: post_message
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 50
+        windowSeconds: 3600
+
+  # ── Read tools — unrestricted ────────────────────────────────────────────────
+  - resource: list_channels
+    actions: [call]
+
+  - resource: get_channel_history
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        count: 100
+        windowSeconds: 3600
+
+  - resource: list_users
+    actions: [call]
