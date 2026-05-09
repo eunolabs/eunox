@@ -18,6 +18,8 @@ import { version } from '../package.json';
 import { StdioProxy } from './transport/stdio';
 import { HttpProxy } from './transport/http';
 import { createLocalAuditSink, McpAuditSink } from './audit';
+import { LocalHmacSigner } from './audit/hmac-signer';
+import { loadOrCreateHmacKey, DEFAULT_KEY_PATH } from './audit/hmac-key';
 import { FilePolicySource } from './policy/source';
 import {
   loadCustomConditionModules,
@@ -26,6 +28,10 @@ import {
 import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 import { createTelemetry } from './telemetry';
+import {
+  runValidateToken,
+  DEFAULT_AUDIT_LOG_PATH as VALIDATE_TOKEN_DEFAULT_LOG,
+} from './cli/validate-token';
 
 const program = new Command();
 
@@ -482,6 +488,85 @@ Examples:
       );
       await telemetry.flush();
       process.exit(1);
+    }
+  });
+
+// ── validate-token ────────────────────────────────────────────────────────
+program
+  .command('validate-token')
+  .description(
+    'Inspect audit log entries.\n' +
+    '  --request-id: find a specific decision by request ID and verify its HMAC signature.\n' +
+    '  --since: list all decisions at or after the given ISO-8601 timestamp.',
+  )
+  .option(
+    '--request-id <uid>',
+    'Find and verify the audit record with this request ID (metadata.uid)',
+  )
+  .option(
+    '--since <ISO8601>',
+    'List all decisions at or after this timestamp (ISO 8601, e.g. 2026-05-01T00:00:00Z)',
+  )
+  .option(
+    '--audit-log <path>',
+    `Path to the OCSF audit JSONL file (default: ${VALIDATE_TOKEN_DEFAULT_LOG})`,
+  )
+  .addHelpText(
+    'after',
+    `
+Examples:
+  # Look up a specific decision by its request ID
+  euno-mcp validate-token --request-id a1b2c3d4-…
+
+  # List all decisions since a point in time
+  euno-mcp validate-token --since 2026-05-01T00:00:00Z
+
+  # Use a custom audit log path
+  euno-mcp validate-token --request-id <uid> --audit-log /var/log/euno/audit.jsonl
+`,
+  )
+  .action(async (options) => {
+    const telemetry = await createTelemetry({ subcommand: 'validate-token' });
+
+    // Validate --since value before loading the key so we fail fast.
+    let since: Date | undefined;
+    if (options.since !== undefined) {
+      since = new Date(options.since as string);
+      if (isNaN(since.getTime())) {
+        process.stderr.write(
+          `[euno-mcp] Invalid --since value "${options.since as string}": ` +
+            `must be an ISO-8601 timestamp (e.g. 2026-05-01T00:00:00Z).\n`,
+        );
+        await telemetry.flush();
+        process.exit(1);
+      }
+    }
+
+    // Load (or create) the HMAC key used to sign audit records.
+    let signer: LocalHmacSigner;
+    try {
+      const key = await loadOrCreateHmacKey(DEFAULT_KEY_PATH);
+      signer = new LocalHmacSigner(key);
+    } catch (err) {
+      process.stderr.write(
+        `[euno-mcp] Failed to load signing key: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      await telemetry.flush();
+      process.exit(1);
+    }
+
+    const exitCode = await runValidateToken(
+      {
+        requestId: options.requestId as string | undefined,
+        since,
+        auditLog: options.auditLog as string | undefined,
+      },
+      signer,
+    );
+
+    await telemetry.flush();
+    if (exitCode !== 0) {
+      process.exit(exitCode);
     }
   });
 

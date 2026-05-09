@@ -31,8 +31,8 @@ export interface TelemetryEvent {
   readonly osFamily: OsFamily;
   /** Major Node.js version number (e.g. 20). */
   readonly nodeMajor: number;
-  /** CLI subcommand that was invoked ("proxy", "validate", or "kill"). */
-  readonly subcommand: 'proxy' | 'validate' | 'kill';
+  /** CLI subcommand that was invoked. */
+  readonly subcommand: 'proxy' | 'validate' | 'kill' | 'validate-token';
   /**
    * Number of MCP sessions started in this invocation.
    * For stdio proxy: always 1 (one process = one session).
