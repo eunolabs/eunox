@@ -30,6 +30,7 @@ import {
   HttpToolTransport,
   TransportCredentials,
 } from '@euno/common';
+import type { Span } from '@euno/common';
 import type { JWK, KeyLike } from 'jose';
 
 // Re-export transport types and classes for consumer convenience.
@@ -537,7 +538,7 @@ export class AgentRuntime {
         [EUNO_ATTR.AGENT_ID]: this.config.agentId,
         [EUNO_ATTR.SERVICE]: 'agent-runtime',
       },
-      async (span) => {
+      async (span: Span) => {
         // `withSpan` already records exceptions and stamps
         // `euno.outcome = "error"` on a thrown error before re-throwing,
         // so the success-path attribute is the only thing we need to
@@ -692,7 +693,7 @@ export class AgentRuntime {
         [EUNO_ATTR.RESOURCE]: request.resource ?? `tool://${request.tool}`,
         'euno.tool': request.tool,
       },
-      async (span) => {
+      async (span: Span) => {
         const result = await this._invokeToolImpl(request);
         span.setAttribute(
           EUNO_ATTR.OUTCOME,
@@ -814,7 +815,7 @@ export class AgentRuntime {
         [EUNO_ATTR.RESOURCE]: url,
         'http.method': method,
       },
-      async (span) => {
+      async (span: Span) => {
         const result = await this._makeRequestImpl(method, url, data);
         span.setAttribute(
           EUNO_ATTR.OUTCOME,
