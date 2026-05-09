@@ -528,13 +528,32 @@ Examples:
   .action(async (options) => {
     const telemetry = await createTelemetry({ subcommand: 'validate-token' });
 
-    // Validate --since value before loading the key so we fail fast.
+    const requestId = options.requestId as string | undefined;
+    const sinceRaw = options.since as string | undefined;
+
+    // ── Validate: exactly one mode must be provided ───────────────────────
+    if (requestId === undefined && sinceRaw === undefined) {
+      process.stderr.write(
+        '[euno-mcp] validate-token requires --request-id <uid> or --since <ISO8601>.\n',
+      );
+      await telemetry.flush();
+      process.exit(1);
+    }
+    if (requestId !== undefined && sinceRaw !== undefined) {
+      process.stderr.write(
+        '[euno-mcp] validate-token: --request-id and --since are mutually exclusive; provide only one.\n',
+      );
+      await telemetry.flush();
+      process.exit(1);
+    }
+
+    // ── Parse --since value (fails fast before any I/O) ──────────────────
     let since: Date | undefined;
-    if (options.since !== undefined) {
-      since = new Date(options.since as string);
+    if (sinceRaw !== undefined) {
+      since = new Date(sinceRaw);
       if (isNaN(since.getTime())) {
         process.stderr.write(
-          `[euno-mcp] Invalid --since value "${options.since as string}": ` +
+          `[euno-mcp] Invalid --since value "${sinceRaw}": ` +
             `must be an ISO-8601 timestamp (e.g. 2026-05-01T00:00:00Z).\n`,
         );
         await telemetry.flush();
@@ -542,22 +561,33 @@ Examples:
       }
     }
 
-    // Load (or create) the HMAC key used to sign audit records.
-    let signer: LocalHmacSigner;
-    try {
-      const key = await loadOrCreateHmacKey(DEFAULT_KEY_PATH);
-      signer = new LocalHmacSigner(key);
-    } catch (err) {
-      process.stderr.write(
-        `[euno-mcp] Failed to load signing key: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      await telemetry.flush();
-      process.exit(1);
+    // ── Load HMAC key only for --request-id (signature verification) ─────
+    let signer: LocalHmacSigner | undefined;
+    if (requestId !== undefined) {
+      try {
+        const key = await loadOrCreateHmacKey(DEFAULT_KEY_PATH);
+        signer = new LocalHmacSigner(key);
+      } catch (err) {
+        process.stderr.write(
+          `[euno-mcp] Failed to load signing key: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        await telemetry.flush();
+        process.exit(1);
+      }
+    }
+
+    // For --since mode no signature check is performed; use a no-op signer placeholder.
+    // runValidateToken only calls signer methods in --request-id mode.
+    if (signer === undefined) {
+      // Construct a dummy signer — it will never be called in --since mode.
+      // We satisfy the TypeScript type by creating a real signer with a throw-away key.
+      const throwawayKey = Buffer.alloc(32);
+      signer = new LocalHmacSigner(throwawayKey);
     }
 
     const exitCode = await runValidateToken(
       {
-        requestId: options.requestId as string | undefined,
+        requestId,
         since,
         auditLog: options.auditLog as string | undefined,
       },

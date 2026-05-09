@@ -52,8 +52,23 @@ import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import { LocalHmacSigner } from '../audit/hmac-signer';
-import { loadOrCreateHmacKey, DEFAULT_KEY_PATH } from '../audit/hmac-key';
+import { loadOrCreateHmacKey } from '../audit/hmac-key';
 import { LocalAuditSink, type McpAuditRecord } from '../audit/audit-sink';
+
+// ---------------------------------------------------------------------------
+// Isolated HOME directory — keeps ~/.euno/key untouched on developer machines
+// ---------------------------------------------------------------------------
+
+/** Temp directory that acts as HOME for all subprocess invocations in this suite. */
+let tempHome: string;
+
+beforeAll(() => {
+  tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'euno-vt-home-'));
+});
+
+afterAll(() => {
+  if (tempHome) fs.rmSync(tempHome, { recursive: true, force: true });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,7 +100,9 @@ function runValidateToken(
     {
       encoding: 'utf8',
       timeout: 20_000,
-      env: { ...process.env, EUNO_TELEMETRY: '0', ...env },
+      // Always set HOME to the isolated temp directory so the CLI loads the
+      // same key as writeAuditFileWithSystemKey, and never touches ~/.euno.
+      env: { ...process.env, EUNO_TELEMETRY: '0', HOME: tempHome, USERPROFILE: tempHome, ...env },
     },
   );
   return {
@@ -95,12 +112,14 @@ function runValidateToken(
   };
 }
 
-/** Write a signed audit JSONL file using the system HMAC key (same as CLI uses). */
+/** Write a signed audit JSONL file using the isolated HMAC key (same as CLI uses). */
 async function writeAuditFileWithSystemKey(
   logPath: string,
   records: McpAuditRecord[],
 ): Promise<string[]> {
-  const key = await loadOrCreateHmacKey(DEFAULT_KEY_PATH);
+  // Use the isolated temp HOME so the key path matches what the CLI subprocess sees.
+  const keyPath = path.join(tempHome, '.euno', 'key');
+  const key = await loadOrCreateHmacKey(keyPath);
   const signer = new LocalHmacSigner(key);
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const sink = new LocalAuditSink(signer, { logPath });
@@ -433,5 +452,31 @@ describe('validate-token --audit-log (custom path)', () => {
       '--audit-log', path.join(dir, 'nonexistent-custom.jsonl'),
     ]);
     expect(exitCode).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mutually exclusive options
+// ---------------------------------------------------------------------------
+
+describe('validate-token — mutually exclusive options', () => {
+  it('exits 1 when both --request-id and --since are provided', () => {
+    const dir = makeTempDir();
+    const { exitCode } = runValidateToken([
+      '--request-id', 'some-uid',
+      '--since', '2026-01-01T00:00:00Z',
+      '--audit-log', path.join(dir, 'audit.jsonl'),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  it('stderr mentions mutual exclusivity when both options provided', () => {
+    const dir = makeTempDir();
+    const { stderr } = runValidateToken([
+      '--request-id', 'some-uid',
+      '--since', '2026-01-01T00:00:00Z',
+      '--audit-log', path.join(dir, 'audit.jsonl'),
+    ]);
+    expect(stderr.toLowerCase()).toMatch(/mutually exclusive|exclusive/);
   });
 });

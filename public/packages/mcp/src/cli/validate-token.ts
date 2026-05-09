@@ -28,6 +28,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as readline from 'node:readline';
 
 import { verifyAuditEvent, DEFAULT_AUDIT_LOG_PATH } from '../audit/audit-sink';
 import type { SignedMcpAuditEvent } from '../audit/audit-sink';
@@ -62,9 +63,19 @@ export function resolveAuditFiles(logPath: string): string[] {
     return [];
   }
 
-  // Collect rotated archives (e.g. `audit.jsonl.2026-…`) sorted oldest first.
+  // Rotation timestamp format: YYYY-MM-DDTHH-MM-SS.mmmZ
+  // Produced by LocalAuditSink._rotate(): new Date().toISOString().replace(/:/g, '-')
+  // e.g. "2026-05-08T12-34-56.789Z"
+  const ROTATION_SUFFIX_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z$/;
+
+  // Collect rotated archives (e.g. `audit.jsonl.2026-05-08T12-34-56.789Z`) sorted oldest first.
+  // Files with unrecognised suffixes (e.g. .bak, .tmp) are intentionally excluded.
   const rotated = entries
-    .filter((name) => name !== base && name.startsWith(base + '.'))
+    .filter((name) => {
+      if (!name.startsWith(base + '.')) return false;
+      const suffix = name.slice(base.length + 1);
+      return ROTATION_SUFFIX_RE.test(suffix);
+    })
     .sort();
 
   const result = rotated.map((name) => path.join(dir, name));
@@ -129,12 +140,12 @@ export function formatTime(timeMs: number): string {
 /**
  * Format a signing-key fingerprint for display.
  *
- * The `keyId` field is a stable, non-secret identifier embedded in every
- * signed record's enrichment block.  It is safe to display verbatim — the
- * raw key material is never included.
+ * Returns `<algorithm>:<keyId>` (e.g. `hmac-sha256:local-hmac-v1`) so users
+ * can distinguish key IDs across different algorithms or after key rotation.
+ * The raw key material is never included.
  */
 export function formatKeyFingerprint(signer: LocalHmacSigner): string {
-  return signer.keyId;
+  return `${signer.algorithm}:${signer.keyId}`;
 }
 
 /**
@@ -260,30 +271,30 @@ export async function readAuditRecords(
   const warn = onWarn ?? ((msg: string) => process.stderr.write(msg + '\n'));
 
   for (const filePath of files) {
-    let content: string;
+    let lineNumber = 0;
     try {
-      content = fs.readFileSync(filePath, 'utf8');
+      const fileStream = fs.createReadStream(filePath, { encoding: 'utf8' });
+      const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+
+      for await (const line of rl) {
+        lineNumber++;
+        if (!line.trim()) continue;
+
+        const event = parseAuditLine(line);
+        if (!event) {
+          warn(
+            `[euno-mcp] validate-token: skipping malformed line ${lineNumber} in ${filePath}`,
+          );
+          continue;
+        }
+
+        if (sinceMs !== undefined && event.time < sinceMs) continue;
+
+        results.push({ event, filePath, lineNumber });
+      }
     } catch {
       // File disappeared between directory listing and read — skip.
       continue;
-    }
-
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      if (!line.trim()) continue;
-
-      const event = parseAuditLine(line);
-      if (!event) {
-        warn(
-          `[euno-mcp] validate-token: skipping malformed line ${i + 1} in ${filePath}`,
-        );
-        continue;
-      }
-
-      if (sinceMs !== undefined && event.time < sinceMs) continue;
-
-      results.push({ event, filePath, lineNumber: i + 1 });
     }
   }
 
@@ -338,6 +349,12 @@ export async function runValidateToken(
   const writeLine = out.stdout ?? ((line: string) => process.stdout.write(line + '\n'));
   const writeErr = out.stderr ?? ((line: string) => process.stderr.write(line + '\n'));
   const logPath = opts.auditLog ?? DEFAULT_AUDIT_LOG_PATH;
+
+  // ── Mutual exclusivity check ──────────────────────────────────────────────
+  if (opts.requestId !== undefined && opts.since !== undefined) {
+    writeErr('[euno-mcp] validate-token: --request-id and --since are mutually exclusive; provide only one.');
+    return 1;
+  }
 
   // ── --request-id mode ────────────────────────────────────────────────────
   if (opts.requestId !== undefined) {

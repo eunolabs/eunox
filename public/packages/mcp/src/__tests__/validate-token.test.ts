@@ -373,6 +373,20 @@ describe('resolveAuditFiles', () => {
     const dir = makeTempDir();
     expect(resolveAuditFiles(path.join(dir, 'audit.jsonl'))).toEqual([]);
   });
+
+  it('excludes files with non-timestamp suffixes like .bak or .tmp', () => {
+    const dir = makeTempDir();
+    const logPath = path.join(dir, 'audit.jsonl');
+    fs.writeFileSync(logPath, '');
+    // These should NOT be treated as rotated archives
+    fs.writeFileSync(path.join(dir, 'audit.jsonl.bak'), 'x');
+    fs.writeFileSync(path.join(dir, 'audit.jsonl.tmp'), 'x');
+    fs.writeFileSync(path.join(dir, 'audit.jsonl.backup-2026-05-08'), 'x');
+    // This valid rotation archive SHOULD be included
+    const validArchive = path.join(dir, 'audit.jsonl.2026-05-08T12-00-00.000Z');
+    fs.writeFileSync(validArchive, '');
+    expect(resolveAuditFiles(logPath)).toEqual([validArchive, logPath]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -563,9 +577,9 @@ describe('formatTime', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatKeyFingerprint', () => {
-  it('returns the signer keyId as-is', () => {
+  it('returns algorithm:keyId format', () => {
     const signer = new LocalHmacSigner(crypto.randomBytes(32), 'my-test-key-id');
-    expect(formatKeyFingerprint(signer)).toBe('my-test-key-id');
+    expect(formatKeyFingerprint(signer)).toBe('hmac-sha256:my-test-key-id');
   });
 
   it('returns a non-empty string', () => {
@@ -582,6 +596,11 @@ describe('formatKeyFingerprint', () => {
     const s1 = new LocalHmacSigner(crypto.randomBytes(32), 'key-1');
     const s2 = new LocalHmacSigner(crypto.randomBytes(32), 'key-2');
     expect(formatKeyFingerprint(s1)).not.toBe(formatKeyFingerprint(s2));
+  });
+
+  it('includes the algorithm prefix', () => {
+    const signer = freshSigner('test-key');
+    expect(formatKeyFingerprint(signer)).toMatch(/^hmac-sha256:/);
   });
 });
 
@@ -1650,5 +1669,16 @@ describe('runValidateToken — edge cases', () => {
     expect(exitCode).toBe(2);
     expect(stdout[0]).toBe('✗ Audit record found');
     expect(stdout.some((l) => l.includes('✗ INVALID'))).toBe(true);
+  });
+
+  it('exits 1 when both requestId and since are provided (mutually exclusive)', async () => {
+    const signer = freshSigner();
+    const dir = makeTempDir();
+    const { exitCode, stderr } = await runVT(
+      { requestId: 'some-uid', since: new Date(0), auditLog: path.join(dir, 'audit.jsonl') },
+      signer,
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr.some((l) => l.includes('mutually exclusive'))).toBe(true);
   });
 });

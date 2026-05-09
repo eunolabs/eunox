@@ -374,12 +374,12 @@ describe('ConditionEnforcerPDP — allowedExtensions condition', () => {
     expect(d.conditionType).toBe('allowedExtensions');
   });
 
-  it('does case-sensitive extension matching (.CSV vs .csv)', async () => {
+  it('does case-insensitive extension matching (.CSV is allowed by .csv)', async () => {
     const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(makeExtManifest(['.csv'])) });
-    // The common-core extension enforcer normalises case — let's verify whatever the actual behaviour is
+    // The condition-registry extension handler lowercases both the file path and the
+    // allowed extension list before comparing, so ".CSV" matches ".csv".
     const d = await pdp.decide(makeRequest('read_file', { filePath: 'REPORT.CSV' }), makeCtx());
-    // We assert the decision exists without requiring a specific value
-    expect(typeof d.allow).toBe('boolean');
+    expect(d.allow).toBe(true);
   });
 });
 
