@@ -10,6 +10,7 @@ exports[`TelemetryEvent schema TELEMETRY_EVENT_KEYS matches the fields emitted b
   "sessionsStarted",
   "sessionsWithEnforcement",
   "denialsByConditionType",
+  "peakConcurrentSessions",
   "upstreamServerName",
   "timestamp",
 ]
