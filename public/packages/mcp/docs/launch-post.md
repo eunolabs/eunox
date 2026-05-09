@@ -113,7 +113,7 @@ Don't want to write a policy from scratch? The repository ships pre-built polici
 | [`filesystem.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes outside `/data/`, executable file types |
 | [`postgres.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL, credential and audit tables |
 | [`github.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Runaway write automation, branch delete, secrets |
-| [`slack.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Messages to external domains (SSRF guard) |
+| [`slack.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages to external domains; file uploads; workspace admin |
 | [`fetch.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP URLs, private RFC-1918 ranges, cloud metadata endpoint |
 
 Browse the full directory: [`public/packages/mcp/policies/`](https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies)

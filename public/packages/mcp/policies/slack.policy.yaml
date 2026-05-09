@@ -4,25 +4,23 @@
 #            https://github.com/modelcontextprotocol/servers/tree/main/src/slack
 #
 # Blocks:
-#   • Messages to external email domains (outside company.com) — blocked by
-#     recipientDomain on post_message and send_dm
+#   • Direct messages sent to external email domains (outside company.com)
+#     blocked by recipientDomain on send_dm (the `to` field is an email address)
+#   • Runaway message bursts (maxCalls per-tool)
 #   • File uploads, workspace administration, channel management (omitted
 #     from allowlist — calls to those tools are denied)
-#   • Runaway message bursts (maxCalls per-tool)
 #
 # Allows:
-#   • post_message to internal Slack channels (no domain check required for
-#     channels — use channel-ID argument schema instead)
 #   • send_dm to users whose address ends in @company.com
+#   • post_message to any channel (channel-ID addressed, not domain-filtered)
 #   • list_channels, get_channel_history, list_users — read-only, unrestricted
 #
-# Note on recipientDomain:
-#   The recipientDomain condition extracts `to`, `recipients`, `cc`, and `bcc`
-#   fields from the tool arguments. Slack tools that accept a channel ID or
-#   user ID string in `to` / `recipients` should be handled via channel-name
-#   allowlists in the custom condition layer rather than domain matching.
-#   This policy applies recipientDomain to the send_dm tool, where the `to`
-#   field contains an email-style user address (user@company.com).
+# Note on recipientDomain vs. post_message:
+#   post_message uses a Slack channel ID (e.g. C12345) as its target, not an
+#   email address, so the recipientDomain condition cannot meaningfully filter
+#   it. Channel access control should be handled at the Slack workspace level
+#   or via a custom condition. This policy applies recipientDomain only to
+#   send_dm where the `to` field contains an email-style address.
 #
 # README: public/packages/mcp/policies/README.md
 # ─────────────────────────────────────────────────────────────────────────────
