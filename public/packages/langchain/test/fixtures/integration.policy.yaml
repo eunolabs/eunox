@@ -1,5 +1,5 @@
 # Integration test policy fixture
-# Tests: max 3 calls on query_db, only SELECT operations, blocked send_email
+# Tests: max 5 calls on query_db, only SELECT/SHOW operations, blocked send_email
 agentId: test-integration-agent
 name: Test Integration Agent
 version: 1.0.0

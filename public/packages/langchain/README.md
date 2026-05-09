@@ -87,14 +87,14 @@ requiredCapabilities:
       - type: allowedOperations
         operations: [SELECT, SHOW]
       - type: maxCalls
-        max: 100
+        count: 100
         windowSeconds: 3600
 
   - resource: send_email
     actions:  [call]
     conditions:
       - type: recipientDomain
-        allowedDomains: [company.com]
+        domains: [company.com]
 ```
 
 ---
