@@ -434,7 +434,7 @@ allowlist for a capability and is the natural carrier for the kind of
 
 `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`
 are deferred to Stage 2. **Stage 2 (`@euno/mcp` 0.2.0) ships all five;**
-see the Stage 2 status block above for per-task detail.
+see the Stage 2 status block below for per-task detail.
 
 **Session identity** (the prior plan punted on this). Define a
 **`session`** as one MCP client connection: for stdio, the lifetime of
