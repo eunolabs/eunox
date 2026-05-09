@@ -208,6 +208,49 @@ const MCP_TOOL_CALL_ACTION = 'call';
  * Looks for common argument keys (`sql`, `query`, `statement`) and extracts
  * the first word (verb) so `allowedOperations` conditions can be enforced.
  * Returns `undefined` when no recognisable SQL argument is found.
+ *
+ * ## Security limitation — first-word extraction, not SQL parsing
+ *
+ * This function extracts the **first whitespace-delimited token** from the
+ * SQL string and uppercases it.  This approach is fast, dependency-free, and
+ * effective against naive prompt injections, but it can be bypassed by
+ * adversaries who control the query string:
+ *
+ * | Bypass vector | Example | Why it works |
+ * |---|---|---|
+ * | Semicolon-chained statements | `SELECT 1; DROP TABLE users` | First word is `SELECT` — second statement executes if the DB driver allows multi-statement queries |
+ * | Block comments before verb | `` /* comment * / DROP TABLE users`` | First token is ``/*`` — verb extraction fails and the call is **allowed** by default |
+ * | Inline comment injection | `SELECT * FROM users -- ; DROP TABLE users` | First word is `SELECT` but comment smuggles a second intent |
+ * | Quoted identifiers | `"SELECT" something` | Verb-match may succeed depending on driver quoting |
+ *
+ * ### Recommended defense-in-depth
+ *
+ * `allowedOperations` is a **first line of defense**, not a complete SQL firewall.
+ * To close the gaps above, combine it with:
+ *
+ * 1. **Parameterized queries in the upstream server** — the MCP server should
+ *    never interpolate agent-supplied strings directly into SQL.
+ * 2. **Read-only / restricted database credentials** — the DB user used by the
+ *    upstream server should only have `SELECT` privilege if you only allow SELECT.
+ * 3. **Disable multi-statement execution** in the database driver (e.g.
+ *    `multipleStatements: false` in mysql2; default-off in psycopg2).
+ * 4. **`argumentSchema` pattern constraint** — add a `pattern` on the `query`
+ *    argument that anchors the verb at the start and rejects strings containing
+ *    `;` or `/*`, e.g.:
+ *    ```yaml
+ *    argumentSchema:
+ *      type: object
+ *      properties:
+ *        query:
+ *          type: string
+ *          pattern: '^SELECT\s.*'
+ *          maxLength: 4096
+ *    ```
+ *    This is still regex-based and not a full SQL parser, but it eliminates the
+ *    most common bypass shapes and provides a second independent gate.
+ *
+ * See `docs/prompt-injection-demo.md` for a full walkthrough of the
+ * prompt-injection attack vector and defense layers.
  */
 function extractSqlOperation(args: Record<string, unknown>): string | undefined {
   const candidates = ['sql', 'query', 'statement'];

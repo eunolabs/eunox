@@ -188,6 +188,33 @@ export interface HttpProxyOptions {
    * {@link HttpProxy.close}.
    */
   auditSink?: McpAuditSink;
+  /**
+   * Maximum time in milliseconds to wait for the upstream to respond to a
+   * `tools/call` request before the proxy returns a structured timeout error
+   * to the MCP host.  The upstream call is abandoned (though the upstream
+   * process itself is not killed — use {@link shutdownTimeoutMs} for that).
+   *
+   * When `undefined` (the default) no timeout is applied and the proxy waits
+   * indefinitely.  Pass a positive integer to bound the wait.
+   *
+   * @default undefined (no timeout)
+   */
+  upstreamTimeoutMs?: number;
+  /**
+   * When set, every `POST /mcp` and `GET /mcp` request must carry an
+   * `Authorization: Bearer <token>` header whose value matches this string
+   * exactly.  Requests that are missing the header or carry the wrong token
+   * receive `401 Unauthorized`.
+   *
+   * Use this when binding to `127.0.0.1` (loopback) to prevent other
+   * processes on the same machine from making unauthenticated calls to the
+   * proxy endpoint.
+   *
+   * Pass via `--auth-token <token>` on the CLI.  The token is never logged.
+   *
+   * @default undefined (no token required)
+   */
+  authToken?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +267,32 @@ function buildDenialResult(
   };
 }
 
+/**
+ * Race an async operation against a millisecond timeout.
+ *
+ * When `timeoutMs` is `undefined` (or ≤ 0) the operation is returned
+ * as-is with no timeout applied.
+ *
+ * On timeout, the returned promise rejects with an `Error` whose message
+ * begins with `"Upstream timeout:"` so callers can detect it.
+ */
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number | undefined,
+  toolName: string,
+): Promise<T> {
+  if (timeoutMs === undefined || timeoutMs <= 0) {
+    return operation;
+  }
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
+    }, timeoutMs);
+    timer.unref();
+  });
+  return Promise.race([operation, timeoutPromise]);
+}
+
 // ---------------------------------------------------------------------------
 // HttpProxy
 // ---------------------------------------------------------------------------
@@ -264,8 +317,8 @@ function buildDenialResult(
  * ```
  */
 export class HttpProxy {
-  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks'>> &
-    Pick<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks'>;
+  private readonly _opts: Required<Omit<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks' | 'upstreamTimeoutMs' | 'authToken'>> &
+    Pick<HttpProxyOptions, 'env' | 'cwd' | 'killController' | 'telemetryHooks' | 'upstreamTimeoutMs' | 'authToken'>;
 
   private _httpServer?: http.Server;
   private _sessions = new Map<string, HttpProxySession>();
@@ -294,6 +347,8 @@ export class HttpProxy {
       shutdownTimeoutMs: opts.shutdownTimeoutMs ?? 5_000,
       telemetryHooks: opts.telemetryHooks,
       trustForwardedFor: opts.trustForwardedFor ?? false,
+      upstreamTimeoutMs: opts.upstreamTimeoutMs,
+      authToken: opts.authToken,
     };
   }
 
@@ -436,6 +491,34 @@ export class HttpProxy {
       res.writeHead(404);
       res.end('Not Found');
       return;
+    }
+
+    // ── Bearer token authentication ────────────────────────────────────────
+    // When authToken is configured, every /mcp request must present it in the
+    // Authorization header.  Constant-time comparison prevents timing attacks.
+    if (this._opts.authToken !== undefined) {
+      const authHeader = req.headers['authorization'] ?? '';
+      const prefix = 'Bearer ';
+      const provided = authHeader.startsWith(prefix)
+        ? authHeader.slice(prefix.length)
+        : '';
+      const expected = this._opts.authToken;
+      // timingSafeEqual requires equal-length buffers.
+      const providedBuf = Buffer.from(provided);
+      const expectedBuf = Buffer.from(expected);
+      const padLen = Math.max(providedBuf.length, expectedBuf.length);
+      const a = Buffer.alloc(padLen);
+      const b = Buffer.alloc(padLen);
+      providedBuf.copy(a);
+      expectedBuf.copy(b);
+      const tokenValid =
+        providedBuf.length === expectedBuf.length &&
+        crypto.timingSafeEqual(a, b);
+      if (!tokenValid) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="euno-mcp"' });
+        res.end(JSON.stringify({ error: 'Unauthorized: valid Bearer token required' }));
+        return;
+      }
     }
 
     const sessionId = Array.isArray(req.headers['mcp-session-id'])
@@ -588,6 +671,7 @@ export class HttpProxy {
 
     const pdp = this._opts.pdp;
     const shutdownTimeoutMs = this._opts.shutdownTimeoutMs;
+    const upstreamTimeoutMs = this._opts.upstreamTimeoutMs;
 
     // ── 4. Wire passthrough handlers (same set as StdioProxy) ─────────────
 
@@ -650,10 +734,29 @@ export class HttpProxy {
       }
 
       // Allowed — forward to upstream and apply any response-path obligations.
-      const upstreamResult = await upstreamClient.callTool(
-        reqMsg.params,
-        CompatibilityCallToolResultSchema,
-      );
+      // Race the upstream call against the configurable timeout so a slow or
+      // unresponsive upstream doesn't hang the MCP host indefinitely.
+      let upstreamResult: Awaited<ReturnType<typeof upstreamClient.callTool>>;
+      try {
+        upstreamResult = await withTimeout(
+          upstreamClient.callTool(reqMsg.params, CompatibilityCallToolResultSchema),
+          upstreamTimeoutMs,
+          reqMsg.params.name,
+        );
+      } catch (err) {
+        const isTimeout =
+          err instanceof Error && err.message.startsWith('Upstream timeout:');
+        process.stderr.write(
+          `[euno-mcp] ${isTimeout ? 'Upstream timeout' : 'Upstream error'} on tool "${reqMsg.params.name}": ${String(err)}\n`,
+        );
+        return buildDenialResult(
+          reqMsg.params.name,
+          isTimeout
+            ? `Upstream did not respond within ${upstreamTimeoutMs} ms`
+            : `Upstream error: ${String(err)}`,
+          isTimeout ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_ERROR',
+        );
+      }
 
       const { matchedConditions } = decision;
       const obligationsApplied: string[] = [];

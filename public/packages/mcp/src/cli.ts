@@ -95,6 +95,17 @@ program
     '5000',
   )
   .option(
+    '--upstream-timeout <ms>',
+    'Milliseconds to wait for the upstream to respond to a tools/call before returning a timeout error ' +
+      '(default: no timeout). Applies to both stdio and HTTP transports.',
+  )
+  .option(
+    '--auth-token <token>',
+    'Bearer token required on all /mcp requests (HTTP transport only). ' +
+      'Protects the proxy endpoint from other local processes. ' +
+      'Generate a strong random token, e.g.: openssl rand -hex 32',
+  )
+  .option(
     '--trust-forwarded-for',
     'Trust the X-Forwarded-For header for ipRange enforcement (HTTP transport + loopback bind only). ' +
       'Enable only when a trusted reverse proxy sits in front of the euno-mcp proxy.',
@@ -128,8 +139,8 @@ Examples:
   # stdio with a policy file and custom audit log path
   euno-mcp proxy --policy ./policy.yaml --audit-log /var/log/euno/audit.jsonl -- node ./my-mcp-server.js
 
-  # HTTP (LangChain.js / in-process clients)
-  euno-mcp proxy --transport http --port 3000 -- node ./my-mcp-server.js
+  # HTTP with bearer-token auth and a 30-second upstream timeout
+  euno-mcp proxy --transport http --port 3000 --auth-token $(openssl rand -hex 32) --upstream-timeout 30000 -- node ./my-mcp-server.js
 `,
   )
   .action(async (upstreamCommand: string, upstreamArgs: string[], options) => {
@@ -154,6 +165,21 @@ Examples:
       }
       shutdownTimeoutMs = parsed;
     }
+
+    let upstreamTimeoutMs: number | undefined;
+    if (options.upstreamTimeout !== undefined) {
+      const parsed = parseInt(options.upstreamTimeout as string, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        process.stderr.write(
+          `[euno-mcp] Invalid --upstream-timeout value "${options.upstreamTimeout}": ` +
+            `must be a positive integer (milliseconds).\n`,
+        );
+        process.exit(1);
+      }
+      upstreamTimeoutMs = parsed;
+    }
+
+    const authToken: string | undefined = options.authToken as string | undefined;
 
     let rotateSizeBytes: number | undefined;
     if (options.auditRotateSize !== undefined) {
@@ -251,6 +277,7 @@ Examples:
         args: upstreamArgs,
         sessionId: options.sessionId as string | undefined,
         shutdownTimeoutMs,
+        upstreamTimeoutMs,
         auditSink,
         pdp,
         telemetryHooks: telemetry.sessionHooks(),
@@ -303,6 +330,8 @@ Examples:
       bind,
       unsafeBindAll,
       shutdownTimeoutMs,
+      upstreamTimeoutMs,
+      authToken,
       telemetryHooks: telemetry.sessionHooks(),
       trustForwardedFor,
     });
@@ -312,6 +341,13 @@ Examples:
       process.stderr.write(
         `[euno-mcp] HTTP proxy ready on http://${bind}:${listenPort}/mcp\n`,
       );
+      if (authToken === undefined) {
+        process.stderr.write(
+          `[euno-mcp] WARNING: --auth-token is not set. Any process on this machine ` +
+            `can call the /mcp endpoint without authentication. ` +
+            `Pass --auth-token $(openssl rand -hex 32) to require a Bearer token.\n`,
+        );
+      }
 
       // Keep the process alive until interrupted.
       const shutdown = async () => {

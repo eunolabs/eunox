@@ -136,6 +136,18 @@ export interface StdioProxyOptions {
    * tool-call enforcement decisions.  No-op when not supplied.
    */
   telemetryHooks?: TelemetryHooks;
+  /**
+   * Maximum time in milliseconds to wait for the upstream to respond to a
+   * `tools/call` request before the proxy returns a structured timeout error
+   * to the MCP host.  The upstream call is abandoned (though the upstream
+   * process itself is not killed — use {@link shutdownTimeoutMs} for that).
+   *
+   * When `undefined` (the default) no timeout is applied and the proxy waits
+   * indefinitely.  Pass a positive integer to bound the wait.
+   *
+   * @default undefined (no timeout)
+   */
+  upstreamTimeoutMs?: number;
 }
 
 /**
@@ -178,6 +190,33 @@ function buildDenialResult(
 }
 
 /**
+ * Race an async operation against a millisecond timeout.
+ *
+ * When `timeoutMs` is `undefined` (or ≤ 0) the operation is returned
+ * as-is with no timeout applied.
+ *
+ * On timeout, the returned promise rejects with an `Error` whose message
+ * begins with `"Upstream timeout:"` so callers can detect it.
+ */
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number | undefined,
+  toolName: string,
+): Promise<T> {
+  if (timeoutMs === undefined || timeoutMs <= 0) {
+    return operation;
+  }
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
+    }, timeoutMs);
+    // Allow Node.js to exit even if the timer is still pending.
+    timer.unref();
+  });
+  return Promise.race([operation, timeoutPromise]);
+}
+
+/**
  * A stdio MCP proxy.
  *
  * Instantiate and call {@link start} to begin proxying.  The proxy takes
@@ -194,9 +233,9 @@ function buildDenialResult(
  */
 export class StdioProxy {
   private readonly _opts: Required<
-    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>
+    Omit<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks' | 'upstreamTimeoutMs'>
   > &
-    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks'>;
+    Pick<StdioProxyOptions, 'env' | 'cwd' | 'hostStdin' | 'hostStdout' | 'telemetryHooks' | 'upstreamTimeoutMs'>;
 
   private _server?: Server;
   private _client?: Client;
@@ -216,6 +255,7 @@ export class StdioProxy {
       hostStdin: opts.hostStdin,
       hostStdout: opts.hostStdout,
       telemetryHooks: opts.telemetryHooks,
+      upstreamTimeoutMs: opts.upstreamTimeoutMs,
     };
   }
 
@@ -379,10 +419,29 @@ export class StdioProxy {
       }
 
       // Allowed — forward to upstream and apply any response-path obligations.
-      const upstreamResult = await client.callTool(
-        req.params,
-        CompatibilityCallToolResultSchema,
-      );
+      // Race the upstream call against the configurable timeout so a slow or
+      // unresponsive upstream doesn't hang the MCP host indefinitely.
+      let upstreamResult: Awaited<ReturnType<typeof client.callTool>>;
+      try {
+        upstreamResult = await withTimeout(
+          client.callTool(req.params, CompatibilityCallToolResultSchema),
+          this._opts.upstreamTimeoutMs,
+          req.params.name,
+        );
+      } catch (err) {
+        const isTimeout =
+          err instanceof Error && err.message.startsWith('Upstream timeout:');
+        process.stderr.write(
+          `[euno-mcp] ${isTimeout ? 'Upstream timeout' : 'Upstream error'} on tool "${req.params.name}": ${String(err)}\n`,
+        );
+        return buildDenialResult(
+          req.params.name,
+          isTimeout
+            ? `Upstream did not respond within ${this._opts.upstreamTimeoutMs} ms`
+            : `Upstream error: ${String(err)}`,
+          isTimeout ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_ERROR',
+        );
+      }
 
       // Apply redactFields (and any other response-path) obligations when the
       // matched constraint carries conditions that have a `redact` lobe.
