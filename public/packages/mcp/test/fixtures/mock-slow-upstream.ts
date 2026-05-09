@@ -36,8 +36,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (_req) => {
   // Hang forever — the proxy's upstreamTimeoutMs should fire before this resolves.
   await new Promise<never>(() => { /* intentionally never resolves */ });
-  // TypeScript: unreachable but needed to satisfy the return type.
-  return { content: [] };
+  // This line is unreachable at runtime but required by TypeScript to satisfy
+  // the return type of the handler.
+  throw new Error('unreachable');
 });
 
 async function main(): Promise<void> {

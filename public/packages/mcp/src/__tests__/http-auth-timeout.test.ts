@@ -131,6 +131,11 @@ describe('HttpProxy authToken — /mcp endpoint enforcement', () => {
   let proxyPort: number;
 
   beforeEach(async () => {
+    // The auth token tests only send raw HTTP requests to /mcp — they never
+    // reach a tools/call handler, so the normal mock upstream (which responds
+    // to tools/list and tools/call) is a fine choice here.  Auth enforcement
+    // happens before any session is created, so the upstream's behaviour is
+    // irrelevant for the 401 tests.
     proxy = new HttpProxy({
       command: process.execPath,
       args: ['--require', TS_NODE_REGISTER, MOCK_UPSTREAM],
@@ -254,8 +259,10 @@ describe('HttpProxy upstreamTimeoutMs — hung upstream returns UPSTREAM_TIMEOUT
       CompatibilityCallToolResultSchema,
     );
     const elapsed = Date.now() - start;
-    // Should resolve shortly after the 1s timeout, not take much longer.
-    expect(elapsed).toBeLessThan(8_000);
+    // The timeout is 1 s.  Allow 4 s total to account for process startup
+    // overhead (ts-node compilation) and CI scheduling jitter, while still
+    // catching true hangs that would take >10 s.
+    expect(elapsed).toBeLessThan(4_000);
   }, 15_000);
 });
 
