@@ -9,6 +9,7 @@ import {
   ConditionEnforcerPDP,
   NullAuditSink,
 } from '@euno/mcp';
+import type { McpAuditRecord } from '@euno/mcp';
 
 import { LocalCapabilityRuntime } from '../runtime';
 import { wrapAsLangChainTool, wrapAsLangChainTools } from '../tool';
@@ -41,9 +42,19 @@ function staticPolicySource(manifest: AgentCapabilityManifest) {
   return { load: async () => manifest };
 }
 
-function makeRuntime(manifest: AgentCapabilityManifest): LocalCapabilityRuntime {
+class RecordingAuditSink extends NullAuditSink {
+  public readonly records: McpAuditRecord[] = [];
+  override async record(entry: McpAuditRecord): Promise<void> {
+    this.records.push(entry);
+  }
+}
+
+function makeRuntime(
+  manifest: AgentCapabilityManifest,
+  opts: { auditSink?: RecordingAuditSink } = {},
+): LocalCapabilityRuntime {
   const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
-  return new LocalCapabilityRuntime(pdp, new NullAuditSink(), crypto.randomUUID());
+  return new LocalCapabilityRuntime(pdp, opts.auditSink ?? new NullAuditSink(), crypto.randomUUID());
 }
 
 // ---------------------------------------------------------------------------
@@ -608,6 +619,69 @@ describe('wrapAsLangChainTool', () => {
         sourceIp: '192.168.1.1',
       });
       await expect(tool.invoke({})).rejects.toThrow(CapabilityDenialError);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // correlationId forwarding to invokeTool
+  // ---------------------------------------------------------------------------
+
+  describe('correlationId forwarding', () => {
+    it('passes a correlationId to invokeTool so audit requestId matches denial error', async () => {
+      // Use a recording sink to capture the requestId written to the audit log.
+      // The CapabilityDenialError's correlationId must match that requestId.
+      const manifest = makeManifest('query_db', [
+        { type: 'maxCalls', count: 1, windowSeconds: 60 },
+      ]);
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(manifest, { auditSink: sink });
+      const tool = wrapAsLangChainTool(runtime, { name: 'query_db', description: 'desc' });
+
+      // First call — allowed; record the requestId from the audit log.
+      await tool.invoke({});
+      const allowRequestId = sink.records[0]!.requestId;
+      expect(typeof allowRequestId).toBe('string');
+
+      // Second call — denied; capture the CapabilityDenialError.
+      let denial: CapabilityDenialError | undefined;
+      try {
+        await tool.invoke({});
+      } catch (e) {
+        denial = e as CapabilityDenialError;
+      }
+
+      // The denial error's correlationId must match the requestId on the audit record.
+      const denyRequestId = sink.records[1]!.requestId;
+      expect(typeof denyRequestId).toBe('string');
+      expect(denial!.correlationId).toBe(denyRequestId);
+    });
+
+    it('correlationId is a UUID v4', async () => {
+      const manifest = makeManifest('query_db', [
+        { type: 'maxCalls', count: 1, windowSeconds: 60 },
+      ]);
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(manifest, { auditSink: sink });
+      const tool = wrapAsLangChainTool(runtime, { name: 'query_db', description: 'desc' });
+
+      await tool.invoke({});
+      expect(sink.records[0]!.requestId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+    });
+
+    it('each tool invocation gets a distinct correlationId', async () => {
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(makeManifest('query_db'), { auditSink: sink });
+      const tool = wrapAsLangChainTool(runtime, { name: 'query_db', description: 'desc' });
+
+      await tool.invoke({});
+      await tool.invoke({});
+      await tool.invoke({});
+
+      const ids = sink.records.map((r) => r.requestId);
+      const unique = new Set(ids);
+      expect(unique.size).toBe(3);
     });
   });
 });

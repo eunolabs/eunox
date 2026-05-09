@@ -169,12 +169,18 @@ export class EunoLangChainCallbackHandler implements LangChainCallbacks {
     const state = this.runState.get(runId);
     this.runState.delete(runId);
     const denial = err instanceof CapabilityDenialError ? err : undefined;
+    // Prefer the correlation ID that was stamped on the CapabilityDenialError
+    // (which matches the audit record's requestId) over the callback-generated
+    // ID from handleToolStart, so all three paths — callback event, denial
+    // error, and OCSF audit entry — share the same identifier.
+    const correlationId =
+      denial?.correlationId ?? state?.correlationId ?? newCorrelationId();
     this.sink({
       phase: 'tool-error',
       toolName: state?.toolName ?? denial?.tool ?? '<unknown>',
       runId,
       parentRunId,
-      correlationId: state?.correlationId ?? newCorrelationId(),
+      correlationId,
       ts: new Date().toISOString(),
       errorCode: denial?.errorCode,
       statusCode: denial?.statusCode,

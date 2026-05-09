@@ -363,4 +363,48 @@ describe('EunoLangChainCallbackHandler', () => {
       expect(diff).toBeLessThan(60_000);
     });
   });
+
+  describe('correlationId — denial correlation', () => {
+    it('uses CapabilityDenialError.correlationId when present on tool-error', () => {
+      const events: EunoCallbackEvent[] = [];
+      const handler = new EunoLangChainCallbackHandler((e) => events.push(e));
+      handler.handleToolStart({ name: 'tool' }, '', 'run-1');
+      const denial = new CapabilityDenialError({
+        message: 'denied',
+        statusCode: 429,
+        errorCode: 'MAX_CALLS_EXCEEDED',
+        tool: 'query_db',
+        correlationId: 'audit-record-uuid-from-runtime',
+      });
+      handler.handleToolError(denial, 'run-1');
+      // The error event must carry the ID stamped on the denial (which matches
+      // the audit record's requestId), not the callback-generated start ID.
+      expect(events[1]!.correlationId).toBe('audit-record-uuid-from-runtime');
+    });
+
+    it('falls back to start correlationId when CapabilityDenialError has no correlationId', () => {
+      const events: EunoCallbackEvent[] = [];
+      const handler = new EunoLangChainCallbackHandler((e) => events.push(e));
+      handler.handleToolStart({ name: 'tool' }, '', 'run-1');
+      const startCorrelationId = events[0]!.correlationId;
+      const denial = new CapabilityDenialError({
+        message: 'denied',
+        statusCode: 403,
+        errorCode: 'CAPABILITY_DENIED',
+        tool: 'query_db',
+        // no correlationId
+      });
+      handler.handleToolError(denial, 'run-1');
+      expect(events[1]!.correlationId).toBe(startCorrelationId);
+    });
+
+    it('uses start correlationId for plain (non-denial) errors', () => {
+      const events: EunoCallbackEvent[] = [];
+      const handler = new EunoLangChainCallbackHandler((e) => events.push(e));
+      handler.handleToolStart({ name: 'tool' }, '', 'run-1');
+      const startCorrelationId = events[0]!.correlationId;
+      handler.handleToolError(new Error('plain error'), 'run-1');
+      expect(events[1]!.correlationId).toBe(startCorrelationId);
+    });
+  });
 });

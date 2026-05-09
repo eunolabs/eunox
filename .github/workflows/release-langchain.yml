@@ -157,11 +157,11 @@ jobs:
 
       - name: Verify @euno/langchain exports are resolvable
         run: |
-          node -e "const m = require('@euno/langchain'); \
-            console.assert(typeof m.wrapAsLangChainTool === 'function', 'wrapAsLangChainTool missing'); \
-            console.assert(typeof m.EunoLangChainCallbackHandler === 'function', 'EunoLangChainCallbackHandler missing'); \
-            console.assert(typeof m.CapabilityDenialError === 'function', 'CapabilityDenialError missing'); \
-            console.log('smoke-test: @euno/langchain exports verified');" \
-          /tmp/euno-langchain-smoke/node_modules/.bin/euno-langchain 2>/dev/null || \
-          node -e "const m = require('@euno/langchain'); console.log(JSON.stringify(Object.keys(m)));" \
-            --prefix /tmp/euno-langchain-smoke
+          cd /tmp/euno-langchain-smoke
+          node -e "
+            const m = require('@euno/langchain');
+            console.assert(typeof m.wrapAsLangChainTool === 'function', 'wrapAsLangChainTool missing');
+            console.assert(typeof m.EunoLangChainCallbackHandler === 'function', 'EunoLangChainCallbackHandler missing');
+            console.assert(typeof m.CapabilityDenialError === 'function', 'CapabilityDenialError missing');
+            console.log('smoke-test: @euno/langchain exports verified', Object.keys(m));
+          "

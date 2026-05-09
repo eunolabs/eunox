@@ -32,6 +32,7 @@
  */
 
 import * as crypto from 'crypto';
+import * as os from 'os';
 import {
   ConditionEnforcerPDP,
   FilePolicySource,
@@ -41,7 +42,7 @@ import {
 import type {
   McpAuditSink,
   LocalAuditSinkOptions,
-  FilePolicySourceOptions,
+  LocalPolicySource,
 } from '@euno/mcp';
 import type { LocalToolInvocationRequest, LocalToolInvocationResult } from './types';
 
@@ -77,12 +78,12 @@ export interface LocalRuntimeOptions {
    */
   sessionId?: string;
   /**
-   * Override the policy source. Useful in tests to inject a fake policy
-   * without touching the file system.
+   * Override the policy source. Useful in tests to inject an in-memory policy
+   * without touching the file system. When provided, `policyFile` is ignored.
    *
    * @internal
    */
-  _policySource?: FilePolicySourceOptions & { load: () => Promise<unknown> };
+  _policySource?: LocalPolicySource;
   /**
    * Override the audit sink. Useful in tests to capture audit records without
    * touching the file system.
@@ -149,6 +150,7 @@ export class LocalCapabilityRuntime {
         decision: 'deny',
         denialCode: result.denialCode,
         conditionType: result.conditionType,
+        requestId: request.correlationId,
       });
       return result;
     }
@@ -175,6 +177,7 @@ export class LocalCapabilityRuntime {
       denialCode: decision.denialCode,
       conditionType: decision.conditionType,
       details: decision.details,
+      requestId: request.correlationId,
     });
 
     if (!decision.allow) {
@@ -248,8 +251,11 @@ export async function createLocalRuntime(
 ): Promise<LocalCapabilityRuntime> {
   const sessionId = opts.sessionId ?? crypto.randomUUID();
 
-  // Policy source — file-backed unless overridden for tests.
-  const policySource = new FilePolicySource({ filePath: opts.policyFile });
+  // Policy source — use caller-supplied override (useful in tests), otherwise
+  // load from the file at opts.policyFile.
+  const policySource: LocalPolicySource = opts._policySource
+    ? opts._policySource
+    : new FilePolicySource({ filePath: opts.policyFile });
 
   // PDP — wires the policy source with in-memory counter state.
   const pdp = new ConditionEnforcerPDP({ policySource });
@@ -261,7 +267,14 @@ export async function createLocalRuntime(
     auditSink = opts._auditSink;
   } else {
     const sinkOpts: LocalAuditSinkOptions = {};
-    if (opts.auditLog) sinkOpts.logPath = opts.auditLog;
+    if (opts.auditLog) {
+      // Expand leading `~` to the user's home directory — Node.js path APIs do
+      // not perform shell tilde expansion, so `~/.euno/audit.jsonl` would
+      // create a literal `~` directory under cwd without this step.
+      sinkOpts.logPath = opts.auditLog.startsWith('~/')
+        ? os.homedir() + opts.auditLog.slice(1)
+        : opts.auditLog;
+    }
     if (opts.rotateSizeBytes !== undefined) sinkOpts.rotateSizeBytes = opts.rotateSizeBytes;
 
     try {

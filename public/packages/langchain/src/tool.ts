@@ -131,13 +131,17 @@ export function wrapAsLangChainTool(
       throw err; // TypeError from normalizeArgs propagates directly.
     }
 
-    // 2. Enforce via the runtime.
+    // 2. Enforce via the runtime. Generate the correlation ID here so it is
+    //    shared between the audit record (via requestId) and the thrown
+    //    CapabilityDenialError — enabling exact join between callback events
+    //    and OCSF entries.
     const correlationId = newCorrelationId();
     const result = await runtime.invokeTool({
       tool: name,
       args,
       resource: resource ?? `mcp-tool://${name}`,
       sourceIp,
+      correlationId,
     });
 
     if (!result.success) {

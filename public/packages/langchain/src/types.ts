@@ -132,6 +132,12 @@ export interface LocalToolInvocationRequest {
   resource?: string;
   /** Optional source IP for `ipRange` condition enforcement. */
   sourceIp?: string;
+  /**
+   * Optional correlation identifier. When provided, it is stored as
+   * `requestId` on the audit record so that LangChain callback events and
+   * OCSF audit entries can be joined in external tracing systems.
+   */
+  correlationId?: string;
 }
 
 /**

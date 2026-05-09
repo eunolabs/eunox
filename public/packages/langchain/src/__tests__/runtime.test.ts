@@ -18,7 +18,7 @@ import {
 } from '@euno/mcp';
 import type { McpAuditRecord } from '@euno/mcp';
 
-import { LocalCapabilityRuntime } from '../runtime';
+import { LocalCapabilityRuntime, createLocalRuntime } from '../runtime';
 import type { LocalToolInvocationRequest } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -566,5 +566,132 @@ describe('LocalCapabilityRuntime', () => {
       expect(result.success).toBe(false);
       expect(result.denialCode).toBe('TABLE_NOT_ALLOWED');
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // correlationId → requestId threading
+  // ---------------------------------------------------------------------------
+
+  describe('correlationId threading into audit requestId', () => {
+    it('sets requestId on the audit record when correlationId is provided (allow)', async () => {
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(makeManifest('query_db'), { auditSink: sink });
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'test-corr-allow' }));
+      expect(sink.records[0]!.requestId).toBe('test-corr-allow');
+    });
+
+    it('sets requestId on the audit record when correlationId is provided (deny)', async () => {
+      const manifest = makeManifest('query_db', [
+        { type: 'maxCalls', count: 1, windowSeconds: 60 },
+      ]);
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(manifest, { auditSink: sink });
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'corr-first' }));
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'corr-denied' }));
+      expect(sink.records[0]!.requestId).toBe('corr-first');
+      expect(sink.records[1]!.requestId).toBe('corr-denied');
+    });
+
+    it('leaves requestId undefined when correlationId is not provided', async () => {
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(makeManifest('query_db'), { auditSink: sink });
+      await runtime.invokeTool(makeRequest('query_db'));
+      expect(sink.records[0]!.requestId).toBeUndefined();
+    });
+
+    it('sets requestId on KILL_SWITCH audit record when correlationId provided', async () => {
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(makeManifest('query_db'), { auditSink: sink });
+      runtime.terminate();
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'kill-corr' }));
+      expect(sink.records[0]!.requestId).toBe('kill-corr');
+    });
+
+    it('each invocation can carry a distinct correlationId', async () => {
+      const sink = new RecordingAuditSink();
+      const runtime = makeRuntime(makeManifest('query_db'), { auditSink: sink });
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'id-1' }));
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'id-2' }));
+      await runtime.invokeTool(makeRequest('query_db', {}, { correlationId: 'id-3' }));
+      expect(sink.records.map((r) => r.requestId)).toEqual(['id-1', 'id-2', 'id-3']);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createLocalRuntime factory — _policySource override and tilde expansion
+// ---------------------------------------------------------------------------
+
+describe('createLocalRuntime', () => {
+  it('uses _policySource when provided, ignoring policyFile', async () => {
+    const manifest: AgentCapabilityManifest = {
+      agentId: 'factory-test-agent',
+      name: 'Factory Test Agent',
+      version: '1.0.0',
+      requiredCapabilities: [
+        {
+          resource: 'custom_tool',
+          actions: ['call'],
+          conditions: [{ type: 'maxCalls', count: 1, windowSeconds: 60 }],
+        },
+      ],
+    };
+    const recordingSink = new RecordingAuditSink();
+    const runtime = await createLocalRuntime({
+      policyFile: '/does-not-exist/fake.yaml', // should be ignored
+      _policySource: { load: async () => manifest },
+      _auditSink: recordingSink,
+    });
+
+    const r1 = await runtime.invokeTool({ tool: 'custom_tool', args: {}, correlationId: 'c-1' });
+    expect(r1.success).toBe(true);
+    const r2 = await runtime.invokeTool({ tool: 'custom_tool', args: {}, correlationId: 'c-2' });
+    expect(r2.success).toBe(false);
+    expect(r2.denialCode).toBe('MAX_CALLS_EXCEEDED');
+
+    expect(recordingSink.records[0]!.requestId).toBe('c-1');
+    expect(recordingSink.records[1]!.requestId).toBe('c-2');
+
+    await runtime.dispose();
+  });
+
+  it('uses the provided sessionId', async () => {
+    const manifest: AgentCapabilityManifest = {
+      agentId: 'sid-test',
+      name: 'SessionId Test',
+      version: '1.0.0',
+      requiredCapabilities: [],
+    };
+    const sink = new RecordingAuditSink();
+    const runtime = await createLocalRuntime({
+      policyFile: '/fake.yaml',
+      sessionId: 'my-fixed-session',
+      _policySource: { load: async () => manifest },
+      _auditSink: sink,
+    });
+    expect(runtime.sessionId).toBe('my-fixed-session');
+    await runtime.dispose();
+  });
+
+  it('generates a unique sessionId when none is provided', async () => {
+    const manifest: AgentCapabilityManifest = {
+      agentId: 'sid-gen-test',
+      name: 'SessionId Gen Test',
+      version: '1.0.0',
+      requiredCapabilities: [],
+    };
+    const r1 = await createLocalRuntime({
+      policyFile: '/fake.yaml',
+      _policySource: { load: async () => manifest },
+      _auditSink: new NullAuditSink(),
+    });
+    const r2 = await createLocalRuntime({
+      policyFile: '/fake.yaml',
+      _policySource: { load: async () => manifest },
+      _auditSink: new NullAuditSink(),
+    });
+    expect(r1.sessionId).not.toBe(r2.sessionId);
+    await r1.dispose();
+    await r2.dispose();
   });
 });

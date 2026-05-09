@@ -106,7 +106,7 @@ requiredCapabilities:
 ```ts
 const runtime = await createLocalRuntime({
   policyFile:       './euno.policy.yaml', // required
-  auditLog:         '~/.euno/audit.jsonl', // optional, defaults to ~/.euno/audit.jsonl
+  auditLog:         `${os.homedir()}/.euno/audit.jsonl`, // optional; tilde (~) is expanded automatically
   rotateSizeBytes:  100 * 1024 * 1024,    // optional, default 100 MiB
   sessionId:        'my-session-id',      // optional, auto-generated if absent
 });
