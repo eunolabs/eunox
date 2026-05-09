@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick start · Euno</title>
+    <meta name="description" content="Run @euno/mcp in 60 seconds. Drop-in setup for Claude Desktop, Cursor, Windsurf, LangChain.js, and any HTTP MCP client.">
+    <link rel="icon" href="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e">
+    <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+
+    <header class="site-header">
+        <div class="header-left">
+            <a class="logo" href="./index.html">
+                <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="Euno">
+                <span class="wordmark">Euno</span>
+            </a>
+            <span class="stage-badge">Stage 2 ✓</span>
+        </div>
+        <nav class="header-nav" aria-label="Primary">
+            <a href="./quickstart.html" class="nav-link active">Quick start</a>
+            <a href="./features.html" class="nav-link">Features</a>
+            <a href="./how-it-works.html" class="nav-link">How it works</a>
+            <a href="./policies.html" class="nav-link">Policies</a>
+            <a href="./docs.html" class="nav-link">Docs</a>
+            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                GitHub
+            </a>
+        </nav>
+    </header>
+
+    <section class="hero hero-compact">
+        <div class="hero-eyebrow"><span class="dot"></span>Quick start</div>
+        <h1>Ship a governed agent <em>in 60 seconds</em></h1>
+        <p class="hero-sub">Three commands and a YAML file. The proxy runs locally, wraps any MCP server, and enforces policy before the upstream is ever contacted.</p>
+        <div aria-live="polite" aria-atomic="true" id="copy-announce" class="sr-only"></div>
+        <button class="install-snippet" aria-label="Copy install command">
+            <span class="prompt" aria-hidden="true">$</span>
+            <span class="cmd">npx -y @euno/mcp proxy --policy ./euno.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data</span>
+            <span class="copy-btn" aria-hidden="true">copy</span>
+        </button>
+    </section>
+
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="./index.html">Home</a> &nbsp;›&nbsp; Quick start
+    </nav>
+
+    <main class="content-section">
+
+        <div class="page-toc" aria-label="On this page">
+            <h4>On this page</h4>
+            <ul>
+                <li><a href="#prereqs">Prerequisites</a></li>
+                <li><a href="#step-1">1. Install</a></li>
+                <li><a href="#step-2">2. Author a policy</a></li>
+                <li><a href="#step-3">3. Validate the policy</a></li>
+                <li><a href="#step-4">4. Run the proxy</a></li>
+                <li><a href="#step-5">5. Try it from a host</a></li>
+                <li><a href="#step-6">6. Inspect the audit log</a></li>
+                <li><a href="#claude">Claude Desktop / Cursor / Windsurf</a></li>
+                <li><a href="#http">HTTP transport · LangChain.js</a></li>
+                <li><a href="#langchain">In-process LangChain.js</a></li>
+                <li><a href="#next">Next steps</a></li>
+            </ul>
+        </div>
+
+        <h2 id="prereqs">Prerequisites</h2>
+        <ul>
+            <li>Node.js <strong>≥ 18</strong> and npm <strong>≥ 9</strong></li>
+            <li>An MCP host: <a href="https://www.anthropic.com/news/claude-desktop" target="_blank" rel="noopener noreferrer">Claude Desktop</a>, <a href="https://cursor.com/" target="_blank" rel="noopener noreferrer">Cursor</a>, <a href="https://codeium.com/windsurf" target="_blank" rel="noopener noreferrer">Windsurf</a>, or any agent that speaks <a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP</a></li>
+            <li>An upstream MCP server you want to govern (e.g. <code>@modelcontextprotocol/server-filesystem</code>)</li>
+        </ul>
+
+        <div class="callout">
+            <strong>Note.</strong> <code>@euno/*</code> packages publish to GitHub Packages while the project is in early stages. See the <a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a> for the scoped <code>.npmrc</code> setup.
+        </div>
+
+        <h2 id="step-1">1. Install</h2>
+        <p>You can run <code>@euno/mcp</code> directly with <code>npx</code> — no global install required:</p>
+<pre><code>npx -y @euno/mcp --version</code></pre>
+        <p>Or install once for repeated use:</p>
+<pre><code>npm install -g @euno/mcp</code></pre>
+
+        <h2 id="step-2">2. Author a policy</h2>
+        <p>A policy is a single YAML file describing which tools are allowed and the conditions on each call. Save the following as <code>euno.policy.yaml</code>:</p>
+<pre><code>agentId: filesystem-agent
+name:    Filesystem Agent
+version: 1.0.0
+
+requiredCapabilities:
+  - resource: "tool://read_file"
+    actions: [call]
+    conditions:
+      - type: allowedExtensions
+        extensions: [".csv", ".json", ".txt", ".md"]
+      - type: maxCalls
+        limit: 50
+        windowSeconds: 60
+
+  - resource: "tool://list_directory"
+    actions: [call]
+</code></pre>
+        <p>The schema is a literal subset of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code> — there is exactly one shape, no drift between proxy and the rest of the system.</p>
+
+        <h2 id="step-3">3. Validate the policy</h2>
+<pre><code>npx -y @euno/mcp validate ./euno.policy.yaml</code></pre>
+        <p>Validation runs without contacting any server and rejects unknown condition types and malformed YAML up front.</p>
+
+        <h2 id="step-4">4. Run the proxy</h2>
+        <p>Wrap any MCP server with the proxy. Everything after <code>--</code> is the upstream command:</p>
+<pre><code>npx -y @euno/mcp proxy \
+  --policy ./euno.policy.yaml \
+  -- npx -y @modelcontextprotocol/server-filesystem /data
+</code></pre>
+        <p>The proxy speaks MCP on stdio in both directions and is transparent to clients.</p>
+
+        <h2 id="step-5">5. Try it from a host</h2>
+        <p>Point your MCP host (or any client) at the proxy command above. From <a href="#claude">Claude Desktop</a>, attempt to read <code>/data/keys.pem</code> — the proxy denies it before the upstream is contacted, and the agent receives a structured <code>CapabilityDenied</code> error.</p>
+
+        <h2 id="step-6">6. Inspect the audit log</h2>
+        <p>Every decision — allow or deny — is recorded as a signed OCSF API Activity event:</p>
+<pre><code>tail -F ~/.euno/audit.jsonl | jq</code></pre>
+        <p>For aggregated denial counts, run:</p>
+<pre><code>npx -y @euno/mcp stats</code></pre>
+        <p>This prints an ASCII histogram grouped by condition type and denial code, including rotated log files.</p>
+
+        <h2 id="claude">Claude Desktop / Cursor / Windsurf</h2>
+        <p>Add the proxy as an <code>mcpServers</code> entry in <code>claude_desktop_config.json</code> (or the equivalent file for Cursor / Windsurf):</p>
+<pre><code>{
+  "mcpServers": {
+    "filesystem-governed": {
+      "command": "npx",
+      "args": [
+        "-y", "@euno/mcp", "proxy",
+        "--policy", "/absolute/path/to/euno.policy.yaml",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
+      ]
+    }
+  }
+}</code></pre>
+        <p>Without <code>--policy</code> the proxy is transparent — handy for capturing an audit trail before you write any rules.</p>
+
+        <h2 id="http">HTTP transport · LangChain.js</h2>
+        <p>For agents that connect over HTTP rather than stdio, run the proxy as an HTTP server:</p>
+<pre><code>npx -y @euno/mcp proxy \
+  --transport http --port 7391 \
+  --policy ./euno.policy.yaml \
+  -- node ./my-mcp-server.js
+</code></pre>
+        <p>Connect your client to <code>http://127.0.0.1:7391/mcp</code>. The same policy file works on both transports — and <code>ipRange</code> conditions become enforceable here.</p>
+
+        <h2 id="langchain">In-process LangChain.js</h2>
+        <p>If your agent runs LangChain tools in-process and you don't want a separate proxy process, install <code>@euno/langchain</code> and wrap your tool:</p>
+<pre><code>import { createLocalRuntime, wrapAsLangChainTool } from '@euno/langchain';
+
+const runtime = await createLocalRuntime({ policyFile: './euno.policy.yaml' });
+
+const queryTool = wrapAsLangChainTool(runtime, {
+  name:        'query_db',
+  description: 'Run a read-only SQL query',
+  schema: { type: 'object', required: ['sql'],
+            properties: { sql: { type: 'string' } } },
+  handler: async ({ sql }) =&gt; db.query(String(sql)),
+});</code></pre>
+        <p>Same YAML, same conditions, same audit format — no transport hop.</p>
+
+        <h2 id="next">Next steps</h2>
+        <ul>
+            <li>Drop in a ready-made policy from the <a href="./policies.html">reference policies</a> page.</li>
+            <li>Browse the <a href="./features.html">full condition matrix</a> with worked demos for each.</li>
+            <li>Read <a href="./how-it-works.html">how the proxy enforces policy</a> end-to-end.</li>
+            <li>Explore the source on <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a> — issues and PRs welcome.</li>
+        </ul>
+    </main>
+
+    <footer class="site-footer">
+        <div class="footer-grid">
+            <div class="footer-col footer-brand">
+                <a class="logo" href="./index.html">
+                    <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="Euno" style="height:30px">
+                    <span class="wordmark">Euno</span>
+                </a>
+                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
+                <span class="footer-license">Apache-2.0</span>
+            </div>
+            <div class="footer-col">
+                <h5>Product</h5>
+                <ul>
+                    <li><a href="./quickstart.html">Quick start</a></li>
+                    <li><a href="./features.html">Features</a></li>
+                    <li><a href="./how-it-works.html">How it works</a></li>
+                    <li><a href="./policies.html">Reference policies</a></li>
+                </ul>
+            </div>
+            <div class="footer-col">
+                <h5>Resources</h5>
+                <ul>
+                    <li><a href="./docs.html">Documentation</a></li>
+                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
+                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
+                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
+                </ul>
+            </div>
+            <div class="footer-col">
+                <h5>Project</h5>
+                <ul>
+                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+                    <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <span>&copy; 2026 Euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">edgeobs</a> project</span>
+            <span>Built for the Model Context Protocol</span>
+        </div>
+    </footer>
+
+    <script src="./assets/main.js"></script>
+</body>
+</html>

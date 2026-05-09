@@ -8,8 +8,9 @@ Design and operational documentation for Euno. Docs are organized by purpose.
 
 | Doc | What it is |
 | --- | ---------- |
-| [../README.md](../README.md) | Root README: project status, quickstart, development setup. |
-| [euno-mcp README](../public/packages/mcp/README.md) | Stage 1 developer product: @euno/mcp quickstart. |
+| [../README.md](../README.md) | Project README — value prop, quick start, links. |
+| [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup. |
+| [euno-mcp README](../public/packages/mcp/README.md) | Stage 2 developer product: @euno/mcp quickstart and condition reference. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 
 ## 2. Architecture
