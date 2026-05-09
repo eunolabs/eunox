@@ -1,0 +1,38 @@
+{
+  // TypeScript — use the workspace version so that monorepo tsconfig paths are resolved correctly.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  // Editor — keep consistent with the eslint config.
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+
+  // ESLint — run against the workspace-root eslint config.
+  "eslint.workingDirectories": [
+    { "directory": "public/packages/common", "changeProcessCWD": true },
+    { "directory": "public/packages/mcp", "changeProcessCWD": true },
+    { "directory": "public/packages/langchain", "changeProcessCWD": true },
+    { "directory": "public/packages/cli", "changeProcessCWD": true }
+  ],
+
+  // File associations.
+  "files.associations": {
+    "*.policy.yaml": "yaml",
+    "*.policy.yml": "yaml"
+  },
+
+  // Search — exclude build artefacts and large generated directories.
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/.git": true
+  },
+
+  // Files — hide generated artefacts from the explorer.
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/dist": true
+  }
+}
