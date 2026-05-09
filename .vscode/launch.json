@@ -253,7 +253,7 @@
       "id": "upstreamScript",
       "type": "promptString",
       "description": "Path to the upstream MCP server script",
-      "default": "./upstream.js"
+      "default": "${workspaceFolder}/public/packages/mcp/test/fixtures/mock-upstream.ts"
     },
     {
       "id": "requestId",

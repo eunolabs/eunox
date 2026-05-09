@@ -408,7 +408,7 @@ schema, where data goes, and all opt-out mechanisms.
 
 ```bash
 npm install        # install all workspace dependencies
-npm run build      # common-core → mcp → langchain → platform packages
+npm run build      # build all workspaces (common-core → common-infra → common → posture-emitter → mcp → langchain → …)
 npm run test       # run all test suites
 npm run lint       # eslint + license-boundary check
 ```

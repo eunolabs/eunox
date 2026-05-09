@@ -25,7 +25,7 @@ One YAML file. No code changes to your agent or server.
 
 `@euno/mcp` 0.2.0 ships the full `CapabilityCondition` matrix:
 `maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`, `allowedTables`,
-`argumentSchema`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`.
+`allowedValues`, `argumentSchema`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`.
 The [`@euno/langchain`](public/packages/langchain/README.md) companion package brings
 in-process enforcement to LangChain.js agents (no MCP transport required).
 
@@ -40,10 +40,10 @@ Euno follows a [staged execution plan](docs/mvp.md).
 |-------|-------|--------|
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit log | ✅ Done |
-| 1.5 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
-| 2 | Cross-process shared state (Redis counters, shared enforcement state) | ⏳ Gate: see [docs/mvp.md §Gate to Stage 2](docs/mvp.md) |
-| 3 | Hosted gateway service, signed JWT capability tokens | Planned |
-| 4–5 | Enterprise: DID federation, KMS, SOC2, multi-cloud | Planned |
+| 2 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
+| 3 | Hosted Tool Gateway, API-key façade, signed capability tokens | ⏳ Gate: see [docs/mvp.md §Gate to Stage 3](docs/mvp.md#gate-to-stage-3--measurable) |
+| 4 | Capability Issuer + IdP integration (Entra ID, AWS Cognito, GCP Cloud Identity) | Planned |
+| 5 | Enterprise: DID federation, KMS, SOC2, multi-cloud | Planned |
 
 The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
 `framework-adapters`) are **feature-frozen** during Stages 0–2 — accepting
