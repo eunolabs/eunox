@@ -840,8 +840,10 @@ export class HttpProxy {
    */
   private async _closeSession(session: HttpProxySession): Promise<void> {
     await Promise.allSettled([
+      session.serverTransport.close(),
       session.server.close(),
       session.upstreamClient.close(),
+      session.upstreamTransport.close(),
     ]);
   }
 

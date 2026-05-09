@@ -91,6 +91,30 @@ function rawRequest(opts: {
   });
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs = 5_000,
+  intervalMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for process ${pid} to exit`);
+}
+
 // ---------------------------------------------------------------------------
 // Auth token — constructor validation
 // ---------------------------------------------------------------------------
@@ -206,6 +230,39 @@ describe('HttpProxy authToken — /mcp endpoint enforcement', () => {
       method: 'GET',
     });
     expect(status).toBe(401);
+  });
+
+  it('proxy.close terminates initialized upstream sessions', async () => {
+    const { status } = await rawRequest({
+      url: `http://127.0.0.1:${proxyPort}/mcp`,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '0.0.1' },
+        },
+      }),
+    });
+    expect(status).not.toBe(401);
+
+    const sessions = Array.from(
+      (
+        proxy as unknown as {
+          _sessions: Map<string, { upstreamTransport: { pid: number | null } }>;
+        }
+      )._sessions.values(),
+    );
+    expect(sessions).toHaveLength(1);
+    const pid = sessions[0]?.upstreamTransport.pid;
+    expect(pid).not.toBeNull();
+
+    await proxy.close();
+    await waitForProcessExit(pid as number);
   });
 });
 
