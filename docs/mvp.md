@@ -570,9 +570,9 @@ path at any layer.
 > - [x] Task 9 — `@euno/langchain` companion package — `wrapAsLangChainTool` over local-only `CapabilityRuntime`
 > - [x] Task 10 — Reference policy library under `public/packages/mcp/policies/`
 > - [x] Task 11 — README + docs updates: condition matrix, before/after, schema-parity claim
-> - [ ] Task 12 — Stage 3 readiness script + signal collection update
+> - [x] Task 12 — Stage 3 readiness script + signal collection update
 >
-> **Tasks 1–11 complete. `@euno/mcp` 0.2.0 is ready to publish.**
+> **All 12 Stage 2 tasks are complete. `@euno/mcp` 0.2.0 is ready to publish.**
 
 **What changes.** Expand from the v0 condition subset to the full
 `CapabilityCondition` discriminated union exposed in policy config.
@@ -593,6 +593,8 @@ handles richer conditions unchanged because enforcement is still at
 - ≥5 teams (≥3 users each) confirmed running it (telemetry + at least one direct conversation per team)
 - ≥3 unsolicited asks for "how do I share this policy across the team" or "how do I see what the agent did last week from my laptop"
 - ≥1 conversation with a team that has already implemented some hand-rolled cross-process audit
+
+Run `npx ts-node scripts/stage3-readiness.ts` to check current status (exits 0 when all three criteria are met, 1 when definitively not met, 2 when UNKNOWN).  Report team-sharing or cross-process-audit asks via [`.github/ISSUE_TEMPLATE/stage-3-signal.md`](../.github/ISSUE_TEMPLATE/stage-3-signal.md).
 
 ---
 

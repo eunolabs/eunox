@@ -62,6 +62,7 @@ function sampleEvent(overrides: Partial<TelemetryEvent> = {}): TelemetryEvent {
     sessionsStarted: 1,
     sessionsWithEnforcement: 0,
     denialsByConditionType: {},
+    peakConcurrentSessions: 1,
     upstreamServerName: 'custom',
     timestamp: 1234567890000,
     ...overrides,
@@ -464,6 +465,261 @@ describe('TelemetryCollector', () => {
 
     // Must not throw:
     await expect(collector.flush()).resolves.toBeUndefined();
+  });
+
+  // ── peakConcurrentSessions ──────────────────────────────────────────────
+
+  it('peakConcurrentSessions is 0 when no sessions are ever started', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(0);
+  });
+
+  it('peakConcurrentSessions is 1 for a single sequential session (stdio proxy)', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    const hooks = collector.sessionHooks();
+    hooks.onSessionStart?.();
+    hooks.onSessionEnd?.();
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(1);
+  });
+
+  it('peakConcurrentSessions is 1 for multiple sequential (non-overlapping) sessions', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    // Three sessions, each fully ending before the next starts
+    for (let i = 0; i < 3; i++) {
+      const h = collector.sessionHooks();
+      h.onSessionStart?.();
+      h.onSessionEnd?.();
+    }
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(1);
+    expect(event.sessionsStarted).toBe(3);
+  });
+
+  it('peakConcurrentSessions is 2 for two simultaneous sessions', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    const h1 = collector.sessionHooks();
+    const h2 = collector.sessionHooks();
+
+    h1.onSessionStart?.();
+    h2.onSessionStart?.(); // now 2 concurrent
+    h1.onSessionEnd?.();   // back to 1
+    h2.onSessionEnd?.();   // back to 0
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(2);
+  });
+
+  it('peakConcurrentSessions is 3 for three simultaneous sessions', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    const h1 = collector.sessionHooks();
+    const h2 = collector.sessionHooks();
+    const h3 = collector.sessionHooks();
+
+    h1.onSessionStart?.();
+    h2.onSessionStart?.();
+    h3.onSessionStart?.(); // now 3 concurrent — peak
+    h3.onSessionEnd?.();
+    h2.onSessionEnd?.();
+    h1.onSessionEnd?.();
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(3);
+  });
+
+  it('peakConcurrentSessions retains the peak after sessions end', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    // Reach peak of 2, then drop back, then add 1 more
+    const h1 = collector.sessionHooks();
+    const h2 = collector.sessionHooks();
+    h1.onSessionStart?.();
+    h2.onSessionStart?.(); // peak = 2
+    h2.onSessionEnd?.();   // concurrent = 1
+    h1.onSessionEnd?.();   // concurrent = 0
+
+    // A new session after — should not affect the peak of 2
+    const h3 = collector.sessionHooks();
+    h3.onSessionStart?.(); // concurrent = 1 (below peak)
+    h3.onSessionEnd?.();   // concurrent = 0
+
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(2);
+  });
+
+  it('peakConcurrentSessions is included in the emitted event schema', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as Record<string, unknown>;
+    expect(event).toHaveProperty('peakConcurrentSessions');
+    expect(typeof event['peakConcurrentSessions']).toBe('number');
+  });
+
+  it('peakConcurrentSessions works correctly with createSessionHooks (HTTP proxy pattern)', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    const rootHooks = collector.sessionHooks();
+    const sessionA = rootHooks.createSessionHooks!();
+    const sessionB = rootHooks.createSessionHooks!();
+    const sessionC = rootHooks.createSessionHooks!();
+
+    sessionA.onSessionStart?.();
+    sessionB.onSessionStart?.();
+    sessionC.onSessionStart?.(); // peak = 3 concurrent
+    sessionA.onSessionEnd?.();
+    sessionB.onSessionEnd?.();
+    sessionC.onSessionEnd?.();
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    expect(event.peakConcurrentSessions).toBe(3);
+    expect(event.sessionsStarted).toBe(3);
+  });
+
+  it('peakConcurrentSessions current counter does not go below 0 on spurious end calls', async () => {
+    const tmpDir = makeTempDir();
+    const localPath = path.join(tmpDir, 'telemetry.jsonl');
+    const emitter = new LocalFileTelemetryEmitter(localPath);
+    const collector = new TelemetryCollector(emitter, {
+      installId: 'test',
+      version: '0.0.0',
+      osFamily: 'linux',
+      nodeMajor: 20,
+      subcommand: 'proxy',
+      upstreamServerName: 'custom',
+    });
+
+    const h = collector.sessionHooks();
+    h.onSessionStart?.();
+    h.onSessionEnd?.();
+    h.onSessionEnd?.(); // spurious second end — should not underflow
+    h.onSessionEnd?.(); // another spurious end
+
+    const h2 = collector.sessionHooks();
+    h2.onSessionStart?.(); // concurrent should now be 1 (not negative)
+    h2.onSessionEnd?.();
+
+    await collector.flush();
+
+    const event = JSON.parse(
+      fs.readFileSync(localPath, 'utf8').trim(),
+    ) as TelemetryEvent;
+    // Peak should be 1 — the spurious ends should not have caused negative counting
+    expect(event.peakConcurrentSessions).toBe(1);
   });
 });
 

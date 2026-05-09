@@ -35,7 +35,7 @@ import type { TelemetryEmitter } from './emitter';
 /** Fields of {@link TelemetryEvent} that are determined at invocation start. */
 export type TelemetryEventBase = Omit<
   TelemetryEvent,
-  'sessionsStarted' | 'sessionsWithEnforcement' | 'denialsByConditionType' | 'timestamp'
+  'sessionsStarted' | 'sessionsWithEnforcement' | 'denialsByConditionType' | 'peakConcurrentSessions' | 'timestamp'
 >;
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,8 @@ export class TelemetryCollector {
   private _sessionsStarted = 0;
   private _sessionsWithEnforcement = 0;
   private readonly _denialsByConditionType: Record<string, number> = {};
+  private _currentConcurrentSessions = 0;
+  private _peakConcurrentSessions = 0;
 
   constructor(
     private readonly _emitter: TelemetryEmitter,
@@ -82,6 +84,10 @@ export class TelemetryCollector {
     return {
       onSessionStart: () => {
         this._sessionsStarted++;
+        this._currentConcurrentSessions++;
+        if (this._currentConcurrentSessions > this._peakConcurrentSessions) {
+          this._peakConcurrentSessions = this._currentConcurrentSessions;
+        }
       },
 
       onDecision: (allowed: boolean, conditionType?: string) => {
@@ -98,6 +104,7 @@ export class TelemetryCollector {
         if (hadEnforcement) {
           this._sessionsWithEnforcement++;
         }
+        this._currentConcurrentSessions = Math.max(0, this._currentConcurrentSessions - 1);
       },
 
       // Allow the HTTP proxy to create a fresh, isolated hook set per session.
@@ -121,6 +128,7 @@ export class TelemetryCollector {
         sessionsStarted: this._sessionsStarted,
         sessionsWithEnforcement: this._sessionsWithEnforcement,
         denialsByConditionType: { ...this._denialsByConditionType },
+        peakConcurrentSessions: this._peakConcurrentSessions,
         timestamp: Date.now(),
       };
       await this._emitter.emit(event);

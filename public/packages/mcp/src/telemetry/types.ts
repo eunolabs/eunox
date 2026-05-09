@@ -51,6 +51,17 @@ export interface TelemetryEvent {
    */
   readonly denialsByConditionType: Readonly<Record<string, number>>;
   /**
+   * Peak number of concurrent MCP sessions observed during this invocation.
+   *
+   * `0` when no session was established (e.g. upstream connection failed
+   * before `onSessionStart` ran).  `1` for a successful stdio proxy run
+   * (one session per process).  May be higher for an HTTP proxy that handles
+   * multiple simultaneous clients, which is a privacy-preserving signal that
+   * the installation is shared across several users.  No user identifiers,
+   * IPs, or hostnames are captured — only the peak count.
+   */
+  readonly peakConcurrentSessions: number;
+  /**
    * Sanitized name of the upstream MCP server.
    * Set to a well-known OSS server name when the command matches a recognized
    * package; "custom" otherwise.  Never includes file paths or arguments.
@@ -75,6 +86,7 @@ export const TELEMETRY_EVENT_KEYS: ReadonlyArray<keyof TelemetryEvent> = [
   'sessionsStarted',
   'sessionsWithEnforcement',
   'denialsByConditionType',
+  'peakConcurrentSessions',
   'upstreamServerName',
   'timestamp',
 ] as const;
