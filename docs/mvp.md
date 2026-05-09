@@ -433,7 +433,8 @@ allowlist for a capability and is the natural carrier for the kind of
 "only these arg shapes" enforcement the MCP wedge needs.
 
 `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`
-are deferred to Stage 2.
+are deferred to Stage 2. **Stage 2 (`@euno/mcp` 0.2.0) ships all five;**
+see the Stage 2 status block above for per-task detail.
 
 **Session identity** (the prior plan punted on this). Define a
 **`session`** as one MCP client connection: for stdio, the lifetime of
@@ -444,6 +445,11 @@ is the local-fallback equivalent of the production `IssuanceRateLimitSubject`
 key shape — same components, different identity source.
 
 ### What is explicitly cut from Stage 1
+
+> **Stage 2 delta:** `ipRange`, `recipientDomain`, `redactFields`, `policy`,
+> and `custom` — all deferred below — are fully shipped in Stage 2 (0.2.0).
+> `@euno/langchain` and the `policies/` reference library also land in Stage 2.
+> Everything else in this list remains Stage 3 or later.
 
 - Token issuance (no UI, no service, no signing key)
 - Any KMS / Key Vault / cloud dependency
@@ -550,6 +556,23 @@ path at any layer.
 ---
 
 ## Stage 2: General Tool Enforcement
+
+> **Stage 2 status** (May 2026)
+>
+> - [x] Task 1 — `argumentSchema` structured error reporting: `details` field in `PdpDecision` and audit `unmapped`
+> - [x] Task 2 — `ipRange` condition: gate lifted; `sourceIp` wired from HTTP transport socket; `--trust-forwarded-for` flag
+> - [x] Task 3 — `recipientDomain` condition: gate lifted; recipients extracted from tool args
+> - [x] Task 4 — `redactFields` condition: gate lifted; response-path rewrite obligation in proxy; `obligationsApplied` in audit
+> - [x] Task 5 — `policy` condition: gate lifted; `--policy-backend <module>` loader wired
+> - [x] Task 6 — `custom` condition: gate lifted; `--custom-condition <module>` loader wired
+> - [x] Task 7 — `euno-mcp validate-token` CLI (audit log explainer, HMAC verifier)
+> - [x] Task 8 — `euno-mcp stats` CLI (denial-reason histograms from local audit log)
+> - [x] Task 9 — `@euno/langchain` companion package — `wrapAsLangChainTool` over local-only `CapabilityRuntime`
+> - [x] Task 10 — Reference policy library under `public/packages/mcp/policies/`
+> - [x] Task 11 — README + docs updates: condition matrix, before/after, schema-parity claim
+> - [ ] Task 12 — Stage 3 readiness script + signal collection update
+>
+> **Tasks 1–11 complete. `@euno/mcp` 0.2.0 is ready to publish.**
 
 **What changes.** Expand from the v0 condition subset to the full
 `CapabilityCondition` discriminated union exposed in policy config.
