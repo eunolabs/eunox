@@ -24,6 +24,10 @@ build/
 # `validate-jwt`). The blanket `*.js` rule above would otherwise hide
 # this hand-written infra file alongside compiled TypeScript output.
 !infra/**/*.js
+# Static website JS in web/assets/ — checked into source so the site
+# can be served directly. The blanket `*.js` rule above would otherwise
+# silently drop these hand-written files.
+!web/**/*.js
 
 # Environment variables
 .env
