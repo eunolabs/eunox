@@ -284,13 +284,16 @@ function withTimeout<T>(
   if (timeoutMs === undefined || timeoutMs <= 0) {
     return operation;
   }
+  let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
     }, timeoutMs);
     timer.unref();
   });
-  return Promise.race([operation, timeoutPromise]);
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 // ---------------------------------------------------------------------------
