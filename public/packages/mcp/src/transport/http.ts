@@ -284,7 +284,7 @@ function withTimeout<T>(
   if (timeoutMs === undefined || timeoutMs <= 0) {
     return operation;
   }
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
@@ -506,17 +506,13 @@ export class HttpProxy {
         ? authHeader.slice(prefix.length)
         : '';
       const expected = this._opts.authToken;
-      // timingSafeEqual requires equal-length buffers.
       const providedBuf = Buffer.from(provided);
       const expectedBuf = Buffer.from(expected);
-      const padLen = Math.max(providedBuf.length, expectedBuf.length);
-      const a = Buffer.alloc(padLen);
-      const b = Buffer.alloc(padLen);
-      providedBuf.copy(a);
-      expectedBuf.copy(b);
+      // timingSafeEqual requires equal-length buffers; when lengths differ the
+      // token is definitely invalid — skip the comparison and reject immediately.
       const tokenValid =
         providedBuf.length === expectedBuf.length &&
-        crypto.timingSafeEqual(a, b);
+        crypto.timingSafeEqual(providedBuf, expectedBuf);
       if (!tokenValid) {
         res.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="euno-mcp"' });
         res.end(JSON.stringify({ error: 'Unauthorized: valid Bearer token required' }));

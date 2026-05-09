@@ -206,7 +206,7 @@ function withTimeout<T>(
   if (timeoutMs === undefined || timeoutMs <= 0) {
     return operation;
   }
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
