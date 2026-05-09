@@ -26,6 +26,7 @@ import {
 import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 import { createTelemetry } from './telemetry';
+import { buildStatsCommand } from './cli/stats';
 
 const program = new Command();
 
@@ -484,5 +485,8 @@ Examples:
       process.exit(1);
     }
   });
+
+// ── stats ──────────────────────────────────────────────────────────────────
+program.addCommand(buildStatsCommand());
 
 program.parse(process.argv);
