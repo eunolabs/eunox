@@ -36,8 +36,9 @@
 # ---------------------------------------------------------------------------
 # Developer Experience (DX) — CLI, framework adapters, web UI
 # ---------------------------------------------------------------------------
-/euno-mcp/packages/cli/                              @edgeobs/euno-dx
-/euno-mcp/packages/euno-mcp/                         @edgeobs/euno-dx
+/public/packages/cli/                                @edgeobs/euno-dx
+/public/packages/mcp/                                @edgeobs/euno-dx
+/public/packages/langchain/                          @edgeobs/euno-dx
 /euno-platform/packages/framework-adapters/           @edgeobs/euno-dx
 /web/                                   @edgeobs/euno-dx
 
@@ -45,7 +46,7 @@
 # Shared code — both CP and DP must approve because behaviour changes
 # can affect either side of the trust boundary.
 # ---------------------------------------------------------------------------
-/euno-mcp/packages/common-core/                       @edgeobs/euno-cp @edgeobs/euno-dp @edgeobs/euno-dx
+/public/packages/common/                              @edgeobs/euno-cp @edgeobs/euno-dp @edgeobs/euno-dx
 /euno-platform/packages/common/                       @edgeobs/euno-cp @edgeobs/euno-dp
 /euno-platform/packages/common-infra/                 @edgeobs/euno-cp @edgeobs/euno-dp
 

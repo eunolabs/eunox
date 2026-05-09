@@ -2,10 +2,10 @@
 
 This repository is mixed-license. The authoritative license for each package is the `LICENSE` file in that package directory.
 
-Current Stage-0 package boundary:
+Current package boundary:
 
-- Apache-2.0: `packages/cli`, `packages/common-core`
-- Business Source License 1.1 (BUSL-1.1): `packages/common` (compatibility shim — deprecated), `packages/common-infra`, `packages/tool-gateway`, `packages/capability-issuer`, `packages/agent-runtime`, `packages/framework-adapters`, `packages/partner-issuer-sim`, `packages/db-token-service`, `packages/storage-grant-service`, `packages/posture-emitter`, `packages/integration-tests`
+- Apache-2.0: `public/packages/cli`, `public/packages/common` (`@euno/common-core`), `public/packages/mcp`, `public/packages/langchain`
+- Business Source License 1.1 (BUSL-1.1): `euno-platform/packages/common` (compatibility shim), `euno-platform/packages/common-infra`, `euno-platform/packages/tool-gateway`, `euno-platform/packages/capability-issuer`, `euno-platform/packages/agent-runtime`, `euno-platform/packages/framework-adapters`, `euno-platform/packages/partner-issuer-sim`, `euno-platform/packages/db-token-service`, `euno-platform/packages/storage-grant-service`, `euno-platform/packages/posture-emitter`, `euno-platform/packages/integration-tests`
 
 If there is any conflict between this root file and a package-level `LICENSE`, the package-level `LICENSE` controls for that package.
 
