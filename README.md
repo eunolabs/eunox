@@ -65,13 +65,13 @@ name:    Filesystem Agent
 version: 1.0.0
 
 requiredCapabilities:
-  - resource: "tool://read_file"
+  - resource: read_file
     actions: [call]
     conditions:
       - type: allowedExtensions
         extensions: [".csv", ".json", ".txt", ".md"]
       - type: maxCalls
-        limit: 50
+        count: 50
         windowSeconds: 60
 ```
 
@@ -81,7 +81,7 @@ Claude Desktop / Cursor / Windsurf / LangChain.js / HTTP-transport setups.
 ## What you get
 
 - 🛡️  **Full condition matrix.** `maxCalls`, `allowedOperations`,
-  `allowedExtensions`, `allowedTables`, `allowedValues`, `argumentSchema`,
+  `allowedExtensions`, `allowedTables`, `argumentSchema`,
   `timeWindow`, `ipRange`, `recipientDomain`, `redactFields`, `policy`,
   and `custom` — all enforced before the upstream is contacted.
 - 📋 **OCSF audit log.** Every decision is recorded as a

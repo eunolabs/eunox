@@ -22,11 +22,11 @@
     { cls: 't-err',    text: '  ✗ denied   extension .pem not in allowedExtensions' },
     { cls: 't-info',   text: '    ↳ upstream never contacted · audited to ~/.euno/audit.jsonl' },
     { cls: 't-dim',    text: '' },
-    { cls: 't-purple', text: '  → tools/call  query_db  { sql: "DROP TABLE users" }' },
+    { cls: 't-purple', text: '  → tools/call  query  { sql: "DROP TABLE users" }' },
     { cls: 't-err',    text: '  ✗ denied   operation DROP not in allowedOperations' },
     { cls: 't-info',   text: '    ↳ upstream never contacted' },
     { cls: 't-dim',    text: '' },
-    { cls: 't-purple', text: '  → tools/call  send_message  { to: "x@evil.com" }' },
+    { cls: 't-purple', text: '  → tools/call  send_dm  { to: "x@evil.com" }' },
     { cls: 't-err',    text: '  ✗ denied   recipient domain not in allowlist' }
   ];
 

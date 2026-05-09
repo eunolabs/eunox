@@ -50,7 +50,6 @@
                 <li><a href="#allowedOperations">allowedOperations</a></li>
                 <li><a href="#allowedExtensions">allowedExtensions</a></li>
                 <li><a href="#allowedTables">allowedTables</a></li>
-                <li><a href="#allowedValues">allowedValues</a></li>
                 <li><a href="#maxCalls">maxCalls</a></li>
                 <li><a href="#timeWindow">timeWindow</a></li>
                 <li><a href="#ipRange">ipRange</a></li>
@@ -82,17 +81,20 @@
                 </div>
                 <div>
 <span class="label">Policy</span>
-<pre><span class="y-key">conditions</span>:
-  - <span class="y-key">type</span>: <span class="y-str">argumentSchema</span>
-    <span class="y-key">schema</span>:
-      <span class="y-key">type</span>: <span class="y-str">object</span>
-      <span class="y-key">required</span>: [<span class="y-str">to</span>, <span class="y-str">body</span>]
-      <span class="y-key">properties</span>:
-        <span class="y-key">to</span>:   { <span class="y-key">type</span>: <span class="y-str">string</span>, <span class="y-key">format</span>: <span class="y-str">email</span> }
-        <span class="y-key">body</span>: { <span class="y-key">type</span>: <span class="y-str">string</span>, <span class="y-key">maxLength</span>: <span class="y-num">10000</span> }</pre>
+<pre><span class="y-comment"># argumentSchema is a top-level field on the capability constraint,</span>
+<span class="y-comment"># not a `conditions[]` entry. The schema body goes here directly.</span>
+<span class="y-key">- resource</span>: <span class="y-str">send_email</span>
+  <span class="y-key">actions</span>: [<span class="y-str">call</span>]
+  <span class="y-key">argumentSchema</span>:
+    <span class="y-key">type</span>: <span class="y-str">object</span>
+    <span class="y-key">required</span>: [<span class="y-str">to</span>, <span class="y-str">body</span>]
+    <span class="y-key">properties</span>:
+      <span class="y-key">to</span>:   { <span class="y-key">type</span>: <span class="y-str">string</span> }
+      <span class="y-key">body</span>: { <span class="y-key">type</span>: <span class="y-str">string</span>, <span class="y-key">maxLength</span>: <span class="y-num">10000</span> }
+    <span class="y-key">additionalProperties</span>: <span class="y-num">false</span></pre>
                 </div>
             </div>
-            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>SCHEMA_VALIDATION_FAILED</code> · <code>body must be string</code> — upstream never contacted.</div>
+            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>ARGUMENT_VALIDATION_FAILED</code> · <code>body must be string</code> — upstream never contacted.</div>
         </div>
 
         <h2 id="allowedOperations">allowedOperations — SQL verb allowlist</h2>
@@ -170,32 +172,6 @@
             <div class="feature-demo-foot"><strong>Outcome:</strong> <code>TABLE_NOT_ALLOWED</code> · <code>credentials ∉ allowedTables</code>.</div>
         </div>
 
-        <h2 id="allowedValues">allowedValues — enum on any field</h2>
-        <p>Restrict any specific argument field to a known set of values.</p>
-        <div class="feature-demo">
-            <div class="feature-demo-head">
-                <h3>Pin a deployment environment</h3>
-                <span class="tag">allowedValues</span>
-            </div>
-            <div class="feature-demo-body">
-                <div>
-<span class="label">Tool call</span>
-<pre><span class="t-purple">tools/call</span> deploy {
-  service: "api",
-  env: "production"   <span class="y-comment"># nope</span>
-}</pre>
-                </div>
-                <div>
-<span class="label">Policy</span>
-<pre><span class="y-key">conditions</span>:
-  - <span class="y-key">type</span>: <span class="y-str">allowedValues</span>
-    <span class="y-key">field</span>: <span class="y-str">env</span>
-    <span class="y-key">values</span>: [<span class="y-str">staging</span>, <span class="y-str">dev</span>]</pre>
-                </div>
-            </div>
-            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>VALUE_NOT_ALLOWED</code> · <code>env=production ∉ [staging, dev]</code>.</div>
-        </div>
-
         <h2 id="maxCalls">maxCalls — per-session rate limit</h2>
         <p>Stop a runaway agent from making thousands of writes in a tight loop. Counter resets when the window expires.</p>
         <div class="feature-demo">
@@ -216,11 +192,11 @@
 <span class="label">Policy</span>
 <pre><span class="y-key">conditions</span>:
   - <span class="y-key">type</span>: <span class="y-str">maxCalls</span>
-    <span class="y-key">limit</span>: <span class="y-num">10</span>
+    <span class="y-key">count</span>: <span class="y-num">10</span>
     <span class="y-key">windowSeconds</span>: <span class="y-num">60</span></pre>
                 </div>
             </div>
-            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>RATE_LIMIT_EXCEEDED</code> · <code>10 calls/60s exhausted</code>.</div>
+            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>MAX_CALLS_EXCEEDED</code> · <code>10 calls/60s exhausted</code>.</div>
         </div>
 
         <h2 id="timeWindow">timeWindow — wall-clock gate</h2>
@@ -239,11 +215,11 @@
 <span class="label">Policy</span>
 <pre><span class="y-key">conditions</span>:
   - <span class="y-key">type</span>: <span class="y-str">timeWindow</span>
-    <span class="y-key">notBefore</span>: <span class="y-str">"2026-05-09T01:00Z"</span>
-    <span class="y-key">notAfter</span>:  <span class="y-str">"2026-05-09T03:00Z"</span></pre>
+    <span class="y-key">notBefore</span>: <span class="y-str">"2026-05-09T01:00:00Z"</span>
+    <span class="y-key">notAfter</span>:  <span class="y-str">"2026-05-09T03:00:00Z"</span></pre>
                 </div>
             </div>
-            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>OUTSIDE_TIME_WINDOW</code> · <code>now=09:15 not in [01:00, 03:00]</code>.</div>
+            <div class="feature-demo-foot"><strong>Outcome:</strong> <code>TIME_WINDOW_DENIED</code> · <code>now=09:15 not in [01:00, 03:00]</code>.</div>
         </div>
 
         <h2 id="ipRange">ipRange — source-IP CIDR allowlist</h2>
@@ -317,12 +293,12 @@
 <span class="label">Policy</span>
 <pre><span class="y-key">conditions</span>:
   - <span class="y-key">type</span>: <span class="y-str">redactFields</span>
-    <span class="y-key">paths</span>:
-      [<span class="y-str">"$.rows[*].ssn"</span>,
-       <span class="y-str">"$.rows[*].email"</span>]</pre>
+    <span class="y-key">fields</span>:
+      [<span class="y-str">"rows.ssn"</span>,
+       <span class="y-str">"rows.email"</span>]</pre>
                 </div>
             </div>
-            <div class="feature-demo-foot"><strong>Outcome:</strong> response forwarded with the named JSONPaths replaced by <code>"[redacted]"</code>; the original is never seen by the agent.</div>
+            <div class="feature-demo-foot"><strong>Outcome:</strong> response forwarded with the named dotted-path fields replaced by <code>"[redacted]"</code>; the original is never seen by the agent.</div>
         </div>
 
         <h2 id="policy">policy — delegate to an external engine</h2>

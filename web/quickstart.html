@@ -90,16 +90,16 @@ name:    Filesystem Agent
 version: 1.0.0
 
 requiredCapabilities:
-  - resource: "tool://read_file"
+  - resource: read_file
     actions: [call]
     conditions:
       - type: allowedExtensions
         extensions: [".csv", ".json", ".txt", ".md"]
       - type: maxCalls
-        limit: 50
+        count: 50
         windowSeconds: 60
 
-  - resource: "tool://list_directory"
+  - resource: list_directory
     actions: [call]
 </code></pre>
         <p>The schema is a literal subset of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code> — there is exactly one shape, no drift between proxy and the rest of the system.</p>

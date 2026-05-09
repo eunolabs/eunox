@@ -94,20 +94,26 @@
 <span class="y-key">version</span>: <span class="y-str">1.0.0</span>
 
 <span class="y-key">requiredCapabilities</span>:
-  - <span class="y-key">resource</span>: <span class="y-str">"tool://read_file"</span>
+  - <span class="y-key">resource</span>: <span class="y-str">read_file</span>
     <span class="y-key">actions</span>: [<span class="y-str">call</span>]
     <span class="y-key">conditions</span>:
       - <span class="y-key">type</span>: <span class="y-str">allowedExtensions</span>
         <span class="y-key">extensions</span>: [<span class="y-str">".csv"</span>, <span class="y-str">".json"</span>, <span class="y-str">".txt"</span>]
       - <span class="y-key">type</span>: <span class="y-str">maxCalls</span>
-        <span class="y-key">limit</span>: <span class="y-num">50</span>
+        <span class="y-key">count</span>: <span class="y-num">50</span>
         <span class="y-key">windowSeconds</span>: <span class="y-num">60</span>
 
-  - <span class="y-key">resource</span>: <span class="y-str">"tool://query_db"</span>
+  - <span class="y-key">resource</span>: <span class="y-str">query</span>
     <span class="y-key">actions</span>: [<span class="y-str">call</span>]
     <span class="y-key">conditions</span>:
       - <span class="y-key">type</span>: <span class="y-str">allowedOperations</span>
-        <span class="y-key">operations</span>: [<span class="y-str">SELECT</span>]</pre>
+        <span class="y-key">operations</span>: [<span class="y-str">SELECT</span>]
+
+  - <span class="y-key">resource</span>: <span class="y-str">send_dm</span>
+    <span class="y-key">actions</span>: [<span class="y-str">call</span>]
+    <span class="y-key">conditions</span>:
+      - <span class="y-key">type</span>: <span class="y-str">recipientDomain</span>
+        <span class="y-key">domains</span>: [<span class="y-str">company.com</span>]</pre>
                     </div>
                 </div>
             </div>
