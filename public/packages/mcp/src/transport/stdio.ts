@@ -558,6 +558,7 @@ export class StdioProxy {
       this._server?.close(),
       this._client?.close(),
     ]);
+    this._opts.pdp.dispose?.();
   }
 
   /**

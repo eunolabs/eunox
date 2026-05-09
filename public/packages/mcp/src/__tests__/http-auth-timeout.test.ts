@@ -91,6 +91,28 @@ function rawRequest(opts: {
   });
 }
 
+async function waitForNoTrackedSessions(
+  proxy: HttpProxy,
+  timeoutMs = 5_000,
+  intervalMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const internalProxy = proxy as unknown as {
+      _sessions: Map<string, unknown>;
+      _pendingSessions: Set<unknown>;
+    };
+    if (
+      internalProxy._sessions.size === 0 &&
+      internalProxy._pendingSessions.size === 0
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('Timed out waiting for tracked HTTP sessions to be cleaned up');
+}
+
 // ---------------------------------------------------------------------------
 // Auth token — constructor validation
 // ---------------------------------------------------------------------------
@@ -207,6 +229,23 @@ describe('HttpProxy authToken — /mcp endpoint enforcement', () => {
     });
     expect(status).toBe(401);
   });
+
+  it('invalid initialize requests do not leak pending upstream sessions', async () => {
+    const { status } = await rawRequest({
+      url: `http://127.0.0.1:${proxyPort}/mcp`,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+
+    expect(status).not.toBe(401);
+    await waitForNoTrackedSessions(proxy);
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------
