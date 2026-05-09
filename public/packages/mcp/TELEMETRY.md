@@ -66,7 +66,7 @@ One JSON event is emitted per CLI invocation.  Every field is documented below.
 | `version` | `string` | Installed package version (e.g. `"1.2.0"`). |
 | `osFamily` | `string` | Broad OS family: `"linux"`, `"darwin"`, `"win32"`, or `"other"`.  No OS version or kernel info. |
 | `nodeMajor` | `number` | Major Node.js version number (e.g. `20`).  No patch or minor. |
-| `subcommand` | `string` | CLI subcommand invoked: `"proxy"`, `"validate"`, or `"kill"`. |
+| `subcommand` | `string` | CLI subcommand invoked: `"proxy"`, `"validate"`, `"kill"`, or `"validate-token"`. |
 | `sessionsStarted` | `number` | Number of MCP sessions started.  Always `1` for a stdio proxy run; may be higher for an HTTP proxy with multiple clients. |
 | `sessionsWithEnforcement` | `number` | Number of those sessions that had at least one `tools/call` enforcement event (allow or deny). |
 | `denialsByConditionType` | `object` | Map from condition type name to denial count.  Keys are the `CapabilityCondition.type` values (`"maxCalls"`, `"timeWindow"`, `"allowedOperations"`, etc.) plus `"argumentSchema"` and `"kill"` for the special denial paths.  **No tool names are included.** |
