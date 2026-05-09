@@ -207,7 +207,6 @@ describe('StdioProxy — integration (Task 4)', () => {
     const parsed = JSON.parse(result.content[0]!.text) as { code: string; error: string };
     expect(parsed.error).toBe('CapabilityDenied');
     expect(parsed.code).toBe('UPSTREAM_ERROR');
-    expect(parsed.code).toMatch(/UPSTREAM_ERROR/i);
   }, 20_000);
 
   // ── resources/list ─────────────────────────────────────────────────────────

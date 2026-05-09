@@ -144,9 +144,8 @@ requiredCapabilities:
         windowSeconds: 60
 ```
 
-Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`,
-`allowedExtensions`, `allowedTables`, `ipRange`, `recipientDomain`,
-`redactFields`, `policy`, `custom`,
+Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`,
+`allowedTables`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, `custom`,
 plus the `argumentSchema` field on each constraint.
 
 See [`docs/policy-backends.md`](./docs/policy-backends.md) for the `policy` backend interface
