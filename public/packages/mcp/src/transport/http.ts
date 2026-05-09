@@ -59,6 +59,7 @@ import {
 import type { TelemetryHooks } from '../telemetry/types';
 import { NullAuditSink, type McpAuditSink } from '../audit/audit-sink';
 import { applyRedactObligations, type ToolCallResult } from './obligations';
+import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
 const PROXY_NAME = 'euno-mcp-proxy';
@@ -267,35 +268,6 @@ function buildDenialResult(
   };
 }
 
-/**
- * Race an async operation against a millisecond timeout.
- *
- * When `timeoutMs` is `undefined` (or ≤ 0) the operation is returned
- * as-is with no timeout applied.
- *
- * On timeout, the returned promise rejects with an `Error` whose message
- * begins with `"Upstream timeout:"` so callers can detect it.
- */
-function withTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs: number | undefined,
-  toolName: string,
-): Promise<T> {
-  if (timeoutMs === undefined || timeoutMs <= 0) {
-    return operation;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`Upstream timeout: upstream did not respond to tool "${toolName}" within ${timeoutMs} ms`));
-    }, timeoutMs);
-    timer.unref();
-  });
-  return Promise.race([operation, timeoutPromise]).finally(() => {
-    clearTimeout(timer);
-  });
-}
-
 // ---------------------------------------------------------------------------
 // HttpProxy
 // ---------------------------------------------------------------------------
@@ -336,6 +308,12 @@ export class HttpProxy {
   private readonly _sourceIpStorage = new AsyncLocalStorage<string | undefined>();
 
   constructor(opts: HttpProxyOptions) {
+    if (opts.authToken !== undefined && opts.authToken.trim().length === 0) {
+      throw new Error(
+        'HttpProxy: authToken must not be an empty or whitespace-only string. ' +
+          'Pass a non-empty token or omit the option to disable auth.',
+      );
+    }
     this._opts = {
       command: opts.command,
       args: opts.args ?? [],
@@ -743,8 +721,7 @@ export class HttpProxy {
           reqMsg.params.name,
         );
       } catch (err) {
-        const isTimeout =
-          err instanceof Error && err.message.startsWith('Upstream timeout:');
+        const isTimeout = err instanceof UpstreamTimeoutError;
         process.stderr.write(
           `[euno-mcp] ${isTimeout ? 'Upstream timeout' : 'Upstream error'} on tool "${reqMsg.params.name}": ${String(err)}\n`,
         );

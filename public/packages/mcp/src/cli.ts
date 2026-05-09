@@ -179,7 +179,17 @@ Examples:
       upstreamTimeoutMs = parsed;
     }
 
-    const authToken: string | undefined = options.authToken as string | undefined;
+    let authToken: string | undefined;
+    if (options.authToken !== undefined) {
+      const raw = (options.authToken as string).trim();
+      if (raw.length === 0) {
+        process.stderr.write(
+          `[euno-mcp] Invalid --auth-token value: token must not be empty or whitespace-only.\n`,
+        );
+        process.exit(1);
+      }
+      authToken = raw;
+    }
 
     let rotateSizeBytes: number | undefined;
     if (options.auditRotateSize !== undefined) {

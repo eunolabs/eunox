@@ -126,7 +126,7 @@ from the SQL string. `"DELETE FROM orders"` → verb `"DELETE"` → blocked.
 It catches the common case. It does **not** catch:
 
 - `SELECT 1; DELETE FROM orders` — first word is `SELECT`, second statement may execute
-- `/* comment */ DELETE FROM orders` — first token is `/*`, verb extraction fails
+- `/* comment */ DELETE FROM orders` — first token is `/*`, which is not in the allowlist, so the call is **denied** (fail-closed). Legitimate comment-prefixed SELECTs are also blocked.
 
 **Stack your defenses**:
 1. `allowedOperations` (first-word gate)

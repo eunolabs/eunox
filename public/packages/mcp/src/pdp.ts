@@ -219,7 +219,7 @@ const MCP_TOOL_CALL_ACTION = 'call';
  * | Bypass vector | Example | Why it works |
  * |---|---|---|
  * | Semicolon-chained statements | `SELECT 1; DROP TABLE users` | First word is `SELECT` — second statement executes if the DB driver allows multi-statement queries |
- * | Block comments before verb | SQL starting with `slash-star ... star-slash DROP TABLE` | First token is the block-comment opener — verb extraction fails and the call is **allowed** by default |
+ * | Block comments before verb | SQL starting with `slash-star ... star-slash DROP TABLE` | First token is the block-comment opener (e.g. `/*`) — this token is NOT in the allowlist, so the call is **denied** (fail-closed). Legitimate comment-prefixed SELECT queries are also blocked. |
  * | Inline comment injection | `SELECT * FROM users -- ; DROP TABLE users` | First word is `SELECT` but comment smuggles a second intent |
  * | Quoted identifiers | `"SELECT" something` | Verb-match may succeed depending on driver quoting |
  *

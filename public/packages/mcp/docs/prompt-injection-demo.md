@@ -158,7 +158,7 @@ but can be bypassed by adversaries who control the query string:
 | Bypass vector | Example | Status |
 |---|---|---|
 | Semicolon-chained statements | `SELECT 1; DELETE FROM users` | **First word passes** — second statement may execute if the DB driver allows multi-statement queries |
-| Block comment before verb | `/* override */ DELETE FROM users` | **First token is `/*`** — verb extraction fails, call is allowed |
+| Block comment before verb | `/* override */ SELECT * FROM users` | **First token `/*` is not in the allowlist** — call is **denied** (fail-closed). Note: also blocks legitimate comment-prefixed queries. |
 | Inline comment injection | `SELECT * FROM users -- ; DELETE FROM users` | First word `SELECT` passes, but intent may be smuggled |
 
 ### Defense-in-depth recommendations

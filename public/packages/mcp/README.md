@@ -198,7 +198,7 @@ control the query string:
 | Bypass vector | Example |
 |---|---|
 | Semicolon-chained statements | `SELECT 1; DELETE FROM orders` — second statement may execute if the DB driver allows multi-statement queries |
-| Block comment before verb | `/* comment */ DROP TABLE users` — first token is `/*`, verb extraction fails, call is allowed |
+| Block comment before verb | `/* comment */ SELECT * FROM ...` — first token is `/*` which is not an allowed operation, so the call is **denied** (fail-closed). Note: this also blocks legitimate comment-prefixed queries. |
 
 **Recommended defense-in-depth** (stack all layers):
 1. `allowedOperations` — first-line gate on the SQL verb
@@ -304,7 +304,7 @@ For CI or project-level use, add an `.npmrc` file instead of running the above c
 
 | | Version |
 |---|---|
-| `@modelcontextprotocol/sdk` peer | `^1.26.0` (semver range) |
+| `@modelcontextprotocol/sdk` (dependency range) | `^1.26.0` (semver range) |
 | MCP protocol (primary) | `2025-11-25` |
 | MCP protocol (also accepted) | `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07` |
 | Node.js | ≥ 18 |

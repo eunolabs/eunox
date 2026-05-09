@@ -20,6 +20,7 @@ export { StdioProxy } from './transport/stdio';
 export type { StdioProxyOptions } from './transport/stdio';
 export { HttpProxy } from './transport/http';
 export type { HttpProxyOptions, KillController } from './transport/http';
+export { UpstreamTimeoutError } from './transport/timeout';
 export type { LocalPolicySource, FilePolicySourceOptions } from './policy/source';
 export { FilePolicySource } from './policy/source';
 export * from './audit';
