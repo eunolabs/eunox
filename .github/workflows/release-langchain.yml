@@ -1,0 +1,167 @@
+name: Release @euno/langchain
+
+# Triggered by a semver tag push (e.g. v0.1.0) or a manual dispatch.
+# The actual publish step only runs on Node 20 (Linux) to avoid double-publishing.
+#
+# Tag filter uses glob syntax (not regex): v*.*.* matches v0.1.0, v1.2.3, etc.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — build and test but skip publish"
+        type: boolean
+        default: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # build-and-test: run on Node 18, 20, 22 to validate compatibility.
+  # The publish step is gated on this job succeeding on all three versions.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: true
+      matrix:
+        node-version: ["18", "20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # scope: "@euno" configures only the @euno scope to use GitHub Packages.
+          # The default registry (npmjs) remains in place for all other packages
+          # (commander, js-yaml, @modelcontextprotocol/sdk, etc.).
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@euno"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build @euno/common-core (required by @euno/mcp and @euno/langchain)
+        run: npm run build -w @euno/common-core
+
+      - name: Build @euno/mcp (required by @euno/langchain)
+        run: npm run build -w @euno/mcp
+
+      - name: Build @euno/langchain
+        run: npm run build -w @euno/langchain
+
+      - name: Test @euno/langchain
+        run: npm run test -w @euno/langchain
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # publish: runs only on Node 20 after all build-and-test jobs pass.
+  # Publishes @euno/common-core, @euno/mcp, and @euno/langchain so that
+  # consumers can install @euno/langchain from a single registry.
+  # Skipped on dry_run=true (workflow_dispatch only).
+  # ──────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20 with GitHub Packages registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # scope: "@euno" scopes only the @euno namespace to GitHub Packages;
+          # all other packages continue to resolve from the public npm registry.
+          # setup-node writes the matching .npmrc entry and injects NODE_AUTH_TOKEN.
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@euno"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build @euno/common-core
+        run: npm run build -w @euno/common-core
+
+      - name: Build @euno/mcp
+        run: npm run build -w @euno/mcp
+
+      - name: Build @euno/langchain
+        run: npm run build -w @euno/langchain
+
+      - name: Publish @euno/common-core to GitHub Packages
+        # @euno/common-core is a runtime dependency of @euno/mcp and @euno/langchain.
+        # Publishing it here ensures consumers can resolve it from the same registry
+        # without needing a local workspace or a separate manual step.
+        run: npm publish --workspace public/packages/common
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @euno/mcp to GitHub Packages
+        # @euno/mcp is a runtime dependency of @euno/langchain.
+        run: npm publish --workspace public/packages/mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @euno/langchain to GitHub Packages
+        run: npm publish --workspace public/packages/langchain
+        env:
+          # GITHUB_TOKEN is automatically injected by Actions; packages: write
+          # permission above allows publishing to https://npm.pkg.github.com.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # smoke-test: install the just-published package from GitHub Packages
+  # and verify the package can be imported without errors.
+  # Runs only after a successful publish.
+  # ──────────────────────────────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke test — install from GitHub Packages
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Set up Node.js 20 with GitHub Packages registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Scope the @euno namespace to GitHub Packages; all other dependencies
+          # resolve from npmjs.
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@euno"
+
+      - name: Create a temporary project and install @euno/langchain
+        run: |
+          mkdir /tmp/euno-langchain-smoke && cd /tmp/euno-langchain-smoke
+          npm init -y
+          # Do NOT pass --registry here: setup-node already wrote a scoped .npmrc
+          # entry so @euno/* resolves from GitHub Packages while non-@euno deps
+          # resolve from npmjs.
+          npm install @euno/langchain
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify @euno/langchain exports are resolvable
+        run: |
+          cd /tmp/euno-langchain-smoke
+          node -e "
+            const m = require('@euno/langchain');
+            console.assert(typeof m.wrapAsLangChainTool === 'function', 'wrapAsLangChainTool missing');
+            console.assert(typeof m.EunoLangChainCallbackHandler === 'function', 'EunoLangChainCallbackHandler missing');
+            console.assert(typeof m.CapabilityDenialError === 'function', 'CapabilityDenialError missing');
+            console.log('smoke-test: @euno/langchain exports verified', Object.keys(m));
+          "

@@ -1,0 +1,33 @@
+# Integration test policy fixture
+# Tests: max 5 calls on query_db, only SELECT/SHOW operations, send_email restricted to allowed domains
+agentId: test-integration-agent
+name: Test Integration Agent
+version: 1.0.0
+
+requiredCapabilities:
+  - resource: query_db
+    actions: [call]
+    argumentSchema:
+      type: object
+      required: [sql]
+      properties:
+        sql:
+          type: string
+    conditions:
+      - type: allowedOperations
+        operations: [SELECT, SHOW]
+      - type: maxCalls
+        count: 5
+        windowSeconds: 60
+
+  - resource: send_email
+    actions: [call]
+    conditions:
+      - type: recipientDomain
+        domains: [example.com, trusted.org]
+
+  - resource: read_file
+    actions: [call]
+    conditions:
+      - type: allowedExtensions
+        extensions: [.txt, .csv, .json]

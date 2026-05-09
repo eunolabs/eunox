@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@euno/common-core": ["../common/dist"],
+      "@euno/common-core/*": ["../common/dist/*"],
+      "@euno/mcp": ["../mcp/dist"],
+      "@euno/mcp/*": ["../mcp/dist/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts", "src/__tests__/**/*"]
+}
