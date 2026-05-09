@@ -54,12 +54,12 @@ requiredCapabilities:
         url:
           type: string
           # Require https:// AND block:
-          #   - userinfo in authority (e.g. user@host) — prevents bypass via
-          #     https://attacker.com@169.254.169.254/
+          #   - userinfo in authority (any @ before the path separator) — prevents
+          #     bypass via https://attacker.com@169.254.169.254/ or https://@169.254.169.254/
           #   - private/loopback/metadata IP ranges
           # The validator wraps this with ^(?:...)$ so the pattern must match
           # the entire URL value (lexical match — no DNS resolution).
-          pattern: "https://(?!(?:[^@]*@|localhost|127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)).*"
+          pattern: "https://(?!(?:[^/]*@|localhost|127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)).*"
         method:
           type: string
           enum: [GET, HEAD, OPTIONS]
