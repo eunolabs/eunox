@@ -90,6 +90,25 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 ---
 
+## Reference policies
+
+Pre-built policy files for the most popular upstream MCP servers are in
+[`policies/`](./policies/). Drop one in your project and run it immediately.
+
+| Policy file | Upstream server | What it enforces |
+|-------------|-----------------|-----------------|
+| [`filesystem.policy.yaml`](./policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes/deletes confined to `/data/`; executable file types blocked |
+| [`postgres.policy.yaml`](./policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL blocked; credential and audit tables blocked |
+| [`github.policy.yaml`](./policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Write tools rate-limited to prevent runaway automation |
+| [`slack.policy.yaml`](./policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages restricted to `company.com` via recipientDomain |
+| [`fetch.policy.yaml`](./policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP URLs blocked; userinfo authority blocked; private RFC-1918 and metadata endpoint blocked (lexical SSRF guard) |
+
+> **Note:** euno-mcp allows tool calls that match no constraint in the manifest. Policies restrict only the tools they list. For tools not listed, use additional constraints or network-level controls.
+
+See [`policies/README.md`](./policies/README.md) for quick-start instructions and adaptation guidance.
+
+---
+
 ## Example policy (`euno.policy.yaml`)
 
 ```yaml

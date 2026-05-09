@@ -155,6 +155,20 @@ The audit log lands at `~/.euno/audit.jsonl` — OCSF-shaped, locally HMAC-signe
 append-only. Every allow and every deny, with the arguments (redacted from telemetry,
 kept in the local log).
 
+## Reference policies
+
+Don't want to write a policy from scratch? The repository ships pre-built policies for the five most popular upstream MCP servers:
+
+| Policy | Upstream | What it enforces |
+|--------|----------|-----------------|
+| [`filesystem.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes/deletes confined to `/data/`, executable file types blocked |
+| [`postgres.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL blocked, credential and audit tables blocked |
+| [`github.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Write tools rate-limited to prevent runaway automation |
+| [`slack.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages restricted to company.com via recipientDomain |
+| [`fetch.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP URLs blocked, userinfo authority blocked, private RFC-1918 and metadata endpoint blocked (lexical SSRF guard) |
+
+Browse the full directory: [`public/packages/mcp/policies/`](https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies)
+
 Source: [github.com/edgeobs/euno](https://github.com/edgeobs/euno), Apache-2.0.
 
 ---
