@@ -53,11 +53,12 @@ export interface TelemetryEvent {
   /**
    * Peak number of concurrent MCP sessions observed during this invocation.
    *
-   * Always `1` for a stdio proxy (one session per process).  For an HTTP proxy
-   * that handles multiple simultaneous clients this may be higher, which is a
-   * privacy-preserving signal that the installation is shared across several
-   * users.  No user identifiers, IPs, or hostnames are captured — only the
-   * peak count.
+   * `0` when no session was established (e.g. upstream connection failed
+   * before `onSessionStart` ran).  `1` for a successful stdio proxy run
+   * (one session per process).  May be higher for an HTTP proxy that handles
+   * multiple simultaneous clients, which is a privacy-preserving signal that
+   * the installation is shared across several users.  No user identifiers,
+   * IPs, or hostnames are captured — only the peak count.
    */
   readonly peakConcurrentSessions: number;
   /**

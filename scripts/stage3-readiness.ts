@@ -222,7 +222,7 @@ function pad(s: string, n: number): string {
 // Main
 // ---------------------------------------------------------------------------
 
-export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Promise<void> {
+export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Promise<0 | 1 | 2> {
   process.stdout.write('Stage 3 readiness check — @euno/mcp\n');
   process.stdout.write('='.repeat(60) + '\n\n');
 
@@ -252,13 +252,15 @@ export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Pr
     );
   }
 
-  process.exit(exitCode);
+  return exitCode;
 }
 
 if (require.main === module) {
-  main().catch((err) => {
-    process.stderr.write(`Error: ${(err as Error).message}\n`);
-    process.exit(1);
-  });
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      process.stderr.write(`Error: ${(err as Error).message}\n`);
+      process.exit(1);
+    });
 }
 
