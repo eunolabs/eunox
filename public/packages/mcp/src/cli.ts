@@ -28,6 +28,7 @@ import {
 import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 import { createTelemetry } from './telemetry';
+import { buildStatsCommand } from './cli/stats';
 import {
   runValidateToken,
   DEFAULT_AUDIT_LOG_PATH as VALIDATE_TOKEN_DEFAULT_LOG,
@@ -599,5 +600,8 @@ Examples:
       process.exit(exitCode);
     }
   });
+
+// ── stats ──────────────────────────────────────────────────────────────────
+program.addCommand(buildStatsCommand());
 
 program.parse(process.argv);
