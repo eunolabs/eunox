@@ -7,6 +7,104 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.0] — 2026-05-09 (Stage 2: General Tool Enforcement)
+
+Full Stage 2 feature set. Expands the supported condition matrix to the complete
+`CapabilityCondition` discriminated union, adds new CLI subcommands, and ships a
+reference policy library for common upstream MCP servers.
+
+### Upgrade from 0.1.x
+
+Users on `@euno/mcp@0.1.x` whose policy file uses only Stage-1 conditions
+(`maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`,
+`allowedTables`, `argumentSchema`) will see **no behavioural change** after
+upgrading to 0.2.0. All existing policy files continue to load and enforce
+identically. The only user-visible change is that conditions which previously
+raised a load-time error ("deferred to Stage 2") are now accepted.
+
+### Added
+
+**New condition types (Stage 1 gate lifted)**
+
+- **`ipRange`** — allows or denies a tool call based on the client's source IP
+  address.  Accepts a list of CIDR strings (`cidrs`).  Wired to the real socket
+  address on the HTTP transport; stdio calls have no source IP and are denied
+  when `ipRange` is present.  CLI flag: `--trust-forwarded-for` allows trusting
+  `X-Forwarded-For` when the proxy is bound to a loopback address.
+
+- **`recipientDomain`** — extracts recipient e-mail / handle arguments from the
+  tool call and checks each against the configured `allowedDomains` list.
+  Recipients not in an allowed domain are denied before the upstream is reached.
+
+- **`redactFields`** — allows the tool call but rewrites the upstream response,
+  replacing the values at the listed JSON paths with `[REDACTED]`.  The audit
+  log records `obligationsApplied: ['redactFields']` on the allow decision.
+
+- **`policy`** — delegates enforcement to an external policy engine loaded via
+  `--policy-backend <module>`.  The module registers a named backend with
+  `registerPolicyBackend`; the condition references that backend by name.
+  See [`docs/policy-backends.md`](./docs/policy-backends.md) for the full
+  interface reference and an OPA HTTP worked example.
+
+- **`custom`** — loads arbitrary condition handlers via `--custom-condition
+  <module>` (repeatable).  Each module registers one or more handler names with
+  `registerCustomCondition`.  See [`docs/custom-conditions.md`](./docs/custom-conditions.md)
+  for the contract.
+
+**Structured error reporting (Task 1)**
+
+- `PdpDecision` now carries an optional `details?: Record<string, unknown>`
+  field populated when `argumentSchema` validation fails.  The JSON-RPC error
+  response includes `{ code: 'ARGUMENT_VALIDATION_FAILED', conditionType:
+  'argumentSchema', details: { path, expected, got } }`.  The audit record
+  writes the same `details` into the `unmapped` block.
+
+**New CLI subcommands**
+
+- `euno-mcp validate-token --request-id <id>` — look up an audit record by
+  request ID and verify its HMAC-SHA-256 signature.  Exits 0 on success, 2 on
+  tampered/invalid signature.
+- `euno-mcp validate-token --since <ISO>` — scan the audit log from a timestamp
+  and verify every record.  Reports the first tampered record, if any.
+- `euno-mcp stats [--since <ISO>] [--audit-log <path>]` — reads the local audit
+  log (including rotated segments) and prints an ASCII histogram of denial
+  events grouped by `conditionType` and `denialCode`.  Useful for understanding
+  why calls are being denied without running a separate query tool.
+
+**New CLI flags**
+
+- `proxy --policy-backend <module>` — load a policy backend module (repeatable;
+  already documented, now fully wired to the `policy` condition type).
+- `proxy --custom-condition <module>` — load a custom condition handler module
+  (repeatable; wires the `custom` condition type).
+- `proxy --trust-forwarded-for` — trust the first value in `X-Forwarded-For`
+  for `ipRange` enforcement (HTTP transport only; requires loopback bind address).
+
+**Reference policy library (`policies/`)**
+
+Five pre-built policy files for the most common upstream MCP servers — drop one
+in your project and run with no additional code:
+
+| File | Upstream | Enforces |
+|------|----------|----------|
+| `filesystem.policy.yaml` | `@modelcontextprotocol/server-filesystem` | Writes/deletes confined to `/data/`; executable types blocked |
+| `postgres.policy.yaml` | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL blocked; credential and audit tables blocked |
+| `github.policy.yaml` | `@modelcontextprotocol/server-github` | Write tools rate-limited to prevent runaway automation |
+| `slack.policy.yaml` | `@modelcontextprotocol/server-slack` | Direct messages restricted to `company.com` via `recipientDomain` |
+| `fetch.policy.yaml` | `mcp-server-fetch` | HTTP URLs blocked; private RFC-1918 addresses blocked (SSRF guard) |
+
+### Changed
+
+- `FilePolicySource` no longer rejects `ipRange`, `recipientDomain`,
+  `redactFields`, `policy`, or `custom` condition types.  These are now
+  accepted and validated via `validateManifest` from `@euno/common-core`.
+- `ConditionEnforcerPDP` now populates `sourceIp` from the HTTP request socket
+  and passes it through the `ConditionContext` for `ipRange` enforcement.
+- Audit records now include a `details` field in `unmapped` for
+  `argumentSchema` denial decisions.
+
+---
+
 ## [0.1.0] — 2026-05-08 (Stage 1 initial release)
 
 First public release of `@euno/mcp`. Published to GitHub Packages
@@ -33,9 +131,10 @@ First public release of `@euno/mcp`. Published to GitHub Packages
 
 - **`src/policy/source.ts`** — `FilePolicySource` / `LocalPolicySource`
   interface: loads YAML or JSON policy files and validates them against
-  `AgentCapabilityManifest` from `@euno/common-core`. Rejects deferred
-  Stage-2 types (`ipRange`, `recipientDomain`, `redactFields`, `policy`,
-  `custom`) with explicit error messages naming the Stage and JSON path.
+  `AgentCapabilityManifest` from `@euno/common-core`. In Stage 1, five
+  condition types (`ipRange`, `recipientDomain`, `redactFields`, `policy`,
+  `custom`) were rejected at load time with an explicit "deferred to Stage 2"
+  error; this gate is lifted in 0.2.0.
 
 - **`src/pdp.ts`** — `ConditionEnforcerPDP`: real policy decision point
   wiring `condition-registry` from `@euno/common-core`,

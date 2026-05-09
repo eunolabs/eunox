@@ -140,11 +140,11 @@ describe('StdioProxy — integration (Task 4)', () => {
 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
-  it('tools/list returns both tools from the mock upstream', async () => {
+  it('tools/list returns all tools from the mock upstream', async () => {
     const { tools } = await client.listTools();
 
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['echo', 'query_db']);
+    expect(names).toEqual(['echo', 'get_user', 'query_db']);
   }, 20_000);
 
   it('each tool has a non-empty description and inputSchema', async () => {
@@ -193,20 +193,20 @@ describe('StdioProxy — integration (Task 4)', () => {
 
   // ── Error propagation ────────────────────────────────────────────────────
 
-  it('calling a nonexistent tool propagates an McpError from the upstream', async () => {
-    // When the upstream has no handler for a tool, it returns a JSON-RPC
-    // protocol error (-32603).  The proxy forwards this as a transport-level
-    // error and the SDK client throws it as an McpError.
-    //
-    // NOTE: Tool-call *denial* (isError: true + CapabilityDenied body) is a
-    // different code path exercised in Phase B tests (Task 8), where a real
-    // PDP is wired in.
-    await expect(
-      client.callTool(
-        { name: 'nonexistent_tool', arguments: {} },
-        CompatibilityCallToolResultSchema,
-      ),
-    ).rejects.toThrow(/Unknown tool.*nonexistent_tool/i);
+  it('calling a nonexistent tool returns an isError result with UPSTREAM_ERROR code', async () => {
+    // When the upstream has no handler for a tool, it throws an error which the
+    // proxy catches and returns as an isError: true result with code UPSTREAM_ERROR.
+    // This preserves MCP semantics — tool calls resolve rather than reject, and
+    // the caller inspects isError to detect failure.
+    const raw = await client.callTool(
+      { name: 'nonexistent_tool', arguments: {} },
+      CompatibilityCallToolResultSchema,
+    );
+    const result = raw as unknown as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text) as { code: string; error: string };
+    expect(parsed.error).toBe('CapabilityDenied');
+    expect(parsed.code).toBe('UPSTREAM_ERROR');
   }, 20_000);
 
   // ── resources/list ─────────────────────────────────────────────────────────

