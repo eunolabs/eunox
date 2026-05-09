@@ -108,13 +108,13 @@ The audit log lands at `~/.euno/audit.jsonl` — OCSF-shaped, locally HMAC-signe
 
 Don't want to write a policy from scratch? The repository ships pre-built policies for the five most popular upstream MCP servers:
 
-| Policy | Upstream | What it blocks |
-|--------|----------|----------------|
-| [`filesystem.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes outside `/data/`, executable file types |
-| [`postgres.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL, credential and audit tables |
-| [`github.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Runaway write automation, branch delete, secrets |
-| [`slack.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages to external domains; file uploads; workspace admin |
-| [`fetch.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP URLs, private RFC-1918 ranges, cloud metadata endpoint |
+| Policy | Upstream | What it enforces |
+|--------|----------|-----------------|
+| [`filesystem.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Writes/deletes confined to `/data/`, executable file types blocked |
+| [`postgres.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | Non-SELECT SQL blocked, credential and audit tables blocked |
+| [`github.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml) | `@modelcontextprotocol/server-github` | Write tools rate-limited to prevent runaway automation |
+| [`slack.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages restricted to company.com via recipientDomain |
+| [`fetch.policy.yaml`](https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml) | `mcp-server-fetch` | HTTP URLs blocked, userinfo authority blocked, private RFC-1918 and metadata endpoint blocked (lexical SSRF guard) |
 
 Browse the full directory: [`public/packages/mcp/policies/`](https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies)
 

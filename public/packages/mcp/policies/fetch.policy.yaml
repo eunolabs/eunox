@@ -3,9 +3,11 @@
 # Upstream:  mcp-server-fetch ^0.6.0 / @modelcontextprotocol/server-fetch
 #            https://github.com/modelcontextprotocol/servers/tree/main/src/fetch
 #
-# Blocks:
+# Blocks (at the URL string level — see Security note):
 #   • Any URL that does not begin with https:// (HTTP is rejected)
-#   • Requests to private / link-local / loopback IP ranges via URL pattern:
+#   • URLs that contain userinfo in the authority (e.g. user@host) — these can
+#     be used to bypass host-based checks (https://evil.com@169.254.169.254/)
+#   • URLs whose authority starts with a private / link-local / loopback range:
 #       - 127.x.x.x  (loopback)
 #       - 10.x.x.x   (RFC-1918 Class A)
 #       - 192.168.x.x (RFC-1918 Class C)
@@ -16,14 +18,16 @@
 #   • Runaway fetch bursts (maxCalls: 60 / 60 s)
 #
 # Allows:
-#   • HTTPS GET/HEAD/OPTIONS to any public internet host
+#   • HTTPS GET/HEAD/OPTIONS to any public internet host (no userinfo)
 #
 # Security note:
-#   This policy guards against Server-Side Request Forgery (SSRF) by
-#   constraining both the URL scheme and the target IP range at the
-#   argumentSchema level, before the upstream fetch server is ever contacted.
-#   A defense-in-depth deployment should also run the fetch server with
-#   network-level egress controls.
+#   Enforcement is LEXICAL (string pattern matching), NOT network-level.
+#   The pattern matches the raw URL string — it does not perform DNS resolution.
+#   A hostname that lexically looks public but resolves to a private address
+#   (DNS rebinding) will NOT be blocked by this policy. For complete SSRF
+#   protection, combine this policy with network-level egress controls (e.g.
+#   running the fetch server in a sandbox with firewall rules restricting
+#   outbound connections to private ranges).
 #
 # README: public/packages/mcp/policies/README.md
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,11 +37,12 @@ name: "Fetch Agent — Reference Policy (Public HTTPS Only / SSRF Guard)"
 version: 1.0.0
 metadata:
   description: >-
-    Blocks SSRF attacks by requiring HTTPS and rejecting URLs whose host
-    resolves to private RFC-1918 ranges, the loopback address, or the
-    cloud-provider metadata endpoint (169.254.169.254). Only GET, HEAD, and
-    OPTIONS methods are permitted. All constraints are enforced at the
-    argumentSchema level before the upstream server is contacted.
+    Lexical SSRF guard: requires HTTPS and rejects URLs whose authority
+    contains userinfo (user@host) or starts with a private RFC-1918 address,
+    the loopback address, or the cloud-provider metadata endpoint
+    (169.254.169.254). Only GET, HEAD, and OPTIONS methods are permitted.
+    Note: enforcement is string-based (not DNS resolution) — combine with
+    network-level egress controls for complete protection against DNS rebinding.
   tags: [fetch, ssrf-protection, https-only, private-ip-blocklist, safe-methods-only]
 
 requiredCapabilities:
@@ -48,11 +53,13 @@ requiredCapabilities:
       properties:
         url:
           type: string
-          # Require https:// AND block private/loopback/metadata IP ranges.
+          # Require https:// AND block:
+          #   - userinfo in authority (e.g. user@host) — prevents bypass via
+          #     https://attacker.com@169.254.169.254/
+          #   - private/loopback/metadata IP ranges
           # The validator wraps this with ^(?:...)$ so the pattern must match
-          # the entire URL. The negative lookahead rejects hostnames that
-          # match common private ranges and localhost.
-          pattern: "https://(?!(?:localhost|127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)).*"
+          # the entire URL value (lexical match — no DNS resolution).
+          pattern: "https://(?!(?:[^@]*@|localhost|127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)).*"
         method:
           type: string
           enum: [GET, HEAD, OPTIONS]

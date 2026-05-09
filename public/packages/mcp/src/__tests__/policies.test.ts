@@ -29,7 +29,9 @@
  *   ✓ write_file with .exe extension is denied (EXTENSION_NOT_ALLOWED)
  *   ✓ delete_file outside /data/ is denied (argumentSchema violation)
  *   ✓ delete_file with .exe extension inside /data/ is denied (EXTENSION_NOT_ALLOWED)
+ *   ✓ move_file with valid source and destination (/data/*.txt) is permitted
  *   ✓ move_file with source outside /data/ is denied (argumentSchema violation)
+ *   ✓ move_file with .exe extension is denied (argumentSchema pattern violation)
  *   ✓ create_directory inside /data/ is permitted
  *   ✓ create_directory outside /data/ is denied (argumentSchema violation)
  *   ✓ list_directory is permitted (no conditions)
@@ -83,6 +85,8 @@
  *   ✓ fetch with method=GET is permitted
  *   ✓ fetch beyond rate limit is denied (MAX_CALLS_EXCEEDED)
  *   ✓ fetch with no url field is denied (argumentSchema — required field missing)
+ *   ✓ fetch with userinfo authority bypass is denied (https://evil.com@169.254.169.254/)
+ *   ✓ fetch with any userinfo in authority is denied (https://user@api.example.com/)
  */
 
 import * as fs from 'node:fs';
@@ -332,10 +336,29 @@ describe('Reference policy — filesystem.policy.yaml', () => {
     expect(d.denialCode).toBe('EXTENSION_NOT_ALLOWED');
   });
 
+  it('move_file with valid source and destination (/data/*.txt) is permitted', async () => {
+    const pdp = pdpFromManifest(manifest);
+    const d = await pdp.decide(
+      makeRequest('move_file', { source: '/data/old.txt', destination: '/data/new.txt' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(true);
+  });
+
   it('move_file with source outside /data/ is denied (argumentSchema violation)', async () => {
     const pdp = pdpFromManifest(manifest);
     const d = await pdp.decide(
       makeRequest('move_file', { source: '/etc/cron.d/job', destination: '/data/job.txt' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('argumentSchema');
+  });
+
+  it('move_file with .exe extension is denied (argumentSchema pattern violation)', async () => {
+    const pdp = pdpFromManifest(manifest);
+    const d = await pdp.decide(
+      makeRequest('move_file', { source: '/data/virus.exe', destination: '/data/virus2.exe' }),
       makeCtx(),
     );
     expect(d.allow).toBe(false);
@@ -585,7 +608,8 @@ describe('Reference policy — github.policy.yaml', () => {
     const req = makeRequest('create_issue', { owner: 'org', repo: 'repo', title: 'Issue' });
     const ctx = makeCtx('issue-rate-limit-session');
     for (let i = 0; i < 10; i++) {
-      await pdp.decide(req, ctx);
+      const d = await pdp.decide(req, ctx);
+      expect(d.allow).toBe(true);
     }
     const denied = await pdp.decide(req, ctx);
     expect(denied.allow).toBe(false);
@@ -599,7 +623,8 @@ describe('Reference policy — github.policy.yaml', () => {
     });
     const ctx = makeCtx('pr-rate-limit-session');
     for (let i = 0; i < 5; i++) {
-      await pdp.decide(req, ctx);
+      const d = await pdp.decide(req, ctx);
+      expect(d.allow).toBe(true);
     }
     const denied = await pdp.decide(req, ctx);
     expect(denied.allow).toBe(false);
@@ -699,7 +724,8 @@ describe('Reference policy — slack.policy.yaml', () => {
     const req = makeRequest('send_dm', { to: 'alice@company.com', text: 'msg' });
     const ctx = makeCtx('slack-rate-session');
     for (let i = 0; i < 20; i++) {
-      await pdp.decide(req, ctx);
+      const d = await pdp.decide(req, ctx);
+      expect(d.allow).toBe(true);
     }
     const denied = await pdp.decide(req, ctx);
     expect(denied.allow).toBe(false);
@@ -720,7 +746,8 @@ describe('Reference policy — slack.policy.yaml', () => {
     const req = makeRequest('post_message', { channel: 'C12345', text: 'msg' });
     const ctx = makeCtx('slack-post-rate-session');
     for (let i = 0; i < 50; i++) {
-      await pdp.decide(req, ctx);
+      const d = await pdp.decide(req, ctx);
+      expect(d.allow).toBe(true);
     }
     const denied = await pdp.decide(req, ctx);
     expect(denied.allow).toBe(false);
@@ -902,10 +929,34 @@ describe('Reference policy — fetch.policy.yaml', () => {
     const req = makeRequest('fetch', { url: 'https://api.example.com/', method: 'GET' });
     const ctx = makeCtx('fetch-rate-session');
     for (let i = 0; i < 60; i++) {
-      await pdp.decide(req, ctx);
+      const d = await pdp.decide(req, ctx);
+      expect(d.allow).toBe(true);
     }
     const denied = await pdp.decide(req, ctx);
     expect(denied.allow).toBe(false);
     expect(denied.denialCode).toBe('MAX_CALLS_EXCEEDED');
+  });
+
+  it('fetch with userinfo authority bypass is denied (https://evil.com@169.254.169.254/)', async () => {
+    const pdp = pdpFromManifest(manifest);
+    const d = await pdp.decide(
+      makeRequest('fetch', {
+        url: 'https://evil.com@169.254.169.254/latest/meta-data/',
+        method: 'GET',
+      }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('argumentSchema');
+  });
+
+  it('fetch with any userinfo in authority is denied (https://user@api.example.com/)', async () => {
+    const pdp = pdpFromManifest(manifest);
+    const d = await pdp.decide(
+      makeRequest('fetch', { url: 'https://user@api.example.com/', method: 'GET' }),
+      makeCtx(),
+    );
+    expect(d.allow).toBe(false);
+    expect(d.conditionType).toBe('argumentSchema');
   });
 });

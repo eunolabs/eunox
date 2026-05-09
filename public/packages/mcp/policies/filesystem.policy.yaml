@@ -4,9 +4,12 @@
 #            https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
 #
 # Blocks:
-#   • Write / delete operations on paths outside /data/ (blocked by argumentSchema)
-#   • Executable and binary file types (.exe .sh .bat .cmd .ps1 .bin .so .dylib)
-#     via allowedExtensions on write/delete tools
+#   • Write / delete / move operations on paths outside /data/ (via argumentSchema)
+#   • Executable and binary file types (.exe .sh .bat .cmd .ps1 .bin .so .dylib):
+#     - on write_file and delete_file via allowedExtensions condition
+#     - on move_file via argumentSchema pattern (source and destination must end
+#       in a safe extension; the PDP's path-extractor does not recognise
+#       'source'/'destination' keys so allowedExtensions cannot be used there)
 #   • Unlimited write bursts (maxCalls guard on destructive tools)
 #
 # Allows:
@@ -101,12 +104,13 @@ requiredCapabilities:
       properties:
         source:
           type: string
-          pattern: "/data/.*"
+          # Enforce /data/ prefix AND safe text-only extensions.
+          # The PDP's extractFilePath() does not recognise 'source'/'destination'
+          # keys, so allowedExtensions cannot be used here. Both constraints are
+          # combined into this single pattern instead.
+          pattern: "/data/.*\\.(?:txt|md|json|csv|yaml|yml)"
         destination:
           type: string
-          pattern: "/data/.*"
+          pattern: "/data/.*\\.(?:txt|md|json|csv|yaml|yml)"
       required: [source, destination]
       additionalProperties: false
-    conditions:
-      - type: allowedExtensions
-        extensions: [.txt, .md, .json, .csv, .yaml, .yml]

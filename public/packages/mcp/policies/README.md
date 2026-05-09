@@ -12,9 +12,9 @@ Drop one in your project, run `euno-mcp validate <file>`, and pass it to
 |------|-----------------|------------------|
 | [`filesystem.policy.yaml`](./filesystem.policy.yaml) | `@modelcontextprotocol/server-filesystem` | Reads limited to safe extensions; writes confined to `/data/`; executables blocked |
 | [`postgres.policy.yaml`](./postgres.policy.yaml) | `@modelcontextprotocol/server-postgres` | SELECT-only on approved business tables; DDL/DML writes blocked |
-| [`github.policy.yaml`](./github.policy.yaml) | `@modelcontextprotocol/server-github` | Read tools unrestricted; write tools rate-limited; branch delete / secrets management blocked |
-| [`slack.policy.yaml`](./slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages restricted to `company.com`; file uploads and admin tools blocked |
-| [`fetch.policy.yaml`](./fetch.policy.yaml) | `mcp-server-fetch` | HTTPS-only; private RFC-1918 ranges and metadata endpoint (169.254.169.254) blocked (SSRF guard) |
+| [`github.policy.yaml`](./github.policy.yaml) | `@modelcontextprotocol/server-github` | Read tools unrestricted; write tools rate-limited to prevent runaway automation |
+| [`slack.policy.yaml`](./slack.policy.yaml) | `@modelcontextprotocol/server-slack` | Direct messages restricted to `company.com` via recipientDomain; message bursts rate-limited |
+| [`fetch.policy.yaml`](./fetch.policy.yaml) | `mcp-server-fetch` | HTTPS-only; userinfo authority blocked; private RFC-1918 ranges and metadata endpoint blocked (lexical SSRF guard — combine with network egress controls) |
 
 ---
 

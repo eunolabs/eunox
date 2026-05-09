@@ -3,17 +3,19 @@
 # Upstream:  @modelcontextprotocol/server-github ^0.4.0
 #            https://github.com/modelcontextprotocol/servers/tree/main/src/github
 #
-# Blocks:
-#   • All tools not listed below are implicitly denied (no matching constraint)
-#   • Branch deletion, force-push, secrets management, repository deletion
-#     (omitted from allowlist — any call to these tools is denied)
-#   • Runaway automation on write tools (per-tool maxCalls rate limits)
+# What this policy enforces:
+#   • Write tools (issue creation, PR creation, file commits, comments) are
+#     allowed with conservative per-hour call budgets to prevent runaway
+#     automation.
+#   • Search tools have a per-minute rate limit to prevent excessive API costs.
+#   • Read tools are unrestricted (subject only to upstream GitHub API limits).
 #
-# Allows:
-#   • All read operations: get_file_contents, list_branches, search_code,
-#     get_pull_request, list_commits, search_issues, get_issue (no limits)
-#   • Capped write operations: create_issue, add_issue_comment,
-#     create_pull_request, create_or_update_file
+# Note on unlisted tools (branch deletion, secrets management, etc.):
+#   The euno-mcp PDP default is ALLOW for any tool with no matching constraint
+#   in the manifest. This policy does NOT block unlisted tools.
+#   If you need to block specific dangerous tools, add an explicit constraint
+#   for each one with a condition that always denies (e.g. a timeWindow in the
+#   past) or use a custom condition that evaluates to deny.
 #
 # README: public/packages/mcp/policies/README.md
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,10 +28,10 @@ metadata:
     Read-heavy GitHub access policy. All read tools are unrestricted (subject
     only to GitHub API rate limits). Write tools (issue creation, PR creation,
     file commits) are allowed with conservative per-hour call budgets.
-    Branch deletion, force-push, secrets management, and repository destruction
-    are blocked by omission — they are not listed in the allowlist, so any
-    call to those tools is denied by the manifest-not-matched default.
-  tags: [github, read-heavy, write-rate-limited, no-destructive-ops]
+    Tools not listed in the manifest are allowed by default (euno-mcp allows
+    calls that match no constraint). Add explicit constraints to restrict
+    additional tools such as branch deletion or secrets management.
+  tags: [github, read-heavy, write-rate-limited]
 
 requiredCapabilities:
   # ── Read tools — unrestricted ────────────────────────────────────────────────

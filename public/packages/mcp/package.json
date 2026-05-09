@@ -30,6 +30,7 @@
   },
   "files": [
     "dist",
+    "policies",
     "README.md",
     "TELEMETRY.md",
     "LICENSE"

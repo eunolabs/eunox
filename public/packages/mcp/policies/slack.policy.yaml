@@ -3,17 +3,16 @@
 # Upstream:  @modelcontextprotocol/server-slack ^0.3.0
 #            https://github.com/modelcontextprotocol/servers/tree/main/src/slack
 #
-# Blocks:
-#   • Direct messages sent to external email domains (outside company.com)
-#     blocked by recipientDomain on send_dm (the `to` field is an email address)
-#   • Runaway message bursts (maxCalls per-tool)
-#   • File uploads, workspace administration, channel management (omitted
-#     from allowlist — calls to those tools are denied)
+# What this policy enforces:
+#   • Direct messages (send_dm) are restricted to internal company.com addresses
+#     via the recipientDomain condition.
+#   • Message burst protection via maxCalls on send_dm and post_message.
 #
-# Allows:
-#   • send_dm to users whose address ends in @company.com
-#   • post_message to any channel (channel-ID addressed, not domain-filtered)
-#   • list_channels, get_channel_history, list_users — read-only, unrestricted
+# Note on unlisted tools (file uploads, workspace admin, channel management):
+#   The euno-mcp PDP default is ALLOW for any tool with no matching constraint.
+#   File uploads, channel management, and workspace admin tools are not listed
+#   here and will therefore be allowed. Add explicit constraints to restrict
+#   those tools if needed.
 #
 # Note on recipientDomain vs. post_message:
 #   post_message uses a Slack channel ID (e.g. C12345) as its target, not an
@@ -31,8 +30,10 @@ version: 1.0.0
 metadata:
   description: >-
     Restricts outbound Slack messages so only internal company.com users can be
-    direct-messaged. Channel posting is allowed with a burst guard. File uploads,
-    channel deletion, and workspace admin operations are blocked by omission.
+    direct-messaged. Channel posting is allowed with a burst guard. Tools not
+    listed in the manifest (file uploads, channel deletion, workspace admin
+    operations) are allowed by default — euno-mcp allows calls that match no
+    constraint. Add explicit constraints to restrict additional tools.
   tags: [slack, internal-only, recipient-domain-allowlist, rate-limited]
 
 requiredCapabilities:
