@@ -1,5 +1,11 @@
 Stage 2 Execution Plan — @euno/mcp General Tool Enforcement
 
+> **Status (May 2026): All 12 tasks are COMPLETE.**
+> `@euno/mcp` 0.2.0 ships all Stage-2 condition types, CLI subcommands,
+> reference policies, the `@euno/langchain` companion package, and full
+> documentation coverage. See docs/mvp.md §"Stage 2 status" for the
+> authoritative per-task checklist.
+
 This plan turns docs/mvp.md §"Stage 2: General Tool Enforcement" (lines 552–574) into a numbered task list modeled on the Stage 1 task structure (mvp.md lines 313–328). Each task is sized so it can be assigned to Copilot as a single issue, includes the file-level scope, the rationale grounded in already-shipped code, and an explicit acceptance criterion. A note on prerequisites and shared context for every task is at the top so issues can be created with that block prepended.
 
 
@@ -7,7 +13,7 @@ This plan turns docs/mvp.md §"Stage 2: General Tool Enforcement" (lines 552–5
 Shared context (paste into every Stage 2 issue)
 
 
-Repository layout. Public, Apache-2.0 packages live under public/packages/{cli,common,mcp}. The common package re-exports from @euno/common-core (packages/common-core — Apache-2.0) and @euno/common-infra (packages/common-infra — BSL 1.1). Stage 2 work stays inside public/packages/mcp plus a new public/packages/langchain package and public/packages/mcp/policies/. Do not add Redis, Postgres, KMS, or any cross-process state — that is Stage 3.
+Repository layout. Public, Apache-2.0 packages live under public/packages/{cli,common,mcp,langchain}. The `@euno/common-core` package lives at `public/packages/common/` (the directory was renamed from `common-core` to `common`; the npm package name `@euno/common-core` is unchanged). Stage 2 work stays inside public/packages/mcp plus public/packages/langchain and public/packages/mcp/policies/. Do not add Redis, Postgres, KMS, or any cross-process state — that is Stage 3.
 
 Reuse, do not reinvent. All five Stage-2 condition types already exist in public/packages/common/src/condition-registry.ts: ipRangeHandler, recipientDomainHandler, redactFieldsHandler, policyHandler, plus the registerCustomCondition / registerPolicyBackend registries. enforceCondition and the two-tier ordering helpers in the same file already handle them. Stage 2 is mostly lifting the Stage-1 gate, wiring richer request context, and surfacing the new capabilities through the CLI/policy/audit surfaces — no new condition logic in @euno/common-core.
 

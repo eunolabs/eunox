@@ -3,7 +3,7 @@
 A capability-based agent governance system. Stop your AI agents from doing
 things they shouldn't — before the tool call reaches your backend.
 
-## Stage 1: `@euno/mcp` is available now
+## Stage 2: General Tool Enforcement is complete — `@euno/mcp` 0.2.0
 
 The entry point for individual developers is [`@euno/mcp`](public/packages/mcp/README.md):
 a drop-in policy proxy for any [Model Context Protocol](https://spec.modelcontextprotocol.io/)
@@ -23,17 +23,24 @@ the upstream is called — if the constraint says `allowedOperations: [SELECT]`,
 the upstream is never contacted and the agent receives a structured denial.
 One YAML file. No code changes to your agent or server.
 
+`@euno/mcp` 0.2.0 ships the full `CapabilityCondition` matrix:
+`maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`, `allowedTables`,
+`argumentSchema`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`.
+The [`@euno/langchain`](public/packages/langchain/README.md) companion package brings
+in-process enforcement to LangChain.js agents (no MCP transport required).
+
 See the [**`@euno/mcp` README**](public/packages/mcp/README.md) for
 quickstart, policy authoring, and drop-in Claude Desktop / Cursor / LangChain.js usage.
 
 ## Project status
 
-Euno follows a [staged execution plan](docs/mvp.md). **Stage 1 has shipped.**
+Euno follows a [staged execution plan](docs/mvp.md).
 
 | Stage | Ships | Status |
 |-------|-------|--------|
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
-| 1 | `@euno/mcp` — local MCP proxy, policy engine, OCSF audit log | ✅ Done |
+| 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit log | ✅ Done |
+| 1.5 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
 | 2 | Cross-process shared state (Redis counters, shared enforcement state) | ⏳ Gate: see [docs/mvp.md §Gate to Stage 2](docs/mvp.md) |
 | 3 | Hosted gateway service, signed JWT capability tokens | Planned |
 | 4–5 | Enterprise: DID federation, KMS, SOC2, multi-cloud | Planned |
@@ -47,9 +54,10 @@ only security fixes and dependency bumps. See [`docs/stage-0-freeze.md`](docs/st
 ```
 edgeobs/euno
 ├── public/packages/       Apache-2.0 — ships to GitHub Packages
-│     common/               Core types, interfaces, in-memory implementations
-│     cli/                   Developer CLI  (`euno` binary)
-│     mcp/                  MCP proxy      (`euno-mcp` binary)  ← Stage 1 product
+│     common/               @euno/common-core — types, interfaces, in-memory implementations
+│     cli/                  @euno/cli — developer CLI  (`euno` binary)
+│     mcp/                  @euno/mcp — MCP proxy      (`euno-mcp` binary)
+│     langchain/            @euno/langchain — in-process LangChain.js enforcement
 │
 └── euno-platform/packages/  BUSL-1.1 — self-host and hosted product
       common-infra/          Redis / Postgres / KMS implementations
@@ -79,6 +87,14 @@ npm install
 npm run build
 npm test
 ```
+
+### VSCode
+
+The repository ships ready-to-use VSCode configuration under `.vscode/`:
+
+- **`launch.json`** — debug the CLI (`proxy`, `validate`, `stats`, `validate-token`), run Jest tests in the debugger, and execute the Stage 3 readiness script.
+- **`tasks.json`** — `build: all` (default build), per-package build/watch/test tasks, and lint tasks. Press **Ctrl+Shift+B** (macOS: ⌘⇧B) to run the default build.
+- **`extensions.json`** — recommended extensions (ESLint, vscode-jest, YAML, GitLens).
 
 ### Lint
 

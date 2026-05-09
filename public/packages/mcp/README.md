@@ -144,12 +144,25 @@ requiredCapabilities:
         windowSeconds: 60
 ```
 
-Supported condition types: `maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`,
-`allowedTables`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, `custom`,
-plus the `argumentSchema` field on each constraint.
+### Supported condition types
 
-See [`docs/policy-backends.md`](./docs/policy-backends.md) for the `policy` backend interface
-and [`docs/custom-conditions.md`](./docs/custom-conditions.md) for the `custom` handler contract.
+| Condition | What it enforces | Notes |
+|-----------|-----------------|-------|
+| `argumentSchema` | JSON Schema validation on tool arguments | Structured error details surfaced in the MCP response |
+| `allowedOperations` | SQL verb allowlist (`SELECT`, `INSERT`, …) | First-word extraction — see [prompt injection note](#allowedoperations--first-word-extraction-not-sql-parsing) |
+| `allowedExtensions` | File extension allowlist (`.csv`, `.json`, …) | Checks the `filePath` / `path` / `file` argument |
+| `allowedTables` | Database table allowlist | Checks `table` / `tables` arguments |
+| `allowedValues` | Enum allowlist on any argument field | |
+| `maxCalls` | Per-session rate limit (count + time window) | Counter resets when the window expires |
+| `timeWindow` | `notBefore` / `notAfter` wall-clock gate | |
+| `ipRange` | Source IP CIDR allowlist | HTTP transport only — stdio sessions have no source IP¹ |
+| `recipientDomain` | E-mail / handle recipient domain allowlist | Checks `to`, `recipients`, `cc`, `bcc` arguments |
+| `redactFields` | Strip named JSON paths from the upstream response | Response-path obligation — enforcement always allows |
+| `policy` | Delegate to a named external policy backend | Loaded via `--policy-backend`; see [`docs/policy-backends.md`](./docs/policy-backends.md) |
+| `custom` | Arbitrary handler registered by name | Loaded via `--custom-condition`; see [`docs/custom-conditions.md`](./docs/custom-conditions.md) |
+
+¹ `ipRange` with a stdio session is denied with `IP_RANGE_DENIED` and the reason
+`"ipRange requires sourceIp in request context"`. Use the HTTP transport when IP-based enforcement is required.
 
 ---
 
@@ -386,6 +399,47 @@ Enable anonymous telemetry? [y/N]
 
 Disable at any time with `EUNO_TELEMETRY=0`. See [TELEMETRY.md](./TELEMETRY.md) for the full
 schema, where data goes, and all opt-out mechanisms.
+
+---
+
+## Development
+
+### Prerequisites
+
+```bash
+npm install        # install all workspace dependencies
+npm run build      # common-core → mcp → langchain → platform packages
+npm run test       # run all test suites
+npm run lint       # eslint + license-boundary check
+```
+
+### VSCode
+
+The repository ships ready-to-use VSCode configuration in `.vscode/`:
+
+| File | Purpose |
+|------|---------|
+| `launch.json` | Debug configurations for the CLI (`proxy`, `validate`, `stats`, `validate-token`), Jest tests, and the Stage 3 readiness script |
+| `tasks.json` | Build, watch, test, and lint tasks for each public package and the monorepo root |
+| `settings.json` | TypeScript workspace SDK, ESLint working directories, and search/file excludes |
+| `extensions.json` | Recommended extensions (ESLint, vscode-jest, YAML, GitLens) |
+
+Open the repo in VSCode and press **F5** to launch a debug session (the
+"euno-mcp: proxy (stdio)" configuration is selected by default — you will be
+prompted for a policy file and upstream script path).  Press **Ctrl+Shift+B**
+(macOS: ⌘⇧B) to run the default build task (`build: all`).
+
+### Build order
+
+The monorepo build sequence is:
+
+```
+@euno/common-core  →  @euno/common-infra  →  @euno/common
+     ↓
+@euno/posture-emitter  →  @euno/mcp  →  @euno/langchain  →  platform packages
+```
+
+The `build: @euno/mcp` VSCode task automatically pre-builds `@euno/common-core`.
 
 ---
 

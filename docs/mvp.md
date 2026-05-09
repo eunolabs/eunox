@@ -571,6 +571,7 @@ path at any layer.
 > - [x] Task 10 — Reference policy library under `public/packages/mcp/policies/`
 > - [x] Task 11 — README + docs updates: condition matrix, before/after, schema-parity claim
 > - [x] Task 12 — Stage 3 readiness script + signal collection update
+> - [x] Post-Stage-2 — VSCode build/debug configs (`.vscode/launch.json`, `tasks.json`, `settings.json`, `extensions.json`); CODEOWNERS and LICENSE updated to reflect `public/packages/common/` rename
 >
 > **All 12 Stage 2 tasks are complete. `@euno/mcp` 0.2.0 is ready to publish.**
 
