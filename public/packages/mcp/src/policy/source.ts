@@ -38,15 +38,10 @@
  *   The enforcement lobe always allows; the redact lobe strips the specified
  *   dotted-path fields from JSON text content and structuredContent.
  *
- * The following condition types are structurally valid in the production
- * gateway but are DEFERRED to a later Stage and therefore REJECTED by this
- * loader with an explicit error message:
- *
- *   custom
- *
- * Rejecting them (rather than silently accepting) ensures that users get
- * immediate, actionable feedback instead of deploying a manifest whose
- * constraints will not be enforced.
+ * Stage-2 task coverage in @euno/mcp now includes every currently-supported
+ * manifest condition type (including ipRange, recipientDomain, redactFields,
+ * policy, and custom). The deferred-stage gate remains in place for future
+ * condition types that may be introduced later.
  *
  * @module
  */
@@ -73,12 +68,10 @@ import type { AgentCapabilityManifest, CapabilityCondition } from '@euno/common-
  * names the offending JSON path.
  *
  * Stage-2 progress: `ipRange` (Task 2), `recipientDomain` (Task 3),
- * `policy` (Task 5), and `redactFields` (Task 4) have been lifted from
- * this set and are now fully enforced.
+ * `redactFields` (Task 4), `policy` (Task 5), and `custom` (Task 6) have
+ * been lifted from this set and are now fully enforced.
  */
-const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set([
-  'custom',
-]);
+const DEFERRED_CONDITION_TYPES: ReadonlySet<string> = new Set();
 
 /**
  * Walk every condition in a loaded manifest and throw if any deferred
@@ -204,9 +197,9 @@ export interface FilePolicySourceOptions {
  * 2. YAML / JSON parse (syntax error → parse error)
  * 3. Structural schema validation via {@link validateManifest} from
  *    `@euno/common-core` (unknown fields, wrong types, etc.)
- * 4. Stage gate — rejects deferred condition types (custom) with an explicit
- *    error message.  `ipRange` (Task 2), `recipientDomain` (Task 3),
- *    `redactFields` (Task 4), and `policy` (Task 5) are now accepted.
+ * 4. Stage gate — currently no deferred types remain after Stage-2 Task 6.
+ *    The gate is retained as forward compatibility if new condition types
+ *    are introduced in later stages.
  */
 export class FilePolicySource implements LocalPolicySource {
   private readonly resolvedPath: string;

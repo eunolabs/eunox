@@ -62,6 +62,7 @@ import {
   validateArguments,
   ArgumentValidationError,
   findMatchingCapability,
+  getCustomConditionHandlers,
   type CallCounterStore,
   type KillSwitchManager,
   type AgentCapabilityManifest,
@@ -631,6 +632,7 @@ export class ConditionEnforcerPDP implements PolicyDecisionPoint {
         // Network-level context (populated by the HTTP transport; undefined for stdio)
         sourceIp: ctx.sourceIp,
         recipients: extractRecipients(rawArgs),
+        customHandlers: getCustomConditionHandlers(),
       };
 
       const result = await enforceConditionsWithType(matched.conditions, conditionCtx);

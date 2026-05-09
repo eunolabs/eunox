@@ -21,6 +21,8 @@
  */
 
 import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CompatibilityCallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -50,9 +52,22 @@ const MOCK_UPSTREAM = path.resolve(__dirname, 'fixtures', 'mock-upstream.ts');
 
 /** Absolute path to the euno-mcp CLI entry point. */
 const PROXY_CLI = path.resolve(__dirname, '..', 'src', 'cli.ts');
+const CUSTOM_CONDITION_MODULE = path.resolve(
+  __dirname,
+  'fixtures',
+  'custom-conditions',
+  'deny-blocked-recipient.cjs',
+);
 
 /** Path to the ts-node register hook (in the monorepo root node_modules). */
 const TS_NODE_REGISTER = require.resolve('ts-node/register');
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 /**
  * Builds a `StdioClientTransport` that spawns the euno-mcp proxy (via ts-node)
@@ -95,6 +110,14 @@ function buildProxyTransport(
       TS_NODE_SKIP_PROJECT: 'false',
     },
   });
+}
+
+function writeTempPolicy(content: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'euno-mcp-stdio-custom-'));
+  tempDirs.push(dir);
+  const filePath = path.join(dir, 'policy.yaml');
+  fs.writeFileSync(filePath, content, 'utf8');
+  return filePath;
 }
 
 // --------------------------------------------------------------------------
@@ -194,4 +217,67 @@ describe('StdioProxy — integration (Task 4)', () => {
     expect(resources).toHaveLength(1);
     expect(resources[0]!.uri).toBe('file:///data/mock.txt');
   }, 20_000);
+});
+
+describe('StdioProxy — custom condition loader (Task 6)', () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  afterEach(async () => {
+    await client?.close().catch(() => undefined);
+  });
+
+  it('loads a custom condition module and denies based on synthetic recipients args', async () => {
+    const policyPath = writeTempPolicy(`
+agentId: custom-stdio-agent
+name: Custom Stdio Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "echo"
+    actions: [call]
+    conditions:
+      - type: custom
+        name: denyBlockedRecipient
+        config:
+          blockedDomain: "blocked.test"
+`.trim());
+
+    transport = buildProxyTransport([
+      '--policy',
+      policyPath,
+      '--custom-condition',
+      CUSTOM_CONDITION_MODULE,
+    ]);
+    client = new Client({ name: 'test-host', version: '1.0.0' }, { capabilities: {} });
+    await client.connect(transport);
+
+    const deniedRaw = await client.callTool(
+      {
+        name: 'echo',
+        arguments: {
+          text: 'hello',
+          recipients: ['alice@blocked.test'],
+        },
+      },
+      CompatibilityCallToolResultSchema,
+    );
+    const denied = deniedRaw as unknown as ToolCallResult;
+    expect(denied.isError).toBe(true);
+    const deniedBody = JSON.parse(denied.content[0]!.text) as { code?: string };
+    expect(deniedBody.code).toBe('CONDITION_NOT_SATISFIED');
+
+    const allowedRaw = await client.callTool(
+      {
+        name: 'echo',
+        arguments: {
+          text: 'hello',
+          recipients: ['alice@example.com'],
+        },
+      },
+      CompatibilityCallToolResultSchema,
+    );
+    const allowed = allowedRaw as unknown as ToolCallResult;
+    expect(allowed.isError).toBeFalsy();
+    expect(allowed.content[0]!.text).toBe('hello');
+  }, 30_000);
 });

@@ -34,7 +34,6 @@ import { loadPolicyBackends } from '../policy/backends';
 import { ConditionEnforcerPDP } from '../pdp';
 import type { LocalPolicySource } from '../policy/source';
 import { FilePolicySource } from '../policy/source';
-import { ManifestValidationError } from '@euno/common-core';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -537,7 +536,7 @@ requiredCapabilities:
     expect(manifest.requiredCapabilities[0]!.conditions![0]!.type).toBe('redactFields');
   });
 
-  it('still rejects custom (remains deferred)', async () => {
+  it('accepts custom condition type (Stage-2 Task 6 gate lifted)', async () => {
     const content = `
 agentId: custom-agent
 name: Custom Agent
@@ -551,7 +550,7 @@ requiredCapabilities:
         config: {}
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
-    await expect(src.load()).rejects.toThrow(ManifestValidationError);
-    await expect(src.load()).rejects.toThrow(/stage/i);
+    const manifest = await src.load();
+    expect(manifest.requiredCapabilities[0]!.conditions![0]!.type).toBe('custom');
   });
 });

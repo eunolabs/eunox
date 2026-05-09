@@ -6,10 +6,12 @@
  * ✓ Valid YAML manifest → exits 0, output matches `euno validate` format
  * ✓ Valid JSON manifest → exits 0, output matches `euno validate` format
  * ✓ Unknown condition type → exits 1, error message names the JSON path
- * ✓ Deferred condition types (redactFields, custom) → exits 1, message mentions stage
  * ✓ ipRange condition → exits 0 (lifted from deferred set in Stage 2 Task 2)
  * ✓ recipientDomain condition → exits 0 (lifted from deferred set in Stage 2 Task 3)
+ * ✓ redactFields condition → exits 0 (lifted from deferred set in Stage 2 Task 4)
  * ✓ policy condition → exits 0 (lifted from deferred set in Stage 2 Task 5)
+ * ✓ custom condition → exits 0 (lifted from deferred set in Stage 2 Task 6)
+ * ✓ ipRange with invalid CIDR shape passes structural validate (semantic check occurs at enforcement)
  * ✓ Missing required field → exits 1, validation error
  * ✓ Non-existent file → exits 1, ENOENT-style error
  * ✓ Malformed YAML → exits 1, parse error
@@ -183,50 +185,6 @@ requiredCapabilities:
 });
 
 // ---------------------------------------------------------------------------
-// Deferred Stage-2 condition types
-// ---------------------------------------------------------------------------
-
-/** Minimal valid YAML for each deferred condition type (with required fields). */
-const DEFERRED_CONDITION_YAMLS: Record<string, string> = {
-  redactFields: `
-agentId: test-agent
-name: Test
-version: 1.0.0
-requiredCapabilities:
-  - resource: "tool://foo"
-    actions: [call]
-    conditions:
-      - type: redactFields
-        fields: ["ssn", "credit_card"]
-`.trim(),
-  custom: `
-agentId: test-agent
-name: Test
-version: 1.0.0
-requiredCapabilities:
-  - resource: "tool://foo"
-    actions: [call]
-    conditions:
-      - type: custom
-        name: my-custom-check
-        config: {}
-`.trim(),
-};
-
-describe('euno-mcp validate — deferred condition types', () => {
-  for (const [deferredType, yaml] of Object.entries(DEFERRED_CONDITION_YAMLS)) {
-    it(`exits 1 for condition type "${deferredType}" and mentions stage`, () => {
-      const filePath = writeTempFile('yaml', yaml);
-      const { exitCode, stderr } = runValidate(filePath);
-
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain('✗ Validation failed');
-      expect(stderr.toLowerCase()).toMatch(/stage/);
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
 // Stage-2 accepted condition types (lifted from deferred set)
 // ---------------------------------------------------------------------------
 
@@ -296,6 +254,28 @@ requiredCapabilities:
   });
 });
 
+describe('euno-mcp validate — Stage-2 custom condition (Task 6)', () => {
+  it('exits 0 for a manifest with a valid custom condition', () => {
+    const yaml = `
+agentId: test-agent
+name: Test
+version: 1.0.0
+requiredCapabilities:
+  - resource: "tool://governed_action"
+    actions: [call]
+    conditions:
+      - type: custom
+        name: my-custom-check
+        config: {}
+`.trim();
+    const filePath = writeTempFile('yaml', yaml);
+    const { exitCode, stdout } = runValidate(filePath);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Stage-2 ipRange condition (accepted from Stage 2 onwards)
 // ---------------------------------------------------------------------------
@@ -320,7 +300,7 @@ requiredCapabilities:
     expect(stdout).toContain('✓ Manifest is valid');
   });
 
-  it('exits 1 for an ipRange condition with an invalid CIDR', () => {
+  it('exits 0 for an ipRange condition with a non-CIDR string at validate time', () => {
     const yaml = `
 agentId: test-agent
 name: Test
@@ -333,10 +313,10 @@ requiredCapabilities:
         cidrs: ["not-a-cidr"]
 `.trim();
     const filePath = writeTempFile('yaml', yaml);
-    const { exitCode, stderr } = runValidate(filePath);
+    const { exitCode, stdout } = runValidate(filePath);
 
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain('✗ Validation failed');
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('✓ Manifest is valid');
   });
 });
 

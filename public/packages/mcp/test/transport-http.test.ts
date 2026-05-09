@@ -416,7 +416,11 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
       // Initialize via raw fetch to capture session ID.
       const initRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-03-26',
+        },
         body: JSON.stringify({
           jsonrpc: '2.0', id: 1, method: 'initialize',
           params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
@@ -431,6 +435,8 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-03-26',
           'mcp-session-id': sessionId!,
           'x-forwarded-for': '10.0.0.1',
         },
@@ -473,7 +479,11 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
       // ── initialize via raw fetch → capture session id ────────────────────
       const initRes = await fetch(`http://127.0.0.1:${port2}/mcp`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-03-26',
+        },
         body: JSON.stringify({
           jsonrpc: '2.0',
           id: 1,
@@ -496,6 +506,8 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-03-26',
           'mcp-session-id': sessionId!,
           'x-forwarded-for': '10.0.0.1',
         },
@@ -518,6 +530,8 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-03-26',
           'mcp-session-id': sessionId!,
           // No X-Forwarded-For header.
         },
@@ -548,7 +562,11 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
     const port = proxy.port!;
     const initRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2025-03-26',
+      },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
         params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
@@ -560,6 +578,8 @@ describe('HttpProxy — ipRange enforcement (Task 2)', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2025-03-26',
         'mcp-session-id': sessionId!,
         'x-forwarded-for': '10.0.0.1', // would be allowed if XFF was trusted
       },

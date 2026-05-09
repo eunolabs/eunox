@@ -163,6 +163,22 @@ several modules.  Module errors fail fast before the proxy starts.
 See [docs/policy-backends.md](./docs/policy-backends.md) for the full interface
 reference, an OPA HTTP worked example, and Stage-3 compatibility notes.
 
+## Custom conditions
+
+Load custom condition handlers with repeatable `--custom-condition` flags:
+
+```bash
+npx -y @euno/mcp proxy \
+  --policy ./euno.policy.yaml \
+  --custom-condition ./custom-conditions/my-handler.js \
+  --custom-condition ./custom-conditions/another-handler.js \
+  -- node ./my-mcp-server.js
+```
+
+Each module must default-export a function that receives
+`{ registerCustomCondition }` and registers one or more handlers.
+See [`docs/custom-conditions.md`](./docs/custom-conditions.md) for the full contract.
+
 ---
 
 ## Enforcement guarantee
@@ -260,4 +276,3 @@ schema, where data goes, and all opt-out mechanisms.
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
-

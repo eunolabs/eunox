@@ -19,11 +19,23 @@ import { StdioProxy } from './transport/stdio';
 import { HttpProxy } from './transport/http';
 import { createLocalAuditSink, McpAuditSink } from './audit';
 import { FilePolicySource } from './policy/source';
+import {
+  loadCustomConditionModules,
+  validateCustomConditionRegistrations,
+} from './policy/custom-handlers';
 import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
 import { createTelemetry } from './telemetry';
 
 const program = new Command();
+
+function collectRepeatableOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function isMissingCustomHandlerValidationError(message: string): boolean {
+  return /custom condition '.*' has no registered handler/.test(message);
+}
 
 program
   .name('euno-mcp')
@@ -82,13 +94,19 @@ program
     false,
   )
   .option(
+    '--custom-condition <module>',
+    'Path to a custom-condition handler module (repeatable). Module default export is called with { registerCustomCondition }.',
+    collectRepeatableOption,
+    [],
+  )
+  .option(
     '--policy-backend <module>',
     'Load a policy backend module (repeatable). Each module must export a default function ' +
       '(api: { registerPolicyBackend }) => void. ' +
       'Relative paths are resolved from the current working directory. ' +
       'See docs/policy-backends.md for the module contract.',
-    (val: string, prev: string[]) => [...prev, val],
-    [] as string[],
+    collectRepeatableOption,
+    [],
   )
   .allowUnknownOption(false)
   .argument('<command>', 'Upstream MCP server command (after --)')
@@ -146,8 +164,32 @@ Examples:
     // ── Build PDP ─────────────────────────────────────────────────────────
     let pdp: PolicyDecisionPoint;
     let conditionPdp: ConditionEnforcerPDP | undefined;
+    const customConditionModules = options.customCondition as string[];
+
+    if (customConditionModules.length > 0) {
+      try {
+        await loadCustomConditionModules(customConditionModules);
+      } catch (err) {
+        process.stderr.write(
+          `[euno-mcp] ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exit(1);
+      }
+    }
+
     if (options.policy) {
       const policySource = new FilePolicySource({ filePath: options.policy as string });
+      try {
+        const manifest = await policySource.load();
+        validateCustomConditionRegistrations(manifest);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const hint = isMissingCustomHandlerValidationError(message)
+          ? ' Hint: load the handler with --custom-condition <module>.'
+          : '';
+        process.stderr.write(`[euno-mcp] Policy validation failed: ${message}${hint}\n`);
+        process.exit(1);
+      }
       conditionPdp = new ConditionEnforcerPDP({ policySource });
       pdp = conditionPdp;
     } else {

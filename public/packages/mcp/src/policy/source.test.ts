@@ -13,7 +13,7 @@
  * ✓ policy condition type now accepted (Stage-2 Task 5 gate lifted)
  * ✓ redactFields condition type now accepted (Stage-2 Task 4 gate lifted)
  * ✓ Unknown condition type → ManifestValidationError (names JSON path)
- * ✓ Deferred condition types (custom) → ManifestValidationError mentioning Stage 2
+ * ✓ Stage-2 condition types accepted (ipRange, recipientDomain, redactFields, policy, custom)
  * ✓ Semantic error: notAfter before notBefore → ManifestValidationError
  * ✓ Missing required top-level field → ManifestValidationError
  * ✓ Unknown top-level field → ManifestValidationError
@@ -26,7 +26,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { FilePolicySource } from '../policy/source';
-import { ManifestValidationError } from '@euno/common-core';
+import {
+  ManifestValidationError,
+} from '@euno/common-core';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -361,95 +363,6 @@ requiredCapabilities:
 // Deferred Stage-2+ condition types
 // ---------------------------------------------------------------------------
 
-const DEFERRED_TYPES = [
-  {
-    type: 'custom',
-    yaml: 'type: custom\nname: my-handler\nconfig: {}',
-  },
-] as const;
-
-describe('FilePolicySource — deferred Stage-2+ condition types', () => {
-  for (const { type, yaml: conditionYaml } of DEFERRED_TYPES) {
-    it(`rejects '${type}' condition type with a deferred-stage error message`, async () => {
-      const content = `
-agentId: deferred-agent
-name: Deferred Agent
-version: 1.0.0
-requiredCapabilities:
-  - resource: "api://svc"
-    actions: [read]
-    conditions:
-      - ${conditionYaml.split('\n').join('\n        ')}
-`.trim();
-      const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
-      let err: ManifestValidationError | undefined;
-      try {
-        await src.load();
-      } catch (e) {
-        err = e as ManifestValidationError;
-      }
-      expect(err).toBeInstanceOf(ManifestValidationError);
-      // Error must explicitly mention a later stage
-      expect(err!.message).toMatch(/stage/i);
-      // Error must name the condition type
-      expect(err!.message).toContain(type);
-      // Path must appear in the message exactly once (no double-prefix)
-      const pathInMessage = (err!.message.match(/conditions\[0\]/g) ?? []).length;
-      expect(pathInMessage).toBe(1);
-      // .path field must also point to the condition
-      expect(err!.path).toContain('conditions[0]');
-    });
-  }
-
-  it('rejects a deferred type in optionalCapabilities too', async () => {
-    const content = `
-agentId: opt-deferred-agent
-name: Opt Deferred Agent
-version: 1.0.0
-requiredCapabilities:
-  - resource: "api://core"
-    actions: [read]
-optionalCapabilities:
-  - resource: "api://extras"
-    actions: [read]
-    conditions:
-      - type: custom
-        name: my-handler
-        config: {}
-`.trim();
-    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
-    await expect(src.load()).rejects.toThrow(ManifestValidationError);
-    await expect(src.load()).rejects.toThrow(/stage/i);
-  });
-
-  it('path correctly identifies deferred condition index > 0', async () => {
-    const content = `
-agentId: idx-agent
-name: Index Agent
-version: 1.0.0
-requiredCapabilities:
-  - resource: "api://svc"
-    actions: [read]
-    conditions:
-      - type: maxCalls
-        count: 10
-        windowSeconds: 60
-      - type: custom
-        name: my-handler
-        config: {}
-`.trim();
-    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
-    let err: ManifestValidationError | undefined;
-    try {
-      await src.load();
-    } catch (e) {
-      err = e as ManifestValidationError;
-    }
-    expect(err).toBeInstanceOf(ManifestValidationError);
-    expect(err!.path).toContain('conditions[1]');
-    expect(err!.message).toMatch(/stage/i);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Stage-2 condition types (accepted from Stage 2 onwards)
@@ -519,6 +432,27 @@ optionalCapabilities:
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const conditions = manifest.optionalCapabilities![0]!.conditions!;
     expect(conditions[0]!.type).toBe('ipRange');
+  });
+});
+
+describe('FilePolicySource — Stage-2 custom condition', () => {
+  it('accepts custom condition type (gate lifted in Stage-2 Task 6)', async () => {
+    const content = `
+agentId: custom-agent
+name: Custom Agent
+version: 1.0.0
+requiredCapabilities:
+  - resource: "echo"
+    actions: [call]
+    conditions:
+      - type: custom
+        name: my-handler
+        config: {}
+`.trim();
+    const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
+    const manifest = await src.load();
+    const conditions = manifest.requiredCapabilities[0]!.conditions!;
+    expect(conditions[0]!.type).toBe('custom');
   });
 });
 
