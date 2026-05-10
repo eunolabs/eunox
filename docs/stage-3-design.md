@@ -1,6 +1,6 @@
 # Stage 3 Design RFC — "The Gateway as Managed Boundary"
 
-> **Status:** Submitted for review. The authoring work (Task 0) is complete.
+> **Status:** Ready for committee sign-off. The authoring work (Task 0) is complete.
 > The gate condition — approved by ≥2 engineers + 1 security reviewer — must be
 > met before any Task 2+ implementation begins. See §9 Review Checklist.
 >
@@ -46,8 +46,8 @@ before code is written, not discovered during code review.
 ### 1.1 Decision
 
 **Primary (hosted service):** Azure Managed HSM, using the
-[Azure Key Vault Managed HSM REST API][az-mhsm] with RSA-4096 non-exportable
-keys.
+[Azure Key Vault Managed HSM REST API][az-mhsm] with per-tenant EC P-256
+(`EC-HSM`, `ES256`) non-exportable signing keys.
 
 **Supported (self-host and hosted fallback):**
 
@@ -62,6 +62,12 @@ All three config types already exist in
 backends in the capability issuer. The minter's `KmsEvidenceSigner`
 (stage3executionplan.md §Task 5) reuses the same abstractions.
 
+The hosted service does **not** keep an online platform-wide signing key.
+Each tenant receives a dedicated HSM signing key selected through the existing
+`policyHash:audience` lookup (`AzureKeyVaultConfig.keysByPolicyHash`, with
+equivalent AWS/GCP mappings). Platform-level credentials may provision or
+disable tenant keys, but they do not sign capability tokens.
+
 ### 1.2 Justification
 
 **Why Azure Managed HSM as the primary:**
@@ -69,17 +75,19 @@ backends in the capability issuer. The minter's `KmsEvidenceSigner`
 The existing Kubernetes deployment (`k8s/README.md`) targets Azure Container
 Registry and Azure Key Vault. Azure Managed HSM provides:
 
-- **Non-exportability enforced at the HSM boundary**: `wrapKey` and `exportKey`
-  operations are denied at the HSM level for keys created with
-  `exportable: false` in the key attributes — not merely by access policy. The
-  Azure MHSM Security Domain enforces this even against privileged HSM
-  administrators. This satisfies the MVP's requirement: "verify
+- **Non-exportability enforced at the HSM boundary**: keys are created as
+  `EC-HSM` P-256 keys with `key_ops` limited to `sign` and `verify`. Managed
+  HSM does not expose private key material for HSM-protected keys, and download
+  attempts fail with `KeyNotExportable` regardless of caller RBAC. This is
+  enforced by the Managed HSM boundary, not merely by minter IAM policy. This
+  satisfies the MVP's requirement: "verify
   non-exportability is enforced at the HSM level, not just by policy
   configuration" (`docs/mvp.md` line 673).
 - **Per-tenant key isolation**: Azure MHSM supports per-tenant key assignment
-  via its role-based access control. The `AzureKeyVaultConfig.keysByPolicyHash`
-  map (already wired in `runtime.ts` lines 456–490) enables per-policy-hash key
-  selection without additional infrastructure.
+  via key names and role-based access control. The
+  `AzureKeyVaultConfig.keysByPolicyHash` map (already wired in `runtime.ts`
+  lines 456–490) enables composite `(policyHash, audience)` key selection
+  without additional infrastructure.
 - **Audit log**: every HSM operation (sign, decrypt, key creation) is written to
   Azure Monitor / Log Analytics. This is the external witness independent of the
   minter's own audit trail.
@@ -94,14 +102,28 @@ environment variable (`azure` | `aws` | `gcp`).
 
 ### 1.3 Non-exportability verification procedure
 
-During provisioning, the operator MUST verify non-exportability by attempting
-an export and confirming rejection:
+During provisioning, the operator MUST verify that the key is HSM-backed,
+restricted to signing operations, and non-exportable:
 
 ```bash
-# Azure Managed HSM — key is non-exportable iff this returns 403
+az keyvault key create \
+  --hsm-name <mhsm-name> \
+  --name euno-minter-tenant-<tenant-id> \
+  --kty EC-HSM \
+  --curve P-256 \
+  --ops sign verify \
+  --protection hsm
+
+az keyvault key show \
+  --hsm-name <mhsm-name> \
+  --name euno-minter-tenant-<tenant-id> \
+  --query "{kty:key.kty, crv:key.crv, ops:key.keyOps}"
+# Expected: kty=EC-HSM, crv=P-256, ops=[sign, verify] with no export/wrap operation.
+
+# Azure Managed HSM — HSM key is non-exportable iff this returns KeyNotExportable.
 az keyvault key download \
   --hsm-name <mhsm-name> \
-  --name euno-minter-key \
+  --name euno-minter-tenant-<tenant-id> \
   --file /tmp/export-test.pem \
   --encoding PEM
 # Expected: "(KeyNotExportable) Key is not exportable"
@@ -119,11 +141,12 @@ the `JWTTokenVerifier` in `tool-gateway/src/verifier.ts` already resolves keys
 by `kid` from a JWKS endpoint (`JwksKeySource`, `runtime.ts:JwksKeySource`).
 Key rotation therefore requires:
 
-1. Generate new key version in the HSM.
+1. Generate a new tenant key version in the HSM.
 2. Publish the new `kid` → public key mapping to the JWKS endpoint.
 3. Update the minter to use the new `kid` for new tokens.
 4. Existing tokens are valid until their `exp`; if rotation is due to
-   compromise, the existing revocation list covers invalidation by `jti`.
+   compromise, the existing revocation list covers invalidation by `jti`, and
+   the tenant-scoped kill switch is activated until revocation replay completes.
 5. Old key version is disabled in the HSM (not deleted — needed for signature
    verification during the token TTL window).
 
@@ -399,7 +422,7 @@ sk-<prefix8>.<secret48>
 │    │         │
 │    │         └── 48 chars ≈ 285 bits of random, base58 encoded
 │    │                        Provides > 2^284 guessing resistance
-│    └── 8 chars of the SHA-256(secret), base58 encoded
+│    └── 8 random base58 chars, unique per key
 │         Allows O(1) DB lookup without scanning hashed secrets
 └── Literal prefix — identifies the token type in logs and error messages
 ```
@@ -418,20 +441,20 @@ wrapping.
 
 **Why not UUID format:** UUIDs expose 122 bits of entropy. The `sk-<p8>.<s48>`
 scheme exposes ~285 bits in base58 (log₂(58^48) ≈ 285), making brute-force
-impractical even against the hashed secret. The 8-char prefix is not secret — it
-is always stored in plaintext for lookup — so its exposure does not meaningfully
-reduce security.
+impractical even against the stored verifier. The 8-character prefix is random
+lookup metadata, not part of the secret; it is stored and logged in plaintext.
 
 ### 5.2 Storage schema
 
 ```sql
 -- Table: api_keys
--- One row per issued key. Credentials live in the 'keys' column only.
+-- One row per issued key. Raw credentials are returned once and never stored.
 CREATE TABLE api_keys (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
   prefix       TEXT NOT NULL UNIQUE,        -- 8-char base58 prefix (plaintext)
-  key_hash     TEXT NOT NULL,               -- Argon2id PHC encoded string (includes salt + params)
+  key_digest   TEXT NOT NULL,               -- base64url(HMAC-SHA256(active pepper, secret))
+  hmac_key_version TEXT NOT NULL,           -- pepper/key version used for key_digest
   policy_id    TEXT NOT NULL,               -- FK → capability_policies.id
   scopes       TEXT[] NOT NULL DEFAULT '{}', -- ['enforce', 'admin', 'audit']
   label        TEXT,                        -- human-readable name set by admin
@@ -458,45 +481,27 @@ CREATE TABLE api_key_issuance_log (
 
 ### 5.3 Key derivation and verification
 
-**Hashing algorithm:** Argon2id with parameters:
-- `m` = 65536 (64 MiB memory)
-- `t` = 3 (iterations)
-- `p` = 4 (parallelism)
+**Verifier algorithm:** HMAC-SHA-256 over the 48-character secret, keyed by a
+pepper stored outside the API-key database (cloud KMS/secret manager, never in
+the DB). Store `base64url(HMAC-SHA256(pepper, secret))` in `key_digest` plus the
+pepper `hmac_key_version` used to compute it.
 
-**Storage format:** The PHC-encoded string (Password Hashing Competition
-standard format) is stored in the `key_hash` column. The PHC string encodes the
-algorithm identifier, parameters, a randomly generated per-key salt, and the
-derived hash output into a single self-contained string. A realistic example
-(base64url encoding, per the PHC spec):
-
-```
-$argon2id$v=19$m=65536,t=3,p=4$c29tZXJhbmRvbXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaasfKSC0OpgYDH1Ys
-```
-
-Where:
-- `c29tZXJhbmRvbXNhbHQ` is a base64url-encoded 16-byte random salt (unique per key)
-- `RdescudvJCsgt3ub+b+dWRWJTmaasfKSC0OpgYDH1Ys` is the base64url-encoded 32-byte Argon2id output
-
-This avoids a separate `salt` column and prevents parameter drift: the stored
-string is fully self-describing, so the verifier reads parameters from it rather
-than relying on a separate configuration source.
-
-**Rationale:** Argon2id is the Password Hashing Competition winner and the
-current OWASP recommendation for credential hashing. The parameters above
-target ~150 ms on a 4-core server. Even at 1 billion keys, 150 ms/attempt
-makes online brute-force infeasible. The ~285-bit secret makes pre-computation
-tables infeasible.
+**Rationale:** API keys are high-entropy random bearer credentials, not
+human-memorable passwords. A memory-hard password KDF adds material online DoS
+risk while providing little additional protection against offline guessing of a
+~285-bit secret. A keyed digest means a DB-only compromise cannot validate
+candidate keys; an attacker needs both the DB and the external pepper. The
+digest comparison is performed with `crypto.timingSafeEqual` after equal-length
+normalization.
 
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
-2. PostgreSQL parameterized query: `SELECT key_hash, tenant_id, policy_id, scopes, revoked_at, expires_at
+2. PostgreSQL parameterized query: `SELECT key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
 3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
-4. `argon2.verify(key_hash, secret)`: uses the [`argon2` npm package](https://www.npmjs.com/package/argon2)
-   (`npm install argon2`). Its `verify(hash, plain)` function extracts the salt
-   and parameters from the PHC string in `key_hash` and performs a
-   constant-time comparison. No separate salt argument is needed.
+4. Load the pepper version named by `hmac_key_version`, compute the candidate
+   digest, and compare it to `key_digest` using constant-time comparison.
 5. If mismatch: return 401.
 6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
    enforcement path).
@@ -517,7 +522,15 @@ the response as a one-time credential delivery.
 > (hosted enforcement HTTP contract).
 
 This section defines the exact request/response contract between `@euno/mcp`
-running in remote-enforcer mode and the gateway's enforcement endpoint.
+running in remote-enforcer mode and the hosted enforcement endpoint.
+
+For Cloud, that public endpoint is the API-key minter façade in front of the
+internal `tool-gateway`. The façade verifies the API key, mints a short-lived
+tenant-scoped capability JWT, forwards the enforcement request to the internal
+gateway using that JWT, and returns the gateway's decision. The internal
+gateway never treats API keys as capability tokens. Self-host/BYO gateway
+operators that do not run the managed minter may expose the same request shape
+but authenticate it with their own issuer's JWT instead of an `sk-...` key.
 
 ### 6.1 Configuration
 
@@ -605,8 +618,11 @@ interface EnforceRequest {
 interface EnforceRequestContext {
   /**
    * Source IP of the MCP client, stripped of IPv4-mapped prefix.
-   * Required for ipRange conditions; omit for stdio-transport requests
-   * (ipRange conditions will deny with MISSING_CONTEXT).
+   * In Cloud, this value is overwritten by the edge/minter from the observed
+   * connection or trusted forwarding headers; caller-supplied sourceIp is not
+   * trusted for ipRange decisions. Self-hosters may accept this field only from
+   * trusted in-network proxies. Omit for stdio-transport requests (ipRange
+   * conditions will deny with MISSING_CONTEXT).
    */
   sourceIp?: string;
 
@@ -747,13 +763,18 @@ The `X-Euno-Protocol-Version` request header carries a monotonic integer
    API key.
 2. On each `tools/call` interception, the proxy constructs an `EnforceRequest`
    and sends it to `POST /api/v1/enforce` with the API key in `Authorization`.
-3. The gateway verifies the API key (§5.3), looks up `(tenant_id, policy_id)`,
-   loads or caches the policy, and runs the PDP.
-4. The proxy applies obligations from the response before forwarding to upstream
-   (for `allow`) or returns a denial to the MCP client (for `deny`).
-5. The gateway writes its own OCSF audit event; the proxy does not write a
-   duplicate local audit record when in remote-enforcer mode (to avoid double
-   counting in the dashboard).
+3. The hosted minter façade verifies the API key (§5.3), loads the stored
+   `(tenant_id, policy_id, policy_hash)`, signs a ≤5 minute capability JWT with
+   the tenant's HSM key, and writes the mint-audit row required by the threat
+   model.
+4. The façade forwards the request to the internal gateway with the capability
+   JWT. The gateway verifies the JWT through the existing verifier path, loads or
+   caches the policy, and runs the PDP.
+5. The proxy applies obligations from the response before forwarding to upstream
+    (for `allow`) or returns a denial to the MCP client (for `deny`).
+6. The gateway writes its own OCSF audit event; the proxy does not write a
+    duplicate local audit record when in remote-enforcer mode (to avoid double
+    counting in the dashboard).
 
 **Latency target:** The gateway MUST return a response within `timeoutMs`
 (default 5000 ms). If the timeout elapses, `@euno/mcp` falls back to
@@ -796,7 +817,7 @@ it. Reviewers should verify each cross-link before approving.
 | Redis circuit-breaker: hosted hard-codes fail-closed; self-hosters must set `REDIS_CIRCUIT_OPEN_MODE` | §3.2 | stage3plan §Task 4 (no silent default) |
 | Self-host bundle excludes minter | §4 | Line 646 (hosted-only initially) |
 | API-key format: `sk-<p8>.<s48>` base58 | §5.1 | stage3plan §Task 10 |
-| API-key hash: Argon2id PHC string (no separate salt column) | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
+| API-key verifier: HMAC-SHA256 with external pepper | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
 | API-key issuance audit log (separate credentials) | §5.2 | Line 679 |
 | Enforcer config: flat form canonical (mvp.md line 633); nested form also accepted | §6.1 | Lines 628–633 |
 | Enforcer endpoint POST /api/v1/enforce | §6.2 | stage3plan §Task 9 |
@@ -807,55 +828,53 @@ it. Reviewers should verify each cross-link before approving.
 
 ---
 
-## 8. Open Questions (resolve before Tasks 2+ begin)
+## 8. Resolved Review Decisions
 
-These items are noted for the review; they are the only unresolved decisions.
-Each must be closed (answered in-line and committed) before the RFC is approved.
+These items were reviewed as pre-signoff blockers and are resolved inline so
+Tasks 2+ have no deferred architectural decisions.
 
-1. **Per-tenant vs platform-wide minter key:** The minter threat model (Task 1)
-   must decide whether the hosted service uses a single platform-wide signing
-   key with per-tenant `aud` scoping, or a separate HSM key version per tenant.
-   The `AzureKeyVaultConfig.keysByPolicyHash` map (referenced in §1.1) names the mechanism for composite key selection; the policy
-   choice (cost vs isolation) is for the threat-model review. Default
-   recommendation: per-tenant key versions (higher isolation, modest additional
-   HSM cost) — override in Task 1 if HSM pricing makes this impractical.
+1. **Per-tenant vs platform-wide minter key:** Resolved to per-tenant HSM keys
+   for the hosted service. The existing `policyHash:audience` lookup in
+   `AzureKeyVaultConfig.keysByPolicyHash` names the selection mechanism. No
+   online platform-wide key signs capability tokens.
 
-2. **Argon2id vs HMAC-SHA256 for API-key hashing:** Argon2id provides
-   memory-hardness against offline attacks. If the key DB is compromised, this
-   matters. HMAC-SHA256 with a secret pepper provides speed (sub-millisecond)
-   and is adequate if the key DB and the pepper are stored separately. Decision
-   deferred to Task 10 reviewer; this document recommends Argon2id as the
-   more conservative choice.
+2. **Argon2id vs HMAC-SHA256 for API-key verification:** Resolved to
+   HMAC-SHA256 with a secret pepper stored outside the API-key database. The API
+   key secret is ~285 bits of random entropy, so the security boundary is pepper
+   separation and rate limiting rather than password-style memory hardness.
 
 3. **Postgres instance: shared vs separate for mint-audit:** The MVP requires
    the mint-audit log to use "separate credentials from the minter" (line 679).
-   This can be satisfied by a separate Postgres user on the same instance, or a
-   separate instance entirely. Separate instance is more operationally expensive;
-   separate user is adequate. Recommendation: separate Postgres user with a
-   separate connection string — resolve in Task 10.
+   Resolved to a separate audit-sidecar write identity and a separate Postgres
+   schema/user on the hosted database cluster by default. Enterprise deployments
+   may place the schema on a separate instance, but the minimum accepted control
+   is separate credentials and append-only grants held outside the minter
+   process.
 
 4. **`@euno/langchain` remote enforcer support:** Stage 3 introduces remote
    enforcement for `@euno/mcp`. The `@euno/langchain` companion package
    (`stage2executionplan.md` Task 9) uses the same `CapabilityRuntime` seam
    locally. Should `@euno/langchain` support `enforcer: { url, apiKey }` in
-   Stage 3? Default: no — langchain is an in-process runtime; the gateway is
-   the right enforcement point for LangChain.js users who want shared state.
-   They should route through the MCP transport instead. Confirm before Task 2.
+   Stage 3? Resolved to no for Stage 3. LangChain.js users who want shared
+   state should route through the MCP transport or adopt the gateway directly
+   after Stage 3; the initial remote-enforcer client surface remains
+   `@euno/mcp` only.
 
 ---
 
 ## 9. Review Checklist
 
 - [ ] KMS provider decision reviewed and signed off by ≥2 engineers.
-- [ ] Minter threat model (Task 1) scheduled; §8 open question 1 resolved there.
+- [ ] Minter threat model (Task 1) approved; §8 resolved decisions remain aligned
+      with `docs/security/minter-threat-model.md`.
 - [ ] Postgres schema reviewed by a DBA or engineer familiar with pg advisory
-      locks and Argon2id parameters.
+      locks and append-only audit credentials.
 - [ ] Redis circuit-breaker defaults reviewed by on-call operations lead.
 - [ ] API-key format reviewed by at least 1 security reviewer (entropy,
-      constant-time comparison, Argon2id parameters).
+      pepper storage, rate limiting, constant-time comparison).
 - [ ] Wire protocol reviewed by the `@euno/mcp` implementer (Task 2) and the
       gateway implementer (Task 9) — they must agree on the same spec.
-- [ ] All §8 open questions resolved (answer inline, commit the update).
+- [x] All §8 review decisions resolved inline.
 - [ ] This document approved (PR approved by ≥2 engineers + 1 security
       reviewer) before any Task 2+ code is merged to `main`.
 

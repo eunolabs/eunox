@@ -26,11 +26,12 @@ single config change:
 { "enforcer": "https://gateway.euno.example", "apiKey": "sk-..." }
 ```
 
-The minter holds the platform's managed signing key. That key has authority to mint a
-valid `AgentCapabilityManifest` JWT for **any tenant, any policy, any agent** on the
-platform. It is the highest-value target in the entire system — equivalent in sensitivity
-to a managed certificate authority or an OAuth authorization server whose tokens directly
-authorize real-world actions.
+The minter holds the platform's managed signing authority. In the hosted design that
+authority is implemented as per-tenant non-exportable HSM keys, not as one online
+platform-wide private key. A compromise of the minter service could still request HSM
+signatures for many tenants, so it remains the highest-value service in the system —
+equivalent in sensitivity to a managed certificate authority or an OAuth authorization
+server whose tokens directly authorize real-world actions.
 
 This document answers the seven questions required by
 [mvp.md §"Minter threat model"](../mvp.md#minter-threat-model-required-before-stage-3-ships)
@@ -51,14 +52,14 @@ The minter uses one of the three KMS drivers already implemented in
 `euno-platform/packages/capability-issuer/src/{azure-signer,aws-kms-signer,gcp-cloudkms-signer}.ts`.
 All three implement the `SigningAdapter` / `TokenSigner` interface from `@euno/common`.
 The **chosen driver for the hosted offering is Azure Managed HSM** (not Standard Key
-Vault). Self-hosters may use AWS CloudHSM or GCP Cloud HSM (HSM protection level). The
-reasoning:
+Vault), with per-tenant EC P-256 (`EC-HSM`, `ES256`) signing keys. Self-hosters may
+use AWS CloudHSM or GCP Cloud HSM (HSM protection level). The reasoning:
 
 | Dimension | Azure Managed HSM | AWS CloudHSM | GCP Cloud HSM |
 |---|---|---|---|
 | FIPS 140-2 Level 3 | ✓ (dedicated HSM cluster) | ✓ (dedicated cluster) | ✓ (HSM protection level on Cloud KMS) |
 | Key non-exportability enforced at HSM | ✓ — `keyOps` excludes `export`; HSM firmware refuses export regardless of IAM | ✓ — CMK with `Origin=AWS_CLOUDHSM` cannot be exported by any IAM action | ✓ — `protectionLevel=HSM` keys have no `ExportCryptoKey` permission at all |
-| Per-tenant key isolation | ✓ — one Key Vault per tenant (or per-tenant key version with separate access policy) | ✓ — one CMK ARN per tenant | ✓ — one CryptoKey per tenant key ring |
+| Per-tenant key isolation | ✓ — one Managed HSM key per tenant selected by `policyHash:audience` | ✓ — one CMK ARN per tenant | ✓ — one CryptoKey per tenant key ring |
 | Managed multi-region HA | ✓ — Managed HSM is geo-replicated | ✗ — single AZ (CloudHSM cluster spans AZs manually) | ✓ — global key rings with regional key versions |
 
 #### Non-exportability — exact API assertions
@@ -120,12 +121,15 @@ gcloud kms keys create minter-signing-key \
 
 - Key creation is performed by a designated **HSM admin identity** (separate from the
   minter service identity). The minter service principal holds only the `sign` and
-  `verify` permissions — it cannot create, delete, or update keys.
+  `verify` permissions on tenant keys — it cannot create, delete, update, export, or
+  change access policy on keys.
 - All HSM admin operations (key create, key rotate, access-policy changes) are logged to
   the cloud provider's audit trail (Azure Monitor Activity Log / AWS CloudTrail / GCP
   Cloud Audit Logs) and to the separate minter audit store described in §6.
 - Key material is stored exclusively in the HSM. No key material is ever logged,
-  transmitted, or persisted to any other store.
+  transmitted, or persisted to any other store. The platform bootstrap/admin identity
+  may create or disable tenant keys, but it does not expose an online key that signs
+  tenant capability tokens.
 
 ---
 
@@ -133,26 +137,39 @@ gcloud kms keys create minter-signing-key \
 
 ### Threat
 
-Compromise of the minter signing key allows an attacker to:
-1. Mint valid JWTs for any tenant and policy on demand.
-2. Assign arbitrary capabilities to agents — bypassing all enforcement guarantees.
-3. Forge audit records that appear legitimate (the records carry the minter's `kid`).
+The damage depends on which credential is compromised:
+
+1. **API key compromise:** attacker can mint short-lived tokens only for the tenant,
+   policy, scopes, and agent IDs bound to that API key.
+2. **Tenant HSM key/sign-oracle compromise:** attacker can forge valid JWTs for that
+   tenant's `aud`/`kid` until rotation removes the key from JWKS and revokes observed
+   JTIs.
+3. **Minter service compromise:** attacker may request HSM signatures across tenants
+   that the service identity can reach and can attempt to bypass API-key policy lookup.
+   This is the worst realistic online compromise and drives the controls below.
+4. **HSM admin/root compromise:** attacker may provision or re-permission keys. This is
+   mitigated by split admin identity, two-person approval, provider audit logs, and
+   tenant-key rotation.
 
 ### Blast-radius containment design
 
 | Layer | Mechanism |
 |---|---|
 | **Short TTL** | Minted tokens expire in ≤ 5 minutes (configurable per tenant down to 1 minute). An attacker with a compromised key can only mint tokens during the window between key compromise and key rotation. The `@euno/mcp` remote-enforcer client refreshes transparently before expiry. |
-| **Per-issuance audit trail** | Every mint call writes an immutable row to the mint-audit store (see §6). On key compromise, the audit trail provides a complete enumeration of every token ever minted with the compromised key: tenant, agent, jti, policy fingerprint, `iat`, and `exp`. This is the blast-radius surface — no rows in the audit log = no exposure. |
+| **Per-issuance audit trail** | Every mint call writes an immutable row to the mint-audit store (see §6). On key or service compromise, the audit trail provides a complete enumeration of every token minted through the legitimate minter path: tenant, agent, jti, policy fingerprint, `iat`, and `exp`. Missing audit rows are treated as evidence of direct HSM-sign-oracle abuse and trigger emergency tenant-key rotation plus kill switch. |
 | **Revocation list** | The gateway's existing `RevocationStore` (Redis-backed with Redis-circuit-breaker fail-closed) covers the unexpired window. On key compromise, the rotation procedure (§3) bulk-revokes all JTIs issued after the estimated compromise time and before the new key becomes active. The kill-switch manager (Redis + Postgres dual-write, §3 step 5a) provides a broader emergency stop if the compromise window is unclear. |
-| **Per-tenant key isolation** | Per-tenant signing keys (§4) bound the blast radius to a single tenant's token population if a tenant-scoped key is compromised, not the entire platform. A compromise of the platform root (used for bootstrapping only) is the worst case — mitigated by the audit trail and short TTL. |
+| **Per-tenant key isolation** | Per-tenant signing keys (§4) bound the blast radius to a single tenant's token population if a tenant-scoped key is compromised, not the entire platform. A compromise of the minter service identity is broader, so the service identity is segmented by tenant shard where operationally possible and all tenant key use is audited by the HSM provider. |
 | **JWKS rotation window** | The gateway verifier respects `kid`. The compromised key's `kid` is removed from the JWKS endpoint immediately on rotation (§3), causing all in-flight tokens signed by the old key to fail verification within their remaining TTL (≤ 5 minutes). |
 
 ### Enumeration procedure on compromise
 
 1. Query the mint-audit store: `SELECT * FROM mint_audit WHERE kid = $compromised_kid ORDER BY minted_at`.
-2. For each row, post the `jti` to the revocation store (the gateway's revocation API accepts bulk JTI lists).
-3. Issue a platform-wide kill-switch if the compromise window is unclear (§3, step 5).
+2. Cross-check HSM provider sign-operation logs for the same `kid`; any HSM sign event
+   without a matching mint-audit row is treated as direct sign-oracle abuse.
+3. For each audited row, post the `jti` to the revocation store (the gateway's
+   revocation API accepts bulk JTI lists).
+4. Issue a tenant-scoped kill switch for known tenant-key compromise, or a platform-wide
+   kill switch if the compromise window or tenant set is unclear (§3, step 5).
 
 ---
 
@@ -181,14 +198,15 @@ Compromise of the minter signing key allows an attacker to:
    no valid in-flight token carries the old `kid`.
 
 5. **If emergency rotation (key compromise suspected):**
-   a. Invoke the platform-wide kill switch (`POST /admin/kill-switch/global`) immediately.
-      This blocks all token validations system-wide within the kill-switch propagation
-      window (pub/sub propagation: single-digit milliseconds intra-DC; worst case bounded
-      by `refreshIntervalMs = 30 s`).
+   a. Invoke the tenant-scoped kill switch immediately when the affected tenant is known;
+      invoke the platform-wide kill switch (`POST /admin/kill-switch/global`) only when
+      the compromise window or tenant set is unclear. This blocks token validations within
+      the kill-switch propagation window (pub/sub propagation: single-digit milliseconds
+      intra-DC; worst case bounded by `refreshIntervalMs = 30 s`).
    b. Bulk-revoke all JTIs in the mint-audit store signed with the compromised `kid`
       (per §2 enumeration procedure).
    c. Notify affected tenants with the list of potentially-forged JTIs from the audit log.
-   d. Lift the global kill switch after new key is active and old-key JTIs are revoked.
+   d. Lift the kill switch after the new key is active and old-key JTIs are revoked.
 
 6. **Remove old key from JWKS** — once no valid token can carry the old `kid`, remove it
    from the JWKS endpoint. The gateway's `JwksTokenVerifier` will reject any future token
@@ -217,17 +235,18 @@ before Stage 3 ships. The test:
 
 ### Threat
 
-A platform-wide signing key means that a compromised minter can issue tokens for
-**any tenant** at maximum privilege, not just the attacker's own tenant.
+Without tenant-scoped signing keys, a compromised minter or signing credential could
+issue tokens for **any tenant** at maximum privilege, not just the attacker's own tenant.
 
 ### Design — per-tenant signing keys behind a single root
 
 **Recommendation: per-tenant keys, single HSM root.**
 
 Each tenant is assigned a dedicated signing key in the HSM. The tenant's tokens carry a
-`kid` that maps to their key, and the JWKS endpoint returns only that tenant's key for
-that `kid`. The platform root key is used only to bootstrap new tenant key creation
-(a brief admin operation) and is otherwise offline.
+`kid` that maps to their key and an `aud`/issuer tuple bound to that tenant. The JWKS
+endpoint returns only keys valid for the tenant/gateway audience being verified. The
+platform root/admin identity is used only to bootstrap or disable tenant key creation
+(a brief admin operation) and is otherwise outside the runtime signing path.
 
 | Property | Per-tenant keys | Platform-wide key |
 |---|---|---|
@@ -255,10 +274,12 @@ This means a compromised **API key** (not the HSM key) can only produce tokens w
 scope of that key's stored policy — it cannot escalate to other tenants or to capabilities
 not in the policy.
 
-A compromised **HSM key** is still bounded to the capability contents that the minter
-would look up for a given `(apiKey, agentId)` pair — but because the attacker can supply
-arbitrary `(apiKey, agentId)` pairs, the effective blast radius is all tenants with valid
-API keys. This is why per-tenant key isolation matters.
+A compromised **tenant HSM signing path** can forge tokens for that tenant, so the
+gateway must enforce the tenant/audience binding in addition to normal signature
+verification. A compromised **minter service** is broader because it can perform policy
+lookups and request signatures for tenants reachable by its workload identity; that risk
+is mitigated by per-tenant HSM keys, tenant-sharded service identities where practical,
+short TTLs, mint-audit/HSM-log reconciliation, and emergency kill-switch rotation.
 
 ---
 
@@ -278,11 +299,11 @@ directly bypasses even that constraint.
 ```
 [Agent process]
     ↓  HTTPS (TLS 1.3, SNI verified)
-[CDN / load balancer] — WAF rules: rate-limit per API-key prefix; only POST /mint is routed — all other methods and paths are rejected at the load balancer
+[CDN / load balancer] — WAF rules: rate-limit per API-key prefix; only POST /mint and hosted /api/v1/enforce are routed — all other methods and paths are rejected at the load balancer
     ↓  Internal mTLS
 [Minter service]
-    ↓  SDK-authenticated KMS API call (IAM role, no long-lived credential)
-[HSM]
+    ├─ SDK-authenticated KMS sign call (IAM role, no long-lived credential) → [HSM]
+    └─ Internal mTLS with short-lived tenant JWT (hosted /api/v1/enforce only) → [Tool gateway]
 ```
 
 - The minter service is not reachable from the public internet except through the CDN/LB.
@@ -293,6 +314,9 @@ directly bypasses even that constraint.
   operator's management VLAN / VPN.
 - API-key validation is rate-limited per `sk-` prefix at the CDN layer (N attempts/minute
   configurable per tenant) before the request reaches the minter process.
+- In hosted remote-enforcer mode, the external API key terminates at the minter façade.
+  The internal tool gateway receives only the short-lived capability JWT; it never accepts
+  an `sk-...` API key as an authorization token.
 
 #### Minter → HSM access path
 
@@ -323,6 +347,8 @@ directly bypasses even that constraint.
   - All other egress is denied.
 - The minter has no direct access to the gateway's enforcement Postgres schema, the
   revocation Redis instance, or any other service beyond what is listed above.
+- The internal tool gateway is separately network-isolated; only the minter façade and
+  approved self-host/BYO ingress paths can reach its enforcement route.
 
 ---
 
@@ -351,9 +377,9 @@ Minter pod:
 ```
 
 The audit-sidecar accepts only append operations (no read, no update, no delete). Its
-Postgres role is: `GRANT INSERT ON mint_audit TO audit_writer`. No `SELECT`, `UPDATE`, or
-`DELETE` is granted to the sidecar. The DBA role (held by operators, not the minter) can
-read and analyze the table.
+Postgres role is: `GRANT INSERT ON mint_audit TO audit_writer` plus the minimum sequence
+usage required for `BIGSERIAL`. No `SELECT`, `UPDATE`, or `DELETE` is granted to the
+sidecar. The DBA role (held by operators, not the minter) can read and analyze the table.
 
 #### Mint-audit row schema
 
@@ -373,7 +399,10 @@ CREATE TABLE mint_audit (
   kid           TEXT NOT NULL,           -- which signing key was used
   exp           BIGINT NOT NULL,         -- unix seconds: token expiry
   result        TEXT NOT NULL CHECK (result IN ('ok', 'denied', 'error')),
-  denial_reason TEXT                     -- populated when result != 'ok'
+  denial_reason TEXT,                    -- populated when result != 'ok'
+  previous_hash TEXT NOT NULL,           -- SHA-256 of previous canonical row
+  row_hash      TEXT NOT NULL,           -- SHA-256 of this canonical row
+  row_hmac      BYTEA NOT NULL           -- HMAC-SHA256(sidecar secret, row_hash)
 );
 
 CREATE INDEX ON mint_audit (tenant_id, minted_at DESC);
@@ -508,6 +537,13 @@ annotations:
   summary: "Emergency minter key rotation for kid {{ $labels.kid }}"
   runbook: "https://docs.euno.example/runbooks/minter-key-rotation"
 ```
+
+#### Rule 6 — HSM sign/audit mismatch
+
+The security telemetry job compares provider HSM sign-operation logs against
+`mint_audit` rows by `kid`, time bucket, and request correlation ID. Any HSM sign event
+without a matching mint-audit row within 2 minutes pages security as a potential direct
+sign-oracle compromise.
 
 ### Alert routing
 
