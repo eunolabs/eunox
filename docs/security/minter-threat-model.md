@@ -104,13 +104,27 @@ aws kms create-key \
 
 **GCP Cloud KMS (HSM protection level):**
 
+> ⚠️ **Region requirement:** GCP Cloud HSM is only available in specific regional
+> locations (e.g. `us-east1`, `europe-west1`). The `global` location does **not**
+> support `--protection-level hsm`; a key ring created there will silently fall back
+> to `SOFTWARE` protection, which violates this requirement. Always specify an
+> approved HSM-capable region and confirm the protection level after creation.
+
 ```bash
 gcloud kms keys create minter-signing-key \
   --keyring $MINTER_KEYRING \
-  --location global \
+  --location <hsm-capable-region>   # e.g. us-east1, europe-west1 — NOT "global"
   --purpose asymmetric-signing \
   --default-algorithm ec-sign-p256-sha256 \
   --protection-level hsm
+
+# Verify the created key version reports HSM protection:
+gcloud kms keys versions describe 1 \
+  --key minter-signing-key \
+  --keyring $MINTER_KEYRING \
+  --location <hsm-capable-region> \
+  --format="value(protectionLevel)"
+# Expected output: HSM   (not SOFTWARE)
 
 # Assert non-exportability — HSM-protected keys have no ExportCryptoKey permission
 # at all: the permission does not exist on the IAM policy surface for HSM keys.
@@ -223,9 +237,11 @@ The damage depends on which credential is compromised:
 
 The rotation procedure is tested end-to-end in `euno-platform/packages/integration-tests/`
 before Stage 3 ships. The test:
-- Mints a token with the old key.
-- Rotates to a new key.
-- Asserts the old-key token is rejected by the verifier after TTL expiry.
+- Mints a token with the old key (with a TTL long enough for the test to complete, e.g. 5 minutes).
+- Rotates to a new key (adds new `kid` to JWKS, switches minter, then removes old `kid`).
+- Asserts the old-key token is rejected by the verifier **before its TTL expires**, immediately
+  after the old `kid` is removed from the JWKS endpoint — not merely that it is rejected after
+  natural expiry (which would be true of any token and does not validate the rotation mechanism).
 - Asserts a new-key token is accepted.
 - Asserts the audit store records both the rotation event and the token's jti.
 
@@ -433,6 +449,27 @@ is encoded as base64url for verification exports. This is the same pattern used 
 `euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
 process and its secret — two separate compromises required.
+
+#### Sidecar HMAC key provisioning and rotation
+
+The sidecar's HMAC secret is **not** stored in an environment variable, container image,
+or the Postgres instance. It is injected at sidecar startup by the cloud secret manager
+(Azure Key Vault secret / AWS Secrets Manager / GCP Secret Manager), using the sidecar's
+own workload identity — separate from both the minter's identity and the DBA role. The
+following controls apply:
+
+- The sidecar workload identity has `GET` access to the HMAC secret in the secret manager.
+  It has no other permissions (no access to the minter's HSM signing credentials, no access
+  to the API-key pepper, no Postgres DBA rights).
+- The HMAC secret is a 32-byte random value (256 bits). A new version is generated during
+  each periodic key rotation or on suspected sidecar compromise.
+- During rotation, the sidecar loads both the current and previous HMAC key version so that
+  rows written during the crossover can be verified against either version. At most two
+  versions are active concurrently for no more than 24 hours.
+- The HMAC key version in use for each row is **not** stored in the `mint_audit` table.
+  Operators verifying older rows use the secret manager's version history. If the old version
+  has been retired, verification requires a point-in-time snapshot of the secret manager;
+  operators must follow the repository's approved audit verification and snapshot procedure.
 
 Optionally (configurable), every N rows the sidecar computes a Merkle root and writes it
 to an S3 Object-Lock bucket. This provides an external witness: a DB-level compromise
