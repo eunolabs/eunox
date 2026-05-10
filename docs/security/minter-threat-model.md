@@ -1,7 +1,7 @@
 # API-Key Minter Threat Model
 
 > **Status:** Pending sign-off (requires ≥ 2 engineers + 1 security reviewer outside the
-> implementer before minter code merges to `main` — see [stage3executionplan.md §Task 1](../stage3executionplan.md#task-1--api-key-minter-threat-model-blocking-per-mvp-lines-660691)).
+> implementer before minter code merges to `main` — see [stage3executionplan.md §Task 1](../stage3executionplan.md).
 >
 > **Last updated:** 2026-05-10
 >
@@ -32,8 +32,9 @@ platform. It is the highest-value target in the entire system — equivalent in 
 to a managed certificate authority or an OAuth authorization server whose tokens directly
 authorize real-world actions.
 
-This document answers the seven questions required by [mvp.md §"Minter threat model"
-(lines 660–691)](../mvp.md) before the minter may ship to a paying customer.
+This document answers the seven questions required by [mvp.md §"Minter threat model
+(required before Stage 3 ships)"](../mvp.md#minter-threat-model-required-before-stage-3-ships)
+before the minter may ship to a paying customer.
 
 ---
 
@@ -143,7 +144,7 @@ Compromise of the minter signing key allows an attacker to:
 |---|---|
 | **Short TTL** | Minted tokens expire in ≤ 5 minutes (configurable per tenant down to 1 minute). An attacker with a compromised key can only mint tokens during the window between key compromise and key rotation. The `@euno/mcp` remote-enforcer client refreshes transparently before expiry. |
 | **Per-issuance audit trail** | Every mint call writes an immutable row to the mint-audit store (see §6). On key compromise, the audit trail provides a complete enumeration of every token ever minted with the compromised key: tenant, agent, jti, policy fingerprint, `iat`, and `exp`. This is the blast-radius surface — no rows in the audit log = no exposure. |
-| **Revocation list** | The gateway's existing `RevocationStore` (Redis-backed with Redis-circuit-breaker fail-closed, plus Postgres dual-write via the `LedgerAuditEvidenceSigner` ledger backend) covers the unexpired window. On key compromise, the rotation procedure (§3) bulk-revokes all JTIs issued after the estimated compromise time and before the new key becomes active. |
+| **Revocation list** | The gateway's existing `RevocationStore` (Redis-backed with Redis-circuit-breaker fail-closed) covers the unexpired window. On key compromise, the rotation procedure (§3) bulk-revokes all JTIs issued after the estimated compromise time and before the new key becomes active. The kill-switch manager (Redis + Postgres dual-write, §3 step 5a) provides a broader emergency stop if the compromise window is unclear. |
 | **Per-tenant key isolation** | Per-tenant signing keys (§4) bound the blast radius to a single tenant's token population if a tenant-scoped key is compromised, not the entire platform. A compromise of the platform root (used for bootstrapping only) is the worst case — mitigated by the audit trail and short TTL. |
 | **JWKS rotation window** | The gateway verifier respects `kid`. The compromised key's `kid` is removed from the JWKS endpoint immediately on rotation (§3), causing all in-flight tokens signed by the old key to fail verification within their remaining TTL (≤ 5 minutes). |
 
@@ -430,8 +431,8 @@ are tested against a synthetic test tenant before Stage 3 ships.
 # Fires when a single tenant's mint rate exceeds 10× its 1-hour rolling average.
 alert: MinterRateSpike
 expr: |
-  rate(euno_minter_mint_total{result="ok"}[5m]) by (tenant)
-  > 10 * avg_over_time(rate(euno_minter_mint_total{result="ok"}[5m])[1h:5m]) by (tenant)
+  sum by (tenant) (rate(euno_minter_mint_total{result="ok"}[5m]))
+  > 10 * sum by (tenant) (avg_over_time(rate(euno_minter_mint_total{result="ok"}[5m])[1h:5m]))
 for: 2m
 labels:
   severity: critical
@@ -447,9 +448,9 @@ annotations:
 alert: MinterOffHoursMint
 expr: |
   (
-    increase(euno_minter_mint_total{result="ok"}[5m]) by (tenant) > 0
+    sum by (tenant) (increase(euno_minter_mint_total{result="ok"}[5m])) > 0
     and on(tenant) (
-      increase(euno_minter_mint_total{result="ok"}[7d]) by (tenant) < 10
+      sum by (tenant) (increase(euno_minter_mint_total{result="ok"}[7d])) < 10
     )
   )
   and (hour() >= 22 or hour() < 6)
@@ -464,14 +465,14 @@ annotations:
 #### Rule 3 — KMS error clustering
 
 ```yaml
-# Fires when more than 5 KMS errors occur in 1 minute across any provider.
+# Fires when more than 5 KMS errors occur in 1 minute summed across all providers.
 alert: MinterKmsErrorCluster
-expr: rate(euno_minter_kms_error_total[1m]) > 5
+expr: sum(rate(euno_minter_kms_error_total[1m])) > 5
 for: 1m
 labels:
   severity: critical
 annotations:
-  summary: "KMS errors clustering on {{ $labels.provider }}"
+  summary: "KMS error rate spike across all providers"
   runbook: "https://docs.euno.example/runbooks/minter-kms-errors"
 ```
 
@@ -482,9 +483,9 @@ annotations:
 # which may indicate a credential stuffing or API-key enumeration attack.
 alert: MinterHighFailureRate
 expr: |
-  rate(euno_minter_mint_total{result=~"denied|error"}[5m]) by (tenant)
+  sum by (tenant) (rate(euno_minter_mint_total{result=~"denied|error"}[5m]))
   /
-  rate(euno_minter_mint_total[5m]) by (tenant)
+  sum by (tenant) (rate(euno_minter_mint_total[5m]))
   > 0.5
 for: 2m
 labels:
@@ -513,8 +514,8 @@ annotations:
 All `critical` alerts page the on-call security engineer immediately (PagerDuty / OpsGenie
 integration). `warning` alerts post to the `#security-alerts` Slack channel and are
 reviewed at the next business-day stand-up. SRE runbooks for each alert are maintained at
-`docs/runbooks/minter-*.md` (stub files created alongside this document; fully populated
-before Stage 3 ships to the first paying customer).
+`docs/runbooks/minter-*.md` (see stub files created alongside this document; fully
+populated before Stage 3 ships to the first paying customer).
 
 ---
 
@@ -539,7 +540,7 @@ enforcing this is tracked in the Stage 3 task checklist in `docs/mvp.md`.
 
 | Document | Relevant section |
 |---|---|
-| [`docs/mvp.md`](../mvp.md) | §"Minter threat model" (lines 660–691), §"Critical Risks" (lines 877–885) |
+| [`docs/mvp.md`](../mvp.md) | [§"Minter threat model"](../mvp.md#minter-threat-model-required-before-stage-3-ships), [§"Critical risks"](../mvp.md#critical-risks) |
 | [`docs/stage3executionplan.md`](../stage3executionplan.md) | Task 1 (this document), Task 10–12 (minter implementation) |
 | [`docs/enforcement.md`](../enforcement.md) | Cryptographic-token invariant |
 | [`docs/capability-model.md`](../capability-model.md) | §6 — unknown types are denied by default |
