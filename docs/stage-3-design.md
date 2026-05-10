@@ -423,7 +423,7 @@ sk-<prefix8>.<secret48>
 │    │         └── 48 chars ≈ 285 bits of random, base58 encoded
 │    │                        Provides > 2^284 guessing resistance
 │    └── 8 random base58 chars, unique per key
-│         Allows O(1) DB lookup without scanning hashed secrets
+│         Stored in plaintext and indexed for O(1) DB lookup without scanning digests
 └── Literal prefix — identifies the token type in logs and error messages
 ```
 
@@ -491,18 +491,31 @@ human-memorable passwords. A memory-hard password KDF adds material online DoS
 risk while providing little additional protection against offline guessing of a
 ~285-bit secret. A keyed digest means a DB-only compromise cannot validate
 candidate keys; an attacker needs both the DB and the external pepper. The
-digest comparison is performed with `crypto.timingSafeEqual` after equal-length
-normalization.
+digest comparison is performed with `crypto.timingSafeEqual` over decoded
+32-byte digests. If the stored digest is malformed or the decoded length is not
+32 bytes, the verifier compares against a fixed-length random dummy digest and
+then rejects; it must not pad attacker-controlled values or skip comparison in
+a way that creates a timing oracle.
+
+**Pepper storage and rotation:** Pepper material is stored in the cloud secret
+manager or KMS-backed configuration store, not in Postgres and not in the
+container image. The verifier keeps a small allowlist of active
+`hmac_key_version` values during rotation. New keys are written with the newest
+version; existing keys continue to verify with their recorded version until
+they are reissued or the old pepper is retired. Retiring a pepper requires
+revoking or reissuing every API key whose row still references that version.
 
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
 2. PostgreSQL parameterized query: `SELECT key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
-3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
+3. If no row, run the same HMAC and constant-time comparison path against a
+   dummy row before returning 401, so prefix enumeration does not get a cheaper
+   timing path. If `revoked_at IS NOT NULL` or `expires_at < now()`, return 401.
 4. Load the pepper version named by `hmac_key_version`, compute the candidate
    digest, and compare it to `key_digest` using constant-time comparison.
-5. If mismatch: return 401.
+5. If mismatch or the stored pepper version is not active: return 401.
 6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
    enforcement path).
 7. Return `(tenant_id, policy_id, scopes)` to the caller.

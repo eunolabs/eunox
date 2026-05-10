@@ -397,6 +397,7 @@ CREATE TABLE mint_audit (
   policy_fingerprint TEXT NOT NULL,      -- SHA-256 of canonical policy JSON
   jti           TEXT NOT NULL UNIQUE,    -- the JWT jti of the minted token
   kid           TEXT NOT NULL,           -- which signing key was used
+  kms_request_id TEXT,                   -- provider request/correlation id when exposed
   exp           BIGINT NOT NULL,         -- unix seconds: token expiry
   result        TEXT NOT NULL CHECK (result IN ('ok', 'denied', 'error')),
   denial_reason TEXT,                    -- populated when result != 'ok'
@@ -414,7 +415,13 @@ CREATE INDEX ON mint_audit (jti);                  -- for per-token lookup on re
 
 Each row is protected by a per-row HMAC-SHA-256 over the canonical JSON of the row
 fields, computed with a secret held only by the audit sidecar (not the minter process and
-not the DBA). This is the same pattern used by `LedgerAuditEvidenceSigner` in
+not the DBA). Canonicalization uses RFC 8785 JSON Canonicalization Scheme over the
+application fields in the SQL schema order, excluding only `id`, `row_hash`, and
+`row_hmac`; `previous_hash` is included so deletion or reordering breaks the chain. The
+sidecar supplies `minted_at` explicitly before hashing rather than relying on the database
+default. SQL `NULL` values are encoded as JSON `null`, timestamps are UTC ISO-8601
+strings with millisecond precision, and binary `row_hmac` is encoded as base64url for
+verification exports. This is the same pattern used by `LedgerAuditEvidenceSigner` in
 `euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
 process and its secret — two separate compromises required.
@@ -541,9 +548,13 @@ annotations:
 #### Rule 6 — HSM sign/audit mismatch
 
 The security telemetry job compares provider HSM sign-operation logs against
-`mint_audit` rows by `kid`, time bucket, and request correlation ID. Any HSM sign event
-without a matching mint-audit row within 2 minutes pages security as a potential direct
-sign-oracle compromise.
+`mint_audit` rows by `kid`, service identity, and time bucket. Where the provider exposes
+a request/correlation identifier to the SDK or audit log, the minter records it in
+`mint_audit.kms_request_id` and the job performs exact matching. Where the provider does
+not expose a stable application-visible request ID, the job falls back to count matching
+per `(kid, service_identity, minute)` with a two-minute ingestion-lag allowance. Any HSM
+sign event without a matching audit row, or any count mismatch after the lag window,
+pages security as a potential direct sign-oracle compromise.
 
 ### Alert routing
 
