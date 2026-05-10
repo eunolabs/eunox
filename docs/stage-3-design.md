@@ -253,9 +253,14 @@ CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
   them. The consistency guarantee is:
   - **Redis write succeeds, Postgres write fails:** The revocation is immediately
     effective in Redis (all replicas see it within pub/sub delivery time). A
-    background reconciler re-drives the Postgres write from Redis on each startup.
-    Risk window: if Redis is flushed before the reconciler runs, the revocation
-    is lost. Mitigated by `redis-kill-switch.ts`'s periodic Postgres refresh.
+    background reconciler re-drives the Postgres write from Redis on each startup
+    and on every Redis reconnection event. The reconciler runs at startup and
+    whenever the Redis client emits a `reconnect` or `ready` event after a
+    connection loss; the maximum re-drive interval is bounded at 30 seconds so a
+    Postgres-write failure is durably captured within one reconnect cycle.
+    Risk window: if Redis is flushed AND the reconciler has not yet written the
+    row to Postgres, the revocation is lost. Mitigated by `redis-kill-switch.ts`'s
+    periodic Postgres refresh and the 30-second reconciler bound.
   - **Postgres write succeeds, Redis write fails:** The revocation is durable.
     The next periodic Redis refresh (every 30 s by default) loads the Postgres
     row, so the revocation takes effect within one refresh interval.
@@ -672,8 +677,13 @@ interface EnforceRequestContext {
   /**
    * Wall-clock time of the request in ISO-8601 format.
    * When omitted, the gateway uses its own clock.
-   * Providing this allows the gateway to enforce timeWindow conditions
-   * against the client's observed time rather than the gateway's.
+   * Providing this allows the gateway to record the client's observed time
+   * for audit purposes. It is NOT used to evaluate `timeWindow` conditions
+   * on the hosted (Cloud) service — the gateway always uses its own
+   * authoritative clock for policy enforcement to prevent clients from
+   * manipulating time-based access decisions. Self-hosters MAY choose to
+   * honour this field for `timeWindow` evaluation, but MUST document the
+   * trust assumption explicitly.
    * Difference > 60 s is rejected (clock-skew guard).
    */
   now?: string;
@@ -808,9 +818,19 @@ The `X-Euno-Protocol-Version` request header carries a monotonic integer
    caches the policy, and runs the PDP.
 5. The proxy applies obligations from the response before forwarding to upstream
     (for `allow`) or returns a denial to the MCP client (for `deny`).
-6. The gateway writes its own OCSF audit event; the proxy does not write a
-    duplicate local audit record when in remote-enforcer mode (to avoid double
-    counting in the dashboard).
+6. The gateway writes its own OCSF audit event. When running in remote-enforcer
+    mode, the proxy does **not** write a duplicate local audit record for the same
+    tool call (to avoid double-counting in the dashboard). This is an accepted
+    tradeoff: the gateway's audit trail is the authoritative record. Compensating
+    controls are: (a) the OCSF audit event is written by the gateway before the
+    enforcement response is returned, so an unanswered proxy request still
+    produces an audit row; (b) the `requestId` in the response is recorded by the
+    proxy in its own structured log for correlation; (c) the KMS mint-audit sidecar
+    records each token issuance independently of the gateway's enforcement log.
+    Operators who require an independent proxy-side audit trail for compliance
+    reasons MUST deploy their own `LocalHmacSigner`-backed audit sink alongside
+    the remote enforcer and accept that dual-write introduces duplicate rows that
+    the query API must de-duplicate on `requestId`.
 
 **Latency target:** The gateway MUST return a response within `timeoutMs`
 (default 5000 ms). If the timeout elapses, `@euno/mcp` falls back to
