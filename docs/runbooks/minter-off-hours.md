@@ -20,8 +20,7 @@
    SELECT minted_at, caller_ip, api_key_prefix, agent_id, result
    FROM mint_audit
    WHERE tenant_id = '<tenant>'
-     AND minted_at::time >= '22:00'
-      OR minted_at::time < '06:00'
+   AND (minted_at::time >= '22:00' OR minted_at::time < '06:00')
    ORDER BY minted_at DESC
    LIMIT 20;
    ```

@@ -32,9 +32,9 @@ platform. It is the highest-value target in the entire system — equivalent in 
 to a managed certificate authority or an OAuth authorization server whose tokens directly
 authorize real-world actions.
 
-This document answers the seven questions required by [mvp.md §"Minter threat model
-(required before Stage 3 ships)"](../mvp.md#minter-threat-model-required-before-stage-3-ships)
-before the minter may ship to a paying customer.
+This document answers the seven questions required by
+[mvp.md §"Minter threat model"](../mvp.md#minter-threat-model-required-before-stage-3-ships)
+(required before Stage 3 ships) before the minter may ship to a paying customer.
 
 ---
 

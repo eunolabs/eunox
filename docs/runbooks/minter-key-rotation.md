@@ -15,7 +15,7 @@ the rotation procedure has already been initiated by an operator.
 
 ## Verify the rotation is in progress
 
-1. Confirm the rotation was initiated by an authorised operator:
+1. Confirm the rotation was initiated by an authorized operator:
    ```sql
    SELECT minted_at, kid, reason
    FROM mint_audit
