@@ -67,11 +67,12 @@ Each tenant receives a dedicated HSM signing key selected through the existing
 `policyHash:audience` lookup for Azure (`AzureKeyVaultConfig.keysByPolicyHash`).
 AWS fallback deployments must bind each tenant to a distinct configured KMS key
 or a separate signer config per tenant; `AWSKMSConfig.grantTokensByPolicyHash` scopes sign
-authorization but does not select a different key. GCP fallback deployments carry
-the issuance context for audit today; hosted GCP fallback is blocked until Task
-11 adds context-keyed `CryptoKeyVersion` selection, while self-hosters can run a
-separate signer config per tenant. Platform-level credentials may provision or
-disable tenant keys, but they do not sign capability tokens.
+authorization but does not select a different key. GCP deployments currently lack
+per-tenant key isolation through a shared signer config; hosted GCP fallback is
+blocked until Task 11 adds context-keyed `CryptoKeyVersion` selection, while
+self-hosters can run a separate signer config per tenant. Platform-level
+credentials may provision or disable tenant keys, but they do not sign capability
+tokens.
 
 ### 1.2 Justification
 
@@ -525,6 +526,8 @@ At most two pepper versions may be active concurrently (`current` and
    format) so every lookup performs a real heap fetch even on requested-prefix misses:
    `SELECT prefix, key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix IN ($1, '__dummy__') ORDER BY (prefix = $1) DESC LIMIT 1`.
+   The descending boolean sort returns the real row when it exists (`true` before `false`)
+   and otherwise falls back to the dummy row.
 3. Run HMAC computation and constant-time comparison before any rejection is
    returned, including for missing, revoked, or expired rows. If the requested
    prefix did not select a real row, use the returned dummy row and fixed dummy
