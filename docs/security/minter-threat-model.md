@@ -562,10 +562,14 @@ to the minute after normalizing all timestamps to UTC. Minter nodes and audit in
 workers must be NTP-synchronized with drift under 30 seconds; if measured drift exceeds
 that bound, the telemetry job pages separately because reconciliation is degraded.
 Concurrent signs are handled by comparing aggregate counts over the affected minute plus
-adjacent minutes covered by the 30-second drift tolerance; no ±1 tolerance is accepted
-after the two-minute ingestion-lag allowance. Any HSM sign event without a matching audit
-row, or any count mismatch after the lag window, pages security as a potential direct
-sign-oracle compromise.
+adjacent minutes covered by the 30-second drift tolerance. If provider logs are batched or
+throughput is high enough that minute-level clustering makes bucket attribution ambiguous,
+the job widens the comparison to a rolling 5-minute UTC window and compares cumulative
+counts for the same `(kid, service_identity)`. No ±1 tolerance is accepted after the
+two-minute ingestion-lag allowance; if the widened window still mismatches, the job pages
+security as a potential direct sign-oracle compromise. Tenants whose normal volume makes
+5-minute count matching too noisy must enable provider request-ID capture before their
+rate limit is raised.
 
 ### Alert routing
 
