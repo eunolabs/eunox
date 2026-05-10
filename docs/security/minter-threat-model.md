@@ -277,7 +277,7 @@ directly bypasses even that constraint.
 ```
 [Agent process]
     ↓  HTTPS (TLS 1.3, SNI verified)
-[CDN / load balancer] — WAF rules: rate-limit per API-key prefix, block non-POST /mint
+[CDN / load balancer] — WAF rules: rate-limit per API-key prefix; only POST /mint is routed — all other methods and paths are rejected at the load balancer
     ↓  Internal mTLS
 [Minter service]
     ↓  SDK-authenticated KMS API call (IAM role, no long-lived credential)
@@ -420,9 +420,9 @@ in `public/packages/common/src/metrics.ts`):
 
 ### Alerting rules
 
-The following rules are defined in the minter's alert configuration and are tested against
-a synthetic test tenant before Stage 3 ships. "Low-activity tenant" is defined as fewer
-than 10 successful mints in the previous 7 days.
+A **low-activity tenant** is defined as one with fewer than 10 successful mints in the
+previous 7 days. The following rules are defined in the minter's alert configuration and
+are tested against a synthetic test tenant before Stage 3 ships.
 
 #### Rule 1 — Mint-rate spike per tenant
 
