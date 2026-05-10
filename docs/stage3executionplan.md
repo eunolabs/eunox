@@ -1,24 +1,23 @@
 Stage 3 Execution Plan — "The Gateway as Managed Boundary"
-Source: docs/mvp.md §"Stage 3: The Gateway as Managed Boundary" (lines 602–697), with hard dependencies on §"Policy and audit schema parity" (lines 507–554) and §"Minter threat model" (lines 660–691).
+Source: docs/mvp.md §"Stage 3: The Gateway as Managed Boundary", with hard dependencies on §"Policy and audit schema parity" and §"Minter threat model".
 
 Stage 3 thesis (preserve when assigning tasks). Stage 1–2 enforcement runs in-process inside @euno/mcp with local files, in-memory counters, an HMAC audit log, and an in-process kill switch. Stage 3 lifts enforcement out of the agent process into a hosted (and self-hostable) gateway. The agent's policy file shape and audit record shape do not change — only the implementations of four already-existing seams in @euno/common-core change, plus one new seam (LocalPolicySource → JWT loader). The user-visible upgrade is a single config change: {"enforcer":"local"} → {"enforcer":"https://gateway.euno.example","apiKey":"sk-..."}. To make that one-config-change promise true while preserving the cryptographic-token invariant, Stage 3 introduces an API-key minter in front of the existing euno-platform/packages/tool-gateway. The minter is the highest-value key in the system; it cannot ship before its written threat model is reviewed.
 
 Ground truth pointers Copilot must read first on every task:
 
 docs/stage-3-design.md (Task 0 RFC — the authoritative design freeze document; read this first)
-docs/mvp.md §"Stage 3" (lines 602–697)
-docs/mvp.md §"Policy and audit schema parity" — the parity table (lines 520–528)
+docs/mvp.md §"Stage 3" and §"Policy and audit schema parity" — the parity table
 docs/capability-model.md §6 ("unknown types are denied by default")
 docs/enforcement.md (cryptographic-token invariant)
 Existing seams: public/packages/common/src/runtime.ts (TokenVerifier, EvidenceSigner, KillSwitchManager), public/packages/common/src/condition-registry.ts (CallCounterStore), public/packages/common/src/manifest-validator.ts
 Existing implementations to wire/reuse: euno-platform/packages/tool-gateway/src/{verifier.ts,enforcement.ts,admin-api.ts,revocation-store.ts}, euno-platform/packages/common-infra/src/{call-counter-store.ts,redis-kill-switch.ts,redis-circuit-breaker.ts,ledger-signer.ts}, euno-platform/packages/capability-issuer/ (for token issuance reference)
-Per-task obligation: any new condition handling, audit field, or token claim must be added in @euno/common-core first and consumed by @euno/mcp and tool-gateway from there. No types in @euno/mcp or tool-gateway that don't exist in @euno/common-core (per Critical Risks §"@euno/mcp" rule, lines 871–874).
+Per-task obligation: any new condition handling, audit field, or token claim must be added in @euno/common-core first and consumed by @euno/mcp and tool-gateway from there. No types in @euno/mcp or tool-gateway that don't exist in @euno/common-core (per Critical Risks §"@euno/mcp" rule in docs/mvp.md §"Critical risks").
 Phase A — Pre-flight (gating; must complete before any code ships to a paying customer)
 Task 0 — Stage 3 design freeze & RFC [SUBMITTED FOR REVIEW — see docs/stage-3-design.md; gate: approved by ≥2 engineers + 1 security reviewer before Tasks 2+ begin]
 Author docs/stage-3-design.md capturing: chosen KMS provider (Azure Managed HSM vs AWS CloudHSM vs GCP Cloud HSM), Postgres deployment shape for audit + revocation, Redis deployment shape, hosted-vs-self-host feature matrix, the API-key format and storage scheme (hash-at-rest, prefix indexing), and the exact request/response contract between @euno/mcp (in enforcer:"https://..." mode) and the gateway.
 Cross-link every decision back to the MVP doc anchor it satisfies.
 Gate: RFC reviewed and merged before Tasks 2+ start.
-Task 1 — API-key minter threat model (BLOCKING per MVP lines 660–691)
+Task 1 — API-key minter threat model (BLOCKING per MVP §"Minter threat model")
 Produce docs/security/minter-threat-model.md answering all seven questions in the MVP table verbatim:
 Key storage (HSM choice, non-exportability verified at HSM level, not just policy — call out exact API used to assert non-exportability).
 Blast radius per key compromise (per-issuance audit trail design).
@@ -111,8 +110,8 @@ Lives in euno-platform/packages/integration-tests/ (existing package).
 Task 20 — Gate-to-Stage-4 instrumentation
 Confirm the Stage 4 gate (MVP lines 693–696): ≥1 paying team and a written security/compliance question. Wire scripts/stage4-readiness.ts (Task 16) to report green; do not begin Stage 4 work until it does.
 Cross-cutting obligations (apply to every task above)
-Schema parity is non-negotiable (MVP lines 507–554). Any change to policy or audit shape must land in @euno/common-core first, with a parity test added in the same PR.
-No Stage-3-only types in @euno/mcp or tool-gateway that aren't also in @euno/common-core (Critical Risks, MVP lines 871–874).
+Schema parity is non-negotiable (see docs/mvp.md §"Policy and audit schema parity"). Any change to policy or audit shape must land in @euno/common-core first, with a parity test added in the same PR.
+No Stage-3-only types in @euno/mcp or tool-gateway that aren't also in @euno/common-core (see docs/mvp.md §"Critical risks" — "@euno/mcp" rule).
 Fail-closed defaults for hosted mode: unknown condition → deny; KMS unavailable → deny; Redis unavailable for counters → deny (operator-overridable for self-host).
 Each task ships with: unit tests, an integration test exercising the new wire path, a README/section update, and a CHANGELOG entry under the @euno/mcp 0.3.0 and tool-gateway 1.0.0 headings.
 Status tracking format: mirror Stage 1 and Stage 2 — add a > **Stage 3 status** block to docs/mvp.md with one bullet per Task 0–20 and check them off as they land.
