@@ -402,8 +402,8 @@ CREATE TABLE mint_audit (
   exp           BIGINT NOT NULL,         -- unix seconds: token expiry
   result        TEXT NOT NULL CHECK (result IN ('ok', 'denied', 'error')),
   denial_reason TEXT,                    -- populated when result != 'ok'
-  previous_hash TEXT NOT NULL,           -- SHA-256 of previous canonical row
-  row_hash      TEXT NOT NULL,           -- SHA-256 of this canonical row
+  previous_hash TEXT NOT NULL,           -- lowercase hex SHA-256 of previous row_hash
+  row_hash      TEXT NOT NULL,           -- lowercase hex SHA-256 of this canonical row
   row_hmac      BYTEA NOT NULL           -- HMAC-SHA256(sidecar secret, row_hash)
 );
 
@@ -423,9 +423,12 @@ precision), `caller_ip`, `caller_ua`, `api_key_prefix`, `tenant_id`, `agent_id`,
 `result`, `denial_reason`, `previous_hash`. Nullable fields such as `caller_ua`,
 `kms_request_id`, and `denial_reason` are encoded as JSON `null` when absent. The
 excluded fields are `id`, `row_hash`, and `row_hmac`; `previous_hash` is included so
-deletion or reordering breaks the chain. The sidecar supplies `minted_at` explicitly
-before hashing rather than relying on the database default. Binary `row_hmac` is encoded
-as base64url for verification exports. This is the same pattern used by
+deletion or reordering breaks the chain. `previous_hash` is the prior row's lowercase
+hex `row_hash` in append order; the first row uses the genesis sentinel
+`0000000000000000000000000000000000000000000000000000000000000000`. `row_hash` is
+stored as lowercase hex SHA-256 of the canonical row. The sidecar supplies `minted_at`
+explicitly before hashing rather than relying on the database default. Binary `row_hmac`
+is encoded as base64url for verification exports. This is the same pattern used by
 `LedgerAuditEvidenceSigner` in
 `euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar

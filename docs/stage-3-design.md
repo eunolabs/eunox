@@ -64,9 +64,13 @@ backends in the capability issuer. The minter's `KmsEvidenceSigner`
 
 The hosted service does **not** keep an online platform-wide signing key.
 Each tenant receives a dedicated HSM signing key selected through the existing
-`policyHash:audience` lookup (`AzureKeyVaultConfig.keysByPolicyHash`, with
-equivalent AWS/GCP mappings). Platform-level credentials may provision or
-disable tenant keys, but they do not sign capability tokens.
+`policyHash:audience` lookup for Azure (`AzureKeyVaultConfig.keysByPolicyHash`).
+AWS fallback deployments must bind each tenant to a distinct configured KMS key
+or tenant-sharded signer; `AWSKMSConfig.grantTokensByPolicyHash` scopes sign
+authorization but does not select a different key. GCP fallback deployments carry
+the issuance context for audit until provider-specific key-version selection is
+wired. Platform-level credentials may provision or disable tenant keys, but they
+do not sign capability tokens.
 
 ### 1.2 Justification
 
@@ -82,7 +86,7 @@ Registry and Azure Key Vault. Azure Managed HSM provides:
   enforced by the Managed HSM boundary, not merely by minter IAM policy. This
   satisfies the MVP's requirement: "verify
   non-exportability is enforced at the HSM level, not just by policy
-  configuration" (`docs/mvp.md` line 673).
+  configuration" (`docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships)).
 - **Per-tenant key isolation**: Azure MHSM supports per-tenant key assignment
   via key names and role-based access control. The
   `AzureKeyVaultConfig.keysByPolicyHash` map (already wired in `runtime.ts`
@@ -515,14 +519,17 @@ At most two pepper versions may be active concurrently (`current` and
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
-2. PostgreSQL parameterized query: `SELECT key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
-   FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
+2. PostgreSQL parameterized query fetches both the requested prefix and one reserved
+   dummy row (prefix `__dummy__`, which is outside the Base58 key format) so every lookup
+   performs a real heap fetch even on requested-prefix misses:
+   `SELECT ... FROM api_keys WHERE prefix IN ($1, '__dummy__') ORDER BY (prefix = $1) DESC LIMIT 1`.
 3. Run HMAC computation and constant-time comparison before any rejection is
-   returned, including for missing, revoked, or expired rows. If no row exists,
-   use a dummy row and the fixed dummy digest so prefix enumeration does not get
-   a cheaper timing path. During pepper rotation, both real-row and dummy-row
-   paths iterate over all active pepper versions; only the digest for the row's
-   recorded `hmac_key_version` can pass.
+   returned, including for missing, revoked, or expired rows. If the requested
+   prefix did not select a real row, use the returned dummy row and fixed dummy
+   digest so prefix enumeration does not get a cheaper timing path. During
+   pepper rotation, both real-row and dummy-row paths iterate over all active
+   pepper versions; only the digest for the row's recorded `hmac_key_version`
+   can pass.
 4. If no row, mismatch, inactive pepper version, `revoked_at IS NOT NULL`, or
    `expires_at < now()`: return 401.
 5. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
@@ -823,10 +830,10 @@ it. Reviewers should verify each cross-link before approving.
 
 | Decision | This document § | `docs/mvp.md` anchor |
 |---|---|---|
-| KMS provider: Azure Managed HSM primary | §1.1 | Lines 672–673 (non-exportability at HSM level) |
+| KMS provider: Azure Managed HSM primary | §1.1 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
 | Config types in `@euno/common-core` | §1.1 | `public/packages/common/src/runtime.ts` |
-| Non-exportability verification procedure | §1.3 | Lines 672–673 |
-| Key rotation via JWKS kid | §1.4 | Lines 674–675 (key rotation) |
+| Non-exportability verification procedure | §1.3 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
+| Key rotation via JWKS kid | §1.4 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
 | Audit signer: KMS-backed → OCSF | §1 | Line 525 (parity table row "Audit signer") |
 | Postgres ledger: existing `euno_audit_ledger` table + per-row HMAC `BYTEA` | §2.1 | Lines 648–650 (persistent audit log) |
 | Advisory lock ID: `0x455534004C454447` (not hashtext) | §2.1 | `ledger-signer.ts` line 683 |
@@ -839,7 +846,7 @@ it. Reviewers should verify each cross-link before approving.
 | Redis circuit-breaker: hosted hard-codes fail-closed; self-hosters must set `REDIS_CIRCUIT_OPEN_MODE` | §3.2 | stage3plan §Task 4 (no silent default) |
 | Self-host bundle excludes minter | §4 | Line 646 (hosted-only initially) |
 | API-key format: `sk-<p8>.<s48>` base58 | §5.1 | stage3plan §Task 10 |
-| API-key verifier: HMAC-SHA256 with external pepper | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
+| API-key verifier: HMAC-SHA256 with external pepper | §5.3 | `docs/mvp.md` §["Stage 3 upgrade bridge"](mvp.md#the-stage-3-upgrade-bridge--the-part-the-prior-plan-skipped) and §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
 | API-key issuance audit log (separate credentials) | §5.2 | Line 679 |
 | Enforcer config: flat form canonical (mvp.md line 633); nested form also accepted | §6.1 | Lines 628–633 |
 | Enforcer endpoint POST /api/v1/enforce | §6.2 | stage3plan §Task 9 |
