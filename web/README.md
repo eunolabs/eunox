@@ -1,6 +1,6 @@
-# Euno website
+# euno website
 
-The public-facing website for Euno. Plain static HTML/CSS/JS — no build step,
+The public-facing website for euno. Plain static HTML/CSS/JS — no build step,
 no framework, no JS dependencies. It is meant to be servable from any static
 host (GitHub Pages, S3, Cloudflare Pages, Netlify) or opened directly from
 disk.

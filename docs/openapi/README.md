@@ -1,6 +1,6 @@
 # OpenAPI Specifications
 
-This directory contains OpenAPI 3.0 specifications for Euno's HTTP services.
+This directory contains OpenAPI 3.0 specifications for euno's HTTP services.
 The specs are hand-maintained; keep them in sync when changing the routes in
 the corresponding `src/index.ts` / `src/admin-api.ts` files.
 

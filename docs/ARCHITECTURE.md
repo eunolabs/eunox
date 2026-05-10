@@ -1,8 +1,8 @@
-# Euno — Architecture Overview
+# euno — Architecture Overview
 
 > **Status:** ✅ Reflects the current two-folder workspace layout as of May 2026.
 >
-> This document is the consolidated architecture reference for Euno
+> This document is the consolidated architecture reference for euno
 > *as implemented in this repository*. It complements (not replaces):
 >
 > - [`diagrams.md`](./diagrams.md) — abstract / engineering / executive
@@ -22,7 +22,7 @@
 
 ## 1. System purpose, in one paragraph
 
-Euno is a **capability-native zero-trust governance plane for AI
+euno is a **capability-native zero-trust governance plane for AI
 agents**. Every agent action is mediated by a cryptographically
 verifiable, time-limited capability token issued by a central
 **Capability Issuer**, attenuated as it flows through delegation
@@ -50,16 +50,16 @@ flowchart LR
     KMS["KMS / HSM (Key Vault / AWS KMS / GCP Cloud KMS)"]
     PartnerIssuer["Partner Capability Issuer (cross-org)"]
 
-    Euno(("Euno control + data plane"))
+    euno(("euno control + data plane"))
 
-    User -->|Authenticate, request agent| Euno
-    Admin -->|Kill switch / revoke / policy| Euno
-    Agent -->|Tool calls + capability token| Euno
-    Euno -->|Authorized requests| Backend
-    Euno -->|Signed audit events| SIEM
-    Euno -->|OIDC validation| IdP
-    Euno -->|Sign / verify| KMS
-    PartnerIssuer -.->|DID-resolvable signing key| Euno
+    User -->|Authenticate, request agent| euno
+    Admin -->|Kill switch / revoke / policy| euno
+    Agent -->|Tool calls + capability token| euno
+    euno -->|Authorized requests| Backend
+    euno -->|Signed audit events| SIEM
+    euno -->|OIDC validation| IdP
+    euno -->|Sign / verify| KMS
+    PartnerIssuer -.->|DID-resolvable signing key| euno
 ```
 
 **External actors and systems**

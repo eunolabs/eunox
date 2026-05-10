@@ -1,6 +1,6 @@
 # @euno/common-infra
 
-Redis, Postgres, and KMS-backed infrastructure implementations for Euno agent
+Redis, Postgres, and KMS-backed infrastructure implementations for euno agent
 governance. Depends on `@euno/common-core`; the reverse dependency is forbidden.
 
 Licensed under **BSL 1.1** (change date 2030-05-07 → Apache-2.0).

@@ -1,4 +1,4 @@
-# Euno Promotion Content
+# euno Promotion Content
 
 Promotion copy for the `@euno/mcp` launch. All copy is anchored to the
 Stage 1 pitch: *"Add guardrails to any MCP server in 5 minutes. No
@@ -13,7 +13,7 @@ failure mode the tool prevents.
 ### Show HN
 
 **Title:**
-> Show HN: Euno – stop your AI agent from dropping your database (MCP proxy, 5-min setup)
+> Show HN: euno – stop your AI agent from dropping your database (MCP proxy, 5-min setup)
 
 **Body:**
 
@@ -25,7 +25,7 @@ and a YAML file.
 
 The problem it solves: agents running against a filesystem or database MCP
 server have no runtime enforcement. LangSmith and similar tools give you
-observability *after* the call executes. Euno stops the call *before* it
+observability *after* the call executes. euno stops the call *before* it
 reaches the upstream server.
 
 The install path for Claude Desktop or Cursor is literally replacing one line
@@ -637,7 +637,7 @@ Open source (Apache-2.0): https://github.com/edgeobs/euno
 Add to the "Proxy / gateway" section of the MCP servers list:
 
 ```markdown
-- **[Euno MCP Proxy](https://github.com/edgeobs/euno)** (`@euno/mcp`) —
+- **[euno MCP Proxy](https://github.com/edgeobs/euno)** (`@euno/mcp`) —
   Policy-enforcing proxy. Intercepts `tools/call`, evaluates typed conditions
   (SQL verb allowlists, path restrictions, call rate limits, argument schemas),
   and returns a structured denial before the upstream server is contacted.

@@ -1,6 +1,6 @@
 # Pluggable Adapters: Identity Providers and Token Signers
 
-The Euno capability governance system implements a clean adapter pattern for
+The euno capability governance system implements a clean adapter pattern for
 identity providers and token signers. This establishes extensible contracts
 that enable support for multiple implementations — Azure AD + Azure Key Vault,
 AWS Cognito + AWS KMS, GCP Cloud Identity + GCP Cloud KMS, and W3C

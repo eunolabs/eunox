@@ -471,7 +471,7 @@ Research on AI agents equipped with W3C DIDs and VCs demonstrates that this appr
 ## SET D — AGT Integration Diagrams
 
 These diagrams show the layered defense model when integrating with an
-in-process policy engine (e.g. Microsoft AGT) alongside the Euno capability
+in-process policy engine (e.g. Microsoft AGT) alongside the euno capability
 gateway.
 
 ### D1 — High-Level Architecture: Sandbox and AGT Integration

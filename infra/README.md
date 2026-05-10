@@ -1,4 +1,4 @@
-# Euno Infrastructure-as-Code
+# euno Infrastructure-as-Code
 
 This directory contains the reproducible-provisioning artifacts for
 the Azure pilot deployment, plus the multi-cloud parity

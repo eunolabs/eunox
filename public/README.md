@@ -1,7 +1,7 @@
 # public — public Apache-2.0 surface
 
 This directory contains the Apache-2.0 packages that form the public
-surface of Euno: the types and interfaces (`@euno/common-core`), the
+surface of euno: the types and interfaces (`@euno/common-core`), the
 MCP proxy (`@euno/mcp`), and the developer CLI (`@euno/cli`).
 
 All packages here are registered as npm workspaces via the root

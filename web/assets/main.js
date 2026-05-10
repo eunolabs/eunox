@@ -1,4 +1,4 @@
-/* Shared JS for the Euno static site
+/* Shared JS for the euno static site
    - terminal animation (#term)
    - install snippet copy buttons
    - smooth scroll to in-page anchors with sticky-header offset

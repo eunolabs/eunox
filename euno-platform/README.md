@@ -1,7 +1,7 @@
 # euno-platform — private BUSL-1.1 surface
 
 This directory contains the BUSL-1.1 packages that form the private
-operational layer of Euno: Redis/Postgres/KMS implementations, the
+operational layer of euno: Redis/Postgres/KMS implementations, the
 tool gateway, the capability issuer, the agent runtime, and supporting
 services.
 

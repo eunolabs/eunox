@@ -1,6 +1,6 @@
-# Euno Documentation Index
+# euno Documentation Index
 
-Design and operational documentation for Euno. Docs are organized by purpose.
+Design and operational documentation for euno. Docs are organized by purpose.
 
 ---
 

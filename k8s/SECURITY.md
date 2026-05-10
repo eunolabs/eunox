@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the Sprint 3 sandbox hardening implementation for the Euno capability governance system. All security measures are designed to prevent privilege escalation, limit resource usage, and enforce zero-trust principles at the container and Kubernetes level.
+This document describes the Sprint 3 sandbox hardening implementation for the euno capability governance system. All security measures are designed to prevent privilege escalation, limit resource usage, and enforce zero-trust principles at the container and Kubernetes level.
 
 ## Implemented Security Controls
 

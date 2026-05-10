@@ -1,10 +1,10 @@
-# Euno - Capability-Native Agent Governance System
+# euno - Capability-Native Agent Governance System
 
 A production-ready capability-based security system for AI agent governance, built on Azure-native services with support for decentralized identity.
 
 ## Overview
 
-Euno implements a **capability-based security model** for AI agents, ensuring that:
+euno implements a **capability-based security model** for AI agents, ensuring that:
 - Every agent action is explicitly authorized
 - Tokens are cryptographically signed and time-limited
 - All access is mediated through a central enforcement gateway
@@ -66,7 +66,7 @@ substrate the framework adapters sit on top of.
 
 ### 5. **Framework Adapters** (`packages/framework-adapters`)
 Framework-native middleware so application authors do not need to
-rewrite agent business logic to adopt Euno:
+rewrite agent business logic to adopt euno:
 
 - **LangChain** — `wrapAsLangChainTool`, `wrapAsLangChainTools`, `EunoLangChainCallbackHandler`
 - **Microsoft Agent Framework (MAF)** — `createEunoFunctionToolMiddleware`, `createEunoAgentRunMiddleware`

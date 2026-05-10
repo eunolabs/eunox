@@ -333,7 +333,7 @@ Stable column ordering and totals; deterministic on the same input.
 
 Task 9 — @euno/langchain companion package
 
-Why. mvp.md line 564: "@euno/langchain companion package — wraps a Tool / StructuredTool so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same AgentCapabilityManifest and the same enforcement core. Not a separate enforcer — the same CapabilityRuntime shape used by euno-platform/packages/agent-runtime, just with a local-only backend."
+Why. mvp.md line 564: "@euno/langchain companion package — wraps a Tool / StructuredTool so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same AgentCapabilityManifest and the same enforcement core. Not a separate enforcer — the same CapabilityRuntime shape used by euno-platform/packages/agent-runtime, just with a local-only backend."
 
 
 Scope.

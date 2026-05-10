@@ -1,4 +1,4 @@
-# Euno: From MVP to Full Vision
+# euno: From MVP to Full Vision
 
 ## Strategic Summary & Staged Execution Plan
 
@@ -16,7 +16,7 @@
 
 ## Context
 
-**What Euno is today.** A capability-native zero-trust governance plane
+**What euno is today.** A capability-native zero-trust governance plane
 for AI agents: cryptographically signed capability tokens (JWT,
 versioned schema), a Tool Gateway that acts as the reference monitor
 in front of every protected backend, typed `CapabilityCondition`
@@ -230,7 +230,7 @@ two-folder structure is in place.
 | `public/packages/common` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
 | `public/packages/cli` | Apache-2.0 | Developer surface. |
 | `euno-platform/packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
-| `euno-platform/packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed Euno Gateway" against you. |
+| `euno-platform/packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed euno Gateway" against you. |
 | `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
 
 **Dependency direction rule.** BSL packages may depend on Apache-2.0
@@ -335,7 +335,7 @@ No infrastructure required."*
 Claude Desktop, or any MCP-compatible client have no runtime
 enforcement on tool calls. Agents can run destructive SQL, hammer
 APIs, write to arbitrary paths. Nothing stops them before the call
-executes. LangSmith gives observability *after the fact*. Euno stops
+executes. LangSmith gives observability *after the fact*. euno stops
 it *before*.
 
 **Why MCP and not the LangChain adapter.** MCP is the dominant tool
@@ -368,8 +368,8 @@ policy, then either forwards to upstream or returns a structured
 denial.
 
 ```
-Client → tools/list  → Euno Proxy → Upstream MCP Server
-Client ← tool schemas ← Euno Proxy ← Upstream MCP Server
+Client → tools/list  → euno Proxy → Upstream MCP Server
+Client ← tool schemas ← euno Proxy ← Upstream MCP Server
 
 Client → tools/call: query_db { query: "DROP TABLE users" }
                         ↓
@@ -585,7 +585,7 @@ handles richer conditions unchanged because enforcement is still at
 
 - Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
 - `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
-- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt Euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `euno-platform/packages/agent-runtime`, just with a local-only backend.**
+- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `euno-platform/packages/agent-runtime`, just with a local-only backend.**
 - A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `public/packages/mcp/policies/` directory. This is what makes the 5-minute pitch real.
 - Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
@@ -680,7 +680,7 @@ minter ships. At minimum it must address:
 
 This is not exotic security engineering — it is the same threat model
 a managed certificate authority or an OAuth server operates under.
-The difference is that Euno's managed key signs capability tokens
+The difference is that euno's managed key signs capability tokens
 that authorize agent actions directly, making it a more operationally
 sensitive target than most token services. The gateway's verifier path
 is already solid; the minter's key-management posture must match it.
@@ -833,7 +833,7 @@ this you'll ship a broken proxy the first week the spec rev moves.
 
 **First-party MCP guardrails.** Anthropic and the MCP working group
 will eventually ship some form of in-protocol guardrail (probably
-weak, probably permission-prompt-shaped). Position Euno as
+weak, probably permission-prompt-shaped). Position euno as
 *deterministic, code-defined, audit-grade* enforcement — adjacent to,
 not competing with, an interactive permission prompt. The plan is
 fine; the messaging needs to be ready.

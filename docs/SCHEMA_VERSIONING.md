@@ -2,7 +2,7 @@
 
 ## Overview
 
-Capability tokens in Euno include a `schemaVersion` field that enables forward and backward compatibility during schema evolution. This document describes the versioning strategy, migration procedures, and compatibility guarantees.
+Capability tokens in euno include a `schemaVersion` field that enables forward and backward compatibility during schema evolution. This document describes the versioning strategy, migration procedures, and compatibility guarantees.
 
 ## Current Version
 

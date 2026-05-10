@@ -1,7 +1,7 @@
 # @euno/common-core
 
 Core types, interfaces, in-memory stores, and the four interface seams for
-Euno agent governance.
+euno agent governance.
 
 Licensed under **Apache-2.0** — freely adoptable, redistributable, and
 embeddable in commercial products.

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="Euno" height="96">
+  <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="euno" height="96">
 </p>
 
-<h1 align="center">Euno</h1>
+<h1 align="center">euno</h1>
 
 <p align="center">
   <strong>Policy proxy for AI agents.</strong><br>
@@ -27,9 +27,9 @@
 
 ---
 
-## What is Euno?
+## What is euno?
 
-Euno is an **open-source policy proxy** for AI agents that speak the
+euno is an **open-source policy proxy** for AI agents that speak the
 [Model Context Protocol](https://spec.modelcontextprotocol.io/). It sits
 between your MCP host (Claude Desktop, Cursor, Windsurf, LangChain.js, …)
 and your upstream MCP server, and enforces a declarative capability policy
@@ -102,7 +102,7 @@ condition type.
 
 ## Project status
 
-Euno follows a [staged execution plan](./docs/mvp.md):
+euno follows a [staged execution plan](./docs/mvp.md):
 
 | Stage | Ships | Status |
 |-------|-------|--------|

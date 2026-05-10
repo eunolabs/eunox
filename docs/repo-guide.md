@@ -1,4 +1,4 @@
-# Euno — repository guide
+# euno — repository guide
 
 > **Looking for a quick overview?** See the project [README](../README.md)
 > or the website at [`web/`](../web/) for the user-facing introduction. This
@@ -36,7 +36,7 @@ quickstart, policy authoring, and drop-in Claude Desktop / Cursor / LangChain.js
 
 ## Project status
 
-Euno follows a [staged execution plan](mvp.md).
+euno follows a [staged execution plan](mvp.md).
 
 | Stage | Ships | Status |
 |-------|-------|--------|

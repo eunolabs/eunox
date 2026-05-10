@@ -42,7 +42,7 @@ activation, token-revocation spikes) are expressed three different ways:
 
 | Sentinel rule (KQL)               | GCP equivalent                                                                |
 |-----------------------------------|-------------------------------------------------------------------------------|
-| `euno-deny-spike`                 | `euno_deny_spike` log-based metric + `Euno - Capability denial spike` policy  |
+| `euno-deny-spike`                 | `euno_deny_spike` log-based metric + `euno - Capability denial spike` policy  |
 | `euno-write-in-readonly`          | `euno_write_in_readonly` metric + matching alert policy                       |
 | `euno-invalid-token-burst`        | `euno_invalid_token_burst` metric + matching alert policy                     |
 | `euno-kill-switch-activated`      | `euno_kill_switch_activated` metric + matching alert policy                   |

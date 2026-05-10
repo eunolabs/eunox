@@ -1,6 +1,6 @@
 # Kubernetes Deployment
 
-This directory contains Kubernetes manifests for deploying the Euno capability governance system with sandboxed agent runtime.
+This directory contains Kubernetes manifests for deploying the euno capability governance system with sandboxed agent runtime.
 
 ## Sprint 1 & Sprint 2 Sandboxing Implementation
 

@@ -1,6 +1,6 @@
 # @euno/langchain
 
-LangChain companion package for **Euno capability-native agent governance**.
+LangChain companion package for **euno capability-native agent governance**.
 
 Wraps any LangChain tool or tool-like function with the same condition
 enforcement engine used by the `euno-mcp` proxy — no separate process, no
