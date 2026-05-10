@@ -417,15 +417,15 @@ CREATE INDEX ON mint_audit (jti);                  -- for per-token lookup on re
 Each row is protected by a per-row HMAC-SHA-256 over the canonical JSON of the row
 fields, computed with a secret held only by the audit sidecar (not the minter process and
 not the DBA). Canonicalization uses RFC 8785 JSON Canonicalization Scheme over the
-following exact field sequence: `minted_at`, `caller_ip`, `caller_ua`, `api_key_prefix`,
-`tenant_id`, `agent_id`, `session_id`, `policy_id`, `policy_fingerprint`, `jti`, `kid`,
-`kms_request_id`, `exp`, `result`, `denial_reason`, `previous_hash`. Nullable fields
-such as `caller_ua`, `kms_request_id`, and `denial_reason` are encoded as JSON `null`
-when absent. The excluded fields are `id`, `row_hash`, and `row_hmac`; `previous_hash`
-is included so deletion or reordering breaks the chain. The sidecar supplies `minted_at`
-explicitly before hashing rather than relying on the database default. Timestamps are UTC
-ISO-8601 strings with millisecond precision, and binary `row_hmac` is encoded as
-base64url for verification exports. This is the same pattern used by
+following exact field sequence: `minted_at` (UTC ISO-8601 string with millisecond
+precision), `caller_ip`, `caller_ua`, `api_key_prefix`, `tenant_id`, `agent_id`,
+`session_id`, `policy_id`, `policy_fingerprint`, `jti`, `kid`, `kms_request_id`, `exp`,
+`result`, `denial_reason`, `previous_hash`. Nullable fields such as `caller_ua`,
+`kms_request_id`, and `denial_reason` are encoded as JSON `null` when absent. The
+excluded fields are `id`, `row_hash`, and `row_hmac`; `previous_hash` is included so
+deletion or reordering breaks the chain. The sidecar supplies `minted_at` explicitly
+before hashing rather than relying on the database default. Binary `row_hmac` is encoded
+as base64url for verification exports. This is the same pattern used by
 `LedgerAuditEvidenceSigner` in
 `euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
@@ -570,6 +570,12 @@ two-minute ingestion-lag allowance; if the widened window still mismatches, the 
 security as a potential direct sign-oracle compromise. Tenants whose normal volume makes
 5-minute count matching too noisy must enable provider request-ID capture before their
 rate limit is raised.
+
+The reconciliation job must ship with fixtures for all matching modes: exact
+`kms_request_id` match, minute-bucket count match, widened 5-minute count match for
+batched logs, a synthetic >30-second clock-drift degradation page, and a missing-HSM-event
+page. These fixtures are replayed in CI with deterministic timestamps before the minter is
+approved for production traffic.
 
 ### Alert routing
 
