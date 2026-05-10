@@ -423,7 +423,8 @@ sk-<prefix8>.<secret48>
 │    │         └── 48 chars ≈ 285 bits of random, base58 encoded
 │    │                        Provides > 2^284 guessing resistance
 │    └── 8 random base58 chars, unique per key
-│         Stored in plaintext and indexed for O(1) DB lookup without scanning digests
+│         Stored in plaintext in api_keys.prefix and indexed for O(1) DB lookup
+│         without scanning digests
 └── Literal prefix — identifies the token type in logs and error messages
 ```
 
@@ -453,8 +454,8 @@ CREATE TABLE api_keys (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
   prefix       TEXT NOT NULL UNIQUE,        -- 8-char base58 prefix (plaintext)
-  key_digest   TEXT NOT NULL,               -- base64url(HMAC-SHA256(active pepper, secret))
-  hmac_key_version TEXT NOT NULL,           -- pepper/key version used for key_digest
+  key_digest   TEXT NOT NULL,               -- base64url(HMAC-SHA256(pepper version, secret))
+  hmac_key_version TEXT NOT NULL,           -- pepper version used for key_digest
   policy_id    TEXT NOT NULL,               -- FK → capability_policies.id
   scopes       TEXT[] NOT NULL DEFAULT '{}', -- ['enforce', 'admin', 'audit']
   label        TEXT,                        -- human-readable name set by admin
@@ -492,10 +493,11 @@ risk while providing little additional protection against offline guessing of a
 ~285-bit secret. A keyed digest means a DB-only compromise cannot validate
 candidate keys; an attacker needs both the DB and the external pepper. The
 digest comparison is performed with `crypto.timingSafeEqual` over decoded
-32-byte digests. If the stored digest is malformed or the decoded length is not
-32 bytes, the verifier compares against a fixed-length random dummy digest and
-then rejects; it must not pad attacker-controlled values or skip comparison in
-a way that creates a timing oracle.
+32-byte digests. The process initializes one fixed 32-byte random dummy digest
+at startup. If the stored digest is malformed or the decoded length is not
+32 bytes, the verifier compares against that dummy digest and then rejects; it
+must not pad attacker-controlled values or skip comparison in a way that creates
+a timing oracle.
 
 **Pepper storage and rotation:** Pepper material is stored in the cloud secret
 manager or KMS-backed configuration store, not in Postgres and not in the
@@ -512,7 +514,10 @@ revoking or reissuing every API key whose row still references that version.
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
 3. If no row, run the same HMAC and constant-time comparison path against a
    dummy row before returning 401, so prefix enumeration does not get a cheaper
-   timing path. If `revoked_at IS NOT NULL` or `expires_at < now()`, return 401.
+   timing path. During pepper rotation, both real-row and dummy-row paths iterate
+   over all active pepper versions; only the digest for the row's recorded
+   `hmac_key_version` can pass. If `revoked_at IS NOT NULL` or `expires_at < now()`,
+   return 401.
 4. Load the pepper version named by `hmac_key_version`, compute the candidate
    digest, and compare it to `key_digest` using constant-time comparison.
 5. If mismatch or the stored pepper version is not active: return 401.
