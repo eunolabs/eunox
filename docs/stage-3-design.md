@@ -307,7 +307,7 @@ Manager) — not baked into the container image.
 > 791–808) and §"Stage 3: What ships" (lines 643–658).
 
 The matrix below maps the pricing tiers from `docs/mvp.md` to concrete
-technical features that Gate the tier. It is the definitive reference for which
+technical features that gate the tier. It is the definitive reference for which
 capabilities land in which tier.
 
 | Feature                                  | OSS (`@euno/mcp` only) | Self-Host (BSL image) | Cloud Free | Cloud Team | Cloud Enterprise |
@@ -425,8 +425,8 @@ tables are not viable.
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
-2. `SELECT key_hash, salt, tenant_id, policy_id, scopes, revoked_at, expires_at
-   FROM api_keys WHERE prefix = $1`.
+2. PostgreSQL parameterized query: `SELECT key_hash, salt, tenant_id, policy_id, scopes, revoked_at, expires_at
+   FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
 3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
 4. `argon2id_verify(key_hash, secret, salt)`: constant-time comparison.
 5. If mismatch: return 401.
@@ -727,7 +727,7 @@ Each must be closed (answered in-line and committed) before the RFC is approved.
 1. **Per-tenant vs platform-wide minter key:** The minter threat model (Task 1)
    must decide whether the hosted service uses a single platform-wide signing
    key with per-tenant `aud` scoping, or a separate HSM key version per tenant.
-   §1.1 names the mechanism (`keysByPolicyHash` composite key); the policy
+   The `AzureKeyVaultConfig.keysByPolicyHash` map (referenced in §1.1) names the mechanism for composite key selection; the policy
    choice (cost vs isolation) is for the threat-model review. Default
    recommendation: per-tenant key versions (higher isolation, modest additional
    HSM cost) — override in Task 1 if HSM pricing makes this impractical.
