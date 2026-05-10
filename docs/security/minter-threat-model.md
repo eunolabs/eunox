@@ -469,7 +469,7 @@ following controls apply:
 - The HMAC key version in use for each row is **not** stored in the `mint_audit` table.
   Operators verifying older rows use the secret manager's version history. If the old version
   has been retired, verification requires a point-in-time snapshot of the secret manager;
-  this snapshot procedure is documented in `docs/runbooks/minter-audit-verify.md`.
+  operators must follow the repository's approved audit verification and snapshot procedure.
 
 Optionally (configurable), every N rows the sidecar computes a Merkle root and writes it
 to an S3 Object-Lock bucket. This provides an external witness: a DB-level compromise
