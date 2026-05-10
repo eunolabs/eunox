@@ -1,8 +1,8 @@
 # Stage 3 Design RFC — "The Gateway as Managed Boundary"
 
-> **Status:** Draft — pending review by ≥2 engineers + 1 security reviewer.
-> Per `stage3executionplan.md` §Task 0, this document must be reviewed and
-> merged before any Task 2+ implementation begins.
+> **Status:** Submitted for review. The authoring work (Task 0) is complete.
+> The gate condition — approved by ≥2 engineers + 1 security reviewer — must be
+> met before any Task 2+ implementation begins. See §9 Review Checklist.
 >
 > **MVP anchors satisfied:** All decisions below cross-link to
 > `docs/mvp.md` sections where they are required. The anchor tag and line
@@ -51,11 +51,11 @@ keys.
 
 **Supported (self-host and hosted fallback):**
 
-| Backend              | Protection level          | Config type in `@euno/common` |
-|----------------------|---------------------------|-------------------------------|
-| Azure Managed HSM    | FIPS 140-2 Level 3 (HSM)  | `AzureKeyVaultConfig`         |
-| AWS CloudHSM via KMS | FIPS 140-2 Level 3 (HSM)  | `AWSKMSConfig`                |
-| GCP Cloud KMS (HSM)  | FIPS 140-2 Level 3 (HSM)  | `GCPCloudKMSConfig`           |
+| Backend              | Protection level          | Config type in `@euno/common-core` (`public/packages/common/src/runtime.ts`) |
+|----------------------|---------------------------|-------------------------------------------------------------------------------|
+| Azure Managed HSM    | FIPS 140-2 Level 3 (HSM)  | `AzureKeyVaultConfig`                                                         |
+| AWS CloudHSM via KMS | FIPS 140-2 Level 3 (HSM)  | `AWSKMSConfig`                                                                |
+| GCP Cloud KMS (HSM)  | FIPS 140-2 Level 3 (HSM)  | `GCPCloudKMSConfig`                                                           |
 
 All three config types already exist in
 `public/packages/common/src/runtime.ts` and are implemented as signing
@@ -137,34 +137,49 @@ Key rotation therefore requires:
 
 ### 2.1 Audit Ledger
 
-**Implementation:** `PostgresLedgerBackend` — already implemented in
-`euno-platform/packages/common-infra/src/ledger-signer.ts`.
+**Implementation:** `PostgresLedgerBackend` (or the lock-free
+`PerReplicaPostgresLedgerBackend` recommended in `docs/mvp.md` line 648) — both
+implemented in `euno-platform/packages/common-infra/src/ledger-signer.ts`.
 
-**Table schema (existing, managed by `LedgerAuditEvidenceSigner`):**
+Stage 3 uses the **existing table schema** managed by
+`PostgresLedgerBackend.migrate()`. The schema below is the authoritative source;
+the RFC reproduces it verbatim for clarity:
 
 ```sql
--- Managed by the bootstrap migrations in ledger-signer.ts
-CREATE TABLE audit_evidence (
-  id           BIGSERIAL PRIMARY KEY,
-  seq          BIGINT NOT NULL UNIQUE,           -- monotonic, 1-based
-  previous_hash TEXT NOT NULL,                   -- SHA-256 of prev record
-  record_hash  TEXT NOT NULL,                    -- SHA-256 of this record
-  replica_id   TEXT NOT NULL,                    -- pod identity
-  signed_evidence JSONB NOT NULL,               -- full OCSF API Activity record
-  hmac         TEXT NOT NULL,                    -- per-row integrity seal
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Table: euno_audit_ledger  (default; configurable via PostgresLedgerOptions.table)
+-- Managed by PostgresLedgerBackend.migrate() in ledger-signer.ts
+CREATE TABLE euno_audit_ledger (
+  seq           BIGINT PRIMARY KEY,       -- application-assigned under advisory lock
+  record_id     TEXT NOT NULL UNIQUE,     -- UUID from AuditEvidence.id
+  replica_id    TEXT NOT NULL,            -- pod / process identity
+  previous_hash TEXT NOT NULL,            -- SHA-256 hex of the preceding record
+  record_hash   TEXT NOT NULL,            -- SHA-256 hex of this record's payload
+  payload       JSONB NOT NULL,           -- full SignedAuditEvidence (OCSF API Activity)
+  row_hmac      BYTEA NOT NULL,           -- HMAC-SHA256(hmacSecret, seq||":"||…)
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Lookup index for the audit query API (Task 7)
-CREATE INDEX audit_evidence_tenant_agent_idx
-  ON audit_evidence ((signed_evidence->>'tenantId'), (signed_evidence->>'agentId'));
-
-CREATE INDEX audit_evidence_created_at_idx ON audit_evidence (created_at);
+CREATE INDEX idx_euno_audit_ledger_created_at ON euno_audit_ledger (created_at);
 ```
 
-**Multi-replica serialization:** `pg_advisory_xact_lock` (already implemented)
-ensures only one replica writes at a time. The advisory lock key is
-`hashtext('euno_audit_chain')` so it is stable across deploys.
+The `PerReplicaPostgresLedgerBackend` uses `euno_audit_ledger_v2` (configurable
+via `PerReplicaPostgresLedgerOptions.table`) with an additional `local_seq`
+column for per-replica sequence tracking — no change in Stage 3.
+
+**Task 7 query index:** For the audit query API, add a derived index on the
+tenant and agent identifiers embedded in the payload:
+
+```sql
+-- Added by the Stage 3 bootstrap migration (not created by the existing backend)
+CREATE INDEX IF NOT EXISTS idx_euno_audit_ledger_tenant_agent
+  ON euno_audit_ledger ((payload->>'tenantId'), (payload->>'agentId'));
+```
+
+**Multi-replica serialization:** Already implemented. `PostgresLedgerBackend`
+acquires `pg_advisory_xact_lock($1)` where the lock ID is configured via
+`PostgresLedgerOptions.advisoryLockId` (default `BigInt('0x455534004C454447')`
+= "EU4LEDG" in ASCII). This is stable across deploys and does not require any
+Stage-3 change.
 
 **Retention:** 90-day default for Cloud Team tier; configurable via
 `AUDIT_RETENTION_DAYS` env var. A background job (cron, or pg-cron) trims rows
@@ -172,9 +187,10 @@ older than the retention window. Rows are append-only until the trim job; the
 trim job is itself audited.
 
 **External witness (optional):** `PostgresLedgerBackend` already supports
-putting a Merkle root of every N rows to an S3 Object-Lock bucket
-(`AUDIT_ANCHOR_BUCKET` env var). This is off by default in Stage 3; the seam
-remains in place per `docs/mvp.md` line 649.
+putting a Merkle root of every N rows to an S3 Object-Lock bucket via
+`PostgresLedgerOptions.s3` (constructed in code; there is no automatic env-var
+wiring for the S3 config). This is off by default in Stage 3; the seam remains
+in place per `docs/mvp.md` line 649.
 
 ### 2.2 Revocation Store
 
@@ -197,42 +213,57 @@ CREATE TABLE revoked_tokens (
 CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
 ```
 
-**Sync strategy:**
-- Every `revoke(jti, expiresAt)` call writes to Redis **and** Postgres
-  atomically (Redis first, Postgres second). If Postgres write fails the
-  revocation is still in Redis; a background reconciler re-drives Postgres from
-  Redis on startup.
+**Sync strategy (best-effort dual-write):**
+- Every `revoke(jti, expiresAt)` call writes to Redis first, then to Postgres.
+  These are two independent writes; there is no distributed transaction between
+  them. The consistency guarantee is:
+  - **Redis write succeeds, Postgres write fails:** The revocation is immediately
+    effective in Redis (all replicas see it within pub/sub delivery time). A
+    background reconciler re-drives the Postgres write from Redis on each startup.
+    Risk window: if Redis is flushed before the reconciler runs, the revocation
+    is lost. Mitigated by `redis-kill-switch.ts`'s periodic Postgres refresh.
+  - **Postgres write succeeds, Redis write fails:** The revocation is durable.
+    The next periodic Redis refresh (every 30 s by default) loads the Postgres
+    row, so the revocation takes effect within one refresh interval.
 - On Redis cold-start (flush or new replica), `PostgresRevocationBackend`
   replays all non-expired rows into Redis via `SETEX` calls in batches of 1000.
 - TTL-expired rows in Postgres are pruned weekly by a trim job.
 
 ### 2.3 Kill-Switch Persistence
 
-**Implementation:** `PostgresKillSwitchBackend` — already referenced in
-`euno-platform/packages/common-infra/src/redis-kill-switch.ts` (the
-`KillSwitchPersistenceBackend` seam).
+**Implementation:** `PostgresKillSwitchBackend` — already implemented in
+`euno-platform/packages/common-infra/src/redis-kill-switch.ts` via the
+`KillSwitchPersistenceBackend` seam.
+
+The existing table schema is preserved unchanged in Stage 3. Row *presence* is
+the kill state — revive/reset deletes the row, keeping reads simple:
 
 ```sql
-CREATE TABLE kill_switches (
-  id           BIGSERIAL PRIMARY KEY,
-  kind         TEXT NOT NULL,  -- 'global' | 'session' | 'agent'
-  target_id    TEXT,           -- NULL for global; session/agent id otherwise
-  tenant_id    TEXT NOT NULL,
-  activated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  revived_at   TIMESTAMPTZ,
-  activated_by TEXT NOT NULL   -- admin identity (audit)
+-- Table: euno_kill_switch_entries  (default; configurable via constructor options.table)
+-- Managed by PostgresKillSwitchBackend.migrate() in redis-kill-switch.ts
+CREATE TABLE euno_kill_switch_entries (
+  entry_type TEXT NOT NULL,  -- 'global' | 'session' | 'agent'
+  entry_id   TEXT NOT NULL,  -- '' for global; session/agent ID otherwise
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (entry_type, entry_id)
 );
-
-CREATE INDEX kill_switches_active_idx
-  ON kill_switches (tenant_id, kind, target_id)
-  WHERE revived_at IS NULL;
 ```
+
+- **Active kill** → row is present.
+- **Revived / reset** → row is deleted (`DELETE FROM … WHERE entry_type = $1 AND entry_id = $2`).
+
+The table deliberately has no `revived_at` or `tenant_id` columns. Tenancy
+isolation at the kill-switch level is enforced by gateway-layer routing (each
+tenant's gateway pods share a single Redis cluster and Postgres schema, but the
+admin API is auth-scoped per tenant). If per-tenant audit trails for kill
+operations are needed, the admin API logs each activation in the main audit
+table (§2.1) — not in `euno_kill_switch_entries`.
 
 **Sync strategy (per `redis-kill-switch.ts` design):** Redis is the read path
 (synchronous, in-process cache). Postgres is the write-through durability layer.
-On Redis cold-start, `resetAll()` replays all non-revived rows from Postgres.
-This satisfies `docs/stage3executionplan.md` §Task 6: "Redis cold-start, replay
-from Postgres."
+On Redis cold-start, `load()` replays all rows from Postgres into the in-process
+cache, and the manager seeds the Redis keys from there. This satisfies
+`docs/stage3executionplan.md` §Task 6: "Redis cold-start, replay from Postgres."
 
 ### 2.4 Deployment topology
 
@@ -258,39 +289,49 @@ mint-audit table uses a third credential (per MVP §"Audit trail" line 679:
 
 ### 3.1 Topology
 
-**Single Redis Cluster** shared by all gateway replicas for the following keys:
+**Single Redis Cluster** shared by all gateway replicas. Each store owns its
+own key namespace, configurable via a dedicated environment variable:
 
-| Purpose                 | Key pattern                        | TTL behaviour         |
-|-------------------------|------------------------------------|-----------------------|
-| Kill-switch global      | `<prefix>global`                   | No TTL (operator-revive) |
-| Kill-switch sessions    | `<prefix>killed_sessions` (SET)    | No TTL                |
-| Kill-switch agents      | `<prefix>killed_agents` (SET)      | No TTL                |
-| Kill-switch pub/sub     | `<prefix>events` (channel)        | N/A                   |
-| Call counters           | `capcall:<agentId>:<constraintId>:<window>` | Set to window boundary |
-| Revocation list         | `rev:<jti>` (string)               | Token `exp` − now     |
-| Revocation epoch        | `rev-epoch:<issuerId>` (string)    | No TTL                |
-| DPoP replay             | `dpop:<jkt>:<jti>` (string)        | DPoP proof `exp` + clock skew |
+| Purpose                 | Key pattern (default prefix)                        | Env var override             | TTL behaviour         |
+|-------------------------|-----------------------------------------------------|------------------------------|-----------------------|
+| Kill-switch global      | `killswitch:global` (default `killswitch:`)         | `KILL_SWITCH_KEY_PREFIX`     | No TTL (operator-revive) |
+| Kill-switch sessions    | `killswitch:killed_sessions` (SET)                  | `KILL_SWITCH_KEY_PREFIX`     | No TTL                |
+| Kill-switch agents      | `killswitch:killed_agents` (SET)                    | `KILL_SWITCH_KEY_PREFIX`     | No TTL                |
+| Kill-switch pub/sub     | `killswitch:events` (channel)                       | `KILL_SWITCH_KEY_PREFIX`     | N/A                   |
+| Call counters           | `capcall:<key>` (default `capcall:`)                | `CALL_COUNTER_KEY_PREFIX`    | Set to window boundary |
+| Revocation list         | `revoked:<jti>` (default `revoked:`)                | `REVOCATION_KEY_PREFIX`      | Token `exp` − now     |
+| Revocation epoch        | `epoch:<issuerId>` (default `epoch:`)               | `REVOCATION_EPOCH_KEY_PREFIX`| No TTL                |
+| DPoP replay             | `dpopjti:<jti>` (default `dpopjti:`)                | `DPOP_REPLAY_KEY_PREFIX`     | DPoP proof `exp` + clock skew |
 
-All key prefixes are configurable via `REDIS_KEY_PREFIX` (default `euno:`).
+Each prefix default is defined in the corresponding module (see
+`common-infra/src/redis-kill-switch.ts`, `common-infra/src/call-counter-store.ts`,
+`tool-gateway/src/revocation-store.ts`, `public/packages/common/src/dpop.ts`).
+There is **no global `REDIS_KEY_PREFIX`** environment variable — each store's
+prefix is independently configurable to allow sharing a Redis instance across
+multiple environments without key collisions.
 
 ### 3.2 Circuit-breaker policy
 
 The `RedisCircuitBreaker` (`common-infra/src/redis-circuit-breaker.ts`) is
-wired to all three Redis-dependent stores. The circuit-open behaviour is
-**operator-configurable** per `docs/stage3executionplan.md` §Task 4:
+wired to all three Redis-dependent stores. Per `docs/stage3executionplan.md`
+§Task 4, the circuit-open behaviour must be explicit — not silently defaulted:
 
 | Store                | `REDIS_CIRCUIT_OPEN_MODE` value | Effect when open                |
 |----------------------|---------------------------------|---------------------------------|
-| CallCounterStore     | `fail-closed` (default)         | Treat counter as exceeded → deny |
+| CallCounterStore     | `fail-closed`                   | Treat counter as exceeded → deny |
 | CallCounterStore     | `fail-open`                     | Allow (local fallback counter used) |
-| RevocationStore      | `fail-closed` (default)         | Treat token as revoked → 401   |
+| RevocationStore      | `fail-closed`                   | Treat token as revoked → 401   |
 | RevocationStore      | `fail-open-503`                 | Return 503 (caller retries)     |
 | KillSwitchManager    | n/a                             | Reads always from local cache; writes surface Redis error to admin API |
 
-There is **no silent default** for circuit-open behaviour. A missing
-`REDIS_CIRCUIT_OPEN_MODE` causes the gateway to log a startup warning and apply
-`fail-closed` across all stores. Self-hosters who want `fail-open` must
-explicitly set it.
+**Default behaviour:** The hosted service hard-codes `fail-closed` and does not
+expose `REDIS_CIRCUIT_OPEN_MODE` to tenants — a degraded Redis must not silently
+widen the enforcement posture. Self-hosters MUST explicitly set
+`REDIS_CIRCUIT_OPEN_MODE` in their deployment config; the gateway logs an
+error-level warning on startup when the variable is absent and defaults to
+`fail-closed` so a misconfigured self-host does not accidentally fail open.
+Self-hosters who want `fail-open` (e.g. to accept per-replica counter
+inaccuracy during Redis maintenance windows) must explicitly set the value.
 
 ### 3.3 Redis credentials
 
@@ -351,9 +392,9 @@ compatible issuer.
 ```
 sk-<prefix8>.<secret48>
 │    │         │
-│    │         └── 48 chars = 288 bits of random, base62 encoded
-│    │                        Provides > 2^160 guessing resistance
-│    └── 8 chars of the SHA-256(secret), base62 encoded
+│    │         └── 48 chars ≈ 285 bits of random, base58 encoded
+│    │                        Provides > 2^256 guessing resistance
+│    └── 8 chars of the SHA-256(secret), base58 encoded
 │         Allows O(1) DB lookup without scanning hashed secrets
 └── Literal prefix — identifies the token type in logs and error messages
 ```
@@ -364,14 +405,16 @@ sk-<prefix8>.<secret48>
 sk-x7Kp9mRq.bL3nYv2wQsT6dFhG8jZcAiUeR1oP4mKxN5yW7uE0tBpV9gC
 ```
 
-**Character set:** `[A-Za-z0-9]` (base62). No ambiguous characters. Total
+**Character set:** Base58 (`[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]` —
+excludes `0`, `O`, `I`, `l` to eliminate visually ambiguous characters). Total
 length: 3 (`sk-`) + 8 + 1 (`.`) + 48 = 60 characters. Fits in a single HTTP
 header field without line wrapping.
 
 **Why not UUID format:** UUIDs expose 122 bits of entropy. The `sk-<p8>.<s48>`
-scheme exposes 288 bits, making brute-force impractical even against the hashed
-secret. The 8-char prefix is not secret — it is always stored in plaintext for
-lookup — so its exposure does not meaningfully reduce security.
+scheme exposes ~285 bits in base58 (log₂(58^48) ≈ 285), making brute-force
+impractical even against the hashed secret. The 8-char prefix is not secret — it
+is always stored in plaintext for lookup — so its exposure does not meaningfully
+reduce security.
 
 ### 5.2 Storage schema
 
@@ -381,9 +424,8 @@ lookup — so its exposure does not meaningfully reduce security.
 CREATE TABLE api_keys (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
-  prefix       TEXT NOT NULL UNIQUE,        -- 8-char base62 prefix (plaintext)
-  key_hash     TEXT NOT NULL,               -- Argon2id(secret48, salt, params)
-  salt         TEXT NOT NULL,               -- per-key Argon2id salt (hex)
+  prefix       TEXT NOT NULL UNIQUE,        -- 8-char base58 prefix (plaintext)
+  key_hash     TEXT NOT NULL,               -- Argon2id PHC encoded string (includes salt + params)
   policy_id    TEXT NOT NULL,               -- FK → capability_policies.id
   scopes       TEXT[] NOT NULL DEFAULT '{}', -- ['enforce', 'admin', 'audit']
   label        TEXT,                        -- human-readable name set by admin
@@ -414,21 +456,35 @@ CREATE TABLE api_key_issuance_log (
 - `m` = 65536 (64 MiB memory)
 - `t` = 3 (iterations)
 - `p` = 4 (parallelism)
-- Output length: 32 bytes (hex-encoded, 64 chars)
+
+**Storage format:** The PHC-encoded string (Password Hashing Competition
+standard format) is stored in the `key_hash` column. The PHC string encodes the
+algorithm identifier, parameters, a randomly generated per-key salt, and the
+derived hash output into a single self-contained string, for example:
+
+```
+$argon2id$v=19$m=65536,t=3,p=4$<base64-salt>$<base64-hash>
+```
+
+This avoids a separate `salt` column and prevents parameter drift: the stored
+string is fully self-describing, so the verifier reads parameters from it rather
+than relying on a separate configuration source.
 
 **Rationale:** Argon2id is the Password Hashing Competition winner and the
 current OWASP recommendation for credential hashing. The parameters above
 target ~150 ms on a 4-core server. Even at 1 billion keys, 150 ms/attempt
-makes online brute-force infeasible. The 288-bit secret means pre-computation
-tables are not viable.
+makes online brute-force infeasible. The ~285-bit secret makes pre-computation
+tables infeasible.
 
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
-2. PostgreSQL parameterized query: `SELECT key_hash, salt, tenant_id, policy_id, scopes, revoked_at, expires_at
+2. PostgreSQL parameterized query: `SELECT key_hash, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
 3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
-4. `argon2id_verify(key_hash, secret, salt)`: constant-time comparison.
+4. `argon2.verify(key_hash, secret)`: the `argon2` Node.js library's `verify()`
+   function extracts the salt and parameters from the PHC string in `key_hash`
+   and performs a constant-time comparison. No separate salt argument is needed.
 5. If mismatch: return 401.
 6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
    enforcement path).
@@ -453,13 +509,24 @@ running in remote-enforcer mode and the gateway's enforcement endpoint.
 
 ### 6.1 Configuration
 
-In `@euno/mcp`, the `enforcer` config field selects the enforcement backend:
+The `@euno/mcp` config uses the flat form promised in `docs/mvp.md` (line 633)
+as the canonical user-facing shape. `@euno/mcp` also accepts the equivalent
+nested-object form as an alternative for operators who prefer explicit
+field grouping. Both forms are equivalent; the flat form is the one shown in
+user-facing documentation.
 
 ```jsonc
-// Stage 1–2: local (default — no change required)
+// Stage 1–2: local enforcement (default — no change required)
 { "enforcer": "local" }
 
-// Stage 3: remote gateway
+// Stage 3: remote gateway — flat form (MVP doc canonical shape, docs/mvp.md line 633)
+{
+  "enforcer": "https://gateway.euno.example",
+  "apiKey": "sk-x7Kp9mRq.bL3nYv2wQsT6dFhG8jZcAiUeR1oP4mKxN5yW7uE0tBpV9gC",
+  "enforcerTimeoutMs": 5000
+}
+
+// Stage 3: remote gateway — nested-object form (equivalent, optional)
 {
   "enforcer": {
     "url": "https://gateway.euno.example",
@@ -469,8 +536,12 @@ In `@euno/mcp`, the `enforcer` config field selects the enforcement backend:
 }
 ```
 
-The `local` string and the remote object are discriminated at `typeof enforcer`.
-When the remote object is present, the proxy skips constructing
+**Parsing rule:** When `enforcer` is a `string` and the string is not `"local"`,
+it is treated as the gateway URL (flat form); `apiKey` is read from the sibling
+field. When `enforcer` is an `object`, it is the nested form. The `local` string
+triggers the existing in-process path unchanged.
+
+When the remote form is active, the proxy skips constructing
 `FilePolicySource`, `LocalHmacSigner`, `InMemoryCallCounterStore`, and the
 in-process kill-switch manager (per `stage3executionplan.md` §Task 2). The
 gateway enforcer returns both the allow/deny decision and any obligations
@@ -698,19 +769,24 @@ it. Reviewers should verify each cross-link before approving.
 | Decision | This document § | `docs/mvp.md` anchor |
 |---|---|---|
 | KMS provider: Azure Managed HSM primary | §1.1 | Lines 672–673 (non-exportability at HSM level) |
+| Config types in `@euno/common-core` | §1.1 | `public/packages/common/src/runtime.ts` |
 | Non-exportability verification procedure | §1.3 | Lines 672–673 |
 | Key rotation via JWKS kid | §1.4 | Lines 674–675 (key rotation) |
 | Audit signer: KMS-backed → OCSF | §1 | Line 525 (parity table row "Audit signer") |
-| Postgres ledger + per-row HMAC | §2.1 | Lines 648–650 (persistent audit log) |
+| Postgres ledger: existing `euno_audit_ledger` table + per-row HMAC `BYTEA` | §2.1 | Lines 648–650 (persistent audit log) |
+| Advisory lock ID: `0x455534004C454447` (not hashtext) | §2.1 | `ledger-signer.ts` line 683 |
+| S3 anchor: `PostgresLedgerOptions.s3` (code-configured, no env var) | §2.1 | `ledger-signer.ts` lines 548–560 |
 | Audit retention 90-day default | §2.1 | Lines 791–798 (pricing tiers) |
-| Revocation: Redis + Postgres dual-write | §2.2 | Lines 524, 527 (parity table "Kill switch") |
-| Kill-switch: Redis pub/sub + Postgres replay | §2.3 | Line 527 + stage3plan §Task 6 |
-| Redis circuit-breaker: fail-closed default | §3.2 | stage3plan §Task 4 (explicit, not silent) |
+| Revocation: Redis + Postgres best-effort dual-write | §2.2 | Lines 524, 527 (parity table "Kill switch") |
+| Kill-switch: existing `euno_kill_switch_entries` table (row-presence = active) | §2.3 | `redis-kill-switch.ts` lines 165–179 |
+| Kill-switch: Redis pub/sub + Postgres `load()` replay on cold-start | §2.3 | Line 527 + stage3plan §Task 6 |
+| Redis key prefixes: per-store env vars (no global prefix) | §3.1 | `redis-kill-switch.ts`, `call-counter-store.ts`, `revocation-store.ts`, `dpop.ts` |
+| Redis circuit-breaker: hosted hard-codes fail-closed; self-hosters must set `REDIS_CIRCUIT_OPEN_MODE` | §3.2 | stage3plan §Task 4 (no silent default) |
 | Self-host bundle excludes minter | §4 | Line 646 (hosted-only initially) |
-| API-key format: `sk-<p8>.<s48>` | §5.1 | stage3plan §Task 10 |
-| API-key hash: Argon2id | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
+| API-key format: `sk-<p8>.<s48>` base58 | §5.1 | stage3plan §Task 10 |
+| API-key hash: Argon2id PHC string (no separate salt column) | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
 | API-key issuance audit log (separate credentials) | §5.2 | Line 679 |
-| Enforcer config shape `enforcer: { url, apiKey }` | §6.1 | Lines 628–633 |
+| Enforcer config: flat form canonical (mvp.md line 633); nested form also accepted | §6.1 | Lines 628–633 |
 | Enforcer endpoint POST /api/v1/enforce | §6.2 | stage3plan §Task 9 |
 | Remote enforcer timeout → deny-by-default | §6.7 | Lines 613–615 (cryptographic-token invariant must not be relaxed) |
 | Policy cache 60-s TTL + invalidation | §6.8 | Line 638 (drop-in replacement, no schema change) |
