@@ -601,6 +601,30 @@ Run `npx ts-node scripts/stage3-readiness.ts` to check current status (exits 0 w
 
 ## Stage 3: The Gateway as Managed Boundary
 
+> **Stage 3 status** (May 2026)
+>
+> - [x] Task 0 — Stage 3 design freeze & RFC: `docs/stage3executionplan.md` authored; KMS provider, Postgres/Redis deployment shape, API-key format, and wire contract captured; pending final merge review
+> - [x] Task 1 — API-key minter threat model: `docs/security/minter-threat-model.md` produced; all seven MVP questions answered; pending engineer + security sign-off
+> - [ ] Task 2 — `@euno/mcp` enforcer mode dispatch (remote-enforcer client)
+> - [ ] Task 3 — `JWTTokenVerifier` wiring (consume seam from `@euno/common-core`)
+> - [ ] Task 4 — `RedisCallCounterStore` for the gateway
+> - [ ] Task 5 — KMS-backed `EvidenceSigner`
+> - [ ] Task 6 — `RedisKillSwitchManager` with Postgres dual-write
+> - [ ] Task 7 — Persistent audit query API
+> - [ ] Task 8 — Admin API hardening
+> - [ ] Task 9 — Hosted enforcement HTTP contract
+> - [ ] Task 10 — Minter service skeleton *(blocked on Task 1 sign-off)*
+> - [ ] Task 11 — Minter HSM integration *(blocked on Task 1 sign-off)*
+> - [ ] Task 12 — Minter monitoring & alerting *(blocked on Task 1 sign-off)*
+> - [ ] Task 13 — Self-hostable Docker image
+> - [ ] Task 14 — BYO-GW path documentation
+> - [ ] Task 15 — `@euno/mcp` upgrade UX
+> - [ ] Task 16 — Telemetry continuity + `scripts/stage4-readiness.ts`
+> - [ ] Task 17 — Pricing & billing plumbing
+> - [ ] Task 18 — Reference materials & migration guide
+> - [ ] Task 19 — Cross-stage parity test suite
+> - [ ] Task 20 — Gate-to-Stage-4 instrumentation
+
 **What changes.** Move enforcement out of the local proxy process
 into a persistent service. `euno-platform/packages/tool-gateway` stops being
 overengineered and starts being exactly right for the population
