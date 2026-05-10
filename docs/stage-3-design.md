@@ -142,12 +142,14 @@ Key rotation therefore requires:
 implemented in `euno-platform/packages/common-infra/src/ledger-signer.ts`.
 
 Stage 3 uses the **existing table schema** managed by
-`PostgresLedgerBackend.migrate()`. The schema below is the authoritative source;
-the RFC reproduces it verbatim for clarity:
+`PostgresLedgerBackend.migrate()` (see `ledger-signer.ts` lines 730–742 for
+the authoritative `CREATE TABLE` statement). The schema is reproduced here for
+reference; if the implementation diverges, `ledger-signer.ts` is the source of
+truth:
 
 ```sql
 -- Table: euno_audit_ledger  (default; configurable via PostgresLedgerOptions.table)
--- Managed by PostgresLedgerBackend.migrate() in ledger-signer.ts
+-- Managed by PostgresLedgerBackend.migrate() in ledger-signer.ts lines 730–742
 CREATE TABLE euno_audit_ledger (
   seq           BIGINT PRIMARY KEY,       -- application-assigned under advisory lock
   record_id     TEXT NOT NULL UNIQUE,     -- UUID from AuditEvidence.id
@@ -176,10 +178,13 @@ CREATE INDEX IF NOT EXISTS idx_euno_audit_ledger_tenant_agent
 ```
 
 **Multi-replica serialization:** Already implemented. `PostgresLedgerBackend`
-acquires `pg_advisory_xact_lock($1)` where the lock ID is configured via
-`PostgresLedgerOptions.advisoryLockId` (default `BigInt('0x455534004C454447')`
-= "EU4LEDG" in ASCII). This is stable across deploys and does not require any
-Stage-3 change.
+acquires `pg_advisory_xact_lock($1)` (PostgreSQL advisory lock function) where
+the lock ID is the TypeScript `BigInt` value `BigInt('0x455534004C454447')` —
+the hex encoding of "EU4LEDG" in ASCII. This is the default configured at
+`ledger-signer.ts` line 683 (`options.advisoryLockId ?? BigInt('0x455534004C454447')`).
+The `BigInt` is converted to a `string` when passed to the pg driver, which
+maps it to PostgreSQL `bigint`. This is stable across deploys and does not
+require any Stage-3 change.
 
 **Retention:** 90-day default for Cloud Team tier; configurable via
 `AUDIT_RETENTION_DAYS` env var. A background job (cron, or pg-cron) trims rows
@@ -393,7 +398,7 @@ compatible issuer.
 sk-<prefix8>.<secret48>
 │    │         │
 │    │         └── 48 chars ≈ 285 bits of random, base58 encoded
-│    │                        Provides > 2^256 guessing resistance
+│    │                        Provides > 2^284 guessing resistance
 │    └── 8 chars of the SHA-256(secret), base58 encoded
 │         Allows O(1) DB lookup without scanning hashed secrets
 └── Literal prefix — identifies the token type in logs and error messages
@@ -405,10 +410,11 @@ sk-<prefix8>.<secret48>
 sk-x7Kp9mRq.bL3nYv2wQsT6dFhG8jZcAiUeR1oP4mKxN5yW7uE0tBpV9gC
 ```
 
-**Character set:** Base58 (`[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]` —
-excludes `0`, `O`, `I`, `l` to eliminate visually ambiguous characters). Total
-length: 3 (`sk-`) + 8 + 1 (`.`) + 48 = 60 characters. Fits in a single HTTP
-header field without line wrapping.
+**Character set:** Bitcoin-style Base58 (`[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]` —
+the standard Bitcoin Base58 alphabet, which excludes `0`, `O`, `I`, `l` to
+eliminate visually ambiguous characters). Total length: 3 (`sk-`) + 8 + 1
+(`.`) + 48 = 60 characters. Fits in a single HTTP header field without line
+wrapping.
 
 **Why not UUID format:** UUIDs expose 122 bits of entropy. The `sk-<p8>.<s48>`
 scheme exposes ~285 bits in base58 (log₂(58^48) ≈ 285), making brute-force
@@ -460,11 +466,16 @@ CREATE TABLE api_key_issuance_log (
 **Storage format:** The PHC-encoded string (Password Hashing Competition
 standard format) is stored in the `key_hash` column. The PHC string encodes the
 algorithm identifier, parameters, a randomly generated per-key salt, and the
-derived hash output into a single self-contained string, for example:
+derived hash output into a single self-contained string. A realistic example
+(base64url encoding, per the PHC spec):
 
 ```
-$argon2id$v=19$m=65536,t=3,p=4$<base64-salt>$<base64-hash>
+$argon2id$v=19$m=65536,t=3,p=4$c29tZXJhbmRvbXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaasfKSC0OpgYDH1Ys
 ```
+
+Where:
+- `c29tZXJhbmRvbXNhbHQ` is a base64url-encoded 16-byte random salt (unique per key)
+- `RdescudvJCsgt3ub+b+dWRWJTmaasfKSC0OpgYDH1Ys` is the base64url-encoded 32-byte Argon2id output
 
 This avoids a separate `salt` column and prevents parameter drift: the stored
 string is fully self-describing, so the verifier reads parameters from it rather
@@ -482,9 +493,10 @@ tables infeasible.
 2. PostgreSQL parameterized query: `SELECT key_hash, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
 3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
-4. `argon2.verify(key_hash, secret)`: the `argon2` Node.js library's `verify()`
-   function extracts the salt and parameters from the PHC string in `key_hash`
-   and performs a constant-time comparison. No separate salt argument is needed.
+4. `argon2.verify(key_hash, secret)`: uses the [`argon2` npm package](https://www.npmjs.com/package/argon2)
+   (`npm install argon2`). Its `verify(hash, plain)` function extracts the salt
+   and parameters from the PHC string in `key_hash` and performs a
+   constant-time comparison. No separate salt argument is needed.
 5. If mismatch: return 401.
 6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
    enforcement path).
