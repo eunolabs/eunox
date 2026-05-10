@@ -69,10 +69,10 @@ AWS fallback deployments must bind each tenant to a distinct configured KMS key
 or a separate signer config per tenant; `AWSKMSConfig.grantTokensByPolicyHash` scopes sign
 authorization but does not select a different key. GCP deployments currently lack
 per-tenant key isolation through a shared signer config; hosted GCP fallback is
-blocked until `docs/stage3executionplan.md` §Task 11 adds context-keyed
-`CryptoKeyVersion` selection, while self-hosters can run a separate signer config
-per tenant. Platform-level credentials may provision or disable tenant keys, but
-they do not sign capability tokens.
+blocked until the Stage 3 execution plan's Task 11 adds context-keyed
+`CryptoKeyVersion` selection, while self-hosters can run a separate signer
+config per tenant. Platform-level credentials may provision or disable tenant
+keys, but they do not sign capability tokens.
 
 ### 1.2 Justification
 
@@ -523,12 +523,13 @@ At most two pepper versions may be active concurrently (`current` and
 1. Split incoming key at `.` → `(prefix, secret)`.
 2. PostgreSQL parameterized query fetches both the requested prefix and one reserved
    dummy row (constant `API_KEY_DUMMY_PREFIX = '__dummy__'`, outside the Base58 key
-   format) so every lookup performs a real heap fetch even on requested-prefix misses:
+   format because `_` is not in the Base58 alphabet) so every lookup performs a real heap
+   fetch even on requested-prefix misses. In PostgreSQL, `(prefix = $1)` evaluates to a
+   boolean; `DESC` sorts `true` before `false`, returning the real row when it exists and
+   falling back to the dummy row otherwise:
    `SELECT prefix, key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix IN ($1, $2) ORDER BY (prefix = $1) DESC LIMIT 1`,
    where `$2` is `API_KEY_DUMMY_PREFIX`.
-   The descending boolean sort returns the real row when it exists (`true` before `false`)
-   and otherwise falls back to the dummy row.
 3. Run HMAC computation and constant-time comparison before any rejection is
    returned, including for missing, revoked, or expired rows. If the requested
    prefix did not select a real row, use the returned dummy row and fixed dummy
