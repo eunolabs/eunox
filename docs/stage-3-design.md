@@ -47,7 +47,7 @@ before code is written, not discovered during code review.
 
 **Primary (hosted service):** Azure Managed HSM, using the
 [Azure Key Vault Managed HSM REST API][az-mhsm] with per-tenant EC P-256
-(`EC-HSM`, `ES256`) non-exportable signing keys.
+(`EC-HSM`, `ES256`) non-exportable keys.
 
 **Supported (self-host and hosted fallback):**
 
@@ -444,6 +444,8 @@ wrapping.
 scheme exposes ~285 bits in base58 (log₂(58^48) ≈ 285), making brute-force
 impractical even against the stored verifier. The 8-character prefix is random
 lookup metadata, not part of the secret; it is stored and logged in plaintext.
+Uniqueness is enforced by the `api_keys.prefix` unique constraint. If generation
+collides, issuance discards the key and generates a new prefix/secret pair.
 
 ### 5.2 Storage schema
 
@@ -454,7 +456,7 @@ CREATE TABLE api_keys (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
   prefix       TEXT NOT NULL UNIQUE,        -- 8-char base58 prefix (plaintext)
-  key_digest   TEXT NOT NULL,               -- base64url(HMAC-SHA256(pepper version, secret))
+  key_digest   TEXT NOT NULL,               -- base64url(HMAC-SHA256 keyed by pepper over secret)
   hmac_key_version TEXT NOT NULL,           -- pepper version used for key_digest
   policy_id    TEXT NOT NULL,               -- FK → capability_policies.id
   scopes       TEXT[] NOT NULL DEFAULT '{}', -- ['enforce', 'admin', 'audit']
@@ -506,24 +508,26 @@ container image. The verifier keeps a small allowlist of active
 version; existing keys continue to verify with their recorded version until
 they are reissued or the old pepper is retired. Retiring a pepper requires
 revoking or reissuing every API key whose row still references that version.
+At most two pepper versions may be active concurrently (`current` and
+`previous`); an emergency overlap of three versions is allowed for no more than
+24 hours.
 
 **Verification flow:**
 
 1. Split incoming key at `.` → `(prefix, secret)`.
 2. PostgreSQL parameterized query: `SELECT key_digest, hmac_key_version, tenant_id, policy_id, scopes, revoked_at, expires_at
    FROM api_keys WHERE prefix = $1` (where `$1` is the prefix extracted in step 1).
-3. If no row, run the same HMAC and constant-time comparison path against a
-   dummy row before returning 401, so prefix enumeration does not get a cheaper
-   timing path. During pepper rotation, both real-row and dummy-row paths iterate
-   over all active pepper versions; only the digest for the row's recorded
-   `hmac_key_version` can pass. If `revoked_at IS NOT NULL` or `expires_at < now()`,
-   return 401.
-4. Load the pepper version named by `hmac_key_version`, compute the candidate
-   digest, and compare it to `key_digest` using constant-time comparison.
-5. If mismatch or the stored pepper version is not active: return 401.
-6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
+3. Run HMAC computation and constant-time comparison before any rejection is
+   returned, including for missing, revoked, or expired rows. If no row exists,
+   use a dummy row and the fixed dummy digest so prefix enumeration does not get
+   a cheaper timing path. During pepper rotation, both real-row and dummy-row
+   paths iterate over all active pepper versions; only the digest for the row's
+   recorded `hmac_key_version` can pass.
+4. If no row, mismatch, inactive pepper version, `revoked_at IS NOT NULL`, or
+   `expires_at < now()`: return 401.
+5. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
    enforcement path).
-7. Return `(tenant_id, policy_id, scopes)` to the caller.
+6. Return `(tenant_id, policy_id, scopes)` to the caller.
 
 **Key issuance:** POST `/admin/v1/keys` (admin scope required). The raw secret
 is returned once in the response body and never stored. The caller MUST treat

@@ -419,13 +419,14 @@ fields, computed with a secret held only by the audit sidecar (not the minter pr
 not the DBA). Canonicalization uses RFC 8785 JSON Canonicalization Scheme over the
 following exact field sequence: `minted_at`, `caller_ip`, `caller_ua`, `api_key_prefix`,
 `tenant_id`, `agent_id`, `session_id`, `policy_id`, `policy_fingerprint`, `jti`, `kid`,
-`kms_request_id`, `exp`, `result`, `denial_reason`, `previous_hash`. The excluded fields
-are `id`, `row_hash`, and `row_hmac`; `previous_hash` is included so deletion or
-reordering breaks the chain. The sidecar supplies `minted_at` explicitly before hashing
-rather than relying on the database default. SQL `NULL` values are encoded as JSON
-`null`, timestamps are UTC ISO-8601 strings with millisecond precision, and binary
-`row_hmac` is encoded as base64url for verification exports. This is the same pattern
-used by `LedgerAuditEvidenceSigner` in
+`kms_request_id`, `exp`, `result`, `denial_reason`, `previous_hash`. Nullable fields
+such as `caller_ua`, `kms_request_id`, and `denial_reason` are encoded as JSON `null`
+when absent. The excluded fields are `id`, `row_hash`, and `row_hmac`; `previous_hash`
+is included so deletion or reordering breaks the chain. The sidecar supplies `minted_at`
+explicitly before hashing rather than relying on the database default. Timestamps are UTC
+ISO-8601 strings with millisecond precision, and binary `row_hmac` is encoded as
+base64url for verification exports. This is the same pattern used by
+`LedgerAuditEvidenceSigner` in
 `euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
 process and its secret — two separate compromises required.
@@ -557,10 +558,14 @@ a request/correlation identifier to the SDK or audit log, the minter records it 
 `mint_audit.kms_request_id` and the job performs exact matching. Where the provider does
 not expose a stable application-visible request ID, the job falls back to exact count
 matching per `(kid, service_identity, minute)` using the provider event timestamp truncated
-to the minute. Concurrent signs in the same minute are handled by comparing aggregate
-counts; no ±1 tolerance is accepted after the two-minute ingestion-lag allowance. Any HSM
-sign event without a matching audit row, or any count mismatch after the lag window, pages
-security as a potential direct sign-oracle compromise.
+to the minute after normalizing all timestamps to UTC. Minter nodes and audit ingestion
+workers must be NTP-synchronized with drift under 30 seconds; if measured drift exceeds
+that bound, the telemetry job pages separately because reconciliation is degraded.
+Concurrent signs are handled by comparing aggregate counts over the affected minute plus
+adjacent minutes covered by the 30-second drift tolerance; no ±1 tolerance is accepted
+after the two-minute ingestion-lag allowance. Any HSM sign event without a matching audit
+row, or any count mismatch after the lag window, pages security as a potential direct
+sign-oracle compromise.
 
 ### Alert routing
 
