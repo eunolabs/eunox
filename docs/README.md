@@ -32,6 +32,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md) | Schema versioning, deployment ordering. |
 | [DISTRIBUTED_STATE.md](./DISTRIBUTED_STATE.md) | Redis-backed shared state (Stage 3+). |
 | [sandboxing.md](./sandboxing.md) | Sandbox reference architecture (Stage 2+). |
+| [stage-3-design.md](./stage-3-design.md) | Stage 3 design freeze RFC: KMS, Postgres, Redis, API-key scheme, enforcer wire protocol. |
 
 ## 4. Deployment and operations
 

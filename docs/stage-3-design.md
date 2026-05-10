@@ -1,0 +1,774 @@
+# Stage 3 Design RFC — "The Gateway as Managed Boundary"
+
+> **Status:** Draft — pending review by ≥2 engineers + 1 security reviewer.
+> Per `stage3executionplan.md` §Task 0, this document must be reviewed and
+> merged before any Task 2+ implementation begins.
+>
+> **MVP anchors satisfied:** All decisions below cross-link to
+> `docs/mvp.md` sections where they are required. The anchor tag and line
+> range appear after each decision header.
+
+---
+
+## 0. Purpose and Scope
+
+This document is the Stage 3 design freeze for `euno-platform`. It captures
+every architectural decision that Tasks 2–12 must implement — and nothing else.
+The goal is to make implementation choices explicit, reviewable, and traceable
+before code is written, not discovered during code review.
+
+**What this document decides:**
+
+1. KMS provider selection for the managed minter signing key.
+2. Postgres deployment shape (audit ledger + revocation list).
+3. Redis deployment shape (kill-switch, call counters, revocation).
+4. Hosted-vs-self-host feature matrix.
+5. API-key format and storage scheme.
+6. Enforcer wire protocol — the exact HTTP contract between `@euno/mcp` in
+   `enforcer:"https://..."` mode and the gateway.
+
+**What this document does not decide:**
+
+- Implementation details covered by individual task specs in
+  `docs/stage3executionplan.md`.
+- UI design (Stage 3 is API-first; see §4 self-host matrix).
+- Pricing (the sketch in `docs/mvp.md` §"Pricing & business model" stands as a
+  guide, not a commitment).
+- Stage 4 capability issuer integration (out of scope for this RFC).
+
+---
+
+## 1. KMS Provider — Minter Signing Key
+
+> **MVP anchor:** `docs/mvp.md` §"Minter threat model" (lines 660–691) and
+> §"Policy and audit schema parity" table row "Audit signer" (line 525).
+
+### 1.1 Decision
+
+**Primary (hosted service):** Azure Managed HSM, using the
+[Azure Key Vault Managed HSM REST API][az-mhsm] with RSA-4096 non-exportable
+keys.
+
+**Supported (self-host and hosted fallback):**
+
+| Backend              | Protection level          | Config type in `@euno/common` |
+|----------------------|---------------------------|-------------------------------|
+| Azure Managed HSM    | FIPS 140-2 Level 3 (HSM)  | `AzureKeyVaultConfig`         |
+| AWS CloudHSM via KMS | FIPS 140-2 Level 3 (HSM)  | `AWSKMSConfig`                |
+| GCP Cloud KMS (HSM)  | FIPS 140-2 Level 3 (HSM)  | `GCPCloudKMSConfig`           |
+
+All three config types already exist in
+`public/packages/common/src/runtime.ts` and are implemented as signing
+backends in the capability issuer. The minter's `KmsEvidenceSigner`
+(stage3executionplan.md §Task 5) reuses the same abstractions.
+
+### 1.2 Justification
+
+**Why Azure Managed HSM as the primary:**
+
+The existing Kubernetes deployment (`k8s/README.md`) targets Azure Container
+Registry and Azure Key Vault. Azure Managed HSM provides:
+
+- **Non-exportability enforced at the HSM boundary**: `wrapKey` and `exportKey`
+  operations are denied at the HSM level for keys created with
+  `exportable: false` in the key attributes — not merely by access policy. The
+  Azure MHSM Security Domain enforces this even against privileged HSM
+  administrators. This satisfies the MVP's requirement: "verify
+  non-exportability is enforced at the HSM level, not just by policy
+  configuration" (`docs/mvp.md` line 673).
+- **Per-tenant key isolation**: Azure MHSM supports per-tenant key assignment
+  via its role-based access control. The `AzureKeyVaultConfig.keysByPolicyHash`
+  map (already wired in `runtime.ts` lines 456–490) enables per-policy-hash key
+  selection without additional infrastructure.
+- **Audit log**: every HSM operation (sign, decrypt, key creation) is written to
+  Azure Monitor / Log Analytics. This is the external witness independent of the
+  minter's own audit trail.
+
+**Why not a single cloud:**
+
+The three KMS backends are already implemented identically against the
+`TokenSigner` / `EvidenceSigner` seams. Self-hosters running AWS or GCP should
+not be blocked by a cloud-specific choice in the hosted service. The
+`KmsEvidenceSigner` (Task 5) selects the backend from a `KMS_PROVIDER`
+environment variable (`azure` | `aws` | `gcp`).
+
+### 1.3 Non-exportability verification procedure
+
+During provisioning, the operator MUST verify non-exportability by attempting
+an export and confirming rejection:
+
+```bash
+# Azure Managed HSM — key is non-exportable iff this returns 403
+az keyvault key download \
+  --hsm-name <mhsm-name> \
+  --name euno-minter-key \
+  --file /tmp/export-test.pem \
+  --encoding PEM
+# Expected: "(KeyNotExportable) Key is not exportable"
+```
+
+This check is part of the provisioning runbook (`docs/runbooks/provision-mhsm.md`,
+to be created in Task 5) and is also asserted by the `scripts/verify-kms-posture.ts`
+script (to be created in Task 5).
+
+### 1.4 Key rotation
+
+Key rotation is addressed in the minter threat model
+(`docs/security/minter-threat-model.md`, Task 1). The design seam here is that
+the `JWTTokenVerifier` in `tool-gateway/src/verifier.ts` already resolves keys
+by `kid` from a JWKS endpoint (`JwksKeySource`, `runtime.ts:JwksKeySource`).
+Key rotation therefore requires:
+
+1. Generate new key version in the HSM.
+2. Publish the new `kid` → public key mapping to the JWKS endpoint.
+3. Update the minter to use the new `kid` for new tokens.
+4. Existing tokens are valid until their `exp`; if rotation is due to
+   compromise, the existing revocation list covers invalidation by `jti`.
+5. Old key version is disabled in the HSM (not deleted — needed for signature
+   verification during the token TTL window).
+
+---
+
+## 2. Postgres Deployment Shape
+
+> **MVP anchor:** `docs/mvp.md` §"Stage 3: What ships" (lines 641–658),
+> specifically "Persistent audit log" (line 648) and the distributed state
+> requirement (lines 653–658).
+
+### 2.1 Audit Ledger
+
+**Implementation:** `PostgresLedgerBackend` — already implemented in
+`euno-platform/packages/common-infra/src/ledger-signer.ts`.
+
+**Table schema (existing, managed by `LedgerAuditEvidenceSigner`):**
+
+```sql
+-- Managed by the bootstrap migrations in ledger-signer.ts
+CREATE TABLE audit_evidence (
+  id           BIGSERIAL PRIMARY KEY,
+  seq          BIGINT NOT NULL UNIQUE,           -- monotonic, 1-based
+  previous_hash TEXT NOT NULL,                   -- SHA-256 of prev record
+  record_hash  TEXT NOT NULL,                    -- SHA-256 of this record
+  replica_id   TEXT NOT NULL,                    -- pod identity
+  signed_evidence JSONB NOT NULL,               -- full OCSF API Activity record
+  hmac         TEXT NOT NULL,                    -- per-row integrity seal
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Lookup index for the audit query API (Task 7)
+CREATE INDEX audit_evidence_tenant_agent_idx
+  ON audit_evidence ((signed_evidence->>'tenantId'), (signed_evidence->>'agentId'));
+
+CREATE INDEX audit_evidence_created_at_idx ON audit_evidence (created_at);
+```
+
+**Multi-replica serialization:** `pg_advisory_xact_lock` (already implemented)
+ensures only one replica writes at a time. The advisory lock key is
+`hashtext('euno_audit_chain')` so it is stable across deploys.
+
+**Retention:** 90-day default for Cloud Team tier; configurable via
+`AUDIT_RETENTION_DAYS` env var. A background job (cron, or pg-cron) trims rows
+older than the retention window. Rows are append-only until the trim job; the
+trim job is itself audited.
+
+**External witness (optional):** `PostgresLedgerBackend` already supports
+putting a Merkle root of every N rows to an S3 Object-Lock bucket
+(`AUDIT_ANCHOR_BUCKET` env var). This is off by default in Stage 3; the seam
+remains in place per `docs/mvp.md` line 649.
+
+### 2.2 Revocation Store
+
+**Implementation:** `RedisRevocationStore` (primary, low-latency) +
+`PostgresRevocationBackend` (durable truth, dual-write).
+
+The Redis store (`tool-gateway/src/revocation-store.ts`) already handles
+in-memory TTL pruning and Redis-backed persistence. Stage 3 adds a
+Postgres backend for durability across Redis flushes:
+
+```sql
+CREATE TABLE revoked_tokens (
+  jti          TEXT PRIMARY KEY,
+  tenant_id    TEXT NOT NULL,
+  expires_at   BIGINT NOT NULL,   -- unix seconds (natural token expiry)
+  revoked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_by   TEXT              -- admin identity (audit)
+);
+
+CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
+```
+
+**Sync strategy:**
+- Every `revoke(jti, expiresAt)` call writes to Redis **and** Postgres
+  atomically (Redis first, Postgres second). If Postgres write fails the
+  revocation is still in Redis; a background reconciler re-drives Postgres from
+  Redis on startup.
+- On Redis cold-start (flush or new replica), `PostgresRevocationBackend`
+  replays all non-expired rows into Redis via `SETEX` calls in batches of 1000.
+- TTL-expired rows in Postgres are pruned weekly by a trim job.
+
+### 2.3 Kill-Switch Persistence
+
+**Implementation:** `PostgresKillSwitchBackend` — already referenced in
+`euno-platform/packages/common-infra/src/redis-kill-switch.ts` (the
+`KillSwitchPersistenceBackend` seam).
+
+```sql
+CREATE TABLE kill_switches (
+  id           BIGSERIAL PRIMARY KEY,
+  kind         TEXT NOT NULL,  -- 'global' | 'session' | 'agent'
+  target_id    TEXT,           -- NULL for global; session/agent id otherwise
+  tenant_id    TEXT NOT NULL,
+  activated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revived_at   TIMESTAMPTZ,
+  activated_by TEXT NOT NULL   -- admin identity (audit)
+);
+
+CREATE INDEX kill_switches_active_idx
+  ON kill_switches (tenant_id, kind, target_id)
+  WHERE revived_at IS NULL;
+```
+
+**Sync strategy (per `redis-kill-switch.ts` design):** Redis is the read path
+(synchronous, in-process cache). Postgres is the write-through durability layer.
+On Redis cold-start, `resetAll()` replays all non-revived rows from Postgres.
+This satisfies `docs/stage3executionplan.md` §Task 6: "Redis cold-start, replay
+from Postgres."
+
+### 2.4 Deployment topology
+
+| Component                     | Instance count  | HA mechanism           |
+|-------------------------------|-----------------|------------------------|
+| Postgres (audit, revocation)  | 1 primary       | Cloud-managed HA replica (Azure Flexible Server / Cloud SQL / RDS) |
+| Postgres (kill-switch)        | Same cluster    | Shared with audit DB, separate schema |
+| Connection pool               | PgBouncer sidecar | One per gateway pod |
+
+**Credentials:** Postgres credentials are separate from the gateway's own
+API-key database (different Postgres user with minimal grants). The minter's
+mint-audit table uses a third credential (per MVP §"Audit trail" line 679:
+"separate credentials from the minter itself").
+
+---
+
+## 3. Redis Deployment Shape
+
+> **MVP anchor:** `docs/mvp.md` §"Stage 3: What ships" (line 653–654):
+> "Redis-backed distributed state for multi-process deployments."
+> `docs/stage3executionplan.md` §Task 4 (call counters) and §Task 6
+> (kill-switch).
+
+### 3.1 Topology
+
+**Single Redis Cluster** shared by all gateway replicas for the following keys:
+
+| Purpose                 | Key pattern                        | TTL behaviour         |
+|-------------------------|------------------------------------|-----------------------|
+| Kill-switch global      | `<prefix>global`                   | No TTL (operator-revive) |
+| Kill-switch sessions    | `<prefix>killed_sessions` (SET)    | No TTL                |
+| Kill-switch agents      | `<prefix>killed_agents` (SET)      | No TTL                |
+| Kill-switch pub/sub     | `<prefix>events` (channel)        | N/A                   |
+| Call counters           | `capcall:<agentId>:<constraintId>:<window>` | Set to window boundary |
+| Revocation list         | `rev:<jti>` (string)               | Token `exp` − now     |
+| Revocation epoch        | `rev-epoch:<issuerId>` (string)    | No TTL                |
+| DPoP replay             | `dpop:<jkt>:<jti>` (string)        | DPoP proof `exp` + clock skew |
+
+All key prefixes are configurable via `REDIS_KEY_PREFIX` (default `euno:`).
+
+### 3.2 Circuit-breaker policy
+
+The `RedisCircuitBreaker` (`common-infra/src/redis-circuit-breaker.ts`) is
+wired to all three Redis-dependent stores. The circuit-open behaviour is
+**operator-configurable** per `docs/stage3executionplan.md` §Task 4:
+
+| Store                | `REDIS_CIRCUIT_OPEN_MODE` value | Effect when open                |
+|----------------------|---------------------------------|---------------------------------|
+| CallCounterStore     | `fail-closed` (default)         | Treat counter as exceeded → deny |
+| CallCounterStore     | `fail-open`                     | Allow (local fallback counter used) |
+| RevocationStore      | `fail-closed` (default)         | Treat token as revoked → 401   |
+| RevocationStore      | `fail-open-503`                 | Return 503 (caller retries)     |
+| KillSwitchManager    | n/a                             | Reads always from local cache; writes surface Redis error to admin API |
+
+There is **no silent default** for circuit-open behaviour. A missing
+`REDIS_CIRCUIT_OPEN_MODE` causes the gateway to log a startup warning and apply
+`fail-closed` across all stores. Self-hosters who want `fail-open` must
+explicitly set it.
+
+### 3.3 Redis credentials
+
+Redis is reached via `REDIS_URL` (`redis://` or `rediss://`). For the hosted
+service, TLS (`rediss://`) is mandatory. The URL is injected at runtime from the
+cloud secret manager (Azure Key Vault secret / AWS Secrets Manager / GCP Secret
+Manager) — not baked into the container image.
+
+---
+
+## 4. Hosted-vs-Self-Host Feature Matrix
+
+> **MVP anchor:** `docs/mvp.md` §"Pricing & business model sketch" (lines
+> 791–808) and §"Stage 3: What ships" (lines 643–658).
+
+The matrix below maps the pricing tiers from `docs/mvp.md` to concrete
+technical features that Gate the tier. It is the definitive reference for which
+capabilities land in which tier.
+
+| Feature                                  | OSS (`@euno/mcp` only) | Self-Host (BSL image) | Cloud Free | Cloud Team | Cloud Enterprise |
+|------------------------------------------|:------:|:------:|:------:|:------:|:------:|
+| Local enforcement (in-process PDP)       | ✅ | ✅ | ✅ | ✅ | ✅ |
+| stdio + HTTP proxy transports            | ✅ | ✅ | ✅ | ✅ | ✅ |
+| All condition types (Stage 1–2)          | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Local HMAC audit log                     | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `euno-mcp validate-token` / `stats`      | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Remote enforcer mode (`enforcer: url`)   | — | ✅ | ✅ | ✅ | ✅ |
+| KMS-backed audit signer                  | — | ✅ (BYO KMS) | ✅ | ✅ | ✅ |
+| Redis call-counter store                 | — | ✅ (BYO Redis) | ✅ | ✅ | ✅ |
+| Redis kill-switch manager                | — | ✅ (BYO Redis) | ✅ | ✅ | ✅ |
+| Postgres audit ledger                    | — | ✅ (BYO Postgres) | ✅ | ✅ | ✅ |
+| Audit query API (Task 7)                 | — | ✅ | 7-day | 90-day | Configurable |
+| Kill-switch admin API                    | — | ✅ | Session-scoped | ✅ | ✅ |
+| API-key minter façade                    | — | — | ✅ | ✅ | ✅ |
+| SSO via OIDC                             | — | — | — | ✅ | ✅ |
+| Evidence export (signed OCSF)            | — | — | — | — | ✅ |
+| On-prem signing key (BYO HSM)            | — | ✅ | — | — | ✅ |
+| SOC2 attestation docs                    | — | — | — | — | ✅ |
+| Cross-chain audit anchor (Stage 5)       | — | — | — | — | ✅ |
+
+**Self-host bundle boundary:** The self-host Docker image ships all gateway
+code (BSL 1.1). The API-key minter is **not** in the self-host bundle initially
+(per `docs/mvp.md` line 646: "not part of the self-host bundle initially —
+that decision can flip later based on demand"). Self-hosters must issue their
+own JWT capability tokens via `euno-platform/packages/capability-issuer` or a
+compatible issuer.
+
+---
+
+## 5. API-Key Format and Storage Scheme
+
+> **MVP anchor:** `docs/mvp.md` §"Stage 3: The Stage 3 upgrade bridge" (lines
+> 609–638) and `docs/stage3executionplan.md` §Task 0 (api-key format and
+> storage scheme), §Task 10 (minter service skeleton).
+
+### 5.1 Key format
+
+```
+sk-<prefix8>.<secret48>
+│    │         │
+│    │         └── 48 chars = 288 bits of random, base62 encoded
+│    │                        Provides > 2^160 guessing resistance
+│    └── 8 chars of the SHA-256(secret), base62 encoded
+│         Allows O(1) DB lookup without scanning hashed secrets
+└── Literal prefix — identifies the token type in logs and error messages
+```
+
+**Concrete example:**
+
+```
+sk-x7Kp9mRq.bL3nYv2wQsT6dFhG8jZcAiUeR1oP4mKxN5yW7uE0tBpV9gC
+```
+
+**Character set:** `[A-Za-z0-9]` (base62). No ambiguous characters. Total
+length: 3 (`sk-`) + 8 + 1 (`.`) + 48 = 60 characters. Fits in a single HTTP
+header field without line wrapping.
+
+**Why not UUID format:** UUIDs expose 122 bits of entropy. The `sk-<p8>.<s48>`
+scheme exposes 288 bits, making brute-force impractical even against the hashed
+secret. The 8-char prefix is not secret — it is always stored in plaintext for
+lookup — so its exposure does not meaningfully reduce security.
+
+### 5.2 Storage schema
+
+```sql
+-- Table: api_keys
+-- One row per issued key. Credentials live in the 'keys' column only.
+CREATE TABLE api_keys (
+  id           BIGSERIAL PRIMARY KEY,
+  tenant_id    TEXT NOT NULL,
+  prefix       TEXT NOT NULL UNIQUE,        -- 8-char base62 prefix (plaintext)
+  key_hash     TEXT NOT NULL,               -- Argon2id(secret48, salt, params)
+  salt         TEXT NOT NULL,               -- per-key Argon2id salt (hex)
+  policy_id    TEXT NOT NULL,               -- FK → capability_policies.id
+  scopes       TEXT[] NOT NULL DEFAULT '{}', -- ['enforce', 'admin', 'audit']
+  label        TEXT,                        -- human-readable name set by admin
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ,
+  revoked_at   TIMESTAMPTZ
+);
+
+CREATE INDEX api_keys_prefix_idx ON api_keys (prefix);
+CREATE INDEX api_keys_tenant_idx ON api_keys (tenant_id) WHERE revoked_at IS NULL;
+
+-- Issuance audit (separate credentials from the minter, per MVP line 679)
+CREATE TABLE api_key_issuance_log (
+  id           BIGSERIAL PRIMARY KEY,
+  key_prefix   TEXT NOT NULL,
+  tenant_id    TEXT NOT NULL,
+  issued_by    TEXT NOT NULL,               -- admin user or service identity
+  policy_id    TEXT NOT NULL,
+  policy_hash  TEXT NOT NULL,               -- SHA-256 of policy at issuance time
+  issued_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### 5.3 Key derivation and verification
+
+**Hashing algorithm:** Argon2id with parameters:
+- `m` = 65536 (64 MiB memory)
+- `t` = 3 (iterations)
+- `p` = 4 (parallelism)
+- Output length: 32 bytes (hex-encoded, 64 chars)
+
+**Rationale:** Argon2id is the Password Hashing Competition winner and the
+current OWASP recommendation for credential hashing. The parameters above
+target ~150 ms on a 4-core server. Even at 1 billion keys, 150 ms/attempt
+makes online brute-force infeasible. The 288-bit secret means pre-computation
+tables are not viable.
+
+**Verification flow:**
+
+1. Split incoming key at `.` → `(prefix, secret)`.
+2. `SELECT key_hash, salt, tenant_id, policy_id, scopes, revoked_at, expires_at
+   FROM api_keys WHERE prefix = $1`.
+3. If no row or `revoked_at IS NOT NULL` or `expires_at < now()`: return 401.
+4. `argon2id_verify(key_hash, secret, salt)`: constant-time comparison.
+5. If mismatch: return 401.
+6. Update `last_used_at` asynchronously (fire-and-forget; do not add latency to
+   enforcement path).
+7. Return `(tenant_id, policy_id, scopes)` to the caller.
+
+**Key issuance:** POST `/admin/v1/keys` (admin scope required). The raw secret
+is returned once in the response body and never stored. The caller MUST treat
+the response as a one-time credential delivery.
+
+---
+
+## 6. Enforcer Wire Protocol
+
+> **MVP anchor:** `docs/mvp.md` §"Stage 3: The Stage 3 upgrade bridge" (lines
+> 609–638): "the upgrade really is one config change" and the `enforcer:
+> "https://..."` config shape.
+> `docs/stage3executionplan.md` §Task 2 (enforcer mode dispatch) and §Task 9
+> (hosted enforcement HTTP contract).
+
+This section defines the exact request/response contract between `@euno/mcp`
+running in remote-enforcer mode and the gateway's enforcement endpoint.
+
+### 6.1 Configuration
+
+In `@euno/mcp`, the `enforcer` config field selects the enforcement backend:
+
+```jsonc
+// Stage 1–2: local (default — no change required)
+{ "enforcer": "local" }
+
+// Stage 3: remote gateway
+{
+  "enforcer": {
+    "url": "https://gateway.euno.example",
+    "apiKey": "sk-x7Kp9mRq.bL3nYv2wQsT6dFhG8jZcAiUeR1oP4mKxN5yW7uE0tBpV9gC",
+    "timeoutMs": 5000
+  }
+}
+```
+
+The `local` string and the remote object are discriminated at `typeof enforcer`.
+When the remote object is present, the proxy skips constructing
+`FilePolicySource`, `LocalHmacSigner`, `InMemoryCallCounterStore`, and the
+in-process kill-switch manager (per `stage3executionplan.md` §Task 2). The
+gateway enforcer returns both the allow/deny decision and any obligations
+(redaction, annotation); the proxy applies obligations locally.
+
+### 6.2 Endpoint
+
+```
+POST /api/v1/enforce
+Host: gateway.euno.example
+Authorization: Bearer sk-<prefix8>.<secret48>
+Content-Type: application/json
+Accept: application/json
+X-Euno-Protocol-Version: 1
+X-Request-Id: <uuid>   (optional; reflected in response)
+```
+
+### 6.3 Request body
+
+```typescript
+interface EnforceRequest {
+  /**
+   * Opaque session identifier from the MCP initialize handshake.
+   * For stdio: the proxy process lifetime ID.
+   * For HTTP: the initialize→shutdown cycle ID.
+   * Used by the gateway to apply session-scoped kill-switch checks.
+   */
+  sessionId: string;
+
+  /**
+   * The MCP tool name exactly as sent in tools/call.
+   * Matched against the policy's requiredCapabilities[].resource
+   * using the same matchesResource() logic as the local PDP.
+   */
+  toolName: string;
+
+  /**
+   * The raw arguments object from the tools/call request.
+   * The gateway runs argumentSchema validation (if present in the policy)
+   * and extracts recipients / operations for condition evaluation.
+   * MUST be JSON-serialisable; binary values should be base64-encoded strings.
+   */
+  arguments: Record<string, unknown>;
+
+  /** Per-request context for condition evaluation. */
+  context: EnforceRequestContext;
+}
+
+interface EnforceRequestContext {
+  /**
+   * Source IP of the MCP client, stripped of IPv4-mapped prefix.
+   * Required for ipRange conditions; omit for stdio-transport requests
+   * (ipRange conditions will deny with MISSING_CONTEXT).
+   */
+  sourceIp?: string;
+
+  /**
+   * Recipients extracted from the tool arguments (to/recipients/cc/bcc fields).
+   * The gateway uses the same extraction logic as the local recipientDomain handler.
+   * MAY be omitted if the tool call has no recipient semantics.
+   */
+  recipients?: string[];
+
+  /**
+   * Wall-clock time of the request in ISO-8601 format.
+   * When omitted, the gateway uses its own clock.
+   * Providing this allows the gateway to enforce timeWindow conditions
+   * against the client's observed time rather than the gateway's.
+   * Difference > 60 s is rejected (clock-skew guard).
+   */
+  now?: string;
+}
+```
+
+**Request size limit:** 512 KiB. Arguments exceeding this limit receive a 413
+response with error code `REQUEST_TOO_LARGE`.
+
+### 6.4 Response body
+
+```typescript
+interface EnforceResponse {
+  /**
+   * Echoes X-Request-Id if provided by the caller, or a gateway-generated UUID.
+   * Included in the gateway's own audit log for correlation.
+   */
+  requestId: string;
+
+  /** The enforcement decision. */
+  decision: 'allow' | 'deny';
+
+  /**
+   * Obligations the caller MUST apply before returning the upstream response
+   * to the MCP client. An empty array means no post-processing required.
+   * Obligations are applied in order.
+   * Only present when decision is 'allow'.
+   */
+  obligations?: Obligation[];
+
+  /**
+   * Denial details. Only present when decision is 'deny'.
+   */
+  denial?: DenialInfo;
+
+  /**
+   * ISO-8601 timestamp of this decision, from the gateway's clock.
+   * Callers may use this to populate the audit log's activity time.
+   */
+  decidedAt: string;
+}
+
+type Obligation =
+  | { type: 'redactFields'; paths: string[] }   // strip dotted-path fields from upstream response
+  | { type: 'annotate'; key: string; value: string }; // add metadata to the audit event
+
+interface DenialInfo {
+  /**
+   * Machine-readable denial code, drawn from the ErrorCode enum in
+   * @euno/common-core. Examples: 'PATH_PATTERN', 'MAX_CALLS_EXCEEDED',
+   * 'IP_RANGE_DENIED', 'KILL_SWITCH_ACTIVE'.
+   */
+  code: string;
+
+  /**
+   * The condition type that triggered the denial, or 'killSwitch' / 'policy'
+   * for non-condition denials.
+   */
+  conditionType: string;
+
+  /** Human-readable denial message. Suitable for logging; NOT for display to end users. */
+  message: string;
+
+  /**
+   * Structured details specific to the denial type.
+   * For argumentSchema failures: { schemaErrors: ValidationError[] }.
+   * For ipRange denials: { sourceIp: string, allowedRanges: string[] }.
+   * For maxCalls denials: { currentCount: number, maxCalls: number, windowSeconds: number }.
+   * May be omitted for simple denials.
+   */
+  details?: Record<string, unknown>;
+}
+```
+
+### 6.5 HTTP status codes
+
+| Situation                                        | Status | Error code in body      |
+|--------------------------------------------------|--------|-------------------------|
+| Decision returned (allow or deny)                | 200    | — (use `decision` field) |
+| Invalid or missing API key                       | 401    | `AUTHENTICATION_FAILED` |
+| Valid key but insufficient scope                 | 403    | `PERMISSION_DENIED`     |
+| Request body malformed / missing required fields | 400    | `INVALID_REQUEST`       |
+| Request body too large (> 512 KiB)               | 413    | `REQUEST_TOO_LARGE`     |
+| Gateway circuit open / temporary overload        | 503    | `GATEWAY_UNAVAILABLE`   |
+| Protocol version not supported                   | 400    | `UNSUPPORTED_PROTOCOL_VERSION` |
+
+All error responses use the same JSON envelope:
+
+```typescript
+interface ErrorResponse {
+  error: {
+    code: string;
+    message: string;
+    requestId?: string;
+  };
+}
+```
+
+### 6.6 Protocol versioning
+
+The `X-Euno-Protocol-Version` request header carries a monotonic integer
+(currently `1`). The gateway echoes the negotiated version in the
+`X-Euno-Protocol-Version` response header.
+
+**Compatibility rules:**
+
+- The gateway MUST accept all versions it has ever supported.
+- When the client sends a version the gateway does not support, the gateway
+  returns 400 with `UNSUPPORTED_PROTOCOL_VERSION` and a `supportedVersions`
+  array in the error body.
+- A protocol version increment requires a **deprecation window of ≥1 minor
+  `@euno/mcp` release** during which the gateway serves both versions and the
+  old version is announced as deprecated in the `X-Euno-Deprecation` response
+  header.
+- `@euno/mcp` sends the highest version it supports. The gateway responds on
+  the negotiated version. This avoids the need for explicit negotiation round-trips.
+
+**Current version 1 capabilities:** all fields described in §6.3–6.4.
+
+### 6.7 Authentication and session lifecycle
+
+1. `@euno/mcp` starts with an `enforcer` config containing the gateway URL and
+   API key.
+2. On each `tools/call` interception, the proxy constructs an `EnforceRequest`
+   and sends it to `POST /api/v1/enforce` with the API key in `Authorization`.
+3. The gateway verifies the API key (§5.3), looks up `(tenant_id, policy_id)`,
+   loads or caches the policy, and runs the PDP.
+4. The proxy applies obligations from the response before forwarding to upstream
+   (for `allow`) or returns a denial to the MCP client (for `deny`).
+5. The gateway writes its own OCSF audit event; the proxy does not write a
+   duplicate local audit record when in remote-enforcer mode (to avoid double
+   counting in the dashboard).
+
+**Latency target:** The gateway MUST return a response within `timeoutMs`
+(default 5000 ms). If the timeout elapses, `@euno/mcp` falls back to
+**deny-by-default** and surfaces the 503 to the MCP client as a structured
+`GATEWAY_UNAVAILABLE` denial. There is no fail-open fallback on timeout.
+
+### 6.8 Policy caching on the gateway
+
+The gateway caches the resolved `AgentCapabilityManifest` keyed by
+`(tenant_id, policy_id, policy_hash)` with a TTL of 60 seconds. This avoids a
+Postgres round-trip on every tool call. Cache invalidation is triggered by:
+
+- TTL expiry (every 60 s).
+- Admin API call `POST /admin/v1/policies/:id/invalidate`.
+- Kill-switch activation (the kill-switch already propagates within milliseconds
+  via Redis pub/sub; the policy cache is a separate concern).
+
+---
+
+## 7. MVP Anchor Cross-Reference
+
+This table maps every decision above to the `docs/mvp.md` section that requires
+it. Reviewers should verify each cross-link before approving.
+
+| Decision | This document § | `docs/mvp.md` anchor |
+|---|---|---|
+| KMS provider: Azure Managed HSM primary | §1.1 | Lines 672–673 (non-exportability at HSM level) |
+| Non-exportability verification procedure | §1.3 | Lines 672–673 |
+| Key rotation via JWKS kid | §1.4 | Lines 674–675 (key rotation) |
+| Audit signer: KMS-backed → OCSF | §1 | Line 525 (parity table row "Audit signer") |
+| Postgres ledger + per-row HMAC | §2.1 | Lines 648–650 (persistent audit log) |
+| Audit retention 90-day default | §2.1 | Lines 791–798 (pricing tiers) |
+| Revocation: Redis + Postgres dual-write | §2.2 | Lines 524, 527 (parity table "Kill switch") |
+| Kill-switch: Redis pub/sub + Postgres replay | §2.3 | Line 527 + stage3plan §Task 6 |
+| Redis circuit-breaker: fail-closed default | §3.2 | stage3plan §Task 4 (explicit, not silent) |
+| Self-host bundle excludes minter | §4 | Line 646 (hosted-only initially) |
+| API-key format: `sk-<p8>.<s48>` | §5.1 | stage3plan §Task 10 |
+| API-key hash: Argon2id | §5.3 | Lines 670–671 (blast radius, per-issuance trail) |
+| API-key issuance audit log (separate credentials) | §5.2 | Line 679 |
+| Enforcer config shape `enforcer: { url, apiKey }` | §6.1 | Lines 628–633 |
+| Enforcer endpoint POST /api/v1/enforce | §6.2 | stage3plan §Task 9 |
+| Remote enforcer timeout → deny-by-default | §6.7 | Lines 613–615 (cryptographic-token invariant must not be relaxed) |
+| Policy cache 60-s TTL + invalidation | §6.8 | Line 638 (drop-in replacement, no schema change) |
+| Protocol version deprecation window | §6.6 | stage3plan §Task 9 (backward-compat plan) |
+| Hosted-vs-self-host matrix | §4 | Lines 643–658 |
+
+---
+
+## 8. Open Questions (resolve before Tasks 2+ begin)
+
+These items are noted for the review; they are the only unresolved decisions.
+Each must be closed (answered in-line and committed) before the RFC is approved.
+
+1. **Per-tenant vs platform-wide minter key:** The minter threat model (Task 1)
+   must decide whether the hosted service uses a single platform-wide signing
+   key with per-tenant `aud` scoping, or a separate HSM key version per tenant.
+   §1.1 names the mechanism (`keysByPolicyHash` composite key); the policy
+   choice (cost vs isolation) is for the threat-model review. Default
+   recommendation: per-tenant key versions (higher isolation, modest additional
+   HSM cost) — override in Task 1 if HSM pricing makes this impractical.
+
+2. **Argon2id vs HMAC-SHA256 for API-key hashing:** Argon2id provides
+   memory-hardness against offline attacks. If the key DB is compromised, this
+   matters. HMAC-SHA256 with a secret pepper provides speed (sub-millisecond)
+   and is adequate if the key DB and the pepper are stored separately. Decision
+   deferred to Task 10 reviewer; this document recommends Argon2id as the
+   more conservative choice.
+
+3. **Postgres instance: shared vs separate for mint-audit:** The MVP requires
+   the mint-audit log to use "separate credentials from the minter" (line 679).
+   This can be satisfied by a separate Postgres user on the same instance, or a
+   separate instance entirely. Separate instance is more operationally expensive;
+   separate user is adequate. Recommendation: separate Postgres user with a
+   separate connection string — resolve in Task 10.
+
+4. **`@euno/langchain` remote enforcer support:** Stage 3 introduces remote
+   enforcement for `@euno/mcp`. The `@euno/langchain` companion package
+   (`stage2executionplan.md` Task 9) uses the same `CapabilityRuntime` seam
+   locally. Should `@euno/langchain` support `enforcer: { url, apiKey }` in
+   Stage 3? Default: no — langchain is an in-process runtime; the gateway is
+   the right enforcement point for LangChain.js users who want shared state.
+   They should route through the MCP transport instead. Confirm before Task 2.
+
+---
+
+## 9. Review Checklist
+
+- [ ] KMS provider decision reviewed and signed off by ≥2 engineers.
+- [ ] Minter threat model (Task 1) scheduled; §8 open question 1 resolved there.
+- [ ] Postgres schema reviewed by a DBA or engineer familiar with pg advisory
+      locks and Argon2id parameters.
+- [ ] Redis circuit-breaker defaults reviewed by on-call operations lead.
+- [ ] API-key format reviewed by at least 1 security reviewer (entropy,
+      constant-time comparison, Argon2id parameters).
+- [ ] Wire protocol reviewed by the `@euno/mcp` implementer (Task 2) and the
+      gateway implementer (Task 9) — they must agree on the same spec.
+- [ ] All §8 open questions resolved (answer inline, commit the update).
+- [ ] This document approved (PR approved by ≥2 engineers + 1 security
+      reviewer) before any Task 2+ code is merged to `main`.
+
+[az-mhsm]: https://learn.microsoft.com/en-us/azure/key-vault/managed-hsm/overview
