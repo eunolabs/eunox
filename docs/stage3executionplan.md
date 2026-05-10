@@ -5,6 +5,7 @@ Stage 3 thesis (preserve when assigning tasks). Stage 1–2 enforcement runs in-
 
 Ground truth pointers Copilot must read first on every task:
 
+docs/stage-3-design.md (Task 0 RFC — the authoritative design freeze document; read this first)
 docs/mvp.md §"Stage 3" (lines 602–697)
 docs/mvp.md §"Policy and audit schema parity" — the parity table (lines 520–528)
 docs/capability-model.md §6 ("unknown types are denied by default")
@@ -13,7 +14,7 @@ Existing seams: public/packages/common/src/runtime.ts (TokenVerifier, EvidenceSi
 Existing implementations to wire/reuse: euno-platform/packages/tool-gateway/src/{verifier.ts,enforcement.ts,admin-api.ts,revocation-store.ts}, euno-platform/packages/common-infra/src/{call-counter-store.ts,redis-kill-switch.ts,redis-circuit-breaker.ts,ledger-signer.ts}, euno-platform/packages/capability-issuer/ (for token issuance reference)
 Per-task obligation: any new condition handling, audit field, or token claim must be added in @euno/common-core first and consumed by @euno/mcp and tool-gateway from there. No types in @euno/mcp or tool-gateway that don't exist in @euno/common-core (per Critical Risks §"@euno/mcp" rule, lines 871–874).
 Phase A — Pre-flight (gating; must complete before any code ships to a paying customer)
-Task 0 — Stage 3 design freeze & RFC
+Task 0 — Stage 3 design freeze & RFC [SUBMITTED FOR REVIEW — see docs/stage-3-design.md; gate: approved by ≥2 engineers + 1 security reviewer before Tasks 2+ begin]
 Author docs/stage-3-design.md capturing: chosen KMS provider (Azure Managed HSM vs AWS CloudHSM vs GCP Cloud HSM), Postgres deployment shape for audit + revocation, Redis deployment shape, hosted-vs-self-host feature matrix, the API-key format and storage scheme (hash-at-rest, prefix indexing), and the exact request/response contract between @euno/mcp (in enforcer:"https://..." mode) and the gateway.
 Cross-link every decision back to the MVP doc anchor it satisfies.
 Gate: RFC reviewed and merged before Tasks 2+ start.
