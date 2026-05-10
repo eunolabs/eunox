@@ -253,11 +253,12 @@ CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
   them. The consistency guarantee is:
   - **Redis write succeeds, Postgres write fails:** The revocation is immediately
     effective in Redis (all replicas see it within pub/sub delivery time). A
-    background reconciler re-drives the Postgres write from Redis on each startup
-    and on every Redis reconnection event. The reconciler runs at startup and
-    whenever the Redis client emits a `reconnect` or `ready` event after a
-    connection loss; the maximum re-drive interval is bounded at 30 seconds so a
-    Postgres-write failure is durably captured within one reconnect cycle.
+    background reconciler re-drives the Postgres write from Redis at startup and
+    on a periodic timer (every 30 s by default). After Redis connectivity is
+    restored and the client becomes ready again following a connection loss, the
+    implementation may also trigger an immediate reconciler run as an optimization.
+    The 30-second bound comes from the periodic reconciler timer, so a
+    Postgres-write failure is durably captured within one reconciler interval.
     Risk window: if Redis is flushed AND the reconciler has not yet written the
     row to Postgres, the revocation is lost. Mitigated by `redis-kill-switch.ts`'s
     periodic Postgres refresh and the 30-second reconciler bound.
