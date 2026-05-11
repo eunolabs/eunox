@@ -419,7 +419,7 @@ describe('docker-compose.yml backend profile parity', () => {
       NODE_ENV: 'development',
       REDIS_URL: 'redis://redis:6379',
       AUDIT_LEDGER_BACKEND: 'postgres',
-      AUDIT_LEDGER_PG_URL: '******postgres:5432/euno_audit',
+      AUDIT_LEDGER_PG_URL: 'postgresql://euno:euno_dev_secret@postgres:5432/euno_audit',
       AUDIT_LEDGER_HMAC_SECRET: 'dev-hmac-secret-change-in-production',
       AUDIT_LEDGER_RUN_MIGRATIONS: 'true',
     };
