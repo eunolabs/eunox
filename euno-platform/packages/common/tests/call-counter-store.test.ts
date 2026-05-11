@@ -262,41 +262,19 @@ describe('RedisCallCounterStore local fallback', () => {
 describe('RedisCallCounterStore multi-replica simulation', () => {
   /**
    * Simulates two gateway replicas that share a single Redis instance.
-   * Both replicas back their RedisCallCounterStore with the same FakeRedis
-   * key-value map, which is equivalent to pointing two real store instances
-   * at the same Redis cluster.
+   * Both replicas point their RedisCallCounterStore at the same FakeRedis
+   * client, which is equivalent to pointing two real store instances at
+   * the same Redis cluster.
    *
    * Correct behaviour: increments from replica A are immediately visible to
-   * replica B because both stores issue INCR against the same key in the
-   * shared backing map.
+   * replica B because both stores issue INCR against the same shared Redis
+   * backing store.
    */
 
-  class SharedFakeRedis implements RedisCallCounterClient {
-    constructor(
-      public readonly values: Map<string, number>,
-      public readonly expiries: Map<string, number>,
-      public errorMode = false,
-    ) {}
-
-    async incr(key: string): Promise<number> {
-      if (this.errorMode) throw new Error('redis-unavailable');
-      const v = (this.values.get(key) ?? 0) + 1;
-      this.values.set(key, v);
-      return v;
-    }
-    async expire(key: string, seconds: number): Promise<unknown> {
-      if (this.errorMode) throw new Error('redis-unavailable');
-      this.expiries.set(key, seconds);
-      return 1;
-    }
-    async quit(): Promise<unknown> { return 'OK'; }
-    on(): unknown { return this; }
-  }
-
   it('counters accumulate jointly across two replicas sharing a Redis store', async () => {
-    const shared = { values: new Map<string, number>(), expiries: new Map<string, number>() };
-    const storeA = new RedisCallCounterStore(new SharedFakeRedis(shared.values, shared.expiries), logger, { keyPrefix: 'r:' });
-    const storeB = new RedisCallCounterStore(new SharedFakeRedis(shared.values, shared.expiries), logger, { keyPrefix: 'r:' });
+    const redis = new FakeRedis();
+    const storeA = new RedisCallCounterStore(redis, logger, { keyPrefix: 'r:' });
+    const storeB = new RedisCallCounterStore(redis, logger, { keyPrefix: 'r:' });
 
     // Replica A increments; counter becomes 1.
     expect(await storeA.incrementAndGet('cap', 60)).toBe(1);
