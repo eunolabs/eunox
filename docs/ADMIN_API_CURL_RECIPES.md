@@ -46,9 +46,13 @@ against a different path.
 
 ## Tenant scoping
 
-When `ADMIN_TENANT_ID` is set on the gateway every mutating request MUST include a
-`tenantId` field in the JSON body whose value matches the configured tenant. A
-mismatch returns HTTP 403 `TENANT_MISMATCH`.
+When `ADMIN_TENANT_ID` is set on the gateway, the **kill-switch, token-revocation,
+and revocation-epoch** endpoints require a `tenantId` field in the JSON body whose
+value matches the configured tenant. A mismatch returns HTTP 403 `TENANT_MISMATCH`.
+
+Partner DID endpoints (`/admin/partner-did/*`, `/admin/partner-dids/*`) are
+**not** tenant-scoped — DID registrations are gateway-wide and do not carry
+per-tenant ownership semantics.
 
 Per-entity kill/revive:
 
@@ -241,8 +245,18 @@ curl -X POST "$ADMIN_HOST/admin/kill-switch/agent/$AGENT_ID/kill" \
 
 ## OCSF audit events
 
-When `AUDIT_OCSF_*` environment variables are configured the gateway emits OCSF
-Authorization events (class_uid 3003) for every mutating admin action:
+When `OCSF_TRANSPORT` is configured the gateway emits OCSF Authorization events
+(class_uid 3003) for every mutating kill-switch, revocation, and revocation-epoch
+admin action.
+
+**Environment variables:**
+
+| Variable | Values / notes |
+|----------|---------------|
+| `OCSF_TRANSPORT` | `stdout` · `file` · `http`. When unset OCSF emission is disabled. |
+| `OCSF_FILE_PATH` | Path to append events to. Required when `OCSF_TRANSPORT=file`. |
+| `OCSF_HTTP_URL` | Collector URL to POST events to. Required when `OCSF_TRANSPORT=http`. |
+| `OCSF_HTTP_HEADERS` | Optional JSON object of extra HTTP headers (`{"x-api-key":"..."}`). |
 
 | Action                   | activity_id | severity_id |
 |--------------------------|-------------|-------------|

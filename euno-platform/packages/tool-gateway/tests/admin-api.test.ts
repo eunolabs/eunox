@@ -997,4 +997,17 @@ describe('AdminIdempotencyStore', () => {
     expect(entry!.status).toBe(201);
     expect(entry!.body).toEqual({ second: true });
   });
+
+  it('evicts oldest live entries when maxSize is reached and no expired entries exist', () => {
+    const store = new AdminIdempotencyStore({ ttlMs: 60_000, maxSize: 3 });
+    store.set('first', 'POST /a', 200, {});
+    store.set('second', 'POST /b', 200, {});
+    store.set('third', 'POST /c', 200, {});
+    // Inserting a 4th entry must not exceed maxSize.
+    store.set('fourth', 'POST /d', 200, {});
+    // The oldest entry ('first') should have been evicted.
+    expect(store.get('first')).toBeUndefined();
+    // The new entry should be present.
+    expect(store.get('fourth')).toBeDefined();
+  });
 });

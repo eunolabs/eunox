@@ -28,12 +28,18 @@ import {
 // Idempotency store
 // =============================================================================
 
-interface IdempotencyEntry {
+/**
+ * A single entry in the idempotency store.
+ *
+ * Exported so callers can type-hint against the stored shape (e.g. when
+ * implementing an alternative `AdminIdempotencyStore` backed by Redis).
+ */
+export interface IdempotencyEntry {
   /** The HTTP status code of the original response. */
   status: number;
   /** The JSON body of the original response. */
   body: unknown;
-  /** Endpoint that handled the original request (method + normalised path). */
+  /** Endpoint that handled the original request (method + concrete request path). */
   endpoint: string;
   /** Expiry in milliseconds since epoch. */
   expiresAt: number;
@@ -82,11 +88,21 @@ export class AdminIdempotencyStore {
 
   /** Store a completed response keyed by the idempotency key. */
   set(key: string, endpoint: string, status: number, body: unknown): IdempotencyEntry {
-    // Prune expired entries when the store is full to bound memory use.
+    // When the store is at capacity, first try to prune expired entries.
     if (this.store.size >= this.maxSize) {
       const now = Date.now();
       for (const [k, v] of this.store) {
         if (now > v.expiresAt) this.store.delete(k);
+      }
+    }
+    // If still at capacity after pruning, evict oldest entries (Map iteration
+    // order is insertion order) until we have room for the new entry.
+    while (this.store.size >= this.maxSize) {
+      const oldestKey = this.store.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.store.delete(oldestKey);
+      } else {
+        break; // Defensive: should not happen, but avoid infinite loop.
       }
     }
     const entry: IdempotencyEntry = {
@@ -166,11 +182,15 @@ export interface AdminApiOptions {
   /**
    * Tenant identifier that scopes this admin router instance.
    *
-   * When set, every mutating endpoint (kill-switch, revocation, epoch) MUST
-   * receive a matching `tenantId` field in the JSON request body.  A request
-   * whose `tenantId` differs from this value is rejected with HTTP 403
-   * `TENANT_MISMATCH` so a credential issued for tenant A cannot affect
-   * resources belonging to tenant B.
+   * When set, the kill-switch, token-revocation, and revocation-epoch mutating
+   * endpoints MUST receive a matching `tenantId` field in the JSON request body.
+   * A request whose `tenantId` differs from this value is rejected with HTTP 403
+   * `TENANT_MISMATCH` so a credential issued for tenant A cannot affect resources
+   * belonging to tenant B.
+   *
+   * Partner DID endpoints (`/partner-did/*`, `/partner-dids/*`) are not
+   * tenant-scoped because DID registrations are inherently gateway-wide and do
+   * not carry per-tenant ownership semantics.
    *
    * Global kill-switch operations additionally require
    * `acknowledgesCrossTenantImpact: true` in the body because they block all
@@ -292,7 +312,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
   // ── Idempotency helpers ──────────────────────────────────────────────────
   /**
    * Extract the Idempotency-Key header value, normalised to a string or
-   * undefined.  Multiple values (rare but allowed by RFC 7240) use the first.
+   * undefined.  Express parses repeated header occurrences into an array;
+   * when multiple values are present we use the first.
    */
   function getIdempotencyKey(req: Request): string | undefined {
     const raw = req.headers['idempotency-key'];
@@ -302,7 +323,13 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * Canonical endpoint label used for idempotency-key scoping.
-   * Format: `METHOD /path/template` (e.g. `POST /kill-switch/global/activate`).
+   * Format: `METHOD <concrete-path>` (e.g. `POST /kill-switch/session/sess-1/kill`).
+   *
+   * Uses the concrete `req.path` (including route parameter values) rather than
+   * the route template.  This means each unique resource path is treated as a
+   * distinct endpoint for idempotency purposes, which is the desired behaviour —
+   * killing session "A" and killing session "B" are independent operations that
+   * should not share idempotency state.
    */
   function endpointLabel(req: Request): string {
     return `${req.method} ${req.path}`;
@@ -801,11 +828,12 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/reset
-   * Reset all kill switches (use with caution).
+   * Reset ALL kill switches on this gateway instance (use with caution).
    *
-   * When the gateway is tenant-scoped, this operation resets kills for the
-   * configured tenant scope.  Requires the cross-tenant acknowledgement because
-   * the underlying manager state is shared across tenants.
+   * This is a gateway-wide operation — it clears the global kill flag and
+   * removes every individually killed session and agent regardless of tenant.
+   * When tenant scoping is active, the cross-tenant acknowledgement field is
+   * therefore required to confirm awareness of this full-instance blast radius.
    */
   router.post('/kill-switch/reset', (req: Request, res: Response) => {
     if (replayIfIdempotent(req, res)) return;
