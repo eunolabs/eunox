@@ -60,11 +60,14 @@ export interface AuditRouterOptions {
 }
 
 /**
- * Parse a query-string parameter as a positive integer.
- * Returns `undefined` when the parameter is absent or not a valid integer.
+ * Parse a query-string parameter as a strictly positive integer.
+ * Returns `undefined` when the parameter is absent, not an integer string
+ * (including trailing text like "3abc" or decimals like "10.5"), or ≤ 0.
  */
 function parseIntParam(value: unknown): number | undefined {
   if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  // Reject anything that isn't a pure decimal integer string.
+  if (!/^\d+$/.test(value.trim())) return undefined;
   const n = parseInt(value, 10);
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
@@ -137,28 +140,36 @@ export function createAuditRouter(opts: AuditRouterOptions): Router {
 
       const decision = parseEnum(q['decision'], ['allow', 'deny'] as const);
 
-      // Timestamp validation: must be ISO 8601 if provided.
-      const fromTs = typeof q['fromTs'] === 'string' && q['fromTs'].length > 0
+      // Timestamp validation: must parse as a valid date if provided.
+      // We normalize to a canonical UTC ISO 8601 string so that backends
+      // receive a consistent format regardless of how the caller expressed
+      // the timestamp (e.g. "2025-6-1" or "+06:00" offset forms).
+      const rawFromTs = typeof q['fromTs'] === 'string' && q['fromTs'].length > 0
         ? q['fromTs']
         : undefined;
-      const toTs = typeof q['toTs'] === 'string' && q['toTs'].length > 0
+      const rawToTs = typeof q['toTs'] === 'string' && q['toTs'].length > 0
         ? q['toTs']
         : undefined;
 
-      if (fromTs !== undefined && isNaN(Date.parse(fromTs))) {
+      if (rawFromTs !== undefined && isNaN(Date.parse(rawFromTs))) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
           'fromTs must be a valid ISO 8601 date/time string',
           400,
         );
       }
-      if (toTs !== undefined && isNaN(Date.parse(toTs))) {
+      if (rawToTs !== undefined && isNaN(Date.parse(rawToTs))) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
           'toTs must be a valid ISO 8601 date/time string',
           400,
         );
       }
+
+      // Normalize to canonical UTC ISO string so all backends receive a
+      // uniform format and string/timestamp comparisons are predictable.
+      const fromTs = rawFromTs !== undefined ? new Date(rawFromTs).toISOString() : undefined;
+      const toTs = rawToTs !== undefined ? new Date(rawToTs).toISOString() : undefined;
 
       const agentId = typeof q['agentId'] === 'string' && q['agentId'].length > 0
         ? q['agentId']

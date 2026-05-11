@@ -524,8 +524,10 @@ export class InMemoryLedgerBackend implements LedgerBackend {
       if (filter.tenantId !== undefined && ev.tenantId !== filter.tenantId) return false;
       if (filter.conditionType !== undefined && ev.conditionType !== filter.conditionType) return false;
       if (filter.denialCode !== undefined && ev.denialCode !== filter.denialCode) return false;
-      if (filter.fromTs !== undefined && ev.ts < filter.fromTs) return false;
-      if (filter.toTs !== undefined && ev.ts > filter.toTs) return false;
+      // Compare as epoch milliseconds to avoid lexicographic ordering surprises
+      // when callers supply timestamps in different formats or timezone offsets.
+      if (filter.fromTs !== undefined && Date.parse(ev.ts) < Date.parse(filter.fromTs)) return false;
+      if (filter.toTs !== undefined && Date.parse(ev.ts) > Date.parse(filter.toTs)) return false;
       return true;
     });
 
@@ -1087,11 +1089,14 @@ export class PostgresLedgerBackend implements LedgerBackend {
     }
     if (filter.fromTs !== undefined) {
       params.push(filter.fromTs);
-      conditions.push(`payload->>'ts' >= $${params.length}`);
+      // Compare against created_at (TIMESTAMPTZ, indexed) rather than the JSONB
+      // payload->'ts' string so the query uses idx_euno_audit_ledger_created_at
+      // and handles non-canonical ISO inputs correctly via Postgres timestamptz casting.
+      conditions.push(`created_at >= $${params.length}::timestamptz`);
     }
     if (filter.toTs !== undefined) {
       params.push(filter.toTs);
-      conditions.push(`payload->>'ts' <= $${params.length}`);
+      conditions.push(`created_at <= $${params.length}::timestamptz`);
     }
 
     // Fetch limit+1 rows to detect whether there is a next page.
@@ -2029,11 +2034,14 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     }
     if (filter.fromTs !== undefined) {
       params.push(filter.fromTs);
-      conditions.push(`payload->>'ts' >= $${params.length}`);
+      // Compare against created_at (TIMESTAMPTZ, indexed) rather than the JSONB
+      // payload->'ts' string so the query can use the created_at index and
+      // handles non-canonical ISO inputs correctly via Postgres timestamptz casting.
+      conditions.push(`created_at >= $${params.length}::timestamptz`);
     }
     if (filter.toTs !== undefined) {
       params.push(filter.toTs);
-      conditions.push(`payload->>'ts' <= $${params.length}`);
+      conditions.push(`created_at <= $${params.length}::timestamptz`);
     }
 
     // Fetch limit+1 rows to detect whether there is a next page.

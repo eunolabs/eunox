@@ -533,7 +533,7 @@ describe('GET /api/v1/audit/records — filter parameters', () => {
     expect(rec.decision).toBe('deny');
   });
 
-  it('rejects an invalid decision value with a 400', async () => {
+  it('silently ignores an unrecognised decision value and returns all records', async () => {
     // Invalid decision values are silently ignored (treated as absent),
     // returning all decisions. The route only rejects malformed date strings.
     // Decision is parsed via parseEnum which returns undefined for invalid values.
