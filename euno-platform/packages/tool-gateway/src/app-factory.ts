@@ -32,6 +32,7 @@ import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
 import { createValidateRouter } from './routes/validate';
 import { createToolsRouter } from './routes/tools';
+import { createEnforceRouter } from './routes/enforce';
 import type { GatewayDependencies } from './bootstrap';
 
 /**
@@ -139,6 +140,12 @@ export function createApp(deps: GatewayDependencies): Express {
 
   // Tool invocation endpoint
   app.use(createToolsRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
+
+  // Remote-enforcer endpoint (Stage-3 Task 9): used by @euno/mcp in
+  // remote-enforcer mode. Returns a structured EnforceResponse (allow/deny
+  // with obligations) rather than throwing on denial, so the client can
+  // apply obligations locally. See docs/stage-3-gateway-protocol.md.
+  app.use(createEnforceRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
 
   // Protected proxy: validate then forward
   app.use(

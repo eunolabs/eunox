@@ -570,6 +570,55 @@ export enum ErrorCode {
    * fail-closed semantics.
    */
   REVOCATION_UNAVAILABLE = 'REVOCATION_UNAVAILABLE',
+
+  // ── Stage-3 remote-enforcer codes (Task 9) ────────────────────────────────
+
+  /**
+   * The `X-Euno-Protocol-Version` header carries a version integer the
+   * gateway does not support. The error body includes a `supportedVersions`
+   * array. Returned with HTTP 400.
+   */
+  UNSUPPORTED_PROTOCOL_VERSION = 'UNSUPPORTED_PROTOCOL_VERSION',
+
+  /**
+   * The gateway or a required backing store (Redis, Postgres) is
+   * temporarily unavailable and cannot serve an enforcement decision.
+   * Callers MUST treat this as a denial (fail-closed) and MUST NOT
+   * retry automatically without a back-off. Returned with HTTP 503.
+   */
+  GATEWAY_UNAVAILABLE = 'GATEWAY_UNAVAILABLE',
+
+  /**
+   * The request body exceeds the 512 KiB size limit for `POST
+   * /api/v1/enforce`. Returned with HTTP 413.
+   */
+  REQUEST_TOO_LARGE = 'REQUEST_TOO_LARGE',
+
+  /**
+   * The caller authenticated successfully but the API key does not carry
+   * the scope required for the requested operation (e.g. an `audit`-scoped
+   * key calling the enforcement endpoint which requires `enforce` scope).
+   * Returned with HTTP 403 to distinguish it from an auth failure (401).
+   */
+  PERMISSION_DENIED = 'PERMISSION_DENIED',
+
+  /**
+   * A required context field is absent from the `EnforceRequestContext` and
+   * a condition that needs it (e.g. `ipRange` without `sourceIp`) cannot be
+   * evaluated. The gateway denies with this code rather than silently
+   * allowing. Returned inside an `EnforceResponse` with `decision: 'deny'`
+   * (HTTP 200) so the client can distinguish a policy denial from a
+   * protocol error.
+   */
+  MISSING_CONTEXT = 'MISSING_CONTEXT',
+
+  /**
+   * The tool call arguments failed the capability's `argumentSchema`
+   * validation. Returned inside an `EnforceResponse` with `decision: 'deny'`
+   * (HTTP 200). The `DenialInfo.details.schemaErrors` array carries the
+   * per-field validation messages.
+   */
+  ARGUMENT_SCHEMA_VIOLATION = 'ARGUMENT_SCHEMA_VIOLATION',
 }
 
 /**

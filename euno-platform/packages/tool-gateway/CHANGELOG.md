@@ -7,6 +7,99 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased — Stage 3, Task 9] — Hosted Enforcement HTTP Contract
+
+### Summary
+
+Task 9 defines and implements the wire protocol for `@euno/mcp` remote-enforcer
+mode. The gateway now exposes `POST /api/v1/enforce` — the endpoint called on
+every intercepted `tools/call` when `@euno/mcp` is configured with
+`enforcer: "https://..."`. Decisions (allow or deny) and any obligations
+(redactFields, annotate) are returned in a structured `EnforceResponse` so the
+proxy can apply them locally without throwing.
+
+### Added
+
+**Wire-protocol types (`@euno/common-core`)**
+
+- `EnforceRequest` — typed request envelope: `sessionId`, `toolName`,
+  `arguments`, `context` (`EnforceRequestContext`).
+- `EnforceRequestContext` — per-request context: `sourceIp`, `recipients`,
+  `now` (ISO-8601, clock-skew guard).
+- `EnforceResponse` — typed response envelope: `requestId`, `decision`,
+  optional `obligations[]`, optional `denial`, `decidedAt`.
+- `Obligation` — discriminated union: `{ type: 'redactFields'; paths }` and
+  `{ type: 'annotate'; key; value }`.
+- `DenialInfo` — structured denial: `code`, `conditionType`, `message`,
+  optional `details`.
+- `ENFORCE_PROTOCOL_VERSION` (`1`) — current monotonic protocol version
+  constant.
+- `SUPPORTED_ENFORCE_PROTOCOL_VERSIONS` — `ReadonlySet<number>` of all
+  gateway-accepted protocol versions; checked on every request.
+
+**New error codes (`ErrorCode` in `@euno/common-core`)**
+
+- `UNSUPPORTED_PROTOCOL_VERSION` — `X-Euno-Protocol-Version` header carries
+  a version the gateway does not recognise; HTTP 400.
+- `GATEWAY_UNAVAILABLE` — transient infrastructure failure; HTTP 503.
+- `REQUEST_TOO_LARGE` — request body exceeds 512 KiB; HTTP 413.
+- `PERMISSION_DENIED` — valid key without the required scope; HTTP 403.
+- `MISSING_CONTEXT` — a condition required a context field (e.g. `sourceIp`
+  for `ipRange`) that was absent; returned inside an `EnforceResponse` (HTTP
+  200, `decision: 'deny'`).
+- `ARGUMENT_SCHEMA_VIOLATION` — tool call arguments failed the capability's
+  `argumentSchema`; returned inside an `EnforceResponse`.
+
+**Gateway route (`tool-gateway/src/routes/enforce.ts`)**
+
+- `POST /api/v1/enforce` — the remote-enforcer endpoint.
+  - `X-Euno-Protocol-Version` negotiation: echoed in every response; missing
+    header defaults to version 1 (back-compat); unsupported versions → 400
+    with `supportedVersions[]` in the error body.
+  - `Authorization: Bearer <jwt>` required; 401 when absent or invalid.
+  - 512 KiB body size guard (checked via `Content-Length` header); 413 on
+    exceedance.
+  - Full structural validation of `EnforceRequest` body fields.
+  - 60-second `context.now` clock-skew guard; `INVALID_REQUEST` on violation.
+  - Server-side action + resource derivation from `toolName` (never trusts
+    client-supplied action/resource strings).
+  - In-band deny for all 4xx CapabilityErrors except 401 (which stays out-of-
+    band); 503 CapabilityErrors also remain out-of-band.
+  - `obligations[]` built from matched capability's `redactFields` conditions.
+  - `requestId` echoed from `X-Request-Id` or auto-generated (UUID).
+  - `decidedAt` always stamped from the gateway's authoritative clock.
+
+**Documentation (`docs/stage-3-gateway-protocol.md`)**
+
+- Complete protocol specification: configuration, endpoint, request/response
+  schemas, HTTP status codes, protocol versioning rules, authentication and
+  session lifecycle, policy caching, error-class taxonomy, and the
+  backward-compatibility promise.
+- Server-side translator contract for future version bumps.
+- Backward-compat promise: the `EnforceRequest`/`EnforceResponse` shapes are
+  additive-only within version 1; clients MUST tolerate unknown `Obligation`
+  types and unknown `DenialInfo.code` values.
+
+**Tests (`tests/enforce.test.ts`)**
+
+- 32 unit tests covering: protocol version negotiation (missing, valid,
+  unsupported, non-integer, zero), authentication (absent header, invalid
+  JWT), body validation (all required-field cases, array arguments, invalid
+  context types, clock-skew guard), allow decisions (matching capability, with
+  and without obligations, `requestId` echoing and auto-generation,
+  `decidedAt`), deny decisions (no matching capability, wrong audience,
+  JWT verification failure, `decidedAt`), kill-switch in-band deny
+  (`AGENT_TERMINATED`, `conditionType: 'killSwitch'`), `timeWindow` condition
+  (expired → deny, active → allow), and `sourceIp` forwarding (CIDR allow and
+  deny).
+
+### Changed
+
+- `app-factory.ts` — mounts `createEnforceRouter` after the existing
+  `createToolsRouter`.
+
+---
+
 ## [Unreleased — Stage 3, Task 6] — Kill-Switch Durable Persistence
 
 ### Summary
