@@ -7,7 +7,89 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased — Stage 3, Task 6] — Kill-Switch Durable Persistence
+## [Unreleased — Stage 3, Task 8] — Admin API Hardening
+
+### Summary
+
+Task 8 audits and hardens the admin API (kill-switch, revocation, revocation
+epoch) across three orthogonal dimensions:
+
+1. **Tenant scoping** — A gateway configured with `ADMIN_TENANT_ID` now
+   enforces that every mutating request carries a `tenantId` body field that
+   matches the configured tenant.  A mismatch returns HTTP 403 `TENANT_MISMATCH`
+   so a credential issued for tenant A cannot kill or revoke resources belonging
+   to tenant B.  Global operations (activate/deactivate global kill switch, reset
+   all) additionally require `acknowledgesCrossTenantImpact: true` because they
+   affect all tenants on the gateway instance; the explicit field forces
+   operators to be deliberate about the blast radius.
+
+2. **Idempotency keys** — All mutating endpoints now honour the
+   `Idempotency-Key` request header.  The first call stores its response in an
+   in-memory `AdminIdempotencyStore` (24-hour TTL, configurable via
+   `idempotencyStore` option).  Subsequent requests with the same key against
+   the same endpoint return the cached response without re-executing the
+   operation.  Reusing a key against a *different* endpoint is rejected with
+   HTTP 422 `IDEMPOTENCY_KEY_REUSE`.
+
+3. **OCSF audit trail** — All mutating admin actions now emit an OCSF
+   Authorization event (class_uid 3003) to the `ocsfTransport` configured on
+   the admin router.  Activity, severity, targets, actor, and status are
+   populated so SIEMs can ingest admin actions without a Euno-specific parser.
+   Failed cross-tenant operations are emitted as Failure events (activity_id=2,
+   severity_id=4) so attempted cross-tenant abuses are visible in SIEM dashboards.
+
+### Added
+
+**`admin-api.ts`**
+
+- `AdminIdempotencyStore` — exported class with configurable TTL and max-size;
+  prunes expired entries lazily on insert.
+- `AdminApiOptions.tenantId?: string` — when set, all mutating endpoints
+  enforce tenant isolation.
+- `AdminApiOptions.ocsfTransport?: OcsfAuditTransport` — when set, every
+  mutating operation emits an OCSF Authorization event.
+- `AdminApiOptions.idempotencyStore?: AdminIdempotencyStore` — optional
+  injected store; defaults to a fresh in-process store per router instance.
+- `Idempotency-Key` header support on all mutating endpoints.
+- `X-Admin-Operator` header is now recorded in OCSF `actor.user.uid` as well
+  as in the existing Winston audit-chain entry.
+- `auditEventId` field added to all Winston audit-chain entries so events can
+  be correlated with OCSF events by their shared UUID.
+
+**`bootstrap.ts`**
+
+- `GatewayDependencies.adminTenantId?: string` — populated from
+  `ADMIN_TENANT_ID` and forwarded to `createAdminApp`.
+
+**`app-factory.ts`**
+
+- `createAdminApp` wires `tenantId: deps.adminTenantId` and
+  `ocsfTransport: deps.ocsfTransport` into `createAdminRouter`.
+
+**Config schema (`@euno/common-core`)**
+
+- `ADMIN_TENANT_ID` — new optional gateway env var with full description
+  of its scoping semantics.
+
+**Documentation**
+
+- `docs/ADMIN_API_CURL_RECIPES.md` — comprehensive curl recipe reference
+  covering all admin endpoints with idempotency-key, tenant-scope, and
+  operator-attribution examples.
+
+**Tests (`tests/admin-api.test.ts`)**
+
+- 31 new tests covering tenant scoping (rejection on missing/mismatched
+  tenantId, acknowledgement required for cross-tenant operations, pass-through
+  when tenant scoping is disabled), idempotency (replay without re-execution,
+  key-reuse rejection, no-header baseline), OCSF event shape/content
+  (class_uid, activity_id, severity_id, resources, actor, unmapped.tenantId,
+  Failure events on rejection), and `AdminIdempotencyStore` unit tests (TTL
+  expiry, overwrite, unknown-key).
+
+---
+
+
 
 ### Summary
 

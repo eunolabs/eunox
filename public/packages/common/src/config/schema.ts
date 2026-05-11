@@ -941,6 +941,16 @@ export const GatewayConfigSchema = z
     ADMIN_API_KEY: optionalString.describe(
       'API key required to call /admin endpoints. MUST be set in production — the gateway refuses to start when NODE_ENV=production and this is unset. When unset in non-production environments the admin API is publicly reachable (not recommended).',
     ),
+    ADMIN_TENANT_ID: optionalString.describe(
+      'Tenant identifier that scopes this admin API instance. When set, all mutating admin ' +
+      'operations (kill-switch, revocation) MUST include a matching `tenantId` field in the ' +
+      'request body, and requests carrying a different tenantId are rejected with HTTP 403. ' +
+      'This prevents a tenant admin credential from affecting resources belonging to another ' +
+      'tenant on the same gateway. Global kill-switch operations additionally require ' +
+      '`acknowledgesCrossTenantImpact: true` in the request body because they block all ' +
+      'traffic on the gateway instance regardless of tenant. Unset means no tenant scoping ' +
+      '(single-tenant / development deployments).',
+    ),
 
     // Cryptographic audit ---------------------------------------------------
     ENABLE_CRYPTOGRAPHIC_AUDIT: envBoolean({

@@ -243,6 +243,12 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       // When PARTNER_DID_AUTO_FETCH_PIN=true, wire resolveDID so the approval
       // endpoint can auto-compute the pinnedDocSha256 from the live document.
       resolveDidDocument: deps.partnerDidAutoFetchPin ? resolveDID : undefined,
+      // Tenant scoping: when ADMIN_TENANT_ID is set, all mutating admin
+      // operations must carry a matching tenantId in the request body.
+      tenantId: deps.adminTenantId,
+      // OCSF transport: when configured, emit Authorization events for every
+      // mutating admin action so SIEMs can ingest them without a custom parser.
+      ocsfTransport: deps.ocsfTransport,
     }),
   );
 
