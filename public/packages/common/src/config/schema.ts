@@ -1072,8 +1072,10 @@ export const GatewayConfigSchema = z
       'GCP KMS crypto key ID. Required when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.',
     ),
     AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION: optionalString.describe(
-      'GCP KMS crypto key version. Defaults to the primary version ("1"). ' +
-        'Omit to let GCP select the active primary automatically on each rotation.',
+      'GCP KMS crypto key version number. When omitted, GCP automatically selects the active ' +
+        'primary version — recommended so key rotations take effect on the next process restart ' +
+        'without a config change. Pin to a specific version (e.g. "2") only when you need to ' +
+        'audit exactly which key version signed a record.',
     ),
     AUDIT_SIGNING_GCP_KEY_FILE_PATH: optionalString.describe(
       'Optional path to a GCP service account key file. ' +

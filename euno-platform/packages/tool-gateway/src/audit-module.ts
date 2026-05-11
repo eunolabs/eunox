@@ -175,7 +175,21 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     return { auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS };
   }
 
-  let evidenceSigner: EvidenceSigner | undefined;
+  // Type-narrow the dynamic config fields once so we avoid repeated `as { ... }` casts below.
+  type DynamicConfig = {
+    AUDIT_SIGNING_KMS_PROVIDER?: string;
+    AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres';
+    AUDIT_LEDGER_PG_URL?: string;
+    AUDIT_LEDGER_HMAC_SECRET?: string;
+    AUDIT_LEDGER_TABLE?: string;
+    AUDIT_LEDGER_RUN_MIGRATIONS?: boolean;
+    AUDIT_LEDGER_S3_BUCKET?: string;
+    AUDIT_LEDGER_ANCHOR_INTERVAL?: number;
+    AUDIT_LEDGER_ACL_ENDPOINT?: string;
+    AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number;
+    AUDIT_ANCHOR_URL?: string;
+  };
+  const dynConfig = validated as typeof validated & DynamicConfig;
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
   let crossChainAnchor: CrossChainAnchor | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
@@ -186,7 +200,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     // Both produce byte-identical canonical evidence records and chain semantics
     // (same AuditEvidenceSigner wrapper); only the signature bytes, keyId, and
     // algorithm field differ — which is the explicit design of Task 5 (Stage 3).
-    const kmsProvider = (validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER;
+    const kmsProvider = dynConfig.AUDIT_SIGNING_KMS_PROVIDER;
     const softwareSigner = kmsProvider
       ? (() => {
           const kmsSigner = createKmsEvidenceSignerFromEnv(env);
@@ -217,16 +231,16 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           return sw;
         })();
 
-    const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
+    const ledgerBackendName = dynConfig.AUDIT_LEDGER_BACKEND;
 
     if (ledgerBackendName && ledgerBackendName !== 'none') {
-      const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
-      const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
-      const table = (validated as { AUDIT_LEDGER_TABLE?: string }).AUDIT_LEDGER_TABLE;
-      const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
-      const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
-      const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
-      const aclEndpoint = (validated as { AUDIT_LEDGER_ACL_ENDPOINT?: string }).AUDIT_LEDGER_ACL_ENDPOINT;
+      const pgUrl = dynConfig.AUDIT_LEDGER_PG_URL;
+      const hmacSecret = dynConfig.AUDIT_LEDGER_HMAC_SECRET;
+      const table = dynConfig.AUDIT_LEDGER_TABLE;
+      const runMigrations = dynConfig.AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
+      const s3Bucket = dynConfig.AUDIT_LEDGER_S3_BUCKET;
+      const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
+      const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
 
       if (ledgerBackendName === 'postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -358,7 +372,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           crossChainAnchor = crossChainAnchorOverride;
         }
 
-        const crossChainIntervalMs = (validated as { AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number }).AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
+        const crossChainIntervalMs = dynConfig.AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
         logger.info('Audit ledger backend: per-replica-postgres', {
           table: table ?? 'euno_audit_ledger_v2',
           replicaId,
@@ -402,8 +416,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   if (signedDecisions !== undefined) {
     logger.info('Cryptographic audit enabled with per-decision signing', { signedDecisions });
   } else {
-    const signerType = (validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER
-      ? `KMS (${(validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER})`
+    const signerType = dynConfig.AUDIT_SIGNING_KMS_PROVIDER
+      ? `KMS (${dynConfig.AUDIT_SIGNING_KMS_PROVIDER})`
       : 'software';
     logger.info(`Cryptographic audit enabled with ${signerType} evidence signer`);
   }
@@ -484,7 +498,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       'drop_oldest_with_metric';
 
     const anchors: AuditAnchor[] = [];
-    const anchorUrl = (validated as { AUDIT_ANCHOR_URL?: string }).AUDIT_ANCHOR_URL;
+    const anchorUrl = dynConfig.AUDIT_ANCHOR_URL;
     const AUDIT_ANCHOR_TIMEOUT_MS = 30_000;
     if (anchorUrl) {
       anchors.push({

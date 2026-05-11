@@ -886,17 +886,20 @@ export function createKmsEvidenceSignerFromEnv(
             'when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.',
         );
       }
-      return createKmsEvidenceSigner({
+      // TypeScript cannot narrow after the compound missing-check above; the
+      // branches above guarantee these strings are defined at this point.
+      const gcpConfig: GcpCloudKmsConfig = {
         provider: 'gcp-cloudkms',
-        projectId: projectId!,
+        projectId: projectId as string,
         locationId: env.AUDIT_SIGNING_GCP_LOCATION_ID || undefined,
-        keyRingId: keyRingId!,
-        cryptoKeyId: cryptoKeyId!,
+        keyRingId: keyRingId as string,
+        cryptoKeyId: cryptoKeyId as string,
         cryptoKeyVersion: env.AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION || undefined,
         keyFilePath: env.AUDIT_SIGNING_GCP_KEY_FILE_PATH || undefined,
         logicalKeyId,
         algorithm,
-      });
+      };
+      return createKmsEvidenceSigner(gcpConfig);
     }
 
     default:
