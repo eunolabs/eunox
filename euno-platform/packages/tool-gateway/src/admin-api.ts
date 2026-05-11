@@ -168,10 +168,16 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * POST /admin/kill-switch/global/activate
    * Activate the global kill switch (blocks all agents)
    */
-  router.post('/kill-switch/global/activate', (_req: Request, res: Response) => {
+  router.post('/kill-switch/global/activate', (req: Request, res: Response) => {
     try {
       killSwitchManager.activateGlobalKill();
-      logger.warn('Global kill switch activated via admin API');
+      const operator = resolveOperator(req);
+      auditLogger.warn('kill_switch_global_activated', {
+        eventType: 'kill_switch_global_activated',
+        operator: operator ?? 'unknown',
+        severity: 'CRITICAL',
+      });
+      logger.warn('Global kill switch activated via admin API', { operator });
       res.json({ message: 'Global kill switch activated' });
     } catch (error) {
       logger.error('Failed to activate global kill switch', {
@@ -190,10 +196,15 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * POST /admin/kill-switch/global/deactivate
    * Deactivate the global kill switch
    */
-  router.post('/kill-switch/global/deactivate', (_req: Request, res: Response) => {
+  router.post('/kill-switch/global/deactivate', (req: Request, res: Response) => {
     try {
       killSwitchManager.deactivateGlobalKill();
-      logger.info('Global kill switch deactivated via admin API');
+      const operator = resolveOperator(req);
+      auditLogger.info('kill_switch_global_deactivated', {
+        eventType: 'kill_switch_global_deactivated',
+        operator: operator ?? 'unknown',
+      });
+      logger.info('Global kill switch deactivated via admin API', { operator });
       res.json({ message: 'Global kill switch deactivated' });
     } catch (error) {
       logger.error('Failed to deactivate global kill switch', {
@@ -226,6 +237,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.killSession(sessionId);
+      auditLogger.warn('kill_switch_session_killed', {
+        eventType: 'kill_switch_session_killed',
+        sessionId,
+        operator: resolveOperator(req) ?? 'unknown',
+      });
       logger.warn('Session killed via admin API', { sessionId });
       res.json({ message: `Session ${sessionId} has been killed` });
     } catch (error) {
@@ -259,6 +275,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.killAgent(agentId);
+      auditLogger.warn('kill_switch_agent_killed', {
+        eventType: 'kill_switch_agent_killed',
+        agentId,
+        operator: resolveOperator(req) ?? 'unknown',
+      });
       logger.warn('Agent killed via admin API', { agentId });
       res.json({ message: `Agent ${agentId} has been killed` });
     } catch (error) {
@@ -292,6 +313,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.reviveSession(sessionId);
+      auditLogger.info('kill_switch_session_revived', {
+        eventType: 'kill_switch_session_revived',
+        sessionId,
+        operator: resolveOperator(req) ?? 'unknown',
+      });
       logger.info('Session revived via admin API', { sessionId });
       res.json({ message: `Session ${sessionId} has been revived` });
     } catch (error) {
@@ -325,6 +351,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.reviveAgent(agentId);
+      auditLogger.info('kill_switch_agent_revived', {
+        eventType: 'kill_switch_agent_revived',
+        agentId,
+        operator: resolveOperator(req) ?? 'unknown',
+      });
       logger.info('Agent revived via admin API', { agentId });
       res.json({ message: `Agent ${agentId} has been revived` });
     } catch (error) {
@@ -344,9 +375,13 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * POST /admin/kill-switch/reset
    * Reset all kill switches (use with caution)
    */
-  router.post('/kill-switch/reset', (_req: Request, res: Response) => {
+  router.post('/kill-switch/reset', (req: Request, res: Response) => {
     try {
       killSwitchManager.resetAll();
+      auditLogger.warn('kill_switch_reset_all', {
+        eventType: 'kill_switch_reset_all',
+        operator: resolveOperator(req) ?? 'unknown',
+      });
       logger.warn('All kill switches reset via admin API');
       res.json({ message: 'All kill switches have been reset' });
     } catch (error) {

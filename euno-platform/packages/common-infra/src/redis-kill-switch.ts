@@ -538,6 +538,33 @@ export class RedisKillSwitchManager implements KillSwitchManager {
     }
     try {
       await this.refresh();
+      // If Redis responded successfully but returned empty state — which
+      // happens after a Redis FLUSHALL or a cold Redis restart — and a
+      // persistence backend is configured, check Postgres for any durably
+      // stored kills and seed the local cache from it.  This ensures that
+      // kill switches issued before a Redis flush are not silently lost when
+      // a new replica starts against the now-empty cluster.
+      //
+      // Note: we only seed when the cache is fully empty.  A non-empty Redis
+      // (e.g. global kill active but no per-entity kills) will have at least
+      // one key present and is presumed to be authoritative — we don't
+      // want to overlay Postgres on top of a partially-populated Redis that
+      // is still in a valid, known state.
+      if (this.persistenceBackend && this.isCacheEmpty()) {
+        try {
+          await this.seedFromPersistenceBackend();
+          if (!this.isCacheEmpty()) {
+            this.logger?.info(
+              'Kill-switch cache seeded from persistence backend (Redis returned empty state; possible FLUSHALL or cold restart)',
+            );
+          }
+        } catch (pgError) {
+          this.logger?.warn(
+            'Could not check persistence backend for kill-switch state during startup',
+            { error: pgError instanceof Error ? pgError.message : 'Unknown error' }
+          );
+        }
+      }
     } catch (error) {
       if (this.persistenceBackend) {
         this.logger?.warn(
@@ -993,6 +1020,18 @@ export class RedisKillSwitchManager implements KillSwitchManager {
   }
   private eventsChannel(): string {
     return `${this.keyPrefix}${DEFAULT_EVENTS_SUFFIX}`;
+  }
+
+  /**
+   * Returns true when the local cache contains no active kills — used to
+   * detect a reachable-but-empty Redis after FLUSHALL / cold restart.
+   */
+  private isCacheEmpty(): boolean {
+    return (
+      !this.cache.globalKillSwitch &&
+      this.cache.killedSessions.size === 0 &&
+      this.cache.killedAgents.size === 0
+    );
   }
 
   /**
