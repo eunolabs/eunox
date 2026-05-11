@@ -35,7 +35,6 @@ import {
   JwkSet,
   SigningAdapter,
   SigningAdapterConfig,
-  SigningAlgorithm,
   TokenVerifier,
   UserContext,
   createLogger,
@@ -112,16 +111,6 @@ class JoseRsaSignerWithKid extends SigningAdapter {
     this.publicKeyPem = publicKeyPem;
     this.kid = kid;
     this.jwk = jwk;
-  }
-
-  override getAlgorithm(): SigningAlgorithm {
-    // The base class `SigningAdapter.getAlgorithm()` already returns
-    // `this.algorithm`, which is initialized from `config.algorithm = SIGNING_ALG`
-    // in the constructor. This override is explicit for clarity so the test
-    // fixture documents that the published JWK will include `alg: 'RS256'`
-    // (the base-class method satisfies the `getAlgorithm?()` on `TokenSigner`
-    // that `CapabilityIssuerService.getJwks()` calls to stamp `alg` in the JWKS).
-    return SIGNING_ALG;
   }
 
   async sign(payload: CapabilityTokenPayload): Promise<string> {
@@ -287,8 +276,10 @@ describe('Task 3 — JWTTokenVerifier wiring', () => {
 
       const jwks = await issuerService.getJwks();
       const client = makeJwksClient(jwks);
-      // Both initial fetch and forced-refresh return the same JWKS (no phantom-key).
-      mockedAxios.get.mockResolvedValue({ data: jwks });
+      // `makeJwksClient` already primes the mock. A second `mockResolvedValue`
+      // call would silently overwrite it — and it did so with the same value,
+      // making the original call a no-op. Both initial fetch and forced-refresh
+      // return the same JWKS (which never contains 'phantom-key').
       const verifier = new JwksTokenVerifier(client, { algorithms: [SIGNING_ALG], requireKid: true });
 
       await expect(verifier.verify(phantomToken)).rejects.toMatchObject({
@@ -318,6 +309,9 @@ describe('Task 3 — JWTTokenVerifier wiring', () => {
       await expect(verifier.verify(noKidToken)).rejects.toMatchObject({
         code: 'INVALID_TOKEN',
       });
+      // The verifier must reject at Step 2 (kid check) before ever touching
+      // the JWKS source — no axios fetch should have been made.
+      expect(mockedAxios.get).not.toHaveBeenCalled();
     });
   });
 
