@@ -26,6 +26,7 @@ import {
   Counter,
   createAuditLogger,
   createAuditPipeline,
+  createKmsEvidenceSignerFromEnv,
   createLogger,
   createOcsfWinstonTransport,
   createSoftwareEvidenceSignerFromEnv,
@@ -174,34 +175,73 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     return { auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS };
   }
 
+  // Type-narrow the dynamic config fields once so we avoid repeated `as { ... }` casts below.
+  type DynamicConfig = {
+    AUDIT_SIGNING_KMS_PROVIDER?: string;
+    AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres';
+    AUDIT_LEDGER_PG_URL?: string;
+    AUDIT_LEDGER_HMAC_SECRET?: string;
+    AUDIT_LEDGER_TABLE?: string;
+    AUDIT_LEDGER_RUN_MIGRATIONS?: boolean;
+    AUDIT_LEDGER_S3_BUCKET?: string;
+    AUDIT_LEDGER_ANCHOR_INTERVAL?: number;
+    AUDIT_LEDGER_ACL_ENDPOINT?: string;
+    AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number;
+    AUDIT_ANCHOR_URL?: string;
+  };
+  const dynConfig = validated as typeof validated & DynamicConfig;
   let evidenceSigner: EvidenceSigner | undefined;
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
   let crossChainAnchor: CrossChainAnchor | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
 
   try {
-    const softwareSigner = createSoftwareEvidenceSignerFromEnv(env);
-    if (!softwareSigner) {
-      throw new Error(
-        'No evidence signer is configured. Provide ' +
-          'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
-          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
-          'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
-          'programmatically. Refusing to start with cryptographic audit ' +
-          'enabled but no signer attached.',
-      );
-    }
+    // Select the evidence signer: KMS-backed (AUDIT_SIGNING_KMS_PROVIDER) takes
+    // precedence over the software signer (EVIDENCE_SIGNING_KEY_PEM / _FILE).
+    // Both produce byte-identical canonical evidence records and chain semantics
+    // (same AuditEvidenceSigner wrapper); only the signature bytes, keyId, and
+    // algorithm field differ — which is the explicit design of Task 5 (Stage 3).
+    const kmsProvider = dynConfig.AUDIT_SIGNING_KMS_PROVIDER;
+    const activeSigner = kmsProvider
+      ? (() => {
+          const kmsSigner = createKmsEvidenceSignerFromEnv(env);
+          if (!kmsSigner) {
+            throw new Error(
+              `AUDIT_SIGNING_KMS_PROVIDER='${kmsProvider}' is set but the required ` +
+                'KMS configuration variables are missing or invalid. ' +
+                'Provide the appropriate AUDIT_SIGNING_<PROVIDER>_* variables.',
+            );
+          }
+          logger.info('Cryptographic audit: using KMS-backed evidence signer', {
+            provider: kmsProvider,
+          });
+          return kmsSigner;
+        })()
+      : (() => {
+          const sw = createSoftwareEvidenceSignerFromEnv(env);
+          if (!sw) {
+            throw new Error(
+              'No evidence signer is configured. Provide ' +
+                'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+                'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
+                'EVIDENCE_SIGNING_KEY_ID, or set AUDIT_SIGNING_KMS_PROVIDER to use ' +
+                'a cloud KMS (azure-keyvault, aws-kms, gcp-cloudkms). ' +
+                'Refusing to start with cryptographic audit enabled but no signer attached.',
+            );
+          }
+          return sw;
+        })();
 
-    const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
+    const ledgerBackendName = dynConfig.AUDIT_LEDGER_BACKEND;
 
     if (ledgerBackendName && ledgerBackendName !== 'none') {
-      const pgUrl = (validated as { AUDIT_LEDGER_PG_URL?: string }).AUDIT_LEDGER_PG_URL;
-      const hmacSecret = (validated as { AUDIT_LEDGER_HMAC_SECRET?: string }).AUDIT_LEDGER_HMAC_SECRET;
-      const table = (validated as { AUDIT_LEDGER_TABLE?: string }).AUDIT_LEDGER_TABLE;
-      const runMigrations = (validated as { AUDIT_LEDGER_RUN_MIGRATIONS?: boolean }).AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
-      const s3Bucket = (validated as { AUDIT_LEDGER_S3_BUCKET?: string }).AUDIT_LEDGER_S3_BUCKET;
-      const anchorInterval = (validated as { AUDIT_LEDGER_ANCHOR_INTERVAL?: number }).AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
-      const aclEndpoint = (validated as { AUDIT_LEDGER_ACL_ENDPOINT?: string }).AUDIT_LEDGER_ACL_ENDPOINT;
+      const pgUrl = dynConfig.AUDIT_LEDGER_PG_URL;
+      const hmacSecret = dynConfig.AUDIT_LEDGER_HMAC_SECRET;
+      const table = dynConfig.AUDIT_LEDGER_TABLE;
+      const runMigrations = dynConfig.AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
+      const s3Bucket = dynConfig.AUDIT_LEDGER_S3_BUCKET;
+      const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
+      const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
 
       if (ledgerBackendName === 'postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -240,11 +280,11 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
         }
 
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, pgBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
 
         logger.info('Audit ledger backend: postgres', {
           table: table ?? 'euno_audit_ledger',
@@ -271,18 +311,18 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         const aclBackend = new AzureConfidentialLedgerBackend(aclClient, {
           onError: (err: Error) => logger.error('Audit ledger ACL error', { error: err.message }),
         });
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, aclBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
       } else if (ledgerBackendName === 'in-memory') {
         const inMemBackend = new InMemoryLedgerBackend();
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, inMemBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
         logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
       } else if (ledgerBackendName === 'per-replica-postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -314,11 +354,11 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           });
         }
 
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, perReplicaBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
 
         if (s3Bucket) {
           logger.warn(
@@ -333,7 +373,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           crossChainAnchor = crossChainAnchorOverride;
         }
 
-        const crossChainIntervalMs = (validated as { AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number }).AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
+        const crossChainIntervalMs = dynConfig.AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
         logger.info('Audit ledger backend: per-replica-postgres', {
           table: table ?? 'euno_audit_ledger_v2',
           replicaId,
@@ -345,8 +385,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       }
     } else {
       // No ledger backend — use the software signer with in-process chain state.
-      evidenceSigner = softwareSigner;
-      auditBatchSigner = softwareSigner;
+      evidenceSigner = activeSigner;
+      auditBatchSigner = activeSigner;
       if (ledgerBackendName === 'none' || !ledgerBackendName) {
         logger.warn(
           'Cryptographic audit is enabled but AUDIT_LEDGER_BACKEND is not set. ' +
@@ -369,14 +409,18 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   if (!evidenceSigner) {
     throw new Error(
       'Evidence signing is enabled but no evidence signer is configured. Provide ' +
-        'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded private key).',
+        'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded private key), ' +
+        'or set AUDIT_SIGNING_KMS_PROVIDER to use a cloud KMS backend (azure-keyvault, aws-kms, gcp-cloudkms).',
     );
   }
 
   if (signedDecisions !== undefined) {
     logger.info('Cryptographic audit enabled with per-decision signing', { signedDecisions });
   } else {
-    logger.info('Cryptographic audit enabled with software evidence signer');
+    const signerType = dynConfig.AUDIT_SIGNING_KMS_PROVIDER
+      ? `KMS (${dynConfig.AUDIT_SIGNING_KMS_PROVIDER})`
+      : 'software';
+    logger.info(`Cryptographic audit enabled with ${signerType} evidence signer`);
   }
 
   // ── Async audit pipeline (R-9) ────────────────────────────────────────────
@@ -455,7 +499,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       'drop_oldest_with_metric';
 
     const anchors: AuditAnchor[] = [];
-    const anchorUrl = (validated as { AUDIT_ANCHOR_URL?: string }).AUDIT_ANCHOR_URL;
+    const anchorUrl = dynConfig.AUDIT_ANCHOR_URL;
     const AUDIT_ANCHOR_TIMEOUT_MS = 30_000;
     if (anchorUrl) {
       anchors.push({
