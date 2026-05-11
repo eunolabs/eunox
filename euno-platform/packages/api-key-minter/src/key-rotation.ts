@@ -308,7 +308,7 @@ export class KeyRotationManager {
       r =>
         r.kid === kid &&
         r.result === result &&
-        (reasonContains === undefined || r.reason?.includes(reasonContains) === true),
+        (reasonContains === undefined || r.reason?.includes(reasonContains)),
     );
   }
 }

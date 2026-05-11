@@ -20,8 +20,9 @@
  *
  * For more fine-grained isolation (per-policy or per-tenant + per-policy),
  * populate `tenantKeyMap` with composite `"${policyHash}:${audience}"` keys
- * or plain `policyHash` / `audience` strings — the same composite-key
- * convention used by `resolveIssuanceContextKey` in `@euno/common-core`.
+ * or plain `policyHash` / `audience` strings.  The lookup order mirrors the
+ * capability-issuer composite-key convention: composite wins over plain
+ * audience, which wins over plain policyHash.
  *
  * ### JWT encoding
  *
@@ -876,7 +877,10 @@ function buildDriverForKeyRef(
 /** Extract the value that follows `label` in a GCP resource path parts array. */
 function gcpPathSegment(parts: string[], label: string): string | undefined {
   const idx = parts.indexOf(label);
-  return idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : undefined;
+  const value = idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : undefined;
+  // Guard against malformed paths like 'projects//locations/...' that produce
+  // empty string segments.
+  return value && value.length > 0 ? value : undefined;
 }
 
 // ── Public factory ────────────────────────────────────────────────────────────
