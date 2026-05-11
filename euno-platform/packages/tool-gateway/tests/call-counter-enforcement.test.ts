@@ -114,8 +114,9 @@ async function buildReplica(
     keyPrefix: opts.keyPrefix ?? 'test:',
     circuitBreaker: opts.circuitBreaker,
     localFallback: opts.localFallback,
-    // failClosedOnError defaults to true — that is the correct setting for the
-    // hosted offering and is intentionally left as the default here.
+    // The `failClosedOnError` option is not set here so it uses its default
+    // value of `true` (fail-closed). This is the correct default for the hosted
+    // offering and is intentionally preserved in these tests.
   });
 
   const engine = new EnforcementEngine({
