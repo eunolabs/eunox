@@ -28,6 +28,7 @@ import {
 import { resolveDID } from '@euno/capability-issuer/adapters';
 
 import { createAdminRouter } from './admin-api';
+import { createAuditRouter } from './routes/audit';
 import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
 import { createValidateRouter } from './routes/validate';
@@ -148,6 +149,19 @@ export function createApp(deps: GatewayDependencies): Express {
 
   // Tool invocation endpoint
   app.use(createToolsRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
+
+  // Audit record query endpoint (Task 7) — only mounted when a ledger backend
+  // is configured. When no backend is present (e.g. software-only signer mode),
+  // the route is simply absent and callers receive a 404.
+  if (deps.auditLedgerBackend) {
+    app.use(
+      createAuditRouter({
+        ledgerBackend: deps.auditLedgerBackend,
+        verifier: deps.verifier,
+        logger,
+      }),
+    );
+  }
 
   // Protected proxy: validate then forward
   app.use(

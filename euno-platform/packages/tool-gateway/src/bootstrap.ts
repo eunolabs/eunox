@@ -123,6 +123,14 @@ export interface GatewayDependencies {
    */
   crossChainAnchor?: CrossChainAnchor;
   /**
+   * The ledger backend exposed by the audit module. Present when
+   * `AUDIT_LEDGER_BACKEND` is set to a queryable backend (`postgres`,
+   * `per-replica-postgres`, `in-memory`, or `acl`). Used by the audit
+   * query route (`GET /api/v1/audit/records`) to serve paginated,
+   * filterable evidence without a separate DB connection pool.
+   */
+  auditLedgerBackend?: import('@euno/common').LedgerBackend;
+  /**
    * Azure Confidential Ledger client for the ACL ledger backend.
    *
    * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
@@ -799,6 +807,7 @@ export async function initializeServices(
     auditPipelineDrainTimeoutMs,
     ledgerPgPool,
     crossChainAnchor,
+    auditLedgerBackend,
   } = await buildAuditModule({
     validated,
     env,
@@ -884,6 +893,7 @@ export async function initializeServices(
     dpopReplayStore,
     ...(ledgerPgPool ? { ledgerPgPool } : {}),
     ...(crossChainAnchor ? { crossChainAnchor } : {}),
+    ...(auditLedgerBackend ? { auditLedgerBackend } : {}),
     adminApiKey,
     adminTenantId,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',

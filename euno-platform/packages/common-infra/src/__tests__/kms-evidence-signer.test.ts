@@ -637,18 +637,26 @@ describe('GCP Cloud KMS-backed CryptoSigner (mock client)', () => {
 
 describe('KmsEvidenceSigner error handling', () => {
   it('throws a clear error when @azure/keyvault-keys is not installed', () => {
-    // @azure/keyvault-keys is an optional deployment dependency that is NOT
-    // installed in the CI environment (not listed in common-infra devDependencies).
-    // After the code fix that validates config BEFORE requiring SDKs, calling
-    // createKmsEvidenceSigner with valid config reaches the require() call,
-    // which throws "the @azure/keyvault-keys package is not installed".
+    // @azure/keyvault-keys is an optional deployment dependency. When it is NOT
+    // available in the deployment image, require() throws and the factory wraps
+    // the error with a helpful install message. We simulate this by resetting the
+    // module registry and mocking @azure/keyvault-keys so its factory throws, then
+    // loading a fresh copy of the module under test.
+    jest.resetModules();
+    jest.doMock('@azure/keyvault-keys', () => {
+      throw new Error('Cannot find module @azure/keyvault-keys');
+    });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createKmsEvidenceSigner: create } = require('../kms-evidence-signer') as typeof import('../kms-evidence-signer');
     expect(() =>
-      createKmsEvidenceSigner({
+      create({
         provider: 'azure-keyvault',
         vaultUrl: 'https://vault.example.com/',
         keyName: 'audit-key',
       }),
     ).toThrow('@azure/keyvault-keys');
+    jest.resetModules();
+    jest.unmock('@azure/keyvault-keys');
   });
 
   it('throws when client-secret credential is requested but required fields are missing', () => {

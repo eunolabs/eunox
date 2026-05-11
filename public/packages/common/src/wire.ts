@@ -692,6 +692,31 @@ export interface AuditEvidence {
   capabilityId: string;
   /** Decision outcome */
   decision: 'allow' | 'deny';
+  /**
+   * Tenant identifier from the capability token's `authorizedBy.tenantId`
+   * claim. Populated at enforcement time when the claim is present. Used by
+   * the audit query API to scope results to the requesting tenant.
+   */
+  tenantId?: string;
+  /**
+   * The condition type that caused a `deny` decision (e.g. `'timeWindow'`,
+   * `'ipRange'`, `'maxCalls'`, `'policy'`, `'custom'`). Only set on denial
+   * records that originate from typed-condition evaluation. Not included in
+   * the canonical evidence string so as not to break existing signatures.
+   */
+  conditionType?: string;
+  /**
+   * A short machine-readable code describing why this action was denied.
+   * Maps to the gateway's `DenialCode` values:
+   *   - `'NO_MATCHING_CAPABILITY'`   — no capability matched (action, resource).
+   *   - `'ARGUMENT_SCHEMA_REQUIRED'` — strict mode, missing argumentSchema.
+   *   - `'ARGUMENT_VALIDATION'`      — argument validation failed.
+   *   - `'QUOTA_EXCEEDED'`           — gateway invocation quota exceeded.
+   *   - `'CONDITION_FAILED'`         — typed-condition evaluation denied.
+   * Only set on `deny` records. Not included in the canonical evidence string
+   * to preserve backward compatibility with existing signatures.
+   */
+  denialCode?: string;
 }
 
 /**

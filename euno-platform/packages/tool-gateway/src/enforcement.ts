@@ -478,6 +478,8 @@ export class EnforcementEngine {
             action: request.action,
             capabilityId: payload.jti,
             decision: 'deny',
+            tenantId: payload.authorizedBy.tenantId,
+            denialCode: 'NO_MATCHING_CAPABILITY',
           });
         }
 
@@ -515,7 +517,7 @@ export class EnforcementEngine {
         );
 
         if (this.shouldSignDecision('deny') && payload.authorizedBy) {
-          await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
+          await this.emitDenialEvidence(payload, request, sessionId, request.context || {}, 'ARGUMENT_SCHEMA_REQUIRED');
         }
 
         return {
@@ -550,7 +552,7 @@ export class EnforcementEngine {
             // surrounding context metadata. This keeps the evidence
             // hash tightly coupled to the input that caused the denial
             // and avoids drift from method/path/session noise.
-            await this.emitDenialEvidence(payload, request, sessionId, argsToValidate);
+            await this.emitDenialEvidence(payload, request, sessionId, argsToValidate, 'ARGUMENT_VALIDATION');
           }
 
           return {
@@ -581,7 +583,7 @@ export class EnforcementEngine {
           const reason = 'Gateway invocation quota exceeded for this token/action/resource';
           await this.logDenial(payload.sub, request.action, request.resource, reason, sessionId);
           if (this.shouldSignDecision('deny') && payload.authorizedBy) {
-            await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
+            await this.emitDenialEvidence(payload, request, sessionId, request.context || {}, 'QUOTA_EXCEEDED');
           }
           throw new CapabilityError(
             ErrorCode.RATE_LIMIT_EXCEEDED,
@@ -615,7 +617,14 @@ export class EnforcementEngine {
           );
 
           if (this.shouldSignDecision('deny') && payload.authorizedBy) {
-            await this.emitDenialEvidence(payload, request, sessionId, request.context || {});
+            await this.emitDenialEvidence(
+              payload,
+              request,
+              sessionId,
+              request.context || {},
+              'CONDITION_FAILED',
+              result.conditionType,
+            );
           }
 
           return {
@@ -646,6 +655,7 @@ export class EnforcementEngine {
           action: request.action,
           capabilityId: payload.jti,
           decision: 'allow',
+          tenantId: payload.authorizedBy.tenantId,
         });
       }
 
@@ -711,6 +721,8 @@ export class EnforcementEngine {
     request: ValidateActionRequest,
     sessionId: string | undefined,
     args: unknown,
+    denialCode?: string,
+    conditionType?: string,
   ): Promise<void> {
     if (!payload.authorizedBy) return;
     await this.generateEvidence({
@@ -723,6 +735,9 @@ export class EnforcementEngine {
       action: request.action,
       capabilityId: payload.jti,
       decision: 'deny',
+      tenantId: payload.authorizedBy.tenantId,
+      denialCode,
+      conditionType,
     });
   }
 
@@ -736,6 +751,9 @@ export class EnforcementEngine {
     action: string;
     capabilityId: string;
     decision: 'allow' | 'deny';
+    tenantId?: string;
+    denialCode?: string;
+    conditionType?: string;
   }): Promise<SignedAuditEvidence | null> {
     if (!this.evidenceSigner && !this.auditPipeline) {
       return null;

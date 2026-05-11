@@ -518,6 +518,9 @@ export function createAuditEvidence(params: {
   capabilityId: string;
   decision: 'allow' | 'deny';
   policyVersion: string;
+  tenantId?: string;
+  conditionType?: string;
+  denialCode?: string;
 }): AuditEvidence {
   const nonce = generateId();
   const ts = new Date().toISOString();
@@ -538,6 +541,9 @@ export function createAuditEvidence(params: {
     action: params.action,
     capabilityId: params.capabilityId,
     decision: params.decision,
+    ...(params.tenantId !== undefined ? { tenantId: params.tenantId } : {}),
+    ...(params.conditionType !== undefined ? { conditionType: params.conditionType } : {}),
+    ...(params.denialCode !== undefined ? { denialCode: params.denialCode } : {}),
   };
 }
 

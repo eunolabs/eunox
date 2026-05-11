@@ -104,7 +104,7 @@ export interface ConditionContext {
 /** Outcome of evaluating a single condition. */
 export type ConditionResult =
   | { allow: true }
-  | { allow: false; reason: string };
+  | { allow: false; reason: string; conditionType?: string };
 
 /**
  * A condition handler implements the validate/enforce/redact lobes of
@@ -391,7 +391,7 @@ export async function enforceConditions(
         : ctx;
     const result = await enforceCondition(cond, scopedCtx);
     if (!result.allow) {
-      return result;
+      return { ...result, conditionType: cond.type };
     }
   }
   return { allow: true };
