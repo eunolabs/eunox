@@ -5,7 +5,13 @@
 
 import * as crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
-import { KillSwitchManager, Logger, createAuditLogger } from '@euno/common';
+import {
+  KillSwitchManager,
+  Logger,
+  createAuditLogger,
+  OcsfAuditTransport,
+  OcsfAuthorizationEvent,
+} from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { RevocationEpochStore } from './revocation-store';
 import { PartnerIssuerResolver } from './partner-issuer-resolver';
@@ -17,6 +23,98 @@ import {
   createPinAttestation,
   jcsSha256,
 } from './partner-did-registry';
+
+// =============================================================================
+// Idempotency store
+// =============================================================================
+
+/**
+ * A single entry in the idempotency store.
+ *
+ * Exported so callers can type-hint against the stored shape (e.g. when
+ * implementing an alternative `AdminIdempotencyStore` backed by Redis).
+ */
+export interface IdempotencyEntry {
+  /** The HTTP status code of the original response. */
+  status: number;
+  /** The JSON body of the original response. */
+  body: unknown;
+  /** Endpoint that handled the original request (method + concrete request path). */
+  endpoint: string;
+  /** Expiry in milliseconds since epoch. */
+  expiresAt: number;
+}
+
+/**
+ * In-memory idempotency store for admin API mutations.
+ *
+ * Keyed by the value of the caller-supplied `Idempotency-Key` header.
+ * Entries expire after `ttlMs` (default {@link AdminIdempotencyStore.DEFAULT_TTL_MS}, 24 hours) and are pruned lazily on
+ * insert when the map grows beyond `maxSize`.
+ *
+ * This implementation is local-process only.  In a multi-replica deployment
+ * the same idempotency key sent to two different replicas will be processed
+ * twice.  For Stage 3 this is acceptable — the admin surface already lives
+ * on a separate port targeted by a ClusterIP Service, so a single replica
+ * typically handles all admin traffic.  A Redis-backed implementation can
+ * replace this class without changing the callers.
+ */
+export class AdminIdempotencyStore {
+  private readonly store = new Map<string, IdempotencyEntry>();
+  private readonly ttlMs: number;
+  private readonly maxSize: number;
+
+  /**
+   * Default TTL for idempotency entries: 24 hours in milliseconds.
+   * Exposed as a named constant so callers can reference it without magic numbers.
+   */
+  static readonly DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
+  constructor(opts: { ttlMs?: number; maxSize?: number } = {}) {
+    this.ttlMs = opts.ttlMs ?? AdminIdempotencyStore.DEFAULT_TTL_MS;
+    this.maxSize = opts.maxSize ?? 10_000;
+  }
+
+  /** Return a cached entry if one exists and has not expired; undefined otherwise. */
+  get(key: string): IdempotencyEntry | undefined {
+    const entry = this.store.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry;
+  }
+
+  /** Store a completed response keyed by the idempotency key. */
+  set(key: string, endpoint: string, status: number, body: unknown): IdempotencyEntry {
+    // When the store is at capacity, first try to prune expired entries.
+    if (this.store.size >= this.maxSize) {
+      const now = Date.now();
+      for (const [k, v] of this.store) {
+        if (now > v.expiresAt) this.store.delete(k);
+      }
+    }
+    // If still at capacity after pruning, evict oldest entries (Map iteration
+    // order is insertion order) until we have room for the new entry.
+    while (this.store.size >= this.maxSize) {
+      const oldestKey = this.store.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.store.delete(oldestKey);
+      } else {
+        break; // Defensive: should not happen, but avoid infinite loop.
+      }
+    }
+    const entry: IdempotencyEntry = {
+      status,
+      body,
+      endpoint,
+      expiresAt: Date.now() + this.ttlMs,
+    };
+    this.store.set(key, entry);
+    return entry;
+  }
+}
 
 export interface AdminApiOptions {
   killSwitchManager: KillSwitchManager;
@@ -81,6 +179,55 @@ export interface AdminApiOptions {
    * future without touching the registry code.
    */
   resolveOperator?: (req: Request) => string | undefined;
+  /**
+   * Tenant identifier that scopes this admin router instance.
+   *
+   * When set, the kill-switch, token-revocation, and revocation-epoch mutating
+   * endpoints MUST receive a matching `tenantId` field in the JSON request body.
+   * A request whose `tenantId` differs from this value is rejected with HTTP 403
+   * `TENANT_MISMATCH` so a credential issued for tenant A cannot affect resources
+   * belonging to tenant B.
+   *
+   * Partner DID endpoints (`/partner-did/*`, `/partner-dids/*`) are not
+   * tenant-scoped because DID registrations are inherently gateway-wide and do
+   * not carry per-tenant ownership semantics.
+   *
+   * Global kill-switch operations additionally require
+   * `acknowledgesCrossTenantImpact: true` in the body because they block all
+   * traffic on the gateway instance irrespective of tenant, and an explicit
+   * acknowledgment forces the operator to be deliberate about that blast radius.
+   *
+   * Plumbed from `ADMIN_TENANT_ID`.  When omitted, no tenant scoping is
+   * applied (single-tenant / development deployments).
+   */
+  tenantId?: string;
+  /**
+   * OCSF audit transport for admin-action events.
+   *
+   * When supplied, every mutating admin action emits an OCSF Authorization
+   * event (class_uid 3003) to this transport in addition to the existing
+   * Winston audit-chain log entries.  This makes admin actions ingestible by
+   * any SIEM that speaks OCSF without requiring a Euno-specific parser.
+   *
+   * The transport must not throw — failures are swallowed per the
+   * {@link OcsfAuditTransport} contract.  Passed from
+   * `GatewayDependencies.ocsfTransport` by `createAdminApp`.
+   */
+  ocsfTransport?: OcsfAuditTransport;
+  /**
+   * Idempotency store shared across all mutating endpoints.
+   *
+   * When supplied, responses for requests that carry an `Idempotency-Key`
+   * header are cached in this store.  Subsequent requests with the same key
+   * targeting the same endpoint return the cached response without re-executing
+   * the underlying operation.  The same key used against a *different* endpoint
+   * is rejected with HTTP 422.
+   *
+   * Callers that do not pass a store still benefit from the store created
+   * internally per-router-instance; pass an explicit store only when you need
+   * to share idempotency state across multiple router instances (uncommon).
+   */
+  idempotencyStore?: AdminIdempotencyStore;
 }
 
 /**
@@ -100,15 +247,212 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     resolveDidDocument,
     pinAttestationSecret,
     resolveOperator: resolveOperatorFn,
+    tenantId: configuredTenantId,
+    ocsfTransport,
   } = options;
 
+  // Idempotency store: use caller-supplied or create a fresh in-memory one.
+  const idempotencyStore = options.idempotencyStore ?? new AdminIdempotencyStore();
+
   const auditLogger = createAuditLogger('tool-gateway');
+
+  // ── OCSF event builder ──────────────────────────────────────────────────
+  // Emits a structured OCSF Authorization event (class_uid 3003) to the
+  // configured transport so SIEMs can ingest admin actions without a
+  // Euno-specific parser.  The function is a no-op when no transport is set
+  // so code paths that call it never need to null-check the transport.
+  function emitAdminOcsfEvent(opts: {
+    uid: string;
+    /** 1=Assign Privileges, 2=Revoke Privileges, 99=Other */
+    activityId: 1 | 2 | 99;
+    /** OCSF severity ordinal: 1=Info, 2=Low, 3=Medium, 4=High, 5=Critical */
+    severityId: number;
+    operator?: string;
+    /** Zero or more resources acted upon. */
+    targets?: Array<{ uid: string; type: string }>;
+    message: string;
+    status: 'Success' | 'Failure';
+    unmapped?: Record<string, unknown>;
+  }): void {
+    if (!ocsfTransport) return;
+    const event: OcsfAuthorizationEvent = {
+      class_uid: 3003,
+      category_uid: 3,
+      activity_id: opts.activityId,
+      type_uid: 3003 * 100 + opts.activityId,
+      time: Date.now(),
+      severity_id: opts.severityId,
+      status_id: opts.status === 'Success' ? 1 : 2,
+      status: opts.status,
+      message: opts.message,
+      metadata: {
+        version: '1.1.0',
+        product: {
+          name: 'euno-tool-gateway',
+          vendor_name: 'Euno',
+          feature: { name: 'admin-api' },
+        },
+        uid: opts.uid,
+      },
+      ...(opts.operator ? { actor: { user: { uid: opts.operator } } } : {}),
+      ...(opts.targets && opts.targets.length > 0 ? { resources: opts.targets } : {}),
+      ...(opts.unmapped || configuredTenantId
+        ? {
+            unmapped: {
+              ...(configuredTenantId ? { tenantId: configuredTenantId } : {}),
+              ...(opts.unmapped ?? {}),
+            },
+          }
+        : {}),
+    };
+    // Fire-and-forget: transport errors must not fail the request.
+    ocsfTransport.send(event).catch(() => undefined);
+  }
+
+  // ── Idempotency helpers ──────────────────────────────────────────────────
+  /**
+   * Extract the Idempotency-Key header value, normalised to a string or
+   * undefined.  Express parses repeated header occurrences into an array;
+   * when multiple values are present we use the first.
+   */
+  function getIdempotencyKey(req: Request): string | undefined {
+    const raw = req.headers['idempotency-key'];
+    const key = Array.isArray(raw) ? raw[0] : raw;
+    return typeof key === 'string' && key.length > 0 ? key : undefined;
+  }
+
+  /**
+   * Canonical endpoint label used for idempotency-key scoping.
+   * Format: `METHOD <concrete-path>` (e.g. `POST /kill-switch/session/sess-1/kill`).
+   *
+   * Uses the concrete `req.path` (including route parameter values) rather than
+   * the route template.  This means each unique resource path is treated as a
+   * distinct endpoint for idempotency purposes, which is the desired behaviour —
+   * killing session "A" and killing session "B" are independent operations that
+   * should not share idempotency state.
+   */
+  function endpointLabel(req: Request): string {
+    return `${req.method} ${req.path}`;
+  }
+
+  /**
+   * Check whether a completed idempotency entry exists for this request.
+   * When one is found, reply with the cached response and return `true`
+   * (caller should `return` immediately).  Returns `false` otherwise.
+   *
+   * If the same key was used for a *different* endpoint, reply with 422 and
+   * return `true`.
+   */
+  function replayIfIdempotent(req: Request, res: Response): boolean {
+    const key = getIdempotencyKey(req);
+    if (!key) return false;
+    const cached = idempotencyStore.get(key);
+    if (!cached) return false;
+    const current = endpointLabel(req);
+    if (cached.endpoint !== current) {
+      res.status(422).json({
+        error: {
+          code: 'IDEMPOTENCY_KEY_REUSE',
+          message:
+            `Idempotency-Key "${key}" was previously used for "${cached.endpoint}" ` +
+            `and cannot be reused for "${current}".`,
+        },
+      });
+      return true;
+    }
+    res.status(cached.status).json(cached.body);
+    return true;
+  }
+
+  /**
+   * Cache the response for a successful idempotency-key request so future
+   * retries can be replayed without re-executing the operation.
+   */
+  function cacheIdempotentResponse(req: Request, status: number, body: unknown): void {
+    const key = getIdempotencyKey(req);
+    if (!key) return;
+    idempotencyStore.set(key, endpointLabel(req), status, body);
+  }
+
+  // ── Tenant-scope guard ──────────────────────────────────────────────────
+  /**
+   * Validate that the request's `tenantId` body field matches the configured
+   * tenant when tenant scoping is enabled.
+   *
+   * Returns `true` if the request has already been answered (validation
+   * failed — caller MUST `return` immediately).  Returns `false` if the
+   * scope check passed or is not applicable.
+   *
+   * @param requiresAcknowledgement - When true (global kill-switch), also
+   *   require `acknowledgesCrossTenantImpact: true` in the body because the
+   *   operation affects all tenants on this gateway instance.
+   */
+  function assertTenantScope(req: Request, res: Response, requiresAcknowledgement = false): boolean {
+    if (!configuredTenantId) return false; // Tenant scoping not configured.
+
+    const provided = req.body?.tenantId;
+    if (typeof provided !== 'string' || !provided.trim()) {
+      res.status(400).json({
+        error: {
+          code: 'TENANT_ID_REQUIRED',
+          message:
+            'tenantId is required in the request body for tenant-scoped operations. ' +
+            'Set tenantId to the tenant this gateway instance is scoped to.',
+        },
+      });
+      return true;
+    }
+
+    if (provided !== configuredTenantId) {
+      logger.warn('Cross-tenant admin operation rejected', {
+        providedTenantId: provided,
+        configuredTenantId,
+        path: req.path,
+        operator: resolveOperator(req),
+      });
+      const uid = crypto.randomUUID();
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2,
+        severityId: 4,
+        operator: resolveOperator(req),
+        message: `Cross-tenant admin operation rejected: provided tenantId "${provided}" does not match configured tenantId.`,
+        status: 'Failure',
+        unmapped: { rejectedTenantId: provided, path: req.path },
+      });
+      res.status(403).json({
+        error: {
+          code: 'TENANT_MISMATCH',
+          message:
+            `The provided tenantId "${provided}" does not match this gateway's configured tenant. ` +
+            'Admin operations on this endpoint can only target the scoped tenant.',
+        },
+      });
+      return true;
+    }
+
+    if (requiresAcknowledgement && req.body?.acknowledgesCrossTenantImpact !== true) {
+      res.status(400).json({
+        error: {
+          code: 'CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED',
+          message:
+            'This operation affects all tenants on the gateway instance. ' +
+            'Add "acknowledgesCrossTenantImpact": true to the request body to confirm you ' +
+            'understand the full blast radius before proceeding.',
+        },
+      });
+      return true;
+    }
+
+    return false; // All checks passed.
+  }
 
   // Default operator resolver: read X-Admin-Operator from the authenticated channel.
   const resolveOperator = resolveOperatorFn ?? ((req: Request): string | undefined => {
     const raw = req.headers['x-admin-operator'];
     return (Array.isArray(raw) ? raw[0] : raw) ?? undefined;
   });
+
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -166,19 +510,40 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/global/activate
-   * Activate the global kill switch (blocks all agents)
+   * Activate the global kill switch (blocks all agents on this gateway instance).
+   *
+   * ⚠️  When the gateway is tenant-scoped (`ADMIN_TENANT_ID` is set) this
+   * operation STILL blocks all tenants because the kill switch is gateway-wide.
+   * Callers must acknowledge this explicitly by including
+   * `"acknowledgesCrossTenantImpact": true` in the request body.
    */
   router.post('/kill-switch/global/activate', (req: Request, res: Response) => {
+    if (replayIfIdempotent(req, res)) return;
+    // Global kill is inherently cross-tenant; require acknowledgement when scoped.
+    if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
       killSwitchManager.activateGlobalKill();
       const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.warn('kill_switch_global_activated', {
         eventType: 'kill_switch_global_activated',
         operator: operator ?? 'unknown',
         severity: 'CRITICAL',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2, // Revoke Privileges
+        severityId: 5, // Critical
+        operator,
+        message: 'Global kill switch activated — all agent traffic blocked',
+        status: 'Success',
+        unmapped: { scope: 'global' },
       });
       logger.warn('Global kill switch activated via admin API', { operator });
-      res.json({ message: 'Global kill switch activated' });
+      const body = { message: 'Global kill switch activated' };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to activate global kill switch', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -194,18 +559,36 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/global/deactivate
-   * Deactivate the global kill switch
+   * Deactivate the global kill switch.
+   *
+   * Same cross-tenant caveat as activate: when tenant-scoped, the acknowledgement
+   * field is required because deactivation restores traffic for ALL tenants.
    */
   router.post('/kill-switch/global/deactivate', (req: Request, res: Response) => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
       killSwitchManager.deactivateGlobalKill();
       const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.info('kill_switch_global_deactivated', {
         eventType: 'kill_switch_global_deactivated',
         operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 1, // Assign Privileges (restoring access)
+        severityId: 2, // Low
+        operator,
+        message: 'Global kill switch deactivated — agent traffic restored',
+        status: 'Success',
+        unmapped: { scope: 'global' },
       });
       logger.info('Global kill switch deactivated via admin API', { operator });
-      res.json({ message: 'Global kill switch deactivated' });
+      const body = { message: 'Global kill switch deactivated' };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to deactivate global kill switch', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -221,9 +604,16 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/session/:sessionId/kill
-   * Kill a specific session
+   * Kill a specific session.
+   *
+   * When the gateway is tenant-scoped, the request body MUST include a
+   * `tenantId` field matching the configured tenant — this prevents an
+   * operator credential for tenant A from killing a session that belongs
+   * to tenant B.
    */
   router.post('/kill-switch/session/:sessionId/kill', (req: Request, res: Response): void => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       const { sessionId } = req.params;
       if (!sessionId) {
@@ -237,13 +627,27 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.killSession(sessionId);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.warn('kill_switch_session_killed', {
         eventType: 'kill_switch_session_killed',
         sessionId,
-        operator: resolveOperator(req) ?? 'unknown',
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2, // Revoke Privileges
+        severityId: 4, // High
+        operator,
+        targets: [{ uid: sessionId, type: 'session' }],
+        message: `Session "${sessionId}" killed`,
+        status: 'Success',
       });
       logger.warn('Session killed via admin API', { sessionId });
-      res.json({ message: `Session ${sessionId} has been killed` });
+      const body = { message: `Session ${sessionId} has been killed` };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to kill session', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -259,9 +663,14 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/agent/:agentId/kill
-   * Kill a specific agent
+   * Kill a specific agent.
+   *
+   * When the gateway is tenant-scoped, the request body MUST include a
+   * matching `tenantId` field.
    */
   router.post('/kill-switch/agent/:agentId/kill', (req: Request, res: Response): void => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       const { agentId } = req.params;
       if (!agentId) {
@@ -275,13 +684,27 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.killAgent(agentId);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.warn('kill_switch_agent_killed', {
         eventType: 'kill_switch_agent_killed',
         agentId,
-        operator: resolveOperator(req) ?? 'unknown',
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2, // Revoke Privileges
+        severityId: 4, // High
+        operator,
+        targets: [{ uid: agentId, type: 'agent' }],
+        message: `Agent "${agentId}" killed`,
+        status: 'Success',
       });
       logger.warn('Agent killed via admin API', { agentId });
-      res.json({ message: `Agent ${agentId} has been killed` });
+      const body = { message: `Agent ${agentId} has been killed` };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to kill agent', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -297,9 +720,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/session/:sessionId/revive
-   * Revive a killed session
+   * Revive a killed session.
    */
   router.post('/kill-switch/session/:sessionId/revive', (req: Request, res: Response): void => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       const { sessionId } = req.params;
       if (!sessionId) {
@@ -313,13 +738,27 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.reviveSession(sessionId);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.info('kill_switch_session_revived', {
         eventType: 'kill_switch_session_revived',
         sessionId,
-        operator: resolveOperator(req) ?? 'unknown',
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 1, // Assign Privileges (restoring access)
+        severityId: 2, // Low
+        operator,
+        targets: [{ uid: sessionId, type: 'session' }],
+        message: `Session "${sessionId}" revived`,
+        status: 'Success',
       });
       logger.info('Session revived via admin API', { sessionId });
-      res.json({ message: `Session ${sessionId} has been revived` });
+      const body = { message: `Session ${sessionId} has been revived` };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to revive session', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -335,9 +774,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/agent/:agentId/revive
-   * Revive a killed agent
+   * Revive a killed agent.
    */
   router.post('/kill-switch/agent/:agentId/revive', (req: Request, res: Response): void => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       const { agentId } = req.params;
       if (!agentId) {
@@ -351,13 +792,27 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       killSwitchManager.reviveAgent(agentId);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.info('kill_switch_agent_revived', {
         eventType: 'kill_switch_agent_revived',
         agentId,
-        operator: resolveOperator(req) ?? 'unknown',
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 1, // Assign Privileges (restoring access)
+        severityId: 2, // Low
+        operator,
+        targets: [{ uid: agentId, type: 'agent' }],
+        message: `Agent "${agentId}" revived`,
+        status: 'Success',
       });
       logger.info('Agent revived via admin API', { agentId });
-      res.json({ message: `Agent ${agentId} has been revived` });
+      const body = { message: `Agent ${agentId} has been revived` };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to revive agent', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -373,17 +828,38 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/kill-switch/reset
-   * Reset all kill switches (use with caution)
+   * Reset ALL kill switches on this gateway instance (use with caution).
+   *
+   * This is a gateway-wide operation — it clears the global kill flag and
+   * removes every individually killed session and agent regardless of tenant.
+   * When tenant scoping is active, the cross-tenant acknowledgement field is
+   * therefore required to confirm awareness of this full-instance blast radius.
    */
   router.post('/kill-switch/reset', (req: Request, res: Response) => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
       killSwitchManager.resetAll();
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
       auditLogger.warn('kill_switch_reset_all', {
         eventType: 'kill_switch_reset_all',
-        operator: resolveOperator(req) ?? 'unknown',
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 99, // Other
+        severityId: 5, // Critical
+        operator,
+        message: 'All kill switches reset — all previously blocked sessions/agents are unblocked',
+        status: 'Success',
+        unmapped: { scope: 'all' },
       });
       logger.warn('All kill switches reset via admin API');
-      res.json({ message: 'All kill switches have been reset' });
+      const body = { message: 'All kill switches have been reset' };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to reset kill switches', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -399,10 +875,14 @@ export function createAdminRouter(options: AdminApiOptions): Router {
 
   /**
    * POST /admin/revoke
-   * Revoke a capability token by its JTI (JWT ID)
+   * Revoke a capability token by its JTI (JWT ID).
    * Body: { tokenId: string, expiresAt?: number }
+   *
+   * When the gateway is tenant-scoped, `tenantId` must be present in the body.
    */
   router.post('/revoke', async (req: Request, res: Response): Promise<void> => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       if (!tokenVerifier) {
         res.status(501).json({
@@ -439,12 +919,33 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       const effectiveExpiresAt = expiresAt ?? now + 86400;
 
       await tokenVerifier.revokeToken(tokenId, effectiveExpiresAt);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
+      auditLogger.warn('token_revoked', {
+        eventType: 'token_revoked',
+        tokenId,
+        expiresAt: effectiveExpiresAt,
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2, // Revoke Privileges
+        severityId: 4, // High
+        operator,
+        targets: [{ uid: tokenId, type: 'capability-token' }],
+        message: `Capability token "${tokenId}" revoked`,
+        status: 'Success',
+        unmapped: { expiresAt: effectiveExpiresAt },
+      });
       logger.warn('Token revoked via admin API', { tokenId, expiresAt: effectiveExpiresAt });
-      res.json({
+      const body = {
         message: `Token ${tokenId} has been revoked`,
         tokenId,
         expiresAt: effectiveExpiresAt,
-      });
+      };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to revoke token', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -476,8 +977,12 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    *                     (DID or plain string, must match exactly).
    *   - `issuedBefore` — Unix timestamp (seconds).  Tokens with
    *                      `iat < issuedBefore` are rejected.
+   *
+   * When the gateway is tenant-scoped, `tenantId` must be present in the body.
    */
   router.post('/revocation/epoch', async (req: Request, res: Response): Promise<void> => {
+    if (replayIfIdempotent(req, res)) return;
+    if (assertTenantScope(req, res)) return;
     try {
       if (!epochStore) {
         res.status(501).json({
@@ -515,12 +1020,33 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       }
 
       await epochStore.setEpoch(issuer, issuedBefore);
+      const operator = resolveOperator(req);
+      const uid = crypto.randomUUID();
+      auditLogger.warn('revocation_epoch_set', {
+        eventType: 'revocation_epoch_set',
+        issuer,
+        issuedBefore,
+        operator: operator ?? 'unknown',
+        auditEventId: uid,
+      });
+      emitAdminOcsfEvent({
+        uid,
+        activityId: 2, // Revoke Privileges
+        severityId: 4, // High
+        operator,
+        targets: [{ uid: issuer, type: 'token-issuer' }],
+        message: `Revocation epoch set for issuer "${issuer}": tokens issued before ${issuedBefore} are now rejected`,
+        status: 'Success',
+        unmapped: { issuedBefore },
+      });
       logger.warn('Revocation epoch set via admin API', { issuer, issuedBefore });
-      res.json({
+      const body = {
         message: `Revocation epoch set for issuer ${issuer}: tokens issued before ${issuedBefore} are now rejected`,
         issuer,
         issuedBefore,
-      });
+      };
+      cacheIdempotentResponse(req, 200, body);
+      res.json(body);
     } catch (error) {
       logger.error('Failed to set revocation epoch', {
         error: error instanceof Error ? error.message : 'Unknown error',

@@ -138,6 +138,12 @@ export interface GatewayDependencies {
   ledgerAclClient?: AzureConfidentialLedgerClient;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
+  /**
+   * Optional tenant identifier that scopes the admin API to a single tenant.
+   * When set, all mutating admin operations require a matching `tenantId` in
+   * the request body.  Plumbed from `ADMIN_TENANT_ID`.
+   */
+  adminTenantId?: string;
   /** Backend service URL for the proxy route. */
   backendServiceUrl: string;
   /** Port the admin HTTP server listens on (separate from the public `config.port`). */
@@ -733,6 +739,7 @@ export async function initializeServices(
   logger.info('JWKS fetched and cached successfully');
 
   const adminApiKey = validated.ADMIN_API_KEY;
+  const adminTenantId = validated.ADMIN_TENANT_ID;
   const requireKid = validated.EUNO_REQUIRE_KID !== undefined ? validated.EUNO_REQUIRE_KID : true;
 
   // ── Step 8: Action resolver + parity check ────────────────────────────────
@@ -878,6 +885,7 @@ export async function initializeServices(
     ...(ledgerPgPool ? { ledgerPgPool } : {}),
     ...(crossChainAnchor ? { crossChainAnchor } : {}),
     adminApiKey,
+    adminTenantId,
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,
     adminHost: validated.ADMIN_HOST?.trim() || undefined,
