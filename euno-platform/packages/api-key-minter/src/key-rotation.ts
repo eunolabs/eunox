@@ -32,6 +32,7 @@
  */
 
 import { MintAuditRecord, MintAuditStore } from './mint-audit';
+import * as crypto from 'crypto';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -294,10 +295,5 @@ export class KeyRotationManager {
  * Uses `crypto.randomUUID()` which is available in Node.js ≥ 14.17.
  */
 function generateRotationJti(): string {
-  // `crypto` is always available in Node.js; no import needed in modern
-  // runtimes, but we import at top of module to keep things explicit.
   return crypto.randomUUID();
 }
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-const crypto: { randomUUID(): string } = require('crypto');

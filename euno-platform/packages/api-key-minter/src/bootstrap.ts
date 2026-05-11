@@ -31,6 +31,7 @@ import { TokenMinter } from './token-minter';
 import { LocalTokenSigner } from './local-token-signer';
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
+import type { MintAuditPgPool } from './postgres-mint-audit-store';
 import { InMemoryMintRateLimiter } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
 import type { TokenSigner } from '@euno/common';
@@ -127,13 +128,7 @@ async function main(): Promise<void> {
       );
     }
     const pool = new pgModule.Pool({ connectionString: auditDbUrl });
-    const pgAuditStore = new PostgresMintAuditStore(
-      pool as Parameters<typeof PostgresMintAuditStore['prototype']['record']>[0] extends never
-        ? never
-        // Pool satisfies MintAuditPgPool structurally
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        : any,
-    );
+    const pgAuditStore = new PostgresMintAuditStore(pool as MintAuditPgPool);
     await pgAuditStore.ensureSchema();
     logger.info('Using Postgres-backed mint audit store');
     auditStoreBase = pgAuditStore;

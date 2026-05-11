@@ -777,7 +777,9 @@ async function signJwt(
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
-  // Pre-hash with SHA-256 (all three KMS drivers use the "sign digest" API).
+  // Pre-hash with SHA-256 (all three KMS drivers use the "sign digest" API —
+  // this is a JWT signing digest, NOT a password hash; the payload is the
+  // base64url-encoded JWT header and claims, not a secret credential).
   const digest = crypto.createHash('sha256').update(signingInput).digest();
   const rawSig = await driver.signDigest(digest);
   const encodedSignature = base64UrlEncode(rawSig);

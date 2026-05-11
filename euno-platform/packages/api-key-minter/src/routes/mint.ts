@@ -144,14 +144,20 @@ export function createMintRouter(opts: MintRouterOptions): Router {
 
 /**
  * Map a caught error to a Prometheus `result` label, or `null` if the metric
- * was already recorded (e.g. rate_limited / authentication_failed paths above).
+ * was already recorded inline (see the early-exit paths in the route handler
+ * above — `authentication_failed` and `rate_limited` are recorded before the
+ * error is thrown so that the latency timer can be stopped at the right point).
+ *
+ * Error codes already recorded (return null):
+ * - `AUTHENTICATION_FAILED` — recorded when Bearer token is missing or invalid
+ * - `RATE_LIMIT_EXCEEDED`   — recorded when tenant rate limit is hit
  */
 function classifyErrorResult(error: unknown): string | null {
   if (error instanceof CapabilityError) {
     switch (error.code as string) {
       case ErrorCode.INVALID_REQUEST: return 'invalid_request';
-      case ErrorCode.AUTHENTICATION_FAILED: return null; // already recorded
-      case ErrorCode.RATE_LIMIT_EXCEEDED: return null;   // already recorded
+      case ErrorCode.AUTHENTICATION_FAILED: return null; // already recorded above
+      case ErrorCode.RATE_LIMIT_EXCEEDED: return null;   // already recorded above
       default: return 'internal_error';
     }
   }
