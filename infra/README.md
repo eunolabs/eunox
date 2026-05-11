@@ -33,7 +33,7 @@ from inside `infra/`).
 
 ```bash
 # From the repo root:
-docker compose -f infra/docker-compose.yml up --build
+docker compose -f infra/docker-compose.yml --profile dev up --build
 ```
 
 This starts the capability-issuer (port 3001) and the gateway (port 3002).

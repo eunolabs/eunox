@@ -410,15 +410,21 @@ describe('docker-compose.yml backend profile parity', () => {
     });
   });
 
-  describe('smoke-test profile (in-memory ledger)', () => {
+  describe('smoke-test profile (full stack — matches gateway-full in docker-compose.yml)', () => {
+    // The smoke profile uses gateway-full which is hard-wired to Postgres.
+    // This fixture mirrors the environment that docker-compose.yml injects
+    // so the schema validates the same set of variables the compose file uses.
     const SMOKE_ENV: NodeJS.ProcessEnv = {
       ...MINIMUM_VALID_ENV,
       NODE_ENV: 'development',
       REDIS_URL: 'redis://redis:6379',
-      AUDIT_LEDGER_BACKEND: 'in-memory',
+      AUDIT_LEDGER_BACKEND: 'postgres',
+      AUDIT_LEDGER_PG_URL: '******postgres:5432/euno_audit',
+      AUDIT_LEDGER_HMAC_SECRET: 'dev-hmac-secret-change-in-production',
+      AUDIT_LEDGER_RUN_MIGRATIONS: 'true',
     };
 
-    it('loads successfully with in-memory ledger backend', () => {
+    it('loads successfully with full-stack env vars (matches smoke docker-compose profile)', () => {
       const config = loadConfigFromEnv(SMOKE_ENV);
       expect(config.name).toBe('tool-gateway');
     });

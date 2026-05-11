@@ -17,7 +17,7 @@
 #   ISSUER_JWKS_URL — JWKS endpoint used to verify the issuer is healthy
 #                     (default: http://localhost:3001/.well-known/jwks.json)
 
-set -e
+set -u
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 ISSUER_JWKS_URL="${ISSUER_JWKS_URL:-http://localhost:3001/.well-known/jwks.json}"
@@ -43,7 +43,8 @@ check_status() {
   label="$1"
   expected="$2"
   shift 2
-  actual=$(curl -o /dev/null -s -w "%{http_code}" "$@")
+  # Use || true so a connection error reports [FAIL] rather than aborting.
+  actual=$(curl -o /dev/null -s -w "%{http_code}" "$@" || true)
   if [ "$actual" = "$expected" ]; then
     printf "[PASS] %s (HTTP %s)\n" "$label" "$actual"
     PASS=$((PASS + 1))
@@ -57,7 +58,8 @@ check_json_field() {
   label="$1"
   url="$2"
   field="$3"
-  body=$(curl -s "$url")
+  # Use || true so a connection error reports [FAIL] rather than aborting.
+  body=$(curl -s "$url" || true)
   # Use grep to avoid a jq dependency in the Alpine/curl image.
   if echo "$body" | grep -q "\"${field}\""; then
     printf "[PASS] %s (field '%s' present)\n" "$label" "$field"

@@ -20,7 +20,7 @@ gateway. The key deliverables are:
    The previous Dockerfiles omitted these packages, causing build failures.
 
 2. **Canonical local stack** (`infra/docker-compose.yml`) — brings up the
-   gateway with Redis + Postgres (full stack) or in in-memory dev mode with a
+   gateway with Redis + Postgres (full stack) or in-memory dev mode with a
    single `--profile` flag. Also includes a smoke-test profile that exercises
    core endpoints after the stack is healthy.
 

@@ -3,7 +3,7 @@
 # Usage
 # -----
 #   # Dev mode (gateway + capability-issuer; all stores in-memory):
-#   docker compose -f infra/docker-compose.yml up --build
+#   docker compose -f infra/docker-compose.yml --profile dev up --build
 #
 #   # Full stack (gateway + Redis + Postgres + capability-issuer):
 #   docker compose -f infra/docker-compose.yml --profile full up --build
@@ -15,8 +15,9 @@
 # ---------------------
 # All backend selection is driven by environment variables.  The values below
 # are the recommended defaults for a self-hosted local stack.  Override any
-# variable by copying .env.gateway.example to .env and editing it, or by
-# setting the variable in your shell before calling docker compose.
+# variable by copying euno-platform/packages/tool-gateway/.env.example to
+# infra/.env and editing it, or by setting the variable in your shell before
+# calling docker compose.
 #
 #   • Redis    — REDIS_URL=redis://redis:6379
 #       Unset → safe in-memory fallbacks per store (single-replica dev only).
@@ -173,11 +174,13 @@ services:
       start_period: 10s
 
   # ── Tool Gateway — dev mode (in-memory backends, no Redis/Postgres) ─────────
-  # Default service (no --profile required).  All control-surface stores use
+  # Active when --profile dev is passed.  All control-surface stores use
   # in-memory fallbacks; suitable for local development and quick-start.
+  # Use --profile full for a durable stack (Redis + Postgres).
   gateway:
     <<: *gateway-build
     container_name: euno-gateway
+    profiles: ["dev"]
     depends_on:
       capability-issuer:
         condition: service_healthy
