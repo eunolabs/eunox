@@ -563,3 +563,438 @@ describe('Kill-switch admin endpoints', () => {
     });
   });
 });
+
+// =============================================================================
+// Task 8 hardening tests
+// =============================================================================
+
+import { AdminIdempotencyStore } from '../src/admin-api';
+import type { OcsfAuditTransport, OcsfAuthorizationEvent } from '@euno/common';
+
+// ── Shared helpers for Task 8 tests ──────────────────────────────────────────
+
+/** Minimal app with a fresh DefaultKillSwitchManager, no API key. */
+function buildSimpleKsApp(): { app: Express; ksm: DefaultKillSwitchManager } {
+  const app = express();
+  app.use(express.json());
+  const ksm = new DefaultKillSwitchManager();
+  const logger = createLogger('test');
+  const adminRouter = createAdminRouter({ killSwitchManager: ksm, logger });
+  app.use('/admin', adminRouter);
+  return { app, ksm };
+}
+
+function buildTenantScopedApp(opts: {
+  tenantId: string;
+  ocsfTransport?: OcsfAuditTransport;
+  idempotencyStore?: AdminIdempotencyStore;
+}): Express {
+  const app = express();
+  app.use(express.json());
+  const killSwitchManager = new DefaultKillSwitchManager();
+  const logger = createLogger('test');
+  const adminRouter = createAdminRouter({
+    killSwitchManager,
+    logger,
+    tenantId: opts.tenantId,
+    ocsfTransport: opts.ocsfTransport,
+    idempotencyStore: opts.idempotencyStore,
+  });
+  app.use('/admin', adminRouter);
+  return app;
+}
+
+function buildOcsfCapturingTransport(): { transport: OcsfAuditTransport; events: OcsfAuthorizationEvent[] } {
+  const events: OcsfAuthorizationEvent[] = [];
+  const transport: OcsfAuditTransport = {
+    name: 'test-ocsf',
+    async send(event) { events.push(event as OcsfAuthorizationEvent); },
+    async flush() {},
+    async close() {},
+  };
+  return { transport, events };
+}
+
+// ── Tenant Scoping ────────────────────────────────────────────────────────────
+
+describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
+  const TENANT = 'tenant-alpha';
+
+  describe('per-entity kill operations', () => {
+    it('rejects session kill when tenantId is missing', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-1/kill')
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('TENANT_ID_REQUIRED');
+    });
+
+    it('rejects session kill when tenantId does not match', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-1/kill')
+        .send({ tenantId: 'tenant-beta' });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('TENANT_MISMATCH');
+    });
+
+    it('allows session kill when tenantId matches', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-1/kill')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(200);
+    });
+
+    it('rejects agent kill when tenantId does not match', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/agent/agent-1/kill')
+        .send({ tenantId: 'other-tenant' });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('TENANT_MISMATCH');
+    });
+
+    it('allows agent kill when tenantId matches', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/agent/agent-1/kill')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(200);
+    });
+
+    it('allows session revive when tenantId matches', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-revive/revive')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(200);
+    });
+
+    it('allows agent revive when tenantId matches', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/agent/agent-revive/revive')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe('global kill switch (cross-tenant acknowledgement)', () => {
+    it('requires tenantId even for global activate', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('TENANT_ID_REQUIRED');
+    });
+
+    it('requires acknowledgesCrossTenantImpact for global activate', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
+    });
+
+    it('activates global kill when tenantId matches and acknowledgement is present', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .send({ tenantId: TENANT, acknowledgesCrossTenantImpact: true });
+      expect(res.status).toBe(200);
+    });
+
+    it('requires acknowledgement for global deactivate', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/global/deactivate')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
+    });
+
+    it('requires acknowledgement for kill-switch reset', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/reset')
+        .send({ tenantId: TENANT });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
+    });
+
+    it('resets all when tenantId matches and acknowledgement present', async () => {
+      const app = buildTenantScopedApp({ tenantId: TENANT });
+      const res = await request(app)
+        .post('/admin/kill-switch/reset')
+        .send({ tenantId: TENANT, acknowledgesCrossTenantImpact: true });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe('no tenant scoping (tenantId not configured)', () => {
+    it('does not require tenantId in the body', async () => {
+      const { app } = buildSimpleKsApp();
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-no-scope/kill')
+        .send({});
+      expect(res.status).toBe(200);
+    });
+
+    it('ignores tenantId in the body if provided', async () => {
+      const { app } = buildSimpleKsApp();
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-no-scope/kill')
+        .send({ tenantId: 'whatever' });
+      expect(res.status).toBe(200);
+    });
+  });
+});
+
+// ── Idempotency Keys ──────────────────────────────────────────────────────────
+
+describe('Idempotency-Key header support', () => {
+  it('returns the same response on retry with the same Idempotency-Key', async () => {
+    const { app } = buildSimpleKsApp();
+    const key = `idem-${Date.now()}`;
+
+    const first = await request(app)
+      .post('/admin/kill-switch/session/sess-idem/kill')
+      .set('Idempotency-Key', key)
+      .send({});
+    expect(first.status).toBe(200);
+
+    const second = await request(app)
+      .post('/admin/kill-switch/session/sess-idem/kill')
+      .set('Idempotency-Key', key)
+      .send({});
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual(first.body);
+  });
+
+  it('does not re-execute the operation on retry', async () => {
+    const store = new AdminIdempotencyStore();
+    const app = express();
+    app.use(express.json());
+    const ksm = new DefaultKillSwitchManager();
+    const adminRouter = createAdminRouter({
+      killSwitchManager: ksm,
+      logger: createLogger('test'),
+      idempotencyStore: store,
+    });
+    app.use('/admin', adminRouter);
+
+    const key = `idem-agent-${Date.now()}`;
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-idem/kill')
+      .set('Idempotency-Key', key)
+      .send({});
+    expect(ksm.isAgentKilled('agent-idem')).toBe(true);
+
+    ksm.reviveAgent('agent-idem'); // Manually revive to test re-execution is NOT happening
+    expect(ksm.isAgentKilled('agent-idem')).toBe(false);
+
+    // Second call with same key: should return cached response WITHOUT re-killing
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-idem/kill')
+      .set('Idempotency-Key', key)
+      .send({});
+    expect(ksm.isAgentKilled('agent-idem')).toBe(false); // Not re-executed
+  });
+
+  it('rejects the same key used against a different endpoint', async () => {
+    const { app } = buildSimpleKsApp();
+    const key = `idem-conflict-${Date.now()}`;
+
+    await request(app)
+      .post('/admin/kill-switch/session/sess-conflict/kill')
+      .set('Idempotency-Key', key)
+      .send({});
+
+    const conflict = await request(app)
+      .post('/admin/kill-switch/session/sess-conflict/revive')
+      .set('Idempotency-Key', key)
+      .send({});
+
+    expect(conflict.status).toBe(422);
+    expect(conflict.body.error.code).toBe('IDEMPOTENCY_KEY_REUSE');
+  });
+
+  it('treats requests without Idempotency-Key as non-idempotent (normal behaviour)', async () => {
+    const { app, ksm } = buildSimpleKsApp();
+
+    await request(app).post('/admin/kill-switch/agent/agent-normal/kill').send({});
+    expect(ksm.isAgentKilled('agent-normal')).toBe(true);
+    ksm.reviveAgent('agent-normal');
+
+    await request(app).post('/admin/kill-switch/agent/agent-normal/kill').send({});
+    expect(ksm.isAgentKilled('agent-normal')).toBe(true); // Re-executed
+  });
+
+  it('AdminIdempotencyStore: expired entries are not replayed', async () => {
+    const store = new AdminIdempotencyStore({ ttlMs: 5 }); // 5 ms TTL
+    store.set('k1', 'POST /x', 200, { ok: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(store.get('k1')).toBeUndefined();
+  });
+});
+
+// ── OCSF Audit Trail ──────────────────────────────────────────────────────────
+
+describe('OCSF audit trail (ocsfTransport)', () => {
+  it('emits an OCSF Authorization event when a session is killed', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = express();
+    app.use(express.json());
+    app.use('/admin', createAdminRouter({
+      killSwitchManager: new DefaultKillSwitchManager(),
+      logger: createLogger('test'),
+      ocsfTransport: transport,
+    }));
+
+    await request(app).post('/admin/kill-switch/session/sess-ocsf/kill').send({});
+
+    // Allow any async send() promises to settle
+    await transport.flush();
+
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.class_uid).toBe(3003);
+    expect(event.category_uid).toBe(3);
+    expect(event.activity_id).toBe(2); // Revoke Privileges
+    expect(event.severity_id).toBe(4); // High
+    expect(event.status).toBe('Success');
+    expect(event.resources).toEqual([{ uid: 'sess-ocsf', type: 'session' }]);
+    expect(event.metadata.product.name).toBe('euno-tool-gateway');
+  });
+
+  it('emits an OCSF event with activity_id=1 (Assign) when an agent is revived', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = express();
+    app.use(express.json());
+    const ksm = new DefaultKillSwitchManager();
+    ksm.killAgent('agent-revive-ocsf');
+    app.use('/admin', createAdminRouter({
+      killSwitchManager: ksm,
+      logger: createLogger('test'),
+      ocsfTransport: transport,
+    }));
+
+    await request(app).post('/admin/kill-switch/agent/agent-revive-ocsf/revive').send({});
+    await transport.flush();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.activity_id).toBe(1); // Assign Privileges
+    expect(events[0]!.severity_id).toBe(2); // Low
+    expect(events[0]!.resources).toEqual([{ uid: 'agent-revive-ocsf', type: 'agent' }]);
+  });
+
+  it('emits severity_id=5 (Critical) for global kill activate', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = express();
+    app.use(express.json());
+    app.use('/admin', createAdminRouter({
+      killSwitchManager: new DefaultKillSwitchManager(),
+      logger: createLogger('test'),
+      ocsfTransport: transport,
+    }));
+
+    await request(app).post('/admin/kill-switch/global/activate').send({});
+    await transport.flush();
+
+    expect(events[0]!.severity_id).toBe(5);
+    expect(events[0]!.activity_id).toBe(2);
+  });
+
+  it('stamps tenantId in OCSF unmapped when tenant scoping is configured', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = buildTenantScopedApp({ tenantId: 'tenant-ocsf', ocsfTransport: transport });
+
+    await request(app)
+      .post('/admin/kill-switch/session/sess-tenant-ocsf/kill')
+      .send({ tenantId: 'tenant-ocsf' });
+    await transport.flush();
+
+    expect(events[0]!.unmapped).toMatchObject({ tenantId: 'tenant-ocsf' });
+  });
+
+  it('records the operator from X-Admin-Operator in the OCSF actor', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = express();
+    app.use(express.json());
+    app.use('/admin', createAdminRouter({
+      killSwitchManager: new DefaultKillSwitchManager(),
+      logger: createLogger('test'),
+      ocsfTransport: transport,
+    }));
+
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-actor/kill')
+      .set('X-Admin-Operator', 'operator-alice')
+      .send({});
+    await transport.flush();
+
+    expect(events[0]!.actor?.user?.uid).toBe('operator-alice');
+  });
+
+  it('emits a failure OCSF event when a cross-tenant operation is rejected', async () => {
+    const { transport, events } = buildOcsfCapturingTransport();
+    const app = buildTenantScopedApp({ tenantId: 'tenant-x', ocsfTransport: transport });
+
+    await request(app)
+      .post('/admin/kill-switch/session/sess-cross/kill')
+      .send({ tenantId: 'tenant-y' });
+    await transport.flush();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.status).toBe('Failure');
+    expect(events[0]!.severity_id).toBe(4);
+    expect(events[0]!.unmapped).toMatchObject({ rejectedTenantId: 'tenant-y' });
+  });
+
+  it('does not emit OCSF events when no transport is configured', async () => {
+    // Control: without a transport, no events should be emitted (no crash either).
+    const { app } = buildSimpleKsApp();
+    // Just confirm the endpoint works without error.
+    const res = await request(app).post('/admin/kill-switch/session/sess-no-transport/kill').send({});
+    expect(res.status).toBe(200);
+  });
+});
+
+// ── AdminIdempotencyStore unit tests ──────────────────────────────────────────
+
+describe('AdminIdempotencyStore', () => {
+  it('returns undefined for unknown keys', () => {
+    const store = new AdminIdempotencyStore();
+    expect(store.get('missing')).toBeUndefined();
+  });
+
+  it('returns a stored entry before expiry', () => {
+    const store = new AdminIdempotencyStore({ ttlMs: 60_000 });
+    store.set('k', 'POST /test', 200, { ok: true });
+    const entry = store.get('k');
+    expect(entry).toBeDefined();
+    expect(entry!.status).toBe(200);
+    expect(entry!.endpoint).toBe('POST /test');
+    expect(entry!.body).toEqual({ ok: true });
+  });
+
+  it('expires entries after TTL', async () => {
+    const store = new AdminIdempotencyStore({ ttlMs: 5 });
+    store.set('k', 'POST /test', 200, {});
+    await new Promise<void>((r) => setTimeout(r, 20));
+    expect(store.get('k')).toBeUndefined();
+  });
+
+  it('overwrites an existing entry with set()', () => {
+    const store = new AdminIdempotencyStore();
+    store.set('k', 'POST /a', 200, { first: true });
+    store.set('k', 'POST /a', 201, { second: true });
+    const entry = store.get('k');
+    expect(entry!.status).toBe(201);
+    expect(entry!.body).toEqual({ second: true });
+  });
+});
