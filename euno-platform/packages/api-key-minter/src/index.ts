@@ -7,8 +7,19 @@ export { ApiKeyVerifier } from './api-key-verifier';
 export type { MintTokenInput, MintTokenResult, TokenMinterOptions } from './token-minter';
 export { TokenMinter, MINTER_DEFAULT_TTL_SECONDS, MINTER_MAX_TTL_SECONDS } from './token-minter';
 export { LocalTokenSigner } from './local-token-signer';
-export type { MintAuditRecord, MintAuditStore } from './mint-audit';
+export type { MintAuditRecord, MintAuditStore, MintAuditResult } from './mint-audit';
 export { InMemoryMintAuditStore } from './mint-audit';
+export type { MintAuditPgPool } from './postgres-mint-audit-store';
+export { PostgresMintAuditStore, MINT_AUDIT_DDL } from './postgres-mint-audit-store';
+export type {
+  JwksKeyEntry,
+  JwksStore,
+  RotationOptions,
+  RotationInitiatedResult,
+  RotationCompletedResult,
+  KeyRotationManagerOptions,
+} from './key-rotation';
+export { KeyRotationManager, InMemoryJwksStore } from './key-rotation';
 export type { MintRateLimiter, MintRateLimiterOptions } from './mint-rate-limiter';
 export { InMemoryMintRateLimiter } from './mint-rate-limiter';
 export { createMintRouter } from './routes/mint';
@@ -17,3 +28,4 @@ export { createAdminKeysRouter } from './routes/admin-keys';
 export type { AdminKeysRouterOptions } from './routes/admin-keys';
 export type { MinterDependencies } from './app-factory';
 export { createMinterApp } from './app-factory';
+export { minterMetrics, minterRegistry, mintTotal, mintLatencySeconds, kmsErrorTotal, anomalyAlertsTotal } from './metrics';

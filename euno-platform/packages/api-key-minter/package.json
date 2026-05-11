@@ -14,9 +14,11 @@
   },
   "dependencies": {
     "@euno/common": "*",
+    "@euno/common-infra": "*",
     "express": "^4.18.2",
     "helmet": "^7.1.0",
     "jose": "^5.2.0",
+    "prom-client": "^15.1.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {

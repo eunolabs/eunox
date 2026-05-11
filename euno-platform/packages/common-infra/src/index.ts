@@ -4,3 +4,4 @@ export * from './ledger-signer';
 export * from './call-counter-store';
 export * from './issuance-rate-limiter';
 export * from './kms-evidence-signer';
+export * from './kms-token-signer';

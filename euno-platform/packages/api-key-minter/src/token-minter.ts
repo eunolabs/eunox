@@ -24,6 +24,8 @@ export interface MintTokenResult {
   capabilityToken: string;
   expiresAt: number;
   jti: string;
+  /** Key ID (`kid`) of the signing key, for the mint audit record. */
+  kid: string;
 }
 
 export interface TokenMinterOptions {
@@ -91,7 +93,8 @@ export class TokenMinter {
     };
 
     const capabilityToken = await this.signer.sign(payload);
+    const kid = await this.signer.getKeyId();
 
-    return { capabilityToken, expiresAt, jti };
+    return { capabilityToken, expiresAt, jti, kid };
   }
 }
