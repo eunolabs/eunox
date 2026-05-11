@@ -8,6 +8,9 @@ artifacts for AWS and GCP.
 
 | Path                                           | Cloud | Purpose                                                                                         |
 |------------------------------------------------|-------|-------------------------------------------------------------------------------------------------|
+| `docker-compose.yml`                           | Local | Canonical self-hosted local stack (gateway + Redis + Postgres + capability-issuer). See below.  |
+| `docker-compose.cross-org.yml`                 | Local | Cross-organisation trust harness (gateway + our-issuer + partner-issuer-sim).                   |
+| `smoke-test.sh`                                | Local | Portable smoke-test script for `docker-compose.yml --profile smoke`.                            |
 | `bicep/main.bicep`                             | Azure | Single-file Bicep template provisioning every Azure resource.                                   |
 | `bicep/main.parameters.example.json`           | Azure | Example parameter file — copy and customize before deploying.                                   |
 | `sentinel/analytic-rules.json`                 | Azure | ARM-deployable Microsoft Sentinel scheduled analytic rules (KQL).                               |
@@ -19,6 +22,59 @@ artifacts for AWS and GCP.
 | `terraform/gcp/terraform.tfvars.example`       | GCP   | Example tfvars file.                                                                            |
 | `gcp/api-gateway/`                             | GCP   | GCP API Gateway OpenAPI + Apigee `VerifyJWT` policy (parity with APIM `validate-jwt`).          |
 | `gcp/security/`                                | GCP   | Cloud Logging queries, Cloud Monitoring alert policies, SCC custom modules.                     |
+
+## Local self-hosted stack (`docker-compose.yml`)
+
+`infra/docker-compose.yml` provides a canonical local stack for development,
+integration testing, and CI smoke gates.  It is built from the repo root (not
+from inside `infra/`).
+
+### Quick-start — dev mode (in-memory; no external services required)
+
+```bash
+# From the repo root:
+docker compose -f infra/docker-compose.yml up --build
+```
+
+This starts the capability-issuer (port 3001) and the gateway (port 3002).
+All control-surface stores (revocation, kill-switch, call-counter, DPoP-replay)
+use safe in-memory fallbacks.  No Redis or Postgres is required.
+
+### Full stack (Redis + Postgres)
+
+```bash
+docker compose -f infra/docker-compose.yml --profile full up --build
+```
+
+Adds Redis (port 6379) and Postgres (port 5432) services and wires the gateway
+to use them.  Schema migrations run automatically on first start.
+
+### Smoke test
+
+```bash
+docker compose -f infra/docker-compose.yml --profile smoke up --build --abort-on-container-exit
+```
+
+Starts the full stack and runs `infra/smoke-test.sh` as a container.  The
+compose process exits with the smoke-test container's exit code (0 = pass,
+1 = fail).
+
+### Configurable environment variables
+
+All backend selection is driven by environment variables.  The most useful
+overrides:
+
+| Variable                    | Default                  | Purpose                                                      |
+|-----------------------------|--------------------------|--------------------------------------------------------------|
+| `REDIS_URL`                 | *(unset — in-memory)*    | Redis URL for all control-surface stores.                    |
+| `AUDIT_LEDGER_BACKEND`      | `none`                   | `none`, `in-memory`, `postgres`, `per-replica-postgres`, `acl` |
+| `AUDIT_LEDGER_PG_URL`       | *(unset)*                | PostgreSQL DSN for the audit ledger.                         |
+| `AUDIT_LEDGER_HMAC_SECRET`  | *(unset)*                | HMAC-SHA-256 secret for per-row ledger integrity.            |
+| `ENABLE_CRYPTOGRAPHIC_AUDIT`| `false`                  | Enable software HMAC evidence signing.                       |
+| `ADMIN_API_KEY`             | `dev-admin-key`          | Key for `/admin/*` endpoints.  **Change in production.**     |
+| `GATEWAY_AUDIENCE`          | `tool-gateway`           | Expected `aud` claim in capability tokens.                   |
+
+See `euno-platform/packages/tool-gateway/.env.example` for the full reference.
 
 ## Deploying the Bicep template
 

@@ -7,6 +7,103 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased — Stage 3, Task 13] — Self-Hostable Docker Image
+
+### Summary
+
+Task 13 ships a production-ready self-hosted deployment story for the tool
+gateway. The key deliverables are:
+
+1. **Fixed Dockerfiles** (`tool-gateway` and `capability-issuer`) — corrected
+   the multi-stage build to include all required workspace packages
+   (`@euno/common-core`, `@euno/common-infra`, `@euno/capability-issuer`).
+   The previous Dockerfiles omitted these packages, causing build failures.
+
+2. **Canonical local stack** (`infra/docker-compose.yml`) — brings up the
+   gateway with Redis + Postgres (full stack) or in in-memory dev mode with a
+   single `--profile` flag. Also includes a smoke-test profile that exercises
+   core endpoints after the stack is healthy.
+
+3. **Smoke-test target** (`infra/smoke-test.sh`) — exercises health, metrics,
+   JWKS, and authentication-enforcement endpoints; used by the `smoke` profile
+   in docker-compose.yml.
+
+4. **Self-host configuration tests** (`tests/self-host-config.test.ts`) — 39
+   new unit tests covering `loadConfigFromEnv`, `resolveAllowedOrigins`,
+   `deriveIssuerMetadataUrl`, `checkActionResolverHashParity`, and backend
+   environment-variable profiles (dev/in-memory, full Redis+Postgres, smoke).
+
+### Added
+
+**`infra/docker-compose.yml`** — canonical local stack with three runtime profiles:
+
+- Default (no `--profile` flag): gateway only (capability-issuer + gateway).
+  All control-surface stores use in-memory fallbacks; no Redis or Postgres
+  required.  Suitable for local development and quick-start exploration.
+
+- `--profile full`: adds `redis` and `postgres` services and wires the gateway
+  to use them (`REDIS_URL=redis://redis:6379`, `AUDIT_LEDGER_BACKEND=postgres`).
+  Auto-runs schema migrations (`AUDIT_LEDGER_RUN_MIGRATIONS=true`).  Suitable
+  for integration testing and pre-production validation.
+
+- `--profile smoke`: starts the full stack and runs `infra/smoke-test.sh` as an
+  `alpine/curl`-based service after all health-checks pass.  Use with
+  `--abort-on-container-exit` for CI smoke-gate usage.
+
+**`infra/smoke-test.sh`** — portable POSIX shell script that exercises:
+- Gateway liveness (`/health`), liveness (`/health/live`), readiness
+  (`/health/ready`)
+- Issuer JWKS endpoint (`/.well-known/jwks.json`)
+- Authentication enforcement (unauthenticated POST to `/api/v1/tools/invoke`
+  and `/api/v1/enforce` must return 401)
+- Prometheus metrics (`/metrics` includes `euno_gateway_decisions_total`)
+- Exits 0 on success, 1 on any failure.  Can be run standalone against any
+  running gateway:
+  ```sh
+  GATEWAY_URL=http://localhost:3002 sh infra/smoke-test.sh
+  ```
+
+**`tests/self-host-config.test.ts`** — 39 new tests covering:
+- `loadConfigFromEnv`: dev profile (minimum required vars), production profile
+  (ADMIN_HOST, ADMIN_API_KEY, evidence-signing constraints), `EUNO_DEPLOYMENT_TIER`
+  validation (single-replica vs multi-replica vs production enforcement).
+- `resolveAllowedOrigins`: CORS defaults per environment, custom origin
+  override.
+- `deriveIssuerMetadataUrl`: URL derivation from JWKS URL, explicit override,
+  empty/whitespace guard, localhost port preservation.
+- `checkActionResolverHashParity`: non-fatal behaviour on network error,
+  non-OK HTTP status, missing `actionResolverHash` field; warn vs error
+  enforcement modes.
+- Docker-compose backend profile parity: confirms the env vars used in
+  `docker-compose.yml` (`dev`, `full`, `smoke` profiles) are accepted by the
+  config schema.
+
+### Fixed
+
+**Dockerfiles** (`packages/tool-gateway/Dockerfile`,
+`packages/capability-issuer/Dockerfile`):
+- Added `public/packages/common` (`@euno/common-core`) to the build so
+  `export * from '@euno/common-core'` in `@euno/common/src/index.ts` resolves.
+- Added `euno-platform/packages/common-infra` (`@euno/common-infra`) to the
+  build for the same reason.
+- Fixed build order: `@euno/common-core` → `@euno/common-infra` → `@euno/common`
+  → `@euno/capability-issuer` → `@euno/tool-gateway`.
+- Added `@euno/capability-issuer` workspace package to the tool-gateway
+  Dockerfile (it is a runtime dependency and must be present in production).
+- Added `EXPOSE 3003` for the admin port (previously undocumented in the image
+  metadata).
+- Added OCI image labels (`org.opencontainers.image.*`).
+- Health-check now reads `PORT` env var instead of hardcoding `3002`.
+
+**`euno-platform/packages/integration-tests/jest.config.js`**:
+- Added `@euno/common-infra` and `@euno/common-core` to `moduleNameMapper` and
+  the `ts-jest` `tsconfig.paths` object so that integration tests can resolve
+  `@euno/common` (which re-exports both) without a pre-built `dist/`.
+- Previously all 5 integration test suites failed with
+  `Cannot find module '@euno/common-infra'`; all 31 tests now pass.
+
+---
+
 ## [Unreleased — Stage 3, Task 9] — Hosted Enforcement HTTP Contract
 
 ### Summary
