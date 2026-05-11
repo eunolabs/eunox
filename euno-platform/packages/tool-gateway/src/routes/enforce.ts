@@ -283,6 +283,31 @@ function enforcementResultToDenialInfo(result: EnforcementResult): DenialInfo {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the `X-Request-Id` header from the request (normalising the
+ * multi-value header case) or generate a fresh UUID when absent.
+ * Centralised here to ensure consistent behaviour across the main handler,
+ * the payload-error handler, and the `replyWithCapabilityError` inner helper.
+ */
+function getOrGenerateRequestId(req: Request): string {
+  const header = req.headers['x-request-id'];
+  return (Array.isArray(header) ? header[0] : header) ?? crypto.randomUUID();
+}
+
+/**
+ * Type augmentation for Express `Request` that allows the enforce route to
+ * attach the resolved `requestId` to the request object so the global error
+ * handler can include it in 500 responses without the route needing to start
+ * a response before calling `next(err)`.
+ */
+interface EnforceRequest_ extends Request {
+  enforceRequestId?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Body-parser middleware with 512 KiB limit and REQUEST_TOO_LARGE mapping
 // ---------------------------------------------------------------------------
 
@@ -292,6 +317,11 @@ function enforcementResultToDenialInfo(result: EnforcementResult): DenialInfo {
  * `PayloadTooLargeError` (status 413 / type `entity.too.large`). The
  * accompanying error handler ({@link enforcePayloadErrorHandler}) converts
  * that into the typed `REQUEST_TOO_LARGE` envelope.
+ *
+ * `strict: true` (the default) is set explicitly to document that only JSON
+ * objects and arrays are accepted at the top level — primitives and other
+ * non-object payloads are rejected by the body-parser before reaching the
+ * route handler, which aligns with the `EnforceRequest` schema.
  *
  * This is intentionally a separate middleware (not the global `express.json()`
  * from `app-factory.ts`) so the 512 KiB limit is scoped to this endpoint only.
@@ -312,15 +342,12 @@ const enforceBodyParser: RequestHandler = express.json({
  */
 function enforcePayloadErrorHandler(
   err: Error & { type?: string; status?: number },
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): void {
   if (err.type === 'entity.too.large' || err.status === 413) {
-    const requestIdHeader = _req.headers['x-request-id'];
-    const requestId =
-      (Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader) ??
-      crypto.randomUUID();
+    const requestId = getOrGenerateRequestId(req);
     res.status(413).json({
       error: {
         code: ErrorCode.REQUEST_TOO_LARGE,
@@ -352,10 +379,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
     '/api/v1/enforce',
     async (req: Request, res: Response, next: NextFunction): Promise<void> => {
       // Resolve the requestId early so every error path can echo it.
-      const requestIdHeader = req.headers['x-request-id'];
-      const requestId =
-        (Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader) ??
-        crypto.randomUUID();
+      const requestId = getOrGenerateRequestId(req);
 
       // Inner helper: serialize any CapabilityError (protocol-level validation
       // errors thrown before enforcement) as a self-contained JSON envelope
@@ -571,7 +595,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
         // global error handler. Re-attach the requestId as a request attribute
         // (not a response header that would force the response to start) so the
         // global error handler can optionally include it.
-        (req as Request & { enforceRequestId?: string }).enforceRequestId = requestId;
+        (req as EnforceRequest_).enforceRequestId = requestId;
         next(error);
       }
     },
