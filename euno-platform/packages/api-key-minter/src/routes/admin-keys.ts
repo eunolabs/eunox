@@ -28,10 +28,29 @@ export interface AdminKeysRouterOptions {
 }
 
 function requireAdminAuth(adminApiKey: string): (req: Request, res: Response, next: NextFunction) => void {
+  // Pre-encode the expected key once so the Buffer allocation is not in the hot path.
+  const expectedBuf = Buffer.from(adminApiKey, 'utf8');
   return (req: Request, _res: Response, next: NextFunction): void => {
     const provided = req.headers['x-admin-key'];
-    if (typeof provided !== 'string' || provided !== adminApiKey) {
+    // Constant-time comparison via timingSafeEqual to prevent timing attacks
+    // that could leak the admin key value or length.
+    const fail = (): void => {
       next(new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Admin authentication required', 401));
+    };
+    if (typeof provided !== 'string') {
+      // Always call timingSafeEqual with equal-length buffers to avoid a length
+      // leak; compare the dummy input against the expected key.
+      const dummy = Buffer.alloc(expectedBuf.length);
+      crypto.timingSafeEqual(dummy, expectedBuf);
+      fail();
+      return;
+    }
+    const providedBuf = Buffer.from(provided, 'utf8');
+    if (
+      providedBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(providedBuf, expectedBuf)
+    ) {
+      fail();
       return;
     }
     next();
