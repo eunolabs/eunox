@@ -2,18 +2,27 @@
  * Response-path obligation helpers shared by the stdio and HTTP proxy transports.
  *
  * Obligations are post-enforcement actions applied to an upstream tool-call
- * result *before* it is forwarded to the MCP client.  Currently the only
- * supported obligation is `redactFields`, which strips specified dotted-path
- * fields from JSON text content and `structuredContent`.
+ * result *before* it is forwarded to the MCP client.  Two obligation types are
+ * recognised:
+ *
+ * - `redactFields` — strips specified dotted-path fields from JSON text content
+ *   and `structuredContent`.  This is a **response-mutating** obligation and
+ *   MUST only be applied when `result.isError` is `false` — callers are
+ *   responsible for that guard.
+ * - `annotate` — attaches metadata key/value pairs to the caller's own audit
+ *   event.  This obligation does **not** modify the upstream response; the
+ *   transport extracts the key/value pairs and passes them to the audit sink
+ *   separately.
  *
  * Two entry points are provided:
  *   - {@link applyRedactObligations} — local-mode path; receives the raw
- *     `CapabilityCondition[]` from the matched constraint.
+ *     `CapabilityCondition[]` from the matched constraint and applies any
+ *     `redactFields` conditions found.
  *   - {@link applyRemoteObligations} — remote-mode path; receives the
- *     `Obligation[]` returned by the hosted gateway's enforce endpoint.
- *     Both `redactFields` and `annotate` obligation types are handled;
- *     `annotate` does not modify the upstream result (it enriches the caller's
- *     audit event, which the caller records separately).
+ *     `Obligation[]` returned by the hosted gateway's enforce endpoint and
+ *     applies `redactFields` obligations.  `annotate` obligations are not
+ *     processed here — the transport layer extracts them and forwards them to
+ *     the audit sink before calling this function.
  */
 
 import {
@@ -100,22 +109,22 @@ export function applyRedactObligations(
 }
 
 /**
- * Apply response-path obligations received from the remote enforcer gateway
+ * Apply `redactFields` obligations received from the remote enforcer gateway
  * to an upstream tool-call result.
  *
  * This is the remote-mode counterpart of {@link applyRedactObligations}.
  * The gateway returns `Obligation[]` in the `EnforceResponse`; this function
- * processes them in declaration order:
+ * processes **only `redactFields` obligations** — all `redactFields` paths
+ * from the entire list are collected into a single merged set and applied in
+ * one redaction pass over the result.
  *
- * - `redactFields`: strip the listed dotted-path fields from every `text` item
- *   whose content is valid JSON, and from `structuredContent` when present.
- *   Non-JSON text items are left unchanged.
- * - `annotate`: does not modify the upstream result — annotation obligations
- *   are for audit enrichment only.  The caller is responsible for forwarding
- *   annotation key/value pairs to the audit sink.
+ * `annotate` obligations are intentionally ignored here: the transport layer
+ * is responsible for extracting annotation key/value pairs before calling this
+ * function and forwarding them to the audit sink separately.
  *
- * Returns the original `result` object unchanged when no obligations affect
- * the content.
+ * Returns the original `result` object unchanged when there are no
+ * `redactFields` obligations or when no listed fields are present in the
+ * response.
  *
  * @param result      - Upstream tool-call result.  MUST NOT be an error result
  *                      (`isError: true`) — callers must guard before invoking.
@@ -133,8 +142,8 @@ export function applyRemoteObligations(
     if (obligation.type === 'redactFields') {
       redactPaths.push(...obligation.paths);
     }
-    // `annotate` obligations are handled by the caller (audit enrichment only);
-    // they do not modify the upstream result.
+    // Other obligation types (e.g. `annotate`) are handled by the caller before
+    // this function is invoked and do not modify the response.
   }
 
   if (redactPaths.length === 0) {

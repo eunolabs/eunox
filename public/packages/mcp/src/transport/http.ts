@@ -747,22 +747,37 @@ export class HttpProxy {
       const { matchedConditions, obligations } = decision;
       const appliedTypes = new Set<string>();
       let finalResult = upstreamResult;
-      if (obligations && obligations.length > 0) {
-        // Remote-enforcer mode: apply obligations from the gateway response.
-        finalResult = applyRemoteObligations(
-          upstreamResult as ToolCallResult,
-          obligations,
-        ) as typeof upstreamResult;
+
+      // Extract annotate key/values regardless of isError.
+      let annotateValues: Record<string, string> | undefined;
+      if (obligations) {
         for (const o of obligations) {
-          appliedTypes.add(o.type);
+          if (o.type === 'annotate') {
+            annotateValues ??= {};
+            annotateValues[o.key] = o.value;
+          }
         }
-      } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
-        // Local mode: derive obligations from the matched capability conditions.
-        finalResult = applyRedactObligations(
-          upstreamResult as ToolCallResult,
-          matchedConditions,
-        ) as typeof upstreamResult;
-        appliedTypes.add('redactFields');
+      }
+
+      const isErrorResult = (upstreamResult as ToolCallResult).isError === true;
+      if (!isErrorResult) {
+        if (obligations && obligations.length > 0) {
+          // Remote-enforcer mode: apply response-mutating obligations.
+          finalResult = applyRemoteObligations(
+            upstreamResult as ToolCallResult,
+            obligations,
+          ) as typeof upstreamResult;
+          if (obligations.some((o) => o.type === 'redactFields')) {
+            appliedTypes.add('redactFields');
+          }
+        } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
+          // Local mode: derive obligations from the matched capability conditions.
+          finalResult = applyRedactObligations(
+            upstreamResult as ToolCallResult,
+            matchedConditions,
+          ) as typeof upstreamResult;
+          appliedTypes.add('redactFields');
+        }
       }
       const obligationsApplied = appliedTypes.size > 0 ? Array.from(appliedTypes) : undefined;
 
@@ -772,6 +787,7 @@ export class HttpProxy {
         toolName: reqMsg.params.name,
         decision: 'allow',
         obligationsApplied,
+        annotateValues,
       });
 
       return finalResult;

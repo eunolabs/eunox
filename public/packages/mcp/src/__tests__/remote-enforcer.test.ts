@@ -108,6 +108,31 @@ describe('RemoteEnforcerPDP – construction', () => {
       .toThrow('apiKey must be a non-empty string');
   });
 
+  it('throws when timeoutMs is zero', () => {
+    expect(() => new RemoteEnforcerPDP({ url: 'https://gateway.example', apiKey: 'sk', timeoutMs: 0 }))
+      .toThrow('timeoutMs must be a positive finite number');
+  });
+
+  it('throws when timeoutMs is negative', () => {
+    expect(() => new RemoteEnforcerPDP({ url: 'https://gateway.example', apiKey: 'sk', timeoutMs: -1000 }))
+      .toThrow('timeoutMs must be a positive finite number');
+  });
+
+  it('throws when timeoutMs is NaN', () => {
+    expect(() => new RemoteEnforcerPDP({ url: 'https://gateway.example', apiKey: 'sk', timeoutMs: NaN }))
+      .toThrow('timeoutMs must be a positive finite number');
+  });
+
+  it('throws when timeoutMs is Infinity', () => {
+    expect(() => new RemoteEnforcerPDP({ url: 'https://gateway.example', apiKey: 'sk', timeoutMs: Infinity }))
+      .toThrow('timeoutMs must be a positive finite number');
+  });
+
+  it('accepts a valid positive timeoutMs', () => {
+    expect(() => new RemoteEnforcerPDP({ url: 'https://gateway.example', apiKey: 'sk', timeoutMs: 5000 }))
+      .not.toThrow();
+  });
+
   it('strips trailing slashes from url', async () => {
     let capturedUrl: string | undefined;
     const pdp = new RemoteEnforcerPDP({
@@ -338,6 +363,145 @@ describe('RemoteEnforcerPDP – fail-closed error handling', () => {
 
     expect(decision.allow).toBe(false);
     expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response shape validation (parseEnforceResponse)
+// ---------------------------------------------------------------------------
+
+describe('RemoteEnforcerPDP – response shape validation', () => {
+  function makeBadFetcher(body: unknown): EnforceFetcher {
+    return async () => ({ ok: true, status: 200, json: async () => body });
+  }
+
+  it('fails closed when deny response is missing denial object', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'deny',
+        decidedAt: new Date().toISOString(),
+        // denial field intentionally omitted
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('fails closed when denial.code is not a string', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'deny',
+        decidedAt: new Date().toISOString(),
+        denial: { code: 42, conditionType: 'policy', message: 'denied' },
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('fails closed when obligations is not an array', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'allow',
+        decidedAt: new Date().toISOString(),
+        obligations: 'not-an-array',
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('fails closed when redactFields obligation is missing paths', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'allow',
+        decidedAt: new Date().toISOString(),
+        obligations: [{ type: 'redactFields' }], // paths field missing
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('fails closed when redactFields obligation paths contains non-strings', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'allow',
+        decidedAt: new Date().toISOString(),
+        obligations: [{ type: 'redactFields', paths: ['valid', 42] }],
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('fails closed when annotate obligation is missing key', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'allow',
+        decidedAt: new Date().toISOString(),
+        obligations: [{ type: 'annotate', value: 'internal' }], // key missing
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(false);
+    expect(decision.denialCode).toBe('GATEWAY_UNAVAILABLE');
+  });
+
+  it('succeeds with a well-formed response containing both obligation types', async () => {
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: makeBadFetcher({
+        requestId: 'r1',
+        decision: 'allow',
+        decidedAt: new Date().toISOString(),
+        obligations: [
+          { type: 'redactFields', paths: ['password'] },
+          { type: 'annotate', key: 'classification', value: 'internal' },
+        ],
+      }),
+    });
+
+    const decision = await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    expect(decision.allow).toBe(true);
+    expect(decision.obligations).toHaveLength(2);
   });
 });
 

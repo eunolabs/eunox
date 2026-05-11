@@ -356,7 +356,7 @@ applies them automatically before forwarding the upstream response to the MCP cl
 | Obligation type | Effect |
 |---|---|
 | `redactFields` | Strips listed dotted-path fields from JSON text content and `structuredContent` |
-| `annotate` | Records key/value metadata in the local audit event (response unchanged) |
+| `annotate` | Captures key/value metadata in the local audit record for this tool call (response unchanged) |
 
 ### Options
 

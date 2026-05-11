@@ -40,13 +40,17 @@
  *
  * **Authentication**
  *
- * The client presents its API key (`apiKey`) as a Bearer token in every
- * `Authorization` header.  In the hosted topology the minter façade
- * (Task 10) converts the API key to a short-lived JWT before the request
- * reaches the gateway's enforcement route; until the minter is deployed the
- * gateway may be configured to accept the raw key directly (development /
- * self-host mode).  This module never constructs JWTs — it is the
- * minter's job to do that conversion transparently.
+ * The client sends its API key (`apiKey`) as a `Bearer` token in the
+ * `Authorization` header.  In the hosted deployment topology the minter façade
+ * (Task 10) sits in front of the enforcement route: it intercepts the request,
+ * exchanges the API key for a short-lived JWT signed by the deployment's issuer,
+ * and forwards the JWT to the enforcement route.  The enforcement route itself
+ * accepts only JWTs — it never sees or accepts raw API keys directly.  This
+ * module does not construct JWTs; the façade handles that conversion
+ * transparently so this client only needs to present the API key.
+ *
+ * In self-hosted deployments where the minter façade is not deployed, the
+ * operator is responsible for configuring an issuer JWT in `apiKey` directly.
  *
  * **Fail-closed guarantees**
  *
@@ -109,12 +113,15 @@ export interface RemoteEnforcerOptions {
   url: string;
 
   /**
-   * API key used to authenticate against the gateway.  Sent as a
-   * `Bearer` token in the `Authorization` header of every enforce request.
+   * API key (or issuer JWT in self-hosted deployments) presented as a `Bearer`
+   * token in the `Authorization` header of every enforce request.
    *
-   * In the hosted deployment topology the minter façade (Task 10) converts
-   * this key to a short-lived JWT; until then the gateway may accept the
-   * raw key.  This value MUST NOT be logged.
+   * In the hosted deployment topology this value is the `sk-…` API key issued
+   * by the Euno console.  The minter façade (Task 10) intercepts requests from
+   * this client and exchanges the key for a short-lived JWT before the
+   * enforcement route sees it — the enforcement route itself only accepts JWTs.
+   *
+   * This value MUST NOT be logged.
    */
   apiKey: string;
 
@@ -224,6 +231,13 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
     }
     this._url = normalizedUrl;
     this._apiKey = trimmedApiKey;
+    if (opts.timeoutMs !== undefined) {
+      if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0) {
+        throw new Error(
+          'RemoteEnforcerPDP: timeoutMs must be a positive finite number',
+        );
+      }
+    }
     this._timeoutMs = opts.timeoutMs ?? 10_000;
     this._fetcher = opts.fetcher ?? defaultFetcher;
     this._clockFn = opts.clockFn ?? (() => new Date());
@@ -345,8 +359,13 @@ const defaultFetcher: EnforceFetcher = async (url, init) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse and minimally validate a raw gateway response body.
- * Throws on structural violations (fail-closed path).
+ * Parse and fully validate a raw gateway response body.
+ *
+ * This function is the fail-closed gate for the remote-enforcer path.  Any
+ * structural violation throws an error that the caller maps to a
+ * `GATEWAY_UNAVAILABLE` deny decision.  Validating obligation and denial
+ * shapes here ensures downstream code (applyRemoteObligations, audit sink)
+ * can safely trust the values it receives without defensive try/catch.
  */
 function parseEnforceResponse(raw: unknown): EnforceResponse {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -364,6 +383,75 @@ function parseEnforceResponse(raw: unknown): EnforceResponse {
   }
   if (typeof r['decidedAt'] !== 'string') {
     throw new Error('Gateway response missing decidedAt field');
+  }
+
+  // Validate obligations array when present.
+  if (r['obligations'] !== undefined) {
+    if (!Array.isArray(r['obligations'])) {
+      throw new Error('Gateway response obligations must be an array');
+    }
+    for (const item of r['obligations'] as unknown[]) {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        throw new Error('Gateway response obligation entry must be an object');
+      }
+      const o = item as Record<string, unknown>;
+      if (o['type'] === 'redactFields') {
+        if (
+          !Array.isArray(o['paths']) ||
+          (o['paths'] as unknown[]).some((p) => typeof p !== 'string')
+        ) {
+          throw new Error(
+            'Gateway response redactFields obligation must have a string[] paths field',
+          );
+        }
+      } else if (o['type'] === 'annotate') {
+        if (typeof o['key'] !== 'string' || typeof o['value'] !== 'string') {
+          throw new Error(
+            'Gateway response annotate obligation must have string key and value fields',
+          );
+        }
+      } else {
+        // Unknown obligation type — log a warning but do not fail.  This
+        // preserves forward-compatibility with gateway versions that may add
+        // new obligation types.  Unknown types are silently skipped by
+        // applyRemoteObligations.
+        process.stderr.write(
+          `[euno-mcp] RemoteEnforcerPDP: ignoring unknown obligation type "${String(o['type'])}"\n`,
+        );
+      }
+    }
+  }
+
+  // Validate denial object when present (required for deny decisions).
+  if (r['decision'] === 'deny') {
+    if (r['denial'] === undefined) {
+      throw new Error('Gateway deny response is missing the denial field');
+    }
+    if (
+      typeof r['denial'] !== 'object' ||
+      r['denial'] === null ||
+      Array.isArray(r['denial'])
+    ) {
+      throw new Error('Gateway response denial field must be an object');
+    }
+    const d = r['denial'] as Record<string, unknown>;
+    if (typeof d['code'] !== 'string') {
+      throw new Error('Gateway response denial.code must be a string');
+    }
+    if (typeof d['conditionType'] !== 'string') {
+      throw new Error('Gateway response denial.conditionType must be a string');
+    }
+    if (typeof d['message'] !== 'string') {
+      throw new Error('Gateway response denial.message must be a string');
+    }
+    if (
+      d['details'] !== undefined &&
+      (typeof d['details'] !== 'object' ||
+        d['details'] === null ||
+        Array.isArray(d['details']))
+    ) {
+      throw new Error('Gateway response denial.details must be an object');
+    }
   }
 
   return r as unknown as EnforceResponse;

@@ -26,9 +26,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **No local infrastructure**: `FilePolicySource`, `LocalHmacSigner`,
     `InMemoryCallCounterStore`, and the in-memory kill switch are not
     constructed in remote mode.  The gateway is the sole enforcement authority.
-  - **Obligations**: `redactFields` and `annotate` obligations returned by the
-    gateway are applied to the upstream response before forwarding to the MCP
-    client, using the same redaction engine as local mode.
+  - **Obligations**: `redactFields` obligations returned by the gateway are
+    applied to the upstream response before forwarding to the MCP client,
+    using the same redaction engine as local mode.  `annotate` obligations
+    are captured as `annotateValues` key/value pairs in the local audit record
+    (they do not modify the upstream response).
   - **Configurable timeout**: `--enforcer-timeout <ms>` (default 10 s) bounds
     each enforce request; exceeded requests are denied fail-closed.
 
@@ -42,8 +44,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing `matchedConditions`-based local path.
 
 - **`applyRemoteObligations`** — new export from `src/transport/obligations.ts`.
-  Applies `Obligation[]` (gateway wire type) to an upstream tool-call result,
-  supporting `redactFields` and `annotate` obligation types.
+  Applies `Obligation[]` (gateway wire type) to an upstream tool-call result:
+  `redactFields` obligations strip fields from the response; `annotate`
+  obligations capture key/value metadata in the caller's audit record (the
+  response is not modified).
+
+- **`McpAuditRecord.annotateValues`** — new optional field on the audit record
+  type.  Carries annotation key/value pairs from the gateway's `annotate`
+  obligations, stored in the OCSF `unmapped` block as `"annotateValues"`.
+  Covered by the HMAC signature.
 
 - **New CLI options**:
   - `--enforcer-url <url>` — gateway base URL (e.g. `https://gateway.euno.example`)
