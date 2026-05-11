@@ -601,31 +601,45 @@ describe('RedisKillSwitchManager — dual-write to Postgres', () => {
     expect(cfg.killedSessions.has('ordering-test')).toBe(false);
   });
 
-  it('Postgres write failure is swallowed (fire-and-forget) and Redis state is preserved', async () => {
-    // First kill successfully so the row exists in Redis.
-    manager.killSession('fire-and-forget-sess');
+  it('Postgres write failure is swallowed (fire-and-forget) and Redis cache is preserved', async () => {
+    // Kill a session successfully so we have a baseline in both Redis + Postgres.
+    manager.killSession('sess-baseline');
     await drainPersistence();
+    expect(manager.isSessionKilled('sess-baseline')).toBe(true);
+    expect(pgClient.readTable().some(r => r.entry_type === 'session' && r.entry_id === 'sess-baseline')).toBe(true);
 
-    // Verify Postgres received it.
-    let cfg = await persistence.load();
-    expect(cfg.killedSessions.has('fire-and-forget-sess')).toBe(true);
+    // Simulate a Postgres error on the NEXT write only.
+    pgClient.simulateError();
 
-    // The session remains killed in Redis regardless of any Postgres error.
-    expect(manager.isSessionKilled('fire-and-forget-sess')).toBe(true);
+    // Kill a second session — Redis write succeeds, Postgres write throws
+    // fire-and-forget.  The manager call must NOT throw.
+    expect(() => manager.killSession('sess-pg-fail')).not.toThrow();
+    await drainPersistence(); // drain the serialised persistence tail
 
-    // Simulate a subsequent Postgres error on the *next* write.
-    // (The backend's underlying client can only report errors via query throws.)
-    // We verify the manager's cache is still consistent (Redis is the read path).
-    expect(manager.isSessionKilled('fire-and-forget-sess')).toBe(true);
+    // Redis/cache still sees the kill (Redis write succeeded; only Postgres failed).
+    expect(manager.isSessionKilled('sess-pg-fail')).toBe(true);
 
-    cfg = await persistence.load();
-    expect(cfg.killedSessions.has('fire-and-forget-sess')).toBe(true);
+    // Postgres does NOT have the entry — the write error was swallowed.
+    expect(pgClient.readTable().some(r => r.entry_type === 'session' && r.entry_id === 'sess-pg-fail')).toBe(false);
+
+    // The baseline session is still correctly reflected in both stores.
+    expect(manager.isSessionKilled('sess-baseline')).toBe(true);
+    expect(pgClient.readTable().some(r => r.entry_type === 'session' && r.entry_id === 'sess-baseline')).toBe(true);
   });
 });
 
-// ─── Kill switch survives Redis flush (cold-start seeding from Postgres) ──────
+// ─── RedisKillSwitchManager — Redis unavailable / cold-start scenarios ────────
+//
+// These tests cover two complementary scenarios:
+//   1. Redis is *unreachable* at startup → initial refresh() throws → manager
+//      falls back to Postgres and seeds its cache from there.
+//   2. Redis is *reachable but empty* (e.g. after FLUSHALL or a cold Redis
+//      restart) → initial refresh() succeeds with empty state → manager
+//      detects the empty cache and seeds from Postgres.
+//
+// In both cases the kill switch is intact after start() completes.
 
-describe('RedisKillSwitchManager — kill switch survives Redis flush', () => {
+describe('RedisKillSwitchManager — Redis unavailable / cold-start scenarios', () => {
   let redis: FakeRedisClient;
   let pgClient: FakePgClient;
   let pgPool: FakePgPool;
@@ -644,16 +658,13 @@ describe('RedisKillSwitchManager — kill switch survives Redis flush', () => {
     persistence = new PostgresKillSwitchBackend(pgPool.asPool());
   });
 
-  it('a new replica seeds its cache from Postgres when Redis is empty (simulates Redis flush)', async () => {
-    // Seed Postgres directly (simulates state that was written before a Redis flush).
+  it('a new replica seeds its cache from Postgres when Redis is unreachable at startup', async () => {
+    // Seed Postgres directly (simulates state that was written before a Redis outage).
     await persistence.activateGlobalKill();
     await persistence.killSession('sess-flush');
     await persistence.killAgent('agent-flush');
 
-    // Redis is empty (after hypothetical FLUSHALL or cold Redis restart).
-    // The manager starts with an empty Redis but Postgres has the truth.
-    // We simulate this by making the initial Redis refresh fail so start()
-    // falls back to Postgres.
+    // Redis is unreachable — the initial refresh() will throw.
     redis.simulateError(); // make the first refresh() call fail
     const manager = new RedisKillSwitchManager(redis, undefined, {
       refreshIntervalMs: 0,
@@ -665,6 +676,64 @@ describe('RedisKillSwitchManager — kill switch survives Redis flush', () => {
     expect(manager.isGlobalKillActive()).toBe(true);
     expect(manager.isSessionKilled('sess-flush')).toBe(true);
     expect(manager.isAgentKilled('agent-flush')).toBe(true);
+
+    await manager.close();
+  });
+
+  it('a new replica seeds its cache from Postgres when Redis is reachable but empty (FLUSHALL scenario)', async () => {
+    // Step 1: issue kills via a manager (dual-write goes to Redis + Postgres).
+    const managerA = new RedisKillSwitchManager(redis, undefined, {
+      refreshIntervalMs: 0,
+      instanceId: 'instance-flush-a',
+      persistenceBackend: persistence,
+    });
+    await managerA.start();
+    managerA.activateGlobalKill();
+    managerA.killSession('sess-flush-actual');
+    managerA.killAgent('agent-flush-actual');
+    await drainPersistence();
+    await managerA.close();
+
+    // Step 2: simulate FLUSHALL — Redis is emptied but still reachable.
+    // No simulateError() here: Redis will respond OK with empty state.
+    redis.flush();
+
+    // Step 3: a new replica starts against the empty-but-reachable Redis.
+    // refresh() succeeds but returns empty state.  start() detects the empty
+    // cache and seeds from Postgres.
+    const managerB = new RedisKillSwitchManager(redis, undefined, {
+      refreshIntervalMs: 0,
+      instanceId: 'instance-flush-b',
+      persistenceBackend: persistence,
+    });
+    await managerB.start();
+
+    // Kill switch state is intact even though Redis was flushed.
+    expect(managerB.isGlobalKillActive()).toBe(true);
+    expect(managerB.isSessionKilled('sess-flush-actual')).toBe(true);
+    expect(managerB.isAgentKilled('agent-flush-actual')).toBe(true);
+
+    await managerB.close();
+  });
+
+  it('does NOT seed from Postgres when Redis is reachable and has non-empty state', async () => {
+    // Poison Postgres with data that should NOT be applied.
+    await persistence.killSession('stale-pg-session');
+
+    // Redis has a different kill — this is the authoritative state.
+    const manager = new RedisKillSwitchManager(redis, undefined, {
+      refreshIntervalMs: 0,
+      instanceId: 'instance-noop',
+      persistenceBackend: persistence,
+    });
+    // Directly write a kill into Redis to simulate a pre-populated cluster.
+    await redis.sadd('killswitch:killed_sessions', 'redis-authoritative-session');
+
+    await manager.start();
+
+    // Redis state is used; Postgres is NOT overlaid on top of a non-empty Redis.
+    expect(manager.isSessionKilled('redis-authoritative-session')).toBe(true);
+    expect(manager.isSessionKilled('stale-pg-session')).toBe(false);
 
     await manager.close();
   });
@@ -695,7 +764,7 @@ describe('RedisKillSwitchManager — kill switch survives Redis flush', () => {
     await manager.close();
   });
 
-  it('revocation list mirrors to Postgres within bounded event-loop turns', async () => {
+  it('kill-switch state mirrors to Postgres within bounded event-loop turns', async () => {
     const manager = new RedisKillSwitchManager(redis, undefined, {
       refreshIntervalMs: 0,
       instanceId: 'bounded-latency',
@@ -723,7 +792,7 @@ describe('RedisKillSwitchManager — kill switch survives Redis flush', () => {
     await manager.close();
   });
 
-  it('kill switch state fully survives a simulated Redis FLUSHALL', async () => {
+  it('kill switch state is preserved when Redis is flushed and the next startup is also initially unreachable', async () => {
     // Step 1: issue kills via a manager (dual-write goes to Redis + Postgres).
     const managerA = new RedisKillSwitchManager(redis, undefined, {
       refreshIntervalMs: 0,
@@ -768,6 +837,15 @@ describe('RedisKillSwitchManager — pub/sub cross-replica propagation', () => {
   let managerA: RedisKillSwitchManager;
   let managerB: RedisKillSwitchManager;
 
+  /**
+   * Offset tracking: each `bridgePublish()` call only delivers messages
+   * published by pod-A *since the previous call*.  Without this, multi-step
+   * tests (e.g. activate → bridge → deactivate → bridge) would re-deliver
+   * earlier events on the second call, masking ordering / idempotency bugs
+   * in pod-B's `handleIncomingEvent` handler.
+   */
+  let bridgeOffset = 0;
+
   beforeEach(async () => {
     redisA = new FakeRedisClient();
     const redisB = new FakeRedisClient();
@@ -775,6 +853,7 @@ describe('RedisKillSwitchManager — pub/sub cross-replica propagation', () => {
     // the publish path (the manager only publishes when subscriber !== undefined).
     const subscriberA = new FakeRedisSubscriber();
     subscriberB = new FakeRedisSubscriber();
+    bridgeOffset = 0;
 
     managerA = new RedisKillSwitchManager(redisA, undefined, {
       refreshIntervalMs: 0,
@@ -798,12 +877,16 @@ describe('RedisKillSwitchManager — pub/sub cross-replica propagation', () => {
   });
 
   /**
-   * Helper that routes a message published by manager-A to manager-B's
-   * subscriber, simulating the Redis broker.
+   * Routes only the messages published by pod-A *since the last call* to
+   * pod-B's subscriber, simulating the Redis pub/sub broker.  Maintaining
+   * an offset prevents earlier events from being re-delivered when this
+   * helper is called multiple times in a single test.
    */
   function bridgePublish(): void {
     const published = redisA.getPublished();
-    for (const { channel, message } of published) {
+    const newMessages = published.slice(bridgeOffset);
+    bridgeOffset = published.length;
+    for (const { channel, message } of newMessages) {
       subscriberB.injectMessage(channel, message);
     }
   }

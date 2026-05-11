@@ -33,10 +33,16 @@ surface, and strengthens the admin-API audit trail.
     kill agent, revive session, revive agent, resetAll) is mirrored to the
     `PostgresKillSwitchBackend`; writes are serialised so a rapid
     kill → revive sequence lands in Postgres in the same order.
-  - **Kill switch survives Redis flush**: after all kill state is written to
-    both Redis and Postgres, simulating `FLUSHALL` followed by a fresh
-    replica start seeds the new replica's cache from Postgres — the kill
-    switch is intact even though Redis was empty.
+  - **Kill switch survives Redis unavailability or flush**: two complementary
+    scenarios are tested. (a) Redis is *unreachable* at startup — the initial
+    `refresh()` throws and the manager falls back to Postgres, seeding its
+    cache from the durably stored kill state. (b) Redis is *reachable but
+    empty* (e.g. after a `FLUSHALL` or cold Redis restart) — `refresh()`
+    succeeds with empty state and the manager detects the empty cache and
+    seeds from Postgres. Both paths leave the kill switch intact.
+    A third test verifies that a non-empty Redis is *not* overlaid with
+    Postgres data (authoritative Redis is always preferred over Postgres when
+    Redis has content).
   - Periodic-refresh Postgres fallback: when a `refresh()` call finds Redis
     unavailable, the manager falls back to Postgres and preserves kill state.
   - Bounded-latency persistence: all three mutations (global, session, agent)
@@ -89,7 +95,7 @@ Three new gauges registered in the gateway's Prometheus registry (Step 6):
 
 **OCSF audit logging for kill-switch mutations (`admin-api.ts`)**
 
-All six kill-switch mutation endpoints now emit structured OCSF audit-log
+All seven kill-switch mutation endpoints now emit structured OCSF audit-log
 events via `auditLogger` (in addition to the existing `logger.*` calls).
 Each event includes an `eventType` field, the subject entity
 (`sessionId` / `agentId`), and the `operator` identity resolved from
