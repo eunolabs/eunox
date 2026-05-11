@@ -674,6 +674,45 @@ export async function initializeServices(
     },
   });
 
+  // Kill-switch observability — lets operators chart kill-switch state and
+  // correlate spikes in denial rates with an active kill.
+  new Gauge({
+    name: 'euno_gateway_kill_switch_active',
+    help: 'Whether any kill switch is currently active on this replica. ' +
+      '1 = at least one kill switch (global, session, or agent) is engaged; ' +
+      '0 = no kills are active. The global_kill label distinguishes the global ' +
+      'kill (which blocks ALL traffic) from per-entity kills.',
+    labelNames: ['global_kill'],
+    registers: [metricsRegistry],
+    collect() {
+      const status = killSwitchManager.getStatus();
+      this.set({ global_kill: '1' }, status.globalKill ? 1 : 0);
+      const anyPerEntityKill =
+        status.killedSessionCount > 0 || status.killedAgentCount > 0 ? 1 : 0;
+      this.set({ global_kill: '0' }, anyPerEntityKill);
+    },
+  });
+
+  new Gauge({
+    name: 'euno_gateway_kill_switch_killed_sessions',
+    help: 'Number of session IDs currently in the kill list. ' +
+      'Non-zero means at least one session is being actively blocked by the kill switch.',
+    registers: [metricsRegistry],
+    collect() {
+      this.set(killSwitchManager.getStatus().killedSessionCount);
+    },
+  });
+
+  new Gauge({
+    name: 'euno_gateway_kill_switch_killed_agents',
+    help: 'Number of agent IDs currently in the kill list. ' +
+      'Non-zero means at least one agent is being actively blocked by the kill switch.',
+    registers: [metricsRegistry],
+    collect() {
+      this.set(killSwitchManager.getStatus().killedAgentCount);
+    },
+  });
+
   // ── Step 7: JWKS client + pre-warm ───────────────────────────────────────
   const jwksCacheTtlMs = (validated.EUNO_JWKS_CACHE_TTL_SECONDS ?? 300) * 1000;
   const issuerJwksUrl = validated.ISSUER_JWKS_URL

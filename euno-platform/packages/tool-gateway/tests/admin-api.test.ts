@@ -345,3 +345,221 @@ describe('POST /admin/revocation/epoch', () => {
     expect(await epochStore.getEpoch('did:web:test.com')).toBe(secondEpoch);
   });
 });
+
+// ── Kill-switch endpoints ─────────────────────────────────────────────────────
+
+describe('Kill-switch admin endpoints', () => {
+  const API_KEY = 'ks-test-key';
+
+  function buildKsApp(apiKey?: string): { app: Express; ksm: DefaultKillSwitchManager } {
+    const app = express();
+    app.use(express.json());
+    const ksm = new DefaultKillSwitchManager();
+    const logger = createLogger('test');
+    const adminRouter = createAdminRouter({ killSwitchManager: ksm, logger, adminApiKey: apiKey });
+    app.use('/admin', adminRouter);
+    return { app, ksm };
+  }
+
+  // ── GET /admin/kill-switch/status ──────────────────────────────────────────
+
+  describe('GET /admin/kill-switch/status', () => {
+    it('returns the initial status (all inactive)', async () => {
+      const { app } = buildKsApp();
+      const res = await request(app).get('/admin/kill-switch/status');
+      expect(res.status).toBe(200);
+      expect(res.body.globalKill).toBe(false);
+      expect(res.body.killedSessionCount).toBe(0);
+      expect(res.body.killedAgentCount).toBe(0);
+    });
+
+    it('reflects active kills in the status', async () => {
+      const { app, ksm } = buildKsApp();
+      ksm.killSession('s1');
+      ksm.killAgent('a1');
+
+      const res = await request(app).get('/admin/kill-switch/status');
+      expect(res.status).toBe(200);
+      expect(res.body.killedSessionCount).toBe(1);
+      expect(res.body.killedAgentCount).toBe(1);
+    });
+
+    it('requires API key when configured', async () => {
+      const { app } = buildKsApp(API_KEY);
+      const res = await request(app).get('/admin/kill-switch/status');
+      expect(res.status).toBe(401);
+    });
+
+    it('passes when correct API key is provided', async () => {
+      const { app } = buildKsApp(API_KEY);
+      const res = await request(app)
+        .get('/admin/kill-switch/status')
+        .set('X-Admin-API-Key', API_KEY);
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── POST /admin/kill-switch/global/activate ───────────────────────────────
+
+  describe('POST /admin/kill-switch/global/activate', () => {
+    it('activates the global kill switch', async () => {
+      const { app, ksm } = buildKsApp();
+      expect(ksm.isGlobalKillActive()).toBe(false);
+
+      const res = await request(app).post('/admin/kill-switch/global/activate');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('activated');
+      expect(ksm.isGlobalKillActive()).toBe(true);
+      expect(ksm.shouldBlock('any-sess', 'any-agent')).toBe(true);
+    });
+
+    it('is idempotent (activating twice returns 200 both times)', async () => {
+      const { app } = buildKsApp();
+      await request(app).post('/admin/kill-switch/global/activate');
+      const res = await request(app).post('/admin/kill-switch/global/activate');
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── POST /admin/kill-switch/global/deactivate ─────────────────────────────
+
+  describe('POST /admin/kill-switch/global/deactivate', () => {
+    it('deactivates the global kill switch', async () => {
+      const { app, ksm } = buildKsApp();
+      ksm.activateGlobalKill();
+      expect(ksm.isGlobalKillActive()).toBe(true);
+
+      const res = await request(app).post('/admin/kill-switch/global/deactivate');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('deactivated');
+      expect(ksm.isGlobalKillActive()).toBe(false);
+    });
+
+    it('is idempotent (deactivating when already inactive returns 200)', async () => {
+      const { app } = buildKsApp();
+      const res = await request(app).post('/admin/kill-switch/global/deactivate');
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── POST /admin/kill-switch/session/:sessionId/kill ───────────────────────
+
+  describe('POST /admin/kill-switch/session/:sessionId/kill', () => {
+    it('kills the specified session', async () => {
+      const { app, ksm } = buildKsApp();
+      const res = await request(app).post('/admin/kill-switch/session/sess-abc/kill');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('sess-abc');
+      expect(ksm.isSessionKilled('sess-abc')).toBe(true);
+      expect(ksm.shouldBlock('sess-abc')).toBe(true);
+    });
+
+    it('does not affect other sessions', async () => {
+      const { app, ksm } = buildKsApp();
+      await request(app).post('/admin/kill-switch/session/sess-x/kill');
+      expect(ksm.isSessionKilled('sess-y')).toBe(false);
+      expect(ksm.shouldBlock('sess-y')).toBe(false);
+    });
+  });
+
+  // ── POST /admin/kill-switch/session/:sessionId/revive ────────────────────
+
+  describe('POST /admin/kill-switch/session/:sessionId/revive', () => {
+    it('revives a killed session', async () => {
+      const { app, ksm } = buildKsApp();
+      ksm.killSession('revive-me');
+
+      const res = await request(app).post('/admin/kill-switch/session/revive-me/revive');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('revive-me');
+      expect(ksm.isSessionKilled('revive-me')).toBe(false);
+    });
+
+    it('is idempotent (reviving an alive session returns 200)', async () => {
+      const { app } = buildKsApp();
+      const res = await request(app).post('/admin/kill-switch/session/alive-sess/revive');
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── POST /admin/kill-switch/agent/:agentId/kill ───────────────────────────
+
+  describe('POST /admin/kill-switch/agent/:agentId/kill', () => {
+    it('kills the specified agent', async () => {
+      const { app, ksm } = buildKsApp();
+      const res = await request(app).post('/admin/kill-switch/agent/agent-xyz/kill');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('agent-xyz');
+      expect(ksm.isAgentKilled('agent-xyz')).toBe(true);
+      expect(ksm.shouldBlock(undefined, 'agent-xyz')).toBe(true);
+    });
+
+    it('does not affect other agents', async () => {
+      const { app, ksm } = buildKsApp();
+      await request(app).post('/admin/kill-switch/agent/agent-a/kill');
+      expect(ksm.isAgentKilled('agent-b')).toBe(false);
+    });
+  });
+
+  // ── POST /admin/kill-switch/agent/:agentId/revive ────────────────────────
+
+  describe('POST /admin/kill-switch/agent/:agentId/revive', () => {
+    it('revives a killed agent', async () => {
+      const { app, ksm } = buildKsApp();
+      ksm.killAgent('agent-revive');
+
+      const res = await request(app).post('/admin/kill-switch/agent/agent-revive/revive');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('agent-revive');
+      expect(ksm.isAgentKilled('agent-revive')).toBe(false);
+    });
+  });
+
+  // ── POST /admin/kill-switch/reset ─────────────────────────────────────────
+
+  describe('POST /admin/kill-switch/reset', () => {
+    it('clears all active kills', async () => {
+      const { app, ksm } = buildKsApp();
+      ksm.activateGlobalKill();
+      ksm.killSession('s1');
+      ksm.killAgent('a1');
+
+      const res = await request(app).post('/admin/kill-switch/reset');
+      expect(res.status).toBe(200);
+      expect(res.body.message).toContain('reset');
+      expect(ksm.isGlobalKillActive()).toBe(false);
+      expect(ksm.isSessionKilled('s1')).toBe(false);
+      expect(ksm.isAgentKilled('a1')).toBe(false);
+    });
+
+    it('is idempotent (resetting when nothing is active returns 200)', async () => {
+      const { app } = buildKsApp();
+      const res = await request(app).post('/admin/kill-switch/reset');
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── Full activate-then-reset round-trip ───────────────────────────────────
+
+  describe('full kill-switch round-trip', () => {
+    it('activate → check status → reset → check status', async () => {
+      const { app } = buildKsApp();
+
+      await request(app).post('/admin/kill-switch/global/activate');
+      await request(app).post('/admin/kill-switch/session/s1/kill');
+      await request(app).post('/admin/kill-switch/agent/a1/kill');
+
+      let status = await request(app).get('/admin/kill-switch/status');
+      expect(status.body.globalKill).toBe(true);
+      expect(status.body.killedSessionCount).toBe(1);
+      expect(status.body.killedAgentCount).toBe(1);
+
+      await request(app).post('/admin/kill-switch/reset');
+
+      status = await request(app).get('/admin/kill-switch/status');
+      expect(status.body.globalKill).toBe(false);
+      expect(status.body.killedSessionCount).toBe(0);
+      expect(status.body.killedAgentCount).toBe(0);
+    });
+  });
+});
