@@ -58,7 +58,7 @@ import {
 } from '../protocol';
 import type { TelemetryHooks } from '../telemetry/types';
 import { NullAuditSink, type McpAuditSink } from '../audit/audit-sink';
-import { applyRedactObligations, type ToolCallResult } from './obligations';
+import { applyRedactObligations, applyRemoteObligations, type ToolCallResult } from './obligations';
 import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
@@ -744,10 +744,22 @@ export class HttpProxy {
         );
       }
 
-      const { matchedConditions } = decision;
+      const { matchedConditions, obligations } = decision;
       const obligationsApplied: string[] = [];
       let finalResult = upstreamResult;
-      if (matchedConditions && hasRedactObligation(matchedConditions)) {
+      if (obligations && obligations.length > 0) {
+        // Remote-enforcer mode: apply obligations from the gateway response.
+        finalResult = applyRemoteObligations(
+          upstreamResult as ToolCallResult,
+          obligations,
+        ) as typeof upstreamResult;
+        for (const o of obligations) {
+          if (!obligationsApplied.includes(o.type)) {
+            obligationsApplied.push(o.type);
+          }
+        }
+      } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
+        // Local mode: derive obligations from the matched capability conditions.
         finalResult = applyRedactObligations(
           upstreamResult as ToolCallResult,
           matchedConditions,

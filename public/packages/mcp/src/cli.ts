@@ -17,7 +17,7 @@ import { Command } from 'commander';
 import { version } from '../package.json';
 import { StdioProxy } from './transport/stdio';
 import { HttpProxy } from './transport/http';
-import { createLocalAuditSink, McpAuditSink } from './audit';
+import { createLocalAuditSink, McpAuditSink, NullAuditSink } from './audit';
 import { LocalHmacSigner } from './audit/hmac-signer';
 import { loadOrCreateHmacKey, DEFAULT_KEY_PATH } from './audit/hmac-key';
 import { FilePolicySource } from './policy/source';
@@ -27,6 +27,7 @@ import {
 } from './policy/custom-handlers';
 import { loadPolicyBackends } from './policy/backends';
 import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
+import { RemoteEnforcerPDP } from './enforcer/remote';
 import { createTelemetry } from './telemetry';
 import { buildStatsCommand } from './cli/stats';
 import {
@@ -126,6 +127,23 @@ program
     collectRepeatableOption,
     [],
   )
+  .option(
+    '--enforcer-url <url>',
+    'Stage-3 remote-enforcer gateway URL (e.g. https://gateway.euno.example). ' +
+      'When set, enforcement is delegated to the hosted gateway instead of running ' +
+      'locally. Requires --enforcer-api-key. ' +
+      'Mutually exclusive with --policy (local enforcement).',
+  )
+  .option(
+    '--enforcer-api-key <key>',
+    'API key for the remote enforcement gateway (required when --enforcer-url is set). ' +
+      'Sent as a Bearer token in every enforce request. Never logged.',
+  )
+  .option(
+    '--enforcer-timeout <ms>',
+    'Timeout in milliseconds for each remote enforce request (default: 10000). ' +
+      'When the gateway exceeds this limit the call is denied fail-closed.',
+  )
   .allowUnknownOption(false)
   .argument('<command>', 'Upstream MCP server command (after --)')
   .argument('[args...]', 'Arguments for the upstream MCP server command')
@@ -141,6 +159,9 @@ Examples:
 
   # HTTP with bearer-token auth and a 30-second upstream timeout
   euno-mcp proxy --transport http --port 3000 --auth-token $(openssl rand -hex 32) --upstream-timeout 30000 -- node ./my-mcp-server.js
+
+  # Stage-3 remote-enforcer mode (delegates enforcement to the hosted gateway)
+  euno-mcp proxy --enforcer-url https://gateway.euno.example --enforcer-api-key sk-... -- node ./my-mcp-server.js
 `,
   )
   .action(async (upstreamCommand: string, upstreamArgs: string[], options) => {
@@ -204,51 +225,127 @@ Examples:
       rotateSizeBytes = parsed;
     }
 
-    // ── Build PDP ─────────────────────────────────────────────────────────
-    let pdp: PolicyDecisionPoint;
-    let conditionPdp: ConditionEnforcerPDP | undefined;
-    const customConditionModules = options.customCondition as string[];
+    // ── Validate remote enforcer options ─────────────────────────────────
+    const enforcerUrl: string | undefined = options.enforcerUrl as string | undefined;
+    const enforcerApiKey: string | undefined = options.enforcerApiKey as string | undefined;
 
-    if (customConditionModules.length > 0) {
-      try {
-        await loadCustomConditionModules(customConditionModules);
-      } catch (err) {
+    // Validate --enforcer-url / --enforcer-api-key mutual constraints.
+    if (enforcerUrl !== undefined && (enforcerApiKey === undefined || enforcerApiKey.trim().length === 0)) {
+      process.stderr.write(
+        `[euno-mcp] --enforcer-url requires --enforcer-api-key to be set.\n`,
+      );
+      process.exit(1);
+    }
+    if (enforcerApiKey !== undefined && enforcerApiKey.trim().length > 0 && enforcerUrl === undefined) {
+      process.stderr.write(
+        `[euno-mcp] --enforcer-api-key requires --enforcer-url to be set.\n`,
+      );
+      process.exit(1);
+    }
+    if (enforcerUrl !== undefined && options.policy !== undefined) {
+      process.stderr.write(
+        `[euno-mcp] --enforcer-url and --policy are mutually exclusive. ` +
+          `In remote-enforcer mode, policy evaluation is performed by the gateway.\n`,
+      );
+      process.exit(1);
+    }
+
+    let enforcerTimeoutMs: number | undefined;
+    if (options.enforcerTimeout !== undefined) {
+      const parsed = parseInt(options.enforcerTimeout as string, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
         process.stderr.write(
-          `[euno-mcp] ${err instanceof Error ? err.message : String(err)}\n`,
+          `[euno-mcp] Invalid --enforcer-timeout value "${options.enforcerTimeout}": ` +
+            `must be a positive integer (milliseconds).\n`,
         );
         process.exit(1);
       }
+      enforcerTimeoutMs = parsed;
     }
 
-    if (options.policy) {
-      const policySource = new FilePolicySource({ filePath: options.policy as string });
-      try {
-        const manifest = await policySource.load();
-        validateCustomConditionRegistrations(manifest);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const hint = isMissingCustomHandlerValidationError(message)
-          ? ' Hint: load the handler with --custom-condition <module>.'
-          : '';
-        process.stderr.write(`[euno-mcp] Policy validation failed: ${message}${hint}\n`);
-        process.exit(1);
+    const isRemoteMode = enforcerUrl !== undefined;
+
+    // ── Build PDP ─────────────────────────────────────────────────────────
+    let pdp: PolicyDecisionPoint;
+    let conditionPdp: ConditionEnforcerPDP | undefined;
+
+    if (isRemoteMode) {
+      // ── Stage-3 remote-enforcer mode ──────────────────────────────────
+      // All enforcement is delegated to the hosted gateway.  Local infrastructure
+      // (FilePolicySource, LocalHmacSigner, InMemoryCallCounterStore, kill switch)
+      // is intentionally skipped — the gateway is the sole enforcement authority.
+      //
+      // Custom conditions and policy backends are not loaded in remote mode
+      // because the gateway has its own condition registry.  Warn if the operator
+      // provided conflicting flags.
+      const customConditionModules = options.customCondition as string[];
+      if (customConditionModules.length > 0) {
+        process.stderr.write(
+          `[euno-mcp] WARNING: --custom-condition is ignored in remote-enforcer mode ` +
+            `(--enforcer-url). Custom conditions are registered on the gateway.\n`,
+        );
       }
-      conditionPdp = new ConditionEnforcerPDP({ policySource });
-      pdp = conditionPdp;
-    } else {
-      pdp = new AlwaysAllowPDP();
-    }
+      const policyBackendPaths = options.policyBackend as string[];
+      if (policyBackendPaths.length > 0) {
+        process.stderr.write(
+          `[euno-mcp] WARNING: --policy-backend is ignored in remote-enforcer mode ` +
+            `(--enforcer-url). Policy backends are registered on the gateway.\n`,
+        );
+      }
 
-    // ── Load policy backends ──────────────────────────────────────────────
-    // Must happen before the proxy starts serving requests so every policy
-    // condition is satisfied by a registered backend.  Errors here are fatal.
-    const policyBackendPaths: string[] = options.policyBackend as string[];
-    if (policyBackendPaths.length > 0) {
-      try {
-        await loadPolicyBackends(policyBackendPaths);
-      } catch {
-        // loadPolicyBackends already wrote a human-readable message to stderr.
-        process.exit(1);
+      pdp = new RemoteEnforcerPDP({
+        url: enforcerUrl,
+        apiKey: enforcerApiKey!,
+        timeoutMs: enforcerTimeoutMs,
+      });
+      process.stderr.write(
+        `[euno-mcp] Remote-enforcer mode: enforcement delegated to ${enforcerUrl}\n`,
+      );
+    } else {
+      // ── Local enforcement mode ────────────────────────────────────────
+      const customConditionModules = options.customCondition as string[];
+
+      if (customConditionModules.length > 0) {
+        try {
+          await loadCustomConditionModules(customConditionModules);
+        } catch (err) {
+          process.stderr.write(
+            `[euno-mcp] ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exit(1);
+        }
+      }
+
+      if (options.policy) {
+        const policySource = new FilePolicySource({ filePath: options.policy as string });
+        try {
+          const manifest = await policySource.load();
+          validateCustomConditionRegistrations(manifest);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const hint = isMissingCustomHandlerValidationError(message)
+            ? ' Hint: load the handler with --custom-condition <module>.'
+            : '';
+          process.stderr.write(`[euno-mcp] Policy validation failed: ${message}${hint}\n`);
+          process.exit(1);
+        }
+        conditionPdp = new ConditionEnforcerPDP({ policySource });
+        pdp = conditionPdp;
+      } else {
+        pdp = new AlwaysAllowPDP();
+      }
+
+      // ── Load policy backends ────────────────────────────────────────────
+      // Must happen before the proxy starts serving requests so every policy
+      // condition is satisfied by a registered backend.  Errors here are fatal.
+      const policyBackendPaths: string[] = options.policyBackend as string[];
+      if (policyBackendPaths.length > 0) {
+        try {
+          await loadPolicyBackends(policyBackendPaths);
+        } catch {
+          // loadPolicyBackends already wrote a human-readable message to stderr.
+          process.exit(1);
+        }
       }
     }
 
@@ -267,19 +364,25 @@ Examples:
 
     // ── stdio transport ───────────────────────────────────────────────────
     if (transport === 'stdio') {
-      // Initialise the audit sink. Errors here are fatal — we want operators
-      // to know early if the key or log path is misconfigured.
+      // In remote-enforcer mode skip building a local audit sink — the gateway
+      // is the audit authority.  In local mode, initialise the audit sink; errors
+      // here are fatal so operators know early if the key or log path is
+      // misconfigured.
       let auditSink: McpAuditSink;
-      try {
-        auditSink = await createLocalAuditSink({
-          logPath: options.auditLog as string | undefined,
-          rotateSizeBytes,
-        });
-      } catch (err) {
-        process.stderr.write(
-          `[euno-mcp] Failed to initialise audit log: ${String(err)}\n`,
-        );
-        process.exit(1);
+      if (isRemoteMode) {
+        auditSink = new NullAuditSink();
+      } else {
+        try {
+          auditSink = await createLocalAuditSink({
+            logPath: options.auditLog as string | undefined,
+            rotateSizeBytes,
+          });
+        } catch (err) {
+          process.stderr.write(
+            `[euno-mcp] Failed to initialise audit log: ${String(err)}\n`,
+          );
+          process.exit(1);
+        }
       }
 
       const proxy = new StdioProxy({

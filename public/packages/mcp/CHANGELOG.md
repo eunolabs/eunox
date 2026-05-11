@@ -7,6 +7,60 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.0] — Unreleased (Stage 3: Remote-Enforcer Mode)
+
+### Added
+
+- **Remote-enforcer mode** (`--enforcer-url` / `--enforcer-api-key`).
+  When `--enforcer-url <url>` is supplied together with `--enforcer-api-key
+  <key>`, the proxy switches from local in-process enforcement to the hosted
+  Euno gateway.  Every `tools/call` is forwarded to `POST /api/v1/enforce`
+  at the configured gateway URL; the gateway's `EnforceResponse` is
+  translated into a `PdpDecision` that the existing transport layer processes
+  without modification.
+
+  Key properties of remote-enforcer mode:
+  - **Fail-closed**: any network error, HTTP error response, or malformed
+    body results in a `deny` decision with code `GATEWAY_UNAVAILABLE`.
+    The upstream tool is never called when the gateway is unreachable.
+  - **No local infrastructure**: `FilePolicySource`, `LocalHmacSigner`,
+    `InMemoryCallCounterStore`, and the in-memory kill switch are not
+    constructed in remote mode.  The gateway is the sole enforcement authority.
+  - **Obligations**: `redactFields` and `annotate` obligations returned by the
+    gateway are applied to the upstream response before forwarding to the MCP
+    client, using the same redaction engine as local mode.
+  - **Configurable timeout**: `--enforcer-timeout <ms>` (default 10 s) bounds
+    each enforce request; exceeded requests are denied fail-closed.
+
+- **`RemoteEnforcerPDP`** — new public class exported from `@euno/mcp` (and
+  `src/enforcer/remote.ts`).  Implements `PolicyDecisionPoint`.  Accepts an
+  injectable `EnforceFetcher` for unit-test isolation.
+
+- **`PdpDecision.obligations`** — new optional field (`readonly Obligation[]`)
+  carrying response-path obligations returned by the remote enforcer.  The
+  transport layer checks this field first; if absent it falls back to the
+  existing `matchedConditions`-based local path.
+
+- **`applyRemoteObligations`** — new export from `src/transport/obligations.ts`.
+  Applies `Obligation[]` (gateway wire type) to an upstream tool-call result,
+  supporting `redactFields` and `annotate` obligation types.
+
+- **New CLI options**:
+  - `--enforcer-url <url>` — gateway base URL (e.g. `https://gateway.euno.example`)
+  - `--enforcer-api-key <key>` — API key sent as Bearer token in each enforce request
+  - `--enforcer-timeout <ms>` — timeout for each gateway call (default: 10000 ms)
+
+### Design note
+
+The Stage-3 architectural boundary is at the *enforcer call*, not at the
+policy-reader seam.  Swapping only `LocalPolicySource` for a JWT loader would
+leave local counters and kill-switch infrastructure running in-process.
+`RemoteEnforcerPDP` skips all local enforcement infrastructure and delegates
+the entire enforcement decision to the gateway.  The `LocalPolicySource` seam
+is retained for the Task-10 minter JWT loader.
+
+---
+
 ## [0.2.0] — 2026-05-09 (Stage 2: General Tool Enforcement)
 
 Full Stage 2 feature set. Expands the supported condition matrix to the complete

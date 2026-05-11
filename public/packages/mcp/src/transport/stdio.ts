@@ -65,7 +65,7 @@ import {
 } from '../protocol';
 import { McpAuditSink, NullAuditSink } from '../audit';
 import type { TelemetryHooks } from '../telemetry/types';
-import { applyRedactObligations, type ToolCallResult } from './obligations';
+import { applyRedactObligations, applyRemoteObligations, type ToolCallResult } from './obligations';
 import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
@@ -417,11 +417,24 @@ export class StdioProxy {
       }
 
       // Apply redactFields (and any other response-path) obligations when the
-      // matched constraint carries conditions that have a `redact` lobe.
-      const { matchedConditions } = decision;
+      // matched constraint carries conditions that have a `redact` lobe, or
+      // when the remote enforcer returned explicit obligations.
+      const { matchedConditions, obligations } = decision;
       const obligationsApplied: string[] = [];
       let finalResult = upstreamResult;
-      if (matchedConditions && hasRedactObligation(matchedConditions)) {
+      if (obligations && obligations.length > 0) {
+        // Remote-enforcer mode: apply obligations from the gateway response.
+        finalResult = applyRemoteObligations(
+          upstreamResult as ToolCallResult,
+          obligations,
+        ) as typeof upstreamResult;
+        for (const o of obligations) {
+          if (!obligationsApplied.includes(o.type)) {
+            obligationsApplied.push(o.type);
+          }
+        }
+      } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
+        // Local mode: derive obligations from the matched capability conditions.
         finalResult = applyRedactObligations(
           upstreamResult as ToolCallResult,
           matchedConditions,

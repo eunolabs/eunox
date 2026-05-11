@@ -69,6 +69,7 @@ import {
   type CapabilityConstraint,
   type CapabilityCondition,
   type ConditionContext,
+  type Obligation,
 } from '@euno/common-core';
 import type { LocalPolicySource } from './policy/source';
 
@@ -151,8 +152,24 @@ export interface PdpDecision {
    *
    * `undefined` when `allow` is `false`, when no constraint matched the
    * tool name, or when the matched constraint carries no conditions.
+   *
+   * **Local mode only.** In remote-enforcer mode the transport layer uses
+   * {@link obligations} instead.
    */
   readonly matchedConditions?: readonly CapabilityCondition[];
+
+  /**
+   * Response-path obligations returned by the remote enforcer (Stage 3
+   * remote mode only).  When present, the transport layer MUST apply these
+   * obligations to the upstream response before returning it to the MCP
+   * client.  The obligations are applied in declaration order.
+   *
+   * Only populated by {@link RemoteEnforcerPDP} when `allow` is `true` and
+   * the gateway returned at least one obligation.  In local mode
+   * {@link matchedConditions} is used instead; the transport layer checks
+   * `obligations` first and falls back to `matchedConditions`.
+   */
+  readonly obligations?: readonly Obligation[];
 }
 
 /**
