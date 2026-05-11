@@ -427,7 +427,7 @@ describe('createKmsTokenSigner — config validation', () => {
     ).toThrow(/unsupported algorithm/);
   });
 
-  it('does NOT throw on EdDSA (not in supported set)', () => {
+  it('throws on EdDSA (not in supported set)', () => {
     // EdDSA is not supported for HSM token signing
     expect(() =>
       createKmsTokenSigner({ provider: 'aws-kms', keyId: 'arn:test', algorithm: 'EdDSA' }),
@@ -550,5 +550,96 @@ describe('KmsTokenSigner — logical key ID derivation', () => {
     const kid = await signer.getKeyId();
     expect(kid).toContain('my-project');
     expect(kid).toContain('my-ring');
+  });
+});
+
+// ── Test 6: Per-tenant driver does not inherit base logicalKeyId ──────────────
+
+describe('KmsTokenSigner — per-tenant driver logicalKeyId isolation', () => {
+  it('JWT kid header for a per-tenant key is NOT the base logicalKeyId', async () => {
+    // When a base signer has keyId='base-kid' and a tenantKeyMap entry
+    // 'tenant-acme' → 'acme-tenant-key', the per-tenant JWT must carry kid
+    // derived from the tenant key reference, NOT 'base-kid'.
+    const signer = new MockKmsTokenSigner({
+      keyId: 'base-kid',
+      tenantKeyMap: { 'tenant-acme': 'acme-tenant-key' },
+    });
+    const tenantToken = await signer.sign(makePayload(), makeContext('tenant-acme'));
+    const tenantHeader = JSON.parse(
+      Buffer.from(tenantToken.split('.')[0]!, 'base64url').toString(),
+    ) as Record<string, unknown>;
+    // The per-tenant kid must be derived from 'acme-tenant-key', not 'base-kid'.
+    expect(tenantHeader.kid).not.toBe('base-kid');
+    expect(tenantHeader.kid).toContain('acme-tenant-key');
+  });
+
+  it('JWT kid header for default (no match) still uses the base keyId', async () => {
+    const signer = new MockKmsTokenSigner({
+      keyId: 'base-kid',
+      tenantKeyMap: { 'tenant-acme': 'acme-tenant-key' },
+    });
+    const defaultToken = await signer.sign(makePayload(), makeContext('other-tenant'));
+    const defaultHeader = JSON.parse(
+      Buffer.from(defaultToken.split('.')[0]!, 'base64url').toString(),
+    ) as Record<string, unknown>;
+    expect(defaultHeader.kid).toBe('base-kid');
+  });
+});
+
+// ── Test 7: GCP full path parsing in buildDriverForKeyRef ─────────────────────
+
+describe('KmsTokenSigner — GCP full cryptoKeyVersionPath in tenantKeyMap', () => {
+  it('accepts a full cryptoKeyVersionPath as a tenantKeyMap value without throwing', () => {
+    // The full path references a different project/location/keyRing to the base
+    // config — the signer must parse all segments rather than rebuilding the
+    // path from the base config's project/location/keyRing.
+    const fullPath =
+      'projects/tenant-proj/locations/europe-west1/keyRings/tenant-ring/cryptoKeys/tenant-key/cryptoKeyVersions/3';
+    expect(() =>
+      createKmsTokenSigner({
+        provider: 'gcp-cloudkms',
+        projectId: 'base-proj',
+        locationId: 'us-east1',
+        keyRingId: 'base-ring',
+        cryptoKeyId: 'base-key',
+        tenantKeyMap: { 'tenant-acme': fullPath },
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts a plain cryptoKeyId (no path segments) as a tenantKeyMap value', () => {
+    expect(() =>
+      createKmsTokenSigner({
+        provider: 'gcp-cloudkms',
+        projectId: 'proj',
+        locationId: 'us-east1',
+        keyRingId: 'ring',
+        cryptoKeyId: 'base-key',
+        tenantKeyMap: { 'tenant-acme': 'tenant-specific-key' },
+      }),
+    ).not.toThrow();
+  });
+});
+
+// ── Test 8: DER → IEEE P1363 conversion ──────────────────────────────────────
+
+describe('KmsTokenSigner — ES256 DER→P1363 conversion', () => {
+  it('produces a verifiable JWT when KMS returns a DER-encoded ES256 signature', async () => {
+    // MockKmsTokenSigner applies DER→P1363 internally (same as the real drivers).
+    // jose.jwtVerify expects JOSE/IEEE-P1363 (r‖s) encoding — this test verifies
+    // that the conversion is applied and the token is verifiable end-to-end.
+    const signer = new MockKmsTokenSigner({ algorithm: 'ES256' });
+    const token = await signer.sign(makePayload());
+    const pubKey = await jose.importSPKI(TEST_PUBLIC_KEY_PEM, 'ES256');
+    await expect(jose.jwtVerify(token, pubKey)).resolves.toBeDefined();
+  });
+
+  it('JWT produced with ES256 has a 64-byte signature (P1363 r‖s, not DER)', async () => {
+    const signer = new MockKmsTokenSigner({ algorithm: 'ES256' });
+    const token = await signer.sign(makePayload());
+    const sigBytes = Buffer.from(token.split('.')[2]!, 'base64url');
+    // P1363 ES256 signature is exactly 64 bytes (32 bytes r + 32 bytes s).
+    // DER-encoded signatures are variable length (typically 70–72 bytes).
+    expect(sigBytes.byteLength).toBe(64);
   });
 });

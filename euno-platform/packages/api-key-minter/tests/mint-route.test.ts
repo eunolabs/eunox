@@ -8,6 +8,7 @@ import { LocalTokenSigner } from '../src/local-token-signer';
 import { InMemoryMintAuditStore } from '../src/mint-audit';
 import { InMemoryMintRateLimiter } from '../src/mint-rate-limiter';
 import { generateApiKey } from '../src/api-key';
+import { minterMetrics } from '../src/metrics';
 import { createLogger } from '@euno/common';
 
 const logger = createLogger('test-mint');
@@ -82,6 +83,18 @@ describe('POST /mint', () => {
       .set('Authorization', `Bearer ${fakeKey.raw}`)
       .send({ agentId: 'agent-1', sessionId: 'session-1' });
     expect(res.status).toBe(401);
+  });
+
+  it('records authentication_failed metric with tenant=unknown when verify() throws', async () => {
+    await minterMetrics.registry.resetMetrics();
+    const { app } = await buildApp();
+    const fakeKey = generateApiKey(); // unknown key — verify() will throw
+    await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${fakeKey.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+    const metrics = await minterMetrics.registry.metrics();
+    expect(metrics).toMatch(/euno_minter_mint_total.*tenant="unknown".*result="authentication_failed"/);
   });
 
   it('returns 429 when rate limit exceeded', async () => {

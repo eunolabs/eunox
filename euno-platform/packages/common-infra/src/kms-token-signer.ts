@@ -19,9 +19,9 @@
  * signer falls back to the default key configured for the provider.
  *
  * For more fine-grained isolation (per-policy or per-tenant + per-policy),
- * pass `policyKeyMap: Record<string, string>` whose keys are
- * `"${tenantId}:${policyHash}"` or plain `policyHash` strings (the same
- * composite-key convention used by the capability-issuer signers).
+ * populate `tenantKeyMap` with composite `"${policyHash}:${audience}"` keys
+ * or plain `policyHash` / `audience` strings — the same composite-key
+ * convention used by `resolveIssuanceContextKey` in `@euno/common-core`.
  *
  * ### JWT encoding
  *
@@ -264,7 +264,12 @@ class AzureKeyVaultSigningDriver implements KmsSigningDriver {
   async signDigest(digest: Buffer): Promise<Buffer> {
     const result = await this.cryptoClient.sign(this.akvAlgorithm, digest);
     const sig = result.result as Uint8Array | Buffer;
-    return Buffer.isBuffer(sig) ? sig : Buffer.from(sig);
+    const sigBuf = Buffer.isBuffer(sig) ? sig : Buffer.from(sig);
+    // Azure Key Vault returns DER-encoded ECDSA; convert to IEEE P1363 (r‖s) for JWS ES256.
+    if (this.algorithm === 'ES256') {
+      return derToIeeeP1363(sigBuf, 32);
+    }
+    return sigBuf;
   }
 
   async getPublicKeyPem(): Promise<string> {
@@ -451,7 +456,12 @@ class AwsKmsSigningDriver implements KmsSigningDriver {
       throw new Error('KmsTokenSigner (aws-kms): SignCommand returned no Signature');
     }
     const sig = response.Signature as Uint8Array | Buffer;
-    return Buffer.isBuffer(sig) ? sig : Buffer.from(sig);
+    const sigBuf = Buffer.isBuffer(sig) ? sig : Buffer.from(sig);
+    // AWS KMS returns DER-encoded ECDSA; convert to IEEE P1363 (r‖s) for JWS ES256.
+    if (this.algorithm === 'ES256') {
+      return derToIeeeP1363(sigBuf, 32);
+    }
+    return sigBuf;
   }
 
   async getPublicKeyPem(): Promise<string> {
@@ -811,6 +821,10 @@ function buildDriver(config: KmsTokenSignerConfig): KmsSigningDriver {
  * fields (credentials, region, algorithm) from the base config.  This is how
  * per-tenant key isolation is implemented without repeating credential config
  * for every tenant.
+ *
+ * `logicalKeyId` is intentionally **not** inherited from the base config so
+ * each per-tenant driver derives its own `kid` from the key reference,
+ * ensuring the JWT `kid` header always reflects the key that actually signed.
  */
 function buildDriverForKeyRef(
   base: KmsTokenSignerConfig,
@@ -818,22 +832,37 @@ function buildDriverForKeyRef(
 ): KmsSigningDriver {
   switch (base.provider) {
     case 'azure-keyvault':
-      return buildAzureKeyVaultDriver({ ...base, keyName: keyRef, keyVersion: undefined });
+      // Clear logicalKeyId so the driver derives kid from the tenant key name.
+      return buildAzureKeyVaultDriver({ ...base, keyName: keyRef, keyVersion: undefined, logicalKeyId: undefined });
     case 'aws-kms':
-      return buildAwsKmsDriver({ ...base, keyId: keyRef });
+      // Clear logicalKeyId so the driver derives kid from the tenant key ARN/ID.
+      return buildAwsKmsDriver({ ...base, keyId: keyRef, logicalKeyId: undefined });
     case 'gcp-cloudkms': {
-      // keyRef for GCP is expected to be a full cryptoKeyVersionPath or a
-      // `cryptoKeyId` value.  We treat it as a cryptoKeyId with version '1'
-      // unless it contains '/cryptoKeyVersions/' (full path).
+      // keyRef for GCP is a full cryptoKeyVersionPath or a plain cryptoKeyId.
+      // Full path format: projects/{p}/locations/{l}/keyRings/{r}/cryptoKeys/{k}/cryptoKeyVersions/{v}
       if (keyRef.includes('/cryptoKeyVersions/')) {
-        // Full version path — parse out the relevant segments.
+        // Extract ALL path segments from the full version path so that
+        // per-tenant keys in different projects/locations/keyRings are
+        // resolved correctly (not rebuilt from the base config).
         const parts = keyRef.split('/');
-        const versionIdx = parts.indexOf('cryptoKeyVersions');
-        const cryptoKeyVersion: string = versionIdx >= 0 ? (parts[versionIdx + 1] ?? '1') : '1';
-        const cryptoKeyId: string = versionIdx >= 1 ? (parts[versionIdx - 1] ?? base.cryptoKeyId) : base.cryptoKeyId;
-        return buildGcpCloudKmsDriver({ ...base, cryptoKeyId, cryptoKeyVersion });
+        const projectId = gcpPathSegment(parts, 'projects') ?? base.projectId;
+        const locationId = gcpPathSegment(parts, 'locations') ?? base.locationId;
+        const keyRingId = gcpPathSegment(parts, 'keyRings') ?? base.keyRingId;
+        const cryptoKeyId = gcpPathSegment(parts, 'cryptoKeys') ?? base.cryptoKeyId;
+        const cryptoKeyVersion = gcpPathSegment(parts, 'cryptoKeyVersions') ?? '1';
+        // Clear logicalKeyId so the driver derives kid from the parsed path.
+        return buildGcpCloudKmsDriver({
+          ...base,
+          projectId,
+          locationId,
+          keyRingId,
+          cryptoKeyId,
+          cryptoKeyVersion,
+          logicalKeyId: undefined,
+        });
       }
-      return buildGcpCloudKmsDriver({ ...base, cryptoKeyId: keyRef, cryptoKeyVersion: '1' });
+      // Plain cryptoKeyId — inherit base project/location/keyRing; clear logicalKeyId.
+      return buildGcpCloudKmsDriver({ ...base, cryptoKeyId: keyRef, cryptoKeyVersion: '1', logicalKeyId: undefined });
     }
     default: {
       const _exhaustive: never = base;
@@ -842,6 +871,12 @@ function buildDriverForKeyRef(
       );
     }
   }
+}
+
+/** Extract the value that follows `label` in a GCP resource path parts array. */
+function gcpPathSegment(parts: string[], label: string): string | undefined {
+  const idx = parts.indexOf(label);
+  return idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : undefined;
 }
 
 // ── Public factory ────────────────────────────────────────────────────────────

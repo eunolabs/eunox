@@ -23,7 +23,7 @@
  * minterMetrics.mintTotal.inc({ tenant: 'acme', result: 'minted' });
  *
  * // Record KMS signing latency
- * const end = minterMetrics.mintLatency.startTimer({ tenant: 'acme' });
+ * const end = minterMetrics.mintLatencySeconds.startTimer({ tenant: 'acme' });
  * await signToken(...);
  * end();
  *

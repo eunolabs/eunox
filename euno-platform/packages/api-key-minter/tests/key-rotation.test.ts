@@ -99,6 +99,34 @@ describe('KeyRotationManager', () => {
       expect(rotRows).toHaveLength(1);
     });
 
+    it('is idempotent across reason changes — scheduled then emergency returns same jti', async () => {
+      // A rotation initiated as 'scheduled' must be detected as already started
+      // even if a second call uses reason='emergency', preventing duplicate rows.
+      const { manager, auditStore } = makeRotationManager();
+      const r1 = await manager.initiateRotation(makeKey('new-key-v2'), 'old-key-v1');
+      const r2 = await manager.initiateRotation(makeKey('new-key-v2'), 'old-key-v1', {
+        reason: 'emergency',
+      });
+      expect(r2.auditJti).toBe(r1.auditJti);
+      const allRotRows = auditStore
+        .getAll()
+        .filter(r => r.result === 'rotation_start' || r.result === 'rotation_emergency');
+      expect(allRotRows).toHaveLength(1);
+    });
+
+    it('is idempotent across reason changes — emergency then scheduled returns same jti', async () => {
+      const { manager, auditStore } = makeRotationManager();
+      const r1 = await manager.initiateRotation(makeKey('new-key-v2'), 'old-key-v1', {
+        reason: 'emergency',
+      });
+      const r2 = await manager.initiateRotation(makeKey('new-key-v2'), 'old-key-v1');
+      expect(r2.auditJti).toBe(r1.auditJti);
+      const allRotRows = auditStore
+        .getAll()
+        .filter(r => r.result === 'rotation_start' || r.result === 'rotation_emergency');
+      expect(allRotRows).toHaveLength(1);
+    });
+
     it('includes initiatedBy in the audit reason when provided', async () => {
       const { manager, auditStore } = makeRotationManager();
       const opts: RotationOptions = { reason: 'scheduled', initiatedBy: 'alice' };
@@ -191,6 +219,26 @@ describe('KeyRotationManager', () => {
       const result = await manager.completeRotation('new-key-v2', 'old-key-v1');
       expect(result.auditJti).toBeTruthy();
       expect(result.retiredKid).toBe('old-key-v1');
+    });
+
+    it('is idempotent — duplicate call returns same auditJti without writing a new row', async () => {
+      const { manager, auditStore } = makeRotationManager();
+      const r1 = await manager.completeRotation('new-key-v2', 'old-key-v1');
+      const r2 = await manager.completeRotation('new-key-v2', 'old-key-v1');
+      expect(r2.auditJti).toBe(r1.auditJti);
+      const completeRows = auditStore.getAll().filter(r => r.result === 'rotation_complete');
+      expect(completeRows).toHaveLength(1);
+    });
+
+    it('idempotency does not suppress a completion for a different oldKid', async () => {
+      // Completing rotation A (new-v2 retires old-v1) must not suppress
+      // completion of rotation B (new-v3 retires old-v2) even though both
+      // share the same newKid prefix pattern.
+      const { manager, auditStore } = makeRotationManager();
+      await manager.completeRotation('new-key-v2', 'old-key-v1');
+      await manager.completeRotation('new-key-v3', 'old-key-v2');
+      const completeRows = auditStore.getAll().filter(r => r.result === 'rotation_complete');
+      expect(completeRows).toHaveLength(2);
     });
 
     it('includes initiatedBy in the completion audit reason', async () => {

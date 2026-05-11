@@ -182,11 +182,13 @@ export class KeyRotationManager {
     const kind: 'scheduled' | 'emergency' = isEmergency ? 'emergency' : 'scheduled';
 
     // Idempotency: check whether a rotation_start OR rotation_emergency row for
-    // this (tenantId, newKid) already exists so duplicate calls are safe.
-    const resultToCheck: MintAuditRecord['result'] = isEmergency
-      ? 'rotation_emergency'
-      : 'rotation_start';
-    const existing = await this.findRotationAuditRow(newKey.kid, resultToCheck);
+    // this (tenantId, newKid) already exists so duplicate calls are safe
+    // regardless of whether the reason is changed between calls (e.g. scheduled
+    // re-run that becomes emergency — both result types signal that rotation for
+    // this key has already been initiated).
+    const existing =
+      (await this.findRotationAuditRow(newKey.kid, 'rotation_start')) ??
+      (await this.findRotationAuditRow(newKey.kid, 'rotation_emergency'));
     if (existing) {
       return { auditJti: existing.jti, kind };
     }
@@ -241,6 +243,17 @@ export class KeyRotationManager {
     opts: RotationOptions = {},
   ): Promise<RotationCompletedResult> {
     const reason = opts.reason ?? 'scheduled';
+
+    // Idempotency: check whether a rotation_complete row for this
+    // (tenantId, newKid, oldKid) triple already exists.  The audit record
+    // stores oldKid in its reason field, so we check for both kid and oldKid
+    // to avoid a false match if the same newKid is used to complete a different
+    // rotation in the future.
+    const existing = await this.findRotationAuditRow(newKid, 'rotation_complete', oldKid);
+    if (existing) {
+      return { auditJti: existing.jti, retiredKid: oldKid };
+    }
+
     const auditJti = generateRotationJti();
 
     // Remove the old key from JWKS first.
@@ -273,18 +286,30 @@ export class KeyRotationManager {
    * Return the first matching audit row for a given `kid` and `result` type,
    * or `undefined` if none exists.
    *
-   * Used for idempotency checking in `initiateRotation`.  Filters
-   * client-side from `listByTenant` to avoid adding a provider-specific
+   * Used for idempotency checking in `initiateRotation` and `completeRotation`.
+   * Filters client-side from `listByTenant` to avoid adding a provider-specific
    * `findByKid` method to the narrow `MintAuditStore` interface.
+   *
+   * @param kid            - The `kid` of the key whose rotation row to look for.
+   * @param result         - The `result` value to match.
+   * @param reasonContains - Optional substring that must appear in the `reason`
+   *                         field (used to tighten idempotency checks that need
+   *                         to distinguish the `oldKid` within the reason text).
    */
   private async findRotationAuditRow(
     kid: string,
     result: MintAuditRecord['result'],
+    reasonContains?: string,
   ): Promise<MintAuditRecord | undefined> {
     // `listByTenant` returns the most recent entries; limit to a reasonable
     // window (1000) to avoid a full table scan for busy tenants.
     const rows = await this.auditStore.listByTenant(this.tenantId, 1000);
-    return rows.find(r => r.kid === kid && r.result === result);
+    return rows.find(
+      r =>
+        r.kid === kid &&
+        r.result === result &&
+        (reasonContains === undefined || r.reason?.includes(reasonContains) === true),
+    );
   }
 }
 

@@ -53,6 +53,8 @@ export function createMintRouter(opts: MintRouterOptions): Router {
     // Start latency timer (label resolved after auth, defaults to 'unknown' if auth fails)
     let tenantId: string | undefined;
     const endLatency = minterMetrics.mintLatencySeconds.startTimer();
+    // Guard against double-recording when an error path already stopped the timer inline.
+    let metricsRecorded = false;
 
     try {
       // 1. Extract and verify API key
@@ -61,6 +63,7 @@ export function createMintRouter(opts: MintRouterOptions): Router {
       if (!rawKeyOrNull) {
         minterMetrics.mintTotal.inc({ tenant: 'unknown', result: 'authentication_failed' });
         endLatency({ tenant: 'unknown' });
+        metricsRecorded = true;
         throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Bearer token required', 401);
       }
       const verified = await opts.verifier.verify(rawKeyOrNull);
@@ -71,6 +74,7 @@ export function createMintRouter(opts: MintRouterOptions): Router {
       if (!rateResult.allowed) {
         minterMetrics.mintTotal.inc({ tenant: tenantId, result: 'rate_limited' });
         endLatency({ tenant: tenantId });
+        metricsRecorded = true;
         throw new CapabilityError(
           ErrorCode.RATE_LIMIT_EXCEEDED,
           'Mint rate limit exceeded for this tenant',
@@ -127,12 +131,15 @@ export function createMintRouter(opts: MintRouterOptions): Router {
         expiresAt: result.expiresAt,
       });
     } catch (error) {
-      // Record failure metric if we haven't already (e.g., for body parse errors)
-      if (tenantId !== undefined) {
-        const resultLabel = classifyErrorResult(error);
+      if (!metricsRecorded) {
+        // If tenantId was never resolved, verify() threw before auth completed.
+        const failureTenant = tenantId ?? 'unknown';
+        const resultLabel = tenantId === undefined
+          ? 'authentication_failed'
+          : classifyErrorResult(error);
         if (resultLabel !== null) {
-          minterMetrics.mintTotal.inc({ tenant: tenantId, result: resultLabel });
-          endLatency({ tenant: tenantId });
+          minterMetrics.mintTotal.inc({ tenant: failureTenant, result: resultLabel });
+          endLatency({ tenant: failureTenant });
         }
       }
       next(error);
@@ -148,8 +155,11 @@ export function createMintRouter(opts: MintRouterOptions): Router {
  * above — `authentication_failed` and `rate_limited` are recorded before the
  * error is thrown so that the latency timer can be stopped at the right point).
  *
- * Error codes already recorded (return null):
- * - `AUTHENTICATION_FAILED` — recorded when Bearer token is missing or invalid
+ * When `tenantId` was never resolved (verify() threw), the caller uses
+ * `'authentication_failed'` directly rather than calling this function.
+ *
+ * Error codes already recorded inline (return null):
+ * - `AUTHENTICATION_FAILED` — recorded when Bearer token is missing
  * - `RATE_LIMIT_EXCEEDED`   — recorded when tenant rate limit is hit
  */
 function classifyErrorResult(error: unknown): string | null {

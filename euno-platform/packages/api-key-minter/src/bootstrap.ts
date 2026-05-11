@@ -129,7 +129,17 @@ async function main(): Promise<void> {
     }
     const pool = new pgModule.Pool({ connectionString: auditDbUrl });
     const pgAuditStore = new PostgresMintAuditStore(pool as MintAuditPgPool);
-    await pgAuditStore.ensureSchema();
+    // Only run DDL when explicitly requested so the service can start under an
+    // INSERT-only role (the recommended least-privilege configuration described
+    // in the threat model §6).  Schema should be deployed via a migration step.
+    if (process.env['MINTER_AUDIT_SCHEMA_INIT']?.toLowerCase() === 'true') {
+      await pgAuditStore.ensureSchema();
+      logger.info('Postgres mint audit schema initialised');
+    } else {
+      logger.info(
+        'Skipping mint audit schema init (set MINTER_AUDIT_SCHEMA_INIT=true to run DDL at startup)',
+      );
+    }
     logger.info('Using Postgres-backed mint audit store');
     auditStoreBase = pgAuditStore;
   } else {
