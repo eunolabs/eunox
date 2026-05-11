@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import { CapabilityError, createLogger } from '@euno/common';
 import { createMintRouter, MintRouterOptions } from './routes/mint';
 import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-keys';
+import { minterMetrics } from './metrics';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -27,6 +28,16 @@ export function createMinterApp(deps: MinterDependencies): Express {
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'api-key-minter' });
+  });
+
+  // Prometheus metrics endpoint
+  app.get('/metrics', async (_req: Request, res: Response) => {
+    try {
+      res.set('Content-Type', minterMetrics.registry.contentType);
+      res.send(await minterMetrics.registry.metrics());
+    } catch {
+      res.status(500).send('Error collecting metrics');
+    }
   });
 
   // Error handler

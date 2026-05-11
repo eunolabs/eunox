@@ -24,6 +24,8 @@ export interface MintTokenResult {
   capabilityToken: string;
   expiresAt: number;
   jti: string;
+  /** Key ID (`kid`) of the signing key, for the mint audit record. */
+  kid: string;
 }
 
 export interface TokenMinterOptions {
@@ -91,7 +93,28 @@ export class TokenMinter {
     };
 
     const capabilityToken = await this.signer.sign(payload);
+    // Extract the actual kid from the JWT protected header so that the audit
+    // record reflects the key that signed the token even when KmsTokenSigner
+    // selects a per-tenant key that differs from the default driver.
+    const kid = extractJwtKid(capabilityToken);
 
-    return { capabilityToken, expiresAt, jti };
+    return { capabilityToken, expiresAt, jti, kid };
+  }
+}
+
+/**
+ * Decode the `kid` claim from the first segment (protected header) of a JWT.
+ * Returns an empty string if the header is absent or does not contain `kid`.
+ */
+function extractJwtKid(jwt: string): string {
+  const headerSegment = jwt.split('.')[0];
+  if (!headerSegment) return '';
+  try {
+    const header = JSON.parse(
+      Buffer.from(headerSegment, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>;
+    return typeof header['kid'] === 'string' ? header['kid'] : '';
+  } catch {
+    return '';
   }
 }
