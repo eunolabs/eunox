@@ -3,7 +3,7 @@
  * ────────────────────────────────────────────────────────────────────────────
  * Tests cover:
  *
- *   1. All six metric types exist and have the correct names.
+ *   1. All six metric families exist and have the correct names.
  *   2. `mintTotal` increments by tenant and result labels.
  *   3. `mintLatencySeconds` timer resolves and the registry collects it.
  *   4. `kmsSignLatencySeconds` timer resolves and the registry collects it.

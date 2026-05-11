@@ -51,9 +51,9 @@ groups:
           summary: "Abnormal mint rate for tenant {{ $labels.tenant }}"
           description: >-
             The current 5-minute mint rate for tenant {{ $labels.tenant }}
-            is {{ $value | humanizePercentage }} above its 1-hour rolling
-            average. This may indicate a runaway agent loop or a credential
-            compromise.
+            is {{ $value | humanize }} mints/s, which exceeds 10× its 1-hour
+            rolling average. This may indicate a runaway agent loop or a
+            credential compromise.
           runbook: "https://docs.euno.example/runbooks/minter-rate-spike"
 
       # ── Rule 2 — Off-hours minting for a low-activity tenant ────────────────
