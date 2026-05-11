@@ -617,7 +617,7 @@ Run `npx ts-node scripts/stage3-readiness.ts` to check current status (exits 0 w
 > - [ ] Task 11 — Minter HSM integration *(blocked on Task 1 sign-off)*
 > - [ ] Task 12 — Minter monitoring & alerting *(blocked on Task 1 sign-off)*
 > - [ ] Task 13 — Self-hostable Docker image
-> - [ ] Task 14 — BYO-GW path documentation
+> - [x] Task 14 — BYO-GW path documentation: `docs/self-host.md` produced; covers component list, what self-hosters give up, minimum viable issuer recipe (DID-based identity, AWS KMS signing path with LocalStack note, local EC-key gateway audit signing), full production docker-compose, audit query API, admin ops, and security checklist
 > - [ ] Task 15 — `@euno/mcp` upgrade UX
 > - [ ] Task 16 — Telemetry continuity + `scripts/stage4-readiness.ts`
 > - [ ] Task 17 — Pricing & billing plumbing
