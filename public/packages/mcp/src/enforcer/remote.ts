@@ -134,6 +134,13 @@ export interface RemoteEnforcerOptions {
    * Override in unit tests to avoid real network I/O.
    */
   fetcher?: EnforceFetcher;
+
+  /**
+   * Injectable clock function returning the current `Date`.
+   * Defaults to `() => new Date()`.  Override in unit tests to produce
+   * deterministic `context.now` timestamps.
+   */
+  clockFn?: () => Date;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +202,7 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
   private readonly _apiKey: string;
   private readonly _timeoutMs: number;
   private readonly _fetcher: EnforceFetcher;
+  private readonly _clockFn: () => Date;
 
   constructor(opts: RemoteEnforcerOptions) {
     if (!opts.url || opts.url.trim().length === 0) {
@@ -203,10 +211,16 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
     if (!opts.apiKey || opts.apiKey.trim().length === 0) {
       throw new Error('RemoteEnforcerPDP: apiKey must be a non-empty string');
     }
-    this._url = opts.url.replace(/\/+$/, ''); // strip trailing slashes
+    // Strip trailing slashes without a regex to avoid potential ReDoS on
+    // adversarial input strings with many repeated '/' characters.
+    let url = opts.url;
+    let end = url.length;
+    while (end > 0 && url[end - 1] === '/') end--;
+    this._url = url.slice(0, end);
     this._apiKey = opts.apiKey;
     this._timeoutMs = opts.timeoutMs ?? 10_000;
     this._fetcher = opts.fetcher ?? defaultFetcher;
+    this._clockFn = opts.clockFn ?? (() => new Date());
   }
 
   /** @inheritdoc */
@@ -221,7 +235,7 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
       context: {
         sourceIp: ctx.sourceIp,
         recipients: extractRecipients(rawArgs),
-        now: new Date().toISOString(),
+        now: this._clockFn().toISOString(),
       },
     };
 

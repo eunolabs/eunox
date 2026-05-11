@@ -745,7 +745,7 @@ export class HttpProxy {
       }
 
       const { matchedConditions, obligations } = decision;
-      const obligationsApplied: string[] = [];
+      const appliedTypes = new Set<string>();
       let finalResult = upstreamResult;
       if (obligations && obligations.length > 0) {
         // Remote-enforcer mode: apply obligations from the gateway response.
@@ -754,9 +754,7 @@ export class HttpProxy {
           obligations,
         ) as typeof upstreamResult;
         for (const o of obligations) {
-          if (!obligationsApplied.includes(o.type)) {
-            obligationsApplied.push(o.type);
-          }
+          appliedTypes.add(o.type);
         }
       } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
         // Local mode: derive obligations from the matched capability conditions.
@@ -764,15 +762,16 @@ export class HttpProxy {
           upstreamResult as ToolCallResult,
           matchedConditions,
         ) as typeof upstreamResult;
-        obligationsApplied.push('redactFields');
+        appliedTypes.add('redactFields');
       }
+      const obligationsApplied = appliedTypes.size > 0 ? Array.from(appliedTypes) : undefined;
 
       // Record the allow decision (with any obligations applied) fire-and-forget.
       void this._opts.auditSink.record({
         sessionId,
         toolName: reqMsg.params.name,
         decision: 'allow',
-        obligationsApplied: obligationsApplied.length > 0 ? obligationsApplied : undefined,
+        obligationsApplied,
       });
 
       return finalResult;

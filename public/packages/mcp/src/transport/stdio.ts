@@ -420,7 +420,7 @@ export class StdioProxy {
       // matched constraint carries conditions that have a `redact` lobe, or
       // when the remote enforcer returned explicit obligations.
       const { matchedConditions, obligations } = decision;
-      const obligationsApplied: string[] = [];
+      const appliedTypes = new Set<string>();
       let finalResult = upstreamResult;
       if (obligations && obligations.length > 0) {
         // Remote-enforcer mode: apply obligations from the gateway response.
@@ -429,9 +429,7 @@ export class StdioProxy {
           obligations,
         ) as typeof upstreamResult;
         for (const o of obligations) {
-          if (!obligationsApplied.includes(o.type)) {
-            obligationsApplied.push(o.type);
-          }
+          appliedTypes.add(o.type);
         }
       } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
         // Local mode: derive obligations from the matched capability conditions.
@@ -439,15 +437,16 @@ export class StdioProxy {
           upstreamResult as ToolCallResult,
           matchedConditions,
         ) as typeof upstreamResult;
-        obligationsApplied.push('redactFields');
+        appliedTypes.add('redactFields');
       }
+      const obligationsApplied = appliedTypes.size > 0 ? Array.from(appliedTypes) : undefined;
 
       // Record the allow decision (with any obligations applied) fire-and-forget.
       void this._opts.auditSink.record({
         sessionId: this._opts.sessionId,
         toolName: req.params.name,
         decision: 'allow',
-        obligationsApplied: obligationsApplied.length > 0 ? obligationsApplied : undefined,
+        obligationsApplied,
       });
 
       return finalResult;
