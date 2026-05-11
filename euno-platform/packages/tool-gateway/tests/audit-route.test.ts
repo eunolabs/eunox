@@ -34,7 +34,6 @@ import {
   AuditQueryFilter,
   AuditQueryPagination,
   AuditQueryPage,
-  InMemoryLedgerBackend,
 } from '@euno/common';
 import { createApp } from '../src/app-factory';
 import { JWTTokenVerifier } from '../src/verifier';
@@ -93,7 +92,6 @@ function makeLedgerEntry(ev: SignedAuditEvidence, seq: number): LedgerEntry {
  * `queryEntries` applies all filters in-memory (same logic as InMemoryLedgerBackend).
  */
 function makeMockBackend(entries: LedgerEntry[]): LedgerBackend {
-  const realBackend = new InMemoryLedgerBackend();
   // Inject entries directly into the in-memory backend via its public API
   // would require signing; instead we implement a thin mock that delegates
   // to the InMemoryLedgerBackend's queryEntries after pre-loading via the
@@ -113,9 +111,6 @@ function makeMockBackend(entries: LedgerEntry[]): LedgerBackend {
       return entries.filter((e) => e.seq >= from && e.seq <= to);
     },
     async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
-      // Delegate the filtering logic to the real InMemoryLedgerBackend
-      // implementation by swapping its internal array — simplest approach.
-      void realBackend; // keep reference alive
       const limit = Math.min(pagination.limit ?? 50, 1000);
       const direction = pagination.direction ?? 'asc';
 

@@ -131,6 +131,15 @@ export class LedgerHmacError extends Error {
 
 // ── LedgerBackend interface ───────────────────────────────────────────────────
 
+/** Default page size for {@link LedgerBackend.queryEntries} when `limit` is omitted. */
+export const LEDGER_QUERY_DEFAULT_LIMIT = 50;
+
+/**
+ * Hard upper bound on the page size accepted by {@link LedgerBackend.queryEntries}.
+ * Back-end implementations MUST clamp `pagination.limit` to this value.
+ */
+export const LEDGER_QUERY_MAX_LIMIT = 1000;
+
 /**
  * Filter parameters for {@link LedgerBackend.queryEntries}.
  *
@@ -497,7 +506,7 @@ export class InMemoryLedgerBackend implements LedgerBackend {
   }
 
   async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
-    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
     const direction = pagination.direction ?? 'asc';
 
     // Decode cursor (a stringified seq number).
@@ -1038,7 +1047,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
   }
 
   async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
-    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
     const direction = pagination.direction ?? 'asc';
     const params: unknown[] = [];
     const conditions: string[] = [];
@@ -1980,7 +1989,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
   }
 
   async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
-    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
     const direction = pagination.direction ?? 'asc';
     const params: unknown[] = [];
     const conditions: string[] = [];
