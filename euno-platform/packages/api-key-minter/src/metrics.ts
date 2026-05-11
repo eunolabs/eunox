@@ -1,5 +1,5 @@
 /**
- * Minter Prometheus metrics (Task 11, Stage 3)
+ * Minter Prometheus metrics (Task 12, Stage 3)
  * ────────────────────────────────────────────────────────────────────────────
  * All minter metrics use a shared `prometheus.Registry` instance so that
  * the `/metrics` endpoint can be served independently of the default global
@@ -9,10 +9,12 @@
  *
  * | Metric | Type | Labels | Description |
  * |---|---|---|---|
- * | `euno_minter_mint_total` | Counter | `tenant`, `result` | Total mint requests by tenant and result (`minted` / `authentication_failed` / `rate_limited` / `invalid_request`) |
+ * | `euno_minter_mint_total` | Counter | `tenant`, `result` | Total mint requests by tenant and result (`minted` / `authentication_failed` / `rate_limited` / `invalid_request` / `kms_error` / `internal_error`) |
  * | `euno_minter_mint_latency_seconds` | Histogram | `tenant` | End-to-end mint request latency in seconds |
- * | `euno_minter_kms_error_total` | Counter | `provider`, `operation` | KMS call errors (sign / get_public_key / get_key_id) by provider |
- * | `euno_minter_anomaly_alerts_total` | Counter | `tenant`, `kind` | Mint anomaly alerts (e.g. `burst_detected`, `cross_tenant_probe`) |
+ * | `euno_minter_kms_sign_latency_seconds` | Histogram | `provider` | HSM sign operation latency in seconds |
+ * | `euno_minter_kms_error_total` | Counter | `provider`, `error_class` | KMS call errors (`sign_failed` / `auth_error` / `timeout` / `unavailable`) by provider |
+ * | `euno_minter_anomaly_alerts_total` | Counter | `tenant`, `rule` | Mint anomaly alerts by tenant and rule name |
+ * | `euno_minter_key_rotation_total` | Counter | `kid`, `reason` | Key rotation events (`scheduled` / `emergency` / `completed`) |
  *
  * ## Usage
  *
@@ -23,7 +25,7 @@
  * minterMetrics.mintTotal.inc({ tenant: 'acme', result: 'minted' });
  *
  * // Record KMS signing latency
- * const end = minterMetrics.mintLatencySeconds.startTimer({ tenant: 'acme' });
+ * const end = minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'azure-keyvault' });
  * await signToken(...);
  * end();
  *
@@ -87,29 +89,74 @@ export const mintLatencySeconds = new promClient.Histogram({
 });
 
 /**
- * KMS call errors, partitioned by provider and operation.
+ * HSM sign operation latency histogram (seconds), partitioned by provider.
  *
- * `operation` label values: `'sign'`, `'get_public_key'`, `'get_key_id'`
+ * Tracks only the cloud KMS/HSM signing call, excluding overhead such as
+ * API-key verification, rate-limit checks, and audit writes.  This is the
+ * metric to alert on when the HSM SLA degrades.
+ *
+ * `provider` label values: `'azure-keyvault'`, `'aws-kms'`, `'gcp-cloudkms'`, `'local'`
  */
-export const kmsErrorTotal = new promClient.Counter({
-  name: 'euno_minter_kms_error_total',
-  help: 'KMS call errors by provider and operation',
-  labelNames: ['provider', 'operation'] as const,
+export const kmsSignLatencySeconds = new promClient.Histogram({
+  name: 'euno_minter_kms_sign_latency_seconds',
+  help: 'HSM sign operation latency in seconds, partitioned by provider',
+  labelNames: ['provider'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
   registers: [minterRegistry],
 });
 
 /**
- * Mint anomaly alerts.
+ * KMS call errors, partitioned by provider and error class.
  *
- * `kind` label values:
- * - `'burst_detected'`      — per-tenant mint rate far above baseline
- * - `'cross_tenant_probe'`  — same key prefix tried across tenants
- * - `'sequential_jti'`      — suspicious sequential JTI pattern
+ * `error_class` label values:
+ * - `'sign_failed'`  — the HSM rejected or failed the sign call
+ * - `'auth_error'`   — workload identity was rejected (IAM/token expiry)
+ * - `'timeout'`      — the HSM call timed out
+ * - `'unavailable'`  — the KMS endpoint was unreachable (network partition / provider outage)
+ */
+export const kmsErrorTotal = new promClient.Counter({
+  name: 'euno_minter_kms_error_total',
+  help: 'KMS call errors by provider and error class',
+  labelNames: ['provider', 'error_class'] as const,
+  registers: [minterRegistry],
+});
+
+/**
+ * Mint anomaly alerts, partitioned by tenant and rule name.
+ *
+ * Incremented by {@link AnomalyDetector} whenever a rule fires in-process.
+ * The Prometheus alerting rules in `prometheus/minter-alert-rules.yaml`
+ * provide the production alert routing; this counter provides defence-in-depth
+ * and enables per-tenant anomaly dashboards without complex PromQL.
+ *
+ * `rule` label values:
+ * - `'rate_spike'`            — per-tenant mint rate far above baseline (Rule 1)
+ * - `'off_hours_low_activity'`— off-hours mint for low-activity tenant (Rule 2)
+ * - `'failure_clustering'`    — mint failure rate spike for tenant (Rule 3)
  */
 export const anomalyAlertsTotal = new promClient.Counter({
   name: 'euno_minter_anomaly_alerts_total',
-  help: 'Mint anomaly alerts by tenant and kind',
-  labelNames: ['tenant', 'kind'] as const,
+  help: 'Mint anomaly alerts by tenant and rule name',
+  labelNames: ['tenant', 'rule'] as const,
+  registers: [minterRegistry],
+});
+
+/**
+ * Key rotation events, partitioned by key ID and reason.
+ *
+ * Incremented by {@link KeyRotationManager} at the start and completion of
+ * each rotation. The `MinterEmergencyKeyRotation` Prometheus alert rule
+ * fires when `reason="emergency"` increases.
+ *
+ * `reason` label values:
+ * - `'scheduled'`  — routine key rotation initiated
+ * - `'emergency'`  — compromise-response emergency rotation initiated
+ * - `'completed'`  — rotation completed and old key retired
+ */
+export const keyRotationTotal = new promClient.Counter({
+  name: 'euno_minter_key_rotation_total',
+  help: 'Key rotation events by key ID and reason',
+  labelNames: ['kid', 'reason'] as const,
   registers: [minterRegistry],
 });
 
@@ -123,6 +170,8 @@ export const minterMetrics = {
   registry: minterRegistry,
   mintTotal,
   mintLatencySeconds,
+  kmsSignLatencySeconds,
   kmsErrorTotal,
   anomalyAlertsTotal,
+  keyRotationTotal,
 } as const;

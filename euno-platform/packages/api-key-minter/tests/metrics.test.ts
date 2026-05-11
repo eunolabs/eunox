@@ -1,14 +1,16 @@
 /**
- * Minter metrics — unit tests (Task 11, Stage 3)
+ * Minter metrics — unit tests (Task 12, Stage 3)
  * ────────────────────────────────────────────────────────────────────────────
  * Tests cover:
  *
- *   1. All four metric types exist and have the correct names.
+ *   1. All six metric families exist and have the correct names.
  *   2. `mintTotal` increments by tenant and result labels.
  *   3. `mintLatencySeconds` timer resolves and the registry collects it.
- *   4. `kmsErrorTotal` increments by provider and operation.
- *   5. `anomalyAlertsTotal` increments by tenant and kind.
- *   6. The `/metrics` HTTP endpoint returns valid Prometheus text format.
+ *   4. `kmsSignLatencySeconds` timer resolves and the registry collects it.
+ *   5. `kmsErrorTotal` increments by provider and error_class.
+ *   6. `anomalyAlertsTotal` increments by tenant and rule.
+ *   7. `keyRotationTotal` increments by kid and reason.
+ *   8. The `/metrics` HTTP endpoint returns valid Prometheus text format.
  */
 
 import request from 'supertest';
@@ -37,11 +39,9 @@ describe('minterMetrics — metric definitions', () => {
   });
 
   it('registers euno_minter_mint_total counter', async () => {
-    const text = await minterMetrics.registry.metrics();
     minterMetrics.mintTotal.inc({ tenant: 'test-tenant', result: 'minted' });
-    const text2 = await minterMetrics.registry.metrics();
-    expect(text2).toMatch(/euno_minter_mint_total/);
-    void text; // avoid unused
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/euno_minter_mint_total/);
   });
 
   it('registers euno_minter_mint_latency_seconds histogram', async () => {
@@ -51,16 +51,29 @@ describe('minterMetrics — metric definitions', () => {
     expect(text).toMatch(/euno_minter_mint_latency_seconds/);
   });
 
+  it('registers euno_minter_kms_sign_latency_seconds histogram', async () => {
+    const end = minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'aws-kms' });
+    end();
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/euno_minter_kms_sign_latency_seconds/);
+  });
+
   it('registers euno_minter_kms_error_total counter', async () => {
-    minterMetrics.kmsErrorTotal.inc({ provider: 'aws-kms', operation: 'sign' });
+    minterMetrics.kmsErrorTotal.inc({ provider: 'aws-kms', error_class: 'sign_failed' });
     const text = await minterMetrics.registry.metrics();
     expect(text).toMatch(/euno_minter_kms_error_total/);
   });
 
   it('registers euno_minter_anomaly_alerts_total counter', async () => {
-    minterMetrics.anomalyAlertsTotal.inc({ tenant: 't1', kind: 'burst_detected' });
+    minterMetrics.anomalyAlertsTotal.inc({ tenant: 't1', rule: 'rate_spike' });
     const text = await minterMetrics.registry.metrics();
     expect(text).toMatch(/euno_minter_anomaly_alerts_total/);
+  });
+
+  it('registers euno_minter_key_rotation_total counter', async () => {
+    minterMetrics.keyRotationTotal.inc({ kid: 'kid-1', reason: 'scheduled' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/euno_minter_key_rotation_total/);
   });
 });
 
@@ -88,49 +101,128 @@ describe('mintTotal counter', () => {
     expect(text).toMatch(/tenant="acme"/);
     expect(text).toMatch(/tenant="beta"/);
   });
+
+  it('supports kms_error result label', async () => {
+    minterMetrics.mintTotal.inc({ tenant: 'acme', result: 'kms_error' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/result="kms_error"/);
+  });
 });
 
-// ── Test 3: Histogram timer ────────────────────────────────────────────────────
+// ── Test 3: Histogram timers ─────────────────────────────────────────────────
 
 describe('mintLatencySeconds histogram', () => {
   it('startTimer().end() increments the bucket count', async () => {
     const end = minterMetrics.mintLatencySeconds.startTimer({ tenant: 'acme' });
     end();
     const text = await minterMetrics.registry.metrics();
-    // The _count metric includes any default labels set on the registry.
     expect(text).toMatch(/euno_minter_mint_latency_seconds_count\{.*tenant="acme".*\} 1/);
+  });
+});
+
+describe('kmsSignLatencySeconds histogram', () => {
+  it('records latency for KMS sign operations by provider', async () => {
+    const end = minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'azure-keyvault' });
+    end();
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/euno_minter_kms_sign_latency_seconds_count\{.*provider="azure-keyvault".*\} 1/);
+  });
+
+  it('tracks different providers separately', async () => {
+    const end1 = minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'aws-kms' });
+    end1();
+    const end2 = minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'gcp-cloudkms' });
+    end2();
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/provider="aws-kms"/);
+    expect(text).toMatch(/provider="gcp-cloudkms"/);
   });
 });
 
 // ── Test 4: kmsErrorTotal counter ────────────────────────────────────────────
 
 describe('kmsErrorTotal counter', () => {
-  it('increments by provider and operation', async () => {
-    minterMetrics.kmsErrorTotal.inc({ provider: 'aws-kms', operation: 'sign' });
+  it('increments by provider and error_class', async () => {
+    minterMetrics.kmsErrorTotal.inc({ provider: 'aws-kms', error_class: 'sign_failed' });
     const text = await minterMetrics.registry.metrics();
     expect(text).toMatch(/provider="aws-kms"/);
-    expect(text).toMatch(/operation="sign"/);
+    expect(text).toMatch(/error_class="sign_failed"/);
   });
 
-  it('tracks get_public_key operation separately', async () => {
-    minterMetrics.kmsErrorTotal.inc({ provider: 'gcp-cloudkms', operation: 'get_public_key' });
+  it('tracks auth_error class separately', async () => {
+    minterMetrics.kmsErrorTotal.inc({ provider: 'azure-keyvault', error_class: 'auth_error' });
     const text = await minterMetrics.registry.metrics();
-    expect(text).toMatch(/operation="get_public_key"/);
+    expect(text).toMatch(/error_class="auth_error"/);
+  });
+
+  it('tracks timeout class separately', async () => {
+    minterMetrics.kmsErrorTotal.inc({ provider: 'gcp-cloudkms', error_class: 'timeout' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/error_class="timeout"/);
+  });
+
+  it('tracks unavailable class separately', async () => {
+    minterMetrics.kmsErrorTotal.inc({ provider: 'aws-kms', error_class: 'unavailable' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/error_class="unavailable"/);
   });
 });
 
 // ── Test 5: anomalyAlertsTotal counter ────────────────────────────────────────
 
 describe('anomalyAlertsTotal counter', () => {
-  it('increments by tenant and kind', async () => {
-    minterMetrics.anomalyAlertsTotal.inc({ tenant: 'acme', kind: 'burst_detected' });
+  it('increments by tenant and rule', async () => {
+    minterMetrics.anomalyAlertsTotal.inc({ tenant: 'acme', rule: 'rate_spike' });
     const text = await minterMetrics.registry.metrics();
-    expect(text).toMatch(/kind="burst_detected"/);
+    expect(text).toMatch(/rule="rate_spike"/);
     expect(text).toMatch(/tenant="acme"/);
+  });
+
+  it('tracks off_hours_low_activity rule separately', async () => {
+    minterMetrics.anomalyAlertsTotal.inc({ tenant: 'acme', rule: 'off_hours_low_activity' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/rule="off_hours_low_activity"/);
+  });
+
+  it('tracks failure_clustering rule separately', async () => {
+    minterMetrics.anomalyAlertsTotal.inc({ tenant: 'acme', rule: 'failure_clustering' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/rule="failure_clustering"/);
   });
 });
 
-// ── Test 6: /metrics HTTP endpoint ───────────────────────────────────────────
+// ── Test 6: keyRotationTotal counter ─────────────────────────────────────────
+
+describe('keyRotationTotal counter', () => {
+  it('increments for scheduled rotation', async () => {
+    minterMetrics.keyRotationTotal.inc({ kid: 'key-v1', reason: 'scheduled' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/kid="key-v1"/);
+    expect(text).toMatch(/reason="scheduled"/);
+  });
+
+  it('increments for emergency rotation', async () => {
+    minterMetrics.keyRotationTotal.inc({ kid: 'key-v2', reason: 'emergency' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/reason="emergency"/);
+  });
+
+  it('increments for rotation completion', async () => {
+    minterMetrics.keyRotationTotal.inc({ kid: 'key-v2', reason: 'completed' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/reason="completed"/);
+  });
+
+  it('tracks different kids independently', async () => {
+    minterMetrics.keyRotationTotal.inc({ kid: 'kid-a', reason: 'scheduled' });
+    minterMetrics.keyRotationTotal.inc({ kid: 'kid-b', reason: 'emergency' });
+    const text = await minterMetrics.registry.metrics();
+    expect(text).toMatch(/kid="kid-a"/);
+    expect(text).toMatch(/kid="kid-b"/);
+  });
+});
+
+// ── Test 7: /metrics HTTP endpoint ───────────────────────────────────────────
 
 describe('/metrics endpoint', () => {
   async function buildApp() {
@@ -176,5 +268,23 @@ describe('/metrics endpoint', () => {
     const app = await buildApp();
     const resp = await request(app).get('/metrics');
     expect(resp.text).toMatch(/euno_minter_/);
+  });
+
+  it('response includes all six metric families', async () => {
+    minterMetrics.mintTotal.inc({ tenant: 'x', result: 'minted' });
+    minterMetrics.mintLatencySeconds.startTimer({ tenant: 'x' })();
+    minterMetrics.kmsSignLatencySeconds.startTimer({ provider: 'local' })();
+    minterMetrics.kmsErrorTotal.inc({ provider: 'local', error_class: 'sign_failed' });
+    minterMetrics.anomalyAlertsTotal.inc({ tenant: 'x', rule: 'rate_spike' });
+    minterMetrics.keyRotationTotal.inc({ kid: 'k1', reason: 'scheduled' });
+
+    const app = await buildApp();
+    const resp = await request(app).get('/metrics');
+    expect(resp.text).toMatch(/euno_minter_mint_total/);
+    expect(resp.text).toMatch(/euno_minter_mint_latency_seconds/);
+    expect(resp.text).toMatch(/euno_minter_kms_sign_latency_seconds/);
+    expect(resp.text).toMatch(/euno_minter_kms_error_total/);
+    expect(resp.text).toMatch(/euno_minter_anomaly_alerts_total/);
+    expect(resp.text).toMatch(/euno_minter_key_rotation_total/);
   });
 });

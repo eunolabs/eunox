@@ -29,6 +29,8 @@ import { InMemoryApiKeyStore } from './api-key-store';
 import { ApiKeyVerifier, PepperEntry } from './api-key-verifier';
 import { TokenMinter } from './token-minter';
 import { LocalTokenSigner } from './local-token-signer';
+import { MeteredTokenSigner } from './metered-token-signer';
+import { AnomalyDetector } from './anomaly-detector';
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
@@ -93,13 +95,15 @@ async function main(): Promise<void> {
   const publicKeyPem = process.env['MINTER_PUBLIC_KEY_PEM'];
 
   // 1. KMS provider (production — HSM-backed, non-exportable keys)
+  const kmsProvider = process.env['MINTER_KMS_PROVIDER'];
   const kmsSigner = createKmsTokenSignerFromEnv(process.env);
   if (kmsSigner) {
     logger.info('Using KMS-backed token signer', {
-      provider: process.env['MINTER_KMS_PROVIDER'],
+      provider: kmsProvider,
       algorithm: kmsSigner.getAlgorithm() ?? process.env['MINTER_SIGNING_ALGORITHM'] ?? 'ES256',
     });
-    signer = kmsSigner;
+    // Wrap with MeteredTokenSigner so sign latency and KMS errors are tracked.
+    signer = new MeteredTokenSigner(kmsSigner, kmsProvider ?? 'unknown');
   } else if (privateKeyPem && publicKeyPem) {
     // 2. Local software signer (self-host / CI with pre-configured key)
     signer = new LocalTokenSigner({ privateKeyPem, publicKeyPem });
@@ -158,9 +162,13 @@ async function main(): Promise<void> {
   const verifier = new ApiKeyVerifier({ store: keyStore, peppers, logger });
   const minter = new TokenMinter({ signer, issuerDid, gatewayAudience, ttlSeconds });
 
+  // Anomaly detector — shared across all requests, stateful per-tenant window.
+  const anomalyDetector = new AnomalyDetector();
+
   const app = createMinterApp({
     mintRouterOpts: { verifier, minter, auditStore, rateLimiter, logger },
     adminKeysRouterOpts: { keyStore, peppers, adminApiKey, logger },
+    anomalyDetector,
     logger,
   });
 

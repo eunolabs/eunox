@@ -1,0 +1,179 @@
+# Minter alert rules — Task 12, Stage 3
+# ────────────────────────────────────────────────────────────────────────────
+# These rules are designed for Prometheus Alertmanager and correspond exactly
+# to the rules defined in docs/security/minter-threat-model.md §7.
+#
+# Deployment:
+#   kubectl apply -f prometheus/minter-alert-rules.yaml
+#   # or, using Prometheus Operator:
+#   kubectl apply -f prometheus/minter-alert-rules.yaml -n monitoring
+#
+# Alert routing:
+#   critical  → PagerDuty / OpsGenie (immediate page, 24×7)
+#   warning   → #security-alerts Slack channel (reviewed at next stand-up)
+#
+# Runbook base URL: https://docs.euno.example/runbooks/
+# All runbooks are maintained in docs/runbooks/minter-*.md.
+#
+# Testing:
+#   Run `promtool check rules prometheus/minter-alert-rules.yaml` to validate.
+#   Synthetic test fixtures are run in CI before the minter is approved for
+#   production traffic (see docs/security/minter-threat-model.md §7).
+# ────────────────────────────────────────────────────────────────────────────
+
+groups:
+  - name: euno_minter_alerts
+    # Evaluation interval: 1 minute.  Alerts with `for: 0m` fire immediately
+    # on the next scrape; others wait for the specified duration.
+    interval: 1m
+    rules:
+
+      # ── Rule 1 — Mint-rate spike per tenant ─────────────────────────────────
+      #
+      # Fires when a single tenant's mint rate in the current 5-minute window
+      # exceeds 10× the rolling 1-hour average (computed as avg_over_time of
+      # the 5-minute rate, sampled at 5-minute intervals over the last 1 hour).
+      #
+      # Runbook: docs/runbooks/minter-rate-spike.md
+      - alert: MinterRateSpike
+        expr: |
+          sum by (tenant) (rate(euno_minter_mint_total{result="minted"}[5m]))
+          > 10 * sum by (tenant) (
+              avg_over_time(
+                rate(euno_minter_mint_total{result="minted"}[5m])[1h:5m]
+              )
+            )
+        for: 2m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Abnormal mint rate for tenant {{ $labels.tenant }}"
+          description: >-
+            The current 5-minute mint rate for tenant {{ $labels.tenant }}
+            is {{ $value | humanize }} mints/s, which exceeds 10× its 1-hour
+            rolling average. This may indicate a runaway agent loop or a
+            credential compromise.
+          runbook: "https://docs.euno.example/runbooks/minter-rate-spike"
+
+      # ── Rule 2 — Off-hours minting for a low-activity tenant ────────────────
+      #
+      # Fires when a tenant with fewer than 10 successful mints in the last 7
+      # days mints a token during the off-hours window (22:00–06:00 UTC).
+      # Low-activity tenants are unlikely to have legitimate automated workloads
+      # during these hours; unexpected activity is a credential-compromise signal.
+      #
+      # The `euno_minter_anomaly_alerts_total{rule="off_hours_low_activity"}`
+      # counter provides an in-process supplement to this rule for environments
+      # where sub-minute detection is required.
+      #
+      # Runbook: docs/runbooks/minter-off-hours.md
+      - alert: MinterOffHoursMint
+        expr: |
+          (
+            sum by (tenant) (
+              increase(euno_minter_mint_total{result="minted"}[5m])
+            ) > 0
+            and on(tenant) (
+              sum by (tenant) (
+                increase(euno_minter_mint_total{result="minted"}[7d])
+              ) < 10
+            )
+          )
+          and (hour() >= 22 or hour() < 6)
+        for: 0m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Off-hours mint for low-activity tenant {{ $labels.tenant }}"
+          description: >-
+            Tenant {{ $labels.tenant }} minted a token during off-hours
+            (22:00–06:00 UTC) but has fewer than 10 successful mints in the
+            last 7 days. Investigate for potential credential compromise.
+          runbook: "https://docs.euno.example/runbooks/minter-off-hours"
+
+      # ── Rule 3 — KMS error clustering ────────────────────────────────────────
+      #
+      # Fires when the total KMS error rate across all providers exceeds 5
+      # errors per second for at least 1 minute. This typically indicates an
+      # HSM outage, network partition, or IAM credential expiry.
+      #
+      # Minter behavior during KMS unavailability: fail-closed (all mint
+      # requests are rejected with HTTP 503). No tokens can be forged.
+      #
+      # Runbook: docs/runbooks/minter-kms-errors.md
+      - alert: MinterKmsErrorCluster
+        expr: |
+          sum(rate(euno_minter_kms_error_total[1m])) > 5
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "KMS error rate spike ({{ $value | humanize }} errors/s)"
+          description: >-
+            The minter KMS error rate has exceeded 5 errors/s for the last
+            minute. All mint requests are being rejected (fail-closed).
+            Check cloud provider status and minter workload identity.
+          runbook: "https://docs.euno.example/runbooks/minter-kms-errors"
+
+      # ── Rule 4 — Mint failure spike (failure clustering) ─────────────────────
+      #
+      # Fires when the fraction of failed mint calls (any result other than
+      # "minted") for a single tenant exceeds 50% over 5 minutes, provided
+      # there is non-zero total traffic. This pattern is consistent with:
+      #   - API-key enumeration / credential stuffing
+      #   - A tenant's key being rotated server-side while the agent has the old key
+      #   - A bug in a new minter deployment
+      #
+      # Runbook: docs/runbooks/minter-high-failure.md
+      - alert: MinterHighFailureRate
+        expr: |
+          (
+            sum by (tenant) (
+              rate(euno_minter_mint_total{result!="minted"}[5m])
+            )
+            /
+            sum by (tenant) (
+              rate(euno_minter_mint_total[5m])
+            )
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: >-
+            High mint failure rate for tenant {{ $labels.tenant }}
+            ({{ $value | humanizePercentage }})
+          description: >-
+            More than 50% of mint requests for tenant {{ $labels.tenant }}
+            have failed over the last 5 minutes. Check for credential
+            stuffing, stale client keys, or a minter deployment regression.
+          runbook: "https://docs.euno.example/runbooks/minter-high-failure"
+
+      # ── Rule 5 — Emergency key rotation ──────────────────────────────────────
+      #
+      # Fires immediately when an emergency key rotation event is recorded
+      # (reason="emergency" on euno_minter_key_rotation_total). This is a
+      # notification alert: the rotation procedure has already been initiated by
+      # an operator. The runbook tracks the completion checklist.
+      #
+      # Runbook: docs/runbooks/minter-key-rotation.md
+      - alert: MinterEmergencyKeyRotation
+        expr: |
+          increase(euno_minter_key_rotation_total{reason="emergency"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: >-
+            Emergency minter key rotation initiated for kid {{ $labels.kid }}
+          description: >-
+            An emergency key rotation has been initiated for signing key
+            {{ $labels.kid }}. Follow the runbook checklist to verify
+            all rotation steps are completed and affected tenants are
+            notified. A global kill switch may have been activated.
+          runbook: "https://docs.euno.example/runbooks/minter-key-rotation"
