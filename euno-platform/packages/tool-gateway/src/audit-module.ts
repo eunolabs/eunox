@@ -26,6 +26,7 @@ import {
   Counter,
   createAuditLogger,
   createAuditPipeline,
+  createKmsEvidenceSignerFromEnv,
   createLogger,
   createOcsfWinstonTransport,
   createSoftwareEvidenceSignerFromEnv,
@@ -180,17 +181,41 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   let auditBatchSigner: AuditBatchSigner | undefined;
 
   try {
-    const softwareSigner = createSoftwareEvidenceSignerFromEnv(env);
-    if (!softwareSigner) {
-      throw new Error(
-        'No evidence signer is configured. Provide ' +
-          'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
-          'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
-          'EVIDENCE_SIGNING_KEY_ID, or wire a KMS-backed EvidenceSigner ' +
-          'programmatically. Refusing to start with cryptographic audit ' +
-          'enabled but no signer attached.',
-      );
-    }
+    // Select the evidence signer: KMS-backed (AUDIT_SIGNING_KMS_PROVIDER) takes
+    // precedence over the software signer (EVIDENCE_SIGNING_KEY_PEM / _FILE).
+    // Both produce byte-identical canonical evidence records and chain semantics
+    // (same AuditEvidenceSigner wrapper); only the signature bytes, keyId, and
+    // algorithm field differ — which is the explicit design of Task 5 (Stage 3).
+    const kmsProvider = (validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER;
+    const softwareSigner = kmsProvider
+      ? (() => {
+          const kmsSigner = createKmsEvidenceSignerFromEnv(env);
+          if (!kmsSigner) {
+            throw new Error(
+              `AUDIT_SIGNING_KMS_PROVIDER='${kmsProvider}' is set but the required ` +
+                'KMS configuration variables are missing or invalid. ' +
+                'Provide the appropriate AUDIT_SIGNING_<PROVIDER>_* variables.',
+            );
+          }
+          logger.info('Cryptographic audit: using KMS-backed evidence signer', {
+            provider: kmsProvider,
+          });
+          return kmsSigner;
+        })()
+      : (() => {
+          const sw = createSoftwareEvidenceSignerFromEnv(env);
+          if (!sw) {
+            throw new Error(
+              'No evidence signer is configured. Provide ' +
+                'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded ' +
+                'private key) and optionally EVIDENCE_SIGNING_ALGORITHM / ' +
+                'EVIDENCE_SIGNING_KEY_ID, or set AUDIT_SIGNING_KMS_PROVIDER to use ' +
+                'a cloud KMS (azure-keyvault, aws-kms, gcp-cloudkms). ' +
+                'Refusing to start with cryptographic audit enabled but no signer attached.',
+            );
+          }
+          return sw;
+        })();
 
     const ledgerBackendName = (validated as { AUDIT_LEDGER_BACKEND?: 'none' | 'postgres' | 'in-memory' | 'acl' | 'per-replica-postgres' }).AUDIT_LEDGER_BACKEND;
 
@@ -369,14 +394,18 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   if (!evidenceSigner) {
     throw new Error(
       'Evidence signing is enabled but no evidence signer is configured. Provide ' +
-        'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded private key).',
+        'EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE (PEM-encoded private key), ' +
+        'or set AUDIT_SIGNING_KMS_PROVIDER to use a cloud KMS backend (azure-keyvault, aws-kms, gcp-cloudkms).',
     );
   }
 
   if (signedDecisions !== undefined) {
     logger.info('Cryptographic audit enabled with per-decision signing', { signedDecisions });
   } else {
-    logger.info('Cryptographic audit enabled with software evidence signer');
+    const signerType = (validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER
+      ? `KMS (${(validated as { AUDIT_SIGNING_KMS_PROVIDER?: string }).AUDIT_SIGNING_KMS_PROVIDER})`
+      : 'software';
+    logger.info(`Cryptographic audit enabled with ${signerType} evidence signer`);
   }
 
   // ── Async audit pipeline (R-9) ────────────────────────────────────────────

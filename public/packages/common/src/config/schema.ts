@@ -971,6 +971,116 @@ export const GatewayConfigSchema = z
       'Evidence signing key id. Defaults to "software-key".',
     ),
 
+    // KMS-backed evidence signer (Task 5 — Stage 3) -------------------------
+    //
+    // When AUDIT_SIGNING_KMS_PROVIDER is set the gateway uses a cloud-KMS
+    // backed EvidenceSigner instead of the software (PEM key) signer.
+    // The two signers produce byte-identical canonical evidence records;
+    // only the `signature` bytes, `keyId`, and `algorithm` fields differ.
+    // Fail-closed: KMS unavailable → gateway refuses to sign and the
+    // request is denied (AUDIT_PIPELINE_BACKPRESSURE=block for strict mode).
+    AUDIT_SIGNING_KMS_PROVIDER: optionalString
+      .pipe(
+        z
+          .union([
+            z.literal('azure-keyvault'),
+            z.literal('aws-kms'),
+            z.literal('gcp-cloudkms'),
+            z.undefined(),
+          ])
+          .optional(),
+      )
+      .describe(
+        'Cloud KMS provider for audit evidence signing. One of: ' +
+          '"azure-keyvault", "aws-kms", "gcp-cloudkms". ' +
+          'When set, the KMS-backed EvidenceSigner is used instead of the software signer ' +
+          '(EVIDENCE_SIGNING_KEY_PEM / EVIDENCE_SIGNING_KEY_FILE). ' +
+          'The two signers produce byte-identical canonical evidence records; only the ' +
+          'signature bytes, keyId, and algorithm fields differ. ' +
+          'Required provider-specific variables are documented under AUDIT_SIGNING_AZURE_*, ' +
+          'AUDIT_SIGNING_AWS_*, and AUDIT_SIGNING_GCP_*.',
+      ),
+    AUDIT_SIGNING_KEY_ID: optionalString.describe(
+      'Logical key ID stamped on every signed audit-evidence record when using the KMS signer. ' +
+        'A short, stable label (e.g. "audit-signing-key-v2") that operators can recognise in the ' +
+        'audit log without needing the full key ARN. Derived from the provider key reference when omitted.',
+    ),
+    AUDIT_SIGNING_ALGORITHM: optionalString.describe(
+      'JWS algorithm for the KMS-backed evidence signer. Defaults to RS256. ' +
+        'Supported: RS256, PS256, ES256. The evidence signer always pre-hashes with SHA-256; ' +
+        'only SHA-256-family algorithms are supported.',
+    ),
+
+    // Azure Key Vault provider -----------------------------------------------
+    AUDIT_SIGNING_AZURE_KEYVAULT_URL: optionalString.describe(
+      'Azure Key Vault base URL. Required when AUDIT_SIGNING_KMS_PROVIDER=azure-keyvault. ' +
+        'Example: https://my-vault.vault.azure.net/',
+    ),
+    AUDIT_SIGNING_AZURE_KEY_NAME: optionalString.describe(
+      'Key name within the vault. Required when AUDIT_SIGNING_KMS_PROVIDER=azure-keyvault. ' +
+        'Example: audit-signing-key',
+    ),
+    AUDIT_SIGNING_AZURE_KEY_VERSION: optionalString.describe(
+      'Optional specific key version. Defaults to the latest version when omitted. ' +
+        'Pin a version only when auditability of the exact signing key matters more than ' +
+        'seamless key rotation.',
+    ),
+    AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE: envEnum({
+      values: ['default', 'managed-identity', 'client-secret'] as const,
+      default: 'default',
+      description:
+        'Azure credential strategy for the audit signing Key Vault. ' +
+        '"default" (recommended): DefaultAzureCredential — workload identity, managed identity, ' +
+        'or standard AZURE_* env vars tried in order. ' +
+        '"managed-identity": ManagedIdentityCredential (set AUDIT_SIGNING_AZURE_CLIENT_ID for user-assigned). ' +
+        '"client-secret": ClientSecretCredential — requires AUDIT_SIGNING_AZURE_CLIENT_ID, ' +
+        'AUDIT_SIGNING_AZURE_CLIENT_SECRET, and AUDIT_SIGNING_AZURE_TENANT_ID.',
+    }),
+    AUDIT_SIGNING_AZURE_CLIENT_ID: optionalString.describe(
+      'Azure client ID. Required when AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE=client-secret. ' +
+        'Also accepted for managed-identity to select a specific user-assigned identity.',
+    ),
+    AUDIT_SIGNING_AZURE_CLIENT_SECRET: optionalString.describe(
+      'Azure client secret. Required when AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    AUDIT_SIGNING_AZURE_TENANT_ID: optionalString.describe(
+      'Azure tenant ID. Required when AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+
+    // AWS KMS provider -------------------------------------------------------
+    AUDIT_SIGNING_AWS_KMS_KEY_ID: optionalString.describe(
+      'AWS KMS key ARN, key ID, or alias ARN. Required when AUDIT_SIGNING_KMS_PROVIDER=aws-kms. ' +
+        'Example: arn:aws:kms:us-east-1:123456789012:key/mrk-… or alias/audit-signing-key.',
+    ),
+    AUDIT_SIGNING_AWS_KMS_REGION: optionalString.describe(
+      'AWS region for the KMS key. Defaults to the SDK default (AWS_REGION / AWS_DEFAULT_REGION env vars). ' +
+        'Set explicitly when the key region differs from the gateway region.',
+    ),
+
+    // GCP Cloud KMS provider -------------------------------------------------
+    AUDIT_SIGNING_GCP_PROJECT_ID: optionalString.describe(
+      'GCP project ID. Required when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.',
+    ),
+    AUDIT_SIGNING_GCP_LOCATION_ID: optionalString.describe(
+      'GCP KMS location (region or "global"). Defaults to "global". ' +
+        'Example: us-central1',
+    ),
+    AUDIT_SIGNING_GCP_KEYRING_ID: optionalString.describe(
+      'GCP KMS key ring ID. Required when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.',
+    ),
+    AUDIT_SIGNING_GCP_CRYPTOKEY_ID: optionalString.describe(
+      'GCP KMS crypto key ID. Required when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.',
+    ),
+    AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION: optionalString.describe(
+      'GCP KMS crypto key version. Defaults to the primary version ("1"). ' +
+        'Omit to let GCP select the active primary automatically on each rotation.',
+    ),
+    AUDIT_SIGNING_GCP_KEY_FILE_PATH: optionalString.describe(
+      'Optional path to a GCP service account key file. ' +
+        'Falls back to Application Default Credentials (ADC) when unset — ' +
+        'workload identity, GOOGLE_APPLICATION_CREDENTIALS, or gcloud ADC.',
+    ),
+
     // Audit chain seed (per-service env var name pattern is documented; we
     // accept the gateway's well-known one explicitly).
     EUNO_AUDIT_CHAIN_SEED_TOOL_GATEWAY: optionalString.describe(
@@ -1642,14 +1752,70 @@ export const GatewayConfigSchema = z
     if (
       willSignSomething &&
       !cfg.EVIDENCE_SIGNING_KEY_PEM &&
-      !cfg.EVIDENCE_SIGNING_KEY_FILE
+      !cfg.EVIDENCE_SIGNING_KEY_FILE &&
+      !cfg.AUDIT_SIGNING_KMS_PROVIDER
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['EVIDENCE_SIGNING_KEY_PEM'],
         message:
-          'When evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS non-empty), either EVIDENCE_SIGNING_KEY_PEM or EVIDENCE_SIGNING_KEY_FILE must be set.',
+          'When evidence signing is enabled (ENABLE_CRYPTOGRAPHIC_AUDIT=true with EVIDENCE_SIGNED_DECISIONS unset, or EVIDENCE_SIGNED_DECISIONS non-empty), ' +
+          'either EVIDENCE_SIGNING_KEY_PEM, EVIDENCE_SIGNING_KEY_FILE, or AUDIT_SIGNING_KMS_PROVIDER must be set.',
       });
+    }
+
+    // Validate KMS-provider-specific required fields at boot time so a
+    // misconfigured deployment fails immediately rather than at first request.
+    if (cfg.AUDIT_SIGNING_KMS_PROVIDER === 'azure-keyvault') {
+      if (!cfg.AUDIT_SIGNING_AZURE_KEYVAULT_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AUDIT_SIGNING_AZURE_KEYVAULT_URL'],
+          message: 'AUDIT_SIGNING_AZURE_KEYVAULT_URL is required when AUDIT_SIGNING_KMS_PROVIDER=azure-keyvault.',
+        });
+      }
+      if (!cfg.AUDIT_SIGNING_AZURE_KEY_NAME) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AUDIT_SIGNING_AZURE_KEY_NAME'],
+          message: 'AUDIT_SIGNING_AZURE_KEY_NAME is required when AUDIT_SIGNING_KMS_PROVIDER=azure-keyvault.',
+        });
+      }
+      if (
+        cfg.AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE === 'client-secret' &&
+        (!cfg.AUDIT_SIGNING_AZURE_CLIENT_ID || !cfg.AUDIT_SIGNING_AZURE_CLIENT_SECRET || !cfg.AUDIT_SIGNING_AZURE_TENANT_ID)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE'],
+          message:
+            'AUDIT_SIGNING_AZURE_CLIENT_ID, AUDIT_SIGNING_AZURE_CLIENT_SECRET, and AUDIT_SIGNING_AZURE_TENANT_ID ' +
+            'are required when AUDIT_SIGNING_AZURE_CREDENTIAL_TYPE=client-secret.',
+        });
+      }
+    }
+
+    if (cfg.AUDIT_SIGNING_KMS_PROVIDER === 'aws-kms') {
+      if (!cfg.AUDIT_SIGNING_AWS_KMS_KEY_ID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AUDIT_SIGNING_AWS_KMS_KEY_ID'],
+          message: 'AUDIT_SIGNING_AWS_KMS_KEY_ID is required when AUDIT_SIGNING_KMS_PROVIDER=aws-kms.',
+        });
+      }
+    }
+
+    if (cfg.AUDIT_SIGNING_KMS_PROVIDER === 'gcp-cloudkms') {
+      const gcpRequired = ['AUDIT_SIGNING_GCP_PROJECT_ID', 'AUDIT_SIGNING_GCP_KEYRING_ID', 'AUDIT_SIGNING_GCP_CRYPTOKEY_ID'] as const;
+      for (const field of gcpRequired) {
+        if (!cfg[field]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: `${field} is required when AUDIT_SIGNING_KMS_PROVIDER=gcp-cloudkms.`,
+          });
+        }
+      }
     }
 
     // R-9: validate the audit-pipeline backpressure policy at config
