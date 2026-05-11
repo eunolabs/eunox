@@ -32,6 +32,7 @@ import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
 import { createValidateRouter } from './routes/validate';
 import { createToolsRouter } from './routes/tools';
+import { createEnforceRouter } from './routes/enforce';
 import type { GatewayDependencies } from './bootstrap';
 
 /**
@@ -118,6 +119,14 @@ export function createApp(deps: GatewayDependencies): Express {
     },
   });
   app.use(limiter);
+
+  // Remote-enforcer endpoint (Stage-3 Task 9): mounted BEFORE the global
+  // body-parser so the route's own 512 KiB body-parser takes precedence.
+  // The global express.json() below is then a no-op for already-parsed bodies
+  // (Express does not double-parse), giving other routes their own 100 KiB
+  // default without changing this route's limit.
+  // See docs/stage-3-gateway-protocol.md for the protocol spec.
+  app.use(createEnforceRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
 
   app.use(express.json());
 

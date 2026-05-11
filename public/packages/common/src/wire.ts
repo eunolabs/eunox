@@ -1195,3 +1195,219 @@ export interface ValidateActionResponse {
   matchedCapability?: CapabilityConstraint;
 }
 
+// ---------------------------------------------------------------------------
+// Stage-3 remote-enforcer wire protocol (Task 9)
+// ---------------------------------------------------------------------------
+//
+// These types define the HTTP contract between @euno/mcp running in
+// remote-enforcer mode and the hosted gateway's POST /api/v1/enforce endpoint.
+// The canonical documentation lives in docs/stage-3-gateway-protocol.md.
+// Any evolution MUST land here first so both the gateway (tool-gateway) and
+// the client (@euno/mcp) share a single source of truth per the cross-cutting
+// obligation in docs/stage3executionplan.md.
+
+/**
+ * Current protocol version integer. Sent by the client in the
+ * `X-Euno-Protocol-Version` request header and echoed by the gateway in the
+ * same response header.
+ *
+ * **Versioning rule:** bump this constant when a breaking change is introduced.
+ * The gateway MUST continue to support all previously published versions until
+ * they are retired after a deprecation window of ≥1 minor `@euno/mcp` release.
+ * Deprecated versions are announced via the `X-Euno-Deprecation` response header.
+ */
+export const ENFORCE_PROTOCOL_VERSION = 1 as const;
+
+/**
+ * Set of protocol version integers the current implementation can serve.
+ * The gateway rejects requests whose `X-Euno-Protocol-Version` is not in
+ * this set with HTTP 400 / `UNSUPPORTED_PROTOCOL_VERSION`.
+ */
+export const SUPPORTED_ENFORCE_PROTOCOL_VERSIONS: ReadonlySet<number> = new Set([
+  ENFORCE_PROTOCOL_VERSION,
+]);
+
+/**
+ * Per-request context forwarded by `@euno/mcp` to the remote enforcer.
+ *
+ * All fields are optional so the client can omit those that are not
+ * applicable to the transport or tool. The gateway applies fail-closed
+ * semantics: a condition that requires a missing field (e.g. `ipRange`
+ * when `sourceIp` is absent) results in a denial with code
+ * `MISSING_CONTEXT`.
+ */
+export interface EnforceRequestContext {
+  /**
+   * Source IP of the MCP client, stripped of any IPv4-mapped prefix
+   * (`::ffff:`). In Cloud, the edge / minter facade overwrites
+   * caller-supplied values with the observed connection IP so that
+   * `ipRange` conditions cannot be bypassed by a compromised agent.
+   * Self-hosters that run their own network boundary MAY supply this
+   * from trusted forwarding headers; they MUST document the trust
+   * assumption and verify it against their ingress configuration.
+   * Omit for stdio-transport requests — ipRange conditions will deny
+   * with `MISSING_CONTEXT`.
+   */
+  sourceIp?: string;
+
+  /**
+   * Recipient addresses extracted from the tool arguments
+   * (to / recipients / cc / bcc fields). The gateway applies the same
+   * recipient-extraction logic as the local `recipientDomain` handler.
+   * MAY be omitted when the tool call has no recipient semantics;
+   * `recipientDomain` conditions will deny with `MISSING_CONTEXT`.
+   */
+  recipients?: string[];
+
+  /**
+   * Wall-clock time of the request as an ISO-8601 string.
+   *
+   * When omitted the gateway uses its own authoritative clock for
+   * enforcement. When supplied the value is recorded in the audit event
+   * for correlation; on the **hosted** service it is NOT used to evaluate
+   * `timeWindow` conditions — clients cannot manipulate time-based access
+   * decisions. Self-hosters MAY honour this field for `timeWindow`
+   * evaluation but MUST document that trust assumption explicitly.
+   *
+   * Requests where the supplied `now` diverges by more than 60 seconds
+   * from the gateway clock are rejected with `INVALID_REQUEST` / clock-skew
+   * guard.
+   */
+  now?: string;
+}
+
+/**
+ * Request body sent by `@euno/mcp` to `POST /api/v1/enforce`.
+ *
+ * **Authentication:** The client always presents a JWT Bearer token in
+ * `Authorization`. In the hosted deployment topology the minter façade
+ * (Task 10) converts the client's API key (`sk-…`) into a short-lived JWT
+ * before the request reaches this route; in self-hosted deployments the
+ * operator's issuer JWT is sent directly. This route never accepts raw API
+ * keys — the façade is the only party that handles them.
+ *
+ * **Size limit:** 512 KiB. Requests exceeding this limit receive HTTP 413
+ * with error code `REQUEST_TOO_LARGE`.
+ */
+export interface EnforceRequest {
+  /**
+   * Opaque session identifier from the MCP `initialize` handshake.
+   * For stdio transport: the proxy process-lifetime ID.
+   * For HTTP transport: the `initialize` → `shutdown` cycle ID.
+   * Used by the gateway to apply session-scoped kill-switch checks and
+   * to group audit events from the same session.
+   */
+  sessionId: string;
+
+  /**
+   * The MCP tool name exactly as sent in the `tools/call` request.
+   * Matched against the policy's `requiredCapabilities[].resource`
+   * using the same `matchesResource()` logic as the local PDP.
+   */
+  toolName: string;
+
+  /**
+   * The raw arguments object from the `tools/call` request.
+   * The gateway runs `argumentSchema` validation (when present in the
+   * policy) and extracts `recipients` / `operations` from this for
+   * condition evaluation. MUST be JSON-serialisable; binary values
+   * should be base64-encoded strings. When the gateway receives an
+   * arguments object that fails schema validation, it denies with code
+   * `ARGUMENT_SCHEMA_VIOLATION`.
+   */
+  arguments: Record<string, unknown>;
+
+  /** Per-request context for condition evaluation. */
+  context: EnforceRequestContext;
+}
+
+/**
+ * A single obligation the caller MUST apply before returning the
+ * upstream response to the MCP client. Obligations are applied in
+ * declaration order. An empty `obligations` array (or omitted field)
+ * means no post-processing is required.
+ *
+ * Only present in an `EnforceResponse` when `decision` is `'allow'`.
+ */
+export type Obligation =
+  /** Strip the listed dotted-path fields from the upstream response body. */
+  | { type: 'redactFields'; paths: string[] }
+  /** Attach metadata to the caller's own audit event for this tool call. */
+  | { type: 'annotate'; key: string; value: string };
+
+/**
+ * Structured details about a denial decision. Only present in an
+ * `EnforceResponse` when `decision` is `'deny'`.
+ */
+export interface DenialInfo {
+  /**
+   * Machine-readable denial code, drawn from the `ErrorCode` enum in
+   * `@euno/common`. Examples: `'AUTHORIZATION_FAILED'`, `'ARGUMENT_SCHEMA_VIOLATION'`,
+   * `'RATE_LIMIT_EXCEEDED'`, `'AGENT_TERMINATED'`.
+   */
+  code: string;
+
+  /**
+   * The condition type that triggered the denial, or `'killSwitch'` /
+   * `'policy'` / `'tokenVerification'` for non-condition denials.
+   */
+  conditionType: string;
+
+  /**
+   * Human-readable denial message. Suitable for server-side logging;
+   * MUST NOT be surfaced verbatim to end-users (may contain internal
+   * identifiers).
+   */
+  message: string;
+
+  /**
+   * Optional structured details specific to the denial type:
+   * - argumentSchema failures: `{ schemaErrors: ValidationError[] }`
+   * - ipRange denials: `{ sourceIp: string, allowedRanges: string[] }`
+   * - maxCalls denials: `{ currentCount: number, maxCalls: number, windowSeconds: number }`
+   */
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Response body returned by the gateway from `POST /api/v1/enforce`.
+ *
+ * HTTP status is always `200` when a decision is reached (whether `allow`
+ * or `deny`). Non-200 status codes indicate infrastructure-level errors
+ * (auth failure, malformed request, etc.) and use the `ErrorResponse` shape.
+ *
+ * The gateway echoes `X-Euno-Protocol-Version` in the response header.
+ */
+export interface EnforceResponse {
+  /**
+   * Echoes the `X-Request-Id` header from the caller, or a gateway-generated
+   * UUID when the header was absent. Included in the gateway's own audit log
+   * for cross-system correlation. Callers SHOULD log this value alongside the
+   * tool call event.
+   */
+  requestId: string;
+
+  /** The enforcement decision. */
+  decision: 'allow' | 'deny';
+
+  /**
+   * Obligations the caller MUST apply before returning the upstream response
+   * to the MCP client. Obligations are applied in the listed order.
+   * Present only when `decision` is `'allow'`; absent (not `null`) otherwise.
+   */
+  obligations?: Obligation[];
+
+  /**
+   * Denial details. Present only when `decision` is `'deny'`;
+   * absent (not `null`) otherwise.
+   */
+  denial?: DenialInfo;
+
+  /**
+   * ISO-8601 timestamp of this decision, from the gateway's authoritative
+   * clock. Callers may use this to populate the `activityTime` field of
+   * their own audit event.
+   */
+  decidedAt: string;
+}
+
