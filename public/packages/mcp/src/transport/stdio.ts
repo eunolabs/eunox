@@ -65,7 +65,7 @@ import {
 } from '../protocol';
 import { McpAuditSink, NullAuditSink } from '../audit';
 import type { TelemetryHooks } from '../telemetry/types';
-import { applyRedactObligations, type ToolCallResult } from './obligations';
+import { applyRedactObligations, applyRemoteObligations, type ToolCallResult } from './obligations';
 import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
@@ -417,24 +417,58 @@ export class StdioProxy {
       }
 
       // Apply redactFields (and any other response-path) obligations when the
-      // matched constraint carries conditions that have a `redact` lobe.
-      const { matchedConditions } = decision;
-      const obligationsApplied: string[] = [];
+      // matched constraint carries conditions that have a `redact` lobe, or
+      // when the remote enforcer returned explicit obligations.
+      //
+      // Response-mutating obligations (redactFields) MUST NOT be applied to
+      // error results — the error payload is preserved intact for debugging.
+      // Metadata obligations (annotate) are always captured regardless of
+      // isError; the transport extracts their key/values before applying any
+      // response mutations.
+      const { matchedConditions, obligations } = decision;
+      const appliedTypes = new Set<string>();
       let finalResult = upstreamResult;
-      if (matchedConditions && hasRedactObligation(matchedConditions)) {
-        finalResult = applyRedactObligations(
-          upstreamResult as ToolCallResult,
-          matchedConditions,
-        ) as typeof upstreamResult;
-        obligationsApplied.push('redactFields');
+
+      // Extract annotate key/values regardless of isError.
+      let annotateValues: Record<string, string> | undefined;
+      if (obligations) {
+        for (const o of obligations) {
+          if (o.type === 'annotate') {
+            annotateValues ??= {};
+            annotateValues[o.key] = o.value;
+          }
+        }
       }
+
+      const isErrorResult = (upstreamResult as ToolCallResult).isError === true;
+      if (!isErrorResult) {
+        if (obligations && obligations.length > 0) {
+          // Remote-enforcer mode: apply response-mutating obligations.
+          finalResult = applyRemoteObligations(
+            upstreamResult as ToolCallResult,
+            obligations,
+          ) as typeof upstreamResult;
+          if (obligations.some((o) => o.type === 'redactFields')) {
+            appliedTypes.add('redactFields');
+          }
+        } else if (matchedConditions && hasRedactObligation(matchedConditions)) {
+          // Local mode: derive obligations from the matched capability conditions.
+          finalResult = applyRedactObligations(
+            upstreamResult as ToolCallResult,
+            matchedConditions,
+          ) as typeof upstreamResult;
+          appliedTypes.add('redactFields');
+        }
+      }
+      const obligationsApplied = appliedTypes.size > 0 ? Array.from(appliedTypes) : undefined;
 
       // Record the allow decision (with any obligations applied) fire-and-forget.
       void this._opts.auditSink.record({
         sessionId: this._opts.sessionId,
         toolName: req.params.name,
         decision: 'allow',
-        obligationsApplied: obligationsApplied.length > 0 ? obligationsApplied : undefined,
+        obligationsApplied,
+        annotateValues,
       });
 
       return finalResult;

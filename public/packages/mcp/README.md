@@ -312,13 +312,73 @@ On timeout the proxy returns a structured `CapabilityDenied` result with
 
 ---
 
+## Stage-3 remote-enforcer mode
+
+`@euno/mcp` can delegate enforcement to the hosted Euno gateway instead of
+evaluating policy in-process.  Pass `--enforcer-url` and `--enforcer-api-key`
+in place of `--policy`:
+
+```bash
+euno-mcp proxy \
+  --enforcer-url https://gateway.euno.example \
+  --enforcer-api-key sk-... \
+  -- node ./my-mcp-server.js
+```
+
+Every intercepted `tools/call` is forwarded to the gateway's
+`POST /api/v1/enforce` endpoint.  The gateway evaluates the full policy (including
+`maxCalls` rate limits, kill-switch state, and KMS-signed audit) and returns either
+an **allow** decision (optionally with response-path obligations such as
+`redactFields`) or a **deny** decision.
+
+### What changes in remote mode
+
+| Feature | Local mode | Remote mode |
+|---|---|---|
+| Policy file | Required (`--policy`) | Not used |
+| In-process counters | `InMemoryCallCounterStore` | Gateway Redis/DB |
+| Kill switch | In-memory (per process) | Gateway global |
+| Audit signing | Local HMAC key file | Gateway KMS |
+| Custom conditions | Loaded via `--custom-condition` | Registered on gateway |
+| Policy backends | Loaded via `--policy-backend` | Registered on gateway |
+
+### Fail-closed guarantee
+
+Any network error, HTTP error response, or malformed response body from the gateway
+results in a `deny` decision with code `GATEWAY_UNAVAILABLE`.  The upstream tool is
+never called when the gateway is unreachable.
+
+### Obligations
+
+When the gateway allows a call it may return response-path obligations.  The proxy
+applies them automatically before forwarding the upstream response to the MCP client:
+
+| Obligation type | Effect |
+|---|---|
+| `redactFields` | Strips listed dotted-path fields from JSON text content and `structuredContent` |
+| `annotate` | Captures key/value metadata in the local audit record for this tool call (response unchanged) |
+
+### Options
+
+| Option | Description | Default |
+|---|---|---|
+| `--enforcer-url <url>` | Gateway base URL | *(required)* |
+| `--enforcer-api-key <key>` | API key (Bearer token) | *(required)* |
+| `--enforcer-timeout <ms>` | Timeout per gateway call | 10000 ms |
+
+`--enforcer-url` and `--policy` are mutually exclusive.
+
+---
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `euno-mcp proxy [--policy <file>] [--transport stdio\|http] [--port <n>] -- <upstream-cmd>` | Start the proxy |
+| `euno-mcp proxy [--policy <file>] [--transport stdio\|http] [--port <n>] -- <upstream-cmd>` | Start the proxy (local enforcement) |
+| `euno-mcp proxy --enforcer-url <url> --enforcer-api-key <key> -- <upstream-cmd>` | Start the proxy (remote-enforcer mode) |
 | `euno-mcp proxy --auth-token <token>` | Require Bearer token auth on /mcp (HTTP transport) |
 | `euno-mcp proxy --upstream-timeout <ms>` | Timeout for upstream tool calls |
+| `euno-mcp proxy --enforcer-timeout <ms>` | Timeout per remote enforce request (default: 10000 ms) |
 | `euno-mcp proxy --policy-backend <module>` | Load a policy backend module (repeatable) |
 | `euno-mcp proxy --custom-condition <module>` | Load a custom condition handler module (repeatable) |
 | `euno-mcp proxy --trust-forwarded-for` | Trust `X-Forwarded-For` for `ipRange` (HTTP transport, loopback bind only) |

@@ -106,10 +106,24 @@ export interface McpAuditRecord {
    * result before forwarding it to the MCP client (e.g. `['redactFields']`).
    * Stored in the `unmapped` block of the OCSF record.
    *
-   * Only set when `decision` is `'allow'` and at least one obligation was
-   * applied.
+   * Only set when `decision` is `'allow'` and at least one response-mutating
+   * obligation (e.g. `redactFields`) was applied.  Metadata-only obligations
+   * (`annotate`) are recorded separately in {@link annotateValues}.
    */
   obligationsApplied?: string[];
+  /**
+   * Annotation key/value pairs from the remote enforcer's `annotate`
+   * obligations.  These are audit-enrichment metadata that the gateway
+   * requested be captured alongside the enforcement decision — they do not
+   * modify the upstream response.
+   *
+   * Stored in the `unmapped` block of the OCSF record under the key
+   * `"annotateValues"` when present.
+   *
+   * Only set when `decision` is `'allow'` and the gateway returned at least
+   * one `annotate` obligation.
+   */
+  annotateValues?: Record<string, string>;
   /**
    * Optional request identifier for correlation with upstream logs.
    * Stored in `metadata.uid` when provided; a UUID is generated otherwise.
@@ -288,8 +302,13 @@ export class LocalAuditSink implements McpAuditSink {
       if (entry.denialCode) unmapped['denialCode'] = entry.denialCode;
       if (entry.conditionType) unmapped['conditionType'] = entry.conditionType;
       if (entry.details) unmapped['details'] = entry.details;
-    } else if (entry.obligationsApplied && entry.obligationsApplied.length > 0) {
-      unmapped['obligationsApplied'] = entry.obligationsApplied;
+    } else {
+      if (entry.obligationsApplied && entry.obligationsApplied.length > 0) {
+        unmapped['obligationsApplied'] = entry.obligationsApplied;
+      }
+      if (entry.annotateValues && Object.keys(entry.annotateValues).length > 0) {
+        unmapped['annotateValues'] = entry.annotateValues;
+      }
     }
 
     // Build the unsigned OCSF event body (no enrichments yet).

@@ -16,6 +16,8 @@
 export { MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS } from './protocol';
 export type { PolicyDecisionPoint, PdpContext, PdpDecision, ConditionEnforcerPDPOptions } from './pdp';
 export { AlwaysAllowPDP, ConditionEnforcerPDP } from './pdp';
+export { RemoteEnforcerPDP } from './enforcer/remote';
+export type { RemoteEnforcerOptions, EnforceFetcher } from './enforcer/remote';
 export { StdioProxy } from './transport/stdio';
 export type { StdioProxyOptions } from './transport/stdio';
 export { HttpProxy } from './transport/http';

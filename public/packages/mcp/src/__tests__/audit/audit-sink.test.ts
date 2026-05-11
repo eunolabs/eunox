@@ -781,3 +781,94 @@ describe('LocalAuditSink — obligationsApplied field in unmapped', () => {
     expect(verifyAuditEvent(event!, signer)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// annotateValues field — remote annotate obligation (Task 2 Stage 3)
+// ---------------------------------------------------------------------------
+
+describe('LocalAuditSink — annotateValues field in unmapped', () => {
+  let dir: string;
+
+  beforeEach(() => { dir = tmpDir(); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('writes annotateValues into unmapped for an allow record when provided', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-ann',
+      toolName: 'get_user',
+      decision: 'allow',
+      annotateValues: { classification: 'internal', owner: 'team-a' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).toMatchObject({
+      annotateValues: { classification: 'internal', owner: 'team-a' },
+    });
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+
+  it('omits annotateValues from unmapped when not provided', async () => {
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({ sessionId: 'sess-no-ann', toolName: 'echo', decision: 'allow' });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('annotateValues');
+  });
+
+  it('omits annotateValues on deny records even if supplied', async () => {
+    const { sink, logPath } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-deny-ann',
+      toolName: 'echo',
+      decision: 'deny',
+      denialCode: 'MAX_CALLS_EXCEEDED',
+      conditionType: 'maxCalls',
+      annotateValues: { classification: 'internal' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).not.toHaveProperty('annotateValues');
+    expect(event!.unmapped).toHaveProperty('denialCode');
+  });
+
+  it('writes both obligationsApplied and annotateValues when both are present', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-both',
+      toolName: 'export',
+      decision: 'allow',
+      obligationsApplied: ['redactFields'],
+      annotateValues: { sensitivity: 'high' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(event!.unmapped).toMatchObject({
+      obligationsApplied: ['redactFields'],
+      annotateValues: { sensitivity: 'high' },
+    });
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+  });
+
+  it('annotateValues is covered by HMAC (tampering fails verify)', async () => {
+    const { sink, logPath, signer } = makeSink(dir);
+    await sink.record({
+      sessionId: 'sess-tamper-ann',
+      toolName: 'get_user',
+      decision: 'allow',
+      annotateValues: { classification: 'internal' },
+    });
+    await sink.close();
+
+    const [event] = readLines(logPath);
+    expect(verifyAuditEvent(event!, signer)).toBe(true);
+
+    const tampered = JSON.parse(JSON.stringify(event)) as SignedMcpAuditEvent;
+    (tampered.unmapped as Record<string, unknown>)['annotateValues'] = { classification: 'TAMPERED' };
+    expect(verifyAuditEvent(tampered, signer)).toBe(false);
+  });
+});
