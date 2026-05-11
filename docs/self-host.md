@@ -130,12 +130,12 @@ provider required for development.
 > **Scope:** Development and internal team use. For production deployments and
 > compliance-sensitive environments, skip to §5.
 >
-> **KMS is always required** — the capability-issuer supports `SIGNING_PROVIDER`
-> values of `azure-keyvault`, `aws-kms`, and `gcp-cloudkms` only. There is no
-> software-PEM signing path. The minimum viable recipe uses AWS KMS, which can be
-> provisioned from a free AWS account. For true air-gapped local development,
-> [LocalStack](https://github.com/localstack/localstack) can emulate the AWS KMS
-> API without a cloud account.
+> **A KMS-compatible signing provider is required** — the capability-issuer
+> `SIGNING_PROVIDER` accepts `azure-keyvault`, `aws-kms`, and `gcp-cloudkms`
+> only. There is no software-PEM signing path. The minimum viable recipe uses
+> AWS KMS. For true air-gapped local development,
+> [LocalStack](https://github.com/localstack/localstack) emulates the AWS KMS
+> API locally — no cloud account needed.
 
 ### 4.1 Concepts
 
@@ -182,8 +182,9 @@ aws kms create-key \
 > `SignCommand` API needed by the issuer.
 >
 > **Production note:** Use an HSM-backed key in production (AWS CloudHSM-origin
-> CMK, or Azure Managed HSM, or GCP HSM protection level). See §5.1 for the full
-> KMS provider options and non-exportability verification steps.
+> CMK, Azure Managed HSM key, or GCP HSM protection level). For the Azure
+> Managed HSM provisioning procedure and non-exportability verification steps,
+> see `docs/stage-3-design.md` §1.3. Other KMS providers are described in §5.1.
 
 #### Step 2 — Write a capability policy manifest
 
