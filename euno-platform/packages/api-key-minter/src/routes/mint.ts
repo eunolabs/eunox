@@ -154,7 +154,7 @@ export function createMintRouter(opts: MintRouterOptions): Router {
  */
 function classifyErrorResult(error: unknown): string | null {
   if (error instanceof CapabilityError) {
-    switch (error.code as string) {
+    switch (error.code) {
       case ErrorCode.INVALID_REQUEST: return 'invalid_request';
       case ErrorCode.AUTHENTICATION_FAILED: return null; // already recorded above
       case ErrorCode.RATE_LIMIT_EXCEEDED: return null;   // already recorded above

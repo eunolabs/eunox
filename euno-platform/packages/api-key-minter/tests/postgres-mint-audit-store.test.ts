@@ -255,37 +255,34 @@ describe('PostgresMintAuditStore', () => {
 
     it('converts issued_at Date object to ISO string', async () => {
       const now = new Date();
-      await store.record(makeRecord({ tenantId: 'tenant-a', issuedAt: now.toISOString() }));
 
-      // Simulate pool returning a Date object (as real pg driver does for TIMESTAMPTZ)
-      // by overriding the query call to return a row with issued_at as Date
-      const original = pool.query.bind(pool);
-      jest.spyOn(pool, 'query').mockImplementationOnce(async (text) => {
-        if (text.startsWith('SELECT')) {
-          return {
-            rows: [
-              {
-                id: 1,
-                key_prefix: 'sk-testpref',
-                tenant_id: 'tenant-a',
-                agent_id: 'agent-1',
-                session_id: 'session-1',
-                jti: 'jti-date-test',
-                policy_id: 'policy-1',
-                issued_at: now, // Date object, as pg returns for TIMESTAMPTZ
-                expires_at: '1234567890',
-                kid: 'my-kid',
-                result: 'minted',
-                reason: null,
-              },
-            ],
-          };
-        }
-        return original(text);
-      });
+      // Simulate pool returning a Date object (as the real pg driver does for TIMESTAMPTZ).
+      // We create a fresh spy BEFORE calling listByTenant so mockImplementationOnce applies
+      // to the very next query() call — the SELECT issued by listByTenant.
+      const spy = jest.spyOn(pool, 'query').mockImplementationOnce(async () => ({
+        rows: [
+          {
+            id: 1,
+            key_prefix: 'sk-testpref',
+            tenant_id: 'tenant-a',
+            agent_id: 'agent-1',
+            session_id: 'session-1',
+            jti: 'jti-date-test',
+            policy_id: 'policy-1',
+            issued_at: now, // Date object, as pg returns for TIMESTAMPTZ
+            expires_at: '1234567890',
+            kid: 'my-kid',
+            result: 'minted',
+            reason: null,
+          },
+        ],
+      }));
 
       const results = await store.listByTenant('tenant-a', 10);
+      spy.mockRestore();
+
       const dateRow = results.find((r) => r.jti === 'jti-date-test');
+      expect(dateRow).toBeDefined();
       if (dateRow) {
         expect(typeof dateRow.issuedAt).toBe('string');
         expect(dateRow.issuedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);

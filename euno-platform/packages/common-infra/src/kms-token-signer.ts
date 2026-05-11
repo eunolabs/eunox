@@ -830,7 +830,7 @@ function buildDriverForKeyRef(
         const parts = keyRef.split('/');
         const versionIdx = parts.indexOf('cryptoKeyVersions');
         const cryptoKeyVersion: string = versionIdx >= 0 ? (parts[versionIdx + 1] ?? '1') : '1';
-        const cryptoKeyId: string = versionIdx >= 2 ? (parts[versionIdx - 1] ?? base.cryptoKeyId) : base.cryptoKeyId;
+        const cryptoKeyId: string = versionIdx >= 1 ? (parts[versionIdx - 1] ?? base.cryptoKeyId) : base.cryptoKeyId;
         return buildGcpCloudKmsDriver({ ...base, cryptoKeyId, cryptoKeyVersion });
       }
       return buildGcpCloudKmsDriver({ ...base, cryptoKeyId: keyRef, cryptoKeyVersion: '1' });

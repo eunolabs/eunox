@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   if (kmsSigner) {
     logger.info('Using KMS-backed token signer', {
       provider: process.env['MINTER_KMS_PROVIDER'],
-      algorithm: kmsSigner.getAlgorithm?.() ?? process.env['MINTER_SIGNING_ALGORITHM'] ?? 'ES256',
+      algorithm: kmsSigner.getAlgorithm() ?? process.env['MINTER_SIGNING_ALGORITHM'] ?? 'ES256',
     });
     signer = kmsSigner;
   } else if (privateKeyPem && publicKeyPem) {
