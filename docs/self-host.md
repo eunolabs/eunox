@@ -93,7 +93,7 @@ the issuance front-door changes.
 │  └────────┬────────┘          │                                  │  │
 │           │ JWT               │  POST /api/v1/enforce            │  │
 │           │                   │  GET  /api/v1/audit/records      │  │
-│           ▼                   │  POST /admin/v1/kill-switch/...  │  │
+│           ▼                   │  POST /admin/kill-switch/...     │  │
 │  ┌────────────────┐           │                                  │  │
 │  │  @euno/mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
 │  │  (agent proxy) │           └──────────┬───────────────────────┘  │
@@ -124,18 +124,27 @@ in the threat model (`docs/security/minter-threat-model.md` §"Audit trail").
 ## 4. Minimum viable issuer recipe
 
 This section shows the smallest configuration that produces a valid capability
-token and satisfies the gateway's verifier — no enterprise OIDC provider required.
+token and satisfies the gateway's verifier — no Redis, Postgres, or enterprise OIDC
+provider required for development.
 
 > **Scope:** Development and internal team use. For production deployments and
 > compliance-sensitive environments, skip to §5.
+>
+> **KMS is always required** — the capability-issuer supports `SIGNING_PROVIDER`
+> values of `azure-keyvault`, `aws-kms`, and `gcp-cloudkms` only. There is no
+> software-PEM signing path. The minimum viable recipe uses AWS KMS, which can be
+> provisioned from a free AWS account. For true air-gapped local development,
+> [LocalStack](https://github.com/localstack/localstack) can emulate the AWS KMS
+> API without a cloud account.
 
 ### 4.1 Concepts
 
 A capability token is a signed JWT that carries an `AgentCapabilityManifest` (your
 policy YAML/JSON) as claims. To issue one you need:
 
-1. **A signing key** — stored in a KMS or (for dev) as a local PEM file wired
-   to a `did:web`-anchored signer.
+1. **A signing key in a KMS** — the issuer signs every token via a cloud KMS key.
+   The minimum viable recipe uses an AWS KMS asymmetric key (EC P-256 / ES256).
+   See §5.1 for Azure Key Vault and GCP Cloud KMS alternatives.
 2. **An issuer DID** — the `iss` claim in every token. The gateway fetches the
    public JWKS from this DID's `/.well-known/jwks.json` endpoint (or the
    `ISSUER_JWKS_URL` you configure directly).
@@ -148,28 +157,33 @@ policy YAML/JSON) as claims. To issue one you need:
 
 ### 4.2 Step-by-step
 
-#### Step 1 — Generate a local signing key pair
+#### Step 1 — Create an AWS KMS asymmetric signing key
 
 ```bash
 # Create a directory for the self-host stack (outside the repo)
 mkdir -p /srv/euno/keys && chmod 700 /srv/euno/keys
 
-# EC P-256 key — matches ES256, the preferred algorithm
-openssl ecparam -name prime256v1 -genkey -noout \
-  | openssl pkcs8 -topk8 -nocrypt -out /srv/euno/keys/issuer-signing.pem
-chmod 600 /srv/euno/keys/issuer-signing.pem
+# Create an EC P-256 asymmetric signing key in AWS KMS (ES256)
+# Note: you must have the AWS CLI configured with sufficient IAM permissions.
+aws kms create-key \
+  --key-usage SIGN_VERIFY \
+  --key-spec ECC_NIST_P256 \
+  --description "euno capability-issuer signing key (dev)" \
+  --region us-east-1
 
-# Derive the public key for the JWKS endpoint
-openssl ec -in /srv/euno/keys/issuer-signing.pem -pubout \
-  -out /srv/euno/keys/issuer-signing.pub.pem
+# The output includes "KeyId" — copy it; you'll need it in Step 3.
+# Example output: "KeyId": "arn:aws:kms:us-east-1:123456789012:key/xxxxxxxx-..."
 ```
 
-You will mount `/srv/euno/keys` into the capability-issuer container in §4.4.
-
-> **Production note:** Replace the local PEM with an HSM-backed key before going
-> to production. A local PEM key is acceptable for development but the private key
-> is software-resident and offers no tamper protection. See §5.1 for the KMS
-> migration path.
+> **LocalStack alternative:** To avoid a real AWS account for local development,
+> run `docker run --rm -p 4566:4566 localstack/localstack` and set
+> `AWS_ENDPOINT_URL=http://localhost:4566` plus dummy `AWS_ACCESS_KEY_ID=test`
+> / `AWS_SECRET_ACCESS_KEY=test` in issuer.env. LocalStack supports the KMS
+> `SignCommand` API needed by the issuer.
+>
+> **Production note:** Use an HSM-backed key in production (AWS CloudHSM-origin
+> CMK, or Azure Managed HSM, or GCP HSM protection level). See §5.1 for the full
+> KMS provider options and non-exportability verification steps.
 
 #### Step 2 — Write a capability policy manifest
 
@@ -206,9 +220,16 @@ NODE_ENV=production
 PORT=3001
 EUNO_DEPLOYMENT_TIER=single-replica
 
-# Signing: DID-based signer using a local PEM key (dev/single-tenant only)
-# Replace with SIGNING_PROVIDER=aws-kms or gcp-cloudkms for production.
-SIGNING_PROVIDER=did
+# Signing: AWS KMS asymmetric key (ES256).
+# Replace the key ARN with the one from Step 1.
+SIGNING_PROVIDER=aws-kms
+AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AWS_KMS_REGION=us-east-1
+# Credentials: use the standard AWS credential chain (instance profile / IRSA / env vars).
+# For local dev with LocalStack, add:
+# AWS_ACCESS_KEY_ID=test
+# AWS_SECRET_ACCESS_KEY=test
+# AWS_ENDPOINT_URL=http://localstack:4566
 ISSUER_DID=did:web:issuer.example.com   # replace with your actual public hostname
 
 # Identity: DID-based — no enterprise OIDC provider required
@@ -223,12 +244,6 @@ GATEWAY_AUDIENCE=tool-gateway:my-team
 # Logging
 ENABLE_DETAILED_LOGGING=false
 ```
-
-> **`SIGNING_PROVIDER=did`** activates the `DIDSigner`, which reads a local
-> PKCS#8 PEM private key. The key is mounted at `/app/signing.pem` inside the
-> container (see §4.4 for the volume mount). The issuer also generates a
-> `/.well-known/jwks.json` endpoint from the corresponding public key so the
-> gateway can verify tokens.
 
 #### Step 4 — Configure the tool gateway
 
@@ -247,23 +262,26 @@ GATEWAY_AUDIENCE=tool-gateway:my-team
 # Verifier: point at the issuer's JWKS endpoint
 ISSUER_JWKS_URL=http://capability-issuer:3001/.well-known/jwks.json
 
-# Audit evidence signing: local HMAC key for dev (no KMS required)
-# Generate: openssl rand -hex 32 > /srv/euno/keys/audit-signing.pem
-# Then replace the value below with the actual PEM path.
+# Audit evidence signing: local EC P-256 key for dev (no KMS required for the gateway).
+# Generate:
+#   openssl ecparam -name prime256v1 -genkey -noout \
+#     | openssl pkcs8 -topk8 -nocrypt -out /srv/euno/keys/audit-signing.pem
+#   chmod 600 /srv/euno/keys/audit-signing.pem
 ENABLE_CRYPTOGRAPHIC_AUDIT=true
 EVIDENCE_SIGNED_DECISIONS=deny
 EVIDENCE_SIGNING_KEY_FILE=/app/keys/audit-signing.pem
 EVIDENCE_SIGNING_ALGORITHM=ES256
 
 # Admin API
-ADMIN_HOST=127.0.0.1
 ADMIN_API_KEY=<generate-with-openssl-rand-base64-32>
 
 # Redis circuit-breaker mode — MUST be set explicitly; no silent default.
 # fail-closed: enforce counter and revocation checks even when Redis is slow.
 REDIS_CIRCUIT_OPEN_MODE=fail-closed
 
-# Audit ledger: in-memory for dev (no Postgres required)
+# Audit ledger: disabled (no external ledger backend for dev; evidence is
+# written to local log files only and AUDIT_LEDGER_BACKEND=none means
+# the audit query API returns no results).
 AUDIT_LEDGER_BACKEND=none
 ```
 
@@ -278,23 +296,24 @@ See §4.5 for the `docker-compose.yml`.
 #### Step 6 — Issue a capability token
 
 ```bash
-# Build your policy manifest into an issue request
-POLICY=$(cat /srv/euno/policies/agent.yaml | base64 -w0)
-
-# POST to the issuer with a DID-bound caller token
-# In the minimal recipe, the caller presents a DID JWT that the
-# DIDIdentityProvider validates via DID resolution.
+# Issue a capability token for a specific agent
+# The Authorization header carries a DID-bound JWT (IDENTITY_PROVIDER=did path).
 curl -s -X POST http://localhost:3001/api/v1/issue \
   -H "Authorization: Bearer <did-bound-jwt>" \
   -H "Content-Type: application/json" \
   -d '{
     "agentId": "my-agent",
-    "sessionId": "sess-001",
-    "capabilities": [
-      { "resource": "read_file", "actions": ["call"] }
+    "requestedCapabilities": [
+      {
+        "resource": "read_file",
+        "actions": ["call"],
+        "conditions": [
+          { "type": "pathPattern", "allowedPaths": ["/data/**"] }
+        ]
+      }
     ]
   }'
-# → { "token": "eyJ...", "expiresAt": "2026-05-11T23:00:00Z" }
+# → { "token": "eyJ...", "expiresAt": 1747000000, "tokenId": "jti-...", "capabilities": [...] }
 ```
 
 Store the returned `token` value; it is what `@euno/mcp` will forward in
@@ -312,7 +331,7 @@ pre-issued JWT instead of an `sk-...` API key:
       "command": "npx",
       "args": [
         "-y", "@euno/mcp", "proxy",
-        "--enforcer", "http://localhost:3002",
+        "--enforcer-url", "http://localhost:3002",
         "--enforcer-api-key", "<the-jwt-from-step-6>",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
@@ -322,10 +341,10 @@ pre-issued JWT instead of an `sk-...` API key:
 }
 ```
 
-> **Token refresh:** The JWT expires after `DEFAULT_TOKEN_TTL` seconds.
-> `@euno/mcp` in remote-enforcer mode automatically refreshes the token before it
-> expires, provided it can reach the issuer. When running in a strict air-gap,
-> pre-issue tokens with a longer TTL and rotate them out-of-band.
+> **Token expiry:** The JWT expires after `DEFAULT_TOKEN_TTL` seconds. The
+> `--enforcer-api-key` is a static bearer token — `@euno/mcp` does not
+> automatically re-issue it. Before the token expires, re-issue a fresh JWT
+> from the issuer (§6.1) and update the config, then restart the proxy.
 
 ### 4.3 Minimum viable issuer: what you skipped
 
@@ -333,14 +352,15 @@ This recipe intentionally omits:
 
 - **Redis** — single-replica mode uses in-process call counters and kill-switch.
   These do not persist across gateway restarts and are not shared across replicas.
-- **Postgres** — audit ledger is in-memory (`AUDIT_LEDGER_BACKEND=none`).
-  Evidence is written to local log files only; there is no queryable store.
+- **Postgres** — `AUDIT_LEDGER_BACKEND=none` disables the external ledger backend.
+  Evidence is written to local log files only; the audit query API returns no results.
 - **Enterprise OIDC** — the `IDENTITY_PROVIDER=did` path requires callers to
   present a DID-bound JWT. For a team using a corporate IdP (Azure AD, Okta,
   AWS Cognito), replace with the appropriate `IDENTITY_PROVIDER` value and
   provide the matching config block.
-- **HSM** — the signing key is a software-resident PEM file. This is acceptable
-  for development; see §5.1 for the production KMS migration.
+- **Gateway-side KMS evidence signing** — the gateway signs audit evidence with a
+  local PEM key (`EVIDENCE_SIGNING_KEY_FILE`). For production, replace with
+  `AUDIT_SIGNING_KMS_PROVIDER` (see §5.1).
 
 Capabilities that require the omitted components:
 
@@ -349,7 +369,7 @@ Capabilities that require the omitted components:
 | Redis | Call-rate counters (`maxCalls`) are per-replica only; kill-switch changes are not shared across gateway replicas; revocation list is in-memory |
 | Postgres | Audit records are ephemeral (lost on restart); audit query API returns no results |
 | Enterprise OIDC | Callers must present DID-bound JWTs; Azure AD / Cognito / GCP-issued OIDC tokens are not accepted |
-| HSM | Signing key is software-resident; a compromised host leaks the private key |
+| Gateway-side KMS | Audit evidence signatures are produced by a software PEM key; a compromised host leaks the audit signing key |
 
 ### 4.4 Docker Compose for the local stack
 
@@ -371,7 +391,6 @@ services:
     container_name: euno-issuer
     env_file: /srv/euno/issuer.env
     volumes:
-      - /srv/euno/keys/issuer-signing.pem:/app/signing.pem:ro
       - /srv/euno/policies:/app/policies:ro
     ports:
       - "3001:3001"
@@ -395,7 +414,7 @@ services:
         condition: service_healthy
     ports:
       - "3002:3002"
-      - "3003:3003"    # admin — bind only to 127.0.0.1 externally
+      - "127.0.0.1:3003:3003"    # admin — host-side loopback only
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
       interval: 10s
@@ -453,12 +472,12 @@ the same KMS provider:
 
 ```bash
 # gateway.env additions — replaces EVIDENCE_SIGNING_KEY_FILE
-AUDIT_SIGNING_KMS_PROVIDER=aws   # or azure / gcp
+AUDIT_SIGNING_KMS_PROVIDER=aws-kms   # or azure-keyvault / gcp-cloudkms
 # AWS KMS example:
-AUDIT_SIGNING_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
+AUDIT_SIGNING_AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
 ```
 
-See `docs/runbooks/provision-mhsm.md` (Task 5) for the Azure Managed HSM
+See `docs/stage-3-design.md` §1.3 for the Azure Managed HSM
 provisioning procedure and the non-exportability verification steps.
 
 ### 5.2 Add Redis and Postgres
@@ -640,15 +659,16 @@ docker compose -f docker-compose.yml up -d
 ### 6.1 Issue a capability token
 
 ```bash
-# Issue a token for a specific agent session
+# Issue a token for a specific agent
+# The Authorization header must carry a caller identity token validated by
+# the configured IDENTITY_PROVIDER (DID-bound JWT for IDENTITY_PROVIDER=did).
 curl -s -X POST http://localhost:3001/api/v1/issue \
   -H "Authorization: Bearer <caller-identity-token>" \
   -H "Content-Type: application/json" \
   -d @- <<'EOF'
 {
   "agentId": "my-agent",
-  "sessionId": "sess-$(date +%s)",
-  "capabilities": [
+  "requestedCapabilities": [
     {
       "resource": "read_file",
       "actions": ["call"],
@@ -656,8 +676,7 @@ curl -s -X POST http://localhost:3001/api/v1/issue \
         { "type": "pathPattern", "allowedPaths": ["/data/**"] }
       ]
     }
-  ],
-  "ttl": 900
+  ]
 }
 EOF
 ```
@@ -667,7 +686,9 @@ The response body contains:
 ```jsonc
 {
   "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6Ii4uLiJ9...",
-  "expiresAt": "2026-05-11T23:15:00Z"
+  "expiresAt": 1747000000,     // unix-seconds
+  "tokenId": "jti-xxxxxxxx",
+  "capabilities": [...]
 }
 ```
 
@@ -688,9 +709,9 @@ npx -y @euno/mcp validate-token <token>
       "command": "npx",
       "args": [
         "-y", "@euno/mcp", "proxy",
-        "--enforcer", "http://gateway.internal:3002",
+        "--enforcer-url", "http://gateway.internal:3002",
         "--enforcer-api-key", "<token-from-step-6-1>",
-        "--enforcer-timeout-ms", "5000",
+        "--enforcer-timeout", "5000",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
       ]
@@ -701,9 +722,9 @@ npx -y @euno/mcp validate-token <token>
 
 `@euno/mcp` includes the token as `Authorization: Bearer <token>` on every
 `POST /api/v1/enforce` call. The gateway verifies the JWT signature and expiry on
-each request. Token refresh must be handled by the operator (re-issue before
-expiry and restart the proxy, or use the `--policy-refresh-url` option to
-configure automatic re-issuance when the issuer supports it).
+each request. Token expiry is not automatically handled by `@euno/mcp` — re-issue
+a fresh JWT from the issuer before the token expires and update the config, then
+restart the proxy.
 
 ---
 
@@ -737,20 +758,22 @@ reference.
 
 ```bash
 # Kill all sessions for a specific agent
-curl -s -X POST http://localhost:3003/admin/v1/kill-switch/agent \
-  -H "X-Admin-Key: <ADMIN_API_KEY>" \
+curl -s -X POST "http://localhost:3003/admin/kill-switch/agent/my-agent/kill" \
+  -H "X-Admin-Api-Key: <ADMIN_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{ "agentId": "my-agent" }'
+  -d '{}'
 
-# Revoke a specific token
-curl -s -X POST http://localhost:3003/admin/v1/revoke \
-  -H "X-Admin-Key: <ADMIN_API_KEY>" \
+# Revoke a specific token by JTI
+curl -s -X POST http://localhost:3003/admin/revoke \
+  -H "X-Admin-Api-Key: <ADMIN_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{ "jti": "<jti-from-token>", "expiresAt": 1747000000 }'
+  -d '{ "tokenId": "<jti-from-token>", "expiresAt": 1747000000 }'
 
 # Revive an agent after a kill-switch was activated
-curl -s -X DELETE "http://localhost:3003/admin/v1/kill-switch/agent/my-agent" \
-  -H "X-Admin-Key: <ADMIN_API_KEY>"
+curl -s -X POST "http://localhost:3003/admin/kill-switch/agent/my-agent/revive" \
+  -H "X-Admin-Api-Key: <ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ---
