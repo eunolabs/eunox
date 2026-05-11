@@ -115,11 +115,12 @@ class JoseRsaSignerWithKid extends SigningAdapter {
   }
 
   override getAlgorithm(): SigningAlgorithm {
-    // The base class already returns `this.algorithm` (set from config.algorithm
-    // = SIGNING_ALG in the constructor). Explicitly overriding here makes the
-    // return value clear in the test fixture without relying on the base-class
-    // default — and satisfies the optional `getAlgorithm?()` on `TokenSigner`
-    // so `CapabilityIssuerService.getJwks()` includes `alg` in the published JWK.
+    // The base class `SigningAdapter.getAlgorithm()` already returns
+    // `this.algorithm`, which is initialized from `config.algorithm = SIGNING_ALG`
+    // in the constructor. This override is explicit for clarity so the test
+    // fixture documents that the published JWK will include `alg: 'RS256'`
+    // (the base-class method satisfies the `getAlgorithm?()` on `TokenSigner`
+    // that `CapabilityIssuerService.getJwks()` calls to stamp `alg` in the JWKS).
     return SIGNING_ALG;
   }
 
@@ -400,7 +401,11 @@ describe('Task 3 — JWTTokenVerifier wiring', () => {
       const cap = payload.capabilities[0];
       expect(cap).toBeDefined();
       // The unknown condition round-tripped intact through the signed JWT.
-      expect((cap!.conditions as any[])[0]!.type).toBe('futureConditionType');
+      const conditions = cap!.conditions;
+      expect(Array.isArray(conditions)).toBe(true);
+      const firstCondition = (conditions as Array<{ type: string }>)[0];
+      expect(firstCondition).toBeDefined();
+      expect(firstCondition!.type).toBe('futureConditionType');
     });
 
     it('tokens with only known condition types are allowed by the EnforcementEngine', async () => {
