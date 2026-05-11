@@ -251,13 +251,18 @@ describe('checkActionResolverHashParity', () => {
     logger: silentLogger,
   };
 
+  // Restore all fetch mocks after each test so a test failure never poisons
+  // the mock state for subsequent tests in this describe block.
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('resolves without throwing when the fetch errors (non-fatal)', async () => {
     // Simulate a network error (fetch rejects) — gateway must not abort startup.
     jest.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),
     ).resolves.toBeUndefined();
-    jest.restoreAllMocks();
   });
 
   it('resolves without throwing when the issuer returns a non-OK status', async () => {
@@ -269,7 +274,6 @@ describe('checkActionResolverHashParity', () => {
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),
     ).resolves.toBeUndefined();
-    jest.restoreAllMocks();
   });
 
   it('resolves without throwing when the metadata body lacks actionResolverHash', async () => {
@@ -281,7 +285,6 @@ describe('checkActionResolverHashParity', () => {
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),
     ).resolves.toBeUndefined();
-    jest.restoreAllMocks();
   });
 
   it('resolves without throwing when hashes match', async () => {
@@ -293,7 +296,6 @@ describe('checkActionResolverHashParity', () => {
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),
     ).resolves.toBeUndefined();
-    jest.restoreAllMocks();
   });
 
   it('resolves (logs warning) on hash mismatch when enforcement=warn', async () => {
@@ -305,7 +307,6 @@ describe('checkActionResolverHashParity', () => {
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),
     ).resolves.toBeUndefined();
-    jest.restoreAllMocks();
   });
 
   it('throws on hash mismatch when enforcement=error', async () => {
@@ -317,7 +318,6 @@ describe('checkActionResolverHashParity', () => {
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'error' }),
     ).rejects.toThrow('ACTION RESOLVER HASH MISMATCH');
-    jest.restoreAllMocks();
   });
 });
 

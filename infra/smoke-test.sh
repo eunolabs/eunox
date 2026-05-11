@@ -104,12 +104,14 @@ check_status "POST /api/v1/enforce (no auth) → 401" "401" \
 printf "\n-- Prometheus metrics --\n"
 
 check_status "GET /metrics → 200" "200" "${GATEWAY_URL}/metrics"
+METRICS_TMP=$(mktemp)
 check "GET /metrics contains gateway counter" \
-  curl -sf "${GATEWAY_URL}/metrics" -o /tmp/metrics.txt
-if [ -f /tmp/metrics.txt ]; then
+  curl -sf "${GATEWAY_URL}/metrics" -o "${METRICS_TMP}"
+if [ -s "${METRICS_TMP}" ]; then
   check "metrics: euno_gateway_decisions_total present" \
-    grep -q "euno_gateway_decisions_total" /tmp/metrics.txt
+    grep -q "euno_gateway_decisions_total" "${METRICS_TMP}"
 fi
+rm -f "${METRICS_TMP}"
 
 # ── Validate endpoint ─────────────────────────────────────────────────────────
 printf "\n-- Validation endpoint --\n"
