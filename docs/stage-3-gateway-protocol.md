@@ -1,7 +1,7 @@
 # Stage-3 Gateway Enforcement Protocol
 
 > **Version:** 1 (current)
-> **Status:** Implemented — `tool-gateway@1.0.0`, `@euno/mcp@0.3.0`
+> **Status:** Implemented — `tool-gateway@1.0.0`, `@euno/mcp` Stage-3
 > **RFC anchor:** `docs/stage-3-design.md` §6 "Enforcer Wire Protocol"
 > **Execution plan task:** `docs/stage3executionplan.md` §Task 9
 
@@ -58,14 +58,34 @@ in-process enforcement path unchanged.
 
 ## 2. Endpoint
 
+### Deployment topology and authentication
+
+This endpoint is the **internal** (post-minter) leg of the enforcement call. It
+**always** receives a JWT Bearer token in `Authorization`. The `sk-…` API key
+that `@euno/mcp` presents in the hosted deployment is handled by the minter
+façade (Task 10) before requests arrive here — the façade exchanges the API key
+for a short-lived JWT and then forwards this endpoint's JWT-authenticated call.
+Self-hosted deployments skip the façade and send the operator's issuer JWT
+directly.
+
 ```
 POST /api/v1/enforce
 Host: gateway.euno.example
-Authorization: Bearer sk-<prefix8>.<secret48>
+Authorization: Bearer <jwt-capability-token>   ← JWT in both topologies
 Content-Type: application/json
 Accept: application/json
 X-Euno-Protocol-Version: 1
 X-Request-Id: <uuid>   (optional; reflected verbatim in the response)
+```
+
+**Hosted deployment (API key path):**
+```
+@euno/mcp ──(sk-…)──► minter façade ──(JWT)──► /api/v1/enforce
+```
+
+**Self-hosted deployment (direct JWT):**
+```
+@euno/mcp ──(JWT from operator's issuer)──► /api/v1/enforce
 ```
 
 ---

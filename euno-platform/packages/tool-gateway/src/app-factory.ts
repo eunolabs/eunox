@@ -120,6 +120,14 @@ export function createApp(deps: GatewayDependencies): Express {
   });
   app.use(limiter);
 
+  // Remote-enforcer endpoint (Stage-3 Task 9): mounted BEFORE the global
+  // body-parser so the route's own 512 KiB body-parser takes precedence.
+  // The global express.json() below is then a no-op for already-parsed bodies
+  // (Express does not double-parse), giving other routes their own 100 KiB
+  // default without changing this route's limit.
+  // See docs/stage-3-gateway-protocol.md for the protocol spec.
+  app.use(createEnforceRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
+
   app.use(express.json());
 
   // Request logging middleware
@@ -140,12 +148,6 @@ export function createApp(deps: GatewayDependencies): Express {
 
   // Tool invocation endpoint
   app.use(createToolsRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
-
-  // Remote-enforcer endpoint (Stage-3 Task 9): used by @euno/mcp in
-  // remote-enforcer mode. Returns a structured EnforceResponse (allow/deny
-  // with obligations) rather than throwing on denial, so the client can
-  // apply obligations locally. See docs/stage-3-gateway-protocol.md.
-  app.use(createEnforceRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
 
   // Protected proxy: validate then forward
   app.use(

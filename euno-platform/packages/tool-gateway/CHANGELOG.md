@@ -15,7 +15,7 @@ Task 9 defines and implements the wire protocol for `@euno/mcp` remote-enforcer
 mode. The gateway now exposes `POST /api/v1/enforce` — the endpoint called on
 every intercepted `tools/call` when `@euno/mcp` is configured with
 `enforcer: "https://..."`. Decisions (allow or deny) and any obligations
-(redactFields, annotate) are returned in a structured `EnforceResponse` so the
+(`redactFields`) are returned in a structured `EnforceResponse` so the
 proxy can apply them locally without throwing.
 
 ### Added

@@ -1279,8 +1279,12 @@ export interface EnforceRequestContext {
 /**
  * Request body sent by `@euno/mcp` to `POST /api/v1/enforce`.
  *
- * The client sends `X-Euno-Protocol-Version: 1` and
- * `Authorization: Bearer sk-<prefix8>.<secret48>` alongside this body.
+ * **Authentication:** The client always presents a JWT Bearer token in
+ * `Authorization`. In the hosted deployment topology the minter façade
+ * (Task 10) converts the client's API key (`sk-…`) into a short-lived JWT
+ * before the request reaches this route; in self-hosted deployments the
+ * operator's issuer JWT is sent directly. This route never accepts raw API
+ * keys — the façade is the only party that handles them.
  *
  * **Size limit:** 512 KiB. Requests exceeding this limit receive HTTP 413
  * with error code `REQUEST_TOO_LARGE`.
@@ -1338,8 +1342,8 @@ export type Obligation =
 export interface DenialInfo {
   /**
    * Machine-readable denial code, drawn from the `ErrorCode` enum in
-   * `@euno/common`. Examples: `'PATH_PATTERN'`, `'MAX_CALLS_EXCEEDED'`,
-   * `'IP_RANGE_DENIED'`, `'KILL_SWITCH_ACTIVE'`.
+   * `@euno/common`. Examples: `'AUTHORIZATION_FAILED'`, `'ARGUMENT_SCHEMA_VIOLATION'`,
+   * `'RATE_LIMIT_EXCEEDED'`, `'AGENT_TERMINATED'`.
    */
   code: string;
 

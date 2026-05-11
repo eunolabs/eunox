@@ -3,12 +3,16 @@
  *
  * Covers:
  *   - Protocol version negotiation (missing header, valid, unsupported)
+ *   - X-Euno-Protocol-Version echoed on UNSUPPORTED_PROTOCOL_VERSION 400
  *   - Authentication (missing token, invalid token)
  *   - Request body validation (malformed, missing fields, clock-skew)
+ *   - requestId included in INVALID_REQUEST error bodies
  *   - In-band allow response with and without obligations
+ *   - ARGUMENT_SCHEMA_VIOLATION denial code propagation
  *   - In-band deny response for policy denials
  *   - In-band deny response for kill-switch and token errors
- *   - 401/503 out-of-band error propagation
+ *   - 401/503 out-of-band error propagation (503 preserves err.code)
+ *   - REQUEST_TOO_LARGE (413) for bodies over 512 KiB (via body-parser)
  *   - requestId echoing
  *   - Protocol-version response header
  */
@@ -23,6 +27,7 @@ import {
   CAPABILITY_TOKEN_SCHEMA_VERSION,
   CapabilityConstraint,
   CapabilityTokenPayload,
+  CapabilityError,
   ErrorCode,
   getCurrentTimestamp,
   getExpirationTimestamp,
@@ -67,9 +72,13 @@ async function signToken(
 
 function buildApp(engine: EnforcementEngine): Express {
   const app = express();
-  // Use a 1 MiB raw body limit so the size-check tests work correctly.
-  app.use(express.json({ limit: '1mb' }));
+  // Mount the enforce router BEFORE the global body-parser, mirroring app-factory.ts.
+  // The router installs its own 512 KiB body-parser and the PayloadTooLargeError
+  // handler so the 413 test cases work correctly.
   app.use(createEnforceRouter({ enforcementEngine: engine, logger }));
+  // Global body-parser for any other routes in this test app (none currently,
+  // but keeps the middleware chain consistent with production).
+  app.use(express.json());
   // Minimal error handler to serialise unhandled errors
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const status = (err as { statusCode?: number }).statusCode ?? 500;
@@ -159,6 +168,8 @@ describe('POST /api/v1/enforce', () => {
       expect(res.body.error.code).toBe(ErrorCode.UNSUPPORTED_PROTOCOL_VERSION);
       expect(Array.isArray(res.body.error.supportedVersions)).toBe(true);
       expect(res.body.error.supportedVersions).toContain(ENFORCE_PROTOCOL_VERSION);
+      // Protocol spec: X-Euno-Protocol-Version MUST be echoed even on 400
+      expect(res.headers['x-euno-protocol-version']).toBe(String(ENFORCE_PROTOCOL_VERSION));
     });
 
     it('returns 400 UNSUPPORTED_PROTOCOL_VERSION for non-integer version', async () => {
@@ -171,6 +182,7 @@ describe('POST /api/v1/enforce', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.UNSUPPORTED_PROTOCOL_VERSION);
       expect(res.body.error.supportedVersions).toContain(ENFORCE_PROTOCOL_VERSION);
+      expect(res.headers['x-euno-protocol-version']).toBe(String(ENFORCE_PROTOCOL_VERSION));
     });
 
     it('returns 400 UNSUPPORTED_PROTOCOL_VERSION for zero', async () => {
@@ -182,6 +194,7 @@ describe('POST /api/v1/enforce', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.UNSUPPORTED_PROTOCOL_VERSION);
+      expect(res.headers['x-euno-protocol-version']).toBe(String(ENFORCE_PROTOCOL_VERSION));
     });
   });
 
@@ -247,6 +260,9 @@ describe('POST /api/v1/enforce', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.INVALID_REQUEST);
+      // Protocol spec: requestId must be present even in validation-error bodies
+      expect(typeof res.body.error.requestId).toBe('string');
+      expect(res.body.error.requestId.length).toBeGreaterThan(0);
     });
 
     it('returns 400 INVALID_REQUEST when context.now has excessive clock skew', async () => {
@@ -260,6 +276,7 @@ describe('POST /api/v1/enforce', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.INVALID_REQUEST);
       expect(res.body.error.message).toMatch(/clock/i);
+      expect(typeof res.body.error.requestId).toBe('string');
     });
 
     it('accepts context.now within 60 s of gateway clock', async () => {
@@ -581,6 +598,77 @@ describe('POST /api/v1/enforce', () => {
 
       expect(denyRes.status).toBe(200);
       expect(denyRes.body.decision).toBe('deny');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9. Request body size guard (REQUEST_TOO_LARGE)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('request body size guard', () => {
+    let validToken: string;
+
+    beforeAll(async () => {
+      validToken = await signToken(privateKey, [
+        { resource: 'tool://test-tool', actions: ['execute'] },
+      ]);
+    });
+
+    it('returns 413 REQUEST_TOO_LARGE when Content-Length exceeds 512 KiB', async () => {
+      // Use the Content-Length fast-path: advertise a large body without
+      // actually sending one (supertest still sets the header).
+      const bigBody = {
+        sessionId: 'sess-1',
+        toolName: 'test-tool',
+        arguments: { data: 'x'.repeat(520 * 1024) }, // ~520 KiB
+        context: {},
+      };
+
+      const res = await request(app)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${validToken}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send(bigBody);
+
+      expect(res.status).toBe(413);
+      expect(res.body.error.code).toBe(ErrorCode.REQUEST_TOO_LARGE);
+      expect(typeof res.body.error.requestId).toBe('string');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 10. 503 out-of-band — preserves engine's specific error code
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('503 out-of-band error propagation', () => {
+    it('preserves the engine error code on 503 (not hardcoded GATEWAY_UNAVAILABLE)', async () => {
+      // Spy on validateAction to throw a REVOCATION_UNAVAILABLE 503,
+      // simulating a Redis outage in the revocation-check path.
+      const spy = jest
+        .spyOn(engine, 'validateAction')
+        .mockRejectedValueOnce(
+          new CapabilityError(
+            ErrorCode.REVOCATION_UNAVAILABLE,
+            'Redis unavailable',
+            503,
+          ),
+        );
+
+      const token = await signToken(privateKey, [
+        { resource: 'tool://my-tool', actions: ['execute'] },
+      ]);
+
+      const res = await request(app)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send({ sessionId: 'sess-1', toolName: 'my-tool', arguments: {}, context: {} });
+
+      spy.mockRestore();
+
+      expect(res.status).toBe(503);
+      // Must preserve the engine's specific code, not the generic GATEWAY_UNAVAILABLE
+      expect(res.body.error.code).toBe(ErrorCode.REVOCATION_UNAVAILABLE);
     });
   });
 });

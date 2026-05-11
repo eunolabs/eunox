@@ -27,7 +27,8 @@
  */
 
 import * as crypto from 'crypto';
-import { Request, Response, NextFunction, Router } from 'express';
+import { Request, Response, NextFunction, Router, RequestHandler } from 'express';
+import express from 'express';
 import {
   CapabilityConstraint,
   CapabilityError,
@@ -252,8 +253,7 @@ function capabilityErrorToDenialInfo(err: CapabilityError): DenialInfo {
  * returns these to the client so the client can apply them locally to the
  * upstream response before forwarding to the MCP caller.
  *
- * Currently only `redactFields` conditions produce obligations; `annotate`
- * obligations may be added by future condition types or policy backends.
+ * Currently only `redactFields` conditions produce obligations.
  */
 function buildObligations(capability: CapabilityConstraint | undefined): Obligation[] {
   if (!capability?.conditions) return [];
@@ -266,6 +266,73 @@ function buildObligations(capability: CapabilityConstraint | undefined): Obligat
   return obligations;
 }
 
+/**
+ * Build a `DenialInfo` from an `EnforcementResult` where `allowed === false`.
+ * Uses the engine's `denialCode` / `denialConditionType` when present, falling
+ * back to generic `AUTHORIZATION_FAILED` / `'policy'` for denials that do not
+ * carry a structured code (e.g. simple capability-not-found).
+ */
+function enforcementResultToDenialInfo(result: EnforcementResult): DenialInfo {
+  const code = result.denialCode ?? ErrorCode.AUTHORIZATION_FAILED;
+  const conditionType = result.denialConditionType ?? deriveConditionType(code);
+  return {
+    code,
+    conditionType,
+    message: result.reason ?? 'Action not permitted by policy',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Body-parser middleware with 512 KiB limit and REQUEST_TOO_LARGE mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * `express.json()` middleware configured with the enforce endpoint's 512 KiB
+ * body limit. When the body exceeds the limit the body-parser emits a
+ * `PayloadTooLargeError` (status 413 / type `entity.too.large`). The
+ * accompanying error handler ({@link enforcePayloadErrorHandler}) converts
+ * that into the typed `REQUEST_TOO_LARGE` envelope.
+ *
+ * This is intentionally a separate middleware (not the global `express.json()`
+ * from `app-factory.ts`) so the 512 KiB limit is scoped to this endpoint only.
+ * The router is mounted **before** the global body-parser in app-factory.ts so
+ * that this per-route parser takes precedence and the global one is a no-op for
+ * already-parsed bodies.
+ */
+const enforceBodyParser: RequestHandler = express.json({
+  limit: ENFORCE_REQUEST_SIZE_LIMIT_BYTES,
+  strict: true,
+});
+
+/**
+ * Error handler that runs immediately after {@link enforceBodyParser} in the
+ * router. Converts `entity.too.large` errors (HTTP 413) emitted by the body
+ * parser into the typed `REQUEST_TOO_LARGE` response shape expected by the
+ * protocol. All other errors are forwarded to the next error handler unchanged.
+ */
+function enforcePayloadErrorHandler(
+  err: Error & { type?: string; status?: number },
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    const requestIdHeader = _req.headers['x-request-id'];
+    const requestId =
+      (Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader) ??
+      crypto.randomUUID();
+    res.status(413).json({
+      error: {
+        code: ErrorCode.REQUEST_TOO_LARGE,
+        message: `Request body exceeds the ${ENFORCE_REQUEST_SIZE_LIMIT_BYTES / 1024} KiB limit`,
+        requestId,
+      },
+    });
+    return;
+  }
+  next(err);
+}
+
 // ---------------------------------------------------------------------------
 // Route factory
 // ---------------------------------------------------------------------------
@@ -274,6 +341,12 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
   const { enforcementEngine, logger } = opts;
   const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   const router = Router();
+
+  // Mount the per-route body parser + its error handler so that
+  // PayloadTooLargeError is caught before the main handler runs.
+  router.use('/api/v1/enforce', enforceBodyParser);
+  // 4-argument signature is required for Express to recognise this as an error handler
+  router.use('/api/v1/enforce', enforcePayloadErrorHandler as express.ErrorRequestHandler);
 
   router.post(
     '/api/v1/enforce',
@@ -284,15 +357,34 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
         (Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader) ??
         crypto.randomUUID();
 
+      // Inner helper: serialize any CapabilityError (protocol-level validation
+      // errors thrown before enforcement) as a self-contained JSON envelope
+      // that includes requestId. This is the correct behaviour for errors like
+      // INVALID_REQUEST (body validation, clock-skew guard) — they are not
+      // enforcement decisions, but they do have a requestId the caller can log.
+      function replyWithCapabilityError(err: CapabilityError): void {
+        res.setHeader('X-Euno-Protocol-Version', String(ENFORCE_PROTOCOL_VERSION));
+        res.status(err.statusCode).json({
+          error: {
+            code: err.code,
+            message: err.message,
+            requestId,
+          },
+        });
+      }
+
       try {
         // ── 1. Protocol version negotiation ─────────────────────────────────
+        // The version header is echoed on *every* response, including the
+        // UNSUPPORTED_PROTOCOL_VERSION 400 so clients receive a machine-readable
+        // signal that tells them both the error code and which versions to use.
         let protocolVersion: number;
         try {
           protocolVersion = parseProtocolVersion(req.headers['x-euno-protocol-version']);
         } catch (err) {
           if (err instanceof CapabilityError && err.code === ErrorCode.UNSUPPORTED_PROTOCOL_VERSION) {
-            // Return the supportedVersions array in the error body as specified
-            // in docs/stage-3-gateway-protocol.md §5.
+            // Echo the *latest* supported version so clients can upgrade.
+            res.setHeader('X-Euno-Protocol-Version', String(ENFORCE_PROTOCOL_VERSION));
             res.status(400).json({
               error: {
                 code: err.code,
@@ -325,10 +417,12 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           return;
         }
 
-        // ── 3. Request body size guard ───────────────────────────────────────
-        // express.json() has already parsed the body; check the advertised
-        // Content-Length as a fast pre-check before doing further work.
-        // The 512 KiB limit is defined in docs/stage-3-gateway-protocol.md §3.
+        // ── 3. Content-Length fast-path size guard ──────────────────────────
+        // The body-parser middleware (enforceBodyParser) already enforces the
+        // 512 KiB limit and emits a PayloadTooLargeError for chunked uploads.
+        // This Content-Length check is an additional fast-path for clients that
+        // advertise a large body upfront — it avoids wasting CPU on token
+        // verification for bodies that will be rejected anyway.
         const contentLength = Number(req.headers['content-length'] ?? 0);
         if (Number.isFinite(contentLength) && contentLength > ENFORCE_REQUEST_SIZE_LIMIT_BYTES) {
           res.status(413).json({
@@ -342,8 +436,17 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
         }
 
         // ── 4. Parse and validate request body ──────────────────────────────
-        const enforceReq = parseEnforceRequestBody(req.body);
-        validateClockSkew(enforceReq.context.now);
+        let enforceReq: EnforceRequest;
+        try {
+          enforceReq = parseEnforceRequestBody(req.body);
+          validateClockSkew(enforceReq.context.now);
+        } catch (err) {
+          if (err instanceof CapabilityError) {
+            replyWithCapabilityError(err);
+            return;
+          }
+          throw err;
+        }
 
         // ── 5. Derive action and canonical resource ──────────────────────────
         // Server-side derivation only — never trust a client-supplied action
@@ -396,8 +499,11 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
               return;
             }
             if (err.statusCode === 503) {
+              // Preserve the engine's specific code (e.g. REVOCATION_UNAVAILABLE)
+              // rather than hard-coding GATEWAY_UNAVAILABLE so operators can
+              // distinguish between different infrastructure failures.
               res.status(503).json({
-                error: { code: ErrorCode.GATEWAY_UNAVAILABLE, message: err.message, requestId },
+                error: { code: err.code, message: err.message, requestId },
               });
               return;
             }
@@ -441,15 +547,14 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           });
           res.json(allowResponse);
         } else {
-          const denial: DenialInfo = {
-            code: ErrorCode.AUTHORIZATION_FAILED,
-            conditionType: 'policy',
-            message: result.reason ?? 'Action not permitted by policy',
-          };
+          // Use the structured denial code from the engine when available
+          // (e.g. ARGUMENT_SCHEMA_VIOLATION) so that the response matches the
+          // protocol's DenialInfo contract rather than always emitting the
+          // generic AUTHORIZATION_FAILED.
           const denyResponse: EnforceResponse = {
             requestId,
             decision: 'deny',
-            denial,
+            denial: enforcementResultToDenialInfo(result),
             decidedAt,
           };
           logger.info('Enforce: denied', {
@@ -457,13 +562,16 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             toolName: enforceReq.toolName,
             sessionId: enforceReq.sessionId,
             reason: result.reason,
+            denialCode: result.denialCode,
           });
           res.json(denyResponse);
         }
       } catch (error) {
-        // Re-attach requestId as a response header so error-handling
-        // middleware can include it when it builds the ErrorResponse body.
-        res.setHeader('X-Request-Id', requestId);
+        // Any unhandled error from this route should be forwarded to Express's
+        // global error handler. Re-attach the requestId as a request attribute
+        // (not a response header that would force the response to start) so the
+        // global error handler can optionally include it.
+        (req as Request & { enforceRequestId?: string }).enforceRequestId = requestId;
         next(error);
       }
     },

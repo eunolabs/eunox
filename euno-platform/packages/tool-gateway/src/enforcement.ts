@@ -178,6 +178,18 @@ export interface EnforcementEngineOptions {
  */
 export interface EnforcementResult extends ValidateActionResponse {
   applyResponseRedactions?: (body: unknown) => unknown;
+  /**
+   * Machine-readable denial code when `allowed` is `false`. Drawn from
+   * `ErrorCode`. When absent the caller should default to
+   * `AUTHORIZATION_FAILED`. Only meaningful when `allowed === false`.
+   */
+  denialCode?: string;
+  /**
+   * Condition type string for DenialInfo serialisation when `allowed` is
+   * `false`. When absent the caller defaults to `'policy'`. Only meaningful
+   * when `allowed === false`.
+   */
+  denialConditionType?: string;
 }
 
 export class EnforcementEngine {
@@ -509,6 +521,8 @@ export class EnforcementEngine {
         return {
           allowed: false,
           reason,
+          denialCode: ErrorCode.ARGUMENT_SCHEMA_VIOLATION,
+          denialConditionType: 'argumentSchema',
         };
       }
 
@@ -542,6 +556,8 @@ export class EnforcementEngine {
           return {
             allowed: false,
             reason,
+            denialCode: ErrorCode.ARGUMENT_SCHEMA_VIOLATION,
+            denialConditionType: 'argumentSchema',
           };
         }
       }
