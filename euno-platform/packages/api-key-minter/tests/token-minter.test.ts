@@ -131,4 +131,32 @@ describe('TokenMinter', () => {
     const r2 = await minter.mintToken(input);
     expect(r1.jti).not.toBe(r2.jti);
   });
-});
+
+  it('throws on NaN ttlSeconds', async () => {
+    const signer = await LocalTokenSigner.generate('RS256');
+    expect(() => new TokenMinter({ signer, issuerDid: 'did:web:test', ttlSeconds: NaN })).toThrow(
+      /invalid ttlSeconds/i,
+    );
+  });
+
+  it('throws on zero ttlSeconds', async () => {
+    const signer = await LocalTokenSigner.generate('RS256');
+    expect(() => new TokenMinter({ signer, issuerDid: 'did:web:test', ttlSeconds: 0 })).toThrow(
+      /invalid ttlSeconds/i,
+    );
+  });
+
+  it('throws on negative ttlSeconds', async () => {
+    const signer = await LocalTokenSigner.generate('RS256');
+    expect(() => new TokenMinter({ signer, issuerDid: 'did:web:test', ttlSeconds: -1 })).toThrow(
+      /invalid ttlSeconds/i,
+    );
+  });
+
+  it('throws on non-integer ttlSeconds', async () => {
+    const signer = await LocalTokenSigner.generate('RS256');
+    expect(() => new TokenMinter({ signer, issuerDid: 'did:web:test', ttlSeconds: 1.5 })).toThrow(
+      /invalid ttlSeconds/i,
+    );
+  });
+})

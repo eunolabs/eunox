@@ -13,6 +13,16 @@ export class InMemoryMintRateLimiter implements MintRateLimiter {
   private readonly windowMs: number;
 
   constructor(opts: MintRateLimiterOptions = { maxMintsPerWindow: 100, windowSeconds: 60 }) {
+    if (!Number.isFinite(opts.maxMintsPerWindow) || !Number.isInteger(opts.maxMintsPerWindow) || opts.maxMintsPerWindow <= 0) {
+      throw new Error(
+        `InMemoryMintRateLimiter: invalid maxMintsPerWindow ${opts.maxMintsPerWindow}. Must be a finite positive integer.`,
+      );
+    }
+    if (!Number.isFinite(opts.windowSeconds) || !Number.isInteger(opts.windowSeconds) || opts.windowSeconds <= 0) {
+      throw new Error(
+        `InMemoryMintRateLimiter: invalid windowSeconds ${opts.windowSeconds}. Must be a finite positive integer.`,
+      );
+    }
     this.maxMints = opts.maxMintsPerWindow;
     this.windowMs = opts.windowSeconds * 1000;
   }

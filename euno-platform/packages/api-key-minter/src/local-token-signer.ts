@@ -13,6 +13,8 @@ export class LocalTokenSigner {
   private readonly publicKeyPem: string;
   private readonly keyId: string;
   private readonly algorithm: 'RS256' | 'ES256';
+  /** Lazily cached imported private key to avoid re-parsing on every sign(). */
+  private cachedPrivateKey: jose.KeyLike | null = null;
 
   constructor(opts: LocalTokenSignerOptions) {
     this.privateKeyPem = opts.privateKeyPem;
@@ -31,10 +33,14 @@ export class LocalTokenSigner {
   }
 
   async sign(payload: CapabilityTokenPayload, _context?: IssuanceContext): Promise<string> {
-    const privateKey = await jose.importPKCS8(this.privateKeyPem, this.algorithm);
+    // Import the private key lazily on first use and cache it for subsequent calls
+    // to avoid the cost of PKCS8 parsing on every token mint.
+    if (!this.cachedPrivateKey) {
+      this.cachedPrivateKey = await jose.importPKCS8(this.privateKeyPem, this.algorithm);
+    }
     return new jose.SignJWT(payload as unknown as jose.JWTPayload)
       .setProtectedHeader({ alg: this.algorithm, kid: this.keyId })
-      .sign(privateKey);
+      .sign(this.cachedPrivateKey);
   }
 
   async getPublicKey(): Promise<string> {

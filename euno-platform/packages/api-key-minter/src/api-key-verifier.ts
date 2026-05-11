@@ -33,10 +33,13 @@ export class ApiKeyVerifier {
     // Step 1: parse format (throws 401 on invalid format)
     const parsed = parseApiKey(raw);
 
-    // Step 2: fetch both the real row and the dummy row in parallel
+    // Step 2: fetch both the real row and the dummy row in parallel.
+    // Use getDummyRecord() rather than getByPrefix(API_KEY_DUMMY_PREFIX) so that
+    // all store implementations (including production Postgres) reliably return
+    // a constant-shape dummy record on an unknown prefix.
     const [realRow, dummyRow] = await Promise.all([
       this.opts.store.getByPrefix(parsed.prefix),
-      this.opts.store.getByPrefix(API_KEY_DUMMY_PREFIX),
+      this.opts.store.getDummyRecord(),
     ]);
 
     // Step 3: pick the row to compare against (real or dummy)
@@ -73,8 +76,12 @@ export class ApiKeyVerifier {
     if (realRow.revokedAt !== undefined) {
       throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'API key has been revoked', 401);
     }
-    if (realRow.expiresAt !== undefined && new Date(realRow.expiresAt) < new Date()) {
-      throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'API key has expired', 401);
+    if (realRow.expiresAt !== undefined) {
+      const expiresAtMs = Date.parse(realRow.expiresAt);
+      // Treat an unparseable expiresAt as already-expired (fail-closed semantics).
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs < Date.now()) {
+        throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'API key has expired', 401);
+      }
     }
 
     // Step 6: update last used (fire-and-forget)

@@ -43,7 +43,16 @@ export class TokenMinter {
     this.signer = opts.signer;
     this.issuerDid = opts.issuerDid;
     this.gatewayAudience = opts.gatewayAudience ?? 'tool-gateway';
-    this.ttlSeconds = Math.min(opts.ttlSeconds ?? MINTER_DEFAULT_TTL_SECONDS, MINTER_MAX_TTL_SECONDS);
+
+    // Validate and cap ttlSeconds.  Fail fast on NaN/Infinity/<=0 so that
+    // a misconfigured minter does not silently mint tokens with invalid `exp`.
+    const raw = opts.ttlSeconds ?? MINTER_DEFAULT_TTL_SECONDS;
+    if (!Number.isFinite(raw) || !Number.isInteger(raw) || raw <= 0) {
+      throw new Error(
+        `TokenMinter: invalid ttlSeconds ${raw}. Must be a finite positive integer.`,
+      );
+    }
+    this.ttlSeconds = Math.min(raw, MINTER_MAX_TTL_SECONDS);
   }
 
   async mintToken(input: MintTokenInput): Promise<MintTokenResult> {

@@ -92,6 +92,26 @@ describe('ApiKeyVerifier', () => {
     await expect(expVerifier.verify(newKey.raw)).rejects.toMatchObject({ statusCode: 401 });
   });
 
+  it('throws 401 for key with unparseable expiresAt (fail-closed)', async () => {
+    const pepper = makePepper('v3');
+    const store = new InMemoryApiKeyStore();
+    const key = generateApiKey();
+    const digest = computeDigest(pepper.key, key.secret);
+    await store.createKey({
+      prefix: key.prefix,
+      keyDigest: digest,
+      hmacKeyVersion: pepper.version,
+      tenantId: 'tenant-1',
+      policyId: 'policy-1',
+      capabilities: [],
+      scopes: ['enforce'],
+      createdAt: new Date().toISOString(),
+      expiresAt: 'not-a-date',
+    });
+    const verifier = new ApiKeyVerifier({ store, peppers: [pepper] });
+    await expect(verifier.verify(key.raw)).rejects.toMatchObject({ statusCode: 401 });
+  });
+
   it('correctly uses matching pepper version', async () => {
     const pepperV1 = makePepper('v1');
     const pepperV2 = makePepper('v2');

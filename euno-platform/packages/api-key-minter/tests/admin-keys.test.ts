@@ -77,6 +77,42 @@ describe('POST /admin/v1/keys', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 400 for invalid scopes (non-string item)', async () => {
+    const { app } = await buildApp();
+    const res = await request(app)
+      .post('/admin/v1/keys')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .send({ tenantId: 'tenant-1', policyId: 'p', capabilities: [], scopes: [123] });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for invalid scopes (empty string item)', async () => {
+    const { app } = await buildApp();
+    const res = await request(app)
+      .post('/admin/v1/keys')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .send({ tenantId: 'tenant-1', policyId: 'p', capabilities: [], scopes: [''] });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for invalid expiresAt', async () => {
+    const { app } = await buildApp();
+    const res = await request(app)
+      .post('/admin/v1/keys')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .send({ ...validBody, expiresAt: 'not-a-date' });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for non-string expiresAt', async () => {
+    const { app } = await buildApp();
+    const res = await request(app)
+      .post('/admin/v1/keys')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .send({ ...validBody, expiresAt: 12345 });
+    expect(res.status).toBe(400);
+  });
+
   it('raw key is only shown once (not stored in response)', async () => {
     const { app } = await buildApp();
     const res = await request(app)
@@ -176,5 +212,35 @@ describe('DELETE /admin/v1/keys/:prefix', () => {
       .delete('/admin/v1/keys/nonexistent')
       .set('X-Admin-Key', ADMIN_KEY);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('InMemoryMintRateLimiter constructor validation', () => {
+  it('throws on NaN maxMintsPerWindow', () => {
+    const { InMemoryMintRateLimiter } = require('../src/mint-rate-limiter');
+    expect(() => new InMemoryMintRateLimiter({ maxMintsPerWindow: NaN, windowSeconds: 60 })).toThrow(
+      /invalid maxMintsPerWindow/i,
+    );
+  });
+
+  it('throws on zero maxMintsPerWindow', () => {
+    const { InMemoryMintRateLimiter } = require('../src/mint-rate-limiter');
+    expect(() => new InMemoryMintRateLimiter({ maxMintsPerWindow: 0, windowSeconds: 60 })).toThrow(
+      /invalid maxMintsPerWindow/i,
+    );
+  });
+
+  it('throws on NaN windowSeconds', () => {
+    const { InMemoryMintRateLimiter } = require('../src/mint-rate-limiter');
+    expect(() => new InMemoryMintRateLimiter({ maxMintsPerWindow: 100, windowSeconds: NaN })).toThrow(
+      /invalid windowSeconds/i,
+    );
+  });
+
+  it('throws on negative windowSeconds', () => {
+    const { InMemoryMintRateLimiter } = require('../src/mint-rate-limiter');
+    expect(() => new InMemoryMintRateLimiter({ maxMintsPerWindow: 100, windowSeconds: -1 })).toThrow(
+      /invalid windowSeconds/i,
+    );
   });
 });

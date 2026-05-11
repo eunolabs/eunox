@@ -3,7 +3,7 @@
  *
  * Routes (all require admin authentication via X-Admin-Key header):
  *   POST   /admin/v1/keys          Create a new API key (returns raw key once)
- *   GET    /admin/v1/keys          List active keys for tenant
+ *   GET    /admin/v1/keys          List all keys for tenant (including revoked/expired)
  *   DELETE /admin/v1/keys/:prefix  Revoke a key
  */
 import { Request, Response, NextFunction, Router } from 'express';
@@ -28,28 +28,27 @@ export interface AdminKeysRouterOptions {
 }
 
 function requireAdminAuth(adminApiKey: string): (req: Request, res: Response, next: NextFunction) => void {
-  // Pre-encode the expected key once so the Buffer allocation is not in the hot path.
-  const expectedBuf = Buffer.from(adminApiKey, 'utf8');
+  // Pre-compute a fixed-size HMAC of the expected key (using a zero key) so that
+  // all comparisons are on 32-byte buffers regardless of the input length.
+  // This eliminates the timing oracle that would otherwise leak the expected key length
+  // when the provided value has a different byte length.
+  const hmacKey = Buffer.alloc(32); // fixed zero key: we're normalising length, not doing MAC-as-auth
+  const expectedHash = crypto.createHmac('sha256', hmacKey)
+    .update(Buffer.from(adminApiKey, 'utf8'))
+    .digest();
+
   return (req: Request, _res: Response, next: NextFunction): void => {
     const provided = req.headers['x-admin-key'];
-    // Constant-time comparison via timingSafeEqual to prevent timing attacks
-    // that could leak the admin key value or length.
     const fail = (): void => {
       next(new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Admin authentication required', 401));
     };
-    if (typeof provided !== 'string') {
-      // Always call timingSafeEqual with equal-length buffers to avoid a length
-      // leak; compare the dummy input against the expected key.
-      const dummy = Buffer.alloc(expectedBuf.length);
-      crypto.timingSafeEqual(dummy, expectedBuf);
-      fail();
-      return;
-    }
-    const providedBuf = Buffer.from(provided, 'utf8');
-    if (
-      providedBuf.length !== expectedBuf.length ||
-      !crypto.timingSafeEqual(providedBuf, expectedBuf)
-    ) {
+
+    // Always hash the provided value (empty string on missing header) and compare
+    // against the expected hash.  Both paths call timingSafeEqual on 32-byte buffers,
+    // so the comparison time does not depend on input length.
+    const providedBuf = typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
+    const providedHash = crypto.createHmac('sha256', hmacKey).update(providedBuf).digest();
+    if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
       fail();
       return;
     }
@@ -80,13 +79,39 @@ function parseCreateKeyBody(body: unknown): CreateKeyBody {
   if (!Array.isArray(b['capabilities'])) {
     throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'capabilities must be an array', 400);
   }
+
+  // Validate scopes: must be an array of non-empty strings when provided.
+  let scopes: string[] = ['enforce'];
+  if (b['scopes'] !== undefined) {
+    if (
+      !Array.isArray(b['scopes']) ||
+      !(b['scopes'] as unknown[]).every((s) => typeof s === 'string' && s.length > 0)
+    ) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'scopes must be an array of non-empty strings', 400);
+    }
+    scopes = b['scopes'] as string[];
+  }
+
+  // Validate expiresAt: must be a parseable ISO-8601 timestamp when provided.
+  let expiresAt: string | undefined;
+  if (b['expiresAt'] !== undefined) {
+    if (typeof b['expiresAt'] !== 'string') {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'expiresAt must be an ISO-8601 string', 400);
+    }
+    const ts = Date.parse(b['expiresAt']);
+    if (!Number.isFinite(ts)) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'expiresAt is not a valid ISO-8601 timestamp', 400);
+    }
+    expiresAt = b['expiresAt'];
+  }
+
   return {
     tenantId: b['tenantId'],
     policyId: b['policyId'],
     capabilities: b['capabilities'] as CapabilityConstraint[],
-    scopes: Array.isArray(b['scopes']) ? (b['scopes'] as string[]) : ['enforce'],
+    scopes,
     label: typeof b['label'] === 'string' ? b['label'] : undefined,
-    expiresAt: typeof b['expiresAt'] === 'string' ? b['expiresAt'] : undefined,
+    expiresAt,
   };
 }
 
