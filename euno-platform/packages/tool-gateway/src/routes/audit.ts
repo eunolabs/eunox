@@ -154,14 +154,14 @@ export function createAuditRouter(opts: AuditRouterOptions): Router {
       if (rawFromTs !== undefined && isNaN(Date.parse(rawFromTs))) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
-          'fromTs must be a valid ISO 8601 date/time string',
+          'fromTs must be a valid date/time string',
           400,
         );
       }
       if (rawToTs !== undefined && isNaN(Date.parse(rawToTs))) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
-          'toTs must be a valid ISO 8601 date/time string',
+          'toTs must be a valid date/time string',
           400,
         );
       }
