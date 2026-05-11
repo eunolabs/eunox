@@ -43,7 +43,7 @@ interface IdempotencyEntry {
  * In-memory idempotency store for admin API mutations.
  *
  * Keyed by the value of the caller-supplied `Idempotency-Key` header.
- * Entries expire after `ttlMs` (default 24 h) and are pruned lazily on
+ * Entries expire after `ttlMs` (default {@link AdminIdempotencyStore.DEFAULT_TTL_MS}, 24 hours) and are pruned lazily on
  * insert when the map grows beyond `maxSize`.
  *
  * This implementation is local-process only.  In a multi-replica deployment
@@ -58,8 +58,14 @@ export class AdminIdempotencyStore {
   private readonly ttlMs: number;
   private readonly maxSize: number;
 
+  /**
+   * Default TTL for idempotency entries: 24 hours in milliseconds.
+   * Exposed as a named constant so callers can reference it without magic numbers.
+   */
+  static readonly DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
   constructor(opts: { ttlMs?: number; maxSize?: number } = {}) {
-    this.ttlMs = opts.ttlMs ?? 24 * 60 * 60 * 1000; // 24 h
+    this.ttlMs = opts.ttlMs ?? AdminIdempotencyStore.DEFAULT_TTL_MS;
     this.maxSize = opts.maxSize ?? 10_000;
   }
 

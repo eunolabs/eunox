@@ -835,10 +835,10 @@ describe('Idempotency-Key header support', () => {
   });
 
   it('AdminIdempotencyStore: expired entries are not replayed', async () => {
-    const store = new AdminIdempotencyStore({ ttlMs: 5 }); // 5 ms TTL
-    store.set('k1', 'POST /x', 200, { ok: true });
+    const shortTtlStore = new AdminIdempotencyStore({ ttlMs: 5 }); // 5 ms TTL
+    shortTtlStore.set('k1', 'POST /x', 200, { ok: true });
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
-    expect(store.get('k1')).toBeUndefined();
+    expect(shortTtlStore.get('k1')).toBeUndefined();
   });
 });
 
