@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import { CapabilityError, createLogger } from '@euno/common';
 import { createMintRouter, MintRouterOptions } from './routes/mint';
 import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-keys';
+import { AnomalyDetector } from './anomaly-detector';
 import { minterMetrics } from './metrics';
 
 type Logger = ReturnType<typeof createLogger>;
@@ -11,6 +12,11 @@ export interface MinterDependencies {
   mintRouterOpts: MintRouterOptions;
   adminKeysRouterOpts: AdminKeysRouterOptions;
   logger: Logger;
+  /**
+   * Optional anomaly detector shared across mint route instances.
+   * When provided, it is injected into the mint router.
+   */
+  anomalyDetector?: AnomalyDetector;
 }
 
 export function createMinterApp(deps: MinterDependencies): Express {
@@ -23,7 +29,12 @@ export function createMinterApp(deps: MinterDependencies): Express {
     next();
   });
 
-  app.use(createMintRouter(deps.mintRouterOpts));
+  // Inject anomaly detector into mint router opts if provided at the app level.
+  const mintRouterOpts: MintRouterOptions = deps.anomalyDetector
+    ? { ...deps.mintRouterOpts, anomalyDetector: deps.anomalyDetector }
+    : deps.mintRouterOpts;
+
+  app.use(createMintRouter(mintRouterOpts));
   app.use(createAdminKeysRouter(deps.adminKeysRouterOpts));
 
   app.get('/health', (_req: Request, res: Response) => {

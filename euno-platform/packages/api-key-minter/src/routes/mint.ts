@@ -20,6 +20,8 @@ import { TokenMinter } from '../token-minter';
 import { MintAuditStore } from '../mint-audit';
 import { MintRateLimiter } from '../mint-rate-limiter';
 import { minterMetrics } from '../metrics';
+import { KmsSigningError } from '../kms-signing-error';
+import { AnomalyDetector } from '../anomaly-detector';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -29,6 +31,11 @@ export interface MintRouterOptions {
   auditStore: MintAuditStore;
   rateLimiter: MintRateLimiter;
   logger: Logger;
+  /**
+   * Optional anomaly detector.  When provided, `recordMint` is called after
+   * every mint attempt and the fired rule names are logged for observability.
+   */
+  anomalyDetector?: AnomalyDetector;
 }
 
 function parseMintRequestBody(body: unknown): { agentId: string; sessionId: string } {
@@ -119,6 +126,14 @@ export function createMintRouter(opts: MintRouterOptions): Router {
       minterMetrics.mintTotal.inc({ tenant: tenantId, result: 'minted' });
       endLatency({ tenant: tenantId });
 
+      // 7. Run anomaly detection (non-blocking; anomalies are logged and metered)
+      if (opts.anomalyDetector) {
+        const firedRules = opts.anomalyDetector.recordMint(tenantId, true);
+        if (firedRules.length > 0) {
+          opts.logger.warn('Mint anomaly detected', { tenantId, rules: firedRules });
+        }
+      }
+
       opts.logger.info('Capability token minted', {
         tenantId,
         agentId,
@@ -142,6 +157,15 @@ export function createMintRouter(opts: MintRouterOptions): Router {
           endLatency({ tenant: failureTenant });
         }
       }
+
+      // Run anomaly detection for failure events (tenantId known = auth succeeded).
+      if (tenantId !== undefined && opts.anomalyDetector) {
+        const firedRules = opts.anomalyDetector.recordMint(tenantId, false);
+        if (firedRules.length > 0) {
+          opts.logger.warn('Mint anomaly detected on failure', { tenantId, rules: firedRules });
+        }
+      }
+
       next(error);
     }
   });
@@ -163,6 +187,11 @@ export function createMintRouter(opts: MintRouterOptions): Router {
  * - `RATE_LIMIT_EXCEEDED`   — recorded when tenant rate limit is hit
  */
 function classifyErrorResult(error: unknown): string | null {
+  if (error instanceof KmsSigningError) {
+    // KMS errors are recorded by MeteredTokenSigner on kmsErrorTotal;
+    // here we only need the mintTotal result label.
+    return 'kms_error';
+  }
   if (error instanceof CapabilityError) {
     switch (error.code) {
       case ErrorCode.INVALID_REQUEST: return 'invalid_request';

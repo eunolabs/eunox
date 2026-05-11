@@ -32,6 +32,7 @@
  */
 
 import { MintAuditRecord, MintAuditStore } from './mint-audit';
+import { keyRotationTotal } from './metrics';
 import * as crypto from 'crypto';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -219,6 +220,9 @@ export class KeyRotationManager {
     // active; tokens signed by the old key remain verifiable.
     await this.jwksStore.addKey(newKey);
 
+    // Record the rotation event in Prometheus.
+    keyRotationTotal.inc({ kid: newKey.kid, reason: kind });
+
     return { auditJti, kind };
   }
 
@@ -276,6 +280,9 @@ export class KeyRotationManager {
         : `${reason}; retired ${oldKid}`,
     };
     await this.auditStore.record(auditRecord);
+
+    // Record the completion event in Prometheus.
+    keyRotationTotal.inc({ kid: newKid, reason: 'completed' });
 
     return { auditJti, retiredKid: oldKid };
   }

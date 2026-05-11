@@ -5,7 +5,8 @@
 > **Condition:** The ratio of denied or errored mint calls to total mint calls for a single
 > tenant exceeds 50% over 5 minutes.
 >
-> **Status:** Stub — fully populated before Stage 3 ships to the first paying customer.
+> **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 4); also fires via
+> `euno_minter_anomaly_alerts_total{rule="failure_clustering"}` for sub-minute in-process detection.
 
 ## Likely causes
 

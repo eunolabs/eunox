@@ -3,9 +3,9 @@
 > **Alert:** `MinterEmergencyKeyRotation` — severity **critical**
 >
 > **Condition:** An emergency key rotation event has been recorded for the minter signing
-> key.
+> key (`euno_minter_key_rotation_total{reason="emergency"}` increases).
 >
-> **Status:** Stub — fully populated before Stage 3 ships to the first paying customer.
+> **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 5).
 
 ## Context
 

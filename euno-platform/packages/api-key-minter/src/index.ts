@@ -7,6 +7,10 @@ export { ApiKeyVerifier } from './api-key-verifier';
 export type { MintTokenInput, MintTokenResult, TokenMinterOptions } from './token-minter';
 export { TokenMinter, MINTER_DEFAULT_TTL_SECONDS, MINTER_MAX_TTL_SECONDS } from './token-minter';
 export { LocalTokenSigner } from './local-token-signer';
+export { MeteredTokenSigner } from './metered-token-signer';
+export { KmsSigningError } from './kms-signing-error';
+export type { AnomalyDetectorOptions } from './anomaly-detector';
+export { AnomalyDetector } from './anomaly-detector';
 export type { MintAuditRecord, MintAuditStore, MintAuditResult } from './mint-audit';
 export { InMemoryMintAuditStore } from './mint-audit';
 export type { MintAuditPgPool } from './postgres-mint-audit-store';
@@ -28,4 +32,13 @@ export { createAdminKeysRouter } from './routes/admin-keys';
 export type { AdminKeysRouterOptions } from './routes/admin-keys';
 export type { MinterDependencies } from './app-factory';
 export { createMinterApp } from './app-factory';
-export { minterMetrics, minterRegistry, mintTotal, mintLatencySeconds, kmsErrorTotal, anomalyAlertsTotal } from './metrics';
+export {
+  minterMetrics,
+  minterRegistry,
+  mintTotal,
+  mintLatencySeconds,
+  kmsSignLatencySeconds,
+  kmsErrorTotal,
+  anomalyAlertsTotal,
+  keyRotationTotal,
+} from './metrics';

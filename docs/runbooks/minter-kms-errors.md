@@ -5,7 +5,9 @@
 > **Condition:** The total KMS error rate across all providers exceeds 5 errors/second for
 > ≥ 1 minute.
 >
-> **Status:** Stub — fully populated before Stage 3 ships to the first paying customer.
+> **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 3).
+> Use `euno_minter_kms_error_total{error_class="..."}` to break down by error class
+> (`sign_failed`, `auth_error`, `timeout`, `unavailable`).
 
 ## Likely causes
 
