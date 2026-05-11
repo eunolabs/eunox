@@ -99,11 +99,13 @@ export async function buildRevocationModule(
   logger: Logger,
   callbacks: RevocationModuleCallbacks,
 ): Promise<RevocationModuleResult> {
-  // Circuit breaker config.
+  // Circuit breaker config — fields are declared in GatewayConfigSchema with
+  // schema-level defaults (5 / 10 000 ms / 30 000 ms) so they are always present
+  // after validation. No type-cast or nullish-coalescing needed here.
   const cbConfig = {
-    failureThreshold: (validated as { REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD?: number }).REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD ?? 5,
-    windowMs: (validated as { REDIS_CIRCUIT_BREAKER_WINDOW_MS?: number }).REDIS_CIRCUIT_BREAKER_WINDOW_MS ?? 10_000,
-    cooldownMs: (validated as { REDIS_CIRCUIT_BREAKER_COOLDOWN_MS?: number }).REDIS_CIRCUIT_BREAKER_COOLDOWN_MS ?? 30_000,
+    failureThreshold: validated.REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    windowMs: validated.REDIS_CIRCUIT_BREAKER_WINDOW_MS,
+    cooldownMs: validated.REDIS_CIRCUIT_BREAKER_COOLDOWN_MS,
   };
 
   // Separate circuit breakers per control surface so a failure on the

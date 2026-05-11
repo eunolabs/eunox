@@ -1490,9 +1490,17 @@ export const GatewayConfigSchema = z
     CALL_COUNTER_FAIL_OPEN: envBoolean({
       default: false,
       description:
-        'When true, a Redis error or circuit-open for the call-counter store falls back to an in-process counter instead of denying all maxCalls-conditioned requests. ' +
-        'The effective cap during a Redis outage becomes maxCalls × replicaCount (counters are not shared across replicas). ' +
-        'Recommended for deployments where a Redis blip causing a service brownout is more disruptive than temporarily relaxed rate-limits. Boolean: true | false.',
+        'Controls circuit-breaker behaviour when Redis is unavailable for the call-counter store. ' +
+        'false (default — fail-closed): a Redis error or circuit-open causes the gateway to return a deny ' +
+        'for any request that carries a maxCalls condition, rather than risk under-counting calls. ' +
+        'This is the correct default for the hosted gateway offering where cryptographic correctness ' +
+        'takes precedence over availability. ' +
+        'true (fail-open): falls back to an in-process per-replica counter instead of denying all ' +
+        'maxCalls-conditioned requests. The effective cap during a Redis outage becomes maxCalls × replicaCount ' +
+        '(counters are not shared across replicas). Recommended for self-hosted deployments where a Redis ' +
+        'blip causing a service brownout is more disruptive than temporarily relaxed rate limits. ' +
+        'Explicitly set this to "false" for the hosted offering and "true" for self-host if you prefer ' +
+        'availability over strict cross-replica counting. Boolean: true | false.',
     }),
 
     // Redis circuit breaker (shared defaults; apply to revocation + call-counter stores)

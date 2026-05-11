@@ -255,6 +255,96 @@ describe('RedisCallCounterStore local fallback', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Multi-replica simulation
+// ---------------------------------------------------------------------------
+
+describe('RedisCallCounterStore multi-replica simulation', () => {
+  /**
+   * Simulates two gateway replicas that share a single Redis instance.
+   * Both replicas point their RedisCallCounterStore at the same FakeRedis
+   * client, which is equivalent to pointing two real store instances at
+   * the same Redis cluster.
+   *
+   * Correct behaviour: increments from replica A are immediately visible to
+   * replica B because both stores issue INCR against the same shared Redis
+   * backing store.
+   */
+
+  it('counters accumulate jointly across two replicas sharing a Redis store', async () => {
+    const redis = new FakeRedis();
+    const storeA = new RedisCallCounterStore(redis, logger, { keyPrefix: 'r:' });
+    const storeB = new RedisCallCounterStore(redis, logger, { keyPrefix: 'r:' });
+
+    // Replica A increments; counter becomes 1.
+    expect(await storeA.incrementAndGet('cap', 60)).toBe(1);
+    // Replica B increments the same key; counter becomes 2.
+    expect(await storeB.incrementAndGet('cap', 60)).toBe(2);
+    // Replica A increments again; counter becomes 3.
+    expect(await storeA.incrementAndGet('cap', 60)).toBe(3);
+    // Replica B sees counter at 4.
+    expect(await storeB.incrementAndGet('cap', 60)).toBe(4);
+  });
+
+  it('exhausts a budget jointly: one call on each replica consumes the shared budget', async () => {
+    const shared = { values: new Map<string, number>(), expiries: new Map<string, number>() };
+    const storeA = new RedisCallCounterStore(new SharedFakeRedis(shared.values, shared.expiries), logger, { keyPrefix: 'r2:' });
+    const storeB = new RedisCallCounterStore(new SharedFakeRedis(shared.values, shared.expiries), logger, { keyPrefix: 'r2:' });
+
+    // maxCalls = 2; each replica contributes one call.
+    const count1 = await storeA.incrementAndGet('budget', 60);
+    const count2 = await storeB.incrementAndGet('budget', 60);
+
+    // Both calls were within budget; values reflect the joint counter.
+    expect(count1).toBe(1);
+    expect(count2).toBe(2);
+
+    // A third increment from either replica returns 3 — the caller
+    // (EnforcementEngine) compares count > maxCalls and denies.
+    const count3 = await storeA.incrementAndGet('budget', 60);
+    expect(count3).toBe(3);
+  });
+
+  it('independent stores (different Redis) do NOT share counters', async () => {
+    const sharedA = { values: new Map<string, number>(), expiries: new Map<string, number>() };
+    const sharedB = { values: new Map<string, number>(), expiries: new Map<string, number>() };
+    const storeA = new RedisCallCounterStore(new SharedFakeRedis(sharedA.values, sharedA.expiries), logger, { keyPrefix: 'ind:' });
+    const storeB = new RedisCallCounterStore(new SharedFakeRedis(sharedB.values, sharedB.expiries), logger, { keyPrefix: 'ind:' });
+
+    // Each store's counter starts independently at 1.
+    expect(await storeA.incrementAndGet('cap', 60)).toBe(1);
+    expect(await storeB.incrementAndGet('cap', 60)).toBe(1);
+    // Second call on each store increments its own local counter only.
+    expect(await storeA.incrementAndGet('cap', 60)).toBe(2);
+    expect(await storeB.incrementAndGet('cap', 60)).toBe(2);
+  });
+
+  it('circuit-open on replica A does not trip circuit on replica B', async () => {
+    const { RedisCircuitBreaker: CB } = await import('../src/redis-circuit-breaker');
+    const shared = { values: new Map<string, number>(), expiries: new Map<string, number>() };
+    const cbA = new CB({ failureThreshold: 1, windowMs: 5000, cooldownMs: 60000 });
+    const cbB = new CB({ failureThreshold: 5, windowMs: 5000, cooldownMs: 60000 });
+
+    const redisA = new SharedFakeRedis(shared.values, shared.expiries);
+    const storeA = new RedisCallCounterStore(redisA, logger, { keyPrefix: 'cb:', circuitBreaker: cbA });
+
+    const redisB = new SharedFakeRedis(shared.values, shared.expiries);
+    const storeB = new RedisCallCounterStore(redisB, logger, { keyPrefix: 'cb:', circuitBreaker: cbB });
+
+    // Trip replica A's circuit by making its Redis fail.
+    redisA.errorMode = true;
+    await storeA.incrementAndGet('key', 60); // trips cbA
+    expect(cbA.getState()).toBe('open');
+
+    // Replica B's circuit is independent and should still be closed.
+    expect(cbB.getState()).toBe('closed');
+
+    // Redis B is healthy, so replica B can still count.
+    const v = await storeB.incrementAndGet('other', 60);
+    expect(v).toBe(1);
+  });
+});
+
 describe('createCallCounterStoreFromEnv', () => {
   it('returns an in-memory store when REDIS_URL is unset', async () => {
     const store = await createCallCounterStoreFromEnv({}, logger);
