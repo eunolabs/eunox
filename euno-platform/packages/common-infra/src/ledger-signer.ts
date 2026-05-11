@@ -132,6 +132,103 @@ export class LedgerHmacError extends Error {
 // ── LedgerBackend interface ───────────────────────────────────────────────────
 
 /**
+ * Filter parameters for {@link LedgerBackend.queryEntries}.
+ *
+ * All fields are optional; omitting a field means "no constraint on this
+ * dimension". Multiple fields are combined with AND semantics. Time
+ * range bounds are inclusive.
+ */
+export interface AuditQueryFilter {
+  /** Only return entries whose `signedEvidence.agentId` matches. */
+  agentId?: string;
+  /**
+   * Only return entries whose `signedEvidence.capabilityId` matches.
+   * This is the JWT `jti` claim of the token used for the request.
+   */
+  jti?: string;
+  /**
+   * Only return entries whose `signedEvidence.decision` matches.
+   * When omitted, both `'allow'` and `'deny'` records are returned.
+   */
+  decision?: 'allow' | 'deny';
+  /**
+   * Only return entries whose `signedEvidence.tenantId` matches.
+   *
+   * Route handlers SHOULD always set this to the tenant extracted from
+   * the caller's capability token so query results are automatically
+   * scoped to the tenant. Omitting it returns all tenants — only
+   * appropriate for admin/internal callers.
+   */
+  tenantId?: string;
+  /**
+   * Only return entries whose `signedEvidence.conditionType` matches.
+   * Useful for finding all denials caused by a specific condition type
+   * (e.g. `'timeWindow'`, `'ipRange'`, `'maxCalls'`).
+   */
+  conditionType?: string;
+  /**
+   * Only return entries whose `signedEvidence.denialCode` matches.
+   * Values: `'NO_MATCHING_CAPABILITY'`, `'ARGUMENT_SCHEMA_REQUIRED'`,
+   * `'ARGUMENT_VALIDATION'`, `'QUOTA_EXCEEDED'`, `'CONDITION_FAILED'`.
+   */
+  denialCode?: string;
+  /**
+   * Inclusive lower bound on entry timestamp (ISO 8601).
+   * Matches the `ts` field of the `signedEvidence` payload.
+   */
+  fromTs?: string;
+  /**
+   * Inclusive upper bound on entry timestamp (ISO 8601).
+   * Matches the `ts` field of the `signedEvidence` payload.
+   */
+  toTs?: string;
+}
+
+/**
+ * Cursor-based pagination input for {@link LedgerBackend.queryEntries}.
+ *
+ * Pass `cursor` from a previous {@link AuditQueryPage.nextCursor} to retrieve
+ * the next page. Omit to start from the beginning (or end, depending on
+ * `direction`).
+ */
+export interface AuditQueryPagination {
+  /**
+   * Maximum number of entries to return.
+   * Back-end implementations MUST respect this and MUST NOT return more.
+   * Defaults to 50 when omitted.
+   */
+  limit?: number;
+  /**
+   * Opaque cursor returned by a previous {@link AuditQueryPage.nextCursor}.
+   * When omitted, the query starts from the earliest (ascending) or latest
+   * (descending) matching entry.
+   */
+  cursor?: string;
+  /**
+   * Sort direction.
+   * - `'asc'`  — oldest first (default).
+   * - `'desc'` — newest first.
+   */
+  direction?: 'asc' | 'desc';
+}
+
+/**
+ * Paginated result page returned by {@link LedgerBackend.queryEntries}.
+ */
+export interface AuditQueryPage {
+  /** The matching ledger entries for this page. */
+  entries: LedgerEntry[];
+  /**
+   * Opaque cursor for the next page.
+   * Pass as `pagination.cursor` to retrieve the subsequent page.
+   * `undefined` when there are no more results.
+   */
+  nextCursor: string | undefined;
+  /** Total number of matching entries (optional; `undefined` when expensive to compute). */
+  total?: number;
+}
+
+/**
  * Pluggable backend that owns the authoritative chain state.
  *
  * The key invariant: `appendEntry` is the **only** path by which chain state
@@ -201,6 +298,20 @@ export interface LedgerBackend {
    * Used by offline verification tools to replay and validate the chain.
    */
   getEntries(fromSeq: number, toSeq: number): Promise<LedgerEntry[]>;
+
+  /**
+   * Paginated, filterable query over the immutable audit ledger.
+   *
+   * Returns a single page of {@link LedgerEntry} records that satisfy
+   * every constraint in `filter`, ordered by `seq` (ascending by default).
+   * Caller MUST NOT assume any particular ordering beyond what is specified
+   * by `pagination.direction`.
+   *
+   * This is the read path for the Task-7 audit query API. Implementations
+   * that do not support querying (e.g. {@link AzureConfidentialLedgerBackend})
+   * MAY return `{ entries: [], nextCursor: undefined }` as a safe no-op.
+   */
+  queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage>;
 
   /**
    * Gracefully release any external resources (e.g. DB connection pool).
@@ -383,6 +494,51 @@ export class InMemoryLedgerBackend implements LedgerBackend {
 
   async getEntries(fromSeq: number, toSeq: number): Promise<LedgerEntry[]> {
     return this.entries.filter((e) => e.seq >= fromSeq && e.seq <= toSeq);
+  }
+
+  async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
+    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const direction = pagination.direction ?? 'asc';
+
+    // Decode cursor (a stringified seq number).
+    let cursorSeq: number | undefined;
+    if (pagination.cursor) {
+      const parsed = parseInt(pagination.cursor, 10);
+      if (!Number.isNaN(parsed)) cursorSeq = parsed;
+    }
+
+    let candidates = this.entries.filter((e) => {
+      const ev = e.signedEvidence;
+      if (filter.agentId !== undefined && ev.agentId !== filter.agentId) return false;
+      if (filter.jti !== undefined && ev.capabilityId !== filter.jti) return false;
+      if (filter.decision !== undefined && ev.decision !== filter.decision) return false;
+      if (filter.tenantId !== undefined && ev.tenantId !== filter.tenantId) return false;
+      if (filter.conditionType !== undefined && ev.conditionType !== filter.conditionType) return false;
+      if (filter.denialCode !== undefined && ev.denialCode !== filter.denialCode) return false;
+      if (filter.fromTs !== undefined && ev.ts < filter.fromTs) return false;
+      if (filter.toTs !== undefined && ev.ts > filter.toTs) return false;
+      return true;
+    });
+
+    if (direction === 'desc') {
+      candidates = [...candidates].reverse();
+    }
+
+    // Apply cursor: skip entries before/at the cursor seq.
+    if (cursorSeq !== undefined) {
+      if (direction === 'asc') {
+        candidates = candidates.filter((e) => e.seq > cursorSeq!);
+      } else {
+        candidates = candidates.filter((e) => e.seq < cursorSeq!);
+      }
+    }
+
+    const page = candidates.slice(0, limit);
+    const lastEntry = page[page.length - 1];
+    const hasMore = candidates.length > limit;
+    const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
+
+    return { entries: page, nextCursor };
   }
 
   /** Total number of entries in the in-memory store (for test assertions). */
@@ -881,6 +1037,94 @@ export class PostgresLedgerBackend implements LedgerBackend {
     }
   }
 
+  async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
+    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const direction = pagination.direction ?? 'asc';
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    // Cursor is the seq value to paginate from.
+    if (pagination.cursor !== undefined) {
+      const cursorSeq = parseInt(pagination.cursor, 10);
+      if (!Number.isNaN(cursorSeq)) {
+        params.push(cursorSeq);
+        conditions.push(`seq ${direction === 'asc' ? '>' : '<'} $${params.length}`);
+      }
+    }
+
+    if (filter.agentId !== undefined) {
+      params.push(filter.agentId);
+      conditions.push(`payload->>'agentId' = $${params.length}`);
+    }
+    if (filter.jti !== undefined) {
+      params.push(filter.jti);
+      conditions.push(`payload->>'capabilityId' = $${params.length}`);
+    }
+    if (filter.decision !== undefined) {
+      params.push(filter.decision);
+      conditions.push(`payload->>'decision' = $${params.length}`);
+    }
+    if (filter.tenantId !== undefined) {
+      params.push(filter.tenantId);
+      conditions.push(`payload->>'tenantId' = $${params.length}`);
+    }
+    if (filter.conditionType !== undefined) {
+      params.push(filter.conditionType);
+      conditions.push(`payload->>'conditionType' = $${params.length}`);
+    }
+    if (filter.denialCode !== undefined) {
+      params.push(filter.denialCode);
+      conditions.push(`payload->>'denialCode' = $${params.length}`);
+    }
+    if (filter.fromTs !== undefined) {
+      params.push(filter.fromTs);
+      conditions.push(`payload->>'ts' >= $${params.length}`);
+    }
+    if (filter.toTs !== undefined) {
+      params.push(filter.toTs);
+      conditions.push(`payload->>'ts' <= $${params.length}`);
+    }
+
+    // Fetch limit+1 rows to detect whether there is a next page.
+    params.push(limit + 1);
+    const limitParam = `$${params.length}`;
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderDir = direction === 'asc' ? 'ASC' : 'DESC';
+    const sql = `
+      SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
+        FROM ${this.table}
+      ${whereClause}
+      ORDER BY seq ${orderDir}
+      LIMIT ${limitParam}
+    `;
+
+    const conn = await this.pool.connect();
+    let rows: LedgerSelectRow[];
+    try {
+      const result = await conn.query<LedgerSelectRow>(sql, params);
+      rows = result.rows;
+    } finally {
+      conn.release();
+    }
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const entries: LedgerEntry[] = pageRows.map((row) => ({
+      seq: Number(row.seq),
+      previousHash: row.previous_hash,
+      recordHash: row.record_hash,
+      replicaId: row.replica_id,
+      signedEvidence: row.payload,
+      ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
+      rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
+    }));
+
+    const lastEntry = entries[entries.length - 1];
+    const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
+    return { entries, nextCursor };
+  }
+
   /**
    * Verify the HMAC of a single ledger row.
    *
@@ -1312,6 +1556,13 @@ export class AzureConfidentialLedgerBackend implements LedgerBackend {
   async close(): Promise<void> {
     // ACL HTTP clients have no explicit cleanup.
   }
+
+  async queryEntries(_filter: AuditQueryFilter, _pagination: AuditQueryPagination): Promise<AuditQueryPage> {
+    // The Azure Confidential Ledger client uses a seq→txId in-process index
+    // that does not support arbitrary filtered queries. Callers should use the
+    // Postgres backends for the audit query API.
+    return { entries: [], nextCursor: undefined };
+  }
 }
 
 // ── PerReplicaPostgresLedgerBackend ───────────────────────────────────────────
@@ -1726,6 +1977,94 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     } finally {
       conn.release();
     }
+  }
+
+  async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
+    const limit = Math.min(pagination.limit ?? 50, 1000);
+    const direction = pagination.direction ?? 'asc';
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    // Cursor is the seq value to paginate from (within this replica).
+    if (pagination.cursor !== undefined) {
+      const cursorSeq = parseInt(pagination.cursor, 10);
+      if (!Number.isNaN(cursorSeq)) {
+        params.push(cursorSeq);
+        conditions.push(`seq ${direction === 'asc' ? '>' : '<'} $${params.length}`);
+      }
+    }
+
+    if (filter.agentId !== undefined) {
+      params.push(filter.agentId);
+      conditions.push(`payload->>'agentId' = $${params.length}`);
+    }
+    if (filter.jti !== undefined) {
+      params.push(filter.jti);
+      conditions.push(`payload->>'capabilityId' = $${params.length}`);
+    }
+    if (filter.decision !== undefined) {
+      params.push(filter.decision);
+      conditions.push(`payload->>'decision' = $${params.length}`);
+    }
+    if (filter.tenantId !== undefined) {
+      params.push(filter.tenantId);
+      conditions.push(`payload->>'tenantId' = $${params.length}`);
+    }
+    if (filter.conditionType !== undefined) {
+      params.push(filter.conditionType);
+      conditions.push(`payload->>'conditionType' = $${params.length}`);
+    }
+    if (filter.denialCode !== undefined) {
+      params.push(filter.denialCode);
+      conditions.push(`payload->>'denialCode' = $${params.length}`);
+    }
+    if (filter.fromTs !== undefined) {
+      params.push(filter.fromTs);
+      conditions.push(`payload->>'ts' >= $${params.length}`);
+    }
+    if (filter.toTs !== undefined) {
+      params.push(filter.toTs);
+      conditions.push(`payload->>'ts' <= $${params.length}`);
+    }
+
+    // Fetch limit+1 rows to detect whether there is a next page.
+    params.push(limit + 1);
+    const limitParam = `$${params.length}`;
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderDir = direction === 'asc' ? 'ASC' : 'DESC';
+    const sql = `
+      SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
+        FROM ${this.table}
+      ${whereClause}
+      ORDER BY seq ${orderDir}
+      LIMIT ${limitParam}
+    `;
+
+    const conn = await this.pool.connect();
+    let rows: PerReplicaSelectRow[];
+    try {
+      const result = await conn.query<PerReplicaSelectRow>(sql, params);
+      rows = result.rows;
+    } finally {
+      conn.release();
+    }
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const entries: LedgerEntry[] = pageRows.map((row) => ({
+      seq: Number(row.seq),
+      previousHash: row.previous_hash,
+      recordHash: row.record_hash,
+      replicaId: row.replica_id,
+      signedEvidence: row.payload,
+      ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
+      rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
+    }));
+
+    const lastEntry = entries[entries.length - 1];
+    const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
+    return { entries, nextCursor };
   }
 
   /**

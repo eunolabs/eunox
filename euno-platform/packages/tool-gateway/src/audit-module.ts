@@ -36,6 +36,7 @@ import {
   Gauge,
   InMemoryLedgerBackend,
   LedgerAuditEvidenceSigner,
+  LedgerBackend,
   LedgerChainError,
   OcsfAuditTransport,
   PerReplicaPostgresLedgerBackend,
@@ -142,6 +143,15 @@ export interface AuditModuleResult {
    * Caller MUST call `crossChainAnchor.stop()` on graceful shutdown.
    */
   crossChainAnchor?: CrossChainAnchor;
+  /**
+   * The ledger backend used by the evidence signer. Present when a ledger
+   * backend is configured (`AUDIT_LEDGER_BACKEND` is set and not `'none'`).
+   *
+   * Exposed so the audit query route can call `queryEntries()` to serve
+   * the Task-7 `GET /api/v1/audit/records` endpoint without an additional
+   * DB connection pool.
+   */
+  auditLedgerBackend?: import('@euno/common').LedgerBackend;
 }
 
 /**
@@ -194,6 +204,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
   let crossChainAnchor: CrossChainAnchor | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
+  let auditLedgerBackend: LedgerBackend | undefined;
 
   try {
     // Select the evidence signer: KMS-backed (AUDIT_SIGNING_KMS_PROVIDER) takes
@@ -285,6 +296,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
+        auditLedgerBackend = pgBackend;
 
         logger.info('Audit ledger backend: postgres', {
           table: table ?? 'euno_audit_ledger',
@@ -316,6 +328,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
+        auditLedgerBackend = aclBackend;
       } else if (ledgerBackendName === 'in-memory') {
         const inMemBackend = new InMemoryLedgerBackend();
         const cryptoSigner = activeSigner.getCryptoSigner();
@@ -323,6 +336,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
+        auditLedgerBackend = inMemBackend;
         logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
       } else if (ledgerBackendName === 'per-replica-postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -359,6 +373,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
+        auditLedgerBackend = perReplicaBackend;
 
         if (s3Bucket) {
           logger.warn(
@@ -625,5 +640,6 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS,
     ledgerPgPool,
     crossChainAnchor,
+    auditLedgerBackend,
   };
 }
