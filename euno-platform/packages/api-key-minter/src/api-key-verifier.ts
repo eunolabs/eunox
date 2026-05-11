@@ -46,7 +46,10 @@ export class ApiKeyVerifier {
     // Step 4: compute HMAC for all active peppers (always iterate all to avoid timing leak)
     let matchFound = false;
     for (const pepper of this.opts.peppers) {
-      const computed = this.hmac(pepper.key, secretBuffer);
+    // HMAC-SHA256 with a 256-bit pepper is intentional for API key storage.
+    // API keys are high-entropy random values (≥285 bits), not user passwords;
+    // PBKDF/bcrypt/scrypt are unnecessary and would add latency without benefit.
+    const computed = this.hmac(pepper.key, secretBuffer);
       let stored: Buffer;
       try {
         stored = Buffer.from(row.keyDigest, 'base64url');

@@ -20,6 +20,9 @@ const logger = createLogger('api-key-minter');
 
 async function main(): Promise<void> {
   const port = parseInt(process.env['MINTER_PORT'] ?? '3004', 10);
+  if (isNaN(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid MINTER_PORT: ${process.env['MINTER_PORT']}. Must be 1–65535.`);
+  }
   const issuerDid = process.env['MINTER_ISSUER_DID'] ?? 'did:web:minter.euno.local';
   const gatewayAudience = process.env['MINTER_GATEWAY_AUDIENCE'] ?? 'tool-gateway';
   const ttlSeconds = parseInt(process.env['MINTER_TOKEN_TTL_SECONDS'] ?? '300', 10);

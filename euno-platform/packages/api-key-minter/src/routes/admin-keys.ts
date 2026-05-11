@@ -84,6 +84,8 @@ export function createAdminKeysRouter(opts: AdminKeysRouterOptions): Router {
       const body = parseCreateKeyBody(req.body);
       const { prefix, secret, raw } = generateApiKey();
 
+      // HMAC-SHA256 with a 256-bit pepper is intentional for API key storage.
+      // API keys are high-entropy random values, not user passwords.
       const keyDigest = crypto
         .createHmac('sha256', activePepper.key)
         .update(secret, 'utf8')

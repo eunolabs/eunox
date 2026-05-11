@@ -47,6 +47,7 @@ function parseMintRequestBody(body: unknown): { agentId: string; sessionId: stri
 export function createMintRouter(opts: MintRouterOptions): Router {
   const router = Router();
 
+  // Rate limiting is applied at the application level via opts.rateLimiter per tenant.
   router.post('/mint', async (req: Request, res: Response, next: NextFunction) => {
     try {
       // 1. Extract and verify API key

@@ -29,6 +29,11 @@ function generateBase58String(length: number): string {
   return result;
 }
 
+/**
+ * Encodes raw bytes to a Base58 string using modulo mapping (not rejection
+ * sampling). This introduces a slight bias and is **not suitable for
+ * cryptographic key generation**. Use {@link generateApiKey} for key material.
+ */
 export function encodeBase58(bytes: Buffer): string {
   let result = '';
   for (let i = 0; i < bytes.length; i++) {
