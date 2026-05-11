@@ -243,17 +243,24 @@ describe('AnomalyDetector — Rule 2: off_hours_low_activity', () => {
     expect(fired).not.toContain('off_hours_low_activity');
   });
 
-  it('fires for tenant with 9 prior mints (below threshold) during off-hours', () => {
-    const { detector, advance } = makeDetector({ now: OFF_HOURS_TIME - 7 * 24 * 60 * 60 * 1000 });
-    // Build exactly 9 prior mints.
-    for (let i = 0; i < 9; i++) {
-      advance(24 * 60 * 60 * 1000);
+  it('fires for a tenant with 8 prior mints (below threshold) during off-hours', () => {
+    // 8 prior successful mints at BASE_TIME_UTC (business hours, within 7-day window).
+    // With the current off-hours mint included: 8 + 1 = 9 < threshold(10) → fires.
+    let now = BASE_TIME_UTC;
+    const detector = new AnomalyDetector({
+      nowFn: () => now,
+      offHoursStartHour: 22,
+      offHoursEndHour: 6,
+      lowActivityThreshold: 10,
+    });
+
+    for (let i = 0; i < 8; i++) {
       detector.recordMint('below-threshold', true);
     }
-    // Advance to off-hours.
-    const { detector: d2 } = makeDetector({ now: OFF_HOURS_TIME });
-    // Fresh detector with no prior events → fires.
-    const fired = d2.recordMint('fresh-below-threshold', true);
+
+    // Jump to off-hours: 8 prior + 1 current = 9 < 10 → fires.
+    now = new Date('2026-01-15T22:30:00Z').getTime();
+    const fired = detector.recordMint('below-threshold', true);
     expect(fired).toContain('off_hours_low_activity');
   });
 

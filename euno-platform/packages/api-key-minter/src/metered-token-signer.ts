@@ -34,9 +34,10 @@ import { KmsSigningError } from './kms-signing-error';
 /**
  * Map a caught error to a coarse error-class label for `kmsErrorTotal`.
  *
- * The classification is intentionally coarse (5 buckets) to avoid unbounded
- * label cardinality in Prometheus.  Fine-grained diagnostics are available
- * in the minter logs and in the provider's own audit trail.
+ * The classification is intentionally coarse (4 values: `auth_error`,
+ * `timeout`, `unavailable`, `sign_failed`) to avoid unbounded label
+ * cardinality in Prometheus.  Fine-grained diagnostics are available in the
+ * minter logs and in the provider's own audit trail.
  */
 function classifyKmsError(err: unknown): string {
   if (err instanceof Error) {

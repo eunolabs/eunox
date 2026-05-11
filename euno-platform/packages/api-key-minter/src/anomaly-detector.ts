@@ -33,23 +33,117 @@
  *
  * ## Memory bounds
  *
- * The detector retains at most 7 days of events per tenant and purges expired
- * entries on every `recordMint` call.  At 10,000 mints/second across 100
- * tenants, the maximum in-memory footprint is ≈ 60 MB (10k×100×24×7 events
- * of 40 bytes each), well within typical minter pod limits.  In practice,
- * tenants with normal activity hold far fewer events.
+ * Per-tenant state is stored in fixed-capacity ring buffers (BucketStore) —
+ * one short-term store (1-min resolution, ≤ 70 buckets) for the rate-spike
+ * and failure-clustering rules, and one long-term store (1-hour resolution,
+ * 170 buckets = 7 days) for the off-hours rule.
+ *
+ * Worst-case memory at 10,000 active tenants:
+ *   - Short-term:  70 buckets × 24 bytes × 10,000 tenants ≈ 17 MB
+ *   - Long-term:  170 buckets × 24 bytes × 10,000 tenants ≈ 41 MB
+ *   - Total: ≈ 58 MB — bounded regardless of request volume.
+ *
+ * `recordMint` is O(1) amortized per call: bucket updates are O(1), and
+ * rule evaluation iterates at most `shortCapacity` (≤ ~70) or `longCapacity`
+ * (170) buckets — both are small, fixed constants.
  */
 
 import { anomalyAlertsTotal } from './metrics';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── BucketStore ────────────────────────────────────────────────────────────────
 
-interface MintEvent {
-  /** Unix millisecond timestamp of the mint attempt. */
-  ts: number;
-  /** `true` when the token was successfully issued, `false` for any failure. */
-  success: boolean;
+/**
+ * A fixed-capacity ring buffer of time-bucketed mint counts.
+ *
+ * Each bucket covers a fixed interval (`resolutionMs`) and accumulates
+ * the number of successful and failed mint attempts that fell within it.
+ * Once `capacity` buckets have been filled, the oldest bucket slot is
+ * reused for the newest data, ensuring O(1) amortized writes and O(capacity)
+ * space — both independent of request volume.
+ */
+class BucketStore {
+  private readonly buf: Array<{ ts: number; success: number; failure: number }>;
+  private head = 0;  // index of the oldest valid bucket
+  private count = 0; // number of valid entries (≤ capacity)
+  readonly resolutionMs: number;
+  readonly capacity: number;
+
+  constructor(resolutionMs: number, capacity: number) {
+    this.resolutionMs = resolutionMs;
+    this.capacity = capacity;
+    // Pre-allocate all slots with sentinel values so the ring buffer never
+    // needs to grow after construction.
+    this.buf = [];
+    for (let i = 0; i < capacity; i++) {
+      this.buf.push({ ts: -Infinity, success: 0, failure: 0 });
+    }
+  }
+
+  /** Add a mint attempt to the appropriate time bucket.  O(1) amortized. */
+  record(ts: number, success: boolean): void {
+    const bts = Math.floor(ts / this.resolutionMs) * this.resolutionMs;
+
+    // Fast path: the newest bucket already covers this timestamp.
+    if (this.count > 0) {
+      const tail = this.buf[(this.head + this.count - 1) % this.capacity]!;
+      if (tail.ts === bts) {
+        if (success) tail.success++;
+        else tail.failure++;
+        return;
+      }
+    }
+
+    // New bucket needed.
+    if (this.count < this.capacity) {
+      // Buffer not yet full — append after the current tail.
+      const next = (this.head + this.count) % this.capacity;
+      this.buf[next] = { ts: bts, success: success ? 1 : 0, failure: success ? 0 : 1 };
+      this.count++;
+    } else {
+      // Buffer full — overwrite the oldest slot (at `head`) and advance head.
+      this.buf[this.head] = { ts: bts, success: success ? 1 : 0, failure: success ? 0 : 1 };
+      this.head = (this.head + 1) % this.capacity;
+    }
+  }
+
+  /**
+   * Sum all buckets whose start time is `>= fromMs`.
+   * Used for the "current window" and "7-day total" queries where there is no
+   * upper bound (the ring buffer contains no future data).
+   */
+  sumFrom(fromMs: number): { success: number; failure: number } {
+    let s = 0;
+    let f = 0;
+    for (let i = 0; i < this.count; i++) {
+      const b = this.buf[(this.head + i) % this.capacity]!;
+      if (b.ts >= fromMs) {
+        s += b.success;
+        f += b.failure;
+      }
+    }
+    return { success: s, failure: f };
+  }
+
+  /**
+   * Sum all buckets whose start time falls within `[fromMs, toMs)`.
+   * Used for the "historical baseline" query where an explicit upper bound is
+   * required to exclude the current rate-window from the baseline.
+   */
+  sumRange(fromMs: number, toMs: number): { success: number; failure: number } {
+    let s = 0;
+    let f = 0;
+    for (let i = 0; i < this.count; i++) {
+      const b = this.buf[(this.head + i) % this.capacity]!;
+      if (b.ts >= fromMs && b.ts < toMs) {
+        s += b.success;
+        f += b.failure;
+      }
+    }
+    return { success: s, failure: f };
+  }
 }
+
+// ── AnomalyDetectorOptions ────────────────────────────────────────────────────
 
 export interface AnomalyDetectorOptions {
   /**
@@ -106,14 +200,6 @@ export interface AnomalyDetectorOptions {
   failureRateWindowMs?: number;
 
   /**
-   * Maximum retention period for per-tenant mint events in milliseconds.
-   * Events older than this are discarded.  Must be ≥ max(baselineWindowMs,
-   * 7 days) to support the low-activity check.
-   * @default 604_800_000 (7 days)
-   */
-  maxRetentionMs?: number;
-
-  /**
    * Injectable clock function for unit tests.  Defaults to `Date.now`.
    * @default Date.now
    */
@@ -123,8 +209,10 @@ export interface AnomalyDetectorOptions {
 // ── AnomalyDetector ───────────────────────────────────────────────────────────
 
 export class AnomalyDetector {
-  // Per-tenant sliding windows of mint events.
-  private readonly events = new Map<string, MintEvent[]>();
+  // Per-tenant ring-buffer stores: one for short-term windows (rate_spike,
+  // failure_clustering) and one for the 7-day off_hours lookback.
+  private readonly shortStores = new Map<string, BucketStore>();
+  private readonly longStores = new Map<string, BucketStore>();
 
   // Rule parameters (all in milliseconds unless suffixed otherwise).
   private readonly rateSpikeMultiplier: number;
@@ -135,10 +223,17 @@ export class AnomalyDetector {
   private readonly lowActivityThreshold: number;
   private readonly failureRateThreshold: number;
   private readonly failureRateWindowMs: number;
-  private readonly maxRetentionMs: number;
   private readonly nowFn: () => number;
 
-  // 7 days in milliseconds — minimum retention for the low-activity check.
+  // Short-term bucket resolution and capacity (derived from window parameters).
+  private readonly shortBucketMs: number;
+  private readonly shortCapacity: number;
+
+  // Long-term bucket store constants (1-hour resolution, 7+ days of retention).
+  private static readonly LONG_BUCKET_MS = 60 * 60 * 1000; // 1 hour
+  private static readonly LONG_CAPACITY = 170;              // 7 days + 2 spare
+
+  // 7 days in milliseconds — lookback window for the off-hours rule.
   private static readonly SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
   constructor(opts: AnomalyDetectorOptions = {}) {
@@ -150,12 +245,20 @@ export class AnomalyDetector {
     this.lowActivityThreshold = opts.lowActivityThreshold ?? 10;
     this.failureRateThreshold = opts.failureRateThreshold ?? 0.5;
     this.failureRateWindowMs = opts.failureRateWindowMs ?? 5 * 60 * 1000;
-    // maxRetentionMs must be at least 7 days to support the low-activity check.
-    this.maxRetentionMs = Math.max(
-      opts.maxRetentionMs ?? AnomalyDetector.SEVEN_DAYS_MS,
-      AnomalyDetector.SEVEN_DAYS_MS,
-    );
     this.nowFn = opts.nowFn ?? (() => Date.now());
+
+    // Derive short-term bucket resolution from the smallest configured window.
+    // Targeting ~5 buckets per window gives adequate granularity while keeping
+    // capacity small.  Minimum resolution is 1 second.
+    this.shortBucketMs = Math.max(
+      Math.floor(Math.min(this.rateWindowMs, this.failureRateWindowMs) / 5),
+      1_000,
+    );
+
+    // Capacity must span the full baseline + current window, with a few spare
+    // buckets for partial-bucket boundaries.
+    this.shortCapacity =
+      Math.ceil((this.baselineWindowMs + this.rateWindowMs) / this.shortBucketMs) + 4;
   }
 
   /**
@@ -167,53 +270,42 @@ export class AnomalyDetector {
    *
    * @param tenantId - The tenant identifier (label value for `anomalyAlertsTotal`).
    * @param success  - `true` when the token was successfully issued.
-   * @returns        - Sorted list of rule names that fired (empty for normal mints).
-   *                   Useful for testing and structured logging.
+   * @returns        - Alphabetically sorted list of rule names that fired
+   *                   (empty array for normal mints).  Useful for testing and
+   *                   structured logging.
    */
   recordMint(tenantId: string, success: boolean): string[] {
     const now = this.nowFn();
-    const cutoff = now - this.maxRetentionMs;
 
-    // Retrieve or create the tenant's event list.
-    let list = this.events.get(tenantId);
-    if (list === undefined) {
-      list = [];
-      this.events.set(tenantId, list);
-    }
+    const short = this.getOrCreateStore(tenantId, this.shortStores, this.shortBucketMs, this.shortCapacity);
+    const long = this.getOrCreateStore(tenantId, this.longStores, AnomalyDetector.LONG_BUCKET_MS, AnomalyDetector.LONG_CAPACITY);
 
-    // Evict events older than maxRetentionMs.
-    // The list is append-only and therefore sorted by ts ascending; we can
-    // binary-search for the cutoff or just use findIndex for simplicity at
-    // the expected cardinalities (≤ few thousand active events per tenant).
-    const firstValid = list.findIndex(e => e.ts >= cutoff);
-    if (firstValid > 0) {
-      list.splice(0, firstValid);
-    } else if (firstValid === -1) {
-      // All events are expired.
-      list.length = 0;
-    }
-
-    // Append the current event.
-    list.push({ ts: now, success });
+    // Record into both stores before evaluating rules so that the current
+    // event is included in the rule calculations.
+    short.record(now, success);
+    long.record(now, success);
 
     // Evaluate rules and collect fired rule names.
     const fired: string[] = [];
 
-    if (this.evaluateRateSpike(list, now)) {
+    if (this.evaluateRateSpike(short, now)) {
       fired.push('rate_spike');
       anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'rate_spike' });
     }
 
-    if (success && this.evaluateOffHours(list, now)) {
+    if (success && this.evaluateOffHours(long, now)) {
       fired.push('off_hours_low_activity');
       anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'off_hours_low_activity' });
     }
 
-    if (this.evaluateFailureClustering(list, now)) {
+    if (this.evaluateFailureClustering(short, now)) {
       fired.push('failure_clustering');
       anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'failure_clustering' });
     }
 
+    // Sort so callers receive a stable, deterministic ordering regardless of
+    // rule evaluation order.
+    fired.sort();
     return fired;
   }
 
@@ -222,7 +314,7 @@ export class AnomalyDetector {
   /**
    * Rule 1 — Rate spike.
    *
-   * Fires when the number of mints in the last `rateWindowMs` (5 min) exceeds
+   * Fires when the total mint count in the last `rateWindowMs` (5 min) exceeds
    * `rateSpikeMultiplier` (10) × the per-window average over the preceding
    * `baselineWindowMs` (60 min).
    *
@@ -230,30 +322,26 @@ export class AnomalyDetector {
    * first batch of mints in a fresh baseline window) to avoid false positives
    * on account creation day.
    */
-  private evaluateRateSpike(list: MintEvent[], now: number): boolean {
+  private evaluateRateSpike(short: BucketStore, now: number): boolean {
     const currentWindowStart = now - this.rateWindowMs;
     const baselineWindowStart = currentWindowStart - this.baselineWindowMs;
 
-    // Count events in the current window (last 5 min, excluding the baseline).
-    let currentCount = 0;
-    // Count events in the historical window (5–65 min ago).
-    let historicalCount = 0;
+    // `sumFrom` (no upper bound) correctly captures the current bucket even
+    // when it starts at exactly `currentWindowStart`.
+    const currentCounts = short.sumFrom(currentWindowStart);
+    const currentCount = currentCounts.success + currentCounts.failure;
 
-    for (const e of list) {
-      if (e.ts >= currentWindowStart) {
-        currentCount++;
-      } else if (e.ts >= baselineWindowStart) {
-        historicalCount++;
-      }
-    }
+    // `sumRange` uses an exclusive upper bound to avoid double-counting buckets
+    // that straddle the current-window boundary.
+    const historicalCounts = short.sumRange(baselineWindowStart, currentWindowStart);
+    const historicalCount = historicalCounts.success + historicalCounts.failure;
 
     // No baseline yet → no spike to detect.
     if (historicalCount === 0) {
       return false;
     }
 
-    // Average 5-min count over the baseline window
-    // = historicalCount / (baselineWindowMs / rateWindowMs)
+    // Average mint count per `rateWindowMs`-sized window over the baseline.
     const numBaselineWindows = this.baselineWindowMs / this.rateWindowMs;
     const historicalAvgPerWindow = historicalCount / numBaselineWindows;
 
@@ -270,7 +358,7 @@ export class AnomalyDetector {
    *
    * Only called when the current mint was successful (`success === true`).
    */
-  private evaluateOffHours(list: MintEvent[], now: number): boolean {
+  private evaluateOffHours(long: BucketStore, now: number): boolean {
     // Check if the current UTC hour is in the off-hours window.
     const hourUtc = new Date(now).getUTCHours();
     const isOffHours =
@@ -280,14 +368,9 @@ export class AnomalyDetector {
       return false;
     }
 
-    // Count successful mints in the last 7 days.
+    // Count successful mints in the last 7 days (including the current one).
     const sevenDaysAgo = now - AnomalyDetector.SEVEN_DAYS_MS;
-    let successfulCount = 0;
-    for (const e of list) {
-      if (e.ts >= sevenDaysAgo && e.success) {
-        successfulCount++;
-      }
-    }
+    const { success: successfulCount } = long.sumFrom(sevenDaysAgo);
 
     return successfulCount < this.lowActivityThreshold;
   }
@@ -300,25 +383,32 @@ export class AnomalyDetector {
    * events in the window (to avoid a single failed attempt triggering the rule
    * on a fresh tenant).
    */
-  private evaluateFailureClustering(list: MintEvent[], now: number): boolean {
+  private evaluateFailureClustering(short: BucketStore, now: number): boolean {
     const windowStart = now - this.failureRateWindowMs;
-    let total = 0;
-    let failures = 0;
-
-    for (const e of list) {
-      if (e.ts >= windowStart) {
-        total++;
-        if (!e.success) {
-          failures++;
-        }
-      }
-    }
+    const { success, failure } = short.sumFrom(windowStart);
+    const total = success + failure;
 
     // Require at least 2 events to avoid single-event noise.
     if (total < 2) {
       return false;
     }
 
-    return failures / total > this.failureRateThreshold;
+    return failure / total > this.failureRateThreshold;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private getOrCreateStore(
+    tenantId: string,
+    storeMap: Map<string, BucketStore>,
+    resolutionMs: number,
+    capacity: number,
+  ): BucketStore {
+    let store = storeMap.get(tenantId);
+    if (store === undefined) {
+      store = new BucketStore(resolutionMs, capacity);
+      storeMap.set(tenantId, store);
+    }
+    return store;
   }
 }

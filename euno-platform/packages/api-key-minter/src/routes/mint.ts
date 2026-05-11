@@ -166,7 +166,20 @@ export function createMintRouter(opts: MintRouterOptions): Router {
         }
       }
 
-      next(error);
+      // Translate KmsSigningError to a retryable 503 so clients can distinguish
+      // transient HSM outages from internal bugs, and to match the alert-rule
+      // documentation (KMS unavailability returns 503).  Metrics were already
+      // classified above using the original KmsSigningError, so the label
+      // accuracy is unaffected by this translation.
+      const effectiveError =
+        error instanceof KmsSigningError
+          ? new CapabilityError(
+              ErrorCode.GATEWAY_UNAVAILABLE,
+              'Signing service temporarily unavailable',
+              503,
+            )
+          : error;
+      next(effectiveError);
     }
   });
 
