@@ -93,6 +93,11 @@ function httpErrorFetcher(status: number): EnforceFetcher {
 // ---------------------------------------------------------------------------
 
 describe('RemoteEnforcerPDP – construction', () => {
+  it('throws when url consists entirely of slashes', () => {
+    expect(() => new RemoteEnforcerPDP({ url: '///', apiKey: 'sk-test' }))
+      .toThrow('url must not consist entirely of slashes');
+  });
+
   it('throws when url is empty', () => {
     expect(() => new RemoteEnforcerPDP({ url: '', apiKey: 'sk-test' }))
       .toThrow('url must be a non-empty string');

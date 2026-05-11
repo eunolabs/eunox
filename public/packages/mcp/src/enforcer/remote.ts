@@ -205,19 +205,25 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
   private readonly _clockFn: () => Date;
 
   constructor(opts: RemoteEnforcerOptions) {
-    if (!opts.url || opts.url.trim().length === 0) {
+    const trimmedUrl = opts.url?.trim() ?? '';
+    if (!trimmedUrl) {
       throw new Error('RemoteEnforcerPDP: url must be a non-empty string');
     }
-    if (!opts.apiKey || opts.apiKey.trim().length === 0) {
+    const trimmedApiKey = opts.apiKey?.trim() ?? '';
+    if (!trimmedApiKey) {
       throw new Error('RemoteEnforcerPDP: apiKey must be a non-empty string');
     }
     // Strip trailing slashes without a regex to avoid potential ReDoS on
     // adversarial input strings with many repeated '/' characters.
-    let url = opts.url;
-    let end = url.length;
-    while (end > 0 && url[end - 1] === '/') end--;
-    this._url = url.slice(0, end);
-    this._apiKey = opts.apiKey;
+    let end = trimmedUrl.length;
+    while (end > 0 && trimmedUrl[end - 1] === '/') end--;
+    const normalizedUrl = trimmedUrl.slice(0, end);
+    if (!normalizedUrl) {
+      // Edge case: url was entirely slashes after trimming (e.g. '///').
+      throw new Error('RemoteEnforcerPDP: url must not consist entirely of slashes');
+    }
+    this._url = normalizedUrl;
+    this._apiKey = trimmedApiKey;
     this._timeoutMs = opts.timeoutMs ?? 10_000;
     this._fetcher = opts.fetcher ?? defaultFetcher;
     this._clockFn = opts.clockFn ?? (() => new Date());
