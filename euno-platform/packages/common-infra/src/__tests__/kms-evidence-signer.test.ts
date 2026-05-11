@@ -322,11 +322,11 @@ describe('createKmsEvidenceSignerFromEnv', () => {
     ).toThrow("unrecognised AUDIT_SIGNING_KMS_PROVIDER value 'hashicorp-vault'");
   });
 
-  it('resolveAlgorithm: throws on unsupported algorithm', () => {
-    // Use createKmsEvidenceSigner which calls resolveAlgorithm internally.
-    // We bypass the SDK require by NOT setting provider to one that tries
-    // to require SDKs — this tests only the algorithm validation branch.
-    // RS384 is intentionally unsupported (only SHA-256 family).
+  it('resolveAlgorithm: throws on unsupported algorithm before requiring the SDK', () => {
+    // Algorithm validation now happens BEFORE the SDK is dynamically required.
+    // RS384 is intentionally unsupported (only SHA-256 family: RS256, PS256, ES256).
+    // This test verifies that the error is "unsupported algorithm", not
+    // "SDK not installed" — proving the validation order is correct.
     expect(() =>
       createKmsEvidenceSigner({
         provider: 'aws-kms',
@@ -637,21 +637,24 @@ describe('GCP Cloud KMS-backed CryptoSigner (mock client)', () => {
 
 describe('KmsEvidenceSigner error handling', () => {
   it('throws a clear error when @azure/keyvault-keys is not installed', () => {
-    // Simulate the exact error message the driver emits when the SDK is missing.
-    // The actual require() call happens inside buildAzureKeyVaultCryptoSigner;
-    // we verify the error shape here by directly checking the error template
-    // the driver would throw.
-    const expectedMessage =
-      'KmsEvidenceSigner (azure-keyvault): the @azure/keyvault-keys package is not installed. ' +
-      'Add it to your deployment image: npm install @azure/keyvault-keys';
-
-    expect(expectedMessage).toMatch('@azure/keyvault-keys');
-    expect(expectedMessage).toMatch('npm install');
+    // @azure/keyvault-keys is an optional deployment dependency that is NOT
+    // installed in the CI environment (not listed in common-infra devDependencies).
+    // After the code fix that validates config BEFORE requiring SDKs, calling
+    // createKmsEvidenceSigner with valid config reaches the require() call,
+    // which throws "the @azure/keyvault-keys package is not installed".
+    expect(() =>
+      createKmsEvidenceSigner({
+        provider: 'azure-keyvault',
+        vaultUrl: 'https://vault.example.com/',
+        keyName: 'audit-key',
+      }),
+    ).toThrow('@azure/keyvault-keys');
   });
 
   it('throws when client-secret credential is requested but required fields are missing', () => {
-    // We bypass the actual SDK require by testing the config validation.
-    // The validation happens before the SDK is loaded, so we can test it.
+    // Config validation happens BEFORE the SDK is dynamically required, so
+    // this throws "client-secret requires tenantId..." regardless of whether
+    // the Azure SDK packages are installed.
     expect(() =>
       createKmsEvidenceSigner({
         provider: 'azure-keyvault',

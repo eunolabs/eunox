@@ -214,9 +214,13 @@ export interface GcpCloudKmsConfig extends KmsCommonConfig {
   /** Crypto key ID. */
   cryptoKeyId: string;
   /**
-   * Crypto key version number. Omit to use the primary version (GCP selects
-   * the active primary automatically — recommended so key rotations take
-   * effect without a config change).
+   * Crypto key version number. Defaults to `'1'` when omitted.
+   *
+   * GCP Cloud KMS `asymmetricSign` requires an explicit `CryptoKeyVersion`
+   * resource name — there is no automatic "primary version" resolution for
+   * asymmetric keys (unlike symmetric keys). When omitted, the driver pins
+   * to version `1`. Update this field (or `AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION`)
+   * when rotating to a new key version.
    */
   cryptoKeyVersion?: string;
   /**
@@ -319,6 +323,19 @@ class AzureKeyVaultCryptoSigner implements CryptoSigner {
  * `@euno/common-infra` package does not declare them as hard dependencies.
  */
 function buildAzureKeyVaultCryptoSigner(config: AzureKeyVaultKmsConfig): CryptoSigner {
+  // Validate config BEFORE dynamically requiring SDKs so that invalid
+  // configuration surfaces as a clear config error rather than an opaque
+  // "SDK not installed" message.
+  const credType = config.credentialType ?? 'default';
+  if (credType === 'client-secret') {
+    if (!config.tenantId || !config.clientId || !config.clientSecret) {
+      throw new Error(
+        'KmsEvidenceSigner (azure-keyvault): credentialType=client-secret requires tenantId, clientId, and clientSecret.',
+      );
+    }
+  }
+  const algorithm = resolveAlgorithm(config.algorithm);
+
   let AzureKeyVaultModule: {
     CryptographyClient: new (
       keyId: string,
@@ -358,19 +375,14 @@ function buildAzureKeyVaultCryptoSigner(config: AzureKeyVaultKmsConfig): CryptoS
 
   // Build the Azure credential.
   let credential: unknown;
-  const credType = config.credentialType ?? 'default';
   if (credType === 'managed-identity') {
     credential = new AzureIdentityModule.ManagedIdentityCredential(config.clientId);
   } else if (credType === 'client-secret') {
-    if (!config.tenantId || !config.clientId || !config.clientSecret) {
-      throw new Error(
-        'KmsEvidenceSigner (azure-keyvault): credentialType=client-secret requires tenantId, clientId, and clientSecret.',
-      );
-    }
+    // Already validated above: tenantId, clientId, clientSecret are present.
     credential = new AzureIdentityModule.ClientSecretCredential(
-      config.tenantId,
-      config.clientId,
-      config.clientSecret,
+      config.tenantId!,
+      config.clientId!,
+      config.clientSecret!,
     );
   } else {
     // 'default' — tries workload identity, managed identity, env vars, etc.
@@ -387,7 +399,6 @@ function buildAzureKeyVaultCryptoSigner(config: AzureKeyVaultKmsConfig): CryptoS
     credential,
   );
 
-  const algorithm = resolveAlgorithm(config.algorithm);
   const keyId = config.logicalKeyId ?? `akv:${config.vaultUrl.replace(/^https?:\/\//, '')}:${config.keyName}`;
 
   return new AzureKeyVaultCryptoSigner(cryptoClient, algorithm, keyId);
@@ -489,6 +500,10 @@ class AwsKmsCryptoSigner implements CryptoSigner {
  * dependency of `@euno/common-infra`.
  */
 function buildAwsKmsCryptoSigner(config: AwsKmsConfig): CryptoSigner {
+  // Validate algorithm BEFORE dynamically requiring the SDK so that an
+  // unsupported algorithm surfaces as a clear config error.
+  const algorithm = resolveAlgorithm(config.algorithm);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let kmsClientModule: { KMSClient: new (cfg: Record<string, unknown>) => any };
   try {
@@ -514,7 +529,6 @@ function buildAwsKmsCryptoSigner(config: AwsKmsConfig): CryptoSigner {
   }
 
   const kmsClient = new kmsClientModule.KMSClient(clientCfg);
-  const algorithm = resolveAlgorithm(config.algorithm);
   // Default logical key ID: derive a concise label from the ARN or alias.
   const defaultKeyId = config.keyId.startsWith('arn:')
     ? config.keyId.split('/').pop() ?? config.keyId
@@ -572,7 +586,7 @@ class GcpCloudKmsCryptoSigner implements CryptoSigner {
     // GCP returns ECDSA signatures in DER format.  The software signer uses
     // IEEE P1363 (r‖s) for JWS ES256 compliance; convert if necessary.
     if (this.algorithm === 'ES256') {
-      return derToIeeP1363(sigBuf, 32);
+      return derToIeeeP1363(sigBuf, 32);
     }
     return sigBuf;
   }
@@ -590,7 +604,7 @@ class GcpCloudKmsCryptoSigner implements CryptoSigner {
       // For verification, GCP also accepts DER-encoded ECDSA signatures.
       // Convert from P1363 back to DER if we stored a P1363 signature.
       const sigForVerify = this.algorithm === 'ES256'
-        ? ieeP1363ToDer(signature, 32)
+        ? ieeeP1363ToDer(signature, 32)
         : signature;
 
       const [response] = await this.kmsClient.asymmetricVerify({
@@ -619,6 +633,9 @@ class GcpCloudKmsCryptoSigner implements CryptoSigner {
  * Dynamically requires `@google-cloud/kms`.
  */
 function buildGcpCloudKmsCryptoSigner(config: GcpCloudKmsConfig): CryptoSigner {
+  // Validate algorithm BEFORE dynamically requiring the SDK.
+  const algorithm = resolveAlgorithm(config.algorithm);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let kmsModule: { KeyManagementServiceClient: new (cfg?: Record<string, unknown>) => any };
   try {
@@ -641,6 +658,11 @@ function buildGcpCloudKmsCryptoSigner(config: GcpCloudKmsConfig): CryptoSigner {
   );
 
   const locationId = config.locationId ?? 'global';
+  // GCP Cloud KMS `asymmetricSign` requires an explicit CryptoKeyVersion path;
+  // there is no automatic "primary version" resolution for asymmetric keys.
+  // When the caller omits `cryptoKeyVersion`, we default to version 1.
+  // Operators must update this value (or `AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION`)
+  // when rotating to a new key version.
   const versionId = config.cryptoKeyVersion ?? '1';
 
   // CryptoKeyVersion resource name format:
@@ -653,7 +675,6 @@ function buildGcpCloudKmsCryptoSigner(config: GcpCloudKmsConfig): CryptoSigner {
     versionId,
   );
 
-  const algorithm = resolveAlgorithm(config.algorithm);
   const logicalKeyId =
     config.logicalKeyId ??
     `gcp-kms:${config.projectId}/${config.keyRingId}/${config.cryptoKeyId}`;
@@ -671,7 +692,7 @@ function buildGcpCloudKmsCryptoSigner(config: GcpCloudKmsConfig): CryptoSigner {
  * uses P1363 (JWS / IEEE P1363 §5.2 format) so we normalise to P1363 for
  * consistency with existing signed records.
  */
-function derToIeeP1363(der: Buffer, coordBytes: number): Buffer {
+function derToIeeeP1363(der: Buffer, coordBytes: number): Buffer {
   // DER structure: 0x30 <len> 0x02 <rLen> <r bytes> 0x02 <sLen> <s bytes>
   if (der[0] !== 0x30) {
     // Already non-DER, return as-is.
@@ -712,7 +733,7 @@ function derToIeeP1363(der: Buffer, coordBytes: number): Buffer {
  * Used when calling GCP's `asymmetricVerify` which expects DER-encoded
  * signatures.
  */
-function ieeP1363ToDer(p1363: Buffer, coordBytes: number): Buffer {
+function ieeeP1363ToDer(p1363: Buffer, coordBytes: number): Buffer {
   let r = p1363.slice(0, coordBytes);
   let s = p1363.slice(coordBytes);
 
@@ -807,7 +828,7 @@ export function createKmsEvidenceSigner(config: KmsEvidenceSignerConfig): AuditE
  * | `AUDIT_SIGNING_GCP_LOCATION_ID` | Optional. Defaults to `global`. |
  * | `AUDIT_SIGNING_GCP_KEYRING_ID` | Required when provider=`gcp-cloudkms`. |
  * | `AUDIT_SIGNING_GCP_CRYPTOKEY_ID` | Required when provider=`gcp-cloudkms`. |
- * | `AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION` | Optional. Defaults to primary version (`1`). |
+ * | `AUDIT_SIGNING_GCP_CRYPTOKEY_VERSION` | Optional. Defaults to `1`. Update on key rotation (asymmetric keys require an explicit version). |
  * | `AUDIT_SIGNING_GCP_KEY_FILE_PATH` | Optional. Path to GCP service account key file. |
  */
 export function createKmsEvidenceSignerFromEnv(

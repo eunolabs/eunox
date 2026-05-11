@@ -190,6 +190,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     AUDIT_ANCHOR_URL?: string;
   };
   const dynConfig = validated as typeof validated & DynamicConfig;
+  let evidenceSigner: EvidenceSigner | undefined;
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
   let crossChainAnchor: CrossChainAnchor | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
@@ -201,7 +202,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     // (same AuditEvidenceSigner wrapper); only the signature bytes, keyId, and
     // algorithm field differ — which is the explicit design of Task 5 (Stage 3).
     const kmsProvider = dynConfig.AUDIT_SIGNING_KMS_PROVIDER;
-    const softwareSigner = kmsProvider
+    const activeSigner = kmsProvider
       ? (() => {
           const kmsSigner = createKmsEvidenceSignerFromEnv(env);
           if (!kmsSigner) {
@@ -279,11 +280,11 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           logger.info('Audit ledger migrations completed', { table: table ?? 'euno_audit_ledger' });
         }
 
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, pgBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
 
         logger.info('Audit ledger backend: postgres', {
           table: table ?? 'euno_audit_ledger',
@@ -310,18 +311,18 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         const aclBackend = new AzureConfidentialLedgerBackend(aclClient, {
           onError: (err: Error) => logger.error('Audit ledger ACL error', { error: err.message }),
         });
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, aclBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
       } else if (ledgerBackendName === 'in-memory') {
         const inMemBackend = new InMemoryLedgerBackend();
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, inMemBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
         logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
       } else if (ledgerBackendName === 'per-replica-postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -353,11 +354,11 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           });
         }
 
-        const cryptoSigner = softwareSigner.getCryptoSigner();
+        const cryptoSigner = activeSigner.getCryptoSigner();
         const ledgerSigner = new LedgerAuditEvidenceSigner(cryptoSigner, perReplicaBackend, replicaId);
         await ledgerSigner.initialize();
         evidenceSigner = ledgerSigner;
-        auditBatchSigner = softwareSigner;
+        auditBatchSigner = activeSigner;
 
         if (s3Bucket) {
           logger.warn(
@@ -384,8 +385,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       }
     } else {
       // No ledger backend — use the software signer with in-process chain state.
-      evidenceSigner = softwareSigner;
-      auditBatchSigner = softwareSigner;
+      evidenceSigner = activeSigner;
+      auditBatchSigner = activeSigner;
       if (ledgerBackendName === 'none' || !ledgerBackendName) {
         logger.warn(
           'Cryptographic audit is enabled but AUDIT_LEDGER_BACKEND is not set. ' +
