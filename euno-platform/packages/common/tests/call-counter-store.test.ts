@@ -89,6 +89,41 @@ class FakeRedis implements RedisCallCounterClient {
   }
 }
 
+/**
+ * Shared fake Redis client. Two instances created from the same `values`/`expiries`
+ * maps share a common backing store, simulating two gateway replicas pointing at
+ * the same Redis cluster. `errorMode` makes every `incr`/`expire` call throw.
+ */
+class SharedFakeRedis implements RedisCallCounterClient {
+  errorMode = false;
+
+  constructor(
+    public readonly values: Map<string, number>,
+    public readonly expiries: Map<string, number>,
+  ) {}
+
+  async incr(key: string): Promise<number> {
+    if (this.errorMode) throw new Error('incr-failed');
+    const v = (this.values.get(key) ?? 0) + 1;
+    this.values.set(key, v);
+    return v;
+  }
+
+  async expire(key: string, seconds: number): Promise<unknown> {
+    if (this.errorMode) throw new Error('expire-failed');
+    this.expiries.set(key, seconds);
+    return 1;
+  }
+
+  async quit(): Promise<unknown> {
+    return 'OK';
+  }
+
+  on(): unknown {
+    return this;
+  }
+}
+
 describe('RedisCallCounterStore', () => {
   it('prefixes keys and sets the TTL on the first increment only', async () => {
     const fake = new FakeRedis();
