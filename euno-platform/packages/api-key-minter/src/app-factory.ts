@@ -1,6 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
-import { CapabilityError, createLogger } from '@euno/common';
+import { CapabilityError, createLogger, tracingMiddleware } from '@euno/common';
 import { createMintRouter, MintRouterOptions } from './routes/mint';
 import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-keys';
 import { createAdminPoliciesRouter } from './routes/admin-policies';
@@ -35,6 +35,10 @@ export interface MinterDependencies {
 
 export function createMinterApp(deps: MinterDependencies): Express {
   const app = express();
+  // OpenTelemetry W3C trace-context propagation (DI-5). Mounted first so
+  // every downstream handler — including the mint audit path — runs inside
+  // the request's span context and audit log entries carry trace_id/span_id.
+  app.use(tracingMiddleware('api-key-minter'));
   app.use(helmet());
   app.use(express.json());
 
