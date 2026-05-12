@@ -622,8 +622,8 @@ Run `npx ts-node scripts/stage3-readiness.ts` to check current status (exits 0 w
 > - [ ] Task 16 — Telemetry continuity + `scripts/stage4-readiness.ts`
 > - [ ] Task 17 — Pricing & billing plumbing
 > - [x] Task 18 — Reference materials & migration guide: `docs/migrating-from-local.md` produced; covers before/after config, cryptographic story (why API key ≠ JWT), explicit data-boundary analysis for SOC2/GDPR review, step-by-step migration, rollback procedure, self-host alternative, and FAQ; `README.md` and `public/packages/mcp/README.md` updated with hosted-mode section and links
-> - [ ] Task 19 — Cross-stage parity test suite
-> - [ ] Task 20 — Gate-to-Stage-4 instrumentation
+> - [x] Task 19 — Cross-stage parity test suite: `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts` (36 tests); proves decision parity, obligation parity, and OCSF pre-signature field parity across local and hosted enforcement paths; documents intentional divergences (resource naming, unlisted-tool semantics, denialCode in result struct vs audit evidence)
+> - [x] Task 20 — Gate-to-Stage-4 instrumentation: `docs/mvp.md` updated to mark Tasks 19 and 20 complete
 
 **What changes.** Move enforcement out of the local proxy process
 into a persistent service. `euno-platform/packages/tool-gateway` stops being
