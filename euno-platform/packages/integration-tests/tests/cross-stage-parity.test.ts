@@ -44,19 +44,23 @@
  *
  * OCSF pre-signature parity
  * -------------------------
- * The `AuditEvidence` struct that both paths would write before signing
- * shares the following fields with identical values:
+ * The `AuditEvidence` struct that both paths write before signing shares
+ * the following fields with identical values:
  *   - `decision`      — allow / deny.
  *   - `conditionType` — which condition triggered a deny.
+ *
+ * The OCSF deny tests below exercise this directly: an `EnforcementEngine`
+ * instance is wired with a stub `EvidenceSigner` and the JWT includes
+ * `authorizedBy` so `emitDenialEvidence` is called. The captured
+ * `AuditEvidence.conditionType` is then asserted to be `'timeWindow'`.
  *
  * Known divergence in denial codes (explicitly asserted):
  *   - Local path: `PdpDecision.denialCode` = type-specific code,
  *     e.g. `TIME_WINDOW_DENIED`.
- *   - Hosted path: `EnforcementResult.denialCode` is not populated for
- *     generic condition failures; the enforce route defaults to
- *     `AUTHORIZATION_FAILED`. The AuditEvidence written by the hosted
- *     engine still carries `conditionType` correctly via
- *     `emitDenialEvidence`, but the wire-body code differs.
+ *   - Hosted path: `EnforcementResult` returned to the caller does NOT
+ *     populate `denialCode` / `denialConditionType` for generic condition
+ *     failures (those values are written only to `AuditEvidence` via
+ *     `emitDenialEvidence`). Flagged with a TODO for follow-up.
  *   This divergence is documented, tested, and flagged for a follow-up
  *   to align the hosted result's `denialCode` field.
  *
@@ -81,6 +85,11 @@ import {
   createLogger,
   hasRedactObligation,
   redactConditions,
+  AuditEvidence,
+  SignedAuditEvidence,
+  EvidenceSigner,
+  GENESIS_HASH,
+  canonicalSha256,
 } from '@euno/common';
 import { EnforcementEngine } from '../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
@@ -89,7 +98,7 @@ import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
 // Test infrastructure
 // ---------------------------------------------------------------------------
 
-const logger = createLogger('parity-test');
+const logger = createLogger('parity-test', 'test');
 
 let privateKey: jose.KeyLike;
 let publicKeyPem: string;
@@ -274,8 +283,37 @@ function constraintPair(
 // Setup
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds a stateful `signEvidence` stub that models the production
+ * `AuditEvidenceSigner` chain contract (incrementing seq, chained
+ * previousHash). Using a real chain ensures future assertions on chain
+ * metadata will catch regressions rather than silently passing.
+ */
+function makeChainedSignEvidence(
+  overrides: Partial<Pick<SignedAuditEvidence, 'signature' | 'keyId' | 'algorithm'>> = {},
+): jest.Mock<Promise<SignedAuditEvidence>, [AuditEvidence]> {
+  let seq = 0;
+  let previousHash: string = GENESIS_HASH;
+  const signature = overrides.signature ?? 'parity-sig';
+  const keyId = overrides.keyId ?? 'parity-kid';
+  const algorithm = overrides.algorithm ?? 'RS256';
+  return jest.fn<Promise<SignedAuditEvidence>, [AuditEvidence]>(async (ev) => {
+    seq += 1;
+    const signed: SignedAuditEvidence = {
+      ...ev,
+      signature,
+      keyId,
+      algorithm,
+      previousHash,
+      seq,
+    };
+    previousHash = canonicalSha256(signed);
+    return signed;
+  });
+}
+
 beforeAll(async () => {
-  const { publicKey, privateKey: privKey } = await jose.generateKeyPair('RS256');
+  const { publicKey, privateKey: privKey } = await jose.generateKeyPair('RS256', { extractable: true });
   privateKey = privKey;
   publicKeyPem = await jose.exportSPKI(publicKey);
   verifier = new JWTTokenVerifier(publicKeyPem, { requireKid: false });
@@ -555,8 +593,8 @@ describe('Cross-stage enforcement parity — Task 19', () => {
       expect(firstResult.allowed).toBe(true);
 
       // Reuse the same token — the counter key in the engine is derived
-      // from jti+action+resource, so the second call with the same jti
-      // consumes the remaining quota.
+      // from capabilityId (the token's jti), so the second call with the
+      // same token consumes the remaining quota.
       const secondResult = await eng.validateAction({
         token: token1,
         action: 'call',
@@ -730,17 +768,56 @@ describe('Cross-stage enforcement parity — Task 19', () => {
         expect(localResult.conditionType).toBe('timeWindow');
       });
 
-      it('hosted AuditEvidence carries conditionType=timeWindow via emitDenialEvidence', async () => {
-        // Although EnforcementResult.denialConditionType is not populated for
-        // generic condition failures (returned by evaluateHosted as undefined),
-        // EnforcementEngine.emitDenialEvidence() is called with conditionType
-        // from enforceConditions — so the AuditEvidence.conditionType field IS
-        // 'timeWindow'. This assertion documents that gap in the result struct.
+      /**
+       * Verify that the hosted engine writes conditionType='timeWindow' to
+       * AuditEvidence via emitDenialEvidence when an evidence signer is wired
+       * and the JWT includes authorizedBy.  This is the canonical OCSF
+       * pre-signature parity assertion — both modes record the same
+       * conditionType in their audit evidence.
+       */
+      it('hosted engine writes conditionType=timeWindow to AuditEvidence', async () => {
+        const signEvidence = makeChainedSignEvidence();
+        const mockSigner: EvidenceSigner = {
+          signEvidence,
+          verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => true),
+        };
+        const auditEngine = new EnforcementEngine({
+          verifier,
+          logger,
+          callCounterStore: makeCounterStore(),
+          dpop: { required: false },
+          evidenceSigner: mockSigner,
+          enableCryptographicAudit: true,
+        });
+
+        // authorizedBy is required to gate emitDenialEvidence.
+        const token = await signToken(hosted, {
+          authorizedBy: { userId: 'parity-user', roles: ['test'], tenantId: 'tenant-parity' },
+        });
+        await auditEngine.validateAction({
+          token,
+          action: 'call',
+          resource: 'tool://time_locked',
+          context: { sessionId: 'ocsf-parity-session', tool: 'time_locked', args: {} },
+        });
+
+        // emitDenialEvidence must have been called.
+        expect(signEvidence).toHaveBeenCalledTimes(1);
+        // AuditEvidence.conditionType is 'timeWindow' — matching the local path.
+        expect(signEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({ decision: 'deny', conditionType: 'timeWindow' }),
+        );
+      });
+
+      it('EnforcementResult.denialConditionType is not populated for condition failures (known gap)', async () => {
+        // Although emitDenialEvidence writes conditionType='timeWindow' to
+        // AuditEvidence (asserted above), validateAction does NOT propagate
+        // denialConditionType back into EnforcementResult.  This is a gap in
+        // the result struct (not in the audit record) — flagged for follow-up.
         const hostedResult = await evaluateHosted(hosted, 'time_locked');
-        // denialConditionType in the result struct is currently unpopulated.
+        // TODO: populate EnforcementResult.denialConditionType for condition
+        // failures so the wire result matches the audit evidence.
         expect(hostedResult.conditionType).toBeUndefined();
-        // TODO: follow-up: populate EnforcementResult.denialConditionType for
-        // condition failures so the wire result matches the audit evidence.
       });
     });
 
