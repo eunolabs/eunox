@@ -51,6 +51,10 @@ import {
 import { buildDpopModule } from './dpop-module';
 import { buildRevocationModule } from './revocation-module';
 import { buildAuditModule } from './audit-module';
+import {
+  GatewayTelemetryCollector,
+  createGatewayTelemetryFromEnv,
+} from './gateway-telemetry';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -264,6 +268,17 @@ export interface GatewayDependencies {
    * to 1 MiB; plumbed from `RESPONSE_REDACTION_MAX_BYTES`.
    */
   responseRedactionMaxBytes: number;
+  /**
+   * Hosted-mode telemetry collector (Task 16 — Telemetry continuity).
+   * Present when `EUNO_TELEMETRY` is not `'0'`.  The enforce route passes
+   * enforcement decisions to this collector; `initializeServices` starts
+   * its flush timer and the entrypoint calls `stop()` on graceful shutdown
+   * so any pending tenant stats are flushed before exit.
+   *
+   * `null` means telemetry is disabled by `EUNO_TELEMETRY=0`.
+   * Omitted (undefined) is equivalent to `null` — telemetry is not collected.
+   */
+  gatewayTelemetry?: GatewayTelemetryCollector | null;
 }
 
 /**
@@ -877,6 +892,15 @@ export async function initializeServices(
     decisionsCounter.inc({ decision });
   });
 
+  // ── Step 15: Hosted-mode telemetry (Task 16 — Telemetry continuity) ───────
+  // Disabled when EUNO_TELEMETRY=0; enabled by default so the operator can
+  // choose to opt out via that env var. The collector is started here and
+  // its flush timer is unref'd so it never prevents clean process exit.
+  const gatewayTelemetry = createGatewayTelemetryFromEnv(env);
+  if (gatewayTelemetry) {
+    logger.info('Gateway telemetry collector started (EUNO_TELEMETRY != 0)');
+  }
+
   const deps: GatewayDependencies = {
     config,
     logger,
@@ -914,6 +938,7 @@ export async function initializeServices(
     pinAttestationSecret: validated.PARTNER_DID_PIN_SECRET || undefined,
     partnerDidAutoFetchPin: validated.PARTNER_DID_AUTO_FETCH_PIN,
     responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
+    gatewayTelemetry,
   };
 
   logger.info('Tool Gateway services initialized successfully');

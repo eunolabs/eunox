@@ -34,6 +34,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **Configurable timeout**: `--enforcer-timeout <ms>` (default 10 s) bounds
     each enforce request; exceeded requests are denied fail-closed.
 
+- **`TelemetryEvent.subcommand`** extended with `'hosted-enforce'` (Task 16 —
+  Telemetry continuity).  Gateway-side events emitted by
+  `euno-platform/packages/tool-gateway`'s `GatewayTelemetryCollector` carry
+  this value so dashboards can separate client-side from server-side rows
+  while sharing the same schema.  All other `subcommand` values are unchanged.
+
 - **`RemoteEnforcerPDP`** — new public class exported from `@euno/mcp` (and
   `src/enforcer/remote.ts`).  Implements `PolicyDecisionPoint`.  Accepts an
   injectable `EnforceFetcher` for unit-test isolation.

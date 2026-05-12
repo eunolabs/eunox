@@ -46,6 +46,8 @@ import {
   createLogger,
 } from '@euno/common';
 import { EnforcementEngine, EnforcementResult } from '../enforcement';
+import type { GatewayTelemetryHooks } from '../gateway-telemetry';
+import { extractTenantIdFromToken } from '../gateway-telemetry';
 
 /** Maximum allowed request body size for POST /api/v1/enforce. */
 const ENFORCE_REQUEST_SIZE_LIMIT_BYTES = 512 * 1024;
@@ -61,6 +63,14 @@ export interface EnforceRouterOptions {
    * used, which maps MCP tool names to the generic action vocabulary.
    */
   actionResolver?: ActionResolver;
+  /**
+   * Optional telemetry hooks (Task 16 — Telemetry continuity). When supplied,
+   * each enforcement decision is recorded per-tenant so the gateway can emit
+   * hosted-mode telemetry events that mirror the local-mode `TelemetryEvent`
+   * schema. When omitted (or when `EUNO_TELEMETRY=0`), no telemetry is
+   * collected.
+   */
+  telemetry?: GatewayTelemetryHooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +377,7 @@ function enforcePayloadErrorHandler(
 export function createEnforceRouter(opts: EnforceRouterOptions): Router {
   const { enforcementEngine, logger } = opts;
   const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
+  const telemetry = opts.telemetry;
   const router = Router();
 
   // Mount the per-route body parser + its error handler so that
@@ -472,6 +483,12 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           throw err;
         }
 
+        // Extract tenantId from the JWT for telemetry routing. The decode is
+        // signature-free and used only for per-tenant aggregation — never for
+        // any authorization decision. Placed after body parsing so sessionId
+        // is available; falls back to 'unknown' on malformed tokens.
+        const tenantId = extractTenantIdFromToken(token);
+
         // ── 5. Derive action and canonical resource ──────────────────────────
         // Server-side derivation only — never trust a client-supplied action
         // or resource string. Mirrors the /api/v1/tools/invoke route.
@@ -545,6 +562,15 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
               toolName: enforceReq.toolName,
               sessionId: enforceReq.sessionId,
             });
+            // Record in-band denial for telemetry (these are enforcement
+            // decisions — the PDP chose to deny; they are not infrastructure
+            // errors and count towards the tenant's denial stats).
+            telemetry?.recordDecision(
+              tenantId,
+              enforceReq.sessionId,
+              false,
+              deriveConditionType(err.code),
+            );
             res.json(denyResponse);
             return;
           }
@@ -569,6 +595,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             sessionId: enforceReq.sessionId,
             obligationCount: obligations.length,
           });
+          telemetry?.recordDecision(tenantId, enforceReq.sessionId, true);
           res.json(allowResponse);
         } else {
           // Use the structured denial code from the engine when available
@@ -588,6 +615,12 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             reason: result.reason,
             denialCode: result.denialCode,
           });
+          telemetry?.recordDecision(
+            tenantId,
+            enforceReq.sessionId,
+            false,
+            result.denialConditionType ?? deriveConditionType(result.denialCode ?? ''),
+          );
           res.json(denyResponse);
         }
       } catch (error) {
