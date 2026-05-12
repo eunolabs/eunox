@@ -184,10 +184,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON mint_audit TO minter_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON api_keys TO minter_app;
 ```
 
-> **Note:** This RLS configuration is a hardening option — the minter application
-> does not yet inject `SET LOCAL euno.tenant_id = ...` before each query.  Enabling
-> RLS without that change will block all writes.  Wiring the session parameter is
-> a future hardening task tracked in the architecture review.
+> **⚠️ DO NOT apply this RLS configuration yet.** The minter application does not
+> currently inject `SET LOCAL euno.tenant_id = ...` before each query.  Applying
+> `ENABLE ROW LEVEL SECURITY` and the policy without that application-layer wiring
+> **will break all writes immediately** — every INSERT/UPDATE will be blocked by the
+> policy.  This SQL is provided as a readiness reference so the schema migration is
+> prepared when the application-layer wiring is completed.  Wiring the session
+> parameter is a follow-on hardening task tracked in the architecture review.
 
 ---
 

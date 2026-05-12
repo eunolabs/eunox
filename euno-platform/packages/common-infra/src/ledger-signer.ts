@@ -900,6 +900,9 @@ export class PostgresLedgerBackend implements LedgerBackend {
   private readonly s3?: Required<PostgresLedgerOptions>['s3'];
   private readonly onAnchorError: (err: Error) => void;
 
+  /** Base delay (ms) for the first retry on a lock-hash collision in per-tenant mode. */
+  private static readonly RETRY_BACKOFF_BASE_MS = 10;
+
   /**
    * Tracks the seq of the last S3 anchor so we know when to emit the next one.
    * Seeded from the DB tip by `initialize()` so restarts resume at the correct
@@ -998,9 +1001,16 @@ export class PostgresLedgerBackend implements LedgerBackend {
     // while still serialising writes within a single tenant.  The global seq
     // namespace is preserved; on the rare event of a lock-hash collision the
     // backend detects the resulting PK conflict and retries automatically.
+    if (this.advisoryLockMode === 'per-tenant' && !evidence.tenantId) {
+      throw new Error(
+        'PostgresLedgerBackend (per-tenant mode): evidence.tenantId is required ' +
+          'when advisoryLockMode is "per-tenant". Every audit record must carry ' +
+          'a non-empty tenantId so the correct per-tenant advisory lock can be derived.',
+      );
+    }
     const lockId =
       this.advisoryLockMode === 'per-tenant'
-        ? fnv1a32LockId(evidence.tenantId ?? '')
+        ? fnv1a32LockId(evidence.tenantId!)
         : this.advisoryLockId;
 
     const maxAttempts = this.advisoryLockMode === 'per-tenant' ? 3 : 1;
@@ -1094,7 +1104,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
         // retry up to maxAttempts times with a short back-off.
         const pgCode = (err as { code?: string }).code;
         if (this.advisoryLockMode === 'per-tenant' && pgCode === '23505' && attempt < maxAttempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+          await new Promise((resolve) => setTimeout(resolve, PostgresLedgerBackend.RETRY_BACKOFF_BASE_MS * (attempt + 1)));
           continue;
         }
         throw err;

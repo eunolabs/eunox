@@ -1189,7 +1189,10 @@ function makeLockCapturingPgPool(): {
       }
       return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
     },
-    release() { /* no-op */ },
+    release() {
+      // No-op: test pool clients hold no real resources; the mock PgPool
+      // never opens a real database connection so there is nothing to release.
+    },
   });
 
   const pool: PgPool = {
@@ -1272,5 +1275,17 @@ describe('PostgresLedgerBackend — advisoryLockMode (DI-2)', () => {
     expect(capturedLockIds).toHaveLength(2);
     // Same tenant → same lock ID on every append.
     expect(capturedLockIds[0]).toBe(capturedLockIds[1]);
+  });
+
+  it('per-tenant mode throws when evidence.tenantId is absent (DI-2)', async () => {
+    const { pool } = makeLockCapturingPgPool();
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+    const ev = makeEvidence(1); // tenantId is undefined
+    await expect(
+      backend.appendEntry(ev, 'r-1', (prev, seq) => signEvidenceWithChain(ev, testSigner, prev, seq)),
+    ).rejects.toThrow(/per-tenant mode.*tenantId is required/);
   });
 });
