@@ -6,7 +6,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@euno/capability-issuer/adapters": ["../capability-issuer/src/exports"]
+      "@euno/capability-issuer/adapters": ["../capability-issuer/src/exports"],
+      "@euno/mcp": ["../../../public/packages/mcp/src"]
     }
   },
   "include": ["tests/**/*"],

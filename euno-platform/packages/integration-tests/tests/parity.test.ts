@@ -24,11 +24,10 @@
  * 1. **Decision parity** — both modes reach the same `allow`/`deny` outcome.
  * 2. **Obligation parity** — both modes derive identical `redactFields`
  *    obligations from the matched constraint's conditions.
- * 3. **OCSF pre-signature status-field parity** — the deterministic OCSF
- *    event fields computed from the decision (`class_uid`, `category_uid`,
- *    `severity_id`, `status_id`, `status`) are identical.  These are the
- *    fields that would be identical regardless of which signing mechanism
- *    (local HMAC vs KMS-backed asymmetric) is used to seal the record.
+ * 3. **OCSF status-field parity** — the status fields produced by the real
+ *    `signedEvidenceToOcsf()` function on captured gateway evidence
+ *    (`class_uid`, `category_uid`, `severity_id`, `status_id`, `status`)
+ *    match the expected values for the decision.
  *
  * ### Design note
  *
@@ -46,7 +45,6 @@
  */
 
 import * as jose from 'jose';
-import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   AgentCapabilityManifest,
   CapabilityConstraint,
@@ -61,6 +59,9 @@ import {
   AuditEvidence,
   SignedAuditEvidence,
   Obligation,
+  signedEvidenceToOcsf,
+  OcsfProductInfo,
+  EvidenceSigner,
 } from '@euno/common';
 import { ConditionEnforcerPDP } from '@euno/mcp';
 import type { PdpContext, PdpDecision, LocalPolicySource } from '@euno/mcp';
@@ -72,6 +73,9 @@ import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
 // ---------------------------------------------------------------------------
 
 const logger = createLogger('parity-test');
+
+/** Product metadata used when calling signedEvidenceToOcsf() in tests. */
+const OCSF_PRODUCT: OcsfProductInfo = { name: 'parity-test', version: '0.0.0' };
 
 /** Shared RS256 key pair created once for the whole suite. */
 let privateKey: jose.KeyLike;
@@ -115,9 +119,9 @@ function staticSource(manifest: AgentCapabilityManifest): LocalPolicySource {
 function callTool(
   toolName: string,
   args: Record<string, unknown> = {},
-): CallToolRequest {
+) {
   return {
-    method: 'tools/call',
+    method: 'tools/call' as const,
     params: { name: toolName, arguments: args },
   };
 }
@@ -144,30 +148,37 @@ function localObligations(decision: PdpDecision): Obligation[] {
 }
 
 /**
- * Build an EvidenceSigner mock that captures the last unsigned `AuditEvidence`
- * before signing so we can inspect the pre-signature content.
+ * Build an {@link EvidenceSigner} mock that captures every
+ * {@link SignedAuditEvidence} produced by the engine so tests can inspect
+ * the real pre-signature content and call {@link signedEvidenceToOcsf} on it.
+ *
+ * The signer mock constant values ('test-sig', 'test-kid') are used only
+ * inside this helper and make the mock nature explicit.
  */
+const TEST_SIG = 'test-sig';
+const TEST_KID = 'test-kid';
+
 function makeCapturingEvidenceSigner(): {
-  signer: import('@euno/common').EvidenceSigner;
-  captured: AuditEvidence[];
+  signer: EvidenceSigner;
+  captured: SignedAuditEvidence[];
 } {
-  const captured: AuditEvidence[] = [];
+  const captured: SignedAuditEvidence[] = [];
   let seq = 0;
   let previousHash = GENESIS_HASH;
 
-  const signer: import('@euno/common').EvidenceSigner = {
+  const signer: EvidenceSigner = {
     async signEvidence(evidence: AuditEvidence): Promise<SignedAuditEvidence> {
-      captured.push({ ...evidence });
       seq += 1;
       const signed: SignedAuditEvidence = {
         ...evidence,
-        signature: 'test-sig',
-        keyId: 'test-kid',
+        signature: TEST_SIG,
+        keyId: TEST_KID,
         algorithm: 'RS256',
         previousHash,
         seq,
       };
       previousHash = canonicalSha256(signed);
+      captured.push(signed);
       return signed;
     },
     async verifyEvidence(_signedEvidence: SignedAuditEvidence): Promise<boolean> {
@@ -175,44 +186,6 @@ function makeCapturingEvidenceSigner(): {
     },
   };
   return { signer, captured };
-}
-
-// ---------------------------------------------------------------------------
-// OCSF pre-signature status fields
-// ---------------------------------------------------------------------------
-
-/**
- * The OCSF API Activity event fields that are determined solely by the
- * enforcement decision and are therefore identical regardless of the signing
- * mechanism.
- *
- * These are the fields that, per the parity contract, must match between a
- * record produced by `@euno/mcp`'s local audit sink and one produced by the
- * gateway's `signedEvidenceToOcsf()` helper:
- *
- *   - `class_uid: 6003`  — OCSF class for API Activity
- *   - `category_uid: 6`  — OCSF category for Application Activity
- *   - `severity_id`      — 1 (Informational) for allow, 3 (Medium) for deny
- *   - `status_id`        — 1 (Success) for allow, 2 (Failure) for deny
- *   - `status`           — "Success" | "Failure"
- */
-interface OcsfStatusFields {
-  class_uid: number;
-  category_uid: number;
-  severity_id: number;
-  status_id: number;
-  status: string;
-}
-
-function ocsfStatusFromDecision(decision: 'allow' | 'deny'): OcsfStatusFields {
-  const allow = decision === 'allow';
-  return {
-    class_uid: 6003,
-    category_uid: 6,
-    severity_id: allow ? 1 : 3,
-    status_id: allow ? 1 : 2,
-    status: allow ? 'Success' : 'Failure',
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +223,7 @@ const SHARED_CONSTRAINTS: CapabilityConstraint[] = [
       },
     ],
   },
-  // 3. maxCalls(1) — denies on the second call within the same session/key
+  // 3. maxCalls(1) — tested in the self-contained maxCalls test below
   {
     resource: 'database_query',
     actions: ['call'],
@@ -301,11 +274,8 @@ const PARITY_MANIFEST: AgentCapabilityManifest = {
 // ---------------------------------------------------------------------------
 
 interface ParityFixture {
-  description: string;
   toolName: string;
   args?: Record<string, unknown>;
-  /** Shared counter store so call-count state is preserved across multi-call tests. */
-  counterStore?: InMemoryCallCounterStore;
   expectedDecision: 'allow' | 'deny';
 }
 
@@ -317,28 +287,31 @@ describe('cross-stage parity test suite (Task 19)', () => {
   let engine: EnforcementEngine;
   let localPdp: ConditionEnforcerPDP;
   let jwtToken: string;
-  /** Shared counter store — both paths must share state for maxCalls tests. */
-  const sharedCounterStore = new InMemoryCallCounterStore();
+  /**
+   * Signed evidence captured from the main `engine`'s signer.
+   * Exposed at describe scope so `assertParity` can inspect newly added
+   * entries and call `signedEvidenceToOcsf()` on them.
+   */
+  let capturedSigned: SignedAuditEvidence[];
 
   beforeAll(async () => {
+    const { signer, captured } = makeCapturingEvidenceSigner();
+    capturedSigned = captured;
+
     // Gateway path: EnforcementEngine with the JWT verifier and a capturing
-    // evidence signer so we can inspect the pre-signature AuditEvidence.
+    // evidence signer so assertParity can validate real OCSF status fields.
     engine = new EnforcementEngine({
       dpop: { required: false },
       verifier,
       logger,
-      callCounterStore: sharedCounterStore,
       policyVersion: 'parity-test-v1',
-      // Capture every signed evidence record for assertion.
-      evidenceSigner: makeCapturingEvidenceSigner().signer,
+      evidenceSigner: signer,
       enableCryptographicAudit: true,
     });
 
     // Local path: ConditionEnforcerPDP backed by the same constraints.
     localPdp = new ConditionEnforcerPDP({
       policySource: staticSource(PARITY_MANIFEST),
-      // Share the counter store so the maxCalls state is consistent.
-      counterStore: sharedCounterStore,
     });
 
     // JWT encodes the same constraints the local PDP loads from the manifest.
@@ -359,6 +332,7 @@ describe('cross-stage parity test suite (Task 19)', () => {
     // We call validateAction() directly with the same action='call' and
     // resource=toolName so capability matching uses identical action/resource
     // strings as the local ConditionEnforcerPDP.
+    const beforeLen = capturedSigned.length;
     const gatewayResult = await engine.validateAction({
       token: jwtToken,
       action: 'call',
@@ -391,19 +365,26 @@ describe('cross-stage parity test suite (Task 19)', () => {
     // 2. Obligation parity
     expect(localObls).toEqual(gatewayObls);
 
-    // 3. OCSF pre-signature status-field parity
-    const expectedOcsf = ocsfStatusFromDecision(expectedDecision);
-    const localOcsf = ocsfStatusFromDecision(localOutcome);
-    const gatewayOcsf = ocsfStatusFromDecision(gatewayOutcome);
-    expect(localOcsf).toEqual(expectedOcsf);
-    expect(gatewayOcsf).toEqual(expectedOcsf);
+    // 3. OCSF status-field parity — use the real signedEvidenceToOcsf()
+    //    function on captured gateway evidence to validate the status fields
+    //    rather than a local helper recomputing them from the decision string.
+    const newlySigned = capturedSigned.slice(beforeLen);
+    const signed = newlySigned.find((e) => e.tool === toolName);
+    expect(signed).toBeDefined();
+    if (signed) {
+      const ocsfEvent = signedEvidenceToOcsf(signed, OCSF_PRODUCT);
+      expect(ocsfEvent.class_uid).toBe(6003);
+      expect(ocsfEvent.category_uid).toBe(6);
+      expect(ocsfEvent.severity_id).toBe(expectedDecision === 'deny' ? 3 : 1);
+      expect(ocsfEvent.status_id).toBe(expectedDecision === 'allow' ? 1 : 2);
+      expect(ocsfEvent.status).toBe(expectedDecision === 'allow' ? 'Success' : 'Failure');
+    }
   }
 
   // ── Fixture 1: unconditional allow ────────────────────────────────────────
 
   it('allows read_file unconditionally — no obligations', async () => {
     await assertParity({
-      description: 'unconditional allow, no conditions',
       toolName: 'read_file',
       expectedDecision: 'allow',
     });
@@ -413,7 +394,6 @@ describe('cross-stage parity test suite (Task 19)', () => {
 
   it('allows send_email and returns identical redactFields obligations', async () => {
     await assertParity({
-      description: 'allow with redactFields obligation',
       toolName: 'send_email',
       args: { to: 'alice@example.com', subject: 'Hi', body: 'Hello' },
       expectedDecision: 'allow',
@@ -426,42 +406,58 @@ describe('cross-stage parity test suite (Task 19)', () => {
     expect(obls).toEqual([{ type: 'redactFields', paths: ['recipients', 'bcc'] }]);
   });
 
-  // ── Fixture 3: first database_query is within maxCalls(1) ─────────────────
+  // ── Fixture 3: maxCalls allow→deny transition ──────────────────────────────
+  //
+  // Uses dedicated counter store, PDP, and engine so the allow→deny transition
+  // is driven entirely within this single test and does not depend on
+  // execution order relative to other test cases.
 
-  it('allows database_query on the first call (within maxCalls limit)', async () => {
-    await assertParity({
-      description: 'maxCalls: first call within limit',
-      toolName: 'database_query',
-      args: { query: 'SELECT 1' },
-      expectedDecision: 'allow',
+  it('enforces maxCalls(1): allows on first call, denies on second call', async () => {
+    const maxStore = new InMemoryCallCounterStore();
+    const maxLocalPdp = new ConditionEnforcerPDP({
+      policySource: staticSource(PARITY_MANIFEST),
+      counterStore: maxStore,
     });
-  });
-
-  // ── Fixture 4: second database_query exceeds maxCalls(1) ──────────────────
-
-  it('denies database_query on the second call (maxCalls limit exceeded)', async () => {
-    // After the first call above the counter is at 1; this second call pushes
-    // it over the maxCalls: 1 threshold.  Both paths share sharedCounterStore
-    // so they see the same counter state.
-    await assertParity({
-      description: 'maxCalls: second call exceeds limit',
-      toolName: 'database_query',
-      args: { query: 'SELECT 2' },
-      expectedDecision: 'deny',
+    const maxToken = await mintToken(SHARED_CONSTRAINTS);
+    const maxEngine = new EnforcementEngine({
+      dpop: { required: false },
+      verifier,
+      logger,
+      callCounterStore: maxStore,
+      policyVersion: 'parity-maxcalls',
     });
 
-    // Verify the conditionType from the local decision matches 'maxCalls'
-    const request = callTool('database_query', { query: 'SELECT 3' });
-    const localDecision = await localPdp.decide(request, PDP_CTX);
-    expect(localDecision.allow).toBe(false);
-    expect(localDecision.conditionType).toBe('maxCalls');
+    const resource = 'database_query';
+    const ctx = { sessionId: PDP_CTX.sessionId, tool: resource, args: {} };
+
+    // ── First call: both paths allow ──────────────────────────────────────
+    const localAllow = await maxLocalPdp.decide(callTool(resource, { query: 'SELECT 1' }), PDP_CTX);
+    const gwAllow = await maxEngine.validateAction({
+      token: maxToken,
+      action: 'call',
+      resource,
+      context: { ...ctx, args: { query: 'SELECT 1' } },
+    });
+    expect(localAllow.allow).toBe(true);
+    expect(gwAllow.allowed).toBe(true);
+
+    // ── Second call: both paths deny ──────────────────────────────────────
+    const localDeny = await maxLocalPdp.decide(callTool(resource, { query: 'SELECT 2' }), PDP_CTX);
+    const gwDeny = await maxEngine.validateAction({
+      token: maxToken,
+      action: 'call',
+      resource,
+      context: { ...ctx, args: { query: 'SELECT 2' } },
+    });
+    expect(localDeny.allow).toBe(false);
+    expect(localDeny.conditionType).toBe('maxCalls');
+    expect(gwDeny.allowed).toBe(false);
   });
 
-  // ── Fixture 5: timeWindow deny ────────────────────────────────────────────
+  // ── Fixture 4: timeWindow deny ────────────────────────────────────────────
 
   it('denies maintenance_task when outside the allowed time window', async () => {
     await assertParity({
-      description: 'timeWindow condition: window has passed',
       toolName: 'maintenance_task',
       expectedDecision: 'deny',
     });
@@ -473,29 +469,27 @@ describe('cross-stage parity test suite (Task 19)', () => {
     expect(localDecision.conditionType).toBe('timeWindow');
   });
 
-  // ── Fixture 6: argumentSchema allow ──────────────────────────────────────
+  // ── Fixture 5: argumentSchema allow ──────────────────────────────────────
 
   it('allows fetch_url when the url argument satisfies the schema', async () => {
     await assertParity({
-      description: 'argumentSchema: valid args → allow',
       toolName: 'fetch_url',
       args: { url: 'https://api.example.com/data' },
       expectedDecision: 'allow',
     });
   });
 
-  // ── Fixture 7: argumentSchema deny ────────────────────────────────────────
+  // ── Fixture 6: argumentSchema deny ────────────────────────────────────────
 
   it('denies fetch_url when required url argument is missing', async () => {
     await assertParity({
-      description: 'argumentSchema: missing required url → deny',
       toolName: 'fetch_url',
       args: {},
       expectedDecision: 'deny',
     });
   });
 
-  // ── Fixture 8: tool not in manifest → local allows, gateway denies ────────
+  // ── Fixture 7: tool not in manifest → local allows, gateway denies ────────
   //
   // This test intentionally documents a KNOWN DESIGN DIFFERENCE between stages:
   //
@@ -509,7 +503,7 @@ describe('cross-stage parity test suite (Task 19)', () => {
   // EvidenceSigner, and KillSwitchManager — the policy-storage model also shifts
   // from "restrict listed tools" to "grant listed tools").  The parity contract
   // covers tools that ARE in both the manifest and the JWT, which is the set
-  // tested by fixtures 1–7 above.
+  // tested by fixtures 1–6 above.
 
   it('documents known Stage 1→3 design difference: unlisted tool allow vs deny', async () => {
     const unlistedTool = 'unknown_tool';
@@ -529,31 +523,50 @@ describe('cross-stage parity test suite (Task 19)', () => {
     expect(gatewayResult.allowed).toBe(false);
   });
 
-  // ── OCSF pre-signature status-field parity (table-driven) ─────────────────
+  // ── OCSF pre-signature status fields (table-driven via real mapping) ────────
+  //
+  // Calls `signedEvidenceToOcsf()` on actual captured gateway evidence for an
+  // allow and a deny, then checks the exact field values.  This validates the
+  // real OCSF mapping function, not a local test-only helper.
 
   describe('OCSF pre-signature status fields', () => {
-    it.each([
-      ['allow', 1, 1, 'Success'],
-      ['deny', 3, 2, 'Failure'],
-    ] as const)(
-      'decision=%s → severity_id=%i, status_id=%i, status=%s, class_uid=6003, category_uid=6',
-      (decision, severity_id, status_id, status) => {
-        const fields = ocsfStatusFromDecision(decision);
-        expect(fields).toEqual({
-          class_uid: 6003,
-          category_uid: 6,
-          severity_id,
-          status_id,
-          status,
-        });
+    it('allow decision → class_uid=6003, category_uid=6, severity_id=1, status_id=1, status=Success', async () => {
+      const token = await mintToken(SHARED_CONSTRAINTS);
+      const beforeLen = capturedSigned.length;
+      await engine.validateAction({
+        token,
+        action: 'call',
+        resource: 'read_file',
+        context: { sessionId: 'ocsf-allow-test' },
+      });
+      const signed = capturedSigned.slice(beforeLen).find((e) => e.tool === 'read_file');
+      expect(signed).toBeDefined();
+      const ev = signedEvidenceToOcsf(signed!, OCSF_PRODUCT);
+      expect(ev.class_uid).toBe(6003);
+      expect(ev.category_uid).toBe(6);
+      expect(ev.severity_id).toBe(1);
+      expect(ev.status_id).toBe(1);
+      expect(ev.status).toBe('Success');
+    });
 
-        // Verify that both local and gateway outcomes produce the same OCSF
-        // status fields for this decision value.
-        const localFields = ocsfStatusFromDecision(decision);
-        const gatewayFields = ocsfStatusFromDecision(decision);
-        expect(localFields).toEqual(gatewayFields);
-      },
-    );
+    it('deny decision → class_uid=6003, category_uid=6, severity_id=3, status_id=2, status=Failure', async () => {
+      const token = await mintToken(SHARED_CONSTRAINTS);
+      const beforeLen = capturedSigned.length;
+      await engine.validateAction({
+        token,
+        action: 'call',
+        resource: 'maintenance_task',
+        context: { sessionId: 'ocsf-deny-test' },
+      });
+      const signed = capturedSigned.slice(beforeLen).find((e) => e.tool === 'maintenance_task');
+      expect(signed).toBeDefined();
+      const ev = signedEvidenceToOcsf(signed!, OCSF_PRODUCT);
+      expect(ev.class_uid).toBe(6003);
+      expect(ev.category_uid).toBe(6);
+      expect(ev.severity_id).toBe(3);
+      expect(ev.status_id).toBe(2);
+      expect(ev.status).toBe('Failure');
+    });
   });
 
   // ── AuditEvidence pre-signature content parity ────────────────────────────
@@ -565,7 +578,7 @@ describe('cross-stage parity test suite (Task 19)', () => {
 
   describe('AuditEvidence pre-signature content', () => {
     let capturedEngine: EnforcementEngine;
-    let captured: AuditEvidence[];
+    let captured: SignedAuditEvidence[];
 
     beforeAll(async () => {
       const store = new InMemoryCallCounterStore();
@@ -582,6 +595,12 @@ describe('cross-stage parity test suite (Task 19)', () => {
       });
     });
 
+    // Clear captured evidence before each test so assertions target only the
+    // evidence produced by the current test's validateAction() call.
+    beforeEach(() => {
+      captured.length = 0;
+    });
+
     it('captures allow evidence with correct tool and decision', async () => {
       const token = await mintToken(SHARED_CONSTRAINTS);
       await capturedEngine.validateAction({
@@ -591,18 +610,18 @@ describe('cross-stage parity test suite (Task 19)', () => {
         context: { sessionId: 'evidence-session', tool: 'read_file', args: {} },
       });
 
-      const evidence = captured.find((e) => e.tool === 'read_file' && e.decision === 'allow');
-      expect(evidence).toBeDefined();
-      expect(evidence!.decision).toBe('allow');
-      expect(evidence!.tool).toBe('read_file');
+      expect(captured).toHaveLength(1);
+      const signed = captured[0]!;
+      expect(signed.decision).toBe('allow');
+      expect(signed.tool).toBe('read_file');
 
-      // Derived OCSF status fields must match the allow expectation
-      const fields = ocsfStatusFromDecision(evidence!.decision);
-      expect(fields.severity_id).toBe(1);
-      expect(fields.status_id).toBe(1);
-      expect(fields.status).toBe('Success');
-      expect(fields.class_uid).toBe(6003);
-      expect(fields.category_uid).toBe(6);
+      // Real OCSF mapping must produce the expected allow status fields.
+      const ev = signedEvidenceToOcsf(signed, OCSF_PRODUCT);
+      expect(ev.class_uid).toBe(6003);
+      expect(ev.category_uid).toBe(6);
+      expect(ev.severity_id).toBe(1);
+      expect(ev.status_id).toBe(1);
+      expect(ev.status).toBe('Success');
     });
 
     it('captures deny evidence with correct tool, decision, and conditionType', async () => {
@@ -616,20 +635,21 @@ describe('cross-stage parity test suite (Task 19)', () => {
         context: { sessionId: 'evidence-session', tool: 'maintenance_task', args: {} },
       });
 
-      const evidence = captured.find(
-        (e) => e.tool === 'maintenance_task' && e.decision === 'deny',
-      );
-      expect(evidence).toBeDefined();
-      expect(evidence!.decision).toBe('deny');
-      expect(evidence!.tool).toBe('maintenance_task');
+      expect(captured).toHaveLength(1);
+      const signed = captured[0]!;
+      expect(signed.decision).toBe('deny');
+      expect(signed.tool).toBe('maintenance_task');
+      // Gateway sets conditionType on evidence so downstream SIEM queries can
+      // distinguish which type of condition caused the denial.
+      expect(signed.conditionType).toBe('timeWindow');
 
-      // Derived OCSF status fields must match the deny expectation
-      const fields = ocsfStatusFromDecision(evidence!.decision);
-      expect(fields.severity_id).toBe(3);
-      expect(fields.status_id).toBe(2);
-      expect(fields.status).toBe('Failure');
-      expect(fields.class_uid).toBe(6003);
-      expect(fields.category_uid).toBe(6);
+      // Real OCSF mapping must produce the expected deny status fields.
+      const ev = signedEvidenceToOcsf(signed, OCSF_PRODUCT);
+      expect(ev.class_uid).toBe(6003);
+      expect(ev.category_uid).toBe(6);
+      expect(ev.severity_id).toBe(3);
+      expect(ev.status_id).toBe(2);
+      expect(ev.status).toBe('Failure');
     });
 
     it('pre-signature AuditEvidence decision field aligns with McpAuditRecord decision field', async () => {
@@ -652,14 +672,9 @@ describe('cross-stage parity test suite (Task 19)', () => {
         toolName: 'read_file',
       };
 
-      // Gateway: AuditEvidence.decision (string literal)
-      const gatewayEvidence = captured.find(
-        (e) => e.tool === 'read_file' && e.decision === 'allow',
-      );
-      expect(gatewayEvidence).toBeDefined();
-
-      // Both must agree
-      expect(localRecord.decision).toBe(gatewayEvidence!.decision);
+      expect(captured).toHaveLength(1);
+      const gatewayEvidence = captured[0]!;
+      expect(localRecord.decision).toBe(gatewayEvidence.decision);
     });
   });
 });
