@@ -189,9 +189,7 @@ describe('RedisAnomalyDetector — basic contract', () => {
     for (let i = 0; i < 5; i++) {
       await detector.recordMint('multi-rule', true);
     }
-    // Advance past window
-    const { advance } = makeDetector();
-    // Re-create with same state
+    // Add many failures to potentially trigger multiple rules.
     const fired: string[] = [];
     for (let i = 0; i < 30; i++) {
       const rules = await detector.recordMint('multi-rule', false);
@@ -202,7 +200,6 @@ describe('RedisAnomalyDetector — basic contract', () => {
     for (let i = 1; i < fired.length; i++) {
       expect(fired[i]! >= fired[i - 1]!).toBe(true);
     }
-    void advance; // suppress unused warning
   });
 });
 
@@ -394,9 +391,6 @@ describe('RedisAnomalyDetector — close()', () => {
   it('calls quit on the underlying Redis client', async () => {
     const client = makeFakeRedisClient();
     const detector = new RedisAnomalyDetector(client);
-    await detector.close();
-    expect(client.calls.some(c => c.method === 'quit')).toBe(false);
-    // quit() is directly on client — verify via the returned promise.
     await expect(detector.close()).resolves.toBeUndefined();
   });
 

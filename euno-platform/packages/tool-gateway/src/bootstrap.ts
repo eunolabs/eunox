@@ -1023,7 +1023,7 @@ export async function initializeServices(
             'Replace with a Redis Sentinel or Redis Cluster deployment and ensure ' +
             'REDIS_GRACE_PERIOD_MS is set (recommended: 5000). ' +
             'See docs/DEPLOYMENT.md §"Redis HA for production".',
-          { url: url.replace(/\/\/[^@]*@/, '//<redacted>@') },
+          { url: url.replace(/\/\/[^@/\s]*@/, '//<redacted>@') },
         );
         break; // Only warn once even if multiple per-store URLs are single-node.
       }
