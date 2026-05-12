@@ -201,7 +201,15 @@ intercepted tool call:
 | `context.sourceIp` | Source IP of the MCP client (omitted for stdio) | Network metadata |
 | `context.recipients` | Recipient addresses extracted from arguments (for `recipientDomain` condition) | **Potentially personal data** — see note below |
 | `context.now` | Wall-clock timestamp of the request (ISO-8601) | Timing metadata |
-| Authorization header | Bearer token derived from the `sk-...` API key via the minter | Credential (short-lived JWT) |
+| `Authorization` header | `Bearer sk-...` — the raw API key sent by `@euno/mcp`; in self-hosted deployments this may be a pre-issued JWT | Credential |
+
+> **Note on the Authorization header:** `@euno/mcp` sends the raw `sk-...` API
+> key as the `Bearer` token. In the hosted deployment, the minter façade
+> intercepts the request server-side, exchanges the key for a short-lived
+> HSM-signed JWT, and forwards the JWT to the internal enforcement route. The
+> enforcement route itself never sees or accepts raw API keys. In self-hosted
+> deployments without a minter façade, the operator configures a pre-issued JWT
+> directly in `--enforcer-api-key`.
 
 **The `arguments` field is the critical data-privacy consideration.** Tool call
 arguments can contain — and often do contain — confidential or personal data:
@@ -211,21 +219,24 @@ policy evaluation.
 
 > **GDPR / SOC2 teams:** The gateway processes `arguments` for policy evaluation
 > (e.g., checking `allowedOperations`, `argumentSchema`, `allowedTables`). The
-> gateway retains the full `arguments` object as part of the OCSF audit record
-> written to the Postgres ledger. The audit record is retained for the duration
-> configured for your plan (default 90 days for Cloud Team, configurable for
-> Cloud Enterprise). If your tool arguments contain personal data as defined by
-> GDPR Article 4(1), you have a data-processing relationship with the gateway
-> operator. Review the DPA and privacy addendum available from
+> raw arguments are used during evaluation and then discarded; the immutable
+> audit ledger stores only `argsHash` — a SHA-256 digest of the canonicalized
+> arguments, not the arguments themselves. The audit record's `argsHash` is
+> retained for the duration configured for your plan (default 90 days for Cloud
+> Team, configurable for Cloud Enterprise). If your tool arguments contain
+> personal data as defined by GDPR Article 4(1), you have a data-processing
+> relationship with the gateway operator for the in-flight evaluation window.
+> Review the DPA and privacy addendum available from
 > [trust.euno.example](https://trust.euno.example) before deploying in production.
 
-### Data that does NOT leave your network
+### Data not sent on every `tools/call`
 
 | Item | Where it stays |
 |---|---|
 | Upstream tool call results (responses from your MCP server) | Your network only — the gateway never sees upstream responses |
-| Your policy YAML content (after initial upload) | Stored on the gateway; not re-transmitted on every call |
-| Raw `sk-...` API key material | Never forwarded beyond the minter façade |
+| Your policy YAML content | Uploaded to the gateway once during setup; not re-transmitted per tool call |
+| Raw `sk-...` API key material | Never forwarded beyond the minter façade (see Authorization header note above) |
+| Raw tool arguments (after evaluation) | Evaluated in-flight; only `argsHash` (SHA-256 digest) is written to the audit ledger |
 | HSM signing key material | Never leaves the HSM boundary |
 | `~/.euno/audit.jsonl` | Local file; not uploaded unless you use the audit-export API explicitly |
 | `maxCalls` / `rateLimit` counter state | Gateway Redis; you can read it back via the admin API but it lives on the gateway |
@@ -274,25 +285,27 @@ with explicit regional commitments.
 ### Step 1 — Upload your policy
 
 Before switching to hosted mode, your policy must be registered in the gateway.
-Use the admin API (see [`docs/ADMIN_API_CURL_RECIPES.md`](./ADMIN_API_CURL_RECIPES.md))
-or the interactive upgrade command (available from Stage 3 onward):
+Use the admin API directly (see [`docs/ADMIN_API_CURL_RECIPES.md`](./ADMIN_API_CURL_RECIPES.md)
+or the [manual recipe in §5](#5-manual-migration-recipe)):
 
 ```bash
-euno-mcp upgrade-to-hosted \
-  --api-key sk-x7Kp9mRq.bL3nYv2wQs... \
-  --gateway-url https://gateway.euno.example \
-  --policy ./euno.policy.yaml
+# Verify the policy file exists before uploading
+[[ -f ./euno.policy.yaml ]] || { echo "Error: ./euno.policy.yaml not found"; exit 1; }
+
+curl -s -X POST \
+  -H "Authorization: Bearer sk-x7Kp9mRq.bL3nYv2wQs..." \
+  -H "Content-Type: application/yaml" \
+  --data-binary @./euno.policy.yaml \
+  "https://gateway.euno.example/admin/v1/policies" \
+  | jq '{policyId: .id, policyHash: .hash}'
 ```
 
-This command:
-1. Validates the API key against the gateway.
-2. Round-trips your existing local policy file to the hosted policy store via
-   the admin API.
-3. Prints the policy ID assigned to your policy.
-4. Optionally patches your `mcp.json` / `claude_desktop_config.json` to add
-   `enforcer.url` and `apiKey`, with a `.bak` backup.
+Save the returned `policyId` — you may need it for API-key scoping.
 
-For the manual path, see the [manual migration recipe](#5-manual-migration-recipe) below.
+> **Coming in a future release:** An interactive `euno-mcp upgrade-to-hosted`
+> command (Task 15) will automate this step — validating your API key, uploading
+> the policy, and optionally patching your `claude_desktop_config.json` in one
+> command. Until then, use the admin API recipe above or §5 below.
 
 ### Step 2 — Smoke-test in parallel
 
@@ -345,7 +358,7 @@ curl -s \
 
 ## 5. Manual migration recipe
 
-If you prefer not to use the interactive upgrade command:
+Complete step-by-step instructions using only the admin API:
 
 **5.1 Create the policy via the admin API:**
 

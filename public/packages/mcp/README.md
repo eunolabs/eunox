@@ -332,7 +332,7 @@ an **allow** decision (optionally with response-path obligations such as
 `redactFields`) or a **deny** decision.
 
 > **Migrating from local mode?**  See
-> [`docs/migrating-from-local.md`](../../docs/migrating-from-local.md) for the
+> [`docs/migrating-from-local.md`](../../../docs/migrating-from-local.md) for the
 > step-by-step guide, the cryptographic story behind the `sk-...` API key, and
 > the explicit data-boundary analysis (what leaves your network in hosted mode —
 > required reading for SOC2 / GDPR review).
