@@ -124,6 +124,13 @@ class FakeRedisClient implements RedisUsageMeterClient {
     return 'OK';
   }
 
+  async setnx(key: string, value: string): Promise<number> {
+    this.maybeThrow(key);
+    if (this.store.has(key)) return 0;
+    this.store.set(key, value);
+    return 1;
+  }
+
   async del(...keys: string[]): Promise<unknown> {
     this.maybeThrow();
     for (const k of keys) {
@@ -294,10 +301,14 @@ describe('RedisUsageMeter', () => {
       meter.recordEnforcement('t1', 'allow');
       await flushPromises();
       const firstTtl = client.rawTtls().get('test:usage:t1:ps');
+      // Confirm the first write applied a TTL (not undefined).
+      expect(typeof firstTtl).toBe('number');
+      expect(firstTtl).toBeGreaterThan(0);
 
       meter.recordEnforcement('t1', 'deny');
       await flushPromises();
-      // setnx returns 0 on the second call, so expire is not re-applied
+      // setnxex returns null on the second call (key already present), so
+      // the TTL value in our fake store should be unchanged.
       expect(client.rawTtls().get('test:usage:t1:ps')).toBe(firstTtl);
     });
   });

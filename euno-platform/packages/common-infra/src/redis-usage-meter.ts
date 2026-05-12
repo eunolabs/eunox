@@ -78,6 +78,13 @@ export interface RedisUsageMeterClient {
    * Avoids the race condition of a separate SETNX + EXPIRE pair.
    */
   setnxex(key: string, seconds: number, value: string): Promise<'OK' | null>;
+  /**
+   * SETNX — conditional write without expiry.
+   * Used when TTL is explicitly disabled (counterTtlSeconds === 0) to
+   * preserve the original period-start without overwriting it.
+   * Returns 1 if written, 0 if the key already existed.
+   */
+  setnx(key: string, value: string): Promise<number>;
   /** DEL — delete one or more keys (variadic, matching ioredis signature). */
   del(...keys: string[]): Promise<unknown>;
   /** MGET — returns null for missing keys, preserving input order (variadic, matching ioredis signature). */
@@ -417,8 +424,9 @@ export class RedisUsageMeter implements UsageMeter {
       if (this.counterTtlSeconds > 0) {
         await this.client.setnxex(psKey, this.counterTtlSeconds, periodStart);
       } else {
-        // TTL explicitly disabled: write only when absent but skip the expiry.
-        await this.client.set(psKey, periodStart);
+        // TTL explicitly disabled: use SETNX so we write only when the key
+        // is absent — same NX contract as setnxex but without expiry.
+        await this.client.setnx(psKey, periodStart);
       }
     } catch (err) {
       this.logger?.error('RedisUsageMeter: Redis tenant registration failed', {
