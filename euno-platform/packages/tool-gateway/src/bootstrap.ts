@@ -982,7 +982,7 @@ export async function initializeServices(
     usageMeter,
     ...(auditRetentionDays !== undefined ? { auditRetentionDays } : {}),
     gatewayTelemetry,
-    sourceIpMode: (validated.ENFORCE_SOURCE_IP_MODE as 'gateway' | 'client') ?? 'gateway',
+    sourceIpMode: validated.ENFORCE_SOURCE_IP_MODE,
   };
 
   logger.info('Tool Gateway services initialized successfully');

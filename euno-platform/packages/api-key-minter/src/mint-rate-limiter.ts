@@ -234,7 +234,7 @@ export async function createPingRateLimiterFromEnv(
 
   if (!redisUrl) {
     logger?.warn(
-      'createPingRateLimiterFromEnv: neither MINTER_PING_REDIS_URL nor REDIS_URL is set. ' +
+      '[minter] createPingRateLimiterFromEnv: neither MINTER_PING_REDIS_URL nor REDIS_URL is set. ' +
         'Using per-process in-memory rate limiter for GET /api/v1/ping. ' +
         'In a multi-replica deployment the effective rate limit is ' +
         `${max} req/${windowSeconds}s × replicaCount, which weakens brute-force protection. ` +
@@ -249,7 +249,7 @@ export async function createPingRateLimiterFromEnv(
     RedisCtor = require('ioredis');
   } catch (error) {
     logger?.error(
-      'createPingRateLimiterFromEnv: REDIS_URL is set but "ioredis" is not installed. ' +
+      '[minter] createPingRateLimiterFromEnv: REDIS_URL is set but "ioredis" is not installed. ' +
         'Install it (npm install ioredis) to enable fleet-wide ping rate limiting. ' +
         'Falling back to in-memory rate limiter.',
       { error: error instanceof Error ? error.message : 'Unknown error' },
@@ -270,7 +270,7 @@ export async function createPingRateLimiterFromEnv(
   const localFallback = new InMemoryMintRateLimiter({ maxMintsPerWindow: max, windowSeconds });
 
   logger?.info(
-    'createPingRateLimiterFromEnv: using Redis-backed fleet-wide rate limiter for GET /api/v1/ping',
+    '[minter] createPingRateLimiterFromEnv: using Redis-backed fleet-wide rate limiter for GET /api/v1/ping',
     { max, windowSeconds, dedicatedUrl: !!env['MINTER_PING_REDIS_URL'] },
   );
 

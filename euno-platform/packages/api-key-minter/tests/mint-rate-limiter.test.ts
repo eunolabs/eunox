@@ -242,29 +242,18 @@ describe('createPingRateLimiterFromEnv', () => {
     expect(limiter).toBeInstanceOf(InMemoryMintRateLimiter);
   });
 
-  it('returns InMemoryMintRateLimiter when ioredis is not installed (Redis URL set)', async () => {
-    // Mock require() to throw as if ioredis is not installed.
-    const originalRequire = require;
-    const mockRequire = jest.fn((mod: string) => {
-      if (mod === 'ioredis') throw new Error('Cannot find module "ioredis"');
-      return originalRequire(mod);
-    }) as unknown as NodeRequire;
-    Object.assign(mockRequire, originalRequire);
-
-    // Temporarily replace require in the module context is tricky; instead
-    // we verify the public contract: when Redis URL is absent, we always get
-    // InMemoryMintRateLimiter.  The ioredis-missing branch is covered by the
-    // integration path; here we simply assert the no-URL path is correct.
+  it('falls back to InMemoryMintRateLimiter when no Redis URL is configured (ioredis not relevant)', async () => {
+    // When neither MINTER_PING_REDIS_URL nor REDIS_URL is set, ioredis is
+    // never required — the factory short-circuits to InMemoryMintRateLimiter.
     const limiter = await createPingRateLimiterFromEnv({});
     expect(limiter).toBeInstanceOf(InMemoryMintRateLimiter);
-    void mockRequire; // silence unused-variable lint warning
   });
 
   it('respects MINTER_PING_RATE_LIMIT_MAX and MINTER_PING_RATE_LIMIT_WINDOW_SECONDS', async () => {
     const limiter = await createPingRateLimiterFromEnv({
       MINTER_PING_RATE_LIMIT_MAX: '2',
       MINTER_PING_RATE_LIMIT_WINDOW_SECONDS: '120',
-    }) as InMemoryMintRateLimiter;
+    });
     // Exhaust the 2-request budget.
     await limiter.check('ip');
     await limiter.check('ip');
