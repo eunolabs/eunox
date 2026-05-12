@@ -300,16 +300,23 @@ export class RedisUsageMeter implements UsageMeter {
 
     const metricsPerTenant = METRICS.length; // 5
     for (let i = 0; i < tenantIds.length; i++) {
-      const tid = tenantIds[i]!;
+      const tid = tenantIds[i];
+      if (!tid) continue;
       const base = i * metricsPerTenant;
       const enforcement = parseIntOrZero(values[base]);
       const allow = parseIntOrZero(values[base + 1]);
       const deny = parseIntOrZero(values[base + 2]);
       const kill = parseIntOrZero(values[base + 3]);
-      const ps = values[base + 4] ?? new Date().toISOString();
+      // Check the raw Redis value before applying the fallback so that the
+      // "only populate if there's any data" guard below can distinguish a
+      // completely expired tenant (all Redis keys gone) from one that has
+      // only a period-start record remaining.
+      const rawPs = values[base + 4];
+      const ps = rawPs ?? new Date().toISOString();
 
-      // Only populate if there's any data (skip tenants whose keys have expired).
-      if (enforcement > 0 || allow > 0 || deny > 0 || kill > 0 || ps !== undefined) {
+      // Only populate if there's any data — skip tenants whose keys have
+      // all expired (rawPs would be null in that case along with zero counters).
+      if (enforcement > 0 || allow > 0 || deny > 0 || kill > 0 || rawPs !== null) {
         this.counters.set(tid, {
           enforcementEvents: enforcement,
           allowDecisions: allow,
