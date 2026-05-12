@@ -233,6 +233,21 @@ describe('GatewayTelemetryCollector', () => {
     expect(evt.peakConcurrentSessions).toBe(3);
   });
 
+  it('peakConcurrentSessions is bounded by active sessions, not request count (Map approach)', async () => {
+    // Same session sending many requests should only count as 1 concurrent session.
+    const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+    for (let i = 0; i < 100; i++) {
+      collector.recordDecision('t1', 'single-session', true); // 100 requests, 1 session
+    }
+    collector.recordDecision('t1', 'session-2', true);
+    await collector.flush();
+
+    const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+    // Only 2 distinct sessions, regardless of request count.
+    expect(evt.peakConcurrentSessions).toBe(2);
+    expect(evt.sessionsStarted).toBe(2);
+  });
+
   it('multiple tenants produce independent events', async () => {
     const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
     collector.recordDecision('alpha', 'sess-a', true);

@@ -138,11 +138,13 @@ interface PerTenantState {
   /** Denial counts keyed by condition type. */
   denialsByConditionType: Record<string, number>;
   /**
-   * Recent (sessionId, timestampMs) pairs used to compute peak concurrency.
-   * Entries older than `CONCURRENCY_WINDOW_MS` from the most recent entry
-   * are pruned on each update.
+   * Maps sessionId → timestamp of most recent request within the concurrency
+   * window. Bounded by the number of *distinct active sessions* (not by
+   * request volume), so the per-request update is O(1) amortised.
+   * Entries older than `CONCURRENCY_WINDOW_MS` from the current time are
+   * pruned lazily on each update.
    */
-  recentActivity: Array<{ sessionId: string; timestampMs: number }>;
+  sessionLastSeen: Map<string, number>;
   /** Running peak: max count of sessions within any 60-s window observed so far. */
   peakConcurrent: number;
 }
@@ -207,9 +209,8 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
       state.denialsByConditionType[key] = (state.denialsByConditionType[key] ?? 0) + 1;
     }
 
-    // Update concurrency window.
-    state.recentActivity.push({ sessionId, timestampMs: nowMs });
-    this._updatePeakConcurrent(state, nowMs);
+    // Update concurrency window (O(active sessions), not O(requests)).
+    this._updatePeakConcurrent(state, sessionId, nowMs);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -251,8 +252,11 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
    * Build and emit one {@link GatewayTelemetryEvent} per active tenant, then
    * reset per-tenant state.
    *
-   * Errors are silently discarded so a telemetry failure never propagates
-   * to the enforcement path.
+   * Errors from `_emit()` are silently discarded so a telemetry failure never
+   * propagates to the enforcement path. The emit is awaited (not
+   * fire-and-forget) so that when `stop()` calls `flush()` during graceful
+   * shutdown the network request actually has a chance to complete before the
+   * process exits.
    */
   async flush(): Promise<void> {
     if (this._disabled) return;
@@ -276,11 +280,15 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
         timestamp: Date.now(),
       };
 
-      // Reset state for the next window.
+      // Reset state for the next window BEFORE emitting so that new decisions
+      // arriving during the await are accumulated in a fresh window rather than
+      // being re-read or double-counted.
       this._tenantState.delete(tenantId);
 
-      // Emit without awaiting — fire-and-forget so errors never block shutdown.
-      this._emit(event).catch(() => { /* silent */ });
+      // Await the emit so that stop() → flush() during graceful shutdown
+      // gives the request a chance to complete. Errors are silently discarded
+      // inside _emit() and must never reach callers.
+      await this._emit(event);
     }
   }
 
@@ -301,7 +309,7 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
       state = {
         sessionIds: new Set(),
         denialsByConditionType: {},
-        recentActivity: [],
+        sessionLastSeen: new Map(),
         peakConcurrent: 0,
       };
       this._tenantState.set(tenantId, state);
@@ -310,17 +318,25 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
   }
 
   /**
-   * Prune activity entries older than `CONCURRENCY_WINDOW_MS` from the most
-   * recent entry, then update the running peak with the number of distinct
-   * session IDs remaining in the window.
+   * Update the per-session `lastSeen` timestamp and prune sessions whose
+   * most-recent activity is older than `CONCURRENCY_WINDOW_MS`.  Work is
+   * O(active sessions), not O(total requests), because we update one map
+   * entry per call and only iterate for pruning.
    */
-  private _updatePeakConcurrent(state: PerTenantState, nowMs: number): void {
+  private _updatePeakConcurrent(state: PerTenantState, sessionId: string, nowMs: number): void {
+    // Update this session's last-seen timestamp (upsert — O(1)).
+    state.sessionLastSeen.set(sessionId, nowMs);
+
+    // Prune sessions that have gone stale (last seen > CONCURRENCY_WINDOW_MS ago).
     const cutoff = nowMs - CONCURRENCY_WINDOW_MS;
-    // Keep only entries within the window.
-    state.recentActivity = state.recentActivity.filter((e) => e.timestampMs >= cutoff);
-    // Distinct sessions within the window.
-    const activeSessionIds = new Set(state.recentActivity.map((e) => e.sessionId));
-    const concurrent = activeSessionIds.size;
+    for (const [sid, lastSeen] of state.sessionLastSeen) {
+      if (lastSeen < cutoff) {
+        state.sessionLastSeen.delete(sid);
+      }
+    }
+
+    // Active sessions = those still in the map after pruning.
+    const concurrent = state.sessionLastSeen.size;
     if (concurrent > state.peakConcurrent) {
       state.peakConcurrent = concurrent;
     }
@@ -416,7 +432,7 @@ export function extractTenantIdFromToken(token: string): string {
 function _getVersion(): string {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pkg = require('../../package.json') as { version: string };
+    const pkg = require('../package.json') as { version: string };
     return pkg.version;
   } catch {
     return 'unknown';

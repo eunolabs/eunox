@@ -483,11 +483,13 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           throw err;
         }
 
-        // Extract tenantId from the JWT for telemetry routing. The decode is
-        // signature-free and used only for per-tenant aggregation — never for
-        // any authorization decision. Placed after body parsing so sessionId
-        // is available; falls back to 'unknown' on malformed tokens.
-        const tenantId = extractTenantIdFromToken(token);
+        // Extract tenantId from the JWT for telemetry routing — only when
+        // telemetry hooks are active so the decode cost is zero when
+        // EUNO_TELEMETRY=0. The decode is signature-free and used only for
+        // per-tenant aggregation, never for any authorization decision.
+        // Falls back to 'unknown' on malformed tokens.
+        const getTenantId = (): string =>
+          telemetry ? extractTenantIdFromToken(token) : 'unknown';
 
         // ── 5. Derive action and canonical resource ──────────────────────────
         // Server-side derivation only — never trust a client-supplied action
@@ -566,7 +568,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             // decisions — the PDP chose to deny; they are not infrastructure
             // errors and count towards the tenant's denial stats).
             telemetry?.recordDecision(
-              tenantId,
+              getTenantId(),
               enforceReq.sessionId,
               false,
               deriveConditionType(err.code),
@@ -595,7 +597,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             sessionId: enforceReq.sessionId,
             obligationCount: obligations.length,
           });
-          telemetry?.recordDecision(tenantId, enforceReq.sessionId, true);
+          telemetry?.recordDecision(getTenantId(), enforceReq.sessionId, true);
           res.json(allowResponse);
         } else {
           // Use the structured denial code from the engine when available
@@ -616,7 +618,7 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
             denialCode: result.denialCode,
           });
           telemetry?.recordDecision(
-            tenantId,
+            getTenantId(),
             enforceReq.sessionId,
             false,
             result.denialConditionType ?? deriveConditionType(result.denialCode ?? ''),
