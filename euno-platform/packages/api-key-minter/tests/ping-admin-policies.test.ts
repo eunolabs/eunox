@@ -108,12 +108,13 @@ describe('GET /api/v1/ping', () => {
   });
 
   it('returns 429 when IP-based rate limit is exceeded', async () => {
-    // Build an app with a very tight rate limit (1 request per window).
+    // Build an app with a very tight dedicated ping rate limit (1 request per window).
     const pepper = { version: 'v1', key: crypto.randomBytes(32) };
     const store = new InMemoryApiKeyStore();
     const signer = await LocalTokenSigner.generate('RS256');
     const auditStore = new InMemoryMintAuditStore();
-    const tightLimiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 1, windowSeconds: 60 });
+    const mintLimiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 100, windowSeconds: 60 });
+    const tightPingLimiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 1, windowSeconds: 60 });
 
     const key = generateApiKey();
     const keyDigest = crypto.createHmac('sha256', pepper.key).update(key.secret, 'utf8').digest().toString('base64url');
@@ -126,8 +127,9 @@ describe('GET /api/v1/ping', () => {
     const verifier = new ApiKeyVerifier({ store, peppers: [pepper] });
     const minter = new TokenMinter({ signer, issuerDid: 'did:web:test', gatewayAudience: 'gw' });
     const tightApp = createMinterApp({
-      mintRouterOpts: { verifier, minter, auditStore, rateLimiter: tightLimiter, logger },
+      mintRouterOpts: { verifier, minter, auditStore, rateLimiter: mintLimiter, logger },
       adminKeysRouterOpts: { keyStore: store, peppers: [pepper], adminApiKey: ADMIN_KEY, logger },
+      pingRateLimiter: tightPingLimiter,
       logger,
     });
 

@@ -48,14 +48,14 @@ export function createPingRouter(opts: PingRouterOptions): Router {
         const ip = req.ip ?? 'unknown';
         const rateResult = await opts.rateLimiter.check(ip);
         if (!rateResult.allowed) {
-          if (rateResult.retryAfterSeconds !== undefined) {
-            res.setHeader('Retry-After', String(rateResult.retryAfterSeconds));
-          }
           next(
             new CapabilityError(
               ErrorCode.RATE_LIMIT_EXCEEDED,
               'Too many validation requests from this IP — please wait before retrying',
               429,
+              rateResult.retryAfterSeconds !== undefined
+                ? { 'Retry-After': String(rateResult.retryAfterSeconds) }
+                : undefined,
             ),
           );
           return;

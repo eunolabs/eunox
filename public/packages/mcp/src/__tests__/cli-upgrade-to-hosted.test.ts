@@ -48,22 +48,30 @@
  * computeConfigPatch()
  *   ✓ returns empty patches for empty mcpServers
  *   ✓ returns empty patches when no euno-mcp entries exist
- *   ✓ returns empty patches when entry already has --enforcer-url
+ *   ✓ returns empty patches when BOTH enforcer flags are present
+ *   ✓ patches entry when --enforcer-url present but --enforcer-api-key missing
  *   ✓ returns a patch for a plain proxy entry (no --policy)
  *   ✓ patch removes --policy <path> from args
  *   ✓ patch inserts --enforcer-url and --enforcer-api-key before --
  *   ✓ patch inserts at end of args when no -- separator
  *   ✓ entries with non-euno-mcp command are ignored
  *   ✓ matches command ending in /euno-mcp
- *   ✓ matches command ending in \euno-mcp
+ *   ✓ matches Windows euno-mcp.cmd launcher
+ *   ✓ matches Windows euno-mcp.exe launcher
+ *   ✓ matches proxy subcommand when flags precede it
+ *   ✓ does not match when no proxy subcommand appears before --
  *
  * patchArgs()
  *   ✓ inserts enforcer flags before --
  *   ✓ inserts enforcer flags at end when no --
  *   ✓ removes --policy and its value
- *   ✓ does not remove --policy when value starts with -
+ *   ✓ does not remove --policy when followed by a named flag (--other)
  *   ✓ does not remove the -- separator itself
- *   ✓ handles multiple --policy flags (only the first)
+ *
+ * redactArgs()
+ *   ✓ replaces value after --enforcer-api-key with ***
+ *   ✓ leaves args unchanged when --enforcer-api-key is absent
+ *   ✓ does not redact --enforcer-url value
  *
  * applyConfigPatches()
  *   ✓ mutates the config's args in place
@@ -84,6 +92,8 @@
  *   ✓ patches config file (non-dry-run)
  *   ✓ does not write files in dry-run mode
  *   ✓ exits 0 on full success
+ *   ✓ exits 1 when a config file cannot be read
+ *   ✓ does not print the raw API key in Step 3 preview output
  */
 
 import * as fs from 'fs';
@@ -98,6 +108,7 @@ import {
   backupFile,
   computeConfigPatch,
   patchArgs,
+  redactArgs,
   applyConfigPatches,
   readJsonConfigFile,
   writeJsonConfigFile,
@@ -459,6 +470,19 @@ describe('computeConfigPatch()', () => {
     expect(computeConfigPatch(config, url, key)).toHaveLength(0);
   });
 
+  it('patches entry when --enforcer-url is present but --enforcer-api-key is missing', () => {
+    // Only both flags present → skip; partial upgrade is re-run.
+    const config: ClaudeDesktopConfig = {
+      mcpServers: {
+        euno: {
+          command: 'euno-mcp',
+          args: ['proxy', '--enforcer-url', url, '--', 'npx', 'server'],
+        },
+      },
+    };
+    expect(computeConfigPatch(config, url, key)).toHaveLength(1);
+  });
+
   it('returns a patch for a plain proxy entry (no --policy)', () => {
     const config: ClaudeDesktopConfig = {
       mcpServers: {
@@ -532,6 +556,37 @@ describe('computeConfigPatch()', () => {
     };
     expect(computeConfigPatch(config, url, key)).toHaveLength(1);
   });
+
+  it('matches Windows euno-mcp.cmd launcher', () => {
+    const config: ClaudeDesktopConfig = {
+      mcpServers: { euno: { command: 'C:\\tools\\euno-mcp.cmd', args: ['proxy'] } },
+    };
+    expect(computeConfigPatch(config, url, key)).toHaveLength(1);
+  });
+
+  it('matches Windows euno-mcp.exe launcher', () => {
+    const config: ClaudeDesktopConfig = {
+      mcpServers: { euno: { command: 'euno-mcp.exe', args: ['proxy'] } },
+    };
+    expect(computeConfigPatch(config, url, key)).toHaveLength(1);
+  });
+
+  it('matches proxy subcommand when flags precede it (--log-level debug proxy)', () => {
+    const config: ClaudeDesktopConfig = {
+      mcpServers: {
+        euno: { command: 'euno-mcp', args: ['--log-level', 'debug', 'proxy', '--', 'npx'] },
+      },
+    };
+    expect(computeConfigPatch(config, url, key)).toHaveLength(1);
+  });
+
+  it('does not match when no proxy subcommand appears before --', () => {
+    const config: ClaudeDesktopConfig = {
+      mcpServers: { euno: { command: 'euno-mcp', args: ['--', 'proxy'] } },
+    };
+    // 'proxy' is after '--', so it is the upstream command, not the subcommand
+    expect(computeConfigPatch(config, url, key)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -577,8 +632,26 @@ describe('patchArgs()', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyConfigPatches()
+// redactArgs()
 // ---------------------------------------------------------------------------
+
+describe('redactArgs()', () => {
+  it('replaces value after --enforcer-api-key with ***', () => {
+    const args = ['proxy', '--enforcer-url', 'https://gw', '--enforcer-api-key', 'sk-secret'];
+    expect(redactArgs(args)).toEqual(['proxy', '--enforcer-url', 'https://gw', '--enforcer-api-key', '***']);
+  });
+
+  it('leaves args unchanged when --enforcer-api-key is absent', () => {
+    const args = ['proxy', '--enforcer-url', 'https://gw'];
+    expect(redactArgs(args)).toEqual(args);
+  });
+
+  it('does not redact --enforcer-url value', () => {
+    const args = ['proxy', '--enforcer-url', 'https://gw.example.com', '--enforcer-api-key', 'sk-x'];
+    const result = redactArgs(args);
+    expect(result[2]).toBe('https://gw.example.com');
+  });
+});
 
 describe('applyConfigPatches()', () => {
   it('mutates the config args in place', () => {
@@ -779,5 +852,42 @@ requiredCapabilities:
   it('exits 0 on full success with no config files', async () => {
     const code = await runUpgrade(makeRunOpts());
     expect(code).toBe(0);
+  });
+
+  it('exits 1 when a config file cannot be read', async () => {
+    const dir = makeTempDir();
+    // Create a file that exists but contains invalid JSON so readJsonConfigFile throws
+    const badFile = writeFile(dir, 'bad.json', 'not valid json {{{{');
+    const code = await runUpgrade(makeRunOpts({
+      configFiles: [badFile],
+      out: () => { /* suppress */ },
+      err: () => { /* suppress */ },
+    }));
+    expect(code).toBe(1);
+  });
+
+  it('does not print the raw API key in Step 3 preview output', async () => {
+    const dir = makeTempDir();
+    const secretKey = 'sk-very-secret-value';
+    const configObj: ClaudeDesktopConfig = {
+      mcpServers: {
+        euno: { command: 'euno-mcp', args: ['proxy', '--', 'npx', 'srv'] },
+      },
+    };
+    const configFile = path.join(dir, 'claude_desktop_config.json');
+    writeJsonConfigFile(configFile, configObj);
+
+    const lines: string[] = [];
+    await runUpgrade(makeRunOpts({
+      apiKey: secretKey,
+      configFiles: [configFile],
+      dryRun: true,
+      out: (l) => lines.push(l),
+      err: (l) => lines.push(l),
+    }));
+
+    const joined = lines.join('\n');
+    expect(joined).not.toContain(secretKey);
+    expect(joined).toContain('***');
   });
 });

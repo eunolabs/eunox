@@ -34,6 +34,15 @@ export function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Return a copy of an args array with the value of `--enforcer-api-key`
+ * replaced by `"***"` so the key is never printed to terminals, CI logs,
+ * or shell history.
+ */
+export function redactArgs(args: string[]): string[] {
+  return args.map((arg, i) => (args[i - 1] === '--enforcer-api-key' ? '***' : arg));
+}
+
 // ---------------------------------------------------------------------------
 // Injectable fetch interface (for unit-test isolation)
 // ---------------------------------------------------------------------------
@@ -405,9 +414,9 @@ export interface EntryPatch {
  * given Claude Desktop config.
  *
  * An entry is a target when:
- *  1. `command` is `"euno-mcp"` (or a path ending in `/euno-mcp` / `\euno-mcp`)
- *  2. The first non-flag element in `args` is `"proxy"` (or `args[0]` is `"proxy"`)
- *  3. The entry does NOT already contain `--enforcer-url`
+ *  1. `command` basename (ignoring `.cmd`/`.bat`/`.exe` suffixes) is `"euno-mcp"`
+ *  2. The args contain a `"proxy"` subcommand (skipping flag-value pairs)
+ *  3. The entry does NOT already have BOTH `--enforcer-url` AND `--enforcer-api-key`
  *
  * The patch:
  *  - Removes `--policy <path>` from `args` (if present).
@@ -426,7 +435,9 @@ export function computeConfigPatch(
     if (!isEunoMcpEntry(entry)) continue;
     const args = entry.args ?? [];
     if (!hasProxySubcommand(args)) continue;
-    if (args.includes('--enforcer-url')) continue; // already upgraded
+    // Only skip when BOTH enforcer flags are already present — allow re-running
+    // to rotate/update the API key or add a missing flag.
+    if (args.includes('--enforcer-url') && args.includes('--enforcer-api-key')) continue;
 
     const patched = patchArgs(args, enforcerUrl, apiKey);
     if (JSON.stringify(patched) !== JSON.stringify(args)) {
@@ -439,14 +450,45 @@ export function computeConfigPatch(
 
 function isEunoMcpEntry(entry: McpServerEntry): boolean {
   const cmd = entry.command ?? '';
-  return cmd === 'euno-mcp' || cmd.endsWith('/euno-mcp') || cmd.endsWith('\\euno-mcp');
+  // Extract the basename using both Unix ('/') and Windows ('\') separators
+  // so this works cross-platform and on configs copied between OSes.
+  const base = cmd.split(/[\\/]/).pop() ?? cmd;
+  const normalized = base.replace(/\.(cmd|bat|exe)$/i, '');
+  return normalized === 'euno-mcp';
 }
 
 function hasProxySubcommand(args: string[]): boolean {
-  // The first non-flag argument should be "proxy", but handle
-  // some edge cases where users put flags before the subcommand.
-  for (const arg of args) {
-    if (!arg.startsWith('-')) return arg === 'proxy';
+  // Scan for a "proxy" positional argument while correctly skipping
+  // flag-value pairs (e.g. `--log-level debug`) so that flag values
+  // named "proxy" are not mistaken for the subcommand.
+  //
+  // Rules:
+  //   - `--` ends the euno-mcp argument list; stop scanning.
+  //   - `--flag=value` style: the flag is self-contained, advance by 1.
+  //   - `--flag value`  style: skip both the flag and the next token.
+  //   - `-x` (short flag)    : treat as boolean, advance by 1.
+  //   - any other token      : positional → check for "proxy".
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i]!;
+    if (arg === '--') return false; // upstream command starts; no subcommand here
+    if (arg.startsWith('--')) {
+      if (arg.includes('=')) {
+        i += 1; // --flag=value — fully self-contained
+      } else {
+        // --flag value pair: next token is the value iff it doesn't look like a flag
+        const next = args[i + 1];
+        if (next !== undefined && !next.startsWith('-')) {
+          i += 2;
+        } else {
+          i += 1;
+        }
+      }
+    } else if (arg.startsWith('-') && arg.length > 1) {
+      i += 1; // short flag (-v, -q, …) — treat as boolean
+    } else {
+      return arg === 'proxy'; // positional argument — must be subcommand
+    }
   }
   return false;
 }
@@ -723,6 +765,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
     out('    To configure manually, see docs/upgrade-to-hosted.md');
   } else {
     let anyPatched = false;
+    let patchFailed = false;
     for (const info of discovered) {
       out(`  Processing: ${info.label}`);
       out(`    Path: ${info.filePath}`);
@@ -734,6 +777,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         err(
           `    ✗ Could not read/parse file: ${formatError(e)}`,
         );
+        patchFailed = true;
         continue;
       }
 
@@ -746,8 +790,10 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
       out(`    Found ${patches.length} entry/entries to upgrade:`);
       for (const p of patches) {
         out(`      [${p.serverName}]`);
-        out(`        before: ${JSON.stringify(p.before)}`);
-        out(`        after : ${JSON.stringify(p.after)}`);
+        // Redact --enforcer-api-key value so it does not appear in terminal
+        // history, CI logs, or shell transcripts.
+        out(`        before: ${JSON.stringify(redactArgs(p.before))}`);
+        out(`        after : ${JSON.stringify(redactArgs(p.after))}`);
       }
 
       if (dryRun) {
@@ -763,6 +809,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         err(
           `    ✗ Could not create backup: ${formatError(e)}`,
         );
+        patchFailed = true;
         continue;
       }
 
@@ -776,6 +823,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
           `    ✗ Could not write patched config: ${formatError(e)}`,
         );
         err(`    Restore from backup: cp "${backupPath}" "${info.filePath}"`);
+        patchFailed = true;
         continue;
       }
     }
@@ -784,6 +832,13 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
       out('');
       out('  Restart Claude Desktop (or whichever MCP client you use) to');
       out('  apply the configuration changes.');
+    }
+
+    if (patchFailed) {
+      err('');
+      err('  One or more config files could not be patched (see errors above).');
+      err('  The upgrade is incomplete. Re-run after resolving the issues.');
+      return 1;
     }
   }
   out('');
