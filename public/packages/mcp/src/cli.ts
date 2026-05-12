@@ -30,6 +30,7 @@ import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp
 import { RemoteEnforcerPDP } from './enforcer/remote';
 import { createTelemetry } from './telemetry';
 import { buildStatsCommand } from './cli/stats';
+import { buildUpgradeToHostedCommand } from './cli/upgrade-to-hosted';
 import {
   runValidateToken,
   DEFAULT_AUDIT_LOG_PATH as VALIDATE_TOKEN_DEFAULT_LOG,
@@ -752,5 +753,8 @@ Examples:
 
 // ── stats ──────────────────────────────────────────────────────────────────
 program.addCommand(buildStatsCommand());
+
+// ── upgrade-to-hosted ──────────────────────────────────────────────────────
+program.addCommand(buildUpgradeToHostedCommand());
 
 program.parse(process.argv);
