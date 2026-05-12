@@ -311,7 +311,9 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
     const timer = setTimeout(() => controller.abort(), this._timeoutMs);
 
     // Inject W3C trace context so the gateway spans become children of the
-    // caller's active span (DI-5). No-op when no SDK is registered.
+    // caller's active span (DI-5). Injects traceparent/tracestate when a
+    // valid span context is active; no-op when there is no active span context
+    // (regardless of whether an SDK is registered).
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this._apiKey}`,

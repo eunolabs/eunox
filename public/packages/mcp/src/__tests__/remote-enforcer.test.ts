@@ -758,7 +758,7 @@ describe('RemoteEnforcerPDP – recipient extraction', () => {
 // ---------------------------------------------------------------------------
 
 describe('RemoteEnforcerPDP – trace context propagation (DI-5)', () => {
-  it('injects traceparent header into every enforce request', async () => {
+  it('preserves all required headers when injectTraceContext is a no-op (no active span)', async () => {
     let capturedHeaders: Record<string, string> | undefined;
     const pdp = new RemoteEnforcerPDP({
       url: 'https://gateway.example',
@@ -770,18 +770,14 @@ describe('RemoteEnforcerPDP – trace context propagation (DI-5)', () => {
 
     await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
 
-    // The traceparent key must be present (value may be absent when no SDK is
-    // registered — the W3C propagator only injects when there is an active
-    // recording span).  What matters is that the header slot is present so
-    // that a real SDK can fill it.  With no SDK the inject is a no-op, but
-    // the header object itself must still be the one passed to injectTraceContext
-    // — meaning the other required headers are still present.
+    // With no active span context, injectTraceContext is a no-op and must not
+    // disturb the required headers that were already set.
     expect(capturedHeaders).toBeDefined();
     expect(capturedHeaders!['Content-Type']).toBe('application/json');
     expect(capturedHeaders!['Authorization']).toBe('Bearer sk-test');
-    // traceparent is absent without an active recording span; injectTraceContext
-    // is a no-op when no span is active (correct W3C propagation behaviour).
     expect(capturedHeaders!['X-Euno-Protocol-Version']).toBe(String(ENFORCE_PROTOCOL_VERSION));
+    // traceparent is absent because there is no active valid span context.
+    expect(capturedHeaders!['traceparent']).toBeUndefined();
   });
 
   it('forwards an inbound traceparent to the gateway when a span context is active', async () => {
