@@ -123,6 +123,26 @@ export class RedisCircuitBreaker {
   }
 
   /**
+   * Returns the time (milliseconds since epoch) at which the circuit last
+   * transitioned to the `'open'` state, or `undefined` when the circuit is
+   * currently `'closed'` or `'half-open'`.
+   *
+   * Use this to implement a grace-period fallback: if the circuit has been
+   * open for less than `REDIS_GRACE_PERIOD_MS`, allow traffic through on the
+   * last-known local state instead of failing closed immediately.
+   *
+   * @example
+   * ```ts
+   * const openedAt = circuitBreaker.getOpenedAt();
+   * const withinGrace = openedAt !== undefined &&
+   *   Date.now() - openedAt < gracePeriodMs;
+   * ```
+   */
+  getOpenedAt(): number | undefined {
+    return this.state === 'open' ? this.openedAt : undefined;
+  }
+
+  /**
    * Execute a Redis call through the circuit breaker.
    *
    * @throws {@link CircuitOpenError} when the circuit is open and the

@@ -74,7 +74,7 @@ https://expressjs.com/en/guide/behind-proxies.html.
 
 ---
 
-### CR-3 — Redis as a simultaneous single point of failure for kill-switch, revocation, call counters, and DPoP replay
+### CR-3 — Redis as a simultaneous single point of failure for kill-switch, revocation, call counters, and DPoP replay ✅ FIXED
 
 **Severity:** High  
 **Package:** `common-infra`, deployment  
@@ -99,9 +99,33 @@ outcome.
 - Add a Prometheus alert on `euno_gateway_revocation_unavailable_total > 0` over
   a sustained window (e.g. `> 0 for 2m`).
 
+**Fix:** All four recommendations implemented.
+- `k8s/redis.yaml`: Deployment carries `euno.dev/dev-only: 'true'` label and
+  an `euno.dev/dev-only-reason` annotation; the file header clearly states it
+  is **DEV/PILOT ONLY** with instructions for every major HA Redis option.
+- `euno-platform/packages/tool-gateway/src/bootstrap.ts`: Startup `warn` when
+  `NODE_ENV=production` and `REDIS_URL` (or any per-store override URL) does
+  not use a Sentinel or Cluster scheme.
+- `public/packages/common/src/config/schema.ts` + `revocation-store.ts`:
+  `REDIS_GRACE_PERIOD_MS` option (default 0 = disabled).  When set, the
+  revocation store uses its local write-through cache for the first
+  `REDIS_GRACE_PERIOD_MS` ms after Redis first becomes unavailable, preventing
+  a brief blip from causing a total brownout.  Recommended production value: 5000 ms.
+- `euno-platform/packages/tool-gateway/prometheus/gateway-alert-rules.yaml`:
+  `EunoGatewayRevocationStoreUnavailable` alert fires when
+  `euno_gateway_revocation_unavailable_total > 0 for 2m`.  Also includes
+  `EunoGatewayRedisCircuitOpen`, `EunoGatewayRedisErrorsElevated`, and
+  `EunoGatewayCounterFallbackElevated` alerts.
+- `docs/DEPLOYMENT.md`: New "Redis HA for production" section documents
+  Sentinel/Cluster URL formats, per-store URL overrides, grace period
+  configuration, startup validation behaviour, and alert rule loading.
+- `euno-platform/packages/common-infra/src/redis-circuit-breaker.ts`:
+  `getOpenedAt()` method exposes when the circuit opened for grace-period
+  integration by calling code.
+
 ---
 
-### CR-4 — Minter anomaly detection is per-replica; distributed brute-force is invisible
+### CR-4 — Minter anomaly detection is per-replica; distributed brute-force is invisible ✅ FIXED
 
 **Severity:** Medium-High  
 **Package:** `api-key-minter`  
@@ -122,6 +146,30 @@ rules share the same blind spot.
   replicas share a coherent view.
 - Add a Prometheus alert on `euno_minter_anomaly_alerts_total` with a per-replica
   label so per-instance vs. fleet-wide discrepancies are visible.
+
+**Fix:** All three recommendations implemented.
+- `euno-platform/packages/api-key-minter/src/anomaly-detector.ts`: Prominent
+  `⚠️ Per-replica limitation (CR-4)` section added to the module JSDoc.
+  `AnomalyDetectorOptions.replicaId` field added; passed as `replica` label on
+  the `euno_minter_anomaly_alerts_total` counter.
+- `euno-platform/packages/api-key-minter/src/redis-anomaly-detector.ts`:
+  New `RedisAnomalyDetector` class backs bucket state in Redis hashes
+  (`minter:anomaly:short:{tenantId}` / `minter:anomaly:long:{tenantId}`).
+  HINCRBY provides atomic increments without locking; EXPIRE manages TTL.
+  Transparent fallback to in-memory `AnomalyDetector` on any Redis error.
+  `createAnomalyDetectorFromEnv` factory selects Redis or in-memory based on
+  `ANOMALY_REDIS_URL` / `REDIS_URL`.
+- `euno-platform/packages/api-key-minter/src/bootstrap.ts`: Wires
+  `RedisAnomalyDetector` when `ANOMALY_REDIS_URL` or `REDIS_URL` is set;
+  `replicaId` from `MINTER_REPLICA_ID` env var or `os.hostname()`.
+- `euno-platform/packages/api-key-minter/src/metrics.ts`: `replica` label
+  added to `euno_minter_anomaly_alerts_total`.
+- `euno-platform/packages/api-key-minter/prometheus/minter-alert-rules.yaml`:
+  New `MinterAnomalyReplicaSkew` alert fires when one replica's anomaly rate
+  is < 50% of the fleet average over 10 minutes.
+- `docs/security/minter-threat-model.md §7`: CR-4 per-replica limitation
+  documented with mitigations; metrics table updated with `replica` label;
+  Rule 6 per-replica discrepancy alert documented.
 
 ---
 

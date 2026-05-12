@@ -7,18 +7,44 @@
 #   - DPoP proof replay defense     (RedisDpopReplayStore)
 #   - per-subject issuance rate limiting (issuance-rate-limiter)
 #
-# This file ships a small in-cluster Redis suitable for development clusters
-# and the production pilot.  For real production deployments prefer a managed
-# Redis (Azure Cache for Redis Standard+, AWS ElastiCache, GCP Memorystore)
-# and override the `redis-url` ConfigMap key in `namespace-and-config.yaml`,
-# `tool-gateway-deployment.yaml`, and `capability-issuer-deployment.yaml`
-# to point at it (the Deployments below can then be removed).
+# ⚠️  DEV / PILOT ONLY — NOT SUITABLE FOR PRODUCTION ⚠️
+# ────────────────────────────────────────────────────────────────────────────
+# This file provisions a SINGLE-NODE, in-memory Redis with NO replication,
+# NO persistence, and NO automatic failover.  A pod restart or node eviction
+# permanently erases all revocation entries, kill-switch state, call counters,
+# and DPoP nonces.
+#
+# Under the gateway's default fail-closed settings a Redis outage causes
+# 100 % of enforcement decisions to be denied until Redis recovers.  Under
+# fail-open settings all revocations and call limits are bypassed.
+#
+# For PRODUCTION deployments you MUST replace this with a high-availability
+# managed Redis offering:
+#   • Azure Cache for Redis — Standard C1+ tier (primary/replica) or Premium
+#     tier (cluster mode) with geo-replication for multi-region deployments.
+#   • AWS ElastiCache (Redis OSS) — cluster mode enabled with ≥ 2 shards and
+#     Multi-AZ automatic failover.
+#   • GCP Memorystore for Redis — Standard tier (read replicas + automatic
+#     failover) or Cluster tier for horizontal scale.
+#   • Self-managed: Redis Sentinel (≥ 3 sentinels, quorum 2) or Redis Cluster
+#     (≥ 6 nodes: 3 primaries + 3 replicas).
+#
+# Set REDIS_URL in namespace-and-config.yaml (and the per-store overrides
+# REVOCATION_REDIS_URL, KILL_SWITCH_REDIS_URL, CALL_COUNTER_REDIS_URL) to
+# point at your HA Redis endpoint.  See docs/DEPLOYMENT.md §"Redis HA for
+# production" for Sentinel and Cluster URL formats and startup-validation
+# behaviour.
+#
+# Once a managed Redis is wired, delete or ignore the Deployment and Service
+# resources below — they are only needed for local / CI / pilot clusters.
 #
 # References:
+#   - docs/DEPLOYMENT.md §"Redis HA for production"
 #   - docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md ("Redis instance provisioned")
 #   - docs/MULTI_REGION_ISSUER.md             (REDIS_URL per-region)
 #   - docs/DISTRIBUTED_REVOCATION.md
 #   - docs/DISTRIBUTED_KILL_SWITCH.md
+#   - docs/architecture-review-2026-05.md     CR-3
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -35,6 +61,19 @@ metadata:
   labels:
     app: redis
     component: coordination
+    # Mark this Deployment as development/pilot only so infrastructure scanners
+    # and admission controllers can enforce that production clusters do not run
+    # single-node Redis.  See docs/DEPLOYMENT.md §"Redis HA for production".
+    euno.dev/dev-only: 'true'
+  annotations:
+    # This single-node Redis is NOT suitable for production.  Replace with
+    # a managed HA offering (Azure Cache for Redis Standard+, AWS ElastiCache
+    # cluster mode, GCP Memorystore Standard tier, or Redis Sentinel/Cluster).
+    euno.dev/dev-only-reason: >-
+      Single-node Redis with no replication or automatic failover.
+      A pod restart causes all revocation, kill-switch, call-counter, and DPoP
+      state to be lost and blocks enforcement until Redis recovers.
+      See docs/DEPLOYMENT.md §"Redis HA for production" for HA alternatives.
 spec:
   # Single replica: the in-memory Redis store is not horizontally replicated;
   # for HA Redis use a managed offering (see header comment).

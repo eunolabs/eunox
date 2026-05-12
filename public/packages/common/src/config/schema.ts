@@ -1658,6 +1658,34 @@ export const GatewayConfigSchema = z
         'If the probe succeeds the circuit closes; if it fails the circuit reopens and the cooldown restarts. Default 30000.',
     }),
 
+    // CR-3: Redis grace period — tolerate brief blips without denying traffic.
+    // When set, the revocation and call-counter stores will not immediately
+    // apply fail-closed / 503 semantics on a Redis outage.  Instead, for the
+    // first REDIS_GRACE_PERIOD_MS milliseconds after the circuit trips open,
+    // the stores use their local in-memory state:
+    //   - Revocation store: tokens confirmed revoked locally are still denied;
+    //     tokens not present in the local cache are allowed through.
+    //   - Call-counter store: already falls back to the local in-memory counter.
+    // After the grace window expires, the configured REVOCATION_UNAVAILABLE_MODE
+    // (or fail-closed default) applies.
+    //
+    // Set to 0 or leave unset to disable the grace period (fail immediately on
+    // circuit open — the pre-CR-3 default, preserved for back-compat).
+    //
+    // Recommended value for production: 5000 (5 seconds) — enough to absorb
+    // a brief Redis network blip without causing a service brownout, while
+    // still failing closed on sustained outages.
+    REDIS_GRACE_PERIOD_MS: envPositiveInt({
+      default: 0,
+      min: 0,
+      description:
+        'Grace period (ms) after the Redis circuit breaker opens during which the revocation store ' +
+        'uses its local write-through cache instead of applying fail-closed / 503 semantics. ' +
+        'Tokens confirmed revoked locally are still denied; tokens not in the local cache are allowed through. ' +
+        'Set to 0 (default) to disable and fail immediately on circuit open. ' +
+        'Recommended production value: 5000 (5 s). See docs/DEPLOYMENT.md §"Redis HA for production".',
+    }),
+
     // Horizontal sharding (H-1) — consistent-hash agents to replicas --------
     //
     // When GATEWAY_SHARD_COUNT > 1 the gateway data-plane is sharded: the

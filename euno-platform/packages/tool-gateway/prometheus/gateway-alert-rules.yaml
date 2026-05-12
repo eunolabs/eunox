@@ -1,0 +1,114 @@
+# Prometheus alerting rules for the Euno Tool Gateway.
+#
+# Load these rules into your Prometheus instance by adding this file to
+# `rule_files` in your prometheus.yaml, or via the Prometheus Operator
+# PrometheusRule CRD (see k8s/tool-gateway.yaml for the ServiceMonitor).
+#
+# Naming convention: euno_gateway_* metrics, EunoGateway* alert names.
+# Severity labels: critical (page on-call immediately) / warning (Slack).
+#
+# See also:
+#   - euno-platform/packages/api-key-minter/prometheus/minter-alert-rules.yaml
+#   - docs/DEPLOYMENT.md §"Observability"
+#   - docs/architecture-review-2026-05.md CR-3
+
+groups:
+  - name: euno_gateway_redis
+    rules:
+
+      # ── CR-3: Revocation store unavailable ──────────────────────────────────
+      # Fires when the Redis-backed revocation store has been unable to complete
+      # a token-revocation check for a sustained 2-minute window.  Under
+      # fail-closed defaults this means all tokens are being treated as revoked
+      # → 100 % of enforcement decisions denied.  Under fail-open, all
+      # revocations are silently bypassed.  In either case, investigate
+      # immediately.
+      #
+      # Resolution: restore Redis connectivity.  If the grace period
+      # (REDIS_GRACE_PERIOD_MS) is configured, the gateway absorbs brief blips
+      # without this alert firing.
+      - alert: EunoGatewayRevocationStoreUnavailable
+        expr: sum(increase(euno_gateway_revocation_unavailable_total[2m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Revocation store unavailable on Euno Gateway for {{ $labels.namespace }}"
+          description: >-
+            euno_gateway_revocation_unavailable_total has been incrementing for
+            2 minutes.  The Redis-backed revocation store cannot complete token
+            checks.  Depending on REVOCATION_UNAVAILABLE_MODE this means either
+            all tokens are being denied (fail-closed) or all revocations are
+            being bypassed (fail-open / stale-readable).
+          runbook: "https://docs.euno.example/runbooks/gateway-redis-revocation"
+
+      # ── Redis circuit breaker open ─────────────────────────────────────────
+      # The circuit breaker has tripped to "open" on one of the control-surface
+      # stores.  euno_gateway_redis_circuit_state 2 = open.
+      - alert: EunoGatewayRedisCircuitOpen
+        expr: euno_gateway_redis_circuit_state == 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis circuit breaker open on {{ $labels.store }} store (Euno Gateway)"
+          description: >-
+            The Redis circuit breaker for the {{ $labels.store }} store has been
+            in the "open" state for at least 1 minute.  New Redis calls are
+            short-circuited and the in-memory fallback or configured
+            unavailableMode is in effect.  Investigate Redis connectivity.
+          runbook: "https://docs.euno.example/runbooks/gateway-redis-circuit"
+
+      # ── Redis errors elevated ─────────────────────────────────────────────
+      # A sustained rate of Redis errors on any control-surface store.
+      - alert: EunoGatewayRedisErrorsElevated
+        expr: sum by (store) (rate(euno_gateway_redis_errors_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated Redis error rate on {{ $labels.store }} store (Euno Gateway)"
+          description: >-
+            The {{ $labels.store }} Redis store is seeing > 0.1 errors/s
+            sustained over 5 minutes.  If this continues, the circuit breaker
+            will trip and the gateway will degrade to local fallback / deny mode.
+          runbook: "https://docs.euno.example/runbooks/gateway-redis-errors"
+
+      # ── Call-counter fallback elevated ────────────────────────────────────
+      # When Redis is unavailable for the call-counter store, increments fall
+      # back to the local in-memory store.  During this period the effective
+      # maxCalls cap is maxCalls × replicaCount.
+      - alert: EunoGatewayCounterFallbackElevated
+        expr: sum(rate(euno_gateway_counter_fallback_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Call-counter falling back to in-memory on Euno Gateway"
+          description: >-
+            euno_gateway_counter_fallback_total is incrementing: the
+            call-counter store cannot reach Redis and is counting per-replica.
+            The effective maxCalls cap is maxCalls × replicaCount until Redis
+            recovers.
+          runbook: "https://docs.euno.example/runbooks/gateway-counter-fallback"
+
+  - name: euno_gateway_availability
+    rules:
+
+      # ── High deny rate ────────────────────────────────────────────────────
+      - alert: EunoGatewayHighDenyRate
+        expr: >-
+          sum(rate(euno_gateway_decisions_total{decision="deny"}[5m]))
+          /
+          sum(rate(euno_gateway_decisions_total[5m]))
+          > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Euno Gateway deny rate > 50 % for 2 minutes"
+          description: >-
+            More than half of all enforcement decisions on the gateway are
+            denials.  This may indicate a Redis outage causing fail-closed
+            revocation denials, or a policy misconfiguration.
+          runbook: "https://docs.euno.example/runbooks/gateway-high-deny"
