@@ -97,6 +97,26 @@ Claude Desktop / Cursor / Windsurf / LangChain.js / HTTP-transport setups.
   `--policy-backend`. Domain-specific guards via `--custom-condition`.
 - 🔒 **Zero infra. Zero cloud.** Runs entirely on your machine.
 
+### Hosted gateway (Stage 3)
+
+When your team outgrows a single process, one config change routes
+enforcement through the hosted Euno gateway — shared call counters, a
+global kill switch, and a persistent queryable audit ledger, all backed
+by KMS-signed JWT tokens and a Postgres ledger:
+
+```diff
+- euno-mcp proxy --policy ./euno.policy.yaml -- node ./my-mcp-server.js
++ euno-mcp proxy --enforcer-url https://gateway.euno.example \
++                --enforcer-api-key sk-... \
++                -- node ./my-mcp-server.js
+```
+
+The policy file format is unchanged — the same YAML you wrote for local
+mode uploads verbatim to the hosted policy store.
+See [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) for the
+step-by-step guide, the cryptographic story behind the `sk-...` key, and the
+explicit data-boundary analysis (what leaves your network in hosted mode).
+
 See [the website](./web/features.html) for worked demos of every
 condition type.
 
@@ -109,7 +129,7 @@ euno follows a [staged execution plan](./docs/mvp.md):
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit | ✅ Done |
 | 2 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ **Current MVP** |
-| 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ⏳ Gate: see [docs/mvp.md §Gate to Stage 3](./docs/mvp.md#gate-to-stage-3--measurable) |
+| 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ⏳ In progress — see [docs/mvp.md §Stage 3](./docs/mvp.md#stage-3-the-gateway-as-managed-boundary) |
 | 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | Planned |
 | 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | Planned |
 
@@ -140,6 +160,8 @@ on Apache packages — see [`docs/repo-split.md`](./docs/repo-split.md).
 - 🏗  **Architecture:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) ·
   [`docs/capability-model.md`](./docs/capability-model.md) ·
   [`docs/enforcement.md`](./docs/enforcement.md).
+- 🔀 **Hosted mode:** [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) ·
+  [`docs/self-host.md`](./docs/self-host.md).
 - 🗺️ **Roadmap:** [`docs/mvp.md`](./docs/mvp.md).
 - 🔧 **Repository guide (build, lint, test, structure):**
   [`docs/repo-guide.md`](./docs/repo-guide.md).
