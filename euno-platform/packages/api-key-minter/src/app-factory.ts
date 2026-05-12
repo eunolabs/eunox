@@ -47,7 +47,15 @@ export function createMinterApp(deps: MinterDependencies): Express {
     peppers: deps.adminKeysRouterOpts.peppers,
     logger: deps.logger,
   });
-  app.use(createPingRouter({ verifier, logger: deps.logger }));
+  // Reuse the mint router's rate limiter for the ping endpoint (rate-limits by IP
+  // to prevent brute-force API key enumeration).
+  app.use(
+    createPingRouter({
+      verifier,
+      logger: deps.logger,
+      rateLimiter: deps.mintRouterOpts.rateLimiter,
+    }),
+  );
 
   // Admin policy-management routes (requires X-Admin-Key).
   app.use(

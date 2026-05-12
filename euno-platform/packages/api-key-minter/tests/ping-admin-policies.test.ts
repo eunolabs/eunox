@@ -106,6 +106,40 @@ describe('GET /api/v1/ping', () => {
     expect(res.body.keyDigest).toBeUndefined();
     expect(res.body.hmacKeyVersion).toBeUndefined();
   });
+
+  it('returns 429 when IP-based rate limit is exceeded', async () => {
+    // Build an app with a very tight rate limit (1 request per window).
+    const pepper = { version: 'v1', key: crypto.randomBytes(32) };
+    const store = new InMemoryApiKeyStore();
+    const signer = await LocalTokenSigner.generate('RS256');
+    const auditStore = new InMemoryMintAuditStore();
+    const tightLimiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 1, windowSeconds: 60 });
+
+    const key = generateApiKey();
+    const keyDigest = crypto.createHmac('sha256', pepper.key).update(key.secret, 'utf8').digest().toString('base64url');
+    await store.createKey({
+      prefix: key.prefix, keyDigest, hmacKeyVersion: pepper.version,
+      tenantId: 'tenant-rate', policyId: 'policy-rate', capabilities: [],
+      scopes: ['enforce'], createdAt: new Date().toISOString(),
+    });
+
+    const verifier = new ApiKeyVerifier({ store, peppers: [pepper] });
+    const minter = new TokenMinter({ signer, issuerDid: 'did:web:test', gatewayAudience: 'gw' });
+    const tightApp = createMinterApp({
+      mintRouterOpts: { verifier, minter, auditStore, rateLimiter: tightLimiter, logger },
+      adminKeysRouterOpts: { keyStore: store, peppers: [pepper], adminApiKey: ADMIN_KEY, logger },
+      logger,
+    });
+
+    // First request should succeed.
+    const first = await request(tightApp).get('/api/v1/ping').set('Authorization', `Bearer ${key.raw}`);
+    expect(first.status).toBe(200);
+
+    // Second request from the same IP should be rate-limited.
+    const second = await request(tightApp).get('/api/v1/ping').set('Authorization', `Bearer ${key.raw}`);
+    expect(second.status).toBe(429);
+    expect(second.headers['retry-after']).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
