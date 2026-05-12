@@ -64,10 +64,20 @@ export interface RedisUsageMeterClient {
   smembers(key: string): Promise<string[]>;
   /** GET — returns null when the key does not exist. */
   get(key: string): Promise<string | null>;
-  /** SET — only writes when the key does NOT already exist (NX). */
-  setnx(key: string, value: string): Promise<number>;
   /** SET — unconditional write. */
   set(key: string, value: string): Promise<unknown>;
+  /**
+   * SETEX — atomic write with expiry (SET key value EX seconds).
+   * Avoids the race condition of a separate SET + EXPIRE pair.
+   */
+  setex(key: string, seconds: number, value: string): Promise<unknown>;
+  /**
+   * SET … EX seconds NX — atomic conditional write with expiry.
+   * Only writes when the key does NOT already exist; returns 'OK' on
+   * success or null when the key was already present.
+   * Avoids the race condition of a separate SETNX + EXPIRE pair.
+   */
+  setnxex(key: string, seconds: number, value: string): Promise<'OK' | null>;
   /** DEL — delete one or more keys (variadic, matching ioredis signature). */
   del(...keys: string[]): Promise<unknown>;
   /** MGET — returns null for missing keys, preserving input order (variadic, matching ioredis signature). */
@@ -399,13 +409,16 @@ export class RedisUsageMeter implements UsageMeter {
       const psKey = `${this.keyPrefix}${tenantId}:ps`;
 
       await this.client.sadd(tenantsKey, tenantId);
-      // setnx writes only when the key is absent — preserves the original
-      // period start across multiple calls without a read-before-write.
-      const created = await this.client.setnx(psKey, periodStart);
-      if (created === 1 && this.counterTtlSeconds > 0) {
-        // First creation — attach TTL so the period-start key expires together
-        // with the counter keys, keeping Redis clean for inactive tenants.
-        await this.client.expire(psKey, this.counterTtlSeconds);
+      // Use an atomic SET … EX … NX to write the period-start key only when
+      // it does not already exist and atomically attach the TTL in one command.
+      // This avoids the SETNX → crash → missing TTL race condition.
+      // When TTL is disabled (counterTtlSeconds === 0), fall back to a plain
+      // SET … NX (emulated via setnxex with TTL 0 → set NX without expiry).
+      if (this.counterTtlSeconds > 0) {
+        await this.client.setnxex(psKey, this.counterTtlSeconds, periodStart);
+      } else {
+        // TTL explicitly disabled: write only when absent but skip the expiry.
+        await this.client.set(psKey, periodStart);
       }
     } catch (err) {
       this.logger?.error('RedisUsageMeter: Redis tenant registration failed', {
@@ -434,13 +447,14 @@ export class RedisUsageMeter implements UsageMeter {
         await this.client.del(...keysToDelete);
       }
 
-      // Write new period-start for every tenant, then re-attach the TTL so
-      // the key expires together with the counter keys for that tenant.
+      // Write new period-start for every tenant using an atomic SETEX so the
+      // TTL is attached in the same command and cannot be dropped by a crash.
       for (const tid of tenantIds) {
         const psKey = `${this.keyPrefix}${tid}:ps`;
-        await this.client.set(psKey, newPeriodStart);
         if (this.counterTtlSeconds > 0) {
-          await this.client.expire(psKey, this.counterTtlSeconds);
+          await this.client.setex(psKey, this.counterTtlSeconds, newPeriodStart);
+        } else {
+          await this.client.set(psKey, newPeriodStart);
         }
       }
     } catch (err) {

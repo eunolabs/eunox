@@ -103,16 +103,24 @@ class FakeRedisClient implements RedisUsageMeterClient {
     return this.store.get(key) ?? null;
   }
 
-  async setnx(key: string, value: string): Promise<number> {
-    this.maybeThrow(key);
-    if (this.store.has(key)) return 0;
-    this.store.set(key, value);
-    return 1;
-  }
-
   async set(key: string, value: string): Promise<unknown> {
     this.maybeThrow(key);
     this.store.set(key, value);
+    return 'OK';
+  }
+
+  async setex(key: string, seconds: number, value: string): Promise<unknown> {
+    this.maybeThrow(key);
+    this.store.set(key, value);
+    this.ttls.set(key, seconds);
+    return 'OK';
+  }
+
+  async setnxex(key: string, seconds: number, value: string): Promise<'OK' | null> {
+    this.maybeThrow(key);
+    if (this.store.has(key)) return null;
+    this.store.set(key, value);
+    if (seconds > 0) this.ttls.set(key, seconds);
     return 'OK';
   }
 
