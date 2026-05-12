@@ -103,6 +103,25 @@ leave local counters and kill-switch infrastructure running in-process.
 the entire enforcement decision to the gateway.  The `LocalPolicySource` seam
 is retained for the Task-10 minter JWT loader.
 
+- **Reference materials and migration guide (Task 18)** — new document
+  `docs/migrating-from-local.md` covering:
+  - Before/after configuration: what replaces `--policy` in hosted mode and
+    exactly what each config flag does.
+  - The cryptographic story: why `sk-...` is not a JWT capability token and
+    why the minter façade is needed to preserve the cryptographic-token
+    invariant.
+  - Explicit data-boundary analysis for SOC2/GDPR review: which fields leave
+    the customer's network on every `tools/call` (notably `arguments`),
+    which data stays local (upstream responses, raw API key material, HSM
+    key material), and the network topology diagram.
+  - Step-by-step migration guide with optional parallel smoke-test phase.
+  - Manual migration recipe using the admin API directly.
+  - Rollback procedure (instantaneous — restore `--policy` flag).
+  - Self-host alternative for teams that cannot transmit tool-call arguments
+    to an external service.
+  - FAQ: policy file reuse, fail-closed behaviour, self-issued JWTs,
+    local audit log fate, custom conditions in hosted mode.
+
 ---
 
 ## [0.2.0] — 2026-05-09 (Stage 2: General Tool Enforcement)

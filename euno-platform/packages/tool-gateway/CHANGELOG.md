@@ -7,6 +7,47 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased — Stage 3, Task 18] — Reference Materials & Migration Guide
+
+### Added
+
+- **`docs/migrating-from-local.md`** — new comprehensive migration guide for
+  operators and developers upgrading from `@euno/mcp` local-enforcement mode to
+  the hosted gateway.  Covers:
+  - Before/after configuration examples (the one-config-change upgrade).
+  - The cryptographic story: why the `sk-...` API key is not a JWT capability
+    token and how the minter façade preserves the cryptographic-token invariant
+    (API key → minter → HSM-signed JWT → gateway PDP).
+  - **Explicit data-boundary analysis** (the SOC2/GDPR gating question): exactly
+    which fields in `EnforceRequest` leave the customer's network on every
+    `tools/call` (`sessionId`, `toolName`, `arguments`, `context.sourceIp`,
+    `context.recipients`), which data stays local (upstream MCP server responses,
+    raw `sk-...` key material, HSM signing key material, local HMAC audit log),
+    and a network topology diagram showing that the gateway never reaches the
+    upstream MCP server.
+  - Step-by-step migration procedure with an optional parallel smoke-test phase.
+  - Manual migration recipe using the admin API directly.
+  - Rollback procedure (instantaneous — re-add `--policy`, no gateway changes needed).
+  - Self-host alternative for teams with strict data-residency requirements.
+  - FAQ: policy file format reuse, fail-closed on gateway unavailability,
+    self-issued JWTs for self-host, local audit log fate, custom conditions.
+
+- **`docs/README.md`** — added `migrating-from-local.md` and `self-host.md` to the
+  "Deployment and operations" section of the documentation index.
+
+### Changed
+
+- **`README.md`** — added "Hosted gateway (Stage 3)" sub-section under "What you get"
+  showing the one-config-change diff and linking to the migration guide.  Project
+  Status table updated to reflect Stage 3 as in progress.  Documentation section
+  updated to link `migrating-from-local.md` and `self-host.md`.
+
+- **`public/packages/mcp/README.md`** — added a callout block in the Stage-3
+  remote-enforcer section directing users to `docs/migrating-from-local.md` for
+  the step-by-step guide and SOC2/GDPR data-boundary analysis.
+
+---
+
 ## [Unreleased — Stage 3, Task 17] — Pricing & Billing Plumbing
 
 ### Summary
