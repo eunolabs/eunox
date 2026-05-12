@@ -45,6 +45,7 @@
  */
 
 import * as jose from 'jose';
+import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   AgentCapabilityManifest,
   CapabilityConstraint,
@@ -119,9 +120,9 @@ function staticSource(manifest: AgentCapabilityManifest): LocalPolicySource {
 function callTool(
   toolName: string,
   args: Record<string, unknown> = {},
-) {
+): CallToolRequest {
   return {
-    method: 'tools/call' as const,
+    method: 'tools/call',
     params: { name: toolName, arguments: args },
   };
 }
