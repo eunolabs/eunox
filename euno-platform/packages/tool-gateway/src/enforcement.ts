@@ -665,6 +665,7 @@ export class EnforcementEngine {
           return {
             allowed: false,
             reason,
+            denialConditionType: result.conditionType,
           };
         }
       }
