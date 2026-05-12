@@ -197,9 +197,9 @@ intercepted tool call:
 |---|---|---|
 | `sessionId` | MCP session identifier from the `initialize` handshake | Session metadata |
 | `toolName` | MCP tool name exactly as sent in `tools/call` | Tool metadata |
-| `arguments` | Raw arguments object from the `tools/call` request | **Potentially sensitive — see below** |
+| `arguments` | Raw arguments object from the `tools/call` request | **Potentially sensitive** — see note below |
 | `context.sourceIp` | Source IP of the MCP client (omitted for stdio) | Network metadata |
-| `context.recipients` | Recipient addresses extracted from arguments (for `recipientDomain` condition) | Potentially personal data |
+| `context.recipients` | Recipient addresses extracted from arguments (for `recipientDomain` condition) | **Potentially personal data** — see note below |
 | `context.now` | Wall-clock timestamp of the request (ISO-8601) | Timing metadata |
 | Authorization header | Bearer token derived from the `sk-...` API key via the minter | Credential (short-lived JWT) |
 
@@ -350,13 +350,14 @@ If you prefer not to use the interactive upgrade command:
 **5.1 Create the policy via the admin API:**
 
 ```bash
-# Read the policy file and POST it to the gateway
-POLICY_YAML=$(cat ./euno.policy.yaml)
+# Verify the policy file exists before uploading
+[[ -f ./euno.policy.yaml ]] || { echo "Error: ./euno.policy.yaml not found"; exit 1; }
 
+# Upload using curl's @file syntax to avoid shell-escaping issues
 curl -s -X POST \
   -H "Authorization: Bearer sk-x7Kp9mRq.bL3nYv2wQs..." \
-  -H "Content-Type: application/json" \
-  -d "{\"policyYaml\": $(printf '%s' "$POLICY_YAML" | jq -Rs .)}" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @./euno.policy.yaml \
   "https://gateway.euno.example/admin/v1/policies" \
   | jq '{policyId: .id, policyHash: .hash}'
 ```
