@@ -117,7 +117,9 @@ export class MeteredTokenSigner implements TokenSigner {
 
   getAlgorithm(): string {
     if (typeof this.inner.getAlgorithm !== 'function') {
-      throw new Error('MeteredTokenSigner: inner signer does not expose getAlgorithm()');
+      throw new Error(
+        'MeteredTokenSigner requires an inner signer that implements getAlgorithm(). Ensure the TokenSigner implementation provides this method.',
+      );
     }
     return this.inner.getAlgorithm();
   }
