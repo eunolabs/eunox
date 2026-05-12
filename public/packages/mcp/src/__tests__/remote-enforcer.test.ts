@@ -752,3 +752,62 @@ describe('RemoteEnforcerPDP – recipient extraction', () => {
     expect(capturedBody?.context.recipients).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Distributed tracing (DI-5): W3C traceparent/tracestate propagation
+// ---------------------------------------------------------------------------
+
+describe('RemoteEnforcerPDP – trace context propagation (DI-5)', () => {
+  it('preserves all required headers when injectTraceContext is a no-op (no active span)', async () => {
+    let capturedHeaders: Record<string, string> | undefined;
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: mockFetcher(makeAllowResponse(), (_url, _body, headers) => {
+        capturedHeaders = headers;
+      }),
+    });
+
+    await pdp.decide(makeToolCallRequest('my_tool'), makePdpContext());
+
+    // With no active span context, injectTraceContext is a no-op and must not
+    // disturb the required headers that were already set.
+    expect(capturedHeaders).toBeDefined();
+    expect(capturedHeaders!['Content-Type']).toBe('application/json');
+    expect(capturedHeaders!['Authorization']).toBe('Bearer sk-test');
+    expect(capturedHeaders!['X-Euno-Protocol-Version']).toBe(String(ENFORCE_PROTOCOL_VERSION));
+    // traceparent is absent because there is no active valid span context.
+    expect(capturedHeaders!['traceparent']).toBeUndefined();
+  });
+
+  it('forwards an inbound traceparent to the gateway when a span context is active', async () => {
+    // Simulate an active trace context by extracting a remote span context
+    // and running the decide call inside it.
+    const { extractTraceContext } = await import('@euno/common-core');
+    const { context, trace } = await import('@opentelemetry/api');
+
+    const inboundTraceparent =
+      '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+    const parentCtx = extractTraceContext({ traceparent: inboundTraceparent });
+    const parentSpan = trace.getSpan(parentCtx)!;
+
+    let capturedHeaders: Record<string, string> | undefined;
+    const pdp = new RemoteEnforcerPDP({
+      url: 'https://gateway.example',
+      apiKey: 'sk-test',
+      fetcher: mockFetcher(makeAllowResponse(), (_url, _body, headers) => {
+        capturedHeaders = headers;
+      }),
+    });
+
+    // Run decide inside the remote span context so injectTraceContext picks it up.
+    await context.with(trace.setSpan(context.active(), parentSpan), () =>
+      pdp.decide(makeToolCallRequest('my_tool'), makePdpContext()),
+    );
+
+    // The forwarded traceparent must carry the same trace-id.
+    expect(capturedHeaders?.['traceparent']).toMatch(
+      /^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-/,
+    );
+  });
+});

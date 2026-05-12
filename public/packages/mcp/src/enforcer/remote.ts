@@ -67,6 +67,7 @@ import {
   type EnforceRequest,
   type EnforceResponse,
   type Obligation,
+  injectTraceContext,
 } from '@euno/common-core';
 import type { PolicyDecisionPoint, PdpContext, PdpDecision } from '../pdp';
 
@@ -309,15 +310,22 @@ export class RemoteEnforcerPDP implements PolicyDecisionPoint {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this._timeoutMs);
 
+    // Inject W3C trace context so the gateway spans become children of the
+    // caller's active span (DI-5). Injects traceparent/tracestate when a
+    // valid span context is active; no-op when there is no active span context
+    // (regardless of whether an SDK is registered).
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this._apiKey}`,
+      'X-Euno-Protocol-Version': String(ENFORCE_PROTOCOL_VERSION),
+    };
+    injectTraceContext(headers);
+
     let res: Awaited<ReturnType<EnforceFetcher>>;
     try {
       res = await this._fetcher(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this._apiKey}`,
-          'X-Euno-Protocol-Version': String(ENFORCE_PROTOCOL_VERSION),
-        },
+        headers,
         body,
         signal: controller.signal,
       });

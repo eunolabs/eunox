@@ -131,3 +131,39 @@ describe('POST /mint', () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Distributed tracing (DI-5): tracingMiddleware is mounted in createMinterApp
+// ---------------------------------------------------------------------------
+
+describe('Minter tracing middleware (DI-5)', () => {
+  it('echoes traceparent response header when inbound traceparent is provided', async () => {
+    const { app, key } = await buildApp();
+    const inboundTraceparent = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+
+    const res = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .set('traceparent', inboundTraceparent)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    expect(res.status).toBe(200);
+    // The tracingMiddleware must echo the traceparent back so the caller can
+    // correlate its own span with the minter's server span.
+    expect(res.headers['traceparent']).toBeDefined();
+    // The echoed header must carry the same trace-id as the inbound header.
+    const echoed = res.headers['traceparent'] as string;
+    expect(echoed).toMatch(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-/);
+  });
+
+  it('still serves requests when no traceparent header is provided', async () => {
+    const { app, key } = await buildApp();
+
+    const res = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    expect(res.status).toBe(200);
+  });
+});
