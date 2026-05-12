@@ -33,6 +33,7 @@ import {
   InMemoryDpopReplayStore,
   verifyDpopProof,
   GatewayQuotaEngine,
+  UsageMeter,
 } from '@euno/common';
 import type TransportStream from 'winston-transport';
 
@@ -164,6 +165,16 @@ export interface EnforcementEngineOptions {
    * conditions).
    */
   gatewayQuota?: GatewayQuotaEngine;
+  /**
+   * Optional billing meter (Task 17). When supplied, every enforcement
+   * decision that can be attributed to a verified token with a
+   * `tenantId` claim increments the per-tenant counter.
+   *
+   * Failures in the meter MUST NOT affect the enforcement outcome —
+   * the engine swallows meter errors in the same finally-block that
+   * guards the Prometheus decision recorder.
+   */
+  usageMeter?: UsageMeter;
 }
 
 /**
@@ -228,6 +239,12 @@ export class EnforcementEngine {
    * from the caller's perspective the action did not go through.
    */
   private decisionRecorder?: (decision: 'allow' | 'deny') => void;
+  /**
+   * Optional billing usage meter (Task 17). When set, every enforcement
+   * decision attributed to a verified token with a `tenantId` claim is
+   * recorded against that tenant's counter.
+   */
+  private usageMeter?: UsageMeter;
 
   /**
    * DPoP (RFC 9449 / F-2) verification surface. `required=true`
@@ -266,6 +283,7 @@ export class EnforcementEngine {
     this.argumentSchemaRequired = options.argumentSchemaRequired || false;
     this.callCounterStore = options.callCounterStore;
     this.gatewayQuota = options.gatewayQuota;
+    this.usageMeter = options.usageMeter;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
     // Defaults are aligned with the `DPOP_REQUIRED` env var (which
     // defaults to `true`) so embedders that omit `dpop` get the same
@@ -345,24 +363,41 @@ export class EnforcementEngine {
     // operator's perspective, anything that isn't an explicit allow is a
     // denied action, so this is also the correct fail-safe value.
     let outcome: 'allow' | 'deny' = 'deny';
+    // tenantId is captured from the verified token payload inside
+    // validateActionInner so we can report it to the usage meter without
+    // threading it all the way up through the return type.
+    let capturedTenantId: string | undefined;
     try {
-      const result = await this.validateActionInner(request);
+      const result = await this.validateActionInner(request, (tid) => { capturedTenantId = tid; });
       outcome = result.allowed ? 'allow' : 'deny';
       return result;
     } finally {
       try {
         this.decisionRecorder?.(outcome);
+        if (capturedTenantId !== undefined) {
+          this.usageMeter?.recordEnforcement(capturedTenantId, outcome);
+        }
       } catch {
         // Metric sinks must never destabilise the request path.
       }
     }
   }
 
-  private async validateActionInner(request: ValidateActionRequest): Promise<EnforcementResult> {
+  private async validateActionInner(
+    request: ValidateActionRequest,
+    onTenantId?: (tenantId: string) => void,
+  ): Promise<EnforcementResult> {
     try {
       // Step 1: Verify the token signature and decode
       this.logger.debug('Verifying capability token');
       const payload = await this.verifier.verify(request.token);
+
+      // Report tenantId to the outer validateAction so it can be passed to
+      // the usage meter. Done immediately after verification so even requests
+      // that are subsequently denied (wrong audience, kill-switch, conditions)
+      // are still attributed to the correct tenant.
+      const tenantId = payload.authorizedBy?.tenantId;
+      if (tenantId) onTenantId?.(tenantId);
 
       // Step 1b (F-2): If the token is sender-constrained (carries
       // `cnf.jkt`) we MUST verify the request also carries a valid

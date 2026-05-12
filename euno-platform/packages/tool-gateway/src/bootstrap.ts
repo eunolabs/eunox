@@ -38,6 +38,8 @@ import {
   Registry,
   ServiceConfig,
   CallCounterStore,
+  UsageMeter,
+  InMemoryUsageMeter,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
@@ -268,6 +270,22 @@ export interface GatewayDependencies {
    * to 1 MiB; plumbed from `RESPONSE_REDACTION_MAX_BYTES`.
    */
   responseRedactionMaxBytes: number;
+  /**
+   * Per-tenant billing usage meter (Task 17).
+   *
+   * Accumulates enforcement-event and kill-switch-invocation counts since
+   * the last `resetPeriod()` call. Surfaced via `GET /admin/usage`.
+   * Always present in production; may be omitted in minimally-wired tests.
+   */
+  usageMeter?: UsageMeter;
+  /**
+   * Configured audit-log retention in days (Task 17).
+   *
+   * Surfaced in `GET /admin/usage` alongside the live usage counters so
+   * billing operators can verify the tenant's tier. Plumbed from
+   * `AUDIT_LEDGER_RETENTION_DAYS` when set; otherwise `undefined`.
+   */
+  auditRetentionDays?: number;
   /**
    * Hosted-mode telemetry collector (Task 16 — Telemetry continuity).
    * Present when `EUNO_TELEMETRY` is not `'0'`.  The enforce route passes
@@ -859,6 +877,17 @@ export async function initializeServices(
     | Array<'allow' | 'deny'>
     | undefined;
 
+  // ── Step 13a: Usage meter (Task 17) ──────────────────────────────────────
+  // Created before the enforcement engine so the engine can reference it.
+  // The InMemoryUsageMeter is always created; a future task can replace it
+  // with a Postgres- or Redis-backed implementation via the UsageMeter seam.
+  const usageMeter: UsageMeter = new InMemoryUsageMeter();
+
+  // Audit-retention days — surfaced in GET /admin/usage for billing tier
+  // confirmation. Read directly from the validated config (the field is
+  // declared in the GatewayConfig schema as AUDIT_LEDGER_RETENTION_DAYS).
+  const auditRetentionDays: number | undefined = validated.AUDIT_LEDGER_RETENTION_DAYS;
+
   const enforcementEngine = new EnforcementEngine({
     verifier,
     logger,
@@ -882,6 +911,7 @@ export async function initializeServices(
       replayStore: dpopReplayStore,
     },
     ...(validated.GATEWAY_AUDIENCE ? { gatewayAudience: validated.GATEWAY_AUDIENCE } : {}),
+    usageMeter,
   });
 
   // ── Step 14: Assemble deps bag ────────────────────────────────────────────
@@ -938,6 +968,8 @@ export async function initializeServices(
     pinAttestationSecret: validated.PARTNER_DID_PIN_SECRET || undefined,
     partnerDidAutoFetchPin: validated.PARTNER_DID_AUTO_FETCH_PIN,
     responseRedactionMaxBytes: validated.RESPONSE_REDACTION_MAX_BYTES,
+    usageMeter,
+    ...(auditRetentionDays !== undefined ? { auditRetentionDays } : {}),
     gatewayTelemetry,
   };
 

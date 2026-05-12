@@ -11,6 +11,7 @@ import {
   createAuditLogger,
   OcsfAuditTransport,
   OcsfAuthorizationEvent,
+  UsageMeter,
 } from '@euno/common';
 import { JWTTokenVerifier } from './verifier';
 import { RevocationEpochStore } from './revocation-store';
@@ -23,6 +24,7 @@ import {
   createPinAttestation,
   jcsSha256,
 } from './partner-did-registry';
+import { mountUsageRoutes } from './routes/usage';
 
 // =============================================================================
 // Idempotency store
@@ -228,6 +230,28 @@ export interface AdminApiOptions {
    * to share idempotency state across multiple router instances (uncommon).
    */
   idempotencyStore?: AdminIdempotencyStore;
+  /**
+   * Billing usage meter (Task 17).
+   *
+   * When supplied, the admin router exposes `GET /usage` (current per-tenant
+   * counters) and `POST /usage/reset` (period rollover), and records a
+   * kill-switch invocation on every activating kill-switch call.
+   *
+   * The meter's `tenantId` key for kill-switch invocations is derived from
+   * the configured `tenantId` option (when present) or from the request
+   * body's `tenantId` field (for requests that pass tenant-scope validation).
+   * When neither is available, the invocation is attributed to `'_unscoped'`.
+   */
+  usageMeter?: UsageMeter;
+  /**
+   * Configured audit-log retention window in days.
+   *
+   * Surfaced alongside usage counters in `GET /admin/usage` so billing
+   * operators can confirm the tenant's tier without consulting environment
+   * docs. Pass `undefined` when no explicit retention policy is configured
+   * (self-host with operator-managed storage).
+   */
+  auditRetentionDays?: number;
 }
 
 /**
@@ -249,6 +273,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     resolveOperator: resolveOperatorFn,
     tenantId: configuredTenantId,
     ocsfTransport,
+    usageMeter,
+    auditRetentionDays,
   } = options;
 
   // Idempotency store: use caller-supplied or create a fresh in-memory one.
@@ -453,6 +479,29 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     return (Array.isArray(raw) ? raw[0] : raw) ?? undefined;
   });
 
+  /**
+   * Derive the billing tenantId for kill-switch invocations.
+   *
+   * Priority order:
+   *   1. `configuredTenantId` — always preferred when the gateway is
+   *      tenant-scoped, because it has already been verified by
+   *      `assertTenantScope` before any kill-switch endpoint reaches
+   *      this helper.
+   *   2. `req.body?.tenantId` — for unscoped gateways where the caller
+   *      supplies a tenantId in the body.
+   *   3. `'_unscoped'` — sentinel for gateways with no tenant
+   *      configuration (self-host dev mode); still useful as a total
+   *      usage count.
+   */
+  function killSwitchTenantId(req: Request): string {
+    const bodyTenantId =
+      typeof req.body?.tenantId === 'string' ? req.body.tenantId.trim() : '';
+    return (
+      configuredTenantId ??
+      (bodyTenantId.length > 0 ? bodyTenantId : undefined) ??
+      '_unscoped'
+    );
+  }
 
   // Authentication middleware for admin endpoints
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
@@ -541,6 +590,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         unmapped: { scope: 'global' },
       });
       logger.warn('Global kill switch activated via admin API', { operator });
+      usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const body = { message: 'Global kill switch activated' };
       cacheIdempotentResponse(req, 200, body);
       res.json(body);
@@ -645,6 +695,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         status: 'Success',
       });
       logger.warn('Session killed via admin API', { sessionId });
+      usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const body = { message: `Session ${sessionId} has been killed` };
       cacheIdempotentResponse(req, 200, body);
       res.json(body);
@@ -702,6 +753,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         status: 'Success',
       });
       logger.warn('Agent killed via admin API', { agentId });
+      usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const body = { message: `Agent ${agentId} has been killed` };
       cacheIdempotentResponse(req, 200, body);
       res.json(body);
@@ -1458,6 +1510,14 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     logger.info('Partner DID cache refreshed via admin API', { eventType: 'partner_did_cache_admin_refresh', did });
     res.json({ message: `Cache for partner DID ${did} has been cleared`, did });
   });
+
+  // ── Billing usage routes (Task 17) ─────────────────────────────────────
+  // Mounted only when a usageMeter is configured. In self-host dev deployments
+  // without metering, the routes are simply absent (404) rather than 501 —
+  // operators who don't configure a meter don't need the endpoints.
+  if (usageMeter) {
+    mountUsageRoutes(router, { usageMeter, auditRetentionDays });
+  }
 
   return router;
 }

@@ -48,6 +48,80 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased — Stage 3, Task 17] — Pricing & Billing Plumbing
+
+### Summary
+
+Task 17 ships the billing metering surface described in
+`docs/pricing-stage-3.md`. The key deliverables are:
+
+1. **`UsageMeter` interface + `InMemoryUsageMeter`** (in `@euno/common`) —
+   per-tenant counters for enforcement events (allow/deny breakdown) and
+   kill-switch invocations. Implements the `resetPeriod()` seam that a
+   future automated billing integration (Stripe, Lago) can drive.
+
+2. **Enforcement engine metering** — `EnforcementEngine` now accepts an
+   optional `usageMeter` option. After every `validateAction` call the
+   tenantId (extracted from the verified token's `authorizedBy.tenantId`
+   claim) and the final decision are reported to the meter. Failures in
+   the meter are swallowed in the same `finally`-block that guards the
+   Prometheus decision recorder — they cannot destabilise the request path.
+
+3. **Admin API metering** — `createAdminRouter` accepts `usageMeter` and
+   `auditRetentionDays`. Kill-switch invocations are recorded on the three
+   activating endpoints (`global/activate`, `session/:id/kill`,
+   `agent/:id/kill`).
+
+4. **`GET /admin/usage`** — returns the current billing-period snapshot for
+   all tenants (or a single tenant via `?tenantId=`), including
+   `auditRetentionDays` for tier confirmation. Mounted only when a
+   `usageMeter` is configured.
+
+5. **`POST /admin/usage/reset`** — advances the billing period by resetting
+   per-tenant counters. Accepts an optional `tenantId` body field to reset
+   a single tenant.
+
+6. **Bootstrap wiring** — `initializeServices` creates an
+   `InMemoryUsageMeter` at Step 13a, passes it to the enforcement engine,
+   and includes it in `GatewayDependencies`. `app-factory.ts` forwards it
+   (and `auditRetentionDays`) to `createAdminRouter`.
+
+7. **`docs/pricing-stage-3.md`** — captures the tier table, billing unit
+   rationale, free-tier limits, and the hand-invoice workflow for the first
+   design partner.
+
+### Added
+
+- `public/packages/common/src/usage-meter.ts` — `TenantUsageSnapshot`,
+  `UsageMeter`, `InMemoryUsageMeter`. Exported from `@euno/common`.
+- `src/routes/usage.ts` — `mountUsageRoutes()` helper that registers
+  `GET /usage` and `POST /usage/reset` on the admin router.
+- `GatewayDependencies.usageMeter` — optional `UsageMeter` in the deps bag.
+- `GatewayDependencies.auditRetentionDays` — optional retention window.
+- `EnforcementEngineOptions.usageMeter` — optional `UsageMeter` option.
+- `AdminApiOptions.usageMeter` — optional `UsageMeter` option.
+- `AdminApiOptions.auditRetentionDays` — optional retention window.
+- `docs/pricing-stage-3.md` — pricing curve decision document.
+- `tests/usage-route.test.ts` — 16 tests covering `GET /usage` and
+  `POST /usage/reset`.
+- `public/packages/common/src/__tests__/usage-meter.test.ts` — 20 tests for
+  `InMemoryUsageMeter`.
+
+### Changed
+
+- `EnforcementEngine.validateAction` now captures the tenantId from the
+  verified token and reports it to the optional `usageMeter` in the
+  shared `finally`-block alongside the Prometheus decision recorder.
+- `EnforcementEngine.validateActionInner` signature gains an optional
+  `onTenantId?: (tenantId: string) => void` parameter (private; no
+  external API change).
+- `bootstrap.ts` `initializeServices` Step 13 split into 13 + 13a
+  (usage meter creation).
+- `app-factory.ts` `createAdminApp` passes `usageMeter` and
+  `auditRetentionDays` to `createAdminRouter`.
+
+---
+
 ## [Unreleased — Stage 3, Task 16] — Hosted-Mode Telemetry Continuity
 
 ### Summary
