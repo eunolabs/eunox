@@ -237,7 +237,7 @@ equivalent is now simply not setting `EUNO_TELEMETRY`.
 
 ---
 
-### DI-5 — No distributed tracing across the minter → gateway → backend call chain
+### DI-5 — No distributed tracing across the minter → gateway → backend call chain ✅ FIXED
 
 **Files:** Cross-cutting; `docs/ARCHITECTURE.md §8`
 
@@ -250,6 +250,14 @@ incident response is log-grep-only.
 **Recommendation:** Wire the OpenTelemetry SDK with W3C trace context propagation
 before Stage 4. The `GatewayDependencies` bag in `bootstrap.ts` is the correct
 injection point for a tracer; no deep refactor is needed.
+
+**Fix:** W3C trace-context fully wired via `@opentelemetry/api` and `tracing.ts`
+in `@euno/common-core`. `tracingMiddleware` runs on every gateway and minter
+request. `RemoteEnforcerPDP` propagates `traceparent`/`tracestate` outbound via
+`injectTraceContext`. Audit log entries carry `trace_id`/`span_id` when a span is
+active. Attaching an OTel SDK exporter (Jaeger, OTLP, etc.) is a config-only
+deployment change — no code modification required. `docs/ARCHITECTURE.md §8`
+updated.
 
 ---
 
