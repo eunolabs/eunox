@@ -39,6 +39,8 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | Doc | What it is |
 | --- | ---------- |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Current deployment notes and platform service paths. |
+| [self-host.md](./self-host.md) | BYO-GW guide: running the full gateway stack on your own infrastructure. |
+| [migrating-from-local.md](./migrating-from-local.md) | Upgrading from `@euno/mcp` local mode to the hosted gateway: before/after, cryptographic story, data-boundary analysis. |
 
 ## 5. Repository conventions
 
