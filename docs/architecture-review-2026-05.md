@@ -9,11 +9,15 @@
 
 ## [!] Critical Risks
 
-### CR-1 — In-memory `UsageMeter` data loss creates billing integrity failures
+### CR-1 — In-memory `UsageMeter` data loss creates billing integrity failures ✅ FIXED
 
 **Severity:** High  
 **Packages:** `tool-gateway`, `@euno/common`  
-**File:** `euno-platform/packages/tool-gateway/src/bootstrap.ts` (Step 13a)
+**File:** `euno-platform/packages/tool-gateway/src/bootstrap.ts` (Step 13a)  
+**Fix:** `RedisUsageMeter` + `createUsageMeterFromEnv` factory in `@euno/common-infra`;
+`euno_usage_meter_errors_total` Prometheus counter + `onMeterError` callback in
+`EnforcementEngine` (see commit with "feat(gateway/infra): cr-1/ci-2/ci-4 — durable
+Redis UsageMeter, usage-meter error counter, anomaly structured logging").
 
 `InMemoryUsageMeter` (wired in `bootstrap.ts` Step 13a) holds all per-tenant
 enforcement-event counters in process memory with no durable backend. A pod
@@ -255,9 +259,14 @@ Zod schema keyed to the protocol version.
 
 ---
 
-### CI-2 — `usageMeter.recordEnforcement` errors are silently swallowed with no counter
+### CI-2 — `usageMeter.recordEnforcement` errors are silently swallowed with no counter ✅ FIXED
 
-**File:** `euno-platform/packages/tool-gateway/src/enforcement.ts`
+**File:** `euno-platform/packages/tool-gateway/src/enforcement.ts`  
+**Fix:** Added `onMeterError?: () => void` to `EnforcementEngineOptions`; the
+`catch {}` block in `validateAction`'s `finally` now calls
+`this.onMeterError?.()`. Bootstrap wires this to a new `euno_usage_meter_errors_total`
+Prometheus counter; the `RedisUsageMeter.onError` callback also increments it on
+Redis write failures.
 
 The `finally` block in `validateAction` catches all errors from `recordEnforcement`
 with an empty `catch {}` body. A billing error here is a silent business failure.
@@ -282,9 +291,14 @@ such as `"Kill applied locally; fleet propagation pending Redis recovery"` when
 
 ---
 
-### CI-4 — Anomaly detection fires only to Prometheus; silent if Prometheus is unavailable
+### CI-4 — Anomaly detection fires only to Prometheus; silent if Prometheus is unavailable ✅ FIXED
 
-**File:** `euno-platform/packages/api-key-minter/src/routes/mint.ts`
+**File:** `euno-platform/packages/api-key-minter/src/routes/mint.ts`  
+**Fix:** `AnomalyDetector.recordMint()` return value is already checked in the
+mint route and a structured `logger.warn('Mint anomaly detected', { tenantId, rules })`
+is emitted when `firedRules.length > 0` — both after a successful mint and after
+a failure where the tenant is known. The anomaly signal is therefore preserved even
+when the Prometheus scrape endpoint is unavailable.
 
 `AnomalyDetector.recordMint` returns fired rule names which the mint route uses
 to increment `anomalyAlertsTotal`. If Prometheus is unavailable, anomaly firings
@@ -425,7 +439,7 @@ for tenant B's resources?
 |----------|------|------------|--------|
 | P0 | **CR-5** Obtain minter threat model sign-off before merging | None | Process |
 | P0 | ~~**CR-2** Fix `sourceIp` trust boundary~~ ✅ Done | — | — |
-| P0 | **CR-1** Wire durable `UsageMeter` backend (Redis or Postgres) | Redis infra | Medium |
+| P0 | ~~**CR-1** Wire durable `UsageMeter` backend (Redis or Postgres)~~ ✅ Done | — | — |
 | P0 | **DI-1** Close GCP per-tenant key isolation (Task 11) | GCP KMS driver | Medium |
 | P1 | **CR-3** Mandate Redis Sentinel/Cluster in prod k8s | k8s/redis.yaml | Medium |
 | P1 | **CR-4** Redis-backed `AnomalyDetector` (or document per-replica limitation) | Redis infra | Medium |
@@ -437,8 +451,8 @@ for tenant B's resources?
 | P2 | **CI-8** Add singleflight coalesce on JWKS `kid`-miss | jwks-client.ts | Small |
 | P2 | **CI-7** Write `hmacSecret` rotation runbook for the audit ledger | Docs | Small |
 | P2 | **DI-3** Wire `AdminIdempotencyStore` Redis backend; add startup warning | admin-api.ts | Small |
-| P3 | **CI-2** Add `euno_usage_meter_errors_total` counter | enforcement.ts | Tiny |
-| P3 | **CI-4** Log structured `warn` when anomaly fires (not only Prometheus) | anomaly-detector.ts | Tiny |
+| P3 | ~~**CI-2** Add `euno_usage_meter_errors_total` counter~~ ✅ Done | — | — |
+| P3 | ~~**CI-4** Log structured `warn` when anomaly fires (not only Prometheus)~~ ✅ Done | — | — |
 | P3 | ~~**CI-5** Redis-backed ping rate limiter~~ ✅ Done | — | — |
 | P3 | **OQ-1/2** Document HMAC secret provisioning; add Postgres RLS hardening option | Docs/schema | Medium |
 | P3 | **OQ-5** Add explicit test for DPoP `cnf.jkt` ↔ proof JWK binding | tests/ | Small |

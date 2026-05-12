@@ -175,6 +175,14 @@ export interface EnforcementEngineOptions {
    * guards the Prometheus decision recorder.
    */
   usageMeter?: UsageMeter;
+  /**
+   * Optional callback invoked when `usageMeter.recordEnforcement` throws
+   * (CI-2). Wired by `bootstrap.ts` to increment
+   * `euno_usage_meter_errors_total` so silent billing failures are
+   * observable in Prometheus dashboards. Failures inside this callback
+   * are silently swallowed — it must never throw.
+   */
+  onMeterError?: () => void;
 }
 
 /**
@@ -245,6 +253,12 @@ export class EnforcementEngine {
    * recorded against that tenant's counter.
    */
   private usageMeter?: UsageMeter;
+  /**
+   * Optional callback invoked when the usage meter or decision recorder
+   * throws (CI-2). Used to increment `euno_usage_meter_errors_total` so
+   * silent billing failures are observable.
+   */
+  private onMeterError?: () => void;
 
   /**
    * DPoP (RFC 9449 / F-2) verification surface. `required=true`
@@ -284,6 +298,7 @@ export class EnforcementEngine {
     this.callCounterStore = options.callCounterStore;
     this.gatewayQuota = options.gatewayQuota;
     this.usageMeter = options.usageMeter;
+    this.onMeterError = options.onMeterError;
     this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';
     // Defaults are aligned with the `DPOP_REQUIRED` env var (which
     // defaults to `true`) so embedders that omit `dpop` get the same
@@ -379,6 +394,9 @@ export class EnforcementEngine {
         }
       } catch {
         // Metric sinks must never destabilise the request path.
+        // Invoke the error callback (CI-2) so silent billing failures
+        // are visible via euno_usage_meter_errors_total.
+        try { this.onMeterError?.(); } catch { /* callback must not throw */ }
       }
     }
   }
