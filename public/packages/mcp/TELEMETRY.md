@@ -66,7 +66,7 @@ One JSON event is emitted per CLI invocation.  Every field is documented below.
 | `version` | `string` | Installed package version (e.g. `"1.2.0"`). |
 | `osFamily` | `string` | Broad OS family: `"linux"`, `"darwin"`, `"win32"`, or `"other"`.  No OS version or kernel info. |
 | `nodeMajor` | `number` | Major Node.js version number (e.g. `20`).  No patch or minor. |
-| `subcommand` | `string` | CLI subcommand invoked: `"proxy"`, `"validate"`, `"kill"`, or `"validate-token"`. |
+| `subcommand` | `string` | CLI subcommand invoked: `"proxy"`, `"validate"`, `"kill"`, `"validate-token"`, or `"stats"` for client-side events; `"hosted-enforce"` for server-side events emitted by the tool-gateway's `GatewayTelemetryCollector` (see §Hosted-mode server-side events below). |
 | `sessionsStarted` | `number` | Number of MCP sessions started.  Always `1` for a stdio proxy run; may be higher for an HTTP proxy with multiple clients. |
 | `sessionsWithEnforcement` | `number` | Number of those sessions that had at least one `tools/call` enforcement event (allow or deny). |
 | `denialsByConditionType` | `object` | Map from condition type name to denial count.  Keys are the `CapabilityCondition.type` values (`"maxCalls"`, `"timeWindow"`, `"allowedOperations"`, etc.) plus `"argumentSchema"` and `"kill"` for the special denial paths.  **No tool names are included.** |
@@ -134,3 +134,53 @@ object per line), so it can be inspected with standard tools:
 ```sh
 cat ~/.euno/telemetry.jsonl | jq .
 ```
+
+---
+
+## Hosted-mode server-side events
+
+When the **tool-gateway** is deployed in hosted mode (Stage 3), the
+`GatewayTelemetryCollector` (added in Task 16) emits server-side analytics
+events to the same `https://telemetry.euno.dev/v1/events` endpoint so
+Stage 1–2 dashboards remain valid without schema changes.
+
+### Key differences from client-side events
+
+| Field | Client-side value | Server-side value |
+| --- | --- | --- |
+| `subcommand` | `"proxy"` / `"validate"` / etc. | `"hosted-enforce"` |
+| `installId` | Random UUID (per install) | `"tenant:" + tenantId` (per tenant) |
+| `upstreamServerName` | Upstream MCP command | `"gateway"` |
+| `sessionsStarted` | Sessions in this process run | Unique session IDs in the 5-min window |
+| `peakConcurrentSessions` | Peak for this process | Max sessions within any 60-s window |
+
+All other field names and types are identical so a single dashboard query can
+aggregate both event types.  Filter on `subcommand = 'hosted-enforce'` to
+isolate server-side rows.
+
+### Privacy model for hosted-mode events
+
+- `installId = 'tenant:' + tenantId` — identifies the organisation (not any
+  individual user or session).  No user IDs, IP addresses, or session IDs.
+- `denialsByConditionType` keys are condition type names (`"maxCalls"`,
+  `"timeWindow"`, etc.) — **no tool names or argument values**.
+- `peakConcurrentSessions` is derived from counting unique session IDs in a
+  60-second sliding window.  No session IDs leave the gateway.
+
+### Opt-out (server-side)
+
+Set `EUNO_TELEMETRY=0` on the gateway host to disable server-side telemetry
+entirely.  Default: enabled (the operator controls the server; there is no
+interactive prompt).
+
+```sh
+EUNO_TELEMETRY=0 docker run ... euno/tool-gateway
+```
+
+### Configuration (server-side)
+
+| Env var | Default |
+| --- | --- |
+| `EUNO_TELEMETRY` | (unset = enabled; `0` = disabled) |
+| `EUNO_TELEMETRY_URL` | `https://telemetry.euno.dev/v1/events` |
+| `GATEWAY_TELEMETRY_FLUSH_MS` | `300000` (5 minutes) |

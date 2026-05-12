@@ -31,8 +31,16 @@ export interface TelemetryEvent {
   readonly osFamily: OsFamily;
   /** Major Node.js version number (e.g. 20). */
   readonly nodeMajor: number;
-  /** CLI subcommand that was invoked. */
-  readonly subcommand: 'proxy' | 'validate' | 'kill' | 'validate-token' | 'stats';
+  /**
+   * CLI subcommand that was invoked (client-side), or `'hosted-enforce'` for
+   * server-side events emitted by the tool-gateway's
+   * {@link GatewayTelemetryCollector} on behalf of hosted-mode tenants.
+   *
+   * Dashboard queries that aggregate across both modes can group by this field
+   * to separate client-side and server-side event streams while using the
+   * same underlying dashboard without schema changes.
+   */
+  readonly subcommand: 'proxy' | 'validate' | 'kill' | 'validate-token' | 'stats' | 'hosted-enforce';
   /**
    * Number of MCP sessions started in this invocation.
    * For stdio proxy: always 1 (one process = one session).
