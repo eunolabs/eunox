@@ -153,6 +153,19 @@ describe('GET /usage?tenantId', () => {
     expect(res.status).toBe(200);
     expect(res.body.tenants).toHaveLength(1);
   });
+
+  it('treats whitespace-only tenantId as absent and returns all tenants', async () => {
+    const meter = new InMemoryUsageMeter();
+    meter.recordEnforcement('t1', 'allow');
+
+    const app = buildApp(meter);
+    const res = await request(app).get('/usage?tenantId=   ');
+
+    expect(res.status).toBe(200);
+    // Whitespace-only should not be treated as a valid tenantId filter.
+    expect(res.body.tenants).toHaveLength(1);
+    expect(res.body.tenants[0].tenantId).toBe('t1');
+  });
 });
 
 // ---------------------------------------------------------------------------

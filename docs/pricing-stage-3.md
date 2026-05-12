@@ -49,7 +49,7 @@ following counters per tenant since the last `resetPeriod()` call:
 | `allowDecisions` | Same, decision = `allow` | Informational |
 | `denyDecisions` | Same, decision = `deny` | Informational |
 | `killSwitchInvocations` | Admin API: global activate, session kill, agent kill | Cloud Team feature gate |
-| `auditRetentionDays` | Configuration (`AUDIT_LEDGER_RETENTION_DAYS`) | Cloud Free = 7; Cloud Team = 90; Enterprise = configurable |
+| `auditRetentionDays` | Configuration (`AUDIT_LEDGER_RETENTION_DAYS` env var, validated by the gateway schema) | Cloud Free = 7; Cloud Team = 90; Enterprise = configurable |
 
 Counters are reset per billing period by calling `POST /admin/usage/reset`.
 

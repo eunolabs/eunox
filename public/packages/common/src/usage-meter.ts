@@ -113,8 +113,15 @@ export interface UsageMeter {
   getUsage(tenantId: string): TenantUsageSnapshot;
 
   /**
-   * Return usage snapshots for every tenant that has been observed since
-   * the last `resetPeriod()` call (or since gateway start).
+   * Return usage snapshots for every tenant ever observed by this meter
+   * instance — including tenants whose counters have been reset to zero by
+   * a prior `resetPeriod()` call.
+   *
+   * **Note:** `resetPeriod()` zeroes counters but retains tenant entries, so
+   * a tenant that was active before the last reset and has had no activity
+   * since will still appear here (with all-zero counts). This is intentional:
+   * the entry keeps its `periodStart` timestamp, making it easy to verify that
+   * the period was correctly advanced.
    *
    * The order of the returned snapshots is unspecified. Callers that
    * present the list to an operator SHOULD sort by `tenantId`.

@@ -494,9 +494,11 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    *      usage count.
    */
   function killSwitchTenantId(req: Request): string {
+    const bodyTenantId =
+      typeof req.body?.tenantId === 'string' ? req.body.tenantId.trim() : '';
     return (
       configuredTenantId ??
-      (typeof req.body?.tenantId === 'string' ? req.body.tenantId : undefined) ??
+      (bodyTenantId.length > 0 ? bodyTenantId : undefined) ??
       '_unscoped'
     );
   }

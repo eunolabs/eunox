@@ -1255,6 +1255,18 @@ export const GatewayConfigSchema = z
         'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
     }),
 
+    AUDIT_LEDGER_RETENTION_DAYS: envPositiveInt({
+      min: 1,
+      description:
+        'Audit-log retention window in days. ' +
+        'Surfaced in GET /admin/usage alongside live usage counters so billing operators ' +
+        'can confirm the tenant\'s tier without consulting environment documentation. ' +
+        'Cloud Free = 7; Cloud Team = 90; Cloud Enterprise = operator-configured. ' +
+        'When unset (the default), the field is omitted from the /admin/usage response, ' +
+        'which is the correct value for self-host deployments where retention is managed ' +
+        'externally (e.g. by a Postgres backup policy).',
+    }),
+
     // ACL-specific config (only used when AUDIT_LEDGER_BACKEND=acl).
     AUDIT_LEDGER_ACL_ENDPOINT: optionalString.describe(
       'Azure Confidential Ledger endpoint URL. ' +

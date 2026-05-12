@@ -869,12 +869,9 @@ export async function initializeServices(
   const usageMeter: UsageMeter = new InMemoryUsageMeter();
 
   // Audit-retention days — surfaced in GET /admin/usage for billing tier
-  // confirmation. Derived from the audit-module config if available.
-  const validatedAny = validated as Record<string, unknown>;
-  const auditRetentionDays: number | undefined =
-    typeof validatedAny['AUDIT_LEDGER_RETENTION_DAYS'] === 'number'
-      ? (validatedAny['AUDIT_LEDGER_RETENTION_DAYS'] as number)
-      : undefined;
+  // confirmation. Read directly from the validated config (the field is
+  // declared in the GatewayConfig schema as AUDIT_LEDGER_RETENTION_DAYS).
+  const auditRetentionDays: number | undefined = validated.AUDIT_LEDGER_RETENTION_DAYS;
 
   const enforcementEngine = new EnforcementEngine({
     verifier,

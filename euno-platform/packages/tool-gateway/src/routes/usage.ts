@@ -34,8 +34,10 @@
  * }
  * ```
  *
- * When `tenantId` is supplied the `"tenants"` array contains at most one entry
- * (or zero entries if the tenant has had no activity this period).
+ * When `tenantId` is supplied the `"tenants"` array always contains exactly
+ * one entry — a zero-count snapshot is returned for tenants that have had no
+ * activity this period (the caller does not need to distinguish "new tenant"
+ * from "zero activity tenant").
  *
  * ## POST /admin/usage/reset
  *
@@ -96,10 +98,9 @@ export function mountUsageRoutes(router: Router, opts: UsageRouterOptions): void
    */
   router.get('/usage', (req: Request, res: Response): void => {
     const rawTenantId = req.query['tenantId'];
-    const filterTenantId =
-      typeof rawTenantId === 'string' && rawTenantId.length > 0
-        ? rawTenantId
-        : undefined;
+    const trimmedTenantId =
+      typeof rawTenantId === 'string' ? rawTenantId.trim() : '';
+    const filterTenantId = trimmedTenantId.length > 0 ? trimmedTenantId : undefined;
 
     let tenants;
     if (filterTenantId !== undefined) {
