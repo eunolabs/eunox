@@ -58,7 +58,7 @@ beforeEach(async () => {
 // ── Test 1: getAlgorithm forwarding ───────────────────────────────────────────
 
 describe('MeteredTokenSigner.getAlgorithm forwarding', () => {
-  it('is undefined when the inner signer does not implement getAlgorithm', async () => {
+  it('is undefined when the inner signer does not implement getAlgorithm', () => {
     const inner = makeMinimalSigner();
     const wrapped = new MeteredTokenSigner(inner, 'test-provider');
 
