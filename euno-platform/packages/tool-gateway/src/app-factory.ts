@@ -272,6 +272,10 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       // OCSF transport: when configured, emit Authorization events for every
       // mutating admin action so SIEMs can ingest them without a custom parser.
       ocsfTransport: deps.ocsfTransport,
+      // Billing metering (Task 17): surface per-tenant usage counters and
+      // audit-retention days at GET /admin/usage.
+      usageMeter: deps.usageMeter,
+      auditRetentionDays: deps.auditRetentionDays,
     }),
   );
 
