@@ -6,6 +6,7 @@ import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-ke
 import { createAdminPoliciesRouter } from './routes/admin-policies';
 import { createPingRouter } from './routes/ping';
 import { AnomalyDetector } from './anomaly-detector';
+import type { RedisAnomalyDetector } from './redis-anomaly-detector';
 import { minterMetrics } from './metrics';
 import { InMemoryMintRateLimiter, MintRateLimiter } from './mint-rate-limiter';
 
@@ -17,9 +18,11 @@ export interface MinterDependencies {
   logger: Logger;
   /**
    * Optional anomaly detector shared across mint route instances.
-   * When provided, it is injected into the mint router.
+   * When provided, it is injected into the mint router.  Accepts both the
+   * in-memory {@link AnomalyDetector} and the Redis-backed
+   * {@link RedisAnomalyDetector} (CR-4).
    */
-  anomalyDetector?: AnomalyDetector;
+  anomalyDetector?: AnomalyDetector | RedisAnomalyDetector;
   /**
    * Optional rate limiter for `GET /api/v1/ping`.  Applied per source IP
    * to prevent brute-force API-key enumeration.

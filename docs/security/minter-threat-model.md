@@ -640,7 +640,7 @@ annotations:
 >
 > See `docs/architecture-review-2026-05.md §CR-4` for the full analysis.
 
-#### Rule 6 — HSM sign/audit mismatch
+#### Rule 7 — HSM sign/audit mismatch
 
 The security telemetry job compares provider HSM sign-operation logs against
 `mint_audit` rows by `kid`, service identity, and time bucket. Where the provider exposes

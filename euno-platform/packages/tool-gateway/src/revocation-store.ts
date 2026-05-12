@@ -414,11 +414,13 @@ export class RedisRevocationStore implements RevocationStore {
         }
         return false;
       }
-      // Grace period (CR-3): if Redis has only just become unavailable and we
-      // are still within the configured grace window, serve from the local
-      // cache the same way stale-readable mode would.  After the grace window
-      // expires, fall through to the configured unavailableMode.
-      if (this.gracePeriodMs > 0 && this.unavailableSince !== null &&
+      // Grace period (CR-3): when the circuit breaker has opened (sustained
+      // outage confirmed) and we are still within the configured grace window,
+      // serve from the local cache the same way stale-readable mode would.
+      // Gating on isCircuitOpen ensures a single transient error does not
+      // incorrectly allow tokens through — only a confirmed sustained outage
+      // (circuit opened) triggers the grace-period fallback.
+      if (isCircuitOpen && this.gracePeriodMs > 0 && this.unavailableSince !== null &&
           Date.now() - this.unavailableSince < this.gracePeriodMs) {
         const expiry = this.localRevokedCache.get(tokenId);
         if (expiry !== undefined) {

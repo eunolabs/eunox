@@ -30,7 +30,6 @@ import { ApiKeyVerifier, PepperEntry } from './api-key-verifier';
 import { TokenMinter } from './token-minter';
 import { LocalTokenSigner } from './local-token-signer';
 import { MeteredTokenSigner } from './metered-token-signer';
-import { AnomalyDetector } from './anomaly-detector';
 import { createAnomalyDetectorFromEnv, RedisAnomalyDetector } from './redis-anomaly-detector';
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
@@ -172,7 +171,7 @@ async function main(): Promise<void> {
   if (anomalyDetector instanceof RedisAnomalyDetector) {
     logger.info('Using Redis-backed anomaly detector (fleet-wide view)', {
       replicaId,
-      redisUrl: (process.env['ANOMALY_REDIS_URL'] || process.env['REDIS_URL'] ?? '').replace(
+      redisUrl: (process.env['ANOMALY_REDIS_URL'] ?? process.env['REDIS_URL'] ?? '').replace(
         /\/\/[^@/\s]*@/,
         '//<redacted>@',
       ),

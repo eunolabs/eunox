@@ -131,12 +131,22 @@ export function createMintRouter(opts: MintRouterOptions): Router {
       minterMetrics.mintTotal.inc({ tenant: tenantId, result: 'minted' });
       endLatency({ tenant: tenantId });
 
-      // 7. Run anomaly detection (non-blocking; anomalies are logged and metered)
+      // 7. Fire-and-forget anomaly detection — intentionally non-blocking so
+      //    Redis round-trips (when RedisAnomalyDetector is used) do not add
+      //    latency to the mint response. Errors are swallowed here; the
+      //    Prometheus counter is the source of truth for anomaly rate.
       if (opts.anomalyDetector) {
-        const firedRules = await Promise.resolve(opts.anomalyDetector.recordMint(tenantId, true));
-        if (firedRules.length > 0) {
-          opts.logger.warn('Mint anomaly detected', { tenantId, rules: firedRules });
-        }
+        void Promise.resolve(opts.anomalyDetector.recordMint(tenantId, true))
+          .then(firedRules => {
+            if (firedRules.length > 0) {
+              opts.logger.warn('Mint anomaly detected', { tenantId, rules: firedRules });
+            }
+          })
+          .catch((err: unknown) => {
+            opts.logger.debug('Anomaly detection error (non-fatal)', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
       }
 
       opts.logger.info('Capability token minted', {
@@ -163,12 +173,19 @@ export function createMintRouter(opts: MintRouterOptions): Router {
         }
       }
 
-      // Run anomaly detection for failure events (tenantId known = auth succeeded).
+      // Fire-and-forget anomaly detection for failure events.
       if (tenantId !== undefined && opts.anomalyDetector) {
-        const firedRules = await Promise.resolve(opts.anomalyDetector.recordMint(tenantId, false));
-        if (firedRules.length > 0) {
-          opts.logger.warn('Mint anomaly detected on failure', { tenantId, rules: firedRules });
-        }
+        void Promise.resolve(opts.anomalyDetector.recordMint(tenantId, false))
+          .then(firedRules => {
+            if (firedRules.length > 0) {
+              opts.logger.warn('Mint anomaly detected on failure', { tenantId, rules: firedRules });
+            }
+          })
+          .catch((err: unknown) => {
+            opts.logger.debug('Anomaly detection error (non-fatal)', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
       }
 
       // Translate KmsSigningError to a retryable 503 so clients can distinguish

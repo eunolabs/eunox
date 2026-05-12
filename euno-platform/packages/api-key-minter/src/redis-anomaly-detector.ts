@@ -79,7 +79,6 @@ export interface RedisAnomalyClient {
 
 // Long-term bucket constants (same as AnomalyDetector).
 const LONG_BUCKET_MS = 60 * 60 * 1000;   // 1 hour
-const LONG_CAPACITY  = 170;               // 7 days + 2 spare
 const LONG_TTL_SEC   = 8 * 24 * 3600;    // 8 days (7 days + 1 day buffer)
 
 export class RedisAnomalyDetector {
@@ -177,13 +176,16 @@ export class RedisAnomalyDetector {
     const shortField = success ? `${shortBucketTs}:s` : `${shortBucketTs}:f`;
     const longField  = success ? `${longBucketTs}:s`  : `${longBucketTs}:f`;
 
-    // Atomic bucket increments + TTL refresh.  All four operations run in
-    // parallel to minimise round-trip overhead on the mint hot path.
+    // Increment bucket counters, then refresh TTLs.  Within each key, the
+    // EXPIRE must run after HINCRBY so that a key created by the increment
+    // always gets a TTL (avoid unbounded key retention / memory leak if EXPIRE
+    // runs first on a not-yet-existing key and returns 0).
+    // The two key-pairs (short + long) are pipelined in parallel.
     await Promise.all([
-      this.client.hincrby(shortKey, shortField, 1),
-      this.client.expire(shortKey, this.shortTtlSec),
-      this.client.hincrby(longKey, longField, 1),
-      this.client.expire(longKey, LONG_TTL_SEC),
+      this.client.hincrby(shortKey, shortField, 1)
+        .then(() => this.client.expire(shortKey, this.shortTtlSec)),
+      this.client.hincrby(longKey, longField, 1)
+        .then(() => this.client.expire(longKey, LONG_TTL_SEC)),
     ]);
 
     // Read both hashes concurrently to evaluate rules.

@@ -2,7 +2,7 @@
  * Tests for RevocationStore implementations.
  */
 
-import { createLogger } from '@euno/common';
+import { createLogger, CircuitOpenError } from '@euno/common';
 import {
   InMemoryRevocationStore,
   RedisRevocationStore,
@@ -283,10 +283,13 @@ describe('RedisRevocationStore', () => {
   });
 
   // ── CR-3: Grace period tests ─────────────────────────────────────────────
+  // Grace period only activates when the circuit breaker has opened (sustained
+  // outage confirmed), not on individual transient Redis errors. Tests
+  // therefore throw CircuitOpenError to simulate the circuit-open state.
   describe('gracePeriodMs (CR-3)', () => {
     it('allows token not in local cache during grace period', async () => {
       const client = makeClient({
-        exists: async () => { throw new Error('redis down'); },
+        exists: async () => { throw new CircuitOpenError(); },
       });
       const store = new RedisRevocationStore(client, logger, {
         gracePeriodMs: 5000,
@@ -303,7 +306,7 @@ describe('RedisRevocationStore', () => {
         set: async (..._args: unknown[]) => { redisCalls++; return 'OK'; },
         exists: async () => {
           // After the first set() call succeeds, exists() always fails
-          throw new Error('redis down');
+          throw new CircuitOpenError();
         },
       });
       const store = new RedisRevocationStore(client, logger, {
@@ -316,25 +319,47 @@ describe('RedisRevocationStore', () => {
       } catch {
         // Redis write failed — that's OK; local cache was already updated.
       }
-      // isRevoked now throws because exists() is broken — within grace window
-      // the local cache should honour the revocation.
+      // isRevoked now throws CircuitOpenError — within grace window the local
+      // cache should honour the revocation.
       const result = await store.isRevoked('revoked-jti');
       expect(result).toBe(true);
     });
 
     it('falls back to fail-closed after grace period expires', async () => {
+      jest.useFakeTimers();
+      try {
+        const client = makeClient({
+          exists: async () => { throw new CircuitOpenError(); },
+        });
+        const store = new RedisRevocationStore(client, logger, {
+          gracePeriodMs: 1000, // 1 second grace window
+        });
+        // First call: circuit open, within grace window → allow through.
+        expect(await store.isRevoked('unknown-jti')).toBe(false);
+        // Advance fake clock past grace window.
+        jest.advanceTimersByTime(1001);
+        // Second call: grace window expired → fall-closed (fail-closed default).
+        expect(await store.isRevoked('unknown-jti')).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not apply grace period on transient errors (only circuit-open)', async () => {
       const client = makeClient({
-        exists: async () => { throw new Error('redis down'); },
+        exists: async () => { throw new Error('transient redis error'); },
       });
       const store = new RedisRevocationStore(client, logger, {
-        gracePeriodMs: 0, // grace period disabled → fail-closed immediately
+        gracePeriodMs: 5000,
       });
+      // Transient error (not circuit-open) → grace period does NOT activate →
+      // falls through to fail-closed default.
       expect(await store.isRevoked('unknown-jti')).toBe(true);
     });
 
     it('does not increment onUnavailable during grace period', async () => {
       const client = makeClient({
-        exists: async () => { throw new Error('redis down'); },
+        exists: async () => { throw new CircuitOpenError(); },
       });
       const onUnavailable = jest.fn();
       const store = new RedisRevocationStore(client, logger, {
@@ -351,14 +376,14 @@ describe('RedisRevocationStore', () => {
       let fail = true;
       const client = makeClient({
         exists: async () => {
-          if (fail) throw new Error('redis down');
+          if (fail) throw new CircuitOpenError();
           return 0;
         },
       });
       const store = new RedisRevocationStore(client, logger, {
         gracePeriodMs: 5000,
       });
-      // First call: Redis down → within grace → allow
+      // First call: circuit open → within grace → allow
       expect(await store.isRevoked('tok-a')).toBe(false);
       // Redis comes back
       fail = false;

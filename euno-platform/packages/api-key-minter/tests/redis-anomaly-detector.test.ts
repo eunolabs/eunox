@@ -419,7 +419,7 @@ describe('createAnomalyDetectorFromEnv', () => {
       jest.isolateModules(() => {
         const mod = require('../src/redis-anomaly-detector');
         const detector = mod.createAnomalyDetectorFromEnv({ REDIS_URL: 'redis://localhost:6379' });
-        expect(detector).toBeInstanceOf(mod.AnomalyDetector);
+        expect(detector).toBeInstanceOf(AnomalyDetector);
       });
     } finally {
       jest.dontMock('ioredis');
