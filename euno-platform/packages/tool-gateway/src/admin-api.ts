@@ -154,17 +154,23 @@ export class RedisAdminIdempotencyStore {
   private readonly client: RedisIdempotencyClient;
   private readonly keyPrefix: string;
   private readonly ttlMs: number;
+  private readonly logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 
   static readonly DEFAULT_TTL_MS = AdminIdempotencyStore.DEFAULT_TTL_MS;
   static readonly DEFAULT_KEY_PREFIX = 'idempotency:';
 
   constructor(
     client: RedisIdempotencyClient,
-    opts: { keyPrefix?: string; ttlMs?: number } = {},
+    opts: {
+      keyPrefix?: string;
+      ttlMs?: number;
+      logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+    } = {},
   ) {
     this.client = client;
     this.keyPrefix = opts.keyPrefix ?? RedisAdminIdempotencyStore.DEFAULT_KEY_PREFIX;
     this.ttlMs = opts.ttlMs ?? RedisAdminIdempotencyStore.DEFAULT_TTL_MS;
+    this.logger = opts.logger;
   }
 
   /**
@@ -200,9 +206,15 @@ export class RedisAdminIdempotencyStore {
     // Fire-and-forget — a Redis write failure is not fatal for idempotency
     // (the operation has already executed; not caching the result means the
     // caller might re-execute on a retry, which is the pre-Redis behaviour).
+    // We log at warn level so operators can detect Redis connectivity issues.
     await this.client
       .set(this.keyPrefix + key, JSON.stringify(entry), 'EX', ttlSeconds, 'NX')
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        this.logger?.warn('RedisAdminIdempotencyStore: failed to cache idempotency key', {
+          key,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     return entry;
   }
 }

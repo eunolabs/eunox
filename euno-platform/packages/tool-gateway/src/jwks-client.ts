@@ -140,6 +140,13 @@ export class JwksClient implements JwksKeySource {
 
     // Register before awaiting so any concurrent caller for the same kid
     // that arrives while the refresh is in flight will join this promise.
+    // The map entry is removed in the finally block: if the same promise
+    // is still in the map when we finish (success or failure), we delete it.
+    // If a newer promise has been registered for the same kid by the time we
+    // reach finally (which cannot happen in practice because any concurrent
+    // caller that arrives while refreshAndFind is in the map will JOIN it
+    // rather than create a new entry), we intentionally leave the newer
+    // promise in place so it can self-clean when it finishes.
     this.kidPendingRefreshes.set(kid, refreshAndFind);
     try {
       return await refreshAndFind;

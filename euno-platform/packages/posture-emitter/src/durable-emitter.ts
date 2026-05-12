@@ -364,6 +364,10 @@ export class DurablePostureEmitter {
 
     const queuePath = env.POSTURE_DURABLE_QUEUE_PATH;
     if (!queuePath) {
+      // `NODE_ENV` must be exactly `'production'` to trigger the hard error —
+      // this is the standard Node.js convention (used by Express, webpack, etc.).
+      // Aliases such as 'prod' are NOT recognised: operators MUST set
+      // NODE_ENV=production in their production Kubernetes manifests.
       const isProduction = env.NODE_ENV === 'production';
       if (isProduction) {
         throw new Error(
