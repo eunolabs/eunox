@@ -3,8 +3,11 @@ import helmet from 'helmet';
 import { CapabilityError, createLogger } from '@euno/common';
 import { createMintRouter, MintRouterOptions } from './routes/mint';
 import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-keys';
+import { createAdminPoliciesRouter } from './routes/admin-policies';
+import { createPingRouter } from './routes/ping';
 import { AnomalyDetector } from './anomaly-detector';
 import { minterMetrics } from './metrics';
+import { InMemoryMintRateLimiter, MintRateLimiter } from './mint-rate-limiter';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -17,6 +20,17 @@ export interface MinterDependencies {
    * When provided, it is injected into the mint router.
    */
   anomalyDetector?: AnomalyDetector;
+  /**
+   * Optional rate limiter for `GET /api/v1/ping`.  Applied per source IP
+   * to prevent brute-force API-key enumeration.
+   *
+   * Kept separate from `mintRouterOpts.rateLimiter` (which is keyed by
+   * tenant ID) so the two limits can be tuned independently without sharing
+   * counters or affecting each other's in-memory state.
+   *
+   * When omitted, a default limiter of 20 req / 60 s per IP is created.
+   */
+  pingRateLimiter?: MintRateLimiter;
 }
 
 export function createMinterApp(deps: MinterDependencies): Express {
@@ -36,6 +50,31 @@ export function createMinterApp(deps: MinterDependencies): Express {
 
   app.use(createMintRouter(mintRouterOpts));
   app.use(createAdminKeysRouter(deps.adminKeysRouterOpts));
+
+  // Reuse the verifier from the mint router so /ping and /mint validate keys
+  // through the same store + pepper chain, eliminating any risk of drift.
+  // Use a dedicated rate limiter (separate from the mint per-tenant limiter)
+  // so brute-force protection can be tuned without touching mint throughput.
+  const pingRateLimiter =
+    deps.pingRateLimiter ??
+    new InMemoryMintRateLimiter({ maxMintsPerWindow: 20, windowSeconds: 60 });
+
+  app.use(
+    createPingRouter({
+      verifier: deps.mintRouterOpts.verifier,
+      logger: deps.logger,
+      rateLimiter: pingRateLimiter,
+    }),
+  );
+
+  // Admin policy-management routes (requires X-Admin-Key).
+  app.use(
+    createAdminPoliciesRouter({
+      keyStore: deps.adminKeysRouterOpts.keyStore,
+      adminApiKey: deps.adminKeysRouterOpts.adminApiKey,
+      logger: deps.logger,
+    }),
+  );
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'api-key-minter' });

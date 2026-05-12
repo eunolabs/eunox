@@ -48,6 +48,86 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased — Stage 3, Task 16] — Hosted-Mode Telemetry Continuity
+
+### Summary
+
+Task 16 adds per-tenant server-side enforcement telemetry to the gateway and
+creates the `scripts/stage4-readiness.ts` gate check.
+
+### Added
+
+- **`GatewayTelemetryCollector`** (`src/gateway-telemetry.ts`) — per-tenant
+  enforcement analytics collector for hosted-mode deployments.  Key
+  properties:
+  - Tracks `sessionsStarted`, `sessionsWithEnforcement`,
+    `denialsByConditionType`, and `peakConcurrentSessions` per tenant per
+    reporting window.
+  - Emits one `GatewayTelemetryEvent` per tenant on every flush.  The JSON
+    schema is identical to `TelemetryEvent` from `@euno/mcp` (same field
+    names, same types) so Stage 1–2 dashboards continue to work without
+    schema changes.  The `subcommand: 'hosted-enforce'` value distinguishes
+    server-side rows from client-side ones.
+  - Uses `installId = 'tenant:' + tenantId` so per-tenant server-side events
+    can be aggregated or separated from client-side UUID-identified installs.
+  - Flush interval defaults to 5 minutes; configurable via
+    `GATEWAY_TELEMETRY_FLUSH_MS`.
+  - **Opt-out**: `EUNO_TELEMETRY=0` disables server-side telemetry and makes
+    all hooks no-ops.  Default: enabled (the operator controls the env var).
+  - Network errors from `fetch()` are silently discarded so telemetry never
+    affects the enforcement hot path.
+  - `stop()` is graceful-shutdown-aware: flushes pending per-tenant stats
+    before the process exits.
+
+- **`GatewayTelemetryHooks`** interface — narrow hook interface passed to
+  `createEnforceRouter` so the route does not depend on the collector class
+  directly.  Only surface: `recordDecision(tenantId, sessionId, allowed,
+  conditionType?)`.
+
+- **`extractTenantIdFromToken`** — signature-free JWT decode helper in
+  `gateway-telemetry.ts`.  Extracts `authorizedBy.tenantId` from the raw
+  token for telemetry routing only — never used in authorization decisions.
+
+- **`createGatewayTelemetryFromEnv`** — factory that reads `EUNO_TELEMETRY`,
+  `EUNO_TELEMETRY_URL`, and `GATEWAY_TELEMETRY_FLUSH_MS` from `process.env`
+  and starts the collector's flush timer.  Returns `null` when
+  `EUNO_TELEMETRY=0`.
+
+- **`EnforceRouterOptions.telemetry`** — new optional field on the enforce
+  router factory.  When supplied, each enforcement outcome (allow, in-band
+  deny from `EnforcementResult`, in-band deny from `CapabilityError`) calls
+  `telemetry.recordDecision(...)`.  401/503 infrastructure errors are not
+  recorded (they are not enforcement decisions).
+
+- **`GatewayDependencies.gatewayTelemetry`** — new field on the deps bag.
+  `initializeServices` creates the collector via
+  `createGatewayTelemetryFromEnv` (step 15).  `createEnforceRouter` receives
+  it as `telemetry`.  `startServer` calls `deps.gatewayTelemetry.stop()` in
+  Phase 5.6 of the graceful-shutdown sequence.
+
+- **28 new tests** (`tests/gateway-telemetry.test.ts`) covering
+  `GatewayTelemetryCollector`, `extractTenantIdFromToken`, and
+  `createGatewayTelemetryFromEnv`.
+
+- **`scripts/stage4-readiness.ts`** — Stage 4 gate check modeled on
+  `scripts/stage3-readiness.ts`.  Evaluates two criteria:
+  - **C1** — ≥1 paying team.  Partially automated via the telemetry API's
+    `/v1/stats/stage4-gate` endpoint which reports
+    `distinctHostedTenants14d` and `confirmedPayingTeams`.  Manual
+    confirmation is always required.
+  - **C2** — ≥1 written security or compliance question (audit retention,
+    SSO, SOC2, GDPR, HIPAA, CISO review).  Manual signal tracked in GitHub
+    issues labelled `stage-4-signal` or in CRM/Notion.
+  - Same `EUNO_TELEMETRY_API` env var as `stage3-readiness.ts`.
+  - Exit codes: 0 = READY, 1 = NOT READY, 2 = UNKNOWN.
+  - **47 new tests** (`public/packages/mcp/src/__tests__/stage4-readiness.test.ts`).
+
+- **`TELEMETRY.md`** updated with a §Hosted-mode server-side events section
+  documenting the field differences, privacy model, opt-out mechanism, and
+  configuration.
+
+---
+
 ## [Unreleased — Stage 3, Task 13] — Self-Hostable Docker Image
 
 ### Summary

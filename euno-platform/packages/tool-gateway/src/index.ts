@@ -55,6 +55,7 @@ export async function startServer(): Promise<void> {
     dpopReplayStore,
     ledgerPgPool,
     crossChainAnchor,
+    gatewayTelemetry = null,
   } = deps;
 
   const server = app.listen(config.port, () => {
@@ -261,6 +262,13 @@ export async function startServer(): Promise<void> {
       // in-flight commitment to complete before closing the DB pool.
       if (crossChainAnchor) {
         await closeWithTimeout('cross-chain anchor', () => crossChainAnchor.stop());
+      }
+
+      // Phase 5.6: stop the hosted-mode telemetry collector — flushes any
+      // pending per-tenant stats before the process exits so the final
+      // reporting window's events are not silently lost.
+      if (gatewayTelemetry) {
+        await closeWithTimeout('gateway telemetry', () => gatewayTelemetry.stop());
       }
 
       // Phase 6: close the ledger Postgres pool LAST — after the pipeline
