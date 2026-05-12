@@ -285,27 +285,27 @@ with explicit regional commitments.
 ### Step 1 — Upload your policy
 
 Before switching to hosted mode, your policy must be registered in the gateway.
-Use the admin API directly (see [`docs/ADMIN_API_CURL_RECIPES.md`](./ADMIN_API_CURL_RECIPES.md)
-or the [manual recipe in §5](#5-manual-migration-recipe)):
+Use the interactive upgrade command to validate your API key, upload the policy,
+and optionally patch your config in one step:
 
 ```bash
-# Verify the policy file exists before uploading
-[[ -f ./euno.policy.yaml ]] || { echo "Error: ./euno.policy.yaml not found"; exit 1; }
-
-curl -s -X POST \
-  -H "Authorization: Bearer sk-x7Kp9mRq.bL3nYv2wQs..." \
-  -H "Content-Type: application/yaml" \
-  --data-binary @./euno.policy.yaml \
-  "https://gateway.euno.example/admin/v1/policies" \
-  | jq '{policyId: .id, policyHash: .hash}'
+euno-mcp upgrade-to-hosted \
+  --gateway-url https://gateway.euno.example \
+  --api-key sk-x7Kp9mRq.bL3nYv2wQs... \
+  --admin-key sk-adminKey... \
+  --policy ./euno.policy.yaml
 ```
 
-Save the returned `policyId` — you may need it for API-key scoping.
+This command:
+1. Validates the API key against the gateway.
+2. Uploads your policy file to the hosted policy store via the admin API.
+3. Prints the policy ID assigned to your policy.
+4. Optionally patches your `mcp.json` / `claude_desktop_config.json` to add
+   `--enforcer-url` and `--enforcer-api-key`, with a `.bak` backup.
 
-> **Coming in a future release:** An interactive `euno-mcp upgrade-to-hosted`
-> command (Task 15) will automate this step — validating your API key, uploading
-> the policy, and optionally patching your `claude_desktop_config.json` in one
-> command. Until then, use the admin API recipe above or §5 below.
+Use `--dry-run` to preview changes without writing any files.
+
+For the manual path, see the [manual migration recipe](#5-manual-migration-recipe) below.
 
 ### Step 2 — Smoke-test in parallel
 
