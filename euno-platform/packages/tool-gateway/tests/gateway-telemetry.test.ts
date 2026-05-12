@@ -32,8 +32,9 @@
  *   ✓ returns 'unknown' for empty token string
  *
  * createGatewayTelemetryFromEnv
- *   ✓ returns null when EUNO_TELEMETRY=0
- *   ✓ returns a started collector when EUNO_TELEMETRY is not 0
+ *   ✓ returns null when EUNO_TELEMETRY is unset (opt-in default, DI-4)
+ *   ✓ returns null when EUNO_TELEMETRY=0 (explicit opt-out, also returns null)
+ *   ✓ returns a started collector when EUNO_TELEMETRY=1 (explicit opt-in)
  *   ✓ uses EUNO_TELEMETRY_URL as the endpoint
  */
 
@@ -351,22 +352,23 @@ describe('createGatewayTelemetryFromEnv', () => {
     // Ensure no timer leaks between tests.
   });
 
-  it('returns null when EUNO_TELEMETRY=0', () => {
+  it('returns null when EUNO_TELEMETRY=0 (explicit opt-out — also null under new opt-in semantics)', () => {
     const result = createGatewayTelemetryFromEnv({ EUNO_TELEMETRY: '0' });
     expect(result).toBeNull();
   });
 
-  it('returns a started collector when EUNO_TELEMETRY is not 0', async () => {
+  it('returns a started collector when EUNO_TELEMETRY=1 (explicit opt-in)', async () => {
     const result = createGatewayTelemetryFromEnv({ EUNO_TELEMETRY: '1' });
     expect(result).toBeInstanceOf(GatewayTelemetryCollector);
     // Clean up the timer.
     if (result) await result.stop();
   });
 
-  it('returns a collector when EUNO_TELEMETRY is unset', async () => {
+  it('returns null when EUNO_TELEMETRY is unset (opt-in default — DI-4)', () => {
+    // Before DI-4 this test expected a collector; after DI-4 the default is
+    // disabled and operators must explicitly set EUNO_TELEMETRY=1 to opt in.
     const result = createGatewayTelemetryFromEnv({});
-    expect(result).toBeInstanceOf(GatewayTelemetryCollector);
-    if (result) await result.stop();
+    expect(result).toBeNull();
   });
 
   it('uses EUNO_TELEMETRY_URL as the endpoint', async () => {

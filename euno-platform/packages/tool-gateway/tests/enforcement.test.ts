@@ -1312,6 +1312,85 @@ describe('EnforcementEngine', () => {
       ).rejects.toThrow(/does not match/);
     });
 
+    // ── OQ-5: cnf.jkt ↔ proof JWK binding (security regression guard) ────────
+    // DPoP verification MUST confirm that the `cnf.jkt` thumbprint in the
+    // capability token matches the thumbprint of the JWK embedded in the DPoP
+    // proof header.  If the binding check is absent, an attacker who obtains a
+    // sender-constrained token can present it with an attacker-controlled JWK,
+    // bypassing the proof-of-possession requirement.
+    //
+    // Three scenarios are tested:
+    //   (a) Token cnf.jkt = X, proof JWK thumbprint = Y (different key) → 401
+    //   (b) Token cnf.jkt = X, proof JWK thumbprint = X (same key) → allowed
+    //   (c) Token has no cnf.jkt, proof present, gateway permissive → allowed
+    //       (DPoP is ignored for non-sender-constrained tokens — the JWK is not
+    //       bound to anything and cannot be checked)
+
+    describe('OQ-5: cnf.jkt ↔ proof JWK binding', () => {
+      it('rejects when token cnf.jkt does not match the proof JWK thumbprint', async () => {
+        // Token is bound to `dpopJkt` (the test key-pair generated in beforeAll).
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { cnf: { jkt: dpopJkt } },
+        );
+        // Proof is signed with a DIFFERENT key — its embedded JWK has a
+        // different thumbprint, so the binding check must reject it.
+        const attackerKp = await jose.generateKeyPair('ES256', { extractable: true });
+        const attackerJwk = await jose.exportJWK(attackerKp.publicKey);
+        const proof = await new jose.SignJWT({
+          htm: 'POST',
+          htu: 'https://gw.example.com/proxy/api',
+          jti: `oq5-attacker-${Math.random().toString(36).slice(2)}`,
+        })
+          .setProtectedHeader({ alg: 'ES256', typ: 'dpop+jwt', jwk: attackerJwk })
+          .setIssuedAt()
+          .sign(attackerKp.privateKey as jose.KeyLike);
+
+        await expect(
+          engine.validateAction({
+            token,
+            action: 'read',
+            resource: 'api://service/endpoint',
+            dpop: { proof, httpMethod: 'POST', httpUrl: 'https://gw.example.com/proxy/api' },
+          }),
+        ).rejects.toThrow(/does not match/i);
+      });
+
+      it('accepts when token cnf.jkt exactly matches the proof JWK thumbprint', async () => {
+        // Sanity-check: the binding check must pass for the legitimate key.
+        const token = await createTestToken(
+          [{ resource: 'api://service/endpoint', actions: ['read'] }],
+          { cnf: { jkt: dpopJkt } },
+        );
+        const proof = await createDpopProof('GET', 'https://gw.example.com/proxy/api');
+        const res = await engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+        });
+        expect(res.allowed).toBe(true);
+      });
+
+      it('ignores a DPoP proof when the token has no cnf.jkt (non-sender-constrained bearer)', async () => {
+        // A token without cnf.jkt is a plain bearer token.  The gateway
+        // should neither verify nor reject a proof attached to it — the
+        // bearer token simply doesn't have a key binding.
+        const token = await createTestToken([
+          { resource: 'api://service/endpoint', actions: ['read'] },
+        ]);
+        const proof = await createDpopProof('GET', 'https://gw.example.com/proxy/api');
+        const res = await engine.validateAction({
+          token,
+          action: 'read',
+          resource: 'api://service/endpoint',
+          // Proof is present but should be ignored — no cnf.jkt in token.
+          dpop: { proof, httpMethod: 'GET', httpUrl: 'https://gw.example.com/proxy/api' },
+        });
+        expect(res.allowed).toBe(true);
+      });
+    });
+
     it('with dpop.required=true, rejects a plain token without cnf.jkt', async () => {
       const strict = new EnforcementEngine({
         verifier,

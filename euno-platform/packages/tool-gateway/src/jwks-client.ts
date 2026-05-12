@@ -62,6 +62,19 @@ export class JwksClient implements JwksKeySource {
   private cache: CacheEntry | null = null;
   /** Deduplicates concurrent refresh calls — only one HTTP request in flight at a time. */
   private refreshPromise: Promise<JwkSet> | null = null;
+  /**
+   * Per-kid singleflight map (CI-8).
+   *
+   * On key rotation, tokens with the new `kid` arrive simultaneously at a
+   * cache that still holds the old key set.  Without this map each concurrent
+   * miss would call `doRefresh()` independently, creating an N × M fan-out to
+   * the issuer's JWKS endpoint (one refresh per concurrent request per
+   * replica).  By storing a single pending `getKeyByKid` promise per `kid` we
+   * guarantee that only one outstanding forced refresh exists per kid at a
+   * time: all other callers for the same kid wait on the same promise and
+   * resolve from the refreshed cache.
+   */
+  private readonly kidPendingRefreshes = new Map<string, Promise<JwkKey>>();
 
   constructor(opts: JwksClientOptions) {
     this.jwksUrl = opts.jwksUrl;
@@ -87,6 +100,12 @@ export class JwksClient implements JwksKeySource {
    * single forced refresh is attempted (handles a freshly-rotated key).
    * Throws {@link CapabilityError} (fail-closed) when the kid is still
    * absent after the refresh.
+   *
+   * **Singleflight per kid (CI-8):** concurrent requests for the same
+   * unknown `kid` share a single pending refresh promise.  This prevents
+   * the N×M fan-out stampede to the JWKS endpoint that otherwise occurs
+   * when many in-flight tokens all carry a freshly-rotated key that is
+   * not yet in the local cache.
    */
   async getKeyByKid(kid: string): Promise<JwkKey> {
     // Fast path: kid is in the (possibly stale) cache.
@@ -97,17 +116,47 @@ export class JwksClient implements JwksKeySource {
     }
 
     // Slow path: force a synchronous refresh — the key might have just
-    // been added at the issuer.
-    const fresh = await this.getJwksInternal({ forceRefresh: true, allowStale: false });
-    const freshKey = pickJwkByKid(fresh, kid);
-    if (!freshKey) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_TOKEN,
-        `No public key found for kid="${kid}" — key may have been removed or the JWKS endpoint is unreachable`,
-        401,
-      );
+    // been added at the issuer.  Singleflight per kid: if another caller is
+    // already refreshing for this kid, piggy-back on their promise instead
+    // of issuing a second HTTP request.
+    const existing = this.kidPendingRefreshes.get(kid);
+    if (existing) {
+      return existing;
     }
-    return freshKey;
+
+    const refreshAndFind = this.getJwksInternal({ forceRefresh: true, allowStale: false }).then(
+      (fresh) => {
+        const freshKey = pickJwkByKid(fresh, kid);
+        if (!freshKey) {
+          throw new CapabilityError(
+            ErrorCode.INVALID_TOKEN,
+            `No public key found for kid="${kid}" — key may have been removed or the JWKS endpoint is unreachable`,
+            401,
+          );
+        }
+        return freshKey;
+      },
+    );
+
+    // Register before awaiting so any concurrent caller for the same kid
+    // that arrives while the refresh is in flight will join this promise.
+    // The map entry is removed in the finally block: if the same promise
+    // is still in the map when we finish (success or failure), we delete it.
+    // If a newer promise has been registered for the same kid by the time we
+    // reach finally (which cannot happen in practice because any concurrent
+    // caller that arrives while refreshAndFind is in the map will JOIN it
+    // rather than create a new entry), we intentionally leave the newer
+    // promise in place so it can self-clean when it finishes.
+    this.kidPendingRefreshes.set(kid, refreshAndFind);
+    try {
+      return await refreshAndFind;
+    } finally {
+      // Remove only if it's still the same promise (no newer refresh was
+      // registered while we were awaiting).
+      if (this.kidPendingRefreshes.get(kid) === refreshAndFind) {
+        this.kidPendingRefreshes.delete(kid);
+      }
+    }
   }
 
   // ── Internal helpers ──────────────────────────────────────────────────────
