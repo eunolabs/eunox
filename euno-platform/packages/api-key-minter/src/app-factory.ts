@@ -3,8 +3,11 @@ import helmet from 'helmet';
 import { CapabilityError, createLogger } from '@euno/common';
 import { createMintRouter, MintRouterOptions } from './routes/mint';
 import { createAdminKeysRouter, AdminKeysRouterOptions } from './routes/admin-keys';
+import { createAdminPoliciesRouter } from './routes/admin-policies';
+import { createPingRouter } from './routes/ping';
 import { AnomalyDetector } from './anomaly-detector';
 import { minterMetrics } from './metrics';
+import { ApiKeyVerifier } from './api-key-verifier';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -36,6 +39,24 @@ export function createMinterApp(deps: MinterDependencies): Express {
 
   app.use(createMintRouter(mintRouterOpts));
   app.use(createAdminKeysRouter(deps.adminKeysRouterOpts));
+
+  // Build a verifier from the admin-keys opts so the ping route can reuse the
+  // same pepper chain and key store that the mint route uses.
+  const verifier = new ApiKeyVerifier({
+    store: deps.adminKeysRouterOpts.keyStore,
+    peppers: deps.adminKeysRouterOpts.peppers,
+    logger: deps.logger,
+  });
+  app.use(createPingRouter({ verifier, logger: deps.logger }));
+
+  // Admin policy-management routes (requires X-Admin-Key).
+  app.use(
+    createAdminPoliciesRouter({
+      keyStore: deps.adminKeysRouterOpts.keyStore,
+      adminApiKey: deps.adminKeysRouterOpts.adminApiKey,
+      logger: deps.logger,
+    }),
+  );
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'api-key-minter' });
