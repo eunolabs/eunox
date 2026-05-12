@@ -173,7 +173,7 @@ async function main(): Promise<void> {
     logger.info('Using Redis-backed anomaly detector (fleet-wide view)', {
       replicaId,
       redisUrl: (process.env['ANOMALY_REDIS_URL'] || process.env['REDIS_URL'] ?? '').replace(
-        /\/\/[^@]*@/,
+        /\/\/[^@/\s]*@/,
         '//<redacted>@',
       ),
     });

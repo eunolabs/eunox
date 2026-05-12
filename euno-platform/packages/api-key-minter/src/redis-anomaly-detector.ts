@@ -141,8 +141,9 @@ export class RedisAnomalyDetector {
     this.fallback = new AnomalyDetector(opts);
 
     this.client.on('error', () => {
-      // Surface Redis errors to the fallback detector's error context.
-      // The fallback itself is always healthy; errors here are transient.
+      // Redis errors are handled per-call in recordMintRedis() — any error
+      // there causes an automatic transparent fallback to the in-memory
+      // AnomalyDetector so detection is never fully disabled by an outage.
     });
   }
 
