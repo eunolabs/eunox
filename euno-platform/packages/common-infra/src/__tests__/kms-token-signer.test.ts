@@ -235,7 +235,38 @@ describe('createKmsTokenSignerFromEnv', () => {
     expect(signer!.getAlgorithm()).toBe('ES256');
   });
 
-  it('returns a KmsTokenSigner for gcp-cloudkms when all GCP vars are set', () => {
+  // DI-1: GCP requires tenantKeyMap — without it the constructor throws.
+  it('throws for gcp-cloudkms when MINTER_TENANT_KEY_MAP is absent (DI-1)', () => {
+    expect(() =>
+      createKmsTokenSignerFromEnv({
+        MINTER_KMS_PROVIDER: 'gcp-cloudkms',
+        MINTER_SIGNING_GCP_PROJECT_ID: 'proj',
+        MINTER_SIGNING_GCP_LOCATION_ID: 'us-east1',
+        MINTER_SIGNING_GCP_KEYRING_ID: 'ring',
+        MINTER_SIGNING_GCP_CRYPTOKEY_ID: 'key',
+        MINTER_SIGNING_ALGORITHM: 'ES256',
+      }),
+    ).toThrow(/tenantKeyMap is required for GCP Cloud KMS/);
+  });
+
+  it('throws for gcp-cloudkms when MINTER_TENANT_KEY_MAP is an empty object (DI-1)', () => {
+    expect(() =>
+      createKmsTokenSignerFromEnv({
+        MINTER_KMS_PROVIDER: 'gcp-cloudkms',
+        MINTER_SIGNING_GCP_PROJECT_ID: 'proj',
+        MINTER_SIGNING_GCP_LOCATION_ID: 'us-east1',
+        MINTER_SIGNING_GCP_KEYRING_ID: 'ring',
+        MINTER_SIGNING_GCP_CRYPTOKEY_ID: 'key',
+        MINTER_TENANT_KEY_MAP: JSON.stringify({}),
+      }),
+    ).toThrow(/tenantKeyMap is required for GCP Cloud KMS/);
+  });
+
+  it('returns a KmsTokenSigner for gcp-cloudkms when all GCP vars and tenantKeyMap are set (DI-1)', () => {
+    const tenantMap = {
+      'tenant-acme':
+        'projects/proj/locations/us-east1/keyRings/ring/cryptoKeys/acme-key/cryptoKeyVersions/1',
+    };
     const signer = createKmsTokenSignerFromEnv({
       MINTER_KMS_PROVIDER: 'gcp-cloudkms',
       MINTER_SIGNING_GCP_PROJECT_ID: 'proj',
@@ -243,6 +274,7 @@ describe('createKmsTokenSignerFromEnv', () => {
       MINTER_SIGNING_GCP_KEYRING_ID: 'ring',
       MINTER_SIGNING_GCP_CRYPTOKEY_ID: 'key',
       MINTER_SIGNING_ALGORITHM: 'ES256',
+      MINTER_TENANT_KEY_MAP: JSON.stringify(tenantMap),
     });
     expect(signer).toBeInstanceOf(KmsTokenSigner);
     expect(signer!.getAlgorithm()).toBe('ES256');
@@ -489,6 +521,11 @@ describe('createKmsTokenSigner — config validation', () => {
       keyRingId: 'ring',
       cryptoKeyId: 'key',
       algorithm: 'ES256',
+      // DI-1: GCP requires tenantKeyMap — single-entry map satisfies the assertion.
+      tenantKeyMap: {
+        'tenant-test':
+          'projects/proj/locations/us-east1/keyRings/ring/cryptoKeys/key/cryptoKeyVersions/1',
+      },
     });
     expect(signer).toBeInstanceOf(KmsTokenSigner);
     expect(signer.getAlgorithm()).toBe('ES256');
@@ -546,6 +583,11 @@ describe('KmsTokenSigner — logical key ID derivation', () => {
       locationId: 'us-east1',
       keyRingId: 'my-ring',
       cryptoKeyId: 'my-key',
+      // DI-1: tenantKeyMap required for GCP.
+      tenantKeyMap: {
+        'tenant-test':
+          'projects/my-project/locations/us-east1/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1',
+      },
     });
     const kid = await signer.getKeyId();
     expect(kid).toContain('my-project');

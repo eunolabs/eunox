@@ -144,7 +144,7 @@ front-matter, or use a CODEOWNERS approval requirement on
 
 ## [~] Design Improvements
 
-### DI-1 — GCP per-tenant key isolation is explicitly blocked
+### DI-1 — GCP per-tenant key isolation is explicitly blocked ✅ FIXED
 
 **Package:** `common-infra`  
 **File:** `euno-platform/packages/common-infra/src/kms-token-signer.ts`
@@ -160,9 +160,17 @@ production deployment. Add a startup assertion in the GCP driver that fails loud
 when `tenantKeyMap` is absent, rather than silently falling back to the default
 key.
 
+**Fix:** The `KmsTokenSigner` constructor now throws a hard `Error` when
+`provider === 'gcp-cloudkms'` and `tenantKeyMap` is absent or empty, with a
+message referencing `docs/security/minter-threat-model.md §1` and the required
+`MINTER_TENANT_KEY_MAP` variable. Two new regression tests cover the absent and
+empty-object cases; the existing GCP factory test is updated to supply a
+`tenantKeyMap`. See `docs/DEPLOYMENT.md §"GCP Cloud KMS per-tenant key isolation"`
+for the operator guide.
+
 ---
 
-### DI-2 — PostgreSQL advisory lock is a global serialization bottleneck for the audit ledger
+### DI-2 — PostgreSQL advisory lock is a global serialization bottleneck for the audit ledger ✅ FIXED
 
 **Package:** `common-infra`  
 **File:** `euno-platform/packages/common-infra/src/ledger-signer.ts`
@@ -183,6 +191,19 @@ The `PerReplicaPostgresLedgerBackend` addresses this, but the simple
 - Consider sharding the advisory lock by tenant for the shared-table case (e.g.
   `hashtext(tenantId) mod N` as the lock ID), accepting that chain integrity
   becomes per-tenant rather than global.
+
+**Fix:**
+- `PostgresLedgerOptions` gains an `advisoryLockMode?: 'global' | 'per-tenant'`
+  option. When `'per-tenant'`, each tenant acquires a separate advisory lock
+  derived from a stable FNV-1a 32-bit hash of `evidence.tenantId`, allowing
+  concurrent writes from independent tenants. The global seq namespace is
+  preserved; hash collisions result in a transparent retry (up to 3 attempts) on
+  Postgres unique-constraint violation (23505).
+- A throughput SLA table is added to both `PostgresLedgerOptions.advisoryLockMode`
+  JSDoc and `docs/DEPLOYMENT.md §"Audit Ledger backend selection"`.
+- `docs/DEPLOYMENT.md` now explicitly recommends `PerReplicaPostgresLedgerBackend`
+  (`AUDIT_LEDGER_BACKEND=per-replica-postgres`) for any Stage 3+ multi-replica or
+  multi-tenant production deployment, with per-replica throughput estimates.
 
 ---
 
@@ -425,19 +446,39 @@ than issuing a second HTTP request. The map entry is cleared after resolution
 
 ## [?] Open Questions
 
-### OQ-1 — How is the audit ledger HMAC secret provisioned and rotated in production?
+### OQ-1 — How is the audit ledger HMAC secret provisioned and rotated in production? ✅ FIXED
 
 The schema stores `row_hmac = HMAC-SHA256(hmacSecret, ...)`. The design doc refers
 to it as "a separate credential, distinct from the signing key" but there is no
 corresponding env-var entry in `schema.ts` or provisioning runbook.
 
+**Fix:** `AUDIT_LEDGER_HMAC_SECRET` is present in `schema.ts` (see
+`public/packages/common/src/config/schema.ts`) and documented in
+`docs/runbooks/ledger-hmac-rotation.md` (CI-7), which covers secret generation
+(`openssl rand -hex 32`), accepted formats, three rotation strategies (new table,
+dual-secret backfill, per-row versioning), Kubernetes/Helm examples, and guidance
+on storing the secret in a secrets manager. See also
+`docs/DEPLOYMENT.md §"Audit Ledger backend selection"` for the provisioning
+quick-reference.
+
 ---
 
-### OQ-2 — What is the per-tenant multi-tenancy isolation model at the minter DB level?
+### OQ-2 — What is the per-tenant multi-tenancy isolation model at the minter DB level? ✅ FIXED
 
 The `api_keys` table has a `tenant_id` column but the minter appears to use a
 single Postgres database with no row-level security. Application-layer filtering is
 the only isolation mechanism. Is Postgres RLS a planned hardening step?
+
+**Fix:** Documented in `docs/DEPLOYMENT.md §"Minter database multi-tenancy
+isolation"`. The current model (application-layer `WHERE tenant_id = $1` on every
+query) is correct and defended in depth by the API key credential structure, but
+relies on the application never issuing a cross-tenant query. The deployment guide
+now provides a complete RLS migration script (`ENABLE ROW LEVEL SECURITY` +
+`CREATE POLICY ... USING (tenant_id = current_setting('euno.tenant_id', true))`)
+for operators who want the database to enforce the `tenant_id` boundary as a
+second layer of isolation. The guide clearly notes that full wiring of the
+`SET LOCAL euno.tenant_id = ...` session parameter in application code is a
+follow-on hardening task.
 
 ---
 
@@ -490,21 +531,21 @@ for tenant B's resources?
 | P0 | **CR-5** Obtain minter threat model sign-off before merging | None | Process |
 | P0 | ~~**CR-2** Fix `sourceIp` trust boundary~~ ✅ Done | — | — |
 | P0 | ~~**CR-1** Wire durable `UsageMeter` backend (Redis or Postgres)~~ ✅ Done | — | — |
-| P0 | **DI-1** Close GCP per-tenant key isolation (Task 11) | GCP KMS driver | Medium |
+| P0 | ~~**DI-1** Close GCP per-tenant key isolation (Task 11)~~ ✅ Done | — | — |
 | P1 | **CR-3** Mandate Redis Sentinel/Cluster in prod k8s | k8s/redis.yaml | Medium |
 | P1 | **CR-4** Redis-backed `AnomalyDetector` (or document per-replica limitation) | Redis infra | Medium |
 | P1 | ~~**CI-3** Admin kill-switch "illusion of kill" — return 207/503 when fail-open~~ ✅ Done | admin-api.ts | Small |
 | P1 | ~~**CI-6** Change `POSTURE_DURABLE_QUEUE_PATH` default to required in prod~~ ✅ Done | index.ts | Small |
-| P2 | **DI-5** Wire OpenTelemetry distributed tracing | All services | Large |
+| P2 | ~~**DI-5** Wire OpenTelemetry distributed tracing~~ ✅ Done | — | — |
 | P2 | ~~**DI-4** Change telemetry default to opt-in; update network policy~~ ✅ Done | gateway-telemetry.ts | Small |
-| P2 | **DI-2** Benchmark advisory lock; promote `PerReplicaPostgresLedgerBackend` | ledger-signer.ts | Medium |
+| P2 | ~~**DI-2** Benchmark advisory lock; promote `PerReplicaPostgresLedgerBackend`~~ ✅ Done | — | — |
 | P2 | ~~**CI-8** Add singleflight coalesce on JWKS `kid`-miss~~ ✅ Done | jwks-client.ts | Small |
 | P2 | ~~**CI-7** Write `hmacSecret` rotation runbook for the audit ledger~~ ✅ Done | Docs | Small |
 | P2 | ~~**DI-3** Wire `AdminIdempotencyStore` Redis backend; add startup warning~~ ✅ Done | admin-api.ts | Small |
 | P3 | ~~**CI-2** Add `euno_usage_meter_errors_total` counter~~ ✅ Done | — | — |
 | P3 | ~~**CI-4** Log structured `warn` when anomaly fires (not only Prometheus)~~ ✅ Done | — | — |
 | P3 | ~~**CI-5** Redis-backed ping rate limiter~~ ✅ Done | — | — |
-| P3 | **OQ-1/2** Document HMAC secret provisioning; add Postgres RLS hardening option | Docs/schema | Medium |
+| P3 | ~~**OQ-1/2** Document HMAC secret provisioning; add Postgres RLS hardening option~~ ✅ Done | — | — |
 | P3 | ~~**OQ-5** Add explicit test for DPoP `cnf.jkt` ↔ proof JWK binding~~ ✅ Done | tests/ | Small |
 
 ---

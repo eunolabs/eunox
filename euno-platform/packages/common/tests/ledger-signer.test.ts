@@ -1145,3 +1145,147 @@ describe('createLedgerSignerFromConfig — acl backend', () => {
     expect(await result!.verifyEvidence(signed)).toBe(true);
   });
 });
+
+// ── DI-2: PostgresLedgerBackend per-tenant advisory lock mode ─────────────────
+
+/**
+ * Build a mock PgPool that records the advisory lock ID passed to each
+ * pg_advisory_xact_lock call.  Used to verify DI-2 per-tenant lock sharding.
+ */
+function makeLockCapturingPgPool(): {
+  pool: PgPool;
+  capturedLockIds: string[];
+} {
+  const capturedLockIds: string[] = [];
+  const inMemoryRows: Array<{ seq: number; record_hash: string; record_id: string }> = [];
+
+  const makeClient = (): PgClientConnection => ({
+    query<R extends Record<string, unknown> = Record<string, unknown>>(
+      sql: string,
+      values?: unknown[],
+    ): Promise<PgQueryResult<R>> {
+      const trimmed = sql.trim().toUpperCase();
+      if (trimmed === 'BEGIN' || trimmed === 'COMMIT' || trimmed === 'ROLLBACK') {
+        return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+      }
+      if (trimmed.startsWith('SELECT PG_ADVISORY_XACT_LOCK')) {
+        capturedLockIds.push(String(values![0]));
+        return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+      }
+      if (trimmed.includes('ORDER BY SEQ DESC LIMIT 1')) {
+        if (inMemoryRows.length === 0) {
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        }
+        const last = inMemoryRows[inMemoryRows.length - 1]!;
+        return Promise.resolve({
+          rows: [{ seq: String(last.seq), record_hash: last.record_hash }],
+          rowCount: 1,
+        }) as unknown as Promise<PgQueryResult<R>>;
+      }
+      if (trimmed.startsWith('INSERT INTO')) {
+        const [seq, recordId, , , recordHash] = values as [number, string, string, string, string];
+        inMemoryRows.push({ seq, record_id: recordId, record_hash: recordHash });
+        return Promise.resolve({ rows: [], rowCount: 1 }) as unknown as Promise<PgQueryResult<R>>;
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+    },
+    release() {
+      // No-op: test pool clients hold no real resources; the mock PgPool
+      // never opens a real database connection so there is nothing to release.
+    },
+  });
+
+  const pool: PgPool = {
+    connect: () => Promise.resolve(makeClient()),
+    end: () => Promise.resolve(),
+  };
+
+  return { pool, capturedLockIds };
+}
+
+describe('PostgresLedgerBackend — advisoryLockMode (DI-2)', () => {
+  const HMAC_SECRET = 'a'.repeat(64);
+  const testSigner = new EcP256Signer();
+
+  it('global mode uses the fixed default advisory lock ID', async () => {
+    const { pool, capturedLockIds } = makeLockCapturingPgPool();
+    const backend = new PostgresLedgerBackend(pool, { hmacSecret: HMAC_SECRET });
+    const ev = makeEvidence(1);
+    await backend.appendEntry(ev, 'replica-1', (prev, seq) =>
+      signEvidenceWithChain(ev, testSigner, prev, seq),
+    );
+    expect(capturedLockIds).toHaveLength(1);
+    // Default lock: BigInt('0x455534004C454447').toString() = '4995956537521685575'
+    expect(capturedLockIds[0]).toBe('4995956537521685575');
+  });
+
+  it('per-tenant mode uses a different lock ID than the global default', async () => {
+    const { pool, capturedLockIds } = makeLockCapturingPgPool();
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+    const ev = { ...makeEvidence(1), tenantId: 'tenant-acme' };
+    await backend.appendEntry(ev, 'replica-1', (prev, seq) =>
+      signEvidenceWithChain(ev, testSigner, prev, seq),
+    );
+    expect(capturedLockIds).toHaveLength(1);
+    // Lock ID must NOT be the global default
+    expect(capturedLockIds[0]).not.toBe('4995956537521685575');
+  });
+
+  it('per-tenant mode uses distinct lock IDs for different tenants', async () => {
+    // Build two independent lock-capturing pools to isolate appends by tenant.
+    const { pool: poolA, capturedLockIds: idsA } = makeLockCapturingPgPool();
+    const { pool: poolB, capturedLockIds: idsB } = makeLockCapturingPgPool();
+
+    const backendA = new PostgresLedgerBackend(poolA, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+    const backendB = new PostgresLedgerBackend(poolB, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+
+    const evA = { ...makeEvidence(1), tenantId: 'tenant-alpha' };
+    const evB = { ...makeEvidence(2), tenantId: 'tenant-beta' };
+
+    await backendA.appendEntry(evA, 'r-1', (prev, seq) => signEvidenceWithChain(evA, testSigner, prev, seq));
+    await backendB.appendEntry(evB, 'r-1', (prev, seq) => signEvidenceWithChain(evB, testSigner, prev, seq));
+
+    expect(idsA[0]).toBeDefined();
+    expect(idsB[0]).toBeDefined();
+    // Two distinct tenants must produce distinct FNV-1a lock IDs.
+    expect(idsA[0]).not.toBe(idsB[0]);
+  });
+
+  it('per-tenant mode produces the same lock ID on repeated appends for the same tenant', async () => {
+    const { pool, capturedLockIds } = makeLockCapturingPgPool();
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+    const ev1 = { ...makeEvidence(1), tenantId: 'tenant-stable' };
+    const ev2 = { ...makeEvidence(2), tenantId: 'tenant-stable' };
+
+    await backend.appendEntry(ev1, 'r-1', (prev, seq) => signEvidenceWithChain(ev1, testSigner, prev, seq));
+    await backend.appendEntry(ev2, 'r-1', (prev, seq) => signEvidenceWithChain(ev2, testSigner, prev, seq));
+
+    expect(capturedLockIds).toHaveLength(2);
+    // Same tenant → same lock ID on every append.
+    expect(capturedLockIds[0]).toBe(capturedLockIds[1]);
+  });
+
+  it('per-tenant mode throws when evidence.tenantId is absent (DI-2)', async () => {
+    const { pool } = makeLockCapturingPgPool();
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      advisoryLockMode: 'per-tenant',
+    });
+    const ev = makeEvidence(1); // tenantId is undefined
+    await expect(
+      backend.appendEntry(ev, 'r-1', (prev, seq) => signEvidenceWithChain(ev, testSigner, prev, seq)),
+    ).rejects.toThrow(/per-tenant mode.*tenantId is required/);
+  });
+});

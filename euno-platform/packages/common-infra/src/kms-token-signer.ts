@@ -706,6 +706,20 @@ function resolveContextKey(
  * Supports per-tenant key isolation via `config.tenantKeyMap`.  The default
  * driver instance is used for all mints that do not match a tenant-specific
  * entry; per-tenant drivers are created lazily on first use and cached.
+ *
+ * ### DI-1: GCP per-tenant key isolation requirement
+ *
+ * When `provider === 'gcp-cloudkms'`, a `tenantKeyMap` **must** be supplied.
+ * Unlike Azure Key Vault and AWS KMS, GCP Cloud KMS does not support
+ * client-side tenant isolation through credential scoping alone — all tenants
+ * that share a signer config share the same signing key.  A compromised
+ * tenant's token-issuing surface can mint tokens for other tenants, violating
+ * the threat model in `docs/security/minter-threat-model.md §1`.
+ *
+ * Omitting `tenantKeyMap` for GCP in a multi-tenant deployment is therefore a
+ * **hard startup error**.  Single-tenant deployments that genuinely do not
+ * require per-tenant keys should provide an explicit single-entry map (e.g.
+ * `{ 'my-tenant': '<full-crypto-key-version-path>' }`).
  */
 export class KmsTokenSigner implements TokenSigner {
   private readonly config: KmsTokenSignerConfig;
@@ -718,6 +732,21 @@ export class KmsTokenSigner implements TokenSigner {
   private readonly driverCache = new Map<string, KmsSigningDriver>();
 
   constructor(config: KmsTokenSignerConfig) {
+    // DI-1: GCP requires tenantKeyMap — fail loudly rather than silently using
+    // a shared key for every tenant.
+    if (
+      config.provider === 'gcp-cloudkms' &&
+      (!config.tenantKeyMap || Object.keys(config.tenantKeyMap).length === 0)
+    ) {
+      throw new Error(
+        'KmsTokenSigner (gcp-cloudkms): tenantKeyMap is required for GCP Cloud KMS deployments. ' +
+          'GCP does not support per-tenant key isolation through shared signer config. ' +
+          'Provide a MINTER_TENANT_KEY_MAP JSON object mapping tenant audience values to ' +
+          'full CryptoKeyVersion resource paths (e.g. ' +
+          'projects/{p}/locations/{l}/keyRings/{r}/cryptoKeys/{k}/cryptoKeyVersions/{v}). ' +
+          'See docs/security/minter-threat-model.md §1 for the threat model rationale.',
+      );
+    }
     this.config = config;
     this.defaultDriver = buildDriver(config);
   }
