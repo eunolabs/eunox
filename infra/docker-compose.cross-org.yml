@@ -33,7 +33,7 @@ services:
   partner-issuer-sim:
     build:
       context: ..
-      dockerfile: packages/partner-issuer-sim/Dockerfile
+      dockerfile: euno-platform/packages/partner-issuer-sim/Dockerfile
     image: euno/partner-issuer-sim:dev
     container_name: euno-partner-sim
     environment:
@@ -63,7 +63,7 @@ services:
   our-issuer:
     build:
       context: ..
-      dockerfile: packages/capability-issuer/Dockerfile
+      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
     image: euno/capability-issuer:dev
     container_name: euno-our-issuer
     environment:
@@ -81,7 +81,7 @@ services:
   our-gateway:
     build:
       context: ..
-      dockerfile: packages/tool-gateway/Dockerfile
+      dockerfile: euno-platform/packages/tool-gateway/Dockerfile
     image: euno/tool-gateway:dev
     container_name: euno-our-gateway
     depends_on:
