@@ -26,6 +26,15 @@ import { Command } from 'commander';
 import { validateManifest, type AgentCapabilityManifest } from '@euno/common-core';
 
 // ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
+
+/** Convert an unknown thrown value to a human-readable message string. */
+export function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// ---------------------------------------------------------------------------
 // Injectable fetch interface (for unit-test isolation)
 // ---------------------------------------------------------------------------
 
@@ -235,7 +244,7 @@ export function loadManifestFromFile(filePath: string): AgentCapabilityManifest 
     content = fs.readFileSync(resolved, 'utf8');
   } catch (err) {
     throw new Error(
-      `Cannot read policy file '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+      `Cannot read policy file '${filePath}': ${formatError(err)}`,
     );
   }
 
@@ -246,7 +255,7 @@ export function loadManifestFromFile(filePath: string): AgentCapabilityManifest 
       raw = JSON.parse(content);
     } catch (err) {
       throw new Error(
-        `Cannot parse JSON policy file '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+        `Cannot parse JSON policy file '${filePath}': ${formatError(err)}`,
       );
     }
   } else {
@@ -254,7 +263,7 @@ export function loadManifestFromFile(filePath: string): AgentCapabilityManifest 
       raw = yaml.load(content);
     } catch (err) {
       throw new Error(
-        `Cannot parse YAML policy file '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+        `Cannot parse YAML policy file '${filePath}': ${formatError(err)}`,
       );
     }
   }
@@ -456,10 +465,17 @@ export function patchArgs(
   apiKey: string,
 ): string[] {
   // Step 1: remove --policy <path>
+  // A token is treated as the policy value if it does not look like a named
+  // flag (does not start with '--') and is not the bare '-' sentinel.
+  // Single-hyphen paths (e.g. '-/relative/path') are uncommon but valid; the
+  // check intentionally accepts them so real-world policy file paths are never
+  // silently dropped.
   const withoutPolicy: string[] = [];
   let i = 0;
   while (i < args.length) {
-    if (args[i] === '--policy' && i + 1 < args.length && !args[i + 1]!.startsWith('-')) {
+    const next = args[i + 1];
+    const nextIsFlag = next === undefined || next === '-' || next.startsWith('--');
+    if (args[i] === '--policy' && !nextIsFlag) {
       i += 2; // skip --policy and its value
     } else {
       withoutPolicy.push(args[i]!);
@@ -516,7 +532,7 @@ export function readJsonConfigFile(filePath: string): ClaudeDesktopConfig {
     content = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
     throw new Error(
-      `Cannot read config file '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+      `Cannot read config file '${filePath}': ${formatError(err)}`,
     );
   }
   try {
@@ -524,7 +540,7 @@ export function readJsonConfigFile(filePath: string): ClaudeDesktopConfig {
   } catch (err) {
     throw new Error(
       `Cannot parse config file '${filePath}' as JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        `${formatError(err)}`,
     );
   }
 }
@@ -539,7 +555,7 @@ export function writeJsonConfigFile(filePath: string, config: unknown): void {
     fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + '\n', 'utf8');
   } catch (err) {
     throw new Error(
-      `Cannot write config file '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
+      `Cannot write config file '${filePath}': ${formatError(err)}`,
     );
   }
 }
@@ -645,7 +661,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
     out(`    policy : ${pingResult.policyId}`);
     out(`    scopes : ${pingResult.scopes.join(', ')}`);
   } catch (e) {
-    err(`  ✗ API key validation failed: ${e instanceof Error ? e.message : String(e)}`);
+    err(`  ✗ API key validation failed: ${formatError(e)}`);
     err('');
     err('  Make sure --gateway-url and --api-key are correct.');
     err('  See docs/upgrade-to-hosted.md for the manual upgrade path.');
@@ -674,7 +690,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
           ' capabilities)',
       );
     } catch (e) {
-      err(`  ✗ Failed to load policy file: ${e instanceof Error ? e.message : String(e)}`);
+      err(`  ✗ Failed to load policy file: ${formatError(e)}`);
       return 1;
     }
 
@@ -693,7 +709,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         out(`    keys updated : ${uploadResult.updatedKeys}`);
       }
     } catch (e) {
-      err(`  ✗ Policy upload failed: ${e instanceof Error ? e.message : String(e)}`);
+      err(`  ✗ Policy upload failed: ${formatError(e)}`);
       return 1;
     }
   }
@@ -716,7 +732,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         config = readJsonConfigFile(info.filePath);
       } catch (e) {
         err(
-          `    ✗ Could not read/parse file: ${e instanceof Error ? e.message : String(e)}`,
+          `    ✗ Could not read/parse file: ${formatError(e)}`,
         );
         continue;
       }
@@ -745,7 +761,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         out(`    ✓ Backup created: ${path.basename(backupPath)}`);
       } catch (e) {
         err(
-          `    ✗ Could not create backup: ${e instanceof Error ? e.message : String(e)}`,
+          `    ✗ Could not create backup: ${formatError(e)}`,
         );
         continue;
       }
@@ -757,7 +773,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<number> {
         anyPatched = true;
       } catch (e) {
         err(
-          `    ✗ Could not write patched config: ${e instanceof Error ? e.message : String(e)}`,
+          `    ✗ Could not write patched config: ${formatError(e)}`,
         );
         err(`    Restore from backup: cp "${backupPath}" "${info.filePath}"`);
         continue;

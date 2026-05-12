@@ -42,9 +42,13 @@ export interface AdminPoliciesRouterOptions {
 function requireAdminAuth(
   adminApiKey: string,
 ): (req: Request, res: Response, next: NextFunction) => void {
-  const hmacKey = Buffer.alloc(32);
+  // Normalise both the expected and provided keys to a fixed-length SHA-256
+  // digest so that crypto.timingSafeEqual (which requires equal-length buffers)
+  // can be used without leaking length information.  SHA-256 (not HMAC) is
+  // sufficient here: the admin API key is a high-entropy random bearer
+  // credential, not a user password; a KDF would add latency without benefit.
   const expectedHash = crypto
-    .createHmac('sha256', hmacKey)
+    .createHash('sha256')
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 
@@ -52,7 +56,7 @@ function requireAdminAuth(
     const provided = req.headers['x-admin-key'];
     const providedBuf =
       typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
-    const providedHash = crypto.createHmac('sha256', hmacKey).update(providedBuf).digest();
+    const providedHash = crypto.createHash('sha256').update(providedBuf).digest();
 
     if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
       next(

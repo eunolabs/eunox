@@ -561,11 +561,13 @@ describe('patchArgs()', () => {
     expect(result).not.toContain('./p.yaml');
   });
 
-  it('does not remove --policy when value starts with -', () => {
-    // Edge case: if the next token after --policy starts with -, it's not a value
+  it('does not remove --policy when followed by a named flag (--other)', () => {
+    // When the next token after --policy starts with '--' it looks like a flag,
+    // not a value, so --policy is preserved to avoid accidentally dropping a
+    // real flag.
     const result = patchArgs(['proxy', '--policy', '--other', '--', 'npx'], url, key);
-    // '--policy' is present but its "value" looks like a flag — should NOT strip
     expect(result).toContain('--policy');
+    expect(result).toContain('--other');
   });
 
   it('does not remove the -- separator itself', () => {
