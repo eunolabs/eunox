@@ -1723,6 +1723,24 @@ export const GatewayConfigSchema = z
       'Express `trust proxy` setting. Controls whether `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-For` are honoured when reconstructing the request URL — required for DPoP `htu` verification (F-2) when the gateway sits behind a TLS-terminating reverse proxy. Accepts: "true" (trust all proxies — UNSAFE if the gateway is also reachable directly by clients), "false"/unset (ignore X-Forwarded-* — safe default for direct deployment), an integer hop count ("1" = trust the immediate upstream proxy, recommended), or a comma-separated list of trusted CIDRs ("10.0.0.0/8,172.16.0.0/12"). MUST be configured when running behind a load balancer; without it, a direct caller can spoof X-Forwarded-* to make the DPoP proof verify against an attacker-chosen URL.',
     ),
 
+    // Source-IP trust mode for POST /api/v1/enforce (CR-2) ------------------
+    ENFORCE_SOURCE_IP_MODE: optionalString
+      .pipe(
+        z
+          .union([z.literal('gateway'), z.literal('client'), z.undefined()])
+          .transform((v) => v ?? 'gateway'),
+      )
+      .describe(
+        'Controls which IP address is used as the authoritative sourceIp for ipRange policy conditions in POST /api/v1/enforce. ' +
+          '"gateway" (default): the gateway derives the effective IP from the TCP connection / X-Forwarded-For headers (via Express req.ip, respecting TRUST_PROXY). ' +
+          'The client-supplied context.sourceIp is ignored for enforcement but logged as a warning when it differs from the derived IP, making spoofing attempts observable. ' +
+          '"client": legacy behaviour — the gateway trusts the sourceIp value sent in the request body. ' +
+          'SECURITY: "client" mode allows any caller to pass an arbitrary IP to bypass ipRange conditions. ' +
+          'Only use "client" if every caller is a trusted internal service that already enforces the trust boundary. ' +
+          'DEPLOYMENT: when TRUST_PROXY is not configured and the gateway sits behind a reverse proxy, ' +
+          '"gateway" mode will see the proxy\'s IP rather than the client\'s — configure TRUST_PROXY first.',
+      ),
+
     // OCSF audit transport (F-6) --------------------------------------------
     OCSF_TRANSPORT: optionalString.describe(
       'Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: "stdout" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), "file" (append to OCSF_FILE_PATH), "http" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser.',

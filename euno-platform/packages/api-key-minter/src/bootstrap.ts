@@ -34,7 +34,7 @@ import { AnomalyDetector } from './anomaly-detector';
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
-import { InMemoryMintRateLimiter } from './mint-rate-limiter';
+import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
 import type { TokenSigner } from '@euno/common';
 
@@ -165,10 +165,15 @@ async function main(): Promise<void> {
   // Anomaly detector — shared across all requests, stateful per-tenant window.
   const anomalyDetector = new AnomalyDetector();
 
+  // Ping rate limiter — fleet-wide when Redis is configured, per-process
+  // in-memory otherwise (suitable for single-replica / dev deployments).
+  const pingRateLimiter = await createPingRateLimiterFromEnv(process.env, logger);
+
   const app = createMinterApp({
     mintRouterOpts: { verifier, minter, auditStore, rateLimiter, logger },
     adminKeysRouterOpts: { keyStore, peppers, adminApiKey, logger },
     anomalyDetector,
+    pingRateLimiter,
     logger,
   });
 

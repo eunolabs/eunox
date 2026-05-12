@@ -70,12 +70,12 @@ async function signToken(
     .sign(privateKey);
 }
 
-function buildApp(engine: EnforcementEngine): Express {
+function buildApp(engine: EnforcementEngine, opts: { sourceIpMode?: 'gateway' | 'client' } = {}): Express {
   const app = express();
   // Mount the enforce router BEFORE the global body-parser, mirroring app-factory.ts.
   // The router installs its own 512 KiB body-parser and the PayloadTooLargeError
   // handler so the 413 test cases work correctly.
-  app.use(createEnforceRouter({ enforcementEngine: engine, logger }));
+  app.use(createEnforceRouter({ enforcementEngine: engine, logger, sourceIpMode: opts.sourceIpMode }));
   // Global body-parser for any other routes in this test app (none currently,
   // but keeps the middleware chain consistent with production).
   app.use(express.json());
@@ -106,7 +106,10 @@ describe('POST /api/v1/enforce', () => {
       logger,
       dpop: { required: false },
     });
-    app = buildApp(engine);
+    // Use 'client' mode for the shared test app so existing tests that pass
+    // context.sourceIp in the body work as expected. Tests for 'gateway' mode
+    // are in section 8b below using a dedicated app instance.
+    app = buildApp(engine, { sourceIpMode: 'client' });
   });
 
   // ── Body representing a minimal valid request ─────────────────────────────
@@ -598,6 +601,120 @@ describe('POST /api/v1/enforce', () => {
 
       expect(denyRes.status).toBe(200);
       expect(denyRes.body.decision).toBe('deny');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 8b. sourceIpMode='gateway' (CR-2 fix)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("sourceIpMode='gateway' (CR-2 fix)", () => {
+    // The 'gateway' mode app: the router uses req.ip (loopback from supertest)
+    // as the effective sourceIp, ignoring the body field.
+    let gatewayModeApp: Express;
+
+    beforeAll(() => {
+      // No need to rebuild engine; reuse the one from the outer beforeAll.
+      gatewayModeApp = buildApp(engine, { sourceIpMode: 'gateway' });
+    });
+
+    it('uses req.ip (loopback) as the effective sourceIp when mode is gateway', async () => {
+      // req.ip from supertest local connections is '::ffff:127.0.0.1' (IPv4-mapped
+      // loopback). The CIDR '::ffff:127.0.0.0/104' covers ::ffff:127.x.x.x — the
+      // IPv4-mapped loopback space — and does NOT match bare IPv4 strings like
+      // '10.9.9.9' (address-family mismatch in ipMatchesCidr).
+      const token = await signToken(privateKey, [
+        {
+          resource: 'tool://gw-tool',
+          actions: ['execute'],
+          conditions: [{ type: 'ipRange', cidrs: ['::ffff:127.0.0.0/104'] }],
+        },
+      ]);
+
+      const res = await request(gatewayModeApp)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send({
+          sessionId: 'sess-gw',
+          toolName: 'gw-tool',
+          arguments: {},
+          // Supply a non-matching IP in the body — gateway mode must ignore it.
+          context: { sourceIp: '10.9.9.9' },
+        });
+
+      // req.ip (::ffff:127.0.0.1) matches ::ffff:127.0.0.0/104 → allow.
+      expect(res.status).toBe(200);
+      expect(res.body.decision).toBe('allow');
+    });
+
+    it('denies when req.ip falls outside the allowed CIDR even though body sourceIp would match', async () => {
+      // Token only allows 10.0.0.0/8 — body says 10.x.x.x but gateway ignores it.
+      const token = await signToken(privateKey, [
+        {
+          resource: 'tool://gw-tool',
+          actions: ['execute'],
+          conditions: [{ type: 'ipRange', cidrs: ['10.0.0.0/8'] }],
+        },
+      ]);
+
+      const res = await request(gatewayModeApp)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send({
+          sessionId: 'sess-gw',
+          toolName: 'gw-tool',
+          arguments: {},
+          // Body says 10.x.x.x (in-range) but req.ip is loopback (out-of-range).
+          context: { sourceIp: '10.1.2.3' },
+        });
+
+      // req.ip (loopback, ~127.x or ::1) is NOT in 10.0.0.0/8 → deny.
+      expect(res.status).toBe(200);
+      expect(res.body.decision).toBe('deny');
+    });
+
+    it("does not set sourceIp in the validation context when req.ip is undefined and body has no sourceIp", async () => {
+      // A token with no ipRange condition. Request with no body sourceIp.
+      // Should behave as if sourceIp is absent (the condition is vacuously met).
+      const token = await signToken(privateKey, [
+        { resource: 'tool://gw-tool', actions: ['execute'] },
+      ]);
+
+      const res = await request(gatewayModeApp)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send({
+          sessionId: 'sess-gw',
+          toolName: 'gw-tool',
+          arguments: {},
+          context: {},
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.decision).toBe('allow');
+    });
+
+    it('still allows when no ipRange condition is present regardless of sourceIp values', async () => {
+      const token = await signToken(privateKey, [
+        { resource: 'tool://gw-tool', actions: ['execute'] },
+      ]);
+
+      const res = await request(gatewayModeApp)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Euno-Protocol-Version', '1')
+        .send({
+          sessionId: 'sess-gw',
+          toolName: 'gw-tool',
+          arguments: {},
+          context: { sourceIp: '1.2.3.4' },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.decision).toBe('allow');
     });
   });
 

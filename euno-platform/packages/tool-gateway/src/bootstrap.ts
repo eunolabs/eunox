@@ -297,6 +297,17 @@ export interface GatewayDependencies {
    * Omitted (undefined) is equivalent to `null` — telemetry is not collected.
    */
   gatewayTelemetry?: GatewayTelemetryCollector | null;
+  /**
+   * Source-IP trust mode for `POST /api/v1/enforce` (CR-2 fix).
+   *
+   * - `'gateway'` (default): use `req.ip` (connection-derived, respects
+   *   `TRUST_PROXY`) as the authoritative `sourceIp` for `ipRange` conditions.
+   *   Emits a `warn` log when the client-supplied body value differs.
+   * - `'client'`: legacy behaviour — use the value from the request body.
+   *
+   * Plumbed from `ENFORCE_SOURCE_IP_MODE` env var.
+   */
+  sourceIpMode?: 'gateway' | 'client';
 }
 
 /**
@@ -971,6 +982,7 @@ export async function initializeServices(
     usageMeter,
     ...(auditRetentionDays !== undefined ? { auditRetentionDays } : {}),
     gatewayTelemetry,
+    sourceIpMode: (validated.ENFORCE_SOURCE_IP_MODE as 'gateway' | 'client') ?? 'gateway',
   };
 
   logger.info('Tool Gateway services initialized successfully');

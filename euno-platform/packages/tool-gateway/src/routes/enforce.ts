@@ -71,6 +71,28 @@ export interface EnforceRouterOptions {
    * collected.
    */
   telemetry?: GatewayTelemetryHooks;
+  /**
+   * Controls which IP address is used as the authoritative `sourceIp` for
+   * `ipRange` policy conditions (CR-2 fix).
+   *
+   * - `'gateway'` (default): the gateway derives the effective IP from the
+   *   TCP connection and `X-Forwarded-For` headers via `req.ip`, which already
+   *   respects the Express `trust proxy` setting (`TRUST_PROXY` env var).
+   *   The client-supplied `context.sourceIp` is ignored for enforcement.
+   *   When the two values differ a `warn`-level log entry is emitted so
+   *   spoofing attempts are always observable.
+   *
+   * - `'client'`: legacy behaviour — the gateway trusts the `sourceIp` value
+   *   supplied in the request body's `context` field. Only safe when every
+   *   caller is a trusted internal service that already enforces its own trust
+   *   boundary (e.g. the minter façade overwriting the field from the observed
+   *   connection). Using this mode in a self-hosted deployment where
+   *   `@euno/mcp` clients connect directly is a security risk: any client can
+   *   pass an arbitrary IP to bypass `ipRange` conditions.
+   *
+   * Wired from `ENFORCE_SOURCE_IP_MODE` in `initializeServices()`.
+   */
+  sourceIpMode?: 'gateway' | 'client';
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +400,10 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
   const { enforcementEngine, logger } = opts;
   const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   const telemetry = opts.telemetry;
+  // Default to 'gateway' so new deployments get the secure behaviour.
+  // Existing deployments that relied on the client-supplied value can opt back
+  // in via ENFORCE_SOURCE_IP_MODE=client.
+  const sourceIpMode = opts.sourceIpMode ?? 'gateway';
   const router = Router();
 
   // Mount the per-route body parser + its error handler so that
@@ -510,9 +536,44 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           tool: enforceReq.toolName,
           args: enforceReq.arguments,
         };
-        if (enforceReq.context.sourceIp !== undefined) {
-          validationContext.sourceIp = enforceReq.context.sourceIp;
+
+        // CR-2: Resolve the effective sourceIp according to the configured
+        // trust mode. In 'gateway' mode req.ip is derived from the TCP
+        // connection and X-Forwarded-For headers (respecting the Express
+        // `trust proxy` setting) and takes precedence over the client-supplied
+        // body field so callers cannot spoof ipRange conditions. In 'client'
+        // mode the body field is used as-is (legacy behaviour).
+        if (sourceIpMode === 'gateway') {
+          // req.ip may be undefined for non-HTTP transports in tests; fall
+          // back to the client-supplied value only in that case.
+          const gatewayDerivedIp = req.ip;
+          const clientSuppliedIp = enforceReq.context.sourceIp;
+          const effectiveIp = gatewayDerivedIp ?? clientSuppliedIp;
+          if (effectiveIp !== undefined) {
+            validationContext.sourceIp = effectiveIp;
+          }
+          // Warn when the client asserted a different IP — signals a spoofing
+          // attempt or a misconfigured TRUST_PROXY.
+          if (
+            gatewayDerivedIp !== undefined &&
+            clientSuppliedIp !== undefined &&
+            clientSuppliedIp !== gatewayDerivedIp
+          ) {
+            logger.warn('Enforce: client-supplied sourceIp differs from gateway-derived IP', {
+              requestId,
+              gatewayDerivedIp,
+              clientSuppliedIp,
+              sourceIpMode,
+            });
+          }
+        } else {
+          // sourceIpMode === 'client': use the value from the request body
+          // (legacy behaviour; only safe when all callers are trusted).
+          if (enforceReq.context.sourceIp !== undefined) {
+            validationContext.sourceIp = enforceReq.context.sourceIp;
+          }
         }
+
         if (enforceReq.context.recipients !== undefined) {
           validationContext.recipients = enforceReq.context.recipients;
         }
