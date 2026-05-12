@@ -11,6 +11,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`euno-mcp upgrade-to-hosted`** — interactive migration command (Task 15).
+  Guides users through the three-step migration from local in-process
+  enforcement to the hosted Euno gateway without any manual JSON editing:
+
+  1. **Step 1 — Validate API key**: calls `GET /api/v1/ping` on the
+     configured gateway URL to confirm the key is valid and returns the
+     tenant ID, policy ID, and scopes.
+  2. **Step 2 — Upload policy** (optional, requires `--admin-key` and
+     `--policy`): uploads the local `AgentCapabilityManifest` to the hosted
+     policy store via `POST /admin/v1/policies`, propagating the capabilities
+     to all matching API keys.
+  3. **Step 3 — Patch config files**: discovers `claude_desktop_config.json`
+     on the current platform (plus any `--config` paths supplied), backs up
+     each file as `<file>.bak.<timestamp>`, removes `--policy <path>` from
+     matching `euno-mcp proxy` entries, and injects `--enforcer-url <url>`
+     and `--enforcer-api-key <key>` in its place.
+
+  Key properties:
+  - **`--dry-run`** flag previews all changes without writing to disk.
+  - **Idempotent**: entries that already contain `--enforcer-url` are
+    skipped; re-running the command is safe.
+  - **Fail-safe**: config files are backed up before any modification; a
+    restore command is printed if the write fails.
+  - **Injectable `UpgradeFetcher`** for unit-test isolation (same pattern as
+    `EnforceFetcher` in `RemoteEnforcerPDP`).
+
+  Full command reference and manual upgrade steps:
+  `docs/upgrade-to-hosted.md`.
+
 - **Remote-enforcer mode** (`--enforcer-url` / `--enforcer-api-key`).
   When `--enforcer-url <url>` is supplied together with `--enforcer-api-key
   <key>`, the proxy switches from local in-process enforcement to the hosted
@@ -33,6 +62,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (they do not modify the upstream response).
   - **Configurable timeout**: `--enforcer-timeout <ms>` (default 10 s) bounds
     each enforce request; exceeded requests are denied fail-closed.
+
+- **`TelemetryEvent.subcommand`** extended with `'hosted-enforce'` (Task 16 —
+  Telemetry continuity).  Gateway-side events emitted by
+  `euno-platform/packages/tool-gateway`'s `GatewayTelemetryCollector` carry
+  this value so dashboards can separate client-side from server-side rows
+  while sharing the same schema.  All other `subcommand` values are unchanged.
 
 - **`RemoteEnforcerPDP`** — new public class exported from `@euno/mcp` (and
   `src/enforcer/remote.ts`).  Implements `PolicyDecisionPoint`.  Accepts an

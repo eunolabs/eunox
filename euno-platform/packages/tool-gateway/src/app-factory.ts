@@ -127,7 +127,12 @@ export function createApp(deps: GatewayDependencies): Express {
   // (Express does not double-parse), giving other routes their own 100 KiB
   // default without changing this route's limit.
   // See docs/stage-3-gateway-protocol.md for the protocol spec.
-  app.use(createEnforceRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
+  app.use(createEnforceRouter({
+    enforcementEngine,
+    logger,
+    actionResolver: deps.actionResolver,
+    telemetry: deps.gatewayTelemetry ?? undefined,
+  }));
 
   app.use(express.json());
 

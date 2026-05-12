@@ -33,6 +33,16 @@ export interface ApiKeyStore {
   updateLastUsedAt(prefix: string, timestamp: string): Promise<void>;
   revokeKey(prefix: string): Promise<void>;
   listByTenant(tenantId: string): Promise<ApiKeyRecord[]>;
+  /**
+   * Replace the `capabilities` array on every non-revoked key whose
+   * `policyId` matches the given value.
+   *
+   * @returns The number of key records that were updated.
+   */
+  updateCapabilitiesByPolicyId(
+    policyId: string,
+    capabilities: CapabilityConstraint[],
+  ): Promise<number>;
 }
 
 export class InMemoryApiKeyStore implements ApiKeyStore {
@@ -80,5 +90,19 @@ export class InMemoryApiKeyStore implements ApiKeyStore {
 
   async listByTenant(tenantId: string): Promise<ApiKeyRecord[]> {
     return Array.from(this.records.values()).filter(r => r.tenantId === tenantId);
+  }
+
+  async updateCapabilitiesByPolicyId(
+    policyId: string,
+    capabilities: CapabilityConstraint[],
+  ): Promise<number> {
+    let count = 0;
+    for (const record of this.records.values()) {
+      if (record.policyId === policyId && record.revokedAt === undefined) {
+        record.capabilities = [...capabilities];
+        count++;
+      }
+    }
+    return count;
   }
 }
