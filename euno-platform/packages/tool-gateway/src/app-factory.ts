@@ -282,6 +282,9 @@ export function createAdminApp(deps: GatewayDependencies): Express {
       // audit-retention days at GET /admin/usage.
       usageMeter: deps.usageMeter,
       auditRetentionDays: deps.auditRetentionDays,
+      // CI-3: surface fail-open-on-write mode so kill-switch endpoints can
+      // return 207 when propagation to other replicas is not guaranteed.
+      killSwitchFailOpenOnWrite: deps.killSwitchFailOpenOnWrite,
     }),
   );
 

@@ -364,10 +364,21 @@ export class DurablePostureEmitter {
 
     const queuePath = env.POSTURE_DURABLE_QUEUE_PATH;
     if (!queuePath) {
+      const isProduction = env.NODE_ENV === 'production';
+      if (isProduction) {
+        throw new Error(
+          'posture-emitter: POSTURE_DURABLE_QUEUE_PATH must be set in production. ' +
+            "Refusing to start with ':memory:' queue because events will be lost on pod " +
+            'restart, defeating the durability guarantee the WAL design exists to provide. ' +
+            'Set POSTURE_DURABLE_QUEUE_PATH to a path on a persistent volume, e.g. ' +
+            '/var/lib/euno/posture-queue.db',
+        );
+      }
       logger?.warn?.(
         'posture-emitter: POSTURE_DURABLE_QUEUE_PATH is not set; ' +
           "using ':memory:' queue — events will not survive restarts. " +
-          'Set POSTURE_DURABLE_QUEUE_PATH to a persistent volume path in production.',
+          'Set POSTURE_DURABLE_QUEUE_PATH to a persistent volume path in production ' +
+          '(a hard startup error will be thrown when NODE_ENV=production).',
         {},
       );
     }

@@ -158,6 +158,14 @@ export interface GatewayDependencies {
    * the request body.  Plumbed from `ADMIN_TENANT_ID`.
    */
   adminTenantId?: string;
+  /**
+   * Whether the kill-switch manager was configured with `failOpenOnWrite=true`
+   * (`KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`).  When true, the admin router
+   * returns `207 Multi-Status` for mutating kill-switch endpoints to signal
+   * that the kill was applied locally but fleet-wide propagation is not
+   * guaranteed (CI-3).  Plumbed from `KILL_SWITCH_FAIL_OPEN_ON_WRITE`.
+   */
+  killSwitchFailOpenOnWrite?: boolean;
   /** Backend service URL for the proxy route. */
   backendServiceUrl: string;
   /** Port the admin HTTP server listens on (separate from the public `config.port`). */
@@ -288,12 +296,12 @@ export interface GatewayDependencies {
   auditRetentionDays?: number;
   /**
    * Hosted-mode telemetry collector (Task 16 — Telemetry continuity).
-   * Present when `EUNO_TELEMETRY` is not `'0'`.  The enforce route passes
-   * enforcement decisions to this collector; `initializeServices` starts
-   * its flush timer and the entrypoint calls `stop()` on graceful shutdown
-   * so any pending tenant stats are flushed before exit.
+   * Present when `EUNO_TELEMETRY=1` (explicit opt-in, DI-4).  The enforce
+   * route passes enforcement decisions to this collector; `initializeServices`
+   * starts its flush timer and the entrypoint calls `stop()` on graceful
+   * shutdown so any pending tenant stats are flushed before exit.
    *
-   * `null` means telemetry is disabled by `EUNO_TELEMETRY=0`.
+   * `null` means telemetry is disabled (the default).
    * Omitted (undefined) is equivalent to `null` — telemetry is not collected.
    */
   gatewayTelemetry?: GatewayTelemetryCollector | null;
@@ -953,12 +961,29 @@ export async function initializeServices(
   });
 
   // ── Step 15: Hosted-mode telemetry (Task 16 — Telemetry continuity) ───────
-  // Disabled when EUNO_TELEMETRY=0; enabled by default so the operator can
-  // choose to opt out via that env var. The collector is started here and
-  // its flush timer is unref'd so it never prevents clean process exit.
+  // Disabled by default (DI-4): only enabled when EUNO_TELEMETRY=1.
+  // When enabled, the collector is started here and its flush timer is
+  // unref'd so it never prevents clean process exit.
   const gatewayTelemetry = createGatewayTelemetryFromEnv(env);
   if (gatewayTelemetry) {
-    logger.info('Gateway telemetry collector started (EUNO_TELEMETRY != 0)');
+    logger.info('Gateway telemetry collector started (EUNO_TELEMETRY=1)');
+  }
+
+  // ── DI-3: Admin idempotency store startup warning ─────────────────────────
+  // The admin idempotency store is in-memory (per-process) by default.  In a
+  // multi-replica deployment the same Idempotency-Key sent to two different
+  // replicas will be processed twice — the in-memory store only prevents
+  // retries to the *same* replica.  When REDIS_URL is configured we emit a
+  // startup warn so operators know the gap exists and can wire a
+  // RedisAdminIdempotencyStore (see src/admin-api.ts) for Stage 4 HA admin.
+  if (env.ADMIN_IDEMPOTENCY_REDIS_URL || env.REDIS_URL) {
+    logger.warn(
+      'DI-3: REDIS_URL is configured but the admin idempotency store is in-memory. ' +
+        'In a multi-replica deployment, duplicate admin operations (kill, revoke, etc.) ' +
+        'can be processed once per replica. To prevent this, wire RedisAdminIdempotencyStore ' +
+        'from @euno/tool-gateway into createAdminRouter({ idempotencyStore: ... }). ' +
+        'See docs/architecture-review-2026-05.md § DI-3.',
+    );
   }
 
   const deps: GatewayDependencies = {
@@ -980,6 +1005,7 @@ export async function initializeServices(
     ...(auditLedgerBackend ? { auditLedgerBackend } : {}),
     adminApiKey,
     adminTenantId,
+    killSwitchFailOpenOnWrite: env.KILL_SWITCH_FAIL_OPEN_ON_WRITE === 'true',
     backendServiceUrl: validated.BACKEND_SERVICE_URL || 'http://localhost:4000',
     adminPort: validated.ADMIN_PORT,
     adminHost: validated.ADMIN_HOST?.trim() || undefined,

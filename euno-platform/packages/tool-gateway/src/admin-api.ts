@@ -118,6 +118,95 @@ export class AdminIdempotencyStore {
   }
 }
 
+/**
+ * Minimal Redis client surface required by {@link RedisAdminIdempotencyStore}.
+ * Defined locally so the gateway does not take a hard runtime dependency on
+ * `ioredis` — callers wire one in via `createAdminIdempotencyStoreFromEnv`.
+ */
+export interface RedisIdempotencyClient {
+  set(
+    key: string,
+    value: string,
+    expiryMode: 'EX',
+    ttlSeconds: number,
+    setMode: 'NX',
+  ): Promise<'OK' | null>;
+  get(key: string): Promise<string | null>;
+  quit(): Promise<unknown>;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+/**
+ * Redis-backed idempotency store for admin API mutations (DI-3).
+ *
+ * Replaces the in-memory {@link AdminIdempotencyStore} for multi-replica
+ * deployments where the same idempotency key might be sent to different
+ * replicas (e.g. after a rolling restart re-routes admin traffic).
+ *
+ * Uses atomic `SET key value EX ttl NX` on write — the NX flag means the
+ * first replica to process a given key wins; all subsequent replicas return
+ * the cached entry.  `GET key` on read returns `null` when the entry has
+ * expired (Redis TTL enforcement) or was never set.
+ *
+ * Key format: `<keyPrefix><idempotencyKey>` (default prefix `idempotency:`).
+ */
+export class RedisAdminIdempotencyStore {
+  private readonly client: RedisIdempotencyClient;
+  private readonly keyPrefix: string;
+  private readonly ttlMs: number;
+
+  static readonly DEFAULT_TTL_MS = AdminIdempotencyStore.DEFAULT_TTL_MS;
+  static readonly DEFAULT_KEY_PREFIX = 'idempotency:';
+
+  constructor(
+    client: RedisIdempotencyClient,
+    opts: { keyPrefix?: string; ttlMs?: number } = {},
+  ) {
+    this.client = client;
+    this.keyPrefix = opts.keyPrefix ?? RedisAdminIdempotencyStore.DEFAULT_KEY_PREFIX;
+    this.ttlMs = opts.ttlMs ?? RedisAdminIdempotencyStore.DEFAULT_TTL_MS;
+  }
+
+  /**
+   * Return a cached entry if one exists and has not expired; undefined
+   * otherwise.  Expired entries are evicted by Redis TTL automatically.
+   */
+  async get(key: string): Promise<IdempotencyEntry | undefined> {
+    const raw = await this.client.get(this.keyPrefix + key);
+    if (!raw) return undefined;
+    try {
+      const entry = JSON.parse(raw) as IdempotencyEntry;
+      // Guard against a race where the entry expires after GET but before
+      // the caller uses it (very narrow window; tolerable for idempotency).
+      if (Date.now() > entry.expiresAt) return undefined;
+      return entry;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Store a completed response keyed by the idempotency key, using NX
+   * semantics so a concurrent replica cannot overwrite an in-flight entry.
+   */
+  async set(key: string, endpoint: string, status: number, body: unknown): Promise<IdempotencyEntry> {
+    const entry: IdempotencyEntry = {
+      status,
+      body,
+      endpoint,
+      expiresAt: Date.now() + this.ttlMs,
+    };
+    const ttlSeconds = Math.ceil(this.ttlMs / 1000);
+    // Fire-and-forget — a Redis write failure is not fatal for idempotency
+    // (the operation has already executed; not caching the result means the
+    // caller might re-execute on a retry, which is the pre-Redis behaviour).
+    await this.client
+      .set(this.keyPrefix + key, JSON.stringify(entry), 'EX', ttlSeconds, 'NX')
+      .catch(() => undefined);
+    return entry;
+  }
+}
+
 export interface AdminApiOptions {
   killSwitchManager: KillSwitchManager;
   logger: Logger;
@@ -231,6 +320,20 @@ export interface AdminApiOptions {
    */
   idempotencyStore?: AdminIdempotencyStore;
   /**
+   * When `true`, the kill-switch manager is configured with
+   * `failOpenOnWrite=true` (i.e. `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`).
+   *
+   * In fail-open mode, a Redis write failure silently updates only the local
+   * cache while other replicas remain unaffected. To alert the operator that
+   * the kill may not have propagated fleet-wide, every mutating kill-switch
+   * endpoint returns `207 Multi-Status` (instead of `200 OK`) with a
+   * `fleetPropagationPending: true` flag in the body.
+   *
+   * Plumbed from `KILL_SWITCH_FAIL_OPEN_ON_WRITE` via `createAdminApp`.
+   */
+  killSwitchFailOpenOnWrite?: boolean;
+
+  /**
    * Billing usage meter (Task 17).
    *
    * When supplied, the admin router exposes `GET /usage` (current per-tenant
@@ -275,7 +378,35 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     ocsfTransport,
     usageMeter,
     auditRetentionDays,
+    killSwitchFailOpenOnWrite = false,
   } = options;
+
+  /**
+   * Build the response status code and body for a successful mutating
+   * kill-switch operation.
+   *
+   * When `killSwitchFailOpenOnWrite` is `true` the caller must be informed
+   * that the kill was applied to the **local replica only** and fleet-wide
+   * propagation is contingent on Redis recovery.  RFC 7807 does not cover
+   * this case precisely, so we use `207 Multi-Status` with a structured
+   * `fleetPropagationPending` flag to distinguish it from a clean `200`.
+   */
+  function killSwitchSuccessResponse(message: string): { status: number; body: Record<string, unknown> } {
+    if (killSwitchFailOpenOnWrite) {
+      return {
+        status: 207,
+        body: {
+          message,
+          fleetPropagationPending: true,
+          warning:
+            'Kill applied to this replica only. Fleet-wide propagation is ' +
+            'pending Redis recovery (KILL_SWITCH_FAIL_OPEN_ON_WRITE=true). ' +
+            'Verify Redis connectivity and re-issue the kill once it is restored.',
+        },
+      };
+    }
+    return { status: 200, body: { message } };
+  }
 
   // Idempotency store: use caller-supplied or create a fresh in-memory one.
   const idempotencyStore = options.idempotencyStore ?? new AdminIdempotencyStore();
@@ -591,9 +722,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.warn('Global kill switch activated via admin API', { operator });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
-      const body = { message: 'Global kill switch activated' };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse('Global kill switch activated');
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to activate global kill switch', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -636,9 +767,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         unmapped: { scope: 'global' },
       });
       logger.info('Global kill switch deactivated via admin API', { operator });
-      const body = { message: 'Global kill switch deactivated' };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse('Global kill switch deactivated');
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to deactivate global kill switch', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -696,9 +827,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.warn('Session killed via admin API', { sessionId });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
-      const body = { message: `Session ${sessionId} has been killed` };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse(`Session ${sessionId} has been killed`);
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to kill session', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -754,9 +885,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.warn('Agent killed via admin API', { agentId });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
-      const body = { message: `Agent ${agentId} has been killed` };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse(`Agent ${agentId} has been killed`);
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to kill agent', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -808,9 +939,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         status: 'Success',
       });
       logger.info('Session revived via admin API', { sessionId });
-      const body = { message: `Session ${sessionId} has been revived` };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse(`Session ${sessionId} has been revived`);
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to revive session', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -862,9 +993,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         status: 'Success',
       });
       logger.info('Agent revived via admin API', { agentId });
-      const body = { message: `Agent ${agentId} has been revived` };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse(`Agent ${agentId} has been revived`);
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to revive agent', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -909,9 +1040,9 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         unmapped: { scope: 'all' },
       });
       logger.warn('All kill switches reset via admin API');
-      const body = { message: 'All kill switches have been reset' };
-      cacheIdempotentResponse(req, 200, body);
-      res.json(body);
+      const { status, body } = killSwitchSuccessResponse('All kill switches have been reset');
+      cacheIdempotentResponse(req, status, body);
+      res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to reset kill switches', {
         error: error instanceof Error ? error.message : 'Unknown error',

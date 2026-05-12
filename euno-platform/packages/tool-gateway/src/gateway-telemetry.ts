@@ -22,17 +22,17 @@
  *   max number of distinct MCP session IDs observed simultaneously within a
  *   60-second window during the reporting interval.
  *
- * Opt-out
- * -------
- * `EUNO_TELEMETRY=0` — disables server-side telemetry entirely. All hooks
- * become no-ops. Default: enabled (the gateway operator controls this env var;
- * there is no interactive prompt).
+ * Opt-in
+ * ------
+ * `EUNO_TELEMETRY=1` — explicitly enables server-side telemetry (opt-in).
+ * Telemetry is **disabled by default** (DI-4). Self-hosters must set
+ * `EUNO_TELEMETRY=1` to activate the outbound connection.
  *
  * Configuration
  * -------------
  * | Env var                           | Default                                     |
  * | --------------------------------- | ------------------------------------------- |
- * | `EUNO_TELEMETRY`                  | (unset = enabled; `0` = disabled)           |
+ * | `EUNO_TELEMETRY`                  | (unset = disabled; `1` = enabled)           |
  * | `EUNO_TELEMETRY_URL`              | `https://telemetry.euno.dev/v1/events`      |
  * | `GATEWAY_TELEMETRY_FLUSH_MS`      | `300000` (5 minutes)                        |
  *
@@ -374,13 +374,15 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
  * Build a {@link GatewayTelemetryCollector} from environment variables and
  * start its flush timer.
  *
- * Returns `null` when `EUNO_TELEMETRY=0` so callers can short-circuit without
- * creating an object.
+ * Returns `null` unless `EUNO_TELEMETRY=1` is explicitly set (opt-in).
+ * The previous behaviour (unset = enabled, `0` = disabled) was an
+ * unexpected outbound connection for self-hosters; the new default is
+ * disabled so operators must consciously opt in (DI-4).
  */
 export function createGatewayTelemetryFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): GatewayTelemetryCollector | null {
-  if (env['EUNO_TELEMETRY'] === '0') {
+  if (env['EUNO_TELEMETRY'] !== '1') {
     return null;
   }
 

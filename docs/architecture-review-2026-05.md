@@ -186,7 +186,7 @@ The `PerReplicaPostgresLedgerBackend` addresses this, but the simple
 
 ---
 
-### DI-3 — `AdminIdempotencyStore` is in-memory; provides false guarantees in multi-replica deployments
+### DI-3 — `AdminIdempotencyStore` is in-memory; provides false guarantees in multi-replica deployments ✅ FIXED
 
 **Package:** `tool-gateway`  
 **File:** `euno-platform/packages/tool-gateway/src/admin-api.ts`
@@ -202,9 +202,15 @@ replicas for HA breaks idempotency silently without a code change.
 - Add a startup `warn` when `REDIS_URL` is set but no Redis-backed idempotency
   store is configured.
 
+**Fix:** Added `RedisAdminIdempotencyStore` (atomic `SET EX NX` + `GET`) and
+`RedisIdempotencyClient` interface to `admin-api.ts`. Added a startup `warn` in
+`initializeServices` when `REDIS_URL` or `ADMIN_IDEMPOTENCY_REDIS_URL` is
+configured but the in-memory store is in use, directing operators to wire the
+Redis store for Stage 4 HA admin deployments.
+
 ---
 
-### DI-4 — Telemetry endpoint is an outbound call to an external service from the enforcement plane
+### DI-4 — Telemetry endpoint is an outbound call to an external service from the enforcement plane ✅ FIXED
 
 **Package:** `tool-gateway`  
 **File:** `euno-platform/packages/tool-gateway/src/gateway-telemetry.ts`
@@ -222,6 +228,12 @@ gateway's egress network policy does not appear to allow this path by default.
 - Document the telemetry endpoint in `DEPLOYMENT.md` and `self-host.md`.
 - Add to the self-host network policy egress rules only when telemetry is
   explicitly enabled.
+
+**Fix:** `createGatewayTelemetryFromEnv` now returns `null` unless
+`EUNO_TELEMETRY === '1'` (opt-in). Telemetry is disabled by default. Updated
+module-level comments, `GatewayDependencies` JSDoc, and the Step 15 comment in
+`initializeServices`. The old `EUNO_TELEMETRY=0` opt-out is superseded: the
+equivalent is now simply not setting `EUNO_TELEMETRY`.
 
 ---
 
@@ -276,7 +288,7 @@ so failures surface in dashboards (`euno_usage_meter_errors_total`).
 
 ---
 
-### CI-3 — Admin kill-switch "illusion of kill" when `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`
+### CI-3 — Admin kill-switch "illusion of kill" when `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true` ✅ FIXED
 
 **File:** `euno-platform/packages/tool-gateway/src/admin-api.ts`
 
@@ -288,6 +300,15 @@ containment they expect.
 **Recommendation:** Return `207 Multi-Status` or a `503` with a clear message
 such as `"Kill applied locally; fleet propagation pending Redis recovery"` when
 `failOpenOnWrite` is active.
+
+**Fix:** Added `killSwitchFailOpenOnWrite` field to `AdminApiOptions` and
+`GatewayDependencies`. When `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`, all seven
+mutating kill-switch endpoints now return `207 Multi-Status` with
+`fleetPropagationPending: true` and a `warning` field explaining that the kill
+was applied to this replica only and fleet-wide propagation is pending Redis
+recovery. Idempotency cache stores the `207` status so retries replay the same
+warning. The flag is plumbed from the env var through `initializeServices` →
+`GatewayDependencies` → `createAdminApp` → `createAdminRouter`.
 
 ---
 
@@ -336,7 +357,7 @@ identically to the ping limiter.
 
 ---
 
-### CI-6 — `POSTURE_DURABLE_QUEUE_PATH` defaults to `:memory:`
+### CI-6 — `POSTURE_DURABLE_QUEUE_PATH` defaults to `:memory:` ✅ FIXED
 
 **File:** `capability-issuer/src/index.ts` (bootstrap)
 
@@ -348,9 +369,14 @@ design exists to provide.
 error in `NODE_ENV=production`, and document `POSTURE_DURABLE_QUEUE_PATH=/var/lib/euno/posture-queue.db`
 in the deployment docs and k8s ConfigMap template.
 
+**Fix:** `DurablePostureEmitter.fromEnv` now throws a hard `Error` when
+`POSTURE_DURABLE_QUEUE_PATH` is unset and `NODE_ENV=production`. Non-production
+environments (dev, test, CI) still fall back to `:memory:` with a warn that
+includes the new production behaviour note.
+
 ---
 
-### CI-7 — Audit ledger HMAC secret rotation procedure is undocumented
+### CI-7 — Audit ledger HMAC secret rotation procedure is undocumented ✅ FIXED
 
 **File:** `euno-platform/packages/common-infra/src/ledger-signer.ts`
 
@@ -362,9 +388,13 @@ breaking tamper detection for historical records unless old secrets are retained
 `verifyHmac(oldSecret)` fallback path during the rotation window, and document the
 provisioning source for `hmacSecret` in the deployment docs.
 
+**Fix:** Created `docs/runbooks/ledger-hmac-rotation.md` covering secret provisioning,
+three rotation strategies (new table, dual-secret backfill, per-row versioning),
+environment variables, Kubernetes/Helm deployment snippets, and cross-references.
+
 ---
 
-### CI-8 — JWKS cache `kid`-miss can cause a fan-out stampede to the issuer on key rotation
+### CI-8 — JWKS cache `kid`-miss can cause a fan-out stampede to the issuer on key rotation ✅ FIXED
 
 **File:** `euno-platform/packages/tool-gateway/src/verifier.ts` (JwksClient usage)
 
@@ -376,6 +406,12 @@ token rate), this creates an N × M fan-out to the issuer's JWKS endpoint.
 **Recommendation:** Implement a singleflight pattern on `kid`-miss: only one
 outstanding JWKS refresh per `kid` at a time per replica. The others wait on the
 same promise and resolve from the refreshed cache.
+
+**Fix:** Added a `kidPendingRefreshes: Map<string, Promise<JwkKey>>` to `JwksClient`.
+`getKeyByKid` now stores the pending refresh promise in the map before awaiting,
+so any concurrent caller for the same unknown `kid` joins the same promise rather
+than issuing a second HTTP request. The map entry is cleared after resolution
+(success or failure) using a `finally` block.
 
 ---
 
@@ -415,12 +451,18 @@ conditions? This should be explicit and tested.
 
 ---
 
-### OQ-5 — Is the DPoP `cnf.jkt` ↔ proof JWK binding explicitly checked and tested?
+### OQ-5 — Is the DPoP `cnf.jkt` ↔ proof JWK binding explicitly checked and tested? ✅ FIXED
 
 DPoP verification must confirm that the `cnf.jkt` in the capability token matches
 the `jwk` thumbprint in the DPoP proof header. If the proof's JWK is not bound to
 the token's `cnf.jkt`, a token can be presented with an attacker-controlled JWK.
 Is this binding check present and covered by tests?
+
+**Fix:** Added an `OQ-5: cnf.jkt ↔ proof JWK binding` describe block to
+`enforcement.test.ts` with three security regression tests: (a) a different-key
+proof is rejected with a "does not match" error; (b) a matching-key proof is
+accepted; (c) a proof attached to a non-sender-constrained bearer token (no
+`cnf.jkt`) is ignored rather than rejected.
 
 ---
 
@@ -443,19 +485,19 @@ for tenant B's resources?
 | P0 | **DI-1** Close GCP per-tenant key isolation (Task 11) | GCP KMS driver | Medium |
 | P1 | **CR-3** Mandate Redis Sentinel/Cluster in prod k8s | k8s/redis.yaml | Medium |
 | P1 | **CR-4** Redis-backed `AnomalyDetector` (or document per-replica limitation) | Redis infra | Medium |
-| P1 | **CI-3** Admin kill-switch "illusion of kill" — return 207/503 when fail-open | admin-api.ts | Small |
-| P1 | **CI-6** Change `POSTURE_DURABLE_QUEUE_PATH` default to required in prod | index.ts | Small |
+| P1 | ~~**CI-3** Admin kill-switch "illusion of kill" — return 207/503 when fail-open~~ ✅ Done | admin-api.ts | Small |
+| P1 | ~~**CI-6** Change `POSTURE_DURABLE_QUEUE_PATH` default to required in prod~~ ✅ Done | index.ts | Small |
 | P2 | **DI-5** Wire OpenTelemetry distributed tracing | All services | Large |
-| P2 | **DI-4** Change telemetry default to opt-in; update network policy | gateway-telemetry.ts | Small |
+| P2 | ~~**DI-4** Change telemetry default to opt-in; update network policy~~ ✅ Done | gateway-telemetry.ts | Small |
 | P2 | **DI-2** Benchmark advisory lock; promote `PerReplicaPostgresLedgerBackend` | ledger-signer.ts | Medium |
-| P2 | **CI-8** Add singleflight coalesce on JWKS `kid`-miss | jwks-client.ts | Small |
-| P2 | **CI-7** Write `hmacSecret` rotation runbook for the audit ledger | Docs | Small |
-| P2 | **DI-3** Wire `AdminIdempotencyStore` Redis backend; add startup warning | admin-api.ts | Small |
+| P2 | ~~**CI-8** Add singleflight coalesce on JWKS `kid`-miss~~ ✅ Done | jwks-client.ts | Small |
+| P2 | ~~**CI-7** Write `hmacSecret` rotation runbook for the audit ledger~~ ✅ Done | Docs | Small |
+| P2 | ~~**DI-3** Wire `AdminIdempotencyStore` Redis backend; add startup warning~~ ✅ Done | admin-api.ts | Small |
 | P3 | ~~**CI-2** Add `euno_usage_meter_errors_total` counter~~ ✅ Done | — | — |
 | P3 | ~~**CI-4** Log structured `warn` when anomaly fires (not only Prometheus)~~ ✅ Done | — | — |
 | P3 | ~~**CI-5** Redis-backed ping rate limiter~~ ✅ Done | — | — |
 | P3 | **OQ-1/2** Document HMAC secret provisioning; add Postgres RLS hardening option | Docs/schema | Medium |
-| P3 | **OQ-5** Add explicit test for DPoP `cnf.jkt` ↔ proof JWK binding | tests/ | Small |
+| P3 | ~~**OQ-5** Add explicit test for DPoP `cnf.jkt` ↔ proof JWK binding~~ ✅ Done | tests/ | Small |
 
 ---
 
