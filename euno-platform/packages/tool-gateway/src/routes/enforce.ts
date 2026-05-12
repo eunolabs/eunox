@@ -71,11 +71,65 @@ export interface EnforceRouterOptions {
    * collected.
    */
   telemetry?: GatewayTelemetryHooks;
+  /**
+   * Controls which IP address is used as the authoritative `sourceIp` for
+   * `ipRange` policy conditions (CR-2 fix).
+   *
+   * - `'gateway'` (default): the gateway derives the effective IP from the
+   *   TCP connection and `X-Forwarded-For` headers via `req.ip`, which already
+   *   respects the Express `trust proxy` setting (`TRUST_PROXY` env var).
+   *   The client-supplied `context.sourceIp` is ignored for enforcement.
+   *   When the two values differ a `warn`-level log entry is emitted so
+   *   spoofing attempts are always observable.
+   *
+   * - `'client'`: legacy behaviour — the gateway trusts the `sourceIp` value
+   *   supplied in the request body's `context` field. Only safe when every
+   *   caller is a trusted internal service that already enforces its own trust
+   *   boundary (e.g. the minter façade overwriting the field from the observed
+   *   connection). Using this mode in a self-hosted deployment where
+   *   `@euno/mcp` clients connect directly is a security risk: any client can
+   *   pass an arbitrary IP to bypass `ipRange` conditions.
+   *
+   * Wired from `ENFORCE_SOURCE_IP_MODE` in `initializeServices()`.
+   */
+  sourceIpMode?: 'gateway' | 'client';
 }
 
 // ---------------------------------------------------------------------------
 // Request parsing helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalize an IPv4-mapped IPv6 address (e.g. `::ffff:127.0.0.1`) to its
+ * plain IPv4 form (`127.0.0.1`). Other addresses are returned unchanged.
+ *
+ * Node.js / Express surface IPv4-mapped IPv6 addresses when the TCP server
+ * listens on a dual-stack socket. Policy conditions are typically written with
+ * plain IPv4 CIDRs (e.g. `10.0.0.0/8`). Without normalization those CIDRs
+ * would never match gateway-derived IPs from dual-stack sockets even when the
+ * underlying client address is in the allowed range, because `ipMatchesCidr`
+ * treats the two families as distinct.
+ *
+ * The normalization also ensures that the spoofing-detection comparison
+ * in gateway mode is not polluted by representation differences: a client
+ * sending `context.sourceIp = "127.0.0.1"` and a gateway deriving
+ * `req.ip = "::ffff:127.0.0.1"` are the same address — no warning should
+ * be emitted in that case.
+ */
+function normalizeIpv4Mapped(ip: string): string {
+  const lower = ip.toLowerCase();
+  const prefix = '::ffff:';
+  if (lower.startsWith(prefix)) {
+    const candidate = ip.slice(prefix.length);
+    // Only strip the prefix when the remainder is a well-formed IPv4 address
+    // (four decimal octets separated by dots) so we don't accidentally mangle
+    // valid IPv6 addresses that happen to start with "::ffff:".
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return ip;
+}
 
 /**
  * Parse and validate the `X-Euno-Protocol-Version` header.
@@ -378,6 +432,10 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
   const { enforcementEngine, logger } = opts;
   const actionResolver = opts.actionResolver ?? BUILTIN_ACTION_RESOLVER;
   const telemetry = opts.telemetry;
+  // Default to 'gateway' so new deployments get the secure behaviour.
+  // Existing deployments that relied on the client-supplied value can opt back
+  // in via ENFORCE_SOURCE_IP_MODE=client.
+  const sourceIpMode = opts.sourceIpMode ?? 'gateway';
   const router = Router();
 
   // Mount the per-route body parser + its error handler so that
@@ -510,9 +568,57 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
           tool: enforceReq.toolName,
           args: enforceReq.arguments,
         };
-        if (enforceReq.context.sourceIp !== undefined) {
-          validationContext.sourceIp = enforceReq.context.sourceIp;
+
+        // CR-2: Resolve the effective sourceIp according to the configured
+        // trust mode. In 'gateway' mode req.ip is derived from the TCP
+        // connection and X-Forwarded-For headers (respecting the Express
+        // `trust proxy` setting) and takes precedence over the client-supplied
+        // body field so callers cannot spoof ipRange conditions. In 'client'
+        // mode the body field is used as-is (legacy behaviour).
+        if (sourceIpMode === 'gateway') {
+          // req.ip may be undefined for non-HTTP transports in tests; fall
+          // back to the client-supplied value only in that case.
+          // Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 → 127.0.0.1)
+          // so that policy CIDRs written with plain IPv4 notation match
+          // correctly even when the gateway accepts connections on a dual-stack
+          // socket.
+          const gatewayDerivedIp =
+            req.ip !== undefined ? normalizeIpv4Mapped(req.ip) : undefined;
+          const clientSuppliedIp = enforceReq.context.sourceIp;
+          // Normalize the client-supplied value too so the spoofing-detection
+          // comparison is not polluted by representation differences (e.g.
+          // a client that echoes the same address back in IPv4-mapped form).
+          const normalizedClientIp =
+            clientSuppliedIp !== undefined ? normalizeIpv4Mapped(clientSuppliedIp) : undefined;
+          const effectiveIp = gatewayDerivedIp ?? normalizedClientIp;
+          if (effectiveIp !== undefined) {
+            validationContext.sourceIp = effectiveIp;
+          }
+          // Warn when the client asserted a different IP — signals a spoofing
+          // attempt or a misconfigured TRUST_PROXY.  Compare the normalized
+          // forms so that representation-equivalent addresses (e.g.
+          // "127.0.0.1" vs "::ffff:127.0.0.1") do not produce a noisy false
+          // positive.
+          if (
+            gatewayDerivedIp !== undefined &&
+            normalizedClientIp !== undefined &&
+            normalizedClientIp !== gatewayDerivedIp
+          ) {
+            logger.warn('Enforce: client-supplied sourceIp differs from gateway-derived IP', {
+              requestId,
+              gatewayDerivedIp,
+              clientSuppliedIp,
+              sourceIpMode,
+            });
+          }
+        } else {
+          // sourceIpMode === 'client': use the value from the request body
+          // (legacy behaviour; only safe when all callers are trusted).
+          if (enforceReq.context.sourceIp !== undefined) {
+            validationContext.sourceIp = enforceReq.context.sourceIp;
+          }
         }
+
         if (enforceReq.context.recipients !== undefined) {
           validationContext.recipients = enforceReq.context.recipients;
         }

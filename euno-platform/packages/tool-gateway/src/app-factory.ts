@@ -132,6 +132,7 @@ export function createApp(deps: GatewayDependencies): Express {
     logger,
     actionResolver: deps.actionResolver,
     telemetry: deps.gatewayTelemetry ?? undefined,
+    sourceIpMode: deps.sourceIpMode,
   }));
 
   app.use(express.json());
