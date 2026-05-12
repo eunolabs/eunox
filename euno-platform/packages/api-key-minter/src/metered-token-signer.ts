@@ -76,6 +76,17 @@ export class MeteredTokenSigner implements TokenSigner {
   private readonly provider: string;
 
   /**
+   * Forwarded from the inner signer when it provides `getAlgorithm`.
+   *
+   * `TokenSigner.getAlgorithm` is optional (`?`): when declared it must return
+   * `string`.  We satisfy that contract by assigning this property only when
+   * the inner signer actually provides the method, leaving it `undefined`
+   * otherwise — which is a valid implementation of the optional interface
+   * member.
+   */
+  readonly getAlgorithm?: () => string;
+
+  /**
    * @param inner    - The underlying signer to delegate to.
    * @param provider - Human-readable provider label for Prometheus metrics
    *                   (e.g. `'azure-keyvault'`, `'aws-kms'`, `'gcp-cloudkms'`,
@@ -85,6 +96,10 @@ export class MeteredTokenSigner implements TokenSigner {
   constructor(inner: TokenSigner, provider: string) {
     this.inner = inner;
     this.provider = provider;
+    if (typeof inner.getAlgorithm === 'function') {
+      // Bind to the inner instance so `this` resolves correctly inside the delegate.
+      this.getAlgorithm = inner.getAlgorithm.bind(inner);
+    }
   }
 
   async sign(payload: CapabilityTokenPayload, context?: IssuanceContext): Promise<string> {
@@ -115,12 +130,4 @@ export class MeteredTokenSigner implements TokenSigner {
     return this.inner.getKeyId();
   }
 
-  getAlgorithm(): string | undefined {
-    // `getAlgorithm` is an optional method on the TokenSigner interface (marked
-    // with `?`), so not all implementations provide it.  We guard before calling
-    // to avoid a runtime error when wrapping a minimal custom signer.
-    return typeof this.inner.getAlgorithm === 'function'
-      ? this.inner.getAlgorithm()
-      : undefined;
-  }
 }
