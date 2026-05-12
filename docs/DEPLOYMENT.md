@@ -189,8 +189,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON api_keys TO minter_app;
 > `ENABLE ROW LEVEL SECURITY` and the policy without that application-layer wiring
 > **will break all writes immediately** — every INSERT/UPDATE will be blocked by the
 > policy.  This SQL is provided as a readiness reference so the schema migration is
-> prepared when the application-layer wiring is completed.  Wiring the session
-> parameter is a follow-on hardening task tracked in the architecture review.
+> prepared when the application-layer wiring is completed.  Before applying, verify
+> that OQ-2 in `docs/architecture-review-2026-05.md` has been marked "Done" with
+> the session-parameter wiring confirmed in the implementation notes.
 
 ---
 

@@ -1008,9 +1008,13 @@ export class PostgresLedgerBackend implements LedgerBackend {
           'a non-empty tenantId so the correct per-tenant advisory lock can be derived.',
       );
     }
+    // After the guard above, tenantId is guaranteed to be a non-empty string
+    // in per-tenant mode.  Capture it in a local variable to avoid repeated
+    // optional-chaining and to make the control flow explicit to the type system.
+    const tenantId = evidence.tenantId;
     const lockId =
       this.advisoryLockMode === 'per-tenant'
-        ? fnv1a32LockId(evidence.tenantId!)
+        ? fnv1a32LockId(tenantId as string)
         : this.advisoryLockId;
 
     const maxAttempts = this.advisoryLockMode === 'per-tenant' ? 3 : 1;
@@ -1102,6 +1106,13 @@ export class PostgresLedgerBackend implements LedgerBackend {
         // writers (different tenants, same hash bucket) to race on seq.
         // Detect the Postgres unique_violation (23505) on the seq PK and
         // retry up to maxAttempts times with a short back-off.
+        //
+        // Linear backoff (10ms, 20ms, 30ms) is intentional: the collision is
+        // expected to be an extremely rare transient (two separate tenants
+        // share the same 32-bit FNV-1a bucket in the same millisecond window).
+        // Exponential backoff would introduce unnecessary wait for the common
+        // single-collision case; the 30ms maximum is acceptable for a rare
+        // 3rd-attempt retry while bounding total delay to under 100ms.
         const pgCode = (err as { code?: string }).code;
         if (this.advisoryLockMode === 'per-tenant' && pgCode === '23505' && attempt < maxAttempts - 1) {
           await new Promise((resolve) => setTimeout(resolve, PostgresLedgerBackend.RETRY_BACKOFF_BASE_MS * (attempt + 1)));
