@@ -177,3 +177,47 @@ groups:
             all rotation steps are completed and affected tenants are
             notified. A global kill switch may have been activated.
           runbook: "https://docs.euno.example/runbooks/minter-key-rotation"
+
+      # ── Rule 6 — Per-replica anomaly discrepancy (CR-4) ──────────────────────
+      #
+      # Fires when the anomaly alert rate on a single replica diverges
+      # significantly from the fleet average over a 10-minute window.  This
+      # pattern indicates that an attacker is distributing mint requests across
+      # replicas (each replica sees only 1/N of the traffic) and that the
+      # per-replica AnomalyDetector is not catching the activity.
+      #
+      # When `RedisAnomalyDetector` is wired (ANOMALY_REDIS_URL set), all
+      # replicas share bucket state and this alert should never fire for
+      # rate_spike; it remains useful for detecting configuration drift
+      # (e.g. one replica accidentally using the in-memory detector).
+      #
+      # Runbook: docs/runbooks/minter-anomaly-replica-skew.md
+      - alert: MinterAnomalyReplicaSkew
+        expr: |
+          (
+            sum by (replica) (
+              rate(euno_minter_anomaly_alerts_total[10m])
+            )
+          )
+          < 0.5 * avg(
+              sum by (replica) (
+                rate(euno_minter_anomaly_alerts_total[10m])
+              )
+            )
+          and
+          sum(rate(euno_minter_anomaly_alerts_total[10m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Anomaly detector skew on replica {{ $labels.replica }}"
+          description: >-
+            Replica {{ $labels.replica }} is firing anomaly alerts at less than
+            half the fleet average rate over the last 10 minutes, while the
+            fleet total is non-trivial.  This may indicate that traffic is
+            being distributed across replicas (per-replica AnomalyDetector
+            limitation, CR-4) or that this replica is misconfigured.
+            Verify ANOMALY_REDIS_URL is set on all replicas so they share
+            a coherent bucket view.
+          runbook: "https://docs.euno.example/runbooks/minter-anomaly-replica-skew"

@@ -31,12 +31,14 @@ import { TokenMinter } from './token-minter';
 import { LocalTokenSigner } from './local-token-signer';
 import { MeteredTokenSigner } from './metered-token-signer';
 import { AnomalyDetector } from './anomaly-detector';
+import { createAnomalyDetectorFromEnv, RedisAnomalyDetector } from './redis-anomaly-detector';
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
 import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
 import type { TokenSigner } from '@euno/common';
+import os from 'os';
 
 const logger = createLogger('api-key-minter');
 
@@ -162,8 +164,22 @@ async function main(): Promise<void> {
   const verifier = new ApiKeyVerifier({ store: keyStore, peppers, logger });
   const minter = new TokenMinter({ signer, issuerDid, gatewayAudience, ttlSeconds });
 
-  // Anomaly detector — shared across all requests, stateful per-tenant window.
-  const anomalyDetector = new AnomalyDetector();
+  // Anomaly detector — fleet-wide when ANOMALY_REDIS_URL or REDIS_URL is
+  // configured (CR-4: backs bucket state in Redis so all replicas share a
+  // coherent view), per-replica in-memory otherwise.
+  const replicaId = process.env['MINTER_REPLICA_ID'] ?? os.hostname();
+  const anomalyDetector = createAnomalyDetectorFromEnv(process.env, { replicaId });
+  if (anomalyDetector instanceof RedisAnomalyDetector) {
+    logger.info('Using Redis-backed anomaly detector (fleet-wide view)', {
+      replicaId,
+      redisUrl: (process.env['ANOMALY_REDIS_URL'] || process.env['REDIS_URL'] ?? '').replace(
+        /\/\/[^@]*@/,
+        '//<redacted>@',
+      ),
+    });
+  } else {
+    logger.info('Using in-memory anomaly detector (per-replica, CR-4 limitation)', { replicaId });
+  }
 
   // Ping rate limiter — fleet-wide when Redis is configured, per-process
   // in-memory otherwise (suitable for single-replica / dev deployments).
@@ -184,6 +200,10 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     logger.info('Shutting down minter');
+    // Close Redis anomaly detector connection if active.
+    if (anomalyDetector instanceof RedisAnomalyDetector) {
+      void anomalyDetector.close();
+    }
     server.close(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);

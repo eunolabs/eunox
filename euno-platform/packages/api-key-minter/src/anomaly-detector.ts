@@ -3,8 +3,8 @@
  * ────────────────────────────────────────────────────────────────────────────
  * Implements the three in-process anomaly rules defined in
  * docs/security/minter-threat-model.md §7 (Monitoring and Alerting).
- * When a rule fires, `euno_minter_anomaly_alerts_total{tenant, rule}` is
- * incremented.  The Prometheus alerting rules in
+ * When a rule fires, `euno_minter_anomaly_alerts_total{tenant, rule, replica}`
+ * is incremented.  The Prometheus alerting rules in
  * `prometheus/minter-alert-rules.yaml` provide the production alert routing;
  * this detector provides:
  *
@@ -12,6 +12,24 @@
  *   2. Defence in depth — fires even when the Prometheus server is unreachable.
  *   3. A counter that enables per-tenant anomaly rate dashboards without
  *      complex PromQL.
+ *
+ * ## ⚠️ Per-replica limitation (CR-4)
+ *
+ * `AnomalyDetector` is an **in-process** ring-buffer structure.  Each minter
+ * replica maintains completely **independent** per-tenant bucket state.  An
+ * attacker distributing mint requests across N replicas (e.g. via a load
+ * balancer) will appear at only 1/N of the actual mint rate on each replica,
+ * potentially staying below all three rule thresholds.
+ *
+ * **Mitigations:**
+ * - Set `replicaId` (from `MINTER_REPLICA_ID` or `os.hostname()`) so the
+ *   `replica` label on `euno_minter_anomaly_alerts_total` makes per-instance
+ *   discrepancies visible in Prometheus.
+ * - For the hosted service, replace this detector with `RedisAnomalyDetector`
+ *   (see `src/redis-anomaly-detector.ts`) which backs bucket state with Redis
+ *   hashes so all replicas share a coherent view.
+ * - Set `ANOMALY_REDIS_URL` (or `REDIS_URL`) in the minter bootstrap to
+ *   automatically wire the Redis-backed detector.
  *
  * ## Rules implemented
  *
@@ -204,6 +222,20 @@ export interface AnomalyDetectorOptions {
    * @default Date.now
    */
   nowFn?: () => number;
+
+  /**
+   * Replica identifier included as the `replica` label on the
+   * `euno_minter_anomaly_alerts_total` Prometheus counter (CR-4).
+   *
+   * Setting this allows operators to compare per-instance anomaly rates in
+   * Prometheus dashboards.  Discrepancies between replicas are a signal that
+   * traffic is being distributed across replicas and the per-replica detector
+   * is only seeing a fraction of the fleet-wide mint rate.
+   *
+   * Defaults to `''` (unset).  Wire from `MINTER_REPLICA_ID` env var or
+   * `os.hostname()` in the minter bootstrap.
+   */
+  replicaId?: string;
 }
 
 // ── AnomalyDetector ───────────────────────────────────────────────────────────
@@ -224,6 +256,8 @@ export class AnomalyDetector {
   private readonly failureRateThreshold: number;
   private readonly failureRateWindowMs: number;
   private readonly nowFn: () => number;
+  /** Replica ID label for the anomalyAlertsTotal counter (CR-4). */
+  readonly replicaId: string;
 
   // Short-term bucket resolution and capacity (derived from window parameters).
   private readonly shortBucketMs: number;
@@ -246,6 +280,7 @@ export class AnomalyDetector {
     this.failureRateThreshold = opts.failureRateThreshold ?? 0.5;
     this.failureRateWindowMs = opts.failureRateWindowMs ?? 5 * 60 * 1000;
     this.nowFn = opts.nowFn ?? (() => Date.now());
+    this.replicaId = opts.replicaId ?? '';
 
     // Derive short-term bucket resolution from the smallest configured window.
     // Targeting ~5 buckets per window gives adequate granularity while keeping
@@ -290,17 +325,17 @@ export class AnomalyDetector {
 
     if (this.evaluateRateSpike(short, now)) {
       fired.push('rate_spike');
-      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'rate_spike' });
+      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'rate_spike', replica: this.replicaId });
     }
 
     if (success && this.evaluateOffHours(long, now)) {
       fired.push('off_hours_low_activity');
-      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'off_hours_low_activity' });
+      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'off_hours_low_activity', replica: this.replicaId });
     }
 
     if (this.evaluateFailureClustering(short, now)) {
       fired.push('failure_clustering');
-      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'failure_clustering' });
+      anomalyAlertsTotal.inc({ tenant: tenantId, rule: 'failure_clustering', replica: this.replicaId });
     }
 
     // Sort so callers receive a stable, deterministic ordering regardless of

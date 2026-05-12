@@ -202,7 +202,118 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON api_keys TO minter_app;
 
 ---
 
+## Redis HA for production (CR-3)
+
+The gateway and issuer use Redis as a shared backing store for four
+runtime-security state stores:
+
+| Store | Purpose | Default fail mode |
+|---|---|---|
+| Revocation (`RevocationStore`) | JTI block-list | fail-closed → 401 all traffic |
+| Kill-switch (`KillSwitchManager`) | Global / session / agent kill | local cache only until Redis recovers |
+| Call counters (`CallCounterStore`) | Per-token `maxCalls` enforcement | fail-open: per-replica counting |
+| DPoP replay (`DpopReplayStore`) | Proof-replay prevention | fail-open: replay accepted |
+
+A single-node Redis instance (`k8s/redis.yaml`) is provided for development
+and pilot clusters **only**.  For production you **must** replace it with a
+high-availability Redis deployment.
+
+### Choosing an HA topology
+
+| Option | Minimum nodes | Automatic failover | Horizontal scale |
+|---|---|---|---|
+| **Redis Sentinel** | 3 sentinels + 1 replica | ✓ (sentinel quorum) | ✗ (single primary) |
+| **Redis Cluster** | 6 nodes (3 primary + 3 replica) | ✓ (per-shard) | ✓ |
+| **Managed Redis** | varies by provider | ✓ | depends on tier |
+
+Recommended production choices:
+- **Azure Cache for Redis** — Standard C1+ tier (primary/replica pair) or
+  Premium tier for cluster mode and geo-replication.
+- **AWS ElastiCache (Redis OSS)** — cluster mode enabled, ≥ 2 shards,
+  Multi-AZ automatic failover.
+- **GCP Memorystore for Redis** — Standard tier (read replicas + automatic
+  failover) or Cluster tier.
+- **Self-managed Redis Sentinel** — ≥ 3 sentinels, quorum 2, at least one
+  replica.
+
+### URL formats
+
+**Redis Sentinel** (ioredis `sentinels` array via connection string):
+```
+redis+sentinel://sentinel1:26379,sentinel2:26379,sentinel3:26379?name=mymaster
+```
+or use the ioredis `Sentinel` constructor via `REDIS_URL`.
+
+**Redis Cluster**:
+```
+# Multiple seed nodes separated by commas
+redis://redis-node-0:6379,redis-node-1:6379,redis-node-2:6379
+```
+
+**TLS** (prefix `rediss://`):
+```
+rediss+sentinel://sentinel1:26379,sentinel2:26379?name=mymaster
+```
+
+The gateway accepts any URL that `ioredis` understands.  Sentinel and
+Cluster URLs are automatically recognised by the startup validator (CR-3) and
+suppress the single-node warning.  A URL containing commas (multiple seed
+nodes) is treated as a Cluster URL.
+
+### Per-store Redis URL overrides
+
+Each control-surface store can point at its own dedicated Redis instance.
+This is recommended so an outage on one store does not cascade to others:
+
+| Env var | Store |
+|---|---|
+| `REVOCATION_REDIS_URL` | Revocation + epoch stores |
+| `KILL_SWITCH_REDIS_URL` | Kill-switch manager |
+| `CALL_COUNTER_REDIS_URL` | maxCalls call-counter store |
+| `REDIS_URL` | Shared fallback for any store that lacks a dedicated URL |
+
+### Grace period (brief Redis blip tolerance)
+
+Set `REDIS_GRACE_PERIOD_MS=5000` (recommended production value) so a brief
+Redis network blip (≤ 5 seconds) does not immediately cause a service
+brownout.  During the grace window the revocation store serves its local
+write-through cache: tokens confirmed revoked locally are still denied;
+tokens not yet seen locally are allowed through.  After the grace window, the
+configured `REVOCATION_UNAVAILABLE_MODE` applies (default: `fail-closed`).
+
+```
+REDIS_GRACE_PERIOD_MS=5000
+```
+
+If you also set `REVOCATION_STALE_READABLE=true`, the grace period is
+redundant (the store always serves from local cache on Redis outage) but
+harmless.
+
+### Startup validation
+
+When `NODE_ENV=production` and a Redis URL is configured that does not
+match a Sentinel or Cluster pattern, the gateway emits a `WARN` log at
+startup:
+
+```
+CR-3: REDIS_URL appears to point at a single-node Redis instance...
+```
+
+This is non-fatal (to avoid breaking pilot deployments) but should be treated
+as a required action before the gateway serves production traffic.
+
+### Alerting
+
+Load `euno-platform/packages/tool-gateway/prometheus/gateway-alert-rules.yaml`
+into your Prometheus instance.  The `EunoGatewayRevocationStoreUnavailable`
+alert fires when `euno_gateway_revocation_unavailable_total` increments for
+2 consecutive minutes, which under fail-closed mode means all traffic is
+being denied.
+
+---
+
 ## Source IP trust (CR-2)
+
 
 Set `ENFORCE_SOURCE_IP_MODE=gateway` (the default) so the gateway derives the
 effective source IP from the TCP connection / `X-Forwarded-For` headers rather

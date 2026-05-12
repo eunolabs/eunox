@@ -238,6 +238,16 @@ export class RedisRevocationStore implements RevocationStore {
    * bounded to the active-token window.
    */
   private readonly staleReadable: boolean;
+  /**
+   * When > 0, the store uses stale-readable behavior for the first
+   * `gracePeriodMs` milliseconds after Redis first becomes unavailable.
+   * After the grace window expires, the configured `unavailableMode`
+   * applies.  Ignored when `staleReadable: true` is also set.
+   */
+  private readonly gracePeriodMs: number;
+  /** Millisecond timestamp when Redis was first observed unavailable.
+   *  `null` when Redis is healthy (last call succeeded). */
+  private unavailableSince: number | null = null;
   private readonly localRevokedCache: Map<string, number> = new Map(); // jti → expiresAt (unix s)
 
   constructor(
@@ -279,6 +289,21 @@ export class RedisRevocationStore implements RevocationStore {
        * stale cache handles unavailability.
        */
       unavailableMode?: 'fail-closed' | '503' | 'open';
+      /**
+       * Grace period (ms) after Redis first becomes unavailable during which
+       * the store uses stale-readable behavior (tokens confirmed revoked
+       * locally are denied; tokens not in the local cache are allowed through).
+       * After this window expires, `unavailableMode` applies.  Default: 0
+       * (disabled — fail immediately per `unavailableMode`).
+       *
+       * Ignored when `staleReadable: true` is also set; in that case the
+       * stale cache always handles unavailability.
+       *
+       * Wire from the `REDIS_GRACE_PERIOD_MS` env var.  Recommended production
+       * value: 5000 ms (tolerates a brief Redis network blip without causing a
+       * service brownout).
+       */
+      gracePeriodMs?: number;
     } = {}
   ) {
     this.client = client;
@@ -292,6 +317,10 @@ export class RedisRevocationStore implements RevocationStore {
     this.onUnavailable = options.onUnavailable;
     this.circuitBreaker = options.circuitBreaker;
     this.staleReadable = options.staleReadable ?? false;
+    this.gracePeriodMs = options.gracePeriodMs ?? 0;
+    // When gracePeriodMs > 0 the store needs the local cache even when
+    // staleReadable is false so it can honour confirmed revocations during
+    // the grace window.  The cache is always populated for staleReadable.
 
     this.client.on('error', (err: unknown) => {
       this.logger.error('Redis revocation store connection error', {
@@ -312,6 +341,9 @@ export class RedisRevocationStore implements RevocationStore {
         exists = await this.client.exists(this.key(tokenId));
       }
       const revoked = exists === 1;
+      // Successful Redis call — Redis is healthy; reset the unavailableSince
+      // marker so subsequent grace-period calculations start fresh.
+      this.unavailableSince = null;
       if (this.staleReadable) {
         // Prune expired entries on every successful Redis round-trip so the
         // local cache stays bounded even when entries are only added via
@@ -354,6 +386,11 @@ export class RedisRevocationStore implements RevocationStore {
         });
         this.onError?.();
       }
+      // Track when Redis first became unavailable so the grace period can be
+      // measured accurately.  The timestamp is reset when Redis next succeeds.
+      if (this.unavailableSince === null) {
+        this.unavailableSince = Date.now();
+      }
       // Stale-readable: serve from local cache on circuit-open or Redis error.
       if (this.staleReadable) {
         const expiry = this.localRevokedCache.get(tokenId);
@@ -375,6 +412,32 @@ export class RedisRevocationStore implements RevocationStore {
             tokenId,
           });
         }
+        return false;
+      }
+      // Grace period (CR-3): if Redis has only just become unavailable and we
+      // are still within the configured grace window, serve from the local
+      // cache the same way stale-readable mode would.  After the grace window
+      // expires, fall through to the configured unavailableMode.
+      if (this.gracePeriodMs > 0 && this.unavailableSince !== null &&
+          Date.now() - this.unavailableSince < this.gracePeriodMs) {
+        const expiry = this.localRevokedCache.get(tokenId);
+        if (expiry !== undefined) {
+          if (expiry > nowSeconds()) {
+            this.logger.debug('Serving revocation status from grace-period local cache', {
+              tokenId,
+              circuitOpen: isCircuitOpen,
+              unavailableSinceMs: Date.now() - this.unavailableSince,
+            });
+            return true;
+          }
+          this.localRevokedCache.delete(tokenId);
+        }
+        // Not in local cache within grace window — allow through.
+        this.logger.debug('Redis unavailable within grace period; token not in local cache — allowing', {
+          tokenId,
+          gracePeriodMs: this.gracePeriodMs,
+          unavailableSinceMs: Date.now() - this.unavailableSince,
+        });
         return false;
       }
       // Signal unavailability via the callback for any non-open mode.
@@ -410,7 +473,8 @@ export class RedisRevocationStore implements RevocationStore {
     }
     // Always update the local stale cache so the circuit-open fallback
     // can honour revocations issued on this replica even when Redis is down.
-    if (this.staleReadable) {
+    // This applies to both staleReadable mode and the grace period (CR-3).
+    if (this.staleReadable || this.gracePeriodMs > 0) {
       this.pruneLocalCache();
       this.localRevokedCache.set(tokenId, expiresAt);
     }
@@ -539,6 +603,16 @@ export async function createRevocationStoreFromEnv(
   const staleReadable = env.REVOCATION_STALE_READABLE === 'true';
   const keyPrefix = env.REVOCATION_KEY_PREFIX || 'revoked:';
 
+  // Parse REDIS_GRACE_PERIOD_MS (CR-3): tolerate brief Redis blips before
+  // failing closed.  When staleReadable is also set, the grace period is
+  // redundant (staleReadable already serves from local cache indefinitely)
+  // but harmless.  0 disables the grace period entirely (default).
+  const rawGracePeriod = env.REDIS_GRACE_PERIOD_MS;
+  const gracePeriodMs =
+    rawGracePeriod !== undefined && rawGracePeriod.trim() !== ''
+      ? Math.max(0, Number.parseInt(rawGracePeriod, 10) || 0)
+      : 0;
+
   // Parse REVOCATION_UNAVAILABLE_MODE; default is 'fail-closed' for back-compat.
   // When REVOCATION_FAIL_OPEN=true is set without an explicit unavailableMode,
   // treat it as 'open' (legacy behaviour preserved).
@@ -554,12 +628,15 @@ export async function createRevocationStoreFromEnv(
 
   const modeDescription = staleReadable
     ? 'stale-readable (local cache fallback on Redis outage)'
-    : unavailableMode;
+    : gracePeriodMs > 0
+      ? `grace-period ${gracePeriodMs}ms then ${unavailableMode}`
+      : unavailableMode;
   logger.info('Using Redis revocation store for distributed token revocation', {
     keyPrefix,
     unavailableMode: modeDescription,
     circuitBreakerEnabled: !!circuitBreaker,
     dedicatedUrl: !!env.REVOCATION_REDIS_URL,
+    gracePeriodMs,
   });
 
   return new RedisRevocationStore(client, logger, {
@@ -569,6 +646,7 @@ export async function createRevocationStoreFromEnv(
     onUnavailable,
     circuitBreaker,
     staleReadable,
+    gracePeriodMs,
   });
 }
 

@@ -11,6 +11,8 @@ export { MeteredTokenSigner } from './metered-token-signer';
 export { KmsSigningError } from './kms-signing-error';
 export type { AnomalyDetectorOptions } from './anomaly-detector';
 export { AnomalyDetector } from './anomaly-detector';
+export type { RedisAnomalyClient } from './redis-anomaly-detector';
+export { RedisAnomalyDetector, createAnomalyDetectorFromEnv } from './redis-anomaly-detector';
 export type { MintAuditRecord, MintAuditStore, MintAuditResult } from './mint-audit';
 export { InMemoryMintAuditStore } from './mint-audit';
 export type { MintAuditPgPool } from './postgres-mint-audit-store';

@@ -122,22 +122,32 @@ export const kmsErrorTotal = new promClient.Counter({
 });
 
 /**
- * Mint anomaly alerts, partitioned by tenant and rule name.
+ * Mint anomaly alerts, partitioned by tenant, rule name, and replica.
  *
- * Incremented by {@link AnomalyDetector} whenever a rule fires in-process.
- * The Prometheus alerting rules in `prometheus/minter-alert-rules.yaml`
- * provide the production alert routing; this counter provides defence-in-depth
- * and enables per-tenant anomaly dashboards without complex PromQL.
+ * Incremented by {@link AnomalyDetector} (and {@link RedisAnomalyDetector})
+ * whenever a rule fires in-process.  The Prometheus alerting rules in
+ * `prometheus/minter-alert-rules.yaml` provide the production alert routing;
+ * this counter provides defence-in-depth and enables per-tenant anomaly
+ * dashboards without complex PromQL.
  *
  * `rule` label values:
  * - `'rate_spike'`            — per-tenant mint rate far above baseline (Rule 1)
  * - `'off_hours_low_activity'`— off-hours mint for low-activity tenant (Rule 2)
  * - `'failure_clustering'`    — mint failure rate spike for tenant (Rule 3)
+ *
+ * `replica` label (CR-4):
+ * The replica identifier — set from `MINTER_REPLICA_ID` env var or
+ * `os.hostname()`.  An empty string `''` indicates the replica ID was not
+ * configured.  The `replica` label allows operators to compare per-instance
+ * anomaly rates in Prometheus; discrepancies between replicas indicate that
+ * the anomaly detector is seeing only a fraction of fleet traffic (the
+ * per-replica limitation described in docs/architecture-review-2026-05.md
+ * CR-4).
  */
 export const anomalyAlertsTotal = new promClient.Counter({
   name: 'euno_minter_anomaly_alerts_total',
-  help: 'Mint anomaly alerts by tenant and rule name',
-  labelNames: ['tenant', 'rule'] as const,
+  help: 'Mint anomaly alerts by tenant, rule name, and replica',
+  labelNames: ['tenant', 'rule', 'replica'] as const,
   registers: [minterRegistry],
 });
 

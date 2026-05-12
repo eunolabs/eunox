@@ -22,6 +22,7 @@ import { MintRateLimiter } from '../mint-rate-limiter';
 import { minterMetrics } from '../metrics';
 import { KmsSigningError } from '../kms-signing-error';
 import { AnomalyDetector } from '../anomaly-detector';
+import type { RedisAnomalyDetector } from '../redis-anomaly-detector';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -34,8 +35,12 @@ export interface MintRouterOptions {
   /**
    * Optional anomaly detector.  When provided, `recordMint` is called after
    * every mint attempt and the fired rule names are logged for observability.
+   *
+   * Accepts both the in-memory {@link AnomalyDetector} (synchronous
+   * `recordMint`) and the Redis-backed {@link RedisAnomalyDetector}
+   * (asynchronous `recordMint`).
    */
-  anomalyDetector?: AnomalyDetector;
+  anomalyDetector?: AnomalyDetector | RedisAnomalyDetector;
 }
 
 function parseMintRequestBody(body: unknown): { agentId: string; sessionId: string } {
@@ -128,7 +133,7 @@ export function createMintRouter(opts: MintRouterOptions): Router {
 
       // 7. Run anomaly detection (non-blocking; anomalies are logged and metered)
       if (opts.anomalyDetector) {
-        const firedRules = opts.anomalyDetector.recordMint(tenantId, true);
+        const firedRules = await Promise.resolve(opts.anomalyDetector.recordMint(tenantId, true));
         if (firedRules.length > 0) {
           opts.logger.warn('Mint anomaly detected', { tenantId, rules: firedRules });
         }
@@ -160,7 +165,7 @@ export function createMintRouter(opts: MintRouterOptions): Router {
 
       // Run anomaly detection for failure events (tenantId known = auth succeeded).
       if (tenantId !== undefined && opts.anomalyDetector) {
-        const firedRules = opts.anomalyDetector.recordMint(tenantId, false);
+        const firedRules = await Promise.resolve(opts.anomalyDetector.recordMint(tenantId, false));
         if (firedRules.length > 0) {
           opts.logger.warn('Mint anomaly detected on failure', { tenantId, rules: firedRules });
         }

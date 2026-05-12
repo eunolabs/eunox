@@ -281,6 +281,95 @@ describe('RedisRevocationStore', () => {
     const store = new RedisRevocationStore(client, logger);
     await expect(store.close()).resolves.toBeUndefined();
   });
+
+  // ── CR-3: Grace period tests ─────────────────────────────────────────────
+  describe('gracePeriodMs (CR-3)', () => {
+    it('allows token not in local cache during grace period', async () => {
+      const client = makeClient({
+        exists: async () => { throw new Error('redis down'); },
+      });
+      const store = new RedisRevocationStore(client, logger, {
+        gracePeriodMs: 5000,
+      });
+      // Token not locally cached: allowed through during grace period.
+      expect(await store.isRevoked('unknown-jti')).toBe(false);
+    });
+
+    it('denies token in local cache during grace period', async () => {
+      const future = Math.floor(Date.now() / 1000) + 3600;
+      // revoke() first call may succeed (before Redis goes down)
+      let redisCalls = 0;
+      const client = makeClient({
+        set: async (..._args: unknown[]) => { redisCalls++; return 'OK'; },
+        exists: async () => {
+          // After the first set() call succeeds, exists() always fails
+          throw new Error('redis down');
+        },
+      });
+      const store = new RedisRevocationStore(client, logger, {
+        gracePeriodMs: 5000,
+      });
+      // Populate local cache via revoke(); Redis write will throw, but local
+      // cache should still be set before the Redis call.
+      try {
+        await store.revoke('revoked-jti', future);
+      } catch {
+        // Redis write failed — that's OK; local cache was already updated.
+      }
+      // isRevoked now throws because exists() is broken — within grace window
+      // the local cache should honour the revocation.
+      const result = await store.isRevoked('revoked-jti');
+      expect(result).toBe(true);
+    });
+
+    it('falls back to fail-closed after grace period expires', async () => {
+      const client = makeClient({
+        exists: async () => { throw new Error('redis down'); },
+      });
+      const store = new RedisRevocationStore(client, logger, {
+        gracePeriodMs: 0, // grace period disabled → fail-closed immediately
+      });
+      expect(await store.isRevoked('unknown-jti')).toBe(true);
+    });
+
+    it('does not increment onUnavailable during grace period', async () => {
+      const client = makeClient({
+        exists: async () => { throw new Error('redis down'); },
+      });
+      const onUnavailable = jest.fn();
+      const store = new RedisRevocationStore(client, logger, {
+        gracePeriodMs: 5000,
+        onUnavailable,
+      });
+      await store.isRevoked('any');
+      // During grace period, onUnavailable should NOT be incremented since
+      // the store is serving from local cache (not applying unavailableMode).
+      expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
+    it('unavailableSince is reset when Redis comes back healthy', async () => {
+      let fail = true;
+      const client = makeClient({
+        exists: async () => {
+          if (fail) throw new Error('redis down');
+          return 0;
+        },
+      });
+      const store = new RedisRevocationStore(client, logger, {
+        gracePeriodMs: 5000,
+      });
+      // First call: Redis down → within grace → allow
+      expect(await store.isRevoked('tok-a')).toBe(false);
+      // Redis comes back
+      fail = false;
+      // Second call: Redis healthy → returns not-revoked
+      expect(await store.isRevoked('tok-a')).toBe(false);
+      // Third call: Redis goes down again — unavailableSince was reset, so
+      // we are within the grace window again and should allow through.
+      fail = true;
+      expect(await store.isRevoked('tok-a')).toBe(false);
+    });
+  });
 });
 
 describe('createRevocationStoreFromEnv', () => {

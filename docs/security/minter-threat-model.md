@@ -497,7 +497,7 @@ in `public/packages/common/src/metrics.ts`):
 | `euno_minter_mint_latency_seconds` | Histogram | `tenant` | End-to-end mint latency |
 | `euno_minter_kms_sign_latency_seconds` | Histogram | `provider` | HSM sign latency |
 | `euno_minter_kms_error_total` | Counter | `provider`, `error_class` | KMS errors |
-| `euno_minter_anomaly_alerts_total` | Counter | `tenant`, `rule` | Times an anomaly rule fired |
+| `euno_minter_anomaly_alerts_total` | Counter | `tenant`, `rule`, `replica` | Times an anomaly rule fired (CR-4: `replica` label for per-instance discrepancy detection) |
 | `euno_minter_key_rotation_total` | Counter | `kid`, `reason` | Key rotations (scheduled / emergency) |
 
 ### Alerting rules
@@ -589,6 +589,56 @@ annotations:
   summary: "Emergency minter key rotation for kid {{ $labels.kid }}"
   runbook: "https://docs.euno.example/runbooks/minter-key-rotation"
 ```
+
+#### Rule 6 — Per-replica anomaly discrepancy (CR-4)
+
+```yaml
+# Fires when one replica's anomaly alert rate is less than 50% of the fleet
+# average over 10 minutes, while the fleet total is non-trivial.
+# This pattern indicates that an attacker is distributing mint requests across
+# replicas, each replica seeing only 1/N of the traffic.
+alert: MinterAnomalyReplicaSkew
+expr: |
+  (
+    sum by (replica) (rate(euno_minter_anomaly_alerts_total[10m]))
+  )
+  < 0.5 * avg(
+      sum by (replica) (rate(euno_minter_anomaly_alerts_total[10m]))
+    )
+  and
+  sum(rate(euno_minter_anomaly_alerts_total[10m])) > 0.01
+for: 5m
+labels:
+  severity: warning
+annotations:
+  summary: "Anomaly detector skew on replica {{ $labels.replica }}"
+  runbook: "https://docs.euno.example/runbooks/minter-anomaly-replica-skew"
+```
+
+> **CR-4 per-replica limitation:** The in-process `AnomalyDetector` maintains
+> completely independent per-tenant state on each minter replica.  An attacker
+> distributing mint requests across N replicas via the load balancer appears at
+> only 1/N of the actual mint rate on each replica, potentially evading all
+> three anomaly rules.  Mitigations:
+>
+> 1. **Redis-backed detector (primary):** Set `ANOMALY_REDIS_URL` to enable
+>    `RedisAnomalyDetector` (`src/redis-anomaly-detector.ts`), which stores
+>    bucket state in Redis hashes so all replicas share a coherent view.
+>    HINCRBY ensures atomic increments with no write contention.
+>
+> 2. **Per-replica label:** `euno_minter_anomaly_alerts_total` carries a
+>    `replica` label (set from `MINTER_REPLICA_ID` env var or `os.hostname()`).
+>    The `MinterAnomalyReplicaSkew` Prometheus alert fires when one replica's
+>    anomaly rate significantly diverges from the fleet average, making
+>    distribution attacks visible even with the in-memory detector.
+>
+> 3. **Redis-backed detector fall-back:** If `ANOMALY_REDIS_URL` is set but
+>    Redis is unavailable, the detector transparently falls back to the
+>    per-replica in-memory `AnomalyDetector` so anomaly detection is never
+>    completely disabled by a Redis outage — it just reverts to per-replica
+>    behaviour.
+>
+> See `docs/architecture-review-2026-05.md §CR-4` for the full analysis.
 
 #### Rule 6 — HSM sign/audit mismatch
 
