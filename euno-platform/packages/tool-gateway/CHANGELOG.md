@@ -63,7 +63,7 @@ Task 17 ships the billing metering surface described in
 - `docs/pricing-stage-3.md` — pricing curve decision document.
 - `tests/usage-route.test.ts` — 16 tests covering `GET /usage` and
   `POST /usage/reset`.
-- `public/packages/common/src/__tests__/usage-meter.test.ts` — 22 tests for
+- `public/packages/common/src/__tests__/usage-meter.test.ts` — 20 tests for
   `InMemoryUsageMeter`.
 
 ### Changed
