@@ -1549,4 +1549,104 @@ describe('EnforcementEngine', () => {
       }
     });
   });
+
+  // ── Usage meter / CI-2 ──────────────────────────────────────────────────────
+
+  describe('onMeterError callback (CI-2)', () => {
+    let meterKey: jose.KeyLike;
+    let meterPubKey: string;
+
+    beforeAll(async () => {
+      const kp = await jose.generateKeyPair('RS256');
+      meterKey = kp.privateKey;
+      meterPubKey = await jose.exportSPKI(kp.publicKey);
+    });
+
+    const makeMeterToken = async (tenantId: string): Promise<string> => {
+      const now = Math.floor(Date.now() / 1000);
+      return new jose.SignJWT({
+        iss: 'did:web:test.com',
+        sub: 'agent-1',
+        aud: 'tool-gateway',
+        iat: now,
+        exp: now + 3600,
+        jti: `meter-test-${Date.now()}`,
+        schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+        capabilities: [{ resource: 'res://tool', actions: ['call'] }],
+        authorizedBy: { userId: 'user-1', roles: ['user'], tenantId },
+      })
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(meterKey);
+    };
+
+    it('invokes onMeterError when usageMeter.recordEnforcement throws', async () => {
+      const onMeterError = jest.fn();
+
+      // Build a meter whose recordEnforcement always throws.
+      const throwingMeter = {
+        recordEnforcement: () => { throw new Error('Billing system unavailable'); },
+        recordKillSwitchInvocation: jest.fn(),
+        getUsage: jest.fn(),
+        getAllUsage: jest.fn(),
+        resetPeriod: jest.fn(),
+      };
+
+      const eng = new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(meterPubKey, { requireKid: false }),
+        logger,
+        usageMeter: throwingMeter,
+        onMeterError,
+      });
+
+      const token = await makeMeterToken('acme');
+      // The validate call must still complete and return a result, despite the
+      // meter error. The enforcement outcome must NOT be affected.
+      const result = await eng.validateAction({ token, action: 'call', resource: 'res://tool' });
+      expect(result.allowed).toBe(true);
+
+      // The onMeterError callback should have been called exactly once.
+      expect(onMeterError).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onMeterError when usageMeter.recordEnforcement succeeds', async () => {
+      const onMeterError = jest.fn();
+
+      const silentMeter = {
+        recordEnforcement: jest.fn(),
+        recordKillSwitchInvocation: jest.fn(),
+        getUsage: jest.fn(),
+        getAllUsage: jest.fn(),
+        resetPeriod: jest.fn(),
+      };
+
+      const eng = new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(meterPubKey, { requireKid: false }),
+        logger,
+        usageMeter: silentMeter,
+        onMeterError,
+      });
+
+      const token = await makeMeterToken('acme');
+      await eng.validateAction({ token, action: 'call', resource: 'res://tool' });
+      expect(onMeterError).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke onMeterError when no usageMeter is configured', async () => {
+      const onMeterError = jest.fn();
+
+      const eng = new EnforcementEngine({
+        dpop: { required: false },
+        verifier: new JWTTokenVerifier(meterPubKey, { requireKid: false }),
+        logger,
+        onMeterError,
+      });
+
+      const token = await makeMeterToken('acme');
+      await eng.validateAction({ token, action: 'call', resource: 'res://tool' });
+      // No meter — no error
+      expect(onMeterError).not.toHaveBeenCalled();
+    });
+  });
 });

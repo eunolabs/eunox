@@ -39,7 +39,7 @@ import {
   ServiceConfig,
   CallCounterStore,
   UsageMeter,
-  InMemoryUsageMeter,
+  createUsageMeterFromEnv,
 } from '@euno/common';
 import { JWTTokenVerifier, JwksTokenVerifier } from './verifier';
 import { buildProofsVerifierFromEnv } from './proofs-verifier-bootstrap';
@@ -620,6 +620,18 @@ export async function initializeServices(
   });
   counterFallbackCounter.inc(0);
 
+  // CI-2: usage-meter error counter — incremented when `recordEnforcement`
+  // throws inside validateAction's finally block. A non-zero rate means
+  // billing events are being silently lost; alert and investigate.
+  const usageMeterErrorsCounter = new Counter({
+    name: 'euno_usage_meter_errors_total',
+    help: 'Errors thrown by the usage meter inside validateAction. ' +
+      'A non-zero rate means per-tenant billing counters may be under-counting. ' +
+      'Investigate the usage meter backend (Redis connectivity, etc.).',
+    registers: [metricsRegistry],
+  });
+  usageMeterErrorsCounter.inc(0);
+
   // H-1: shard mis-route counter — conditional on sharding being enabled.
   const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
   const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
@@ -888,11 +900,17 @@ export async function initializeServices(
     | Array<'allow' | 'deny'>
     | undefined;
 
-  // ── Step 13a: Usage meter (Task 17) ──────────────────────────────────────
-  // Created before the enforcement engine so the engine can reference it.
-  // The InMemoryUsageMeter is always created; a future task can replace it
-  // with a Postgres- or Redis-backed implementation via the UsageMeter seam.
-  const usageMeter: UsageMeter = new InMemoryUsageMeter();
+  // ── Step 13a: Usage meter (CR-1 / Task 17) ───────────────────────────────
+  // Use a Redis-backed UsageMeter when REDIS_URL (or USAGE_METER_REDIS_URL) is
+  // configured so billing counters survive pod restarts. Falls back to the
+  // InMemoryUsageMeter when no Redis URL is available (emits a warn in prod).
+  // The onError callback wires Redis write failures to euno_usage_meter_errors_total
+  // (CI-2) so operators can observe silent billing losses in dashboards.
+  const usageMeter: UsageMeter = await createUsageMeterFromEnv(
+    env,
+    logger,
+    () => usageMeterErrorsCounter.inc(),
+  );
 
   // Audit-retention days — surfaced in GET /admin/usage for billing tier
   // confirmation. Read directly from the validated config (the field is
@@ -923,6 +941,7 @@ export async function initializeServices(
     },
     ...(validated.GATEWAY_AUDIENCE ? { gatewayAudience: validated.GATEWAY_AUDIENCE } : {}),
     usageMeter,
+    onMeterError: () => usageMeterErrorsCounter.inc(),
   });
 
   // ── Step 14: Assemble deps bag ────────────────────────────────────────────
