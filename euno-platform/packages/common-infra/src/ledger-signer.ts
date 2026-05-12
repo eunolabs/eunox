@@ -770,8 +770,18 @@ export interface PostgresLedgerOptions {
    * |---------|----------|---------|-------------|
    * | `PostgresLedgerBackend` (`'global'`) | 1 | any | ~200–1000 |
    * | `PostgresLedgerBackend` (`'global'`) | N | any | ~200–1000 (lock serializes all) |
-   * | `PostgresLedgerBackend` (`'per-tenant'`) | N | T | T × 200–1000 (scales with tenants) |
+   * | `PostgresLedgerBackend` (`'per-tenant'`) | N | T | ~200–1000 (seq PK limits total; reduced per-tenant lock wait) |
    * | `PerReplicaPostgresLedgerBackend` | N | any | N × 200–1000 (scales with replicas) |
+   *
+   * **Note on `'per-tenant'` mode:** The advisory lock is sharded by tenant so
+   * different tenants do not block each other at the lock-acquisition step.
+   * However, all appends share the same global `seq` primary key, so concurrent
+   * writers from different tenants will still race on the INSERT and may trigger
+   * up to 3 retries on a PK collision (Postgres error 23505).  Total cluster
+   * throughput is therefore still bounded by the seq-insert rate, not by the
+   * number of tenants.  Per-tenant mode lowers _individual-tenant latency_ at
+   * moderate concurrency; it is **not** a throughput multiplier.  For true
+   * linear throughput scaling, use {@link PerReplicaPostgresLedgerBackend}.
    *
    * Default: `'global'`.
    */
@@ -997,10 +1007,11 @@ export class PostgresLedgerBackend implements LedgerBackend {
   ): Promise<SignedAuditEvidence> {
     // DI-2: When advisoryLockMode==='per-tenant', use a per-tenant advisory
     // lock derived from the evidence's tenantId.  Different tenants acquire
-    // different locks, allowing concurrent writes from independent tenants
-    // while still serialising writes within a single tenant.  The global seq
-    // namespace is preserved; on the rare event of a lock-hash collision the
-    // backend detects the resulting PK conflict and retries automatically.
+    // different locks so they do not block each other at the advisory-lock step.
+    // NOTE: total cluster throughput is still bounded by the global seq PK —
+    // concurrent writers from different tenants race on INSERT and may collide
+    // (23505), triggering automatic retries.  Per-tenant mode reduces individual-
+    // tenant lock-wait latency; it is not a total-throughput multiplier.
     if (this.advisoryLockMode === 'per-tenant' && !evidence.tenantId) {
       throw new Error(
         'PostgresLedgerBackend (per-tenant mode): evidence.tenantId is required ' +

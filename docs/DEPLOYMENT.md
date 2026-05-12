@@ -70,10 +70,17 @@ This backend is the correct choice when:
 - You have a single active tenant, **or**
 - Your audit write rate is comfortably below ~500 appends / second.
 
-For multi-tenant deployments that stay within the throughput envelope, enable the
-per-tenant advisory lock sharding to allow concurrent writes from independent
-tenants (set `advisoryLockMode: 'per-tenant'` in code; this is not yet exposed as
-a standalone env var — wire it via `createLedgerSignerFromConfig` options).
+For multi-tenant deployments, you can enable per-tenant advisory lock sharding
+(`advisoryLockMode: 'per-tenant'`) to reduce per-tenant lock-wait latency:
+different tenants will no longer block each other at the advisory-lock step.
+**Note:** total cluster throughput is still bounded by the global `seq` primary
+key — concurrent writers from different tenants race on INSERT and may trigger
+retries (up to 3, with linear back-off).  Per-tenant mode is **not** a
+throughput multiplier; it is a latency optimisation for multi-tenant workloads
+at moderate concurrency.  For true throughput scaling, use
+`PerReplicaPostgresLedgerBackend` instead (set `advisoryLockMode: 'per-tenant'`
+in code; this is not yet exposed as a standalone env var — wire it via
+`createLedgerSignerFromConfig` options).
 
 ### `PerReplicaPostgresLedgerBackend` — lock-free (recommended for multi-replica or multi-tenant production)
 
