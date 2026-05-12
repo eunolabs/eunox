@@ -252,8 +252,14 @@ export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Pr
   const criteria = buildCriteria(stats, apiUrl);
 
   for (const c of criteria) {
-    const statusChar =
-      c.met === true ? '✅' : c.met === false ? '❌' : '⚠️ ';
+    let statusChar: string;
+    if (c.met === true) {
+      statusChar = '✅';
+    } else if (c.met === false) {
+      statusChar = '❌';
+    } else {
+      statusChar = '⚠️ ';
+    }
     process.stdout.write(`${statusChar}  ${pad(c.label, 35)}  ${c.detail}\n`);
     process.stdout.write(`   ${pad('', 35)}  Tracking: ${c.trackingPointer}\n\n`);
   }

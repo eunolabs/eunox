@@ -341,7 +341,11 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
         signal: AbortSignal.timeout(5_000),
       });
     } catch {
-      // Network errors must never affect the enforcement path.
+      // Telemetry errors are intentionally swallowed — they must never
+      // affect the enforcement hot path or gateway startup/shutdown.
+      // Matching the local-mode client: HttpTelemetryEmitter also discards
+      // errors silently to preserve the same guarantee for operators who
+      // route telemetry through an unreliable or off-by-default endpoint.
     }
   }
 }
