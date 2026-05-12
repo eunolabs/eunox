@@ -440,38 +440,12 @@ describe('Cross-stage enforcement parity — Task 19', () => {
       expect(localResult.allow).toBe(false);
     });
 
-    /**
-     * OCSF conditionType audit parity — documented divergence.
-     *
-     * Local path (ConditionEnforcerPDP):
-     *   `PdpDecision.conditionType = 'timeWindow'` → written to
-     *   `McpAuditRecord.conditionType` → lands in the OCSF record's
-     *   `unmapped.conditionType` field.
-     *
-     * Hosted path (EnforcementEngine):
-     *   `emitDenialEvidence(..., 'CONDITION_FAILED', 'timeWindow')` →
-     *   `AuditEvidence.conditionType = 'timeWindow'`. This field IS
-     *   accurate in the audit record. However, `validateActionInner`
-     *   does NOT propagate `denialConditionType` back into
-     *   `EnforcementResult` for generic condition failures, so
-     *   `EnforcementResult.denialConditionType` is `undefined` here.
-     *
-     * Both modes write `conditionType='timeWindow'` to their audit
-     * evidence (the OCSF pre-signature parity claim). The
-     * `EnforcementResult.denialConditionType` field being undefined
-     * is a gap in the result struct, not in the audit record.
-     */
-    it('conditionType in audit evidence matches between modes (documented gap in result struct)', async () => {
+    it('conditionType in denial results matches between modes', async () => {
       const localResult = await evaluateLocal(local, 'expired_tool');
       const hostedResult = await evaluateHosted(hosted, 'expired_tool');
 
-      // Local result exposes conditionType (used to populate audit record).
       expect(localResult.conditionType).toBe('timeWindow');
-
-      // Hosted EnforcementResult.denialConditionType is not populated for
-      // generic condition failures (gap documented above). The audit
-      // evidence still carries conditionType='timeWindow' via emitDenialEvidence.
-      expect(hostedResult.conditionType).toBeUndefined();
+      expect(hostedResult.conditionType).toBe('timeWindow');
     });
   });
 
@@ -809,15 +783,9 @@ describe('Cross-stage enforcement parity — Task 19', () => {
         );
       });
 
-      it('EnforcementResult.denialConditionType is not populated for condition failures (known gap)', async () => {
-        // Although emitDenialEvidence writes conditionType='timeWindow' to
-        // AuditEvidence (asserted above), validateAction does NOT propagate
-        // denialConditionType back into EnforcementResult.  This is a gap in
-        // the result struct (not in the audit record) — flagged for follow-up.
+      it('propagates EnforcementResult.denialConditionType for condition failures', async () => {
         const hostedResult = await evaluateHosted(hosted, 'time_locked');
-        // TODO: populate EnforcementResult.denialConditionType for condition
-        // failures so the wire result matches the audit evidence.
-        expect(hostedResult.conditionType).toBeUndefined();
+        expect(hostedResult.conditionType).toBe('timeWindow');
       });
     });
 

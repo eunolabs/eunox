@@ -115,12 +115,10 @@ export class MeteredTokenSigner implements TokenSigner {
     return this.inner.getKeyId();
   }
 
-  getAlgorithm(): string | undefined {
-    // `getAlgorithm` is an optional method on the TokenSigner interface (marked
-    // with `?`), so not all implementations provide it.  We guard before calling
-    // to avoid a runtime error when wrapping a minimal custom signer.
-    return typeof this.inner.getAlgorithm === 'function'
-      ? this.inner.getAlgorithm()
-      : undefined;
+  getAlgorithm(): string {
+    if (typeof this.inner.getAlgorithm !== 'function') {
+      throw new Error('MeteredTokenSigner: inner signer does not expose getAlgorithm()');
+    }
+    return this.inner.getAlgorithm();
   }
 }
