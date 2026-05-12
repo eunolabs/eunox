@@ -568,7 +568,7 @@ describe('Kill-switch admin endpoints', () => {
 // Task 8 hardening tests
 // =============================================================================
 
-import { AdminIdempotencyStore } from '../src/admin-api';
+import { AdminIdempotencyStore, IAdminIdempotencyStore } from '../src/admin-api';
 import type { OcsfAuditTransport, OcsfAuthorizationEvent } from '@euno/common';
 
 // ── Shared helpers for Task 8 tests ──────────────────────────────────────────
@@ -587,7 +587,7 @@ function buildSimpleKsApp(): { app: Express; ksm: DefaultKillSwitchManager } {
 function buildTenantScopedApp(opts: {
   tenantId: string;
   ocsfTransport?: OcsfAuditTransport;
-  idempotencyStore?: AdminIdempotencyStore;
+  idempotencyStore?: IAdminIdempotencyStore;
 }): Express {
   const app = express();
   app.use(express.json());

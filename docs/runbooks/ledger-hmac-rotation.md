@@ -86,10 +86,14 @@ const { PostgresLedgerBackend } = require('@euno/common-infra');
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.POSTGRES_URL });
 const backend = new PostgresLedgerBackend({ pool, hmacSecret: process.env.AUDIT_LEDGER_HMAC_SECRET });
-backend.getEntries({ fromSeq: 1, limit: 10 }).then(entries => {
+// getEntries(fromSeq, toSeq) — both arguments are required positional numbers.
+backend.getEntries(1, 100).then(entries => {
   for (const e of entries) {
-    const ok = backend.verifyRowHmac(e.seq, e.previousHash, e.recordHash, e.replicaId, e.rowHmac);
-    console.log('seq', e.seq, ok ? 'OK' : 'TAMPERED');
+    // rowHmac is populated by getEntries() from the raw BYTEA column.
+    if (e.rowHmac) {
+      const ok = backend.verifyRowHmac(e, e.rowHmac);
+      console.log('seq', e.seq, ok ? 'OK' : 'TAMPERED');
+    }
   }
   pool.end();
 });
@@ -108,19 +112,24 @@ For deployments that cannot tolerate table recreation, add a `verifyHmac(oldSecr
 
    ```sql
    -- CAUTION: requires AUDIT_LEDGER_WRITE_LOCK during this operation.
-   -- Replace $OLD_SECRET and $NEW_SECRET with the hex-encoded secrets.
+   -- Replace $NEW_SECRET_HEX with the hex-encoded new secret.
+   -- pgcrypto hmac() produces the same HMAC-SHA256 as Node.js
+   --   crypto.createHmac('sha256', secret).update(message).digest()
+   -- The message format matches the gateway: seq:previousHash:recordHash:replicaId
    UPDATE euno_audit_ledger SET row_hmac = (
-     SELECT digest(
-       encode(decode($NEW_SECRET, 'hex'), 'escape') ||
-       seq::text || ':' || previous_hash || ':' || record_hash || ':' || replica_id,
+     hmac(
+       (seq::text || ':' || previous_hash || ':' || record_hash || ':' || replica_id)::bytea,
+       decode($NEW_SECRET_HEX, 'hex'),
        'sha256'
      )
    );
    ```
 
-   > **Note:** PostgreSQL's `digest()` function is provided by the `pgcrypto` extension
-   > (`CREATE EXTENSION IF NOT EXISTS pgcrypto`). Alternatively, use an offline script
-   > that reads, recomputes, and updates each row in batches.
+   > **Prerequisites:** The `pgcrypto` extension must be installed
+   > (`CREATE EXTENSION IF NOT EXISTS pgcrypto`). The `$NEW_SECRET_HEX`
+   > placeholder must be replaced with the actual hex-encoded secret value
+   > (e.g. a 32-byte value as 64 hex characters). Alternatively, use an
+   > offline script that reads, recomputes, and updates each row in batches.
 
 3. **Deploy the new secret.** HMACs for all rows now match the new secret.
 

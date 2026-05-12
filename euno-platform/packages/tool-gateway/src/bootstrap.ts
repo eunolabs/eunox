@@ -980,8 +980,9 @@ export async function initializeServices(
     logger.warn(
       'DI-3: REDIS_URL is configured but the admin idempotency store is in-memory. ' +
         'In a multi-replica deployment, duplicate admin operations (kill, revoke, etc.) ' +
-        'can be processed once per replica. To prevent this, wire RedisAdminIdempotencyStore ' +
-        'from @euno/tool-gateway into createAdminRouter({ idempotencyStore: ... }). ' +
+        'can be processed once per replica. To prevent this, create a RedisAdminIdempotencyStore ' +
+        'using createAdminIdempotencyStore({ redisClient: new Redis(url) }) from @euno/tool-gateway ' +
+        'and pass it to createAdminRouter({ ..., idempotencyStore }). ' +
         'See docs/architecture-review-2026-05.md § DI-3.',
     );
   }

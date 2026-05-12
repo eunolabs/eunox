@@ -119,9 +119,28 @@ export class AdminIdempotencyStore {
 }
 
 /**
+ * Shared interface for both the in-memory and Redis-backed idempotency stores.
+ *
+ * `get` and `set` may return synchronously or via a Promise so that the
+ * in-memory implementation can keep its simple synchronous internals while
+ * allowing the Redis-backed implementation to use proper async I/O.  All
+ * call sites use `await Promise.resolve(store.get(...))` to handle both.
+ */
+export interface IAdminIdempotencyStore {
+  get(key: string): Promise<IdempotencyEntry | undefined> | (IdempotencyEntry | undefined);
+  set(
+    key: string,
+    endpoint: string,
+    status: number,
+    body: unknown,
+  ): Promise<IdempotencyEntry> | IdempotencyEntry;
+}
+
+/**
  * Minimal Redis client surface required by {@link RedisAdminIdempotencyStore}.
  * Defined locally so the gateway does not take a hard runtime dependency on
- * `ioredis` — callers wire one in via `createAdminIdempotencyStoreFromEnv`.
+ * `ioredis` — callers supply a pre-wired Redis client (e.g. an ioredis `Redis`
+ * instance) and pass it to `new RedisAdminIdempotencyStore(client)`.
  */
 export interface RedisIdempotencyClient {
   set(
@@ -217,6 +236,40 @@ export class RedisAdminIdempotencyStore {
       });
     return entry;
   }
+}
+
+/**
+ * Factory that returns a {@link RedisAdminIdempotencyStore} when a pre-wired
+ * Redis client is supplied, or an in-memory {@link AdminIdempotencyStore}
+ * otherwise.
+ *
+ * Usage in the gateway bootstrap:
+ * ```typescript
+ * import Redis from 'ioredis';
+ * const idempotencyStore = createAdminIdempotencyStore({
+ *   redisClient: new Redis(process.env.ADMIN_IDEMPOTENCY_REDIS_URL ?? process.env.REDIS_URL),
+ *   logger,
+ * });
+ * createAdminRouter({ killSwitchManager, logger, idempotencyStore });
+ * ```
+ *
+ * When no `redisClient` is provided the in-memory store is returned, which is
+ * correct for single-replica / development deployments.
+ */
+export function createAdminIdempotencyStore(
+  opts: {
+    redisClient?: RedisIdempotencyClient;
+    ttlMs?: number;
+    logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  } = {},
+): IAdminIdempotencyStore {
+  if (opts.redisClient) {
+    return new RedisAdminIdempotencyStore(opts.redisClient, {
+      ttlMs: opts.ttlMs,
+      logger: opts.logger,
+    });
+  }
+  return new AdminIdempotencyStore({ ttlMs: opts.ttlMs });
 }
 
 export interface AdminApiOptions {
@@ -329,8 +382,14 @@ export interface AdminApiOptions {
    * Callers that do not pass a store still benefit from the store created
    * internally per-router-instance; pass an explicit store only when you need
    * to share idempotency state across multiple router instances (uncommon).
+   *
+   * Accepts either the in-memory {@link AdminIdempotencyStore} or a
+   * {@link RedisAdminIdempotencyStore} (constructed via
+   * {@link createAdminIdempotencyStore}).  The router awaits the result of
+   * every `get`/`set` call so both sync and async implementations are
+   * transparently supported.
    */
-  idempotencyStore?: AdminIdempotencyStore;
+  idempotencyStore?: IAdminIdempotencyStore;
   /**
    * When `true`, the kill-switch manager is configured with
    * `failOpenOnWrite=true` (i.e. `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`).
@@ -512,10 +571,10 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * If the same key was used for a *different* endpoint, reply with 422 and
    * return `true`.
    */
-  function replayIfIdempotent(req: Request, res: Response): boolean {
+  async function replayIfIdempotent(req: Request, res: Response): Promise<boolean> {
     const key = getIdempotencyKey(req);
     if (!key) return false;
-    const cached = idempotencyStore.get(key);
+    const cached = await Promise.resolve(idempotencyStore.get(key));
     if (!cached) return false;
     const current = endpointLabel(req);
     if (cached.endpoint !== current) {
@@ -537,10 +596,10 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * Cache the response for a successful idempotency-key request so future
    * retries can be replayed without re-executing the operation.
    */
-  function cacheIdempotentResponse(req: Request, status: number, body: unknown): void {
+  async function cacheIdempotentResponse(req: Request, status: number, body: unknown): Promise<void> {
     const key = getIdempotencyKey(req);
     if (!key) return;
-    idempotencyStore.set(key, endpointLabel(req), status, body);
+    await Promise.resolve(idempotencyStore.set(key, endpointLabel(req), status, body));
   }
 
   // ── Tenant-scope guard ──────────────────────────────────────────────────
@@ -709,8 +768,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * Callers must acknowledge this explicitly by including
    * `"acknowledgesCrossTenantImpact": true` in the request body.
    */
-  router.post('/kill-switch/global/activate', (req: Request, res: Response) => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/global/activate', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     // Global kill is inherently cross-tenant; require acknowledgement when scoped.
     if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
@@ -735,7 +794,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       logger.warn('Global kill switch activated via admin API', { operator });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const { status, body } = killSwitchSuccessResponse('Global kill switch activated');
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to activate global kill switch', {
@@ -757,8 +816,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * Same cross-tenant caveat as activate: when tenant-scoped, the acknowledgement
    * field is required because deactivation restores traffic for ALL tenants.
    */
-  router.post('/kill-switch/global/deactivate', (req: Request, res: Response) => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/global/deactivate', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
       killSwitchManager.deactivateGlobalKill();
@@ -780,7 +839,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.info('Global kill switch deactivated via admin API', { operator });
       const { status, body } = killSwitchSuccessResponse('Global kill switch deactivated');
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to deactivate global kill switch', {
@@ -804,8 +863,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * operator credential for tenant A from killing a session that belongs
    * to tenant B.
    */
-  router.post('/kill-switch/session/:sessionId/kill', (req: Request, res: Response): void => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/session/:sessionId/kill', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       const { sessionId } = req.params;
@@ -840,7 +899,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       logger.warn('Session killed via admin API', { sessionId });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const { status, body } = killSwitchSuccessResponse(`Session ${sessionId} has been killed`);
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to kill session', {
@@ -862,8 +921,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * When the gateway is tenant-scoped, the request body MUST include a
    * matching `tenantId` field.
    */
-  router.post('/kill-switch/agent/:agentId/kill', (req: Request, res: Response): void => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/agent/:agentId/kill', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       const { agentId } = req.params;
@@ -898,7 +957,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       logger.warn('Agent killed via admin API', { agentId });
       usageMeter?.recordKillSwitchInvocation(killSwitchTenantId(req));
       const { status, body } = killSwitchSuccessResponse(`Agent ${agentId} has been killed`);
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to kill agent', {
@@ -917,8 +976,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * POST /admin/kill-switch/session/:sessionId/revive
    * Revive a killed session.
    */
-  router.post('/kill-switch/session/:sessionId/revive', (req: Request, res: Response): void => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/session/:sessionId/revive', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       const { sessionId } = req.params;
@@ -952,7 +1011,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.info('Session revived via admin API', { sessionId });
       const { status, body } = killSwitchSuccessResponse(`Session ${sessionId} has been revived`);
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to revive session', {
@@ -971,8 +1030,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * POST /admin/kill-switch/agent/:agentId/revive
    * Revive a killed agent.
    */
-  router.post('/kill-switch/agent/:agentId/revive', (req: Request, res: Response): void => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/agent/:agentId/revive', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       const { agentId } = req.params;
@@ -1006,7 +1065,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.info('Agent revived via admin API', { agentId });
       const { status, body } = killSwitchSuccessResponse(`Agent ${agentId} has been revived`);
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to revive agent', {
@@ -1030,8 +1089,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * When tenant scoping is active, the cross-tenant acknowledgement field is
    * therefore required to confirm awareness of this full-instance blast radius.
    */
-  router.post('/kill-switch/reset', (req: Request, res: Response) => {
-    if (replayIfIdempotent(req, res)) return;
+  router.post('/kill-switch/reset', async (req: Request, res: Response): Promise<void> => {
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res, /* requiresAcknowledgement */ true)) return;
     try {
       killSwitchManager.resetAll();
@@ -1053,7 +1112,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
       });
       logger.warn('All kill switches reset via admin API');
       const { status, body } = killSwitchSuccessResponse('All kill switches have been reset');
-      cacheIdempotentResponse(req, status, body);
+      await cacheIdempotentResponse(req, status, body);
       res.status(status).json(body);
     } catch (error) {
       logger.error('Failed to reset kill switches', {
@@ -1076,7 +1135,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * When the gateway is tenant-scoped, `tenantId` must be present in the body.
    */
   router.post('/revoke', async (req: Request, res: Response): Promise<void> => {
-    if (replayIfIdempotent(req, res)) return;
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       if (!tokenVerifier) {
@@ -1139,7 +1198,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         tokenId,
         expiresAt: effectiveExpiresAt,
       };
-      cacheIdempotentResponse(req, 200, body);
+      await cacheIdempotentResponse(req, 200, body);
       res.json(body);
     } catch (error) {
       logger.error('Failed to revoke token', {
@@ -1176,7 +1235,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
    * When the gateway is tenant-scoped, `tenantId` must be present in the body.
    */
   router.post('/revocation/epoch', async (req: Request, res: Response): Promise<void> => {
-    if (replayIfIdempotent(req, res)) return;
+    if (await replayIfIdempotent(req, res)) return;
     if (assertTenantScope(req, res)) return;
     try {
       if (!epochStore) {
@@ -1240,7 +1299,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
         issuer,
         issuedBefore,
       };
-      cacheIdempotentResponse(req, 200, body);
+      await cacheIdempotentResponse(req, 200, body);
       res.json(body);
     } catch (error) {
       logger.error('Failed to set revocation epoch', {
