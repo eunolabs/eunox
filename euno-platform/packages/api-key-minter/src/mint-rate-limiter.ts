@@ -157,14 +157,27 @@ export class RedisBackedMintRateLimiter implements MintRateLimiter {
         await this.client.expire(fullKey, this.windowSeconds);
       }
       if (count > this.maxMints) {
-        // Best-effort TTL fetch for a helpful Retry-After value; fall back to
-        // the full window length if the TTL call fails.
+        // Fetch the remaining TTL to provide an accurate Retry-After value.
+        // The TTL fetch also serves as a safety guard: if expire() failed on
+        // the initial increment (count was 1), the key has no TTL and the
+        // caller would be blocked permanently.  When we detect ttl === -1
+        // (key exists but has no expiry) we re-apply expire so the block is
+        // always temporary.
         let remainingSeconds = this.windowSeconds;
         try {
           const ttl = await this.client.ttl(fullKey);
-          if (ttl > 0) remainingSeconds = ttl;
+          if (ttl > 0) {
+            remainingSeconds = ttl;
+          } else if (ttl === -1) {
+            // Safety guard: no TTL on the key — this happens when the initial
+            // expire() call (count === 1 path) threw after incr() succeeded.
+            // Re-apply expire so the counter eventually resets.
+            await this.client.expire(fullKey, this.windowSeconds);
+            remainingSeconds = this.windowSeconds;
+          }
         } catch {
-          // Non-critical — Retry-After is informational only.
+          // Non-critical — Retry-After is informational only; the deny is
+          // still correct regardless of the TTL value.
         }
         return { allowed: false, retryAfterSeconds: remainingSeconds };
       }
@@ -248,11 +261,13 @@ export async function createPingRateLimiterFromEnv(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {
+    const detectedVar = env['MINTER_PING_REDIS_URL'] ? 'MINTER_PING_REDIS_URL' : 'REDIS_URL';
     logger?.error(
-      '[minter] createPingRateLimiterFromEnv: REDIS_URL is set but "ioredis" is not installed. ' +
-        'Install it (npm install ioredis) to enable fleet-wide ping rate limiting. ' +
+      `[minter] createPingRateLimiterFromEnv: ${detectedVar} is set but "ioredis" is not installed. ` +
+        'Install it (npm install ioredis) to enable fleet-wide ping rate limiting ' +
+        '(supports both MINTER_PING_REDIS_URL and REDIS_URL). ' +
         'Falling back to in-memory rate limiter.',
-      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { error: error instanceof Error ? error.message : 'Unknown error', detectedVar },
     );
     return new InMemoryMintRateLimiter({ maxMintsPerWindow: max, windowSeconds });
   }

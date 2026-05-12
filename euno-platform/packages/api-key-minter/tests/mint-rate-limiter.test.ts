@@ -20,21 +20,35 @@ import {
 /**
  * In-memory Redis mock that satisfies {@link RedisMintRateLimiterClient}.
  * Keys are stored with an explicit expiry so `ttl()` returns a meaningful value.
+ *
+ * `expiresAt = -1` is the internal sentinel meaning "key exists but has no TTL"
+ * (mirrors Redis's `TTL → -1` for persistent keys). This lets tests exercise
+ * the safety guard that re-applies expire() when the initial expire() call
+ * failed after a successful incr().
  */
 class FakeRedisClient implements RedisMintRateLimiterClient {
   private readonly store = new Map<string, { count: number; expiresAt: number }>();
   private readonly eventListeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
-  // Used by tests to simulate a broken client.
+  // Used by tests to simulate a fully broken client.
   shouldThrow = false;
+
+  // Number of times expire() should throw before succeeding. Used to simulate
+  // a transient Redis error on the initial expire() call (INCR succeeds but
+  // EXPIRE fails), leaving the key with no TTL. Each call decrements the
+  // counter; once it reaches 0 expire() operates normally.
+  expireFailsRemaining = 0;
 
   async incr(key: string): Promise<number> {
     if (this.shouldThrow) throw new Error('Redis connection refused');
     const now = Date.now();
     const entry = this.store.get(key);
-    if (!entry || now >= entry.expiresAt) {
-      // Expired or missing — start a new window (TTL set by expire() call).
-      this.store.set(key, { count: 1, expiresAt: Infinity });
+    // Reset when: (a) key missing, or (b) key has a real expiry that has passed.
+    // A key with expiresAt === -1 (no TTL yet) is NOT treated as expired; it is
+    // a valid persistent key awaiting its first expire() call.
+    if (!entry || (entry.expiresAt !== -1 && now >= entry.expiresAt)) {
+      // Expired or missing — start a new window. expiresAt=-1 means no TTL set yet.
+      this.store.set(key, { count: 1, expiresAt: -1 });
       return 1;
     }
     entry.count++;
@@ -43,6 +57,10 @@ class FakeRedisClient implements RedisMintRateLimiterClient {
 
   async expire(key: string, seconds: number): Promise<number> {
     if (this.shouldThrow) throw new Error('Redis connection refused');
+    if (this.expireFailsRemaining > 0) {
+      this.expireFailsRemaining--;
+      throw new Error('Redis expire error');
+    }
     const entry = this.store.get(key);
     if (entry) {
       entry.expiresAt = Date.now() + seconds * 1000;
@@ -54,6 +72,7 @@ class FakeRedisClient implements RedisMintRateLimiterClient {
     if (this.shouldThrow) throw new Error('Redis connection refused');
     const entry = this.store.get(key);
     if (!entry) return -2; // key does not exist
+    if (entry.expiresAt === -1) return -1; // key exists but has no TTL
     const remaining = Math.ceil((entry.expiresAt - Date.now()) / 1000);
     return remaining > 0 ? remaining : -1;
   }
@@ -226,6 +245,36 @@ describe('RedisBackedMintRateLimiter', () => {
   it('close() does not throw when quit() rejects', async () => {
     jest.spyOn(fakeRedis, 'quit').mockRejectedValue(new Error('already closed'));
     await expect(limiter.close()).resolves.toBeUndefined();
+  });
+
+  it('re-applies TTL in the deny path when the initial expire() failed (safety guard)', async () => {
+    // Simulate a transient Redis error on the very first expire() call.
+    // incr() succeeds and stores count=1, but expire() throws → outer catch
+    // fires → fail-open (allowed=true). The key is left with no TTL.
+    fakeRedis.expireFailsRemaining = 1;
+    // Default keyPrefix is 'mintrl:' — match it when querying fakeRedis directly.
+    const fullKey = 'mintrl:ip-guard';
+
+    // Call 1: incr → 1, expire fails → outer catch → fail-open.
+    const r1 = await limiter.check('ip-guard');
+    expect(r1.allowed).toBe(true);
+
+    // The key now has count=1 with no TTL (expiresAt === -1 in the mock).
+    expect(await fakeRedis.ttl(fullKey)).toBe(-1);
+
+    // Calls 2-3: count reaches maxMints=3 without triggering the deny path.
+    await limiter.check('ip-guard');
+    await limiter.check('ip-guard');
+
+    // Call 4: count=4 > maxMints=3. The deny path calls ttl(), detects -1,
+    // and re-applies expire so the block is time-bounded rather than permanent.
+    const r4 = await limiter.check('ip-guard');
+    expect(r4.allowed).toBe(false);
+    expect(r4.retryAfterSeconds).toBeGreaterThan(0);
+    expect(r4.retryAfterSeconds).toBeLessThanOrEqual(60);
+
+    // The TTL should now be set — the key is no longer persistent.
+    expect(await fakeRedis.ttl(fullKey)).toBeGreaterThan(0);
   });
 });
 

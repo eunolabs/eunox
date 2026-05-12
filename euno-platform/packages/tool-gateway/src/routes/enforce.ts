@@ -100,6 +100,38 @@ export interface EnforceRouterOptions {
 // ---------------------------------------------------------------------------
 
 /**
+ * Normalize an IPv4-mapped IPv6 address (e.g. `::ffff:127.0.0.1`) to its
+ * plain IPv4 form (`127.0.0.1`). Other addresses are returned unchanged.
+ *
+ * Node.js / Express surface IPv4-mapped IPv6 addresses when the TCP server
+ * listens on a dual-stack socket. Policy conditions are typically written with
+ * plain IPv4 CIDRs (e.g. `10.0.0.0/8`). Without normalization those CIDRs
+ * would never match gateway-derived IPs from dual-stack sockets even when the
+ * underlying client address is in the allowed range, because `ipMatchesCidr`
+ * treats the two families as distinct.
+ *
+ * The normalization also ensures that the spoofing-detection comparison
+ * in gateway mode is not polluted by representation differences: a client
+ * sending `context.sourceIp = "127.0.0.1"` and a gateway deriving
+ * `req.ip = "::ffff:127.0.0.1"` are the same address — no warning should
+ * be emitted in that case.
+ */
+function normalizeIpv4Mapped(ip: string): string {
+  const lower = ip.toLowerCase();
+  const prefix = '::ffff:';
+  if (lower.startsWith(prefix)) {
+    const candidate = ip.slice(prefix.length);
+    // Only strip the prefix when the remainder is a well-formed IPv4 address
+    // (four decimal octets separated by dots) so we don't accidentally mangle
+    // valid IPv6 addresses that happen to start with "::ffff:".
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return ip;
+}
+
+/**
  * Parse and validate the `X-Euno-Protocol-Version` header.
  *
  * - Missing header: treated as version 1 for backward compatibility with
@@ -546,18 +578,31 @@ export function createEnforceRouter(opts: EnforceRouterOptions): Router {
         if (sourceIpMode === 'gateway') {
           // req.ip may be undefined for non-HTTP transports in tests; fall
           // back to the client-supplied value only in that case.
-          const gatewayDerivedIp = req.ip;
+          // Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 → 127.0.0.1)
+          // so that policy CIDRs written with plain IPv4 notation match
+          // correctly even when the gateway accepts connections on a dual-stack
+          // socket.
+          const gatewayDerivedIp =
+            req.ip !== undefined ? normalizeIpv4Mapped(req.ip) : undefined;
           const clientSuppliedIp = enforceReq.context.sourceIp;
-          const effectiveIp = gatewayDerivedIp ?? clientSuppliedIp;
+          // Normalize the client-supplied value too so the spoofing-detection
+          // comparison is not polluted by representation differences (e.g.
+          // a client that echoes the same address back in IPv4-mapped form).
+          const normalizedClientIp =
+            clientSuppliedIp !== undefined ? normalizeIpv4Mapped(clientSuppliedIp) : undefined;
+          const effectiveIp = gatewayDerivedIp ?? normalizedClientIp;
           if (effectiveIp !== undefined) {
             validationContext.sourceIp = effectiveIp;
           }
           // Warn when the client asserted a different IP — signals a spoofing
-          // attempt or a misconfigured TRUST_PROXY.
+          // attempt or a misconfigured TRUST_PROXY.  Compare the normalized
+          // forms so that representation-equivalent addresses (e.g.
+          // "127.0.0.1" vs "::ffff:127.0.0.1") do not produce a noisy false
+          // positive.
           if (
             gatewayDerivedIp !== undefined &&
-            clientSuppliedIp !== undefined &&
-            clientSuppliedIp !== gatewayDerivedIp
+            normalizedClientIp !== undefined &&
+            normalizedClientIp !== gatewayDerivedIp
           ) {
             logger.warn('Enforce: client-supplied sourceIp differs from gateway-derived IP', {
               requestId,

@@ -619,15 +619,15 @@ describe('POST /api/v1/enforce', () => {
     });
 
     it('uses req.ip (loopback) as the effective sourceIp when mode is gateway', async () => {
-      // req.ip from supertest local connections is '::ffff:127.0.0.1' (IPv4-mapped
-      // loopback). The CIDR '::ffff:127.0.0.0/104' covers ::ffff:127.x.x.x — the
-      // IPv4-mapped loopback space — and does NOT match bare IPv4 strings like
-      // '10.9.9.9' (address-family mismatch in ipMatchesCidr).
+      // req.ip from supertest local connections is '::ffff:127.0.0.1', which
+      // normalizeIpv4Mapped() strips to '127.0.0.1'. The token uses a plain
+      // IPv4 CIDR — this test verifies that (a) the gateway-derived IP is
+      // normalized before enforcement and (b) the body-supplied IP is ignored.
       const token = await signToken(privateKey, [
         {
           resource: 'tool://gw-tool',
           actions: ['execute'],
-          conditions: [{ type: 'ipRange', cidrs: ['::ffff:127.0.0.0/104'] }],
+          conditions: [{ type: 'ipRange', cidrs: ['127.0.0.0/8'] }],
         },
       ]);
 
@@ -639,11 +639,11 @@ describe('POST /api/v1/enforce', () => {
           sessionId: 'sess-gw',
           toolName: 'gw-tool',
           arguments: {},
-          // Supply a non-matching IP in the body — gateway mode must ignore it.
+          // Supply a non-loopback IP in the body — gateway mode must ignore it.
           context: { sourceIp: '10.9.9.9' },
         });
 
-      // req.ip (::ffff:127.0.0.1) matches ::ffff:127.0.0.0/104 → allow.
+      // req.ip (::ffff:127.0.0.1) → normalized to 127.0.0.1 → matches 127.0.0.0/8 → allow.
       expect(res.status).toBe(200);
       expect(res.body.decision).toBe('allow');
     });
@@ -675,9 +675,13 @@ describe('POST /api/v1/enforce', () => {
       expect(res.body.decision).toBe('deny');
     });
 
-    it("does not set sourceIp in the validation context when req.ip is undefined and body has no sourceIp", async () => {
-      // A token with no ipRange condition. Request with no body sourceIp.
-      // Should behave as if sourceIp is absent (the condition is vacuously met).
+    it('allows when no ipRange condition is present and body has no sourceIp', async () => {
+      // No ipRange condition on the token and no sourceIp in the body.
+      // The decision should be allow regardless of what req.ip is (there is
+      // no CIDR constraint to evaluate against).  This is different from the
+      // "req.ip is undefined" case — supertest always populates req.ip; what
+      // matters here is that the absence of an ipRange condition means the
+      // sourceIp field is simply irrelevant to the outcome.
       const token = await signToken(privateKey, [
         { resource: 'tool://gw-tool', actions: ['execute'] },
       ]);
