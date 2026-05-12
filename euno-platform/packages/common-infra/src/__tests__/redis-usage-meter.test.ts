@@ -116,7 +116,7 @@ class FakeRedisClient implements RedisUsageMeterClient {
     return 'OK';
   }
 
-  async del(keys: string[]): Promise<unknown> {
+  async del(...keys: string[]): Promise<unknown> {
     this.maybeThrow();
     for (const k of keys) {
       this.store.delete(k);
@@ -125,7 +125,7 @@ class FakeRedisClient implements RedisUsageMeterClient {
     return keys.length;
   }
 
-  async mget(keys: string[]): Promise<(string | null)[]> {
+  async mget(...keys: string[]): Promise<(string | null)[]> {
     this.maybeThrow();
     return keys.map((k) => this.store.get(k) ?? null);
   }
@@ -275,6 +275,23 @@ describe('RedisUsageMeter', () => {
       // setnx should not overwrite
       expect(second).toBe(first);
     });
+
+    it('applies TTL to the :ps key on first creation', async () => {
+      meter.recordEnforcement('t1', 'allow');
+      await flushPromises();
+      expect(client.rawTtls().has('test:usage:t1:ps')).toBe(true);
+    });
+
+    it('does NOT set TTL again on second record (NX skipped duplicate)', async () => {
+      meter.recordEnforcement('t1', 'allow');
+      await flushPromises();
+      const firstTtl = client.rawTtls().get('test:usage:t1:ps');
+
+      meter.recordEnforcement('t1', 'deny');
+      await flushPromises();
+      // setnx returns 0 on the second call, so expire is not re-applied
+      expect(client.rawTtls().get('test:usage:t1:ps')).toBe(firstTtl);
+    });
   });
 
   // ── recordKillSwitchInvocation ─────────────────────────────────────────────
@@ -346,6 +363,16 @@ describe('RedisUsageMeter', () => {
       await flushPromises();
 
       expect(client.rawStore().has('test:usage:t1:enforcement')).toBe(false);
+    });
+
+    it('applies TTL to the new :ps key written during reset', async () => {
+      meter.recordEnforcement('t1', 'allow');
+      await flushPromises();
+
+      meter.resetPeriod('t1');
+      await flushPromises();
+
+      expect(client.rawTtls().has('test:usage:t1:ps')).toBe(true);
     });
 
     it('writes new period-start to Redis', async () => {
@@ -534,43 +561,80 @@ describe('createUsageMeterFromEnv', () => {
     expect(meter).toBeInstanceOf(InMemoryUsageMeter);
   });
 
-  it('returns an InMemoryUsageMeter when ioredis is not installed and falls back', async () => {
-    // Provide a fake Redis URL but ioredis is not actually available in tests.
-    // The factory should catch the require() error and fall back gracefully.
-    // We override require() by checking if the module exists; in the test
-    // environment it may or may not be installed. If it IS installed we skip
-    // this test to avoid a real Redis connection.
-    let ioredisAvailable = false;
+  it('falls back to InMemoryUsageMeter when ioredis is not installed', async () => {
+    // Force `require('ioredis')` to fail deterministically, regardless of whether
+    // ioredis happens to be hoisted into the workspace — same pattern as revocation-store tests.
+    jest.resetModules();
     try {
-      require('ioredis');
-      ioredisAvailable = true;
-    } catch {
-      // not installed
-    }
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
 
-    if (!ioredisAvailable) {
-      const meter = await createUsageMeterFromEnv({ REDIS_URL: 'redis://localhost:6379' });
-      expect(meter).toBeInstanceOf(InMemoryUsageMeter);
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../redis-usage-meter');
+        const meter = await mod.createUsageMeterFromEnv(
+          { REDIS_URL: 'redis://localhost:6379' } as unknown as NodeJS.ProcessEnv,
+        );
+        // Falls back to in-memory when ioredis can't be loaded.
+        const snap = meter.getUsage('nonexistent-tenant');
+        expect(snap.enforcementEvents).toBe(0);
+        expect(snap.allowDecisions).toBe(0);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
     }
   });
 
-  it('uses USAGE_METER_REDIS_URL over REDIS_URL when both are set', async () => {
-    // Both are set; if ioredis is not installed both fall back to in-memory.
-    let ioredisAvailable = false;
+  it('USAGE_METER_REDIS_URL takes precedence over REDIS_URL in the error log', async () => {
+    // When both URLs are set but ioredis is missing, the logged detectedVar
+    // should reference USAGE_METER_REDIS_URL (checked first by the factory).
+    jest.resetModules();
     try {
-      require('ioredis');
-      ioredisAvailable = true;
-    } catch {
-      // not installed — skip the connection-level behaviour
-    }
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
 
-    if (!ioredisAvailable) {
-      const meter = await createUsageMeterFromEnv({
-        REDIS_URL: 'redis://localhost:6379',
-        USAGE_METER_REDIS_URL: 'redis://localhost:6380',
+      const errorMessages: string[] = [];
+      const fakeLogger = {
+        info: () => undefined,
+        warn: () => undefined,
+        error: (msg: string) => { errorMessages.push(msg); },
+        debug: () => undefined,
+      };
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../redis-usage-meter');
+        await mod.createUsageMeterFromEnv(
+          {
+            REDIS_URL: 'redis://localhost:6379',
+            USAGE_METER_REDIS_URL: 'redis://localhost:6380',
+          } as unknown as NodeJS.ProcessEnv,
+          fakeLogger as unknown as Parameters<typeof mod.createUsageMeterFromEnv>[1],
+        );
       });
-      // Falls back to in-memory when ioredis isn't installed
-      expect(meter).toBeInstanceOf(InMemoryUsageMeter);
+
+      expect(errorMessages.some((m) => m.includes('USAGE_METER_REDIS_URL'))).toBe(true);
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
+    }
+  });
+
+  it('honours USAGE_METER_TTL_SECONDS=0 to disable TTL', async () => {
+    // The parse path for USAGE_METER_TTL_SECONDS=0 should not error or fall
+    // back to the default; the meter should be usable normally.
+    jest.resetModules();
+    try {
+      jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
+
+      await jest.isolateModulesAsync(async () => {
+        const mod = await import('../redis-usage-meter');
+        const meter = await mod.createUsageMeterFromEnv(
+          { USAGE_METER_TTL_SECONDS: '0' } as unknown as NodeJS.ProcessEnv,
+        );
+        meter.recordEnforcement('t1', 'allow');
+        expect(meter.getUsage('t1').enforcementEvents).toBe(1);
+      });
+    } finally {
+      jest.dontMock('ioredis');
+      jest.resetModules();
     }
   });
 });

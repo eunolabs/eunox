@@ -68,10 +68,10 @@ export interface RedisUsageMeterClient {
   setnx(key: string, value: string): Promise<number>;
   /** SET — unconditional write. */
   set(key: string, value: string): Promise<unknown>;
-  /** DEL — delete one or more keys. */
-  del(keys: string[]): Promise<unknown>;
-  /** MGET — returns null for missing keys, preserving input order. */
-  mget(keys: string[]): Promise<(string | null)[]>;
+  /** DEL — delete one or more keys (variadic, matching ioredis signature). */
+  del(...keys: string[]): Promise<unknown>;
+  /** MGET — returns null for missing keys, preserving input order (variadic, matching ioredis signature). */
+  mget(...keys: string[]): Promise<(string | null)[]>;
   quit(): Promise<unknown>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
@@ -279,7 +279,7 @@ export class RedisUsageMeter implements UsageMeter {
       return;
     }
 
-    // Build all keys for a bulk MGET, batching to avoid extremely large commands.
+    // Build all keys for a single bulk MGET across all tenants.
     const METRICS = ['enforcement', 'allow', 'deny', 'kill', 'ps'] as const;
     const keys: string[] = [];
     for (const tid of tenantIds) {
@@ -288,9 +288,11 @@ export class RedisUsageMeter implements UsageMeter {
       }
     }
 
+    // Issue one MGET for all tenant keys. ioredis expects variadic arguments,
+    // so we spread the keys array at the call site.
     let values: (string | null)[];
     try {
-      values = await this.client.mget(keys);
+      values = await this.client.mget(...keys);
     } catch (err) {
       this.logger?.warn('RedisUsageMeter: Failed to load usage counters from Redis; starting with empty local state', {
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -399,7 +401,12 @@ export class RedisUsageMeter implements UsageMeter {
       await this.client.sadd(tenantsKey, tenantId);
       // setnx writes only when the key is absent — preserves the original
       // period start across multiple calls without a read-before-write.
-      await this.client.setnx(psKey, periodStart);
+      const created = await this.client.setnx(psKey, periodStart);
+      if (created === 1 && this.counterTtlSeconds > 0) {
+        // First creation — attach TTL so the period-start key expires together
+        // with the counter keys, keeping Redis clean for inactive tenants.
+        await this.client.expire(psKey, this.counterTtlSeconds);
+      }
     } catch (err) {
       this.logger?.error('RedisUsageMeter: Redis tenant registration failed', {
         tenantId,
@@ -424,13 +431,17 @@ export class RedisUsageMeter implements UsageMeter {
       }
 
       if (keysToDelete.length > 0) {
-        await this.client.del(keysToDelete);
+        await this.client.del(...keysToDelete);
       }
 
-      // Write new period-start for every tenant.
+      // Write new period-start for every tenant, then re-attach the TTL so
+      // the key expires together with the counter keys for that tenant.
       for (const tid of tenantIds) {
         const psKey = `${this.keyPrefix}${tid}:ps`;
         await this.client.set(psKey, newPeriodStart);
+        if (this.counterTtlSeconds > 0) {
+          await this.client.expire(psKey, this.counterTtlSeconds);
+        }
       }
     } catch (err) {
       this.logger?.error('RedisUsageMeter: Redis reset failed', {
@@ -523,8 +534,10 @@ export async function createUsageMeterFromEnv(
   );
 
   const keyPrefix = env['USAGE_METER_KEY_PREFIX'] || DEFAULT_KEY_PREFIX;
+  // Allow `USAGE_METER_TTL_SECONDS=0` to explicitly disable TTL (stale keys
+  // never expire). Any non-finite parse result falls back to the default.
   const ttlRaw = parseInt(env['USAGE_METER_TTL_SECONDS'] ?? String(DEFAULT_TTL_SECONDS), 10);
-  const counterTtlSeconds = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_SECONDS;
+  const counterTtlSeconds = Number.isFinite(ttlRaw) && ttlRaw >= 0 ? ttlRaw : DEFAULT_TTL_SECONDS;
 
   const meter = new RedisUsageMeter(client, {
     keyPrefix,
