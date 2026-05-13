@@ -10,6 +10,17 @@ import {
   EUNO_SERVICE_NAMES,
 } from '../src/config';
 
+/** Minimal env that passes the minter schema in production. */
+const MINTER_PROD_ENV = {
+  NODE_ENV: 'production',
+  MINTER_ADMIN_API_KEY: 'a'.repeat(32),
+  MINTER_PEPPER_HEX: 'a'.repeat(64),
+  MINTER_PRIVATE_KEY_PEM: '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7\n-----END PRIVATE KEY-----',
+  MINTER_PUBLIC_KEY_PEM: '-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu\n-----END PUBLIC KEY-----',
+  MINTER_AUDIT_DB_URL: 'postgresql://localhost:5432/audit',
+  MINTER_API_KEY_DB_URL: 'postgresql://localhost:5432/keys',
+};
+
 describe('loadConfig (issuer)', () => {
   it('rejects an empty environment with the canonical fail-closed errors', () => {
     const result = loadConfig({}, 'issuer');
@@ -663,5 +674,195 @@ describe('dumpEnvTemplate', () => {
     for (const service of EUNO_SERVICE_NAMES) {
       expect(dumpEnvTemplate(service)).toMatch(/AUTO-GENERATED/);
     }
+  });
+});
+
+// ── MinterConfigSchema ────────────────────────────────────────────────────────
+
+describe('loadConfig (minter) — defaults and type coercion', () => {
+  it('accepts an empty env and applies all declared defaults in development', () => {
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_PORT).toBe(3004);
+    expect(result.config.MINTER_TOKEN_TTL_SECONDS).toBe(300);
+    expect(result.config.MINTER_RATE_LIMIT_MAX).toBe(100);
+    expect(result.config.MINTER_RATE_LIMIT_WINDOW_SECONDS).toBe(60);
+    expect(result.config.MINTER_AUDIT_SCHEMA_INIT).toBe(false);
+    expect(result.config.MINTER_API_KEY_SCHEMA_INIT).toBe(false);
+    expect(result.config.NODE_ENV).toBe('development');
+  });
+
+  it('coerces MINTER_PORT to a number', () => {
+    const result = loadConfig({ MINTER_PORT: '4567' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_PORT).toBe(4567);
+  });
+
+  it('rejects a non-numeric MINTER_PORT', () => {
+    const result = loadConfig({ MINTER_PORT: 'not-a-port' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PORT')).toBe(true);
+  });
+
+  it('coerces MINTER_TOKEN_TTL_SECONDS to a number', () => {
+    const result = loadConfig({ MINTER_TOKEN_TTL_SECONDS: '600' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_TOKEN_TTL_SECONDS).toBe(600);
+  });
+
+  it('coerces MINTER_AUDIT_SCHEMA_INIT to a boolean', () => {
+    const result = loadConfig({ MINTER_AUDIT_SCHEMA_INIT: 'true' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_AUDIT_SCHEMA_INIT).toBe(true);
+  });
+
+  it('coerces MINTER_KMS_PROVIDER to the allowed enum value', () => {
+    const result = loadConfig({ MINTER_KMS_PROVIDER: 'aws-kms' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_KMS_PROVIDER).toBe('aws-kms');
+  });
+
+  it('rejects an invalid MINTER_KMS_PROVIDER value', () => {
+    const result = loadConfig({ MINTER_KMS_PROVIDER: 'bad-kms' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_KMS_PROVIDER')).toBe(true);
+  });
+
+  it('treats empty-string env vars as unset (applies defaults)', () => {
+    const result = loadConfig({ MINTER_PORT: '', MINTER_TOKEN_TTL_SECONDS: '' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_PORT).toBe(3004);
+    expect(result.config.MINTER_TOKEN_TTL_SECONDS).toBe(300);
+  });
+});
+
+describe('loadConfig (minter) — production validation', () => {
+  it('accepts a valid production configuration', () => {
+    const result = loadConfig(MINTER_PROD_ENV, 'minter');
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts production with MINTER_KMS_PROVIDER instead of PEM keys', () => {
+    const { MINTER_PRIVATE_KEY_PEM: _priv, MINTER_PUBLIC_KEY_PEM: _pub, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig({ ...rest, MINTER_KMS_PROVIDER: 'aws-kms' }, 'minter');
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects production when MINTER_ADMIN_API_KEY is absent', () => {
+    const { MINTER_ADMIN_API_KEY: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_ADMIN_API_KEY')).toBe(true);
+  });
+
+  it('rejects production when MINTER_ADMIN_API_KEY equals the insecure default', () => {
+    const result = loadConfig({ ...MINTER_PROD_ENV, MINTER_ADMIN_API_KEY: 'dev-admin-key' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_ADMIN_API_KEY')).toBe(true);
+  });
+
+  it('rejects production when MINTER_ADMIN_API_KEY is shorter than 32 chars', () => {
+    const result = loadConfig({ ...MINTER_PROD_ENV, MINTER_ADMIN_API_KEY: 'short' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_ADMIN_API_KEY')).toBe(true);
+  });
+
+  it('accepts production when MINTER_ADMIN_API_KEY is exactly 32 characters', () => {
+    const result = loadConfig({ ...MINTER_PROD_ENV, MINTER_ADMIN_API_KEY: 'x'.repeat(32) }, 'minter');
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects production when MINTER_PEPPER_HEX is absent', () => {
+    const { MINTER_PEPPER_HEX: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PEPPER_HEX')).toBe(true);
+  });
+
+  it('rejects production when no signing key is configured', () => {
+    const { MINTER_PRIVATE_KEY_PEM: _priv, MINTER_PUBLIC_KEY_PEM: _pub, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_KMS_PROVIDER')).toBe(true);
+  });
+
+  it('rejects production when only MINTER_PRIVATE_KEY_PEM is set (missing public)', () => {
+    const { MINTER_PUBLIC_KEY_PEM: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PUBLIC_KEY_PEM')).toBe(true);
+  });
+
+  it('rejects production when only MINTER_PUBLIC_KEY_PEM is set (missing private)', () => {
+    const { MINTER_PRIVATE_KEY_PEM: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PRIVATE_KEY_PEM')).toBe(true);
+  });
+
+  it('rejects production when MINTER_AUDIT_DB_URL is absent', () => {
+    const { MINTER_AUDIT_DB_URL: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_AUDIT_DB_URL')).toBe(true);
+  });
+
+  it('rejects production when MINTER_API_KEY_DB_URL is absent', () => {
+    const { MINTER_API_KEY_DB_URL: _, ...rest } = MINTER_PROD_ENV;
+    const result = loadConfig(rest, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_API_KEY_DB_URL')).toBe(true);
+  });
+
+  it('reports all violations in a single result when multiple production configs are missing', () => {
+    const result = loadConfig({ NODE_ENV: 'production' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const fields = result.errors.map((e) => e.field);
+    expect(fields).toContain('MINTER_ADMIN_API_KEY');
+    expect(fields).toContain('MINTER_PEPPER_HEX');
+    expect(fields).toContain('MINTER_AUDIT_DB_URL');
+    expect(fields).toContain('MINTER_API_KEY_DB_URL');
+  });
+
+  it('does not apply production validation when NODE_ENV=development', () => {
+    // In development, missing MINTER_ADMIN_API_KEY is fine (uses insecure default).
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('dumpEnvTemplate (minter)', () => {
+  it('includes MINTER_PORT and MINTER_ADMIN_API_KEY in the template', () => {
+    const template = dumpEnvTemplate('minter');
+    expect(template).toMatch(/MINTER_PORT=/);
+    expect(template).toMatch(/MINTER_ADMIN_API_KEY=/);
+  });
+
+  it('includes Redis URL hints', () => {
+    const template = dumpEnvTemplate('minter');
+    expect(template).toMatch(/REDIS_URL/);
+    expect(template).toMatch(/ANOMALY_REDIS_URL/);
+  });
+
+  it('is included in EUNO_SERVICE_NAMES', () => {
+    expect(EUNO_SERVICE_NAMES).toContain('minter');
   });
 });

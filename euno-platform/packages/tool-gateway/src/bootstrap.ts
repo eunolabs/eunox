@@ -137,6 +137,21 @@ export interface GatewayDependencies {
    */
   auditLedgerBackend?: import('@euno/common').LedgerBackend;
   /**
+   * Query-only projection of the audit ledger. Present when a queryable
+   * backend is configured.
+   *
+   * Backed by a {@link PostgresAuditQueryStore} that shares the pool
+   * with the write backend — no additional DB connection pool.  When
+   * present, the audit route prefers this over {@link auditLedgerBackend}
+   * because the query store carries no chain state, advisory locks, or
+   * HMAC material — it is a lighter-weight read path.
+   *
+   * For deployments that want to direct audit queries to a dedicated
+   * read replica, construct a {@link PostgresAuditQueryStore} with an
+   * independent pool and inject it here.
+   */
+  auditQueryStore?: import('@euno/common').AuditQueryStore;
+  /**
    * Azure Confidential Ledger client for the ACL ledger backend.
    *
    * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
@@ -942,6 +957,7 @@ export async function initializeServices(
     ledgerPgPool,
     crossChainAnchor,
     auditLedgerBackend,
+    auditQueryStore,
   } = await buildAuditModule({
     validated,
     env,
@@ -1080,6 +1096,7 @@ export async function initializeServices(
     ...(ledgerPgPool ? { ledgerPgPool } : {}),
     ...(crossChainAnchor ? { crossChainAnchor } : {}),
     ...(auditLedgerBackend ? { auditLedgerBackend } : {}),
+    ...(auditQueryStore ? { auditQueryStore } : {}),
     adminApiKey,
     adminTenantId,
     killSwitchFailOpenOnWrite: env.KILL_SWITCH_FAIL_OPEN_ON_WRITE === 'true',

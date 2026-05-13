@@ -42,7 +42,7 @@ import {
   ErrorCode,
   parseBearerToken,
   createLogger,
-  LedgerBackend,
+  AuditQueryStore,
   TokenVerifier,
   AuditQueryFilter,
   AuditQueryPagination,
@@ -54,7 +54,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 
 export interface AuditRouterOptions {
-  ledgerBackend: LedgerBackend;
+  queryStore: AuditQueryStore;
   verifier: TokenVerifier;
   logger: Logger;
 }
@@ -85,10 +85,10 @@ function parseEnum<T extends string>(value: unknown, allowed: readonly T[]): T |
  *
  * The router authenticates the caller using `verifier.verify()`, extracts
  * `tenantId` from the token, and forwards a tenant-scoped query to the
- * ledger backend.
+ * audit query store.
  */
 export function createAuditRouter(opts: AuditRouterOptions): Router {
-  const { ledgerBackend, verifier, logger } = opts;
+  const { queryStore, verifier, logger } = opts;
   const router = Router();
 
   router.get('/api/v1/audit/records', async (req: Request, res: Response, next: NextFunction) => {
@@ -209,7 +209,7 @@ export function createAuditRouter(opts: AuditRouterOptions): Router {
         pagination: { limit, direction, hasCursor: cursor !== undefined },
       });
 
-      const page = await ledgerBackend.queryEntries(filter, pagination);
+      const page = await queryStore.queryEntries(filter, pagination);
 
       // Strip `rowHmac` (raw DB bytes) from the response — callers do not
       // need the per-row HMAC to verify the chain (they use the `signature`
