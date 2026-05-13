@@ -420,16 +420,27 @@ async function initializeServices() {
 
       // Mount the admin templates router (requires store to be ready).
       const { createAdminTemplatesRouter, createIssuerAdminJwtVerifier } = await import('./routes/admin-templates');
-      const adminApiKey = env.ISSUER_ADMIN_API_KEY ?? 'dev-admin-key';
       const jwtVerifier = createIssuerAdminJwtVerifier(process.env);
-      const adminRouter = createAdminTemplatesRouter({
-        store: templateStore,
-        adminApiKey,
-        logger,
-        jwtVerifier,
-      });
-      app.use('/api/v1/admin/templates', adminRouter);
-      logger.info('Admin templates router mounted at /api/v1/admin/templates');
+      // Require ISSUER_ADMIN_API_KEY when no JWT verifier is configured —
+      // prevents the admin API from being reachable via a predictable default key.
+      const adminApiKey = env.ISSUER_ADMIN_API_KEY;
+      if (!adminApiKey && !jwtVerifier) {
+        logger.warn(
+          'ISSUER_ADMIN_API_KEY is not set and ISSUER_ADMIN_JWKS_URI is not configured. ' +
+            'The admin template API (/api/v1/admin/templates) is DISABLED. ' +
+            'Set ISSUER_ADMIN_API_KEY or configure ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE to enable it.',
+        );
+        // Do not mount the router.
+      } else {
+        const adminRouter = createAdminTemplatesRouter({
+          store: templateStore,
+          adminApiKey: adminApiKey ?? '',
+          logger,
+          jwtVerifier,
+        });
+        app.use('/api/v1/admin/templates', adminRouter);
+        logger.info('Admin templates router mounted at /api/v1/admin/templates');
+      }
     }
 
     // Prometheus counter for side-credential broker errors in best-effort mode.

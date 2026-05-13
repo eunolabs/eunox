@@ -23,7 +23,7 @@ import {
   PostgresManifestTemplateStore,
   TemplateStoreError,
 } from '../src/manifest-template-store';
-import { buildIssuerDdl, IssuerMigrationRunner } from '../src/migrations';
+import { buildIssuerDdl, IssuerMigrationRunner, IssuerPgPool } from '../src/migrations';
 import type { AgentCapabilityManifest } from '@euno/common';
 import express from 'express';
 import request from 'supertest';
@@ -307,7 +307,7 @@ describe('PostgresManifestTemplateStore', () => {
 
   beforeEach(() => {
     pool = new StubPool();
-    store = new PostgresManifestTemplateStore(pool as unknown as import("../src/migrations").IssuerPgPool, 'euno_issuer');
+    store = new PostgresManifestTemplateStore(pool as unknown as IssuerPgPool, 'euno_issuer');
   });
 
   // ── createTemplate ─────────────────────────────────────────────────────
@@ -741,7 +741,7 @@ describe('Admin Templates Router (HTTP)', () => {
 
   beforeEach(() => {
     pool = new StubPool();
-    store = new PostgresManifestTemplateStore(pool as unknown as import("../src/migrations").IssuerPgPool, 'euno_issuer');
+    store = new PostgresManifestTemplateStore(pool as unknown as IssuerPgPool, 'euno_issuer');
     app = buildTestApp(store);
   });
 
@@ -995,7 +995,7 @@ describe('Full round-trip', () => {
 
   beforeEach(() => {
     pool = new StubPool();
-    store = new PostgresManifestTemplateStore(pool as unknown as import("../src/migrations").IssuerPgPool, 'euno_issuer');
+    store = new PostgresManifestTemplateStore(pool as unknown as IssuerPgPool, 'euno_issuer');
   });
 
   it('create → version 1 → assign → findActiveAssignment → softDelete → cannot assign', async () => {

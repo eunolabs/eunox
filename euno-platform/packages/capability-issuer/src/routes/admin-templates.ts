@@ -25,6 +25,7 @@
 
 import * as crypto from 'crypto';
 import * as jose from 'jose';
+import rateLimit from 'express-rate-limit';
 import { Router, Request, Response, NextFunction } from 'express';
 import { CapabilityError, ErrorCode, createLogger } from '@euno/common';
 import {
@@ -123,7 +124,11 @@ function requireAdminAuth(
   logger: Logger,
   jwtVerifier?: IssuerAdminJwtVerifier,
 ): (req: Request, res: Response, next: NextFunction) => void {
-  // Pre-compute HMAC so all comparisons are constant-time on 32-byte buffers.
+  // Pre-compute a fixed-size HMAC of the expected key so that all comparisons
+  // are on 32-byte buffers regardless of input length (eliminates timing oracle).
+  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars in
+  // production), NOT a user password. HMAC-SHA256 is appropriate here; a KDF
+  // (bcrypt/argon2) would add latency without security benefit for random tokens.
   // lgtm[js/insufficient-password-hash]
   const hmacKey = Buffer.alloc(32);
   const expectedHash = crypto
@@ -207,7 +212,20 @@ export function createAdminTemplatesRouter(opts: AdminTemplatesRouterOptions): R
   const router = Router();
   const auth = requireAdminAuth(opts.adminApiKey, opts.logger, opts.jwtVerifier);
 
-  // Apply admin auth to all routes in this router.
+  // Per-IP rate limiter on admin endpoints to prevent brute-force credential
+  // enumeration or denial-of-service against the Postgres template store.
+  // 120 requests per minute is generous for human-driven admin use while
+  // blocking automated flooding.
+  const adminRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests — please retry after a moment.' },
+  });
+
+  // Apply rate limit and admin auth to all routes in this router.
+  router.use(adminRateLimit);
   router.use(auth);
 
   // ── POST /api/v1/admin/templates — Create template ───────────────────────
