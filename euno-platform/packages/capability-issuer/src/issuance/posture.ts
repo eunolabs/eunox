@@ -48,6 +48,21 @@ import {
  * Manifest hashing reuses the shared {@link canonicalSha256} helper so
  * the posture record's `capabilityManifestHash` matches the value
  * recorded in audit-log evidence for the same manifest.
+ *
+ * **⚠ Single-writer constraint (HA deployments):**
+ * {@link DurablePostureEmitter} uses SQLite in WAL mode, which allows
+ * concurrent readers but only a single writer at a time. In
+ * multi-replica (HA) issuer deployments, only **one** replica should
+ * have an active `DurablePostureEmitter`; all other replicas should use
+ * a no-op or network-forwarding emitter. Running `DurablePostureEmitter`
+ * on multiple replicas targeting the same SQLite file over a shared
+ * filesystem produces write contention and eventual data loss.
+ *
+ * Recommended HA pattern: dedicate one sidecar (or Kubernetes Job) as
+ * the sole SQLite writer; have all issuer replicas enqueue records into
+ * a shared queue (e.g. Redis Stream) that the sidecar drains and writes
+ * to SQLite. See `docs/DEPLOYMENT.md §"Posture-emitter queue topology
+ * for HA issuers"` for the reference architecture.
  */
 export async function emitPostureRecord(
   emitter: PostureEmitterLike | undefined,

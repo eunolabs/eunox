@@ -11,6 +11,7 @@ import {
   RedisMintRateLimiterClient,
   MintRateLimiter,
   createPingRateLimiterFromEnv,
+  createMintRateLimiterFromEnv,
 } from '../src/mint-rate-limiter';
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ import {
  * failed after a successful incr().
  */
 class FakeRedisClient implements RedisMintRateLimiterClient {
-  private readonly store = new Map<string, { count: number; expiresAt: number }>();
+  readonly store = new Map<string, { count: number; expiresAt: number }>();
   private readonly eventListeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
   // Used by tests to simulate a fully broken client.
@@ -83,6 +84,27 @@ class FakeRedisClient implements RedisMintRateLimiterClient {
     if (entry.expiresAt === -1) return -1; // key exists but has no TTL
     const remaining = Math.ceil((entry.expiresAt - Date.now()) / 1000);
     return remaining > 0 ? remaining : -1;
+  }
+
+  /**
+   * Simulate the LUA_ATOMIC_INCR_EXPIRE script: atomically increment the counter
+   * and set the TTL on the first call. This is the production code path used by
+   * {@link RedisBackedMintRateLimiter.check()}.
+   */
+  async eval(_script: string, _numkeys: number, ...args: (string | number)[]): Promise<unknown> {
+    if (this.shouldThrow) throw new Error('Redis connection refused');
+    const key = args[0] as string;
+    const ttlSeconds = parseInt(args[1] as string, 10);
+    const now = Date.now();
+    const entry = this.store.get(key);
+    if (!entry || (entry.expiresAt !== -1 && now >= entry.expiresAt)) {
+      // First call in a new window — set count=1 AND TTL atomically.
+      this.store.set(key, { count: 1, expiresAt: now + ttlSeconds * 1000 });
+      return 1;
+    }
+    // Subsequent call in the same window — just increment.
+    entry.count++;
+    return entry.count;
   }
 
   async quit(): Promise<'OK'> {
@@ -279,33 +301,29 @@ describe('RedisBackedMintRateLimiter', () => {
     await expect(limiter.close()).resolves.toBeUndefined();
   });
 
-  it('re-applies TTL in the deny path when the initial expire() failed (safety guard)', async () => {
-    // Simulate a transient Redis error on the very first expire() call.
-    // incr() succeeds and stores count=1, but expire() throws → outer catch
-    // fires → fail-open (allowed=true). The key is left with no TTL.
-    fakeRedis.expireFailsRemaining = 1;
-    // Default keyPrefix is 'mintrl:' — match it when querying fakeRedis directly.
+  it('uses eval() for atomic INCR+EXPIRE (not separate incr/expire calls)', async () => {
+    const evalSpy = jest.spyOn(fakeRedis, 'eval');
+    const incrSpy = jest.spyOn(fakeRedis, 'incr');
+    await limiter.check('::eval-test');
+    expect(evalSpy).toHaveBeenCalledTimes(1);
+    expect(incrSpy).not.toHaveBeenCalled();
+  });
+
+  it('re-applies TTL in the deny path when a key exists with no TTL (safety guard)', async () => {
+    // Directly inject a key with count > maxMints and no TTL (expiresAt=-1)
+    // to simulate the belt-and-suspenders scenario the safety guard covers
+    // (e.g. a key left in a persistent state by an external operation).
     const fullKey = 'mintrl:ip-guard';
+    fakeRedis.store.set(fullKey, { count: 4, expiresAt: -1 });
 
-    // Call 1: incr → 1, expire fails → outer catch → fail-open.
-    const r1 = await limiter.check('ip-guard');
-    expect(r1.allowed).toBe(true);
+    // check() should deny (count=4 > maxMints=3), detect ttl=-1, and re-apply expire.
+    // Note: eval() atomically increments to count=5 before the deny check.
+    const result = await limiter.check('ip-guard');
+    expect(result.allowed).toBe(false);
+    expect(result.retryAfterSeconds).toBeGreaterThan(0);
+    expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
 
-    // The key now has count=1 with no TTL (expiresAt === -1 in the mock).
-    expect(await fakeRedis.ttl(fullKey)).toBe(-1);
-
-    // Calls 2-3: count reaches maxMints=3 without triggering the deny path.
-    await limiter.check('ip-guard');
-    await limiter.check('ip-guard');
-
-    // Call 4: count=4 > maxMints=3. The deny path calls ttl(), detects -1,
-    // and re-applies expire so the block is time-bounded rather than permanent.
-    const r4 = await limiter.check('ip-guard');
-    expect(r4.allowed).toBe(false);
-    expect(r4.retryAfterSeconds).toBeGreaterThan(0);
-    expect(r4.retryAfterSeconds).toBeLessThanOrEqual(60);
-
-    // The TTL should now be set — the key is no longer persistent.
+    // The TTL should now be set by the belt-and-suspenders guard.
     expect(await fakeRedis.ttl(fullKey)).toBeGreaterThan(0);
   });
 
@@ -390,3 +408,50 @@ describe('createPingRateLimiterFromEnv', () => {
     expect(typeof limiter.check).toBe('function');
   });
 });
+
+// ---------------------------------------------------------------------------
+// createMintRateLimiterFromEnv
+// ---------------------------------------------------------------------------
+
+describe('createMintRateLimiterFromEnv', () => {
+  it('returns InMemoryMintRateLimiter when no Redis URL is configured', async () => {
+    const limiter = await createMintRateLimiterFromEnv({});
+    expect(limiter).toBeInstanceOf(InMemoryMintRateLimiter);
+    const result = await limiter.check('tenant-1');
+    expect(result.allowed).toBe(true);
+  });
+
+  it('falls back to InMemoryMintRateLimiter when no Redis URL is configured (ioredis not relevant)', async () => {
+    const limiter = await createMintRateLimiterFromEnv({});
+    expect(limiter).toBeInstanceOf(InMemoryMintRateLimiter);
+  });
+
+  it('respects MINTER_MINT_RATE_LIMIT_MAX and MINTER_MINT_RATE_LIMIT_WINDOW_SECONDS', async () => {
+    const limiter = await createMintRateLimiterFromEnv({
+      MINTER_MINT_RATE_LIMIT_MAX: '2',
+      MINTER_MINT_RATE_LIMIT_WINDOW_SECONDS: '90',
+    });
+    await limiter.check('t');
+    await limiter.check('t');
+    const third = await limiter.check('t');
+    expect(third.allowed).toBe(false);
+    expect(third.retryAfterSeconds).toBeLessThanOrEqual(90);
+  });
+
+  it('falls back to default max=100 when MINTER_MINT_RATE_LIMIT_MAX is invalid', async () => {
+    const limiter = await createMintRateLimiterFromEnv({
+      MINTER_MINT_RATE_LIMIT_MAX: 'not-a-number',
+    });
+    expect(limiter).toBeInstanceOf(InMemoryMintRateLimiter);
+    // With default 100 max, 100 allowed requests should not be rate-limited.
+    for (let i = 0; i < 100; i++) {
+      expect((await limiter.check('ip-test')).allowed).toBe(true);
+    }
+  });
+
+  it('returns a MintRateLimiter interface', async () => {
+    const limiter: MintRateLimiter = await createMintRateLimiterFromEnv({});
+    expect(typeof limiter.check).toBe('function');
+  });
+});
+

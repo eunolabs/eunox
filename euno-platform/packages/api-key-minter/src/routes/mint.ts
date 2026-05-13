@@ -75,11 +75,14 @@ export function createMintRouter(opts: MintRouterOptions): Router {
     const endLatency = minterMetrics.mintLatencySeconds.startTimer();
     // Guard against double-recording when an error path already stopped the timer inline.
     let metricsRecorded = false;
+    // Hoisted outside try so the catch block can feed pre-auth failures to the
+    // anomaly detector using the key prefix (Task 23).
+    let rawKeyOrNull: string | null = null;
 
     try {
       // 1. Extract and verify API key
       const authHeader = req.headers.authorization;
-      const rawKeyOrNull = parseBearerToken(authHeader);
+      rawKeyOrNull = parseBearerToken(authHeader);
       if (!rawKeyOrNull) {
         minterMetrics.mintTotal.inc({ tenant: 'unknown', result: 'authentication_failed' });
         endLatency({ tenant: 'unknown' });
@@ -196,10 +199,27 @@ export function createMintRouter(opts: MintRouterOptions): Router {
 
       // Fire-and-forget anomaly detection for failure events.
       if (tenantId !== undefined && opts.anomalyDetector) {
+        // Post-auth failure: record against the resolved tenant ID.
         void Promise.resolve(opts.anomalyDetector.recordMint(tenantId, false))
           .then(firedRules => {
             if (firedRules.length > 0) {
               opts.logger.warn('Mint anomaly detected on failure', { tenantId, rules: firedRules });
+            }
+          })
+          .catch((err: unknown) => {
+            opts.logger.debug('Anomaly detection error (non-fatal)', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+      } else if (tenantId === undefined && rawKeyOrNull && opts.anomalyDetector) {
+        // Pre-auth failure (key present but verification failed): record against
+        // the key prefix so failed-verify bursts on a single key are detected
+        // even when the key is unknown/revoked and we never resolved a tenantId.
+        const keyPrefix = extractKeyPrefix(rawKeyOrNull);
+        void Promise.resolve(opts.anomalyDetector.recordMint(keyPrefix, false))
+          .then(firedRules => {
+            if (firedRules.length > 0) {
+              opts.logger.warn('Mint anomaly detected on pre-auth failure', { keyPrefix, rules: firedRules });
             }
           })
           .catch((err: unknown) => {
@@ -262,4 +282,20 @@ function classifyErrorResult(error: unknown): string | null {
     }
   }
   return 'internal_error';
+}
+
+/**
+ * Extract the prefix portion of a raw API key for use as an anomaly-detection
+ * key when the full tenant ID cannot be resolved (e.g. the key is unknown or
+ * revoked and `verify()` threw before populating `tenantId`).
+ *
+ * API keys are formatted as `sk-<prefix8>.<secret48>`. The prefix is the
+ * `sk-XXXXXXXX` segment before the first `.`. This gives enough identity to
+ * detect repeated invalid-key attempts without leaking the full secret.
+ *
+ * If the key does not contain a `.` the entire raw key is returned as-is.
+ */
+function extractKeyPrefix(rawKey: string): string {
+  const dotIndex = rawKey.indexOf('.');
+  return dotIndex >= 0 ? rawKey.slice(0, dotIndex) : rawKey;
 }

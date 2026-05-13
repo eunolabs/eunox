@@ -481,6 +481,19 @@ const timeWindowHandler: ConditionHandler<TimeWindowCondition> = {
       );
     }
   },
+  /**
+   * Evaluate a `timeWindow` condition against the current time.
+   *
+   * **Gateway clock always wins.**
+   * `ctx.now` is set by the gateway from its own `new Date()` immediately
+   * before invoking the enforcement engine (see `enforce.ts`). The
+   * client-supplied `context.now` from the request body is validated for
+   * clock-skew (≤ 60 s) but is NEVER forwarded as `ctx.now` — clients
+   * cannot manipulate time-based access decisions. This function therefore
+   * always uses the gateway's authoritative wall-clock, falling back to a
+   * fresh `new Date()` only when called outside the gateway context (e.g.
+   * in unit tests or SDK-embedded enforcement).
+   */
   enforce(c, ctx) {
     const now = (ctx.now ?? new Date()).getTime();
     if (c.notBefore !== undefined) {

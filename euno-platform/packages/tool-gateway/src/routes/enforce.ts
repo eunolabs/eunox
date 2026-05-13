@@ -238,6 +238,18 @@ function parseEnforceRequestBody(body: unknown): EnforceRequest {
     );
   }
 
+  // Strip unknown context fields before passing the request to the enforcement
+  // engine. Unknown fields are silently dropped — they are never read by any
+  // condition handler and retaining them would allow untrusted client data to
+  // pollute the ConditionContext and potentially reach log sinks or SIEM
+  // pipelines in an unexpected shape.
+  const KNOWN_CONTEXT_FIELDS = new Set<string>(['sourceIp', 'recipients', 'now']);
+  for (const key of Object.keys(ctx)) {
+    if (!KNOWN_CONTEXT_FIELDS.has(key)) {
+      delete ctx[key];
+    }
+  }
+
   return b as unknown as EnforceRequest;
 }
 
@@ -246,9 +258,17 @@ function parseEnforceRequestBody(body: unknown): EnforceRequest {
  * gateway's wall-clock. The 60-second bound is the same as the DPoP clock-skew
  * tolerance documented in `verifyDpopProof`.
  *
- * The gateway always uses its own authoritative clock for enforcement; this
- * check is purely a sanity guard on the client-supplied value and ensures the
- * audit event `activityTime` is not wildly misleading.
+ * **Gateway clock always wins for enforcement.**
+ * The client-supplied `context.now` is validated here for sanity (to detect
+ * wildly misconfigured clients and keep audit timestamps meaningful), but it
+ * is NEVER passed to the condition registry as the enforcement clock. The
+ * gateway sets `ctx.now` from its own `new Date()` at the point of evaluation,
+ * so `timeWindow` conditions always use the gateway's authoritative wall-clock
+ * regardless of what the client sends. Clients cannot manipulate time-based
+ * access decisions.
+ *
+ * This check is purely a sanity guard on the client-supplied value and ensures
+ * the audit event `activityTime` is not wildly misleading.
  */
 function validateClockSkew(now: string | undefined): void {
   if (!now) return;

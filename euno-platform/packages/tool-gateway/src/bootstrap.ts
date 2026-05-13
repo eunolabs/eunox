@@ -498,6 +498,41 @@ export function checkProductionRedisHa(
 
 
 /**
+ * CR-4: Fail at startup when `ADMIN_HOST` binds the admin surface to a
+ * wildcard interface in production.
+ *
+ * The admin routes (`/admin/*`) control token revocation and the kill switch.
+ * Binding them to `0.0.0.0` or `::` means a misconfigured ingress or LoadBalancer
+ * service could expose these endpoints on the public network, allowing an
+ * unauthenticated caller to revoke tokens or activate the kill switch fleet-wide.
+ *
+ * The Kubernetes `ClusterIP` admin Service in `k8s/tool-gateway-deployment.yaml`
+ * already limits reachability at the infrastructure level; this guard adds a
+ * belt-and-suspenders check at the application level.
+ *
+ * @internal Exported for unit testing only; not part of the public API.
+ */
+export function checkProductionAdminHost(
+  env: { ADMIN_HOST?: string | undefined },
+  environment: string,
+): void {
+  if (environment !== 'production') return;
+  const adminHost = env.ADMIN_HOST?.trim();
+  if (!adminHost || adminHost === '0.0.0.0' || adminHost === '::') {
+    throw new Error(
+      `CR-4: Gateway refused to start — ADMIN_HOST is ` +
+        `${adminHost === undefined ? '<unset>' : `"${adminHost}"`}, which binds the admin surface ` +
+        'to all network interfaces. In production, ADMIN_HOST must be set to a non-wildcard ' +
+        'interface (e.g. "127.0.0.1" for sidecar-only access, or the pod\'s cluster IP). ' +
+        'A wildcard binding allows a misconfigured ingress to expose /admin/* (revocation, ' +
+        'kill-switch) on the public load-balancer. ' +
+        'See docs/DEPLOYMENT.md §"Admin API security".',
+    );
+  }
+}
+
+
+/**
  * Fetch the issuer's `/.well-known/capability-issuer` discovery document and
  * compare its `actionResolverHash` against the locally-computed hash.
  *
@@ -1077,6 +1112,8 @@ export async function initializeServices(
   // HA Redis is mandatory for production (Task 4).  See checkProductionRedisHa
   // for the full rationale and detection heuristics.
   checkProductionRedisHa(env, config.environment);
+  // ── CR-4: Fail when NODE_ENV=production and ADMIN_HOST is a wildcard ────
+  checkProductionAdminHost(env, config.environment);
 
 
   const deps: GatewayDependencies = {

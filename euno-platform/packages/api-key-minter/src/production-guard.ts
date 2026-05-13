@@ -139,17 +139,17 @@ export function validateProductionMinterConfig(
     ['REDIS_URL', env['REDIS_URL']],
     ['ANOMALY_REDIS_URL', env['ANOMALY_REDIS_URL']],
     ['MINTER_PING_REDIS_URL', env['MINTER_PING_REDIS_URL']],
+    ['MINTER_MINT_REDIS_URL', env['MINTER_MINT_REDIS_URL']],
   ];
   for (const [varName, url] of redisVars) {
     if (url && !isHaRedisUrl(url)) {
       violations.push(
         `${varName} appears to point at a single-node Redis instance. ` +
           'In production, all minter Redis-backed stores (anomaly detection, ping rate ' +
-          'limiting) require a high-availability deployment. ' +
+          'limiting, mint rate limiting) require a high-availability deployment. ' +
           'Replace with a Redis Sentinel or Redis Cluster URL. ' +
           'See docs/DEPLOYMENT.md §"Redis HA for production".',
       );
-      break; // Only report the first single-node URL to avoid noisy output.
     }
   }
 
