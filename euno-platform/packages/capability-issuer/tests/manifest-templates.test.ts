@@ -297,6 +297,23 @@ class StubPool {
 
   /** Add a unique-violation simulation for assignment inserts. */
   simulateUniqueViolation = false;
+
+  /** Implement connect() for transaction support (returns a stub client backed by the same pool). */
+  async connect(): Promise<import('../src/migrations').IssuerPgClient & { release: () => void }> {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+    return {
+      query: async (text: string, values?: unknown[]) => {
+        // Skip BEGIN/COMMIT/ROLLBACK — stub treats all as no-ops.
+        const t = text.trim();
+        if (t === 'BEGIN' || t === 'COMMIT' || t === 'ROLLBACK') {
+          return { rows: [] };
+        }
+        return self.query(text, values);
+      },
+      release: () => undefined,
+    };
+  }
 }
 
 // ── PostgresManifestTemplateStore unit tests ───────────────────────────────
@@ -696,11 +713,15 @@ describe('IssuerMigrationRunner', () => {
 
   it('migrate() calls query() for each DDL statement', async () => {
     const queryCalls: string[] = [];
-    const fakePool = {
+    const fakePool: IssuerPgPool = {
       query: async (text: string) => {
         queryCalls.push(text);
         return { rows: [] };
       },
+      connect: async () => ({
+        query: async () => ({ rows: [] }),
+        release: () => undefined,
+      }),
     };
     const runner = new IssuerMigrationRunner(fakePool, 'euno_issuer');
     await runner.migrate();

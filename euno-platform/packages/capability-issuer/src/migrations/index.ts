@@ -25,6 +25,17 @@
  */
 export interface IssuerPgPool {
   query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  /**
+   * Checkout a dedicated client for transaction management.
+   * Matches the `pg.Pool.connect()` contract.
+   */
+  connect(): Promise<IssuerPgClient>;
+}
+
+/** Minimal pg.Client shape required for transaction management. */
+export interface IssuerPgClient {
+  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  release(): void;
 }
 
 // ── DDL ────────────────────────────────────────────────────────────────────

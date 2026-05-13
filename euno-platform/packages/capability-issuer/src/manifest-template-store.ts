@@ -390,47 +390,59 @@ export class PostgresManifestTemplateStore implements ManifestTemplateStore {
   // ── appendVersion ─────────────────────────────────────────────────────────
 
   async appendVersion(input: AppendVersionInput): Promise<TemplateVersionRecord> {
-    // Lock the parent row to prevent concurrent version appends.
-    const { rows: lockRows } = await this.pool.query(
-      `SELECT template_id, deleted_at
-       FROM ${this.schema}.templates
-       WHERE template_id = $1 AND owner_tenant_id = $2
-       FOR UPDATE`,
-      [input.templateId, input.ownerTenantId],
-    );
-    if (lockRows.length === 0) {
-      throw new TemplateStoreError('NOT_FOUND', `Template ${input.templateId} not found`);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lock the parent row to prevent concurrent version appends.
+      const { rows: lockRows } = await client.query(
+        `SELECT template_id, deleted_at
+         FROM ${this.schema}.templates
+         WHERE template_id = $1 AND owner_tenant_id = $2
+         FOR UPDATE`,
+        [input.templateId, input.ownerTenantId],
+      );
+      if (lockRows.length === 0) {
+        throw new TemplateStoreError('NOT_FOUND', `Template ${input.templateId} not found`);
+      }
+      if (lockRows[0]!['deleted_at'] != null) {
+        throw new TemplateStoreError('DELETED', `Template ${input.templateId} has been deleted`);
+      }
+
+      // Compute new version number within the same transaction.
+      const { rows: maxRows } = await client.query(
+        `SELECT COALESCE(MAX(version), 0) AS max_v
+         FROM ${this.schema}.template_versions
+         WHERE template_id = $1`,
+        [input.templateId],
+      );
+      const newVersion = (maxRows[0]!['max_v'] as number) + 1;
+      const policyHash = canonicalSha256(input.manifest);
+
+      const { rows } = await client.query(
+        `INSERT INTO ${this.schema}.template_versions
+           (template_id, version, manifest, policy_hash, created_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING created_at`,
+        [input.templateId, newVersion, JSON.stringify(input.manifest), policyHash, input.createdBy],
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        templateId: input.templateId,
+        version: newVersion,
+        manifest: input.manifest,
+        policyHash,
+        createdBy: input.createdBy,
+        createdAt: toIso(rows[0]!['created_at']),
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
     }
-    if (lockRows[0]!['deleted_at'] != null) {
-      throw new TemplateStoreError('DELETED', `Template ${input.templateId} has been deleted`);
-    }
-
-    // Compute new version number.
-    const { rows: maxRows } = await this.pool.query(
-      `SELECT COALESCE(MAX(version), 0) AS max_v
-       FROM ${this.schema}.template_versions
-       WHERE template_id = $1`,
-      [input.templateId],
-    );
-    const newVersion = (maxRows[0]!['max_v'] as number) + 1;
-    const policyHash = canonicalSha256(input.manifest);
-
-    const { rows } = await this.pool.query(
-      `INSERT INTO ${this.schema}.template_versions
-         (template_id, version, manifest, policy_hash, created_by)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING created_at`,
-      [input.templateId, newVersion, JSON.stringify(input.manifest), policyHash, input.createdBy],
-    );
-
-    return {
-      templateId: input.templateId,
-      version: newVersion,
-      manifest: input.manifest,
-      policyHash,
-      createdBy: input.createdBy,
-      createdAt: toIso(rows[0]!['created_at']),
-    };
   }
 
   // ── assignTemplate ────────────────────────────────────────────────────────

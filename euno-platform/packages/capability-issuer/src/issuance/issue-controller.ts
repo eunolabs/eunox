@@ -243,7 +243,7 @@ export class IssueController {
       // is updated to the template version's hash.
       let templateManifest = request.manifest;
       if (this.templateStore && userContext.tenantId && request.agentId) {
-        const primaryRole = userContext.roles[0];
+        const primaryRole = userContext.roles.length > 0 ? userContext.roles[0] : undefined;
         if (primaryRole) {
           try {
             const assignment = await this.templateStore.findActiveAssignment(
