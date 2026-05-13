@@ -11,11 +11,14 @@
  *    This confirms the ID token was issued in response to *this* authorization
  *    request and has not been recycled from a different session.
  *
- * 2. **Authorization-code replay prevention** (`usedCodes`): After the issuer
- *    exchanges an authorization code for tokens it marks that code as "used".
- *    Any subsequent attempt to exchange the same code within the TTL window is
- *    rejected. This is required by the Stage-4 threat model (§5, row
- *    "IdP-token replay against the issuer").
+ * 2. **ID-token-hash replay prevention** (`usedIdTokenHashes`): Before any
+ *    remote IdP validation the issuer computes a SHA-256 hash of the submitted
+ *    `idToken` string and marks it as used **eagerly** (fail-closed). Any
+ *    subsequent attempt to submit the same token within the TTL window is
+ *    rejected, even if the first attempt failed at the IdP or issuance stage.
+ *    This is required by the Stage-4 threat model (§5, row "IdP-token replay
+ *    against the issuer"). Using the token hash rather than a caller-supplied
+ *    `code` field prevents bypassing the check with a fresh, arbitrary code.
  *
  * Both stores are **in-memory**. For multi-replica deployments the stores
  * should be backed by a shared Redis instance (a future improvement); the
@@ -63,10 +66,10 @@ export class OidcStateStore {
   private readonly pendingStates = new Map<string, PendingOidcState>();
 
   /**
-   * Used authorization codes. The value is the expiry timestamp (ms).
-   * Re-submission of a code whose entry is still present is rejected.
+   * Used ID-token hashes. The value is the expiry timestamp (ms).
+   * Re-submission of a token whose hash is still present is rejected.
    */
-  private readonly usedCodes = new Map<string, number>();
+  private readonly usedIdTokenHashes = new Map<string, number>();
 
   /**
    * @param codeTtlSeconds TTL (seconds) for both state/nonce pairs and
@@ -119,30 +122,31 @@ export class OidcStateStore {
   // -------------------------------------------------------------------------
 
   /**
-   * Returns `true` if the code has already been used within the current TTL
-   * window, `false` otherwise. **Does not** mark the code as used.
+   * Returns `true` if the ID-token hash has already been seen within the
+   * current TTL window, `false` otherwise. **Does not** mark the hash as used.
    */
-  isCodeUsed(code: string): boolean {
-    const expiry = this.usedCodes.get(code);
+  isIdTokenHashUsed(hash: string): boolean {
+    const expiry = this.usedIdTokenHashes.get(hash);
     if (expiry === undefined) return false;
     if (expiry <= Date.now()) {
-      this.usedCodes.delete(code);
+      this.usedIdTokenHashes.delete(hash);
       return false;
     }
     return true;
   }
 
   /**
-   * Mark `code` as used. Subsequent calls to {@link isCodeUsed} with the same
-   * code will return `true` until the TTL expires.
+   * Mark the ID-token hash as used. Subsequent calls to
+   * {@link isIdTokenHashUsed} with the same hash will return `true` until
+   * the TTL expires.
    *
-   * Call this **after** a successful code exchange with the IdP, not before —
-   * if the exchange fails the code should remain available for a retry (IdP
-   * network hiccup, etc.).
+   * Call this **before** any remote IdP call — fail-closed semantics: even
+   * if the IdP call or downstream issuance fails, the same token cannot be
+   * resubmitted. The caller must obtain a fresh token to retry.
    */
-  markCodeUsed(code: string): void {
+  markIdTokenHashUsed(hash: string): void {
     this.sweep();
-    this.usedCodes.set(code, Date.now() + this.codeTtlSeconds * 1000);
+    this.usedIdTokenHashes.set(hash, Date.now() + this.codeTtlSeconds * 1000);
   }
 
   // -------------------------------------------------------------------------
@@ -155,8 +159,8 @@ export class OidcStateStore {
     for (const [k, entry] of this.pendingStates) {
       if (entry.expiresAtMs <= now) this.pendingStates.delete(k);
     }
-    for (const [k, expiry] of this.usedCodes) {
-      if (expiry <= now) this.usedCodes.delete(k);
+    for (const [k, expiry] of this.usedIdTokenHashes) {
+      if (expiry <= now) this.usedIdTokenHashes.delete(k);
     }
   }
 
@@ -165,8 +169,8 @@ export class OidcStateStore {
     return this.pendingStates.size;
   }
 
-  /** Current number of used-code entries — useful in tests. */
-  get usedCodeCount(): number {
-    return this.usedCodes.size;
+  /** Current number of used ID-token hash entries — useful in tests. */
+  get usedIdTokenHashCount(): number {
+    return this.usedIdTokenHashes.size;
   }
 }

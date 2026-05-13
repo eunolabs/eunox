@@ -212,10 +212,19 @@ serve as the fallback for tenants not listed in the file.
 
 ### 4.2 Hot-reload
 
-The `TenantIdpRegistry` watches the file for changes and reloads it
-automatically (SIGHUP-triggered `reload()` is also available).  If the new
-file is invalid JSON or fails schema validation, the previous configuration is
-preserved and an error is logged — no traffic is disrupted.
+Send `SIGHUP` to the issuer process to trigger a live reload of the tenant IdP
+config file:
+
+```bash
+kill -HUP <issuer-pid>
+```
+
+If the new file is invalid JSON or fails schema validation, the previous
+configuration is preserved and an error is logged — no traffic is disrupted.
+
+> **Note:** The registry does **not** watch the file for filesystem changes
+> automatically. A `SIGHUP` (or a rolling restart) is required to pick up
+> edits.
 
 ### 4.3 Environment variable
 

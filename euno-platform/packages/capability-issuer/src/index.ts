@@ -4,6 +4,7 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -1122,29 +1123,32 @@ app.get('/api/v1/oidc/authorize', (req: Request, res: Response, next: NextFuncti
  * {
  *   "idToken":        "...",        // ID token returned by the upstream IdP
  *   "nonce":          "...",        // nonce embedded in the ID token's claims
- *   "code":           "...",        // original authorization code (replay prevention)
  *   "agentId":        "...",        // capability token subject
  *   "tenantId":       "...",        // optional — selects per-tenant IdP adapter
+ *   "state":          "...",        // optional — opaque state from GET /authorize
  *   "requestedCapabilities": [...]  // optional capability constraints
  * }
  * ```
  *
  * Security invariants enforced here (Stage-4 threat model §5):
- *  1. **Authorization-code replay prevention** — each code value may be
- *     submitted at most once within the OIDC_CODE_TTL_SECONDS window.
+ *  1. **ID-token replay prevention** — a SHA-256 hash of the submitted
+ *     `idToken` is marked as used eagerly (fail-closed) before any remote
+ *     call. The same token cannot be resubmitted even if a subsequent step
+ *     fails. The caller must obtain a fresh token to retry.
  *  2. **Nonce binding** — the `nonce` claim inside the IdP's signed ID token
  *     must equal the `nonce` field in the request body.
  *  3. **Audience / issuer / expiry** — validated inside each IdP adapter via
  *     jose `jwtVerify` (enforces `aud`, `iss`, `exp`, `iat`).
  *  4. **Role-from-token** — capabilities are derived exclusively from the
  *     IdP token's role claims; the request body cannot escalate privileges.
- *  5. **State / nonce binding** (optional) — when `state` is provided and a
- *     pending state was created via GET /api/v1/oidc/authorize, the stored
- *     nonce is cross-checked against the request nonce before token validation.
+ *  5. **State binding** (optional) — when `state` is provided and a pending
+ *     state was created via GET /api/v1/oidc/authorize, the stored nonce,
+ *     agentId, and tenantId are cross-checked against the request values.
+ *     The effective tenantId is derived from the stored state when present.
  */
 app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { idToken, nonce, code, state, agentId, tenantId, requestedCapabilities } = req.body ?? {};
+    const { idToken, nonce, state, agentId, tenantId, requestedCapabilities } = req.body ?? {};
 
     // --- Validate required fields -------------------------------------------
     if (typeof idToken !== 'string' || !idToken) {
@@ -1160,31 +1164,32 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
         400,
       );
     }
-    if (typeof code !== 'string' || !code) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_REQUEST,
-        'code is required for authorization-code replay prevention',
-        400,
-      );
-    }
 
-    // --- Code replay prevention (threat model §5 "IdP-token replay") ---------
-    // The code is marked as used immediately after the first submission —
-    // fail-closed semantics: even if a later step (IdP validation, issuance)
-    // fails, the same code cannot be retried. The caller must restart the
-    // authorization flow and obtain a fresh code.
-    if (oidcStateStore.isCodeUsed(code)) {
-      logger.warn('OIDC code replay attempt detected', { agentId, tenantId });
+    // --- ID-token replay prevention (threat model §5 "IdP-token replay") ----
+    // Hash the submitted idToken and mark it as used eagerly (fail-closed).
+    // Even if a later step (IdP validation, issuance) fails, the same token
+    // cannot be resubmitted. The caller must obtain a fresh token to retry.
+    // Tracking the token hash (not a caller-supplied field) prevents bypassing
+    // this check by submitting the same stolen idToken with a fresh value.
+    const tokenHash = crypto.createHash('sha256').update(idToken).digest('hex');
+    if (oidcStateStore.isIdTokenHashUsed(tokenHash)) {
+      logger.warn('OIDC token replay attempt detected', { agentId, tenantId });
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
-        'Authorization code has already been used — request a new authorization code',
+        'ID token has already been used — obtain a fresh token',
         401,
       );
     }
-    // Eagerly mark the code before any remote call.
-    oidcStateStore.markCodeUsed(code);
+    // Eagerly mark the token hash before any remote call.
+    oidcStateStore.markIdTokenHashUsed(tokenHash);
 
-    // --- Optional state/nonce binding (if flow was started via /authorize) ---
+    // --- Optional state binding (if flow was started via /authorize) ---------
+    // When state is present, the stored nonce, agentId, and tenantId are all
+    // cross-checked. The effective tenantId is derived from the stored state
+    // (the request body cannot override it once a state has been issued).
+    let effectiveTenantId: string | undefined =
+      typeof tenantId === 'string' && tenantId ? tenantId : undefined;
+
     if (typeof state === 'string' && state) {
       const pending = oidcStateStore.consumeState(state);
       if (!pending) {
@@ -1202,10 +1207,28 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
           401,
         );
       }
+      // The agentId must match what was stored (if the state recorded one).
+      if (pending.agentId && pending.agentId !== agentId) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'agentId mismatch — request agentId does not match the stored state',
+          401,
+        );
+      }
+      // The tenantId must match what was stored (if the state recorded one).
+      const pendingTenantId = pending.tenantId;
+      if (pendingTenantId) {
+        if (effectiveTenantId && effectiveTenantId !== pendingTenantId) {
+          throw new CapabilityError(
+            ErrorCode.AUTHENTICATION_FAILED,
+            'tenantId mismatch — request tenantId does not match the stored state',
+            401,
+          );
+        }
+        // Derive the effective tenantId from the stored state.
+        effectiveTenantId = pendingTenantId;
+      }
     }
-
-    // --- Resolve identity provider (per-tenant override or global) ----------
-    const effectiveTenantId = typeof tenantId === 'string' && tenantId ? tenantId : undefined;
     const perTenantIdp = effectiveTenantId ? tenantIdpRegistry.getAdapter(effectiveTenantId) : undefined;
     const idp = perTenantIdp ?? getIssuerService().getIdentityProvider();
 

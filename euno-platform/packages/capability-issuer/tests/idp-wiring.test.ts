@@ -186,7 +186,7 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     it('returns 400 when idToken is missing', async () => {
       const res = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ nonce: 'n1', code: 'c1', agentId: AGENT_ID });
+        .send({ nonce: 'n1', agentId: AGENT_ID });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('INVALID_REQUEST');
       expect(res.body.error.message).toMatch(/idToken/);
@@ -195,25 +195,16 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     it('returns 400 when nonce is missing', async () => {
       const res = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken: 'some.jwt.token', code: 'c1', agentId: AGENT_ID });
+        .send({ idToken: 'some.jwt.token', agentId: AGENT_ID });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('INVALID_REQUEST');
       expect(res.body.error.message).toMatch(/nonce/);
     });
 
-    it('returns 400 when code is missing', async () => {
-      const res = await request(app)
-        .post('/api/v1/oidc/token')
-        .send({ idToken: 'some.jwt.token', nonce: 'n1', agentId: AGENT_ID });
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('INVALID_REQUEST');
-      expect(res.body.error.message).toMatch(/code/);
-    });
-
     it('returns 400 when agentId is missing', async () => {
       const res = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken: 'some.jwt.token', nonce: 'n1', code: 'c1' });
+        .send({ idToken: 'some.jwt.token', nonce: 'n1' });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('INVALID_REQUEST');
       expect(res.body.error.message).toMatch(/agentId/);
@@ -226,12 +217,11 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     function makeAzureProvider() {
       return new AzureADIdentityProvider({
         type: 'azure-ad',
-        name: 'azure-test',
         azureAD: {
           tenantId: AZURE_TENANT_ID,
           clientId: AZURE_CLIENT_ID,
         },
-      });
+      } as any);
     }
 
     it('accepts a valid Azure AD token with correct nonce claim', async () => {
@@ -317,14 +307,13 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     function makeCognitoProvider() {
       return new AWSCognitoIdentityProvider({
         type: 'aws-cognito',
-        name: 'cognito-test',
         awsCognito: {
           region: COGNITO_REGION,
           userPoolId: COGNITO_POOL_ID,
           clientId: COGNITO_CLIENT_ID,
           tokenUse: 'id',
         },
-      });
+      } as any);
     }
 
     it('validates a Cognito ID token and extracts nonce claim', async () => {
@@ -364,14 +353,12 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     });
   });
 
-  // ── Code replay prevention ────────────────────────────────────────────────
+  // ── Token replay prevention ───────────────────────────────────────────────
 
-  describe('POST /api/v1/oidc/token — code replay prevention', () => {
-    it('rejects a code that has already been used (replay attack)', async () => {
+  describe('POST /api/v1/oidc/token — token replay prevention', () => {
+    it('rejects a resubmitted idToken (replay attack)', async () => {
       createRemoteJWKSetSpy.mockReturnValue((() => publicKeyAzure) as any);
       const nonce = 'nonce-replay-test-' + Date.now();
-      // Use a unique code that has never been used.
-      const code = 'replay-code-unique-' + Date.now();
 
       const idToken = await signAzureToken({
         oid: 'uid',
@@ -380,20 +367,20 @@ describe('OIDC endpoint wiring (Task 2)', () => {
         nonce,
       });
 
-      // First request: code is new → passes replay check → eagerly marked as used
+      // First request: token hash is new → passes replay check → eagerly marked
       // → service not initialized → 503 (or some other non-replay error)
       const first = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken, nonce, code, agentId: AGENT_ID });
+        .send({ idToken, nonce, agentId: AGENT_ID });
       // Any response is acceptable for the first call as long as it is NOT
       // the replay-prevention 401.
       expect(first.body.error?.message ?? '').not.toMatch(/[Aa]lready been used/);
 
-      // Second request: same code — must be rejected with AUTHENTICATION_FAILED
-      // because the code was eagerly marked on the first submission.
+      // Second request: same idToken — must be rejected with AUTHENTICATION_FAILED
+      // because the token hash was eagerly marked on the first submission.
       const second = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken, nonce, code, agentId: AGENT_ID });
+        .send({ idToken, nonce, agentId: AGENT_ID });
       expect(second.status).toBe(401);
       expect(second.body.error.code).toBe('AUTHENTICATION_FAILED');
       expect(second.body.error.message).toMatch(/[Aa]lready been used/);
@@ -406,7 +393,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     it('rejects /token with an unknown state value', async () => {
       createRemoteJWKSetSpy.mockReturnValue((() => publicKeyAzure) as any);
       const nonce = 'nonce-state-unknown-' + Date.now();
-      const code = 'code-state-unknown-' + Date.now();
 
       const idToken = await signAzureToken({
         oid: 'uid',
@@ -420,7 +406,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
         .send({
           idToken,
           nonce,
-          code,
           state: 'completely-invalid-state-value',
           agentId: AGENT_ID,
         });
@@ -441,7 +426,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
       const { state, nonce } = authorizeRes.body as { state: string; nonce: string };
 
       // Step 2: Sign an IdP token with the nonce embedded.
-      const code = 'code-state-valid-' + Date.now();
       const idToken = await signAzureToken({
         oid: 'uid',
         roles: ['Reader'],
@@ -455,7 +439,7 @@ describe('OIDC endpoint wiring (Task 2)', () => {
       // state-binding check successfully — the error is at a later stage.
       const tokenRes = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken, nonce, code, state, agentId: AGENT_ID });
+        .send({ idToken, nonce, state, agentId: AGENT_ID });
 
       // 503 = service not initialized (expected in unit test); NOT a 401.
       expect([200, 503]).toContain(tokenRes.status);
@@ -476,7 +460,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
       const { state } = authorizeRes.body as { state: string; nonce: string };
 
       const tamperedNonce = 'tampered-nonce-' + Date.now();
-      const code = 'code-state-nonce-mismatch-' + Date.now();
 
       const idToken = await signAzureToken({
         oid: 'uid',
@@ -486,13 +469,67 @@ describe('OIDC endpoint wiring (Task 2)', () => {
 
       const res = await request(app)
         .post('/api/v1/oidc/token')
-        .send({ idToken, nonce: tamperedNonce, code, state, agentId: AGENT_ID });
+        .send({ idToken, nonce: tamperedNonce, state, agentId: AGENT_ID });
 
       // The state nonce (from /authorize) differs from the request nonce
       // (tamperedNonce) → rejected as Nonce mismatch.
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('AUTHENTICATION_FAILED');
       expect(res.body.error.message).toMatch(/[Nn]once mismatch/);
+    });
+
+    it('rejects /token when request agentId does not match the stored state agentId', async () => {
+      createRemoteJWKSetSpy.mockReturnValue((() => publicKeyAzure) as any);
+
+      // Create a state for a specific agentId.
+      const authorizeRes = await request(app)
+        .get('/api/v1/oidc/authorize')
+        .query({ agentId: 'original-agent' });
+      expect(authorizeRes.status).toBe(200);
+      const { state, nonce } = authorizeRes.body as { state: string; nonce: string };
+
+      const idToken = await signAzureToken({
+        oid: 'uid',
+        roles: ['Reader'],
+        tid: AZURE_TENANT_ID,
+        nonce,
+      });
+
+      // Submit with a different agentId — should be rejected.
+      const res = await request(app)
+        .post('/api/v1/oidc/token')
+        .send({ idToken, nonce, state, agentId: 'attacker-agent' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('AUTHENTICATION_FAILED');
+      expect(res.body.error.message).toMatch(/agentId mismatch/);
+    });
+
+    it('rejects /token when request tenantId does not match the stored state tenantId', async () => {
+      createRemoteJWKSetSpy.mockReturnValue((() => publicKeyAzure) as any);
+
+      // Create a state for a specific tenantId.
+      const authorizeRes = await request(app)
+        .get('/api/v1/oidc/authorize')
+        .query({ agentId: AGENT_ID, tenantId: 'correct-tenant' });
+      expect(authorizeRes.status).toBe(200);
+      const { state, nonce } = authorizeRes.body as { state: string; nonce: string };
+
+      const idToken = await signAzureToken({
+        oid: 'uid',
+        roles: ['Reader'],
+        tid: AZURE_TENANT_ID,
+        nonce,
+      });
+
+      // Submit with a different tenantId — should be rejected.
+      const res = await request(app)
+        .post('/api/v1/oidc/token')
+        .send({ idToken, nonce, state, agentId: AGENT_ID, tenantId: 'wrong-tenant' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('AUTHENTICATION_FAILED');
+      expect(res.body.error.message).toMatch(/tenantId mismatch/);
     });
   });
 
@@ -502,7 +539,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     it('token role=viewer cannot produce admin capabilities via requestedCapabilities', async () => {
       createRemoteJWKSetSpy.mockReturnValue((() => publicKeyAzure) as any);
       const nonce = 'nonce-role-check-' + Date.now();
-      const code = 'code-role-check-' + Date.now();
 
       // Token claims viewer role only.
       const idToken = await signAzureToken({
@@ -520,7 +556,6 @@ describe('OIDC endpoint wiring (Task 2)', () => {
         .send({
           idToken,
           nonce,
-          code,
           agentId: AGENT_ID,
           requestedCapabilities: [
             { resource: '*', actions: ['admin'] }, // escalation attempt
@@ -571,27 +606,27 @@ describe('OidcStateStore', () => {
     expect(store.consumeState('nonexistent')).toBeUndefined();
   });
 
-  it('isCodeUsed returns false for a new code', () => {
-    expect(store.isCodeUsed('brand-new-code')).toBe(false);
+  it('isIdTokenHashUsed returns false for a new hash', () => {
+    expect(store.isIdTokenHashUsed('abcdef1234567890')).toBe(false);
   });
 
-  it('isCodeUsed returns true after markCodeUsed', () => {
-    store.markCodeUsed('my-code');
-    expect(store.isCodeUsed('my-code')).toBe(true);
+  it('isIdTokenHashUsed returns true after markIdTokenHashUsed', () => {
+    store.markIdTokenHashUsed('my-token-hash');
+    expect(store.isIdTokenHashUsed('my-token-hash')).toBe(true);
   });
 
-  it('different codes are tracked independently', () => {
-    store.markCodeUsed('code-a');
-    expect(store.isCodeUsed('code-a')).toBe(true);
-    expect(store.isCodeUsed('code-b')).toBe(false);
+  it('different hashes are tracked independently', () => {
+    store.markIdTokenHashUsed('hash-a');
+    expect(store.isIdTokenHashUsed('hash-a')).toBe(true);
+    expect(store.isIdTokenHashUsed('hash-b')).toBe(false);
   });
 
-  it('expiry: isCodeUsed returns false after TTL passes', () => {
+  it('expiry: isIdTokenHashUsed returns false after TTL passes', () => {
     const shortStore = new OidcStateStore(0.001); // ~1 ms TTL
-    shortStore.markCodeUsed('expiring-code');
+    shortStore.markIdTokenHashUsed('expiring-hash');
     return new Promise<void>((resolve) =>
       setTimeout(() => {
-        expect(shortStore.isCodeUsed('expiring-code')).toBe(false);
+        expect(shortStore.isIdTokenHashUsed('expiring-hash')).toBe(false);
         resolve();
       }, 5),
     );
@@ -616,12 +651,12 @@ describe('OidcStateStore', () => {
     expect(store.pendingStateCount).toBe(0);
   });
 
-  it('usedCodeCount increments on markCodeUsed', () => {
-    expect(store.usedCodeCount).toBe(0);
-    store.markCodeUsed('c1');
-    expect(store.usedCodeCount).toBe(1);
-    store.markCodeUsed('c2');
-    expect(store.usedCodeCount).toBe(2);
+  it('usedIdTokenHashCount increments on markIdTokenHashUsed', () => {
+    expect(store.usedIdTokenHashCount).toBe(0);
+    store.markIdTokenHashUsed('h1');
+    expect(store.usedIdTokenHashCount).toBe(1);
+    store.markIdTokenHashUsed('h2');
+    expect(store.usedIdTokenHashCount).toBe(2);
   });
 });
 
@@ -796,6 +831,46 @@ describe('TenantIdpRegistry', () => {
     fs.writeFileSync(tmpFile, JSON.stringify(cfg));
     try {
       // Registry logs error and keeps zero tenants (file is invalid).
+      const reg = new TenantIdpRegistry(tmpFile, logger);
+      expect(reg.size).toBe(0);
+      expect(logger.error).toHaveBeenCalled();
+      reg.destroy();
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  });
+
+  it('rejects config where azure-ad entry is missing the azureAD block', () => {
+    const cfg = {
+      tenants: {
+        'bad-az': { provider: 'azure-ad' }, // missing azureAD object
+      },
+    };
+    const tmpFile = path.join(os.tmpdir(), `euno-tenant-idp-${Date.now()}.json`);
+    fs.writeFileSync(tmpFile, JSON.stringify(cfg));
+    try {
+      const reg = new TenantIdpRegistry(tmpFile, logger);
+      // Validation should fail → error logged, zero tenants loaded.
+      expect(reg.size).toBe(0);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to load'),
+        expect.any(Object),
+      );
+      reg.destroy();
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  });
+
+  it('rejects config where aws-cognito entry is missing the awsCognito block', () => {
+    const cfg = {
+      tenants: {
+        'bad-cog': { provider: 'aws-cognito' }, // missing awsCognito object
+      },
+    };
+    const tmpFile = path.join(os.tmpdir(), `euno-tenant-idp-${Date.now()}.json`);
+    fs.writeFileSync(tmpFile, JSON.stringify(cfg));
+    try {
       const reg = new TenantIdpRegistry(tmpFile, logger);
       expect(reg.size).toBe(0);
       expect(logger.error).toHaveBeenCalled();

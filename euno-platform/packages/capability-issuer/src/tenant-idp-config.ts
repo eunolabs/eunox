@@ -180,10 +180,41 @@ export class TenantIdpRegistry {
         throw new Error(`Tenant "${tenantId}": entry must be an object`);
       }
       const e = entry as Record<string, unknown>;
-      if (!['azure-ad', 'aws-cognito', 'gcp-identity'].includes(e['provider'] as string)) {
+      const provider = e['provider'] as string;
+      if (!['azure-ad', 'aws-cognito', 'gcp-identity'].includes(provider)) {
         throw new Error(
           `Tenant "${tenantId}": provider must be one of azure-ad, aws-cognito, gcp-identity`,
         );
+      }
+      // Validate that the provider-specific config block is present and is an
+      // object. Missing blocks would cause the adapter constructor to receive
+      // undefined, which causes failures at request time instead of at load time.
+      if (provider === 'azure-ad') {
+        if (!e['azureAD'] || typeof e['azureAD'] !== 'object') {
+          throw new Error(`Tenant "${tenantId}": provider azure-ad requires an "azureAD" config object`);
+        }
+        const az = e['azureAD'] as Record<string, unknown>;
+        if (typeof az['tenantId'] !== 'string' || !az['tenantId']) {
+          throw new Error(`Tenant "${tenantId}": azureAD.tenantId (string) is required`);
+        }
+        if (typeof az['clientId'] !== 'string' || !az['clientId']) {
+          throw new Error(`Tenant "${tenantId}": azureAD.clientId (string) is required`);
+        }
+      } else if (provider === 'aws-cognito') {
+        if (!e['awsCognito'] || typeof e['awsCognito'] !== 'object') {
+          throw new Error(`Tenant "${tenantId}": provider aws-cognito requires an "awsCognito" config object`);
+        }
+        const cog = e['awsCognito'] as Record<string, unknown>;
+        if (typeof cog['userPoolId'] !== 'string' || !cog['userPoolId']) {
+          throw new Error(`Tenant "${tenantId}": awsCognito.userPoolId (string) is required`);
+        }
+        if (typeof cog['clientId'] !== 'string' || !cog['clientId']) {
+          throw new Error(`Tenant "${tenantId}": awsCognito.clientId (string) is required`);
+        }
+      } else if (provider === 'gcp-identity') {
+        if (!e['gcpIdentity'] || typeof e['gcpIdentity'] !== 'object') {
+          throw new Error(`Tenant "${tenantId}": provider gcp-identity requires a "gcpIdentity" config object`);
+        }
       }
     }
     return { tenants: tenants as Record<string, TenantIdpEntry> };
