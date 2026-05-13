@@ -1041,7 +1041,9 @@ app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
   if (baseUrl) {
     const tenantParam = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
     doc.authorization_endpoint = `${baseUrl}/api/v1/oidc/authorize${tenantParam}`;
-    doc.token_endpoint = `${baseUrl}/api/v1/oidc/token`;
+    // token_endpoint also carries the tenantId hint so discovery-document consumers
+    // (clients / IdP libraries) can pass it as a body parameter on the token call.
+    doc.token_endpoint = `${baseUrl}/api/v1/oidc/token${tenantParam}`;
   }
 
   if (tenantId) {

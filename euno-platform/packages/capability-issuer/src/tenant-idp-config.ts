@@ -209,6 +209,11 @@ export class TenantIdpRegistry {
           name: `gcp-identity[${tenantId}]`,
           gcpIdentity: entry.gcpIdentity,
         });
+      default:
+        // Should be unreachable: validateConfig rejects unknown providers.
+        throw new Error(
+          `Tenant "${tenantId}": unsupported provider "${(entry as TenantIdpEntry).provider}"`,
+        );
     }
   }
 }
