@@ -206,12 +206,29 @@ JOSE validation via the `jose` library before returning a `UserContext`:
 | `iss` | Must exactly match the tenant's configured OIDC issuer URL (e.g., `https://login.microsoftonline.com/<tid>/v2.0` or `https://cognito-idp.<region>.amazonaws.com/<poolId>`). |
 | `exp` | Must be in the future; the issuer applies a 60-second clock-skew tolerance. Tokens more than 60 seconds past their `exp` are rejected. |
 | `iat` | Must be in the past; the issuer rejects tokens with an `iat` more than 60 seconds in the future (anti-clockskew-future). |
-| Signature | Verified against the IdP's JWKS endpoint. The `AzureADIdentityProvider` and `AWSCognitoIdentityProvider` use `jose.createRemoteJWKSet()`, which handles caching and refresh internally. The gateway's own JWKS verifier (for capability tokens) uses `EUNO_JWKS_CACHE_TTL_SECONDS` (existing config, default 300 s; defined in `public/packages/common/src/config/schema.ts`). The IdP-side JWKS refresh interval for the issuer's identity providers is controlled by `jose.createRemoteJWKSet()`'s internal defaults; Task 2 must wire an explicit cache TTL option and document the corresponding env var if configurable behaviour is required. A failed JWKS refresh does not invalidate the current cache (fail-safe for JWKS endpoint flaps); the issuer rejects tokens only if no cached JWKS is available at all. |
+| Signature | Verified against the IdP's JWKS endpoint via `jose.createRemoteJWKSet()`. See §2.3.1 below for caching details. |
 | `alg` | Only `RS256` and `ES256` are accepted. `none` and symmetric algorithms (`HS256`, etc.) are explicitly rejected. |
 
 Validation is performed **before** any role lookup or capability derivation. If any
 claim fails, the issuer returns 401 and logs the rejection without consulting the
 `RoleCapabilityPolicy`.
+
+#### 2.3.1 JWKS caching for IdP signature verification
+
+Both identity provider adapters use `jose.createRemoteJWKSet()`, which handles JWKS
+fetching, caching, and refresh internally. The caching behaviour:
+
+- **IdP-side JWKS (for verifying end-user IdP tokens):** controlled by
+  `jose.createRemoteJWKSet()`'s internal defaults. Task 2 must wire an explicit
+  `cooldownDuration` option to `createRemoteJWKSet()` and document the corresponding
+  env var if operator-configurable TTL is required.
+- **Gateway-side JWKS (for verifying capability JWTs):** uses the existing
+  `EUNO_JWKS_CACHE_TTL_SECONDS` config variable (default 300 s; defined in
+  `public/packages/common/src/config/schema.ts:923`).
+
+A failed JWKS refresh does not invalidate the currently cached JWKS (fail-safe for
+transient JWKS endpoint flaps). The issuer rejects tokens only if no cached JWKS
+is available at all (e.g., first-use and the JWKS endpoint is unreachable).
 
 ---
 
