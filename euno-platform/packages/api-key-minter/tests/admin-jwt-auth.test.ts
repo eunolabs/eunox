@@ -101,7 +101,10 @@ describe('Admin routes — Bearer JWT primary authentication', () => {
     // Create a key first using the shared key (convenience).
     const { generateApiKey } = await import('../src/api-key');
     const k = generateApiKey();
-    const keyDigest = crypto.createHmac('sha256', pepper.key)
+    // API key digest — HMAC-SHA256 with a pepper is the correct storage
+    // mechanism for high-entropy random API key secrets (not a password).
+    // lgtm[js/insufficient-password-hash]
+    const keyDigest = crypto.createHmac('sha256', pepper.key) // lgtm[js/insufficient-password-hash]
       .update(k.secret, 'utf8').digest().toString('base64url');
     await store.createKey({
       prefix: k.prefix,

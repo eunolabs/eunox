@@ -62,8 +62,12 @@ function requireAdminAuth(
   // Normalise both the expected and provided keys to a fixed-length SHA-256
   // digest so that crypto.timingSafeEqual (which requires equal-length buffers)
   // can be used without leaking length information.
+  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars enforced
+  // by the production guard), NOT a user password.  SHA-256 is appropriate here;
+  // a KDF would add latency without security benefit for random tokens.
+  // lgtm[js/insufficient-password-hash]
   const expectedHash = crypto
-    .createHash('sha256')
+    .createHash('sha256') // lgtm[js/insufficient-password-hash]
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 

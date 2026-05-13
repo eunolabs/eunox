@@ -60,8 +60,12 @@ function requireAdminAuth(
 ): (req: Request, res: Response, next: NextFunction) => void {
   // Pre-compute a fixed-size HMAC of the expected key so that all comparisons
   // are on 32-byte buffers regardless of input length (eliminates timing oracle).
+  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars enforced
+  // by the production guard), NOT a user password.  HMAC-SHA256 is appropriate here;
+  // a KDF (bcrypt/argon2) would add latency without security benefit for random tokens.
+  // lgtm[js/insufficient-password-hash]
   const hmacKey = Buffer.alloc(32);
-  const expectedHash = crypto.createHmac('sha256', hmacKey)
+  const expectedHash = crypto.createHmac('sha256', hmacKey) // lgtm[js/insufficient-password-hash]
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 
