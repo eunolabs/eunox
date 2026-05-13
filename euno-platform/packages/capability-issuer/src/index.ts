@@ -766,12 +766,15 @@ app.use(express.json());
 
 // Task 3: role-policy admin routes.
 // Mounted after express.json() so PUT /api/v1/admin/role-policy can parse
-// request bodies.
+// request bodies.  The policyStore is not yet initialized at mount time
+// (initializeServices runs after the app is constructed), so a getter
+// function is used to read the module-level `rolePolicyStore` variable at
+// request time rather than at mount time.
 app.use(
   createAdminRolePolicyRouter({
     adminApiKey: issuerAdminApiKey,
     jwtVerifier: adminJwtVerifier,
-    get policyStore() { return rolePolicyStore; },
+    getPolicyStore: () => rolePolicyStore,
     onPolicyUpdated: applyPolicyUpdate,
     getCurrentPolicy: () =>
       activeRolePolicy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP },

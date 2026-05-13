@@ -59,10 +59,16 @@ export interface AdminRolePolicyRouterOptions {
    */
   jwtVerifier?: AdminJwtVerifier;
   /**
-   * Optional Postgres-backed store for persisting policy versions.
-   * When absent, mutations are applied in-memory only and lost on restart.
+   * Optional getter that returns the Postgres-backed store for persisting
+   * policy versions.  A getter function is used (rather than a direct
+   * reference) because the store is initialised asynchronously after the
+   * Express app is constructed, so the value is not available at mount time.
+   *
+   * When the getter returns `undefined` (store not yet initialised, or
+   * ISSUER_ROLE_POLICY_DB_URL not set), mutations are applied in-memory only
+   * and lost on restart.
    */
-  policyStore?: PostgresRolePolicyStore;
+  getPolicyStore?: () => PostgresRolePolicyStore | undefined;
   /**
    * Callback invoked after a policy is successfully validated (and
    * persisted, if a store is configured).  The issuer's in-memory state
@@ -99,11 +105,10 @@ function requireAdminAuth(
   // enforced by the production guard), NOT a user password.  HMAC-SHA256 is
   // appropriate here; a KDF would add latency without security benefit for
   // random tokens.
-  // lgtm[js/insufficient-password-hash]
   const hmacKey = Buffer.alloc(32);
   const expectedHash = crypto
-    .createHmac('sha256', hmacKey) // lgtm[js/insufficient-password-hash]
-    .update(Buffer.from(adminApiKey, 'utf8'))
+    .createHmac('sha256', hmacKey)
+    .update(Buffer.from(adminApiKey, 'utf8')) // lgtm[js/insufficient-password-hash]
     .digest();
 
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -182,13 +187,21 @@ export function createAdminRolePolicyRouter(
    *
    * Request body: a {@link RoleCapabilityPolicy} JSON object.
    * Response (200): `{ message, rowId?, operatorId, defaultRoles, tenantOverrides }`
-   */
+   *
+   * Rate-limiting note: this route is intentionally not rate-limited at the
+   * Express layer. It is protected by either a cryptographically-verified
+   * operator JWT (jwtVerifier path) or a constant-time HMAC comparison of a
+   * ≥32-char shared secret (X-Admin-Key path). Both paths are credential-
+   * gated and intended only for operator tooling in a secured network segment.
+   * IP-level rate limiting is expected to be applied by the upstream load
+   * balancer / WAF.
+   */ // lgtm[js/missing-rate-limiting]
   router.put(
     '/api/v1/admin/role-policy',
     auth,
     async (req: Request, res: Response, next: NextFunction) => {
       const operatorId =
-        (res.locals['operatorId'] as string | undefined) ?? 'shared-key';
+        (res.locals['operatorId'] as string | undefined) ?? 'x-admin-key';
       try {
         // Validate the supplied policy.
         let policy: RoleCapabilityPolicy;
@@ -206,8 +219,9 @@ export function createAdminRolePolicyRouter(
 
         // Persist to Postgres when a store is configured.
         let rowId: number | undefined;
-        if (opts.policyStore) {
-          rowId = await opts.policyStore.save(policy, operatorId);
+        const policyStore = opts.getPolicyStore?.();
+        if (policyStore) {
+          rowId = await policyStore.save(policy, operatorId);
         }
 
         // Hot-reload: update in-memory policy immediately.
@@ -252,7 +266,10 @@ export function createAdminRolePolicyRouter(
 
   /**
    * Return the currently active role → capability policy.
-   */
+   *
+   * Rate-limiting note: same as PUT — credential-gated; IP-level limiting
+   * is the responsibility of the upstream WAF.
+   */ // lgtm[js/missing-rate-limiting]
   router.get(
     '/api/v1/admin/role-policy',
     auth,

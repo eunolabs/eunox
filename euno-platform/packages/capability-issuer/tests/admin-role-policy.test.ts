@@ -89,7 +89,7 @@ function makeApp(overrides: {
     createAdminRolePolicyRouter({
       adminApiKey: ADMIN_API_KEY,
       jwtVerifier: overrides.jwtVerifier,
-      policyStore: overrides.policyStore,
+      getPolicyStore: () => overrides.policyStore,
       onPolicyUpdated: policyUpdated,
       getCurrentPolicy: () => currentPolicy,
       logger,
@@ -190,7 +190,7 @@ describe('Admin role-policy routes (Task 3)', () => {
       expect(onPolicyUpdated.mock.calls[0][0]).toEqual(UPDATED_POLICY);
     });
 
-    it('sets operatorId to "shared-key" when X-Admin-Key is used', async () => {
+    it('sets operatorId to "x-admin-key" when X-Admin-Key is used', async () => {
       const onPolicyUpdated = jest.fn();
       const { app } = makeApp({ onPolicyUpdated });
       await request(app)
@@ -198,7 +198,7 @@ describe('Admin role-policy routes (Task 3)', () => {
         .set('X-Admin-Key', ADMIN_API_KEY)
         .send(UPDATED_POLICY);
       const operatorId = onPolicyUpdated.mock.calls[0]?.[1] as string;
-      expect(operatorId).toBe('shared-key');
+      expect(operatorId).toBe('x-admin-key');
     });
 
     it('persists to policyStore.save() when a store is configured', async () => {
@@ -210,7 +210,7 @@ describe('Admin role-policy routes (Task 3)', () => {
         .put('/api/v1/admin/role-policy')
         .set('X-Admin-Key', ADMIN_API_KEY)
         .send(UPDATED_POLICY);
-      expect(saveSpy).toHaveBeenCalledWith(UPDATED_POLICY, 'shared-key');
+      expect(saveSpy).toHaveBeenCalledWith(UPDATED_POLICY, 'x-admin-key');
     });
 
     it('includes rowId in the response when a store is configured', async () => {
@@ -343,7 +343,7 @@ describe('Admin role-policy routes (Task 3)', () => {
       // Operator identity is captured
       const metadata = logEntry['metadata'] as Record<string, unknown>;
       expect(metadata['operation']).toBe('role_policy_update');
-      expect(metadata['operator']).toBe('shared-key');
+      expect(metadata['operator']).toBe('x-admin-key');
     });
 
     it('audit log entry includes the updated role list', async () => {
