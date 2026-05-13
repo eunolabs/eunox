@@ -128,6 +128,29 @@ See `docs/runbooks/ledger-hmac-rotation.md` for the rotation procedure.
 
 ---
 
+## Minter production configuration (Task 1)
+
+The API-key minter enforces **fail-closed startup** when `NODE_ENV=production`.
+The following env vars **must** be set; the minter refuses to start if any are
+absent and logs a single error message listing all violations:
+
+| Env var | Requirement |
+|---|---|
+| `MINTER_ADMIN_API_KEY` | Secret value ≥ 32 characters; the default `dev-admin-key` cannot be used in production. |
+| `MINTER_PEPPER_HEX` | 64-character hex string (32-byte pepper); generate with `openssl rand -hex 32`. |
+| `MINTER_KMS_PROVIDER` **or** `MINTER_PRIVATE_KEY_PEM` + `MINTER_PUBLIC_KEY_PEM` | At least one signing-key source must be configured; ephemeral keys are not permitted. |
+| `MINTER_AUDIT_DB_URL` | Postgres connection string for the durable mint-audit store. |
+| `MINTER_API_KEY_DB_URL` | Postgres connection string for the durable API-key store (implemented in Task 2). |
+
+Additionally, any Redis URL that is configured (`REDIS_URL`, `ANOMALY_REDIS_URL`,
+`MINTER_PING_REDIS_URL`) must use a Sentinel or Cluster scheme in production
+(see §"Redis HA for production" below).
+
+Development and CI clusters may omit any of these variables; the minter will
+start with safe in-process fallbacks and log a `WARN` for each one.
+
+---
+
 ## GCP Cloud KMS per-tenant key isolation (DI-1)
 
 When `MINTER_KMS_PROVIDER=gcp-cloudkms`, **`MINTER_TENANT_KEY_MAP` is required**.
@@ -292,15 +315,16 @@ harmless.
 ### Startup validation
 
 When `NODE_ENV=production` and a Redis URL is configured that does not
-match a Sentinel or Cluster pattern, the gateway emits a `WARN` log at
-startup:
+match a Sentinel or Cluster pattern, the gateway **refuses to start** with a
+fatal error:
 
 ```
-CR-3: REDIS_URL appears to point at a single-node Redis instance...
+CR-3: Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance...
 ```
 
-This is non-fatal (to avoid breaking pilot deployments) but should be treated
-as a required action before the gateway serves production traffic.
+This check is **fatal in production** (Task 4).  Pilot and development clusters
+may continue to use single-node Redis (`redis://` scheme) by setting
+`NODE_ENV=development`.
 
 ### Alerting
 

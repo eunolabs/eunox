@@ -413,6 +413,76 @@ export function deriveIssuerMetadataUrl(
 }
 
 /**
+ * Validates that every configured Redis URL uses a high-availability topology
+ * (Sentinel or Cluster) when running in production.
+ *
+ * A single-node Redis instance is a single point of failure for all four
+ * runtime-security state stores (revocation, kill-switch, call counters,
+ * DPoP replay).  Under fail-closed defaults, a Redis outage denies 100 % of
+ * enforcement traffic.  Production deployments MUST use Redis Sentinel or
+ * Redis Cluster.
+ *
+ * **In production this check is fatal** — the gateway refuses to start when a
+ * single-node URL is detected, preventing an operator from accidentally putting
+ * a high-availability service behind a single Redis pod.
+ *
+ * Detection heuristic:
+ * - `redis+sentinel://` / `rediss+sentinel://` scheme → Redis Sentinel ✓
+ * - `redis+cluster://`  / `rediss+cluster://`  scheme → Redis Cluster  ✓
+ * - URL contains a comma (multiple seed nodes)        → Redis Cluster  ✓
+ * - Plain `redis://host:port` (single node)           → rejected in production
+ *
+ * The check is skipped when:
+ * - `environment` is not `'production'` (dev/test clusters may use single-node).
+ * - No Redis URLs are configured at all (Redis is optional for single-replica
+ *   deployments; see `EUNO_DEPLOYMENT_TIER=single-replica`).
+ *
+ * See docs/DEPLOYMENT.md §"Redis HA for production".
+ *
+ * @internal Exported for unit testing only; not part of the public API.
+ */
+export function checkProductionRedisHa(
+  env: {
+    REDIS_URL?: string | undefined;
+    REVOCATION_REDIS_URL?: string | undefined;
+    KILL_SWITCH_REDIS_URL?: string | undefined;
+    CALL_COUNTER_REDIS_URL?: string | undefined;
+  },
+  environment: string,
+): void {
+  if (environment !== 'production') return;
+
+  const redisUrls = [
+    env.REDIS_URL,
+    env.REVOCATION_REDIS_URL,
+    env.KILL_SWITCH_REDIS_URL,
+    env.CALL_COUNTER_REDIS_URL,
+  ].filter(Boolean) as string[];
+
+  for (const url of redisUrls) {
+    const isHa =
+      url.startsWith('redis+sentinel://') ||
+      url.startsWith('rediss+sentinel://') ||
+      url.startsWith('redis+cluster://') ||
+      url.startsWith('rediss+cluster://') ||
+      url.includes(','); // multiple comma-separated seed nodes → cluster
+    if (!isHa) {
+      throw new Error(
+        'CR-3: Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance. ' +
+          'In production, all runtime-security state stores (revocation, kill-switch, ' +
+          'call counters, DPoP replay) share this Redis. A single-node outage causes ' +
+          '100 % of enforcement decisions to be denied (fail-closed default) or all ' +
+          'revocations to be bypassed (fail-open). ' +
+          'Replace with a Redis Sentinel or Redis Cluster deployment and set ' +
+          'REDIS_GRACE_PERIOD_MS=5000 (recommended). ' +
+          'See docs/DEPLOYMENT.md §"Redis HA for production".',
+      );
+    }
+  }
+}
+
+
+/**
  * Fetch the issuer's `/.well-known/capability-issuer` discovery document and
  * compare its `actionResolverHash` against the locally-computed hash.
  *
@@ -987,48 +1057,10 @@ export async function initializeServices(
     );
   }
 
-  // ── CR-3: Warn when NODE_ENV=production and REDIS_URL is single-node ──────
-  // A standalone Redis instance is a single point of failure for all four
-  // runtime-security state stores (revocation, kill-switch, call counters,
-  // DPoP replay).  Under fail-closed defaults, a Redis outage denies 100 % of
-  // enforcement traffic.  Production deployments MUST use Redis Sentinel or
-  // Redis Cluster (see docs/DEPLOYMENT.md §"Redis HA for production").
-  //
-  // Detection heuristic: a Sentinel URL uses the scheme "redis+sentinel://" or
-  // contains "sentinel_mode" in the cluster config; a Cluster URL contains
-  // commas (multiple seed nodes) or uses the scheme "redis+cluster://".
-  // Neither pattern is present in a plain "redis://host:port" URL.
-  if (config.environment === 'production') {
-    const redisUrls = [
-      env.REDIS_URL,
-      env.REVOCATION_REDIS_URL,
-      env.KILL_SWITCH_REDIS_URL,
-      env.CALL_COUNTER_REDIS_URL,
-    ].filter(Boolean) as string[];
-
-    for (const url of redisUrls) {
-      const isHa =
-        url.startsWith('redis+sentinel://') ||
-        url.startsWith('rediss+sentinel://') ||
-        url.startsWith('redis+cluster://') ||
-        url.startsWith('rediss+cluster://') ||
-        url.includes(',');  // multiple comma-separated seed nodes → cluster
-      if (!isHa) {
-        logger.warn(
-          'CR-3: REDIS_URL appears to point at a single-node Redis instance. ' +
-            'In production, all runtime-security state stores (revocation, kill-switch, ' +
-            'call counters, DPoP replay) share this Redis. A single-node outage causes ' +
-            '100 % of enforcement decisions to be denied (fail-closed default) or all ' +
-            'revocations to be bypassed (fail-open). ' +
-            'Replace with a Redis Sentinel or Redis Cluster deployment and ensure ' +
-            'REDIS_GRACE_PERIOD_MS is set (recommended: 5000). ' +
-            'See docs/DEPLOYMENT.md §"Redis HA for production".',
-          { url: url.replace(/\/\/[^@/\s]*@/, '//<redacted>@') },
-        );
-        break; // Only warn once even if multiple per-store URLs are single-node.
-      }
-    }
-  }
+  // ── CR-3: Fail when NODE_ENV=production and REDIS_URL is single-node ───────
+  // HA Redis is mandatory for production (Task 4).  See checkProductionRedisHa
+  // for the full rationale and detection heuristics.
+  checkProductionRedisHa(env, config.environment);
 
 
   const deps: GatewayDependencies = {

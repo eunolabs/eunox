@@ -354,7 +354,7 @@ describe('RedisAnomalyDetector — Redis error fallback', () => {
     // Test that the fallback detector (in-memory AnomalyDetector) is functional.
     let redisDown = false;
     const fakeClient = makeFakeRedisClient({
-      hincrbyOverride: async (key, field, inc) => {
+      hincrbyOverride: async (_key, field, inc) => {
         if (redisDown) throw new Error('Redis down');
         const hash = new Map<string, number>();
         hash.set(field, inc);
@@ -417,9 +417,12 @@ describe('createAnomalyDetectorFromEnv', () => {
     try {
       jest.doMock('ioredis', () => { throw new Error("Cannot find module 'ioredis'"); }, { virtual: true });
       jest.isolateModules(() => {
-        const mod = require('../src/redis-anomaly-detector');
+        // Load AnomalyDetector from the same fresh module scope so that
+        // toBeInstanceOf compares the same constructor reference.
+        const { AnomalyDetector: FreshAnomalyDetector } = require('../src/anomaly-detector') as typeof import('../src/anomaly-detector');
+        const mod = require('../src/redis-anomaly-detector') as typeof import('../src/redis-anomaly-detector');
         const detector = mod.createAnomalyDetectorFromEnv({ REDIS_URL: 'redis://localhost:6379' });
-        expect(detector).toBeInstanceOf(AnomalyDetector);
+        expect(detector).toBeInstanceOf(FreshAnomalyDetector);
       });
     } finally {
       jest.dontMock('ioredis');

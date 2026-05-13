@@ -22,6 +22,7 @@ import {
   resolveAllowedOrigins,
   deriveIssuerMetadataUrl,
   checkActionResolverHashParity,
+  checkProductionRedisHa,
 } from '../src/bootstrap';
 import { createLogger } from '@euno/common';
 
@@ -427,6 +428,163 @@ describe('docker-compose.yml backend profile parity', () => {
     it('loads successfully with full-stack env vars (matches smoke docker-compose profile)', () => {
       const config = loadConfigFromEnv(SMOKE_ENV);
       expect(config.name).toBe('tool-gateway');
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// checkProductionRedisHa (Task 4 — CR-3 mandatory HA Redis in production)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('checkProductionRedisHa', () => {
+  describe('non-production environments', () => {
+    it('does not throw for environment=development with a single-node URL', () => {
+      expect(() =>
+        checkProductionRedisHa({ REDIS_URL: 'redis://localhost:6379' }, 'development'),
+      ).not.toThrow();
+    });
+
+    it('does not throw for environment=test with a single-node URL', () => {
+      expect(() =>
+        checkProductionRedisHa({ REDIS_URL: 'redis://localhost:6379' }, 'test'),
+      ).not.toThrow();
+    });
+  });
+
+  describe('production — no Redis configured', () => {
+    it('does not throw when no Redis URLs are set (Redis is optional for single-replica)', () => {
+      expect(() => checkProductionRedisHa({}, 'production')).not.toThrow();
+    });
+  });
+
+  describe('production — HA URLs accepted', () => {
+    it('accepts a Redis Sentinel URL (redis+sentinel:// scheme)', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REDIS_URL: 'redis+sentinel://sentinel1:26379,sentinel2:26379?name=mymaster' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts a TLS Redis Sentinel URL (rediss+sentinel:// scheme)', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REDIS_URL: 'rediss+sentinel://sentinel1:26379,sentinel2:26379?name=mymaster' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts a Redis Cluster URL (redis+cluster:// scheme)', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REDIS_URL: 'redis+cluster://cluster.redis.internal:6379' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts a TLS Redis Cluster URL (rediss+cluster:// scheme)', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REDIS_URL: 'rediss+cluster://cluster.redis.internal:6379' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts a comma-separated cluster seed list as a cluster URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REDIS_URL: 'redis://node0:6379,node1:6379,node2:6379' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts HA URL on REVOCATION_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REVOCATION_REDIS_URL: 'redis+sentinel://s1:26379,s2:26379?name=master' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts HA URL on KILL_SWITCH_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { KILL_SWITCH_REDIS_URL: 'redis+cluster://ks-cluster:6379' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts HA URL on CALL_COUNTER_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { CALL_COUNTER_REDIS_URL: 'redis+cluster://cc-cluster:6379' },
+          'production',
+        ),
+      ).not.toThrow();
+    });
+  });
+
+  describe('production — single-node URLs rejected', () => {
+    it('throws for a plain redis:// URL on REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa({ REDIS_URL: 'redis://redis.euno-system:6379' }, 'production'),
+      ).toThrow(/single-node Redis/i);
+    });
+
+    it('throws for a plain redis:// URL on REVOCATION_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { REVOCATION_REDIS_URL: 'redis://revocation-redis:6379' },
+          'production',
+        ),
+      ).toThrow(/single-node Redis/i);
+    });
+
+    it('throws for a plain redis:// URL on KILL_SWITCH_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { KILL_SWITCH_REDIS_URL: 'redis://killswitch-redis:6379' },
+          'production',
+        ),
+      ).toThrow(/single-node Redis/i);
+    });
+
+    it('throws for a plain redis:// URL on CALL_COUNTER_REDIS_URL', () => {
+      expect(() =>
+        checkProductionRedisHa(
+          { CALL_COUNTER_REDIS_URL: 'redis://counter-redis:6379' },
+          'production',
+        ),
+      ).toThrow(/single-node Redis/i);
+    });
+
+    it('error message includes actionable guidance', () => {
+      expect(() =>
+        checkProductionRedisHa({ REDIS_URL: 'redis://localhost:6379' }, 'production'),
+      ).toThrow(/DEPLOYMENT\.md/);
+    });
+
+    it('throws on the first single-node URL found (first wins)', () => {
+      // Both REDIS_URL and REVOCATION_REDIS_URL are single-node; only one error.
+      let callCount = 0;
+      try {
+        checkProductionRedisHa(
+          {
+            REDIS_URL: 'redis://redis1:6379',
+            REVOCATION_REDIS_URL: 'redis://redis2:6379',
+          },
+          'production',
+        );
+      } catch {
+        callCount++;
+      }
+      expect(callCount).toBe(1);
     });
   });
 });
