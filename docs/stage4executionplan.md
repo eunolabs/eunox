@@ -174,7 +174,7 @@ artifacts to first-class status:
 | Artifact | Today | After Stage 4 |
 |---|---|---|
 | `euno-platform/packages/capability-issuer/` | Internal lib used by the API-key minter; standalone Express app exists but is not exposed as a hosted product surface | Hosted service (HA, KMS-signed, IdP-authenticated) **and** self-host docker image |
-| `public/packages/cli/` `request` / `validate-token` commands | Scaffold; CLI shape exists, no live issuer wired | Live, documented, end-to-end tested commands; default issuer URL configurable per environment |
+| `public/packages/cli/` `request` / `validate-token` commands | Implemented and usable against explicitly configured issuer/JWKS endpoints today; not yet PKCE/SSO-bound and no hosted-default issuer wiring | Live, documented, end-to-end tested commands; default issuer URL configurable per environment |
 | `web/` (static landing site) | Marketing pages | Adds a (still simple, server-rendered or SPA, decided in Task 0) authenticated **manifest templates** view |
 
 Stage 4 introduces **no new seam types** in `@euno/common-core` unless a
