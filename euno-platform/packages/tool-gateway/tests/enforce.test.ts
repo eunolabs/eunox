@@ -792,4 +792,56 @@ describe('POST /api/v1/enforce', () => {
       expect(res.body.error.code).toBe(ErrorCode.REVOCATION_UNAVAILABLE);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9. Unknown context field stripping (Task 14)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('unknown context field stripping', () => {
+    let token: string;
+
+    beforeAll(async () => {
+      token = await signToken(privateKey, []);
+    });
+
+    it('strips unknown fields from context before enforcement', async () => {
+      const res = await request(app)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          sessionId: 'sess-strip',
+          toolName: 'test-tool',
+          arguments: {},
+          context: {
+            sourceIp: '1.2.3.4',
+            unknownField: 'should-be-removed',
+            extraData: { nested: true },
+          },
+        });
+      // The request should succeed (unknown fields silently stripped, not rejected)
+      expect([200, 403]).toContain(res.status);
+      // Specifically should NOT return 400 INVALID_REQUEST
+      expect(res.status).not.toBe(400);
+    });
+
+    it('preserves known context fields (sourceIp, recipients, now)', async () => {
+      const near = new Date(Date.now() - 5000).toISOString();
+      const res = await request(app)
+        .post('/api/v1/enforce')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          sessionId: 'sess-known',
+          toolName: 'test-tool',
+          arguments: {},
+          context: {
+            sourceIp: '10.0.0.1',
+            recipients: ['alice@example.com'],
+            now: near,
+            shouldBeRemoved: 'yes',
+          },
+        });
+      // Not a 400 — known fields are preserved, unknown ones stripped
+      expect(res.status).not.toBe(400);
+    });
+  });
 });

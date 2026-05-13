@@ -86,6 +86,18 @@ export interface RedisMintRateLimiterClient {
   decr(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
   ttl(key: string): Promise<number>;
+  /**
+   * Execute a Lua script atomically on the Redis server.
+   *
+   * Used by {@link RedisBackedMintRateLimiter} to run the INCR+EXPIRE
+   * operation as a single atomic unit, eliminating the race where
+   * `INCR` succeeds but the subsequent `EXPIRE` call fails.
+   *
+   * @param script  The Lua script to evaluate.
+   * @param numkeys Number of key arguments (passed as KEYS[]).
+   * @param args    Key and value arguments (KEYS[] then ARGV[]).
+   */
+  eval(script: string, numkeys: number, ...args: (string | number)[]): Promise<unknown>;
   quit(): Promise<unknown>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
@@ -113,6 +125,23 @@ export interface RedisMintRateLimiterClient {
  * });
  * ```
  */
+
+/**
+ * Lua script that atomically increments a counter and sets its TTL on the
+ * first call. Using a single EVAL eliminates the race condition where INCR
+ * succeeds but the subsequent EXPIRE call fails, which would leave a key
+ * with no expiry and block the tenant permanently.
+ *
+ * KEYS[1] — the rate-limit key
+ * ARGV[1] — TTL in seconds (string-coerced integer)
+ * Returns — the new counter value after the increment (number)
+ */
+const LUA_ATOMIC_INCR_EXPIRE = `\
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count`;
 export class RedisBackedMintRateLimiter implements MintRateLimiter {
   private readonly client: RedisMintRateLimiterClient;
   private readonly maxMints: number;
@@ -170,29 +199,25 @@ export class RedisBackedMintRateLimiter implements MintRateLimiter {
   async check(key: string): Promise<{ allowed: boolean; retryAfterSeconds?: number }> {
     const fullKey = `${this.keyPrefix}${key}`;
     try {
-      const count = await this.client.incr(fullKey);
-      // Set the TTL only on the first increment so the window is tumbling
-      // (same semantics as RedisCallCounterStore — the first writer owns the
-      // window boundary).
-      if (count === 1) {
-        await this.client.expire(fullKey, this.windowSeconds);
-      }
+      // Atomically increment the counter and set the TTL on the first call.
+      // Using a Lua EVAL eliminates the race where INCR succeeds but the
+      // subsequent EXPIRE call fails, leaving a key with no expiry and
+      // blocking the tenant permanently.
+      const count = (await this.client.eval(
+        LUA_ATOMIC_INCR_EXPIRE,
+        1,
+        fullKey,
+        String(this.windowSeconds),
+      )) as number;
       if (count > this.maxMints) {
         // Fetch the remaining TTL to provide an accurate Retry-After value.
-        // The TTL fetch also serves as a safety guard: if expire() failed on
-        // the initial increment (count was 1), the key has no TTL and the
-        // caller would be blocked permanently.  When we detect ttl === -1
-        // (key exists but has no expiry) we re-apply expire so the block is
-        // always temporary.
         let remainingSeconds = this.windowSeconds;
         try {
           const ttl = await this.client.ttl(fullKey);
           if (ttl > 0) {
             remainingSeconds = ttl;
           } else if (ttl === -1) {
-            // Safety guard: no TTL on the key — this happens when the initial
-            // expire() call (count === 1 path) threw after incr() succeeded.
-            // Re-apply expire so the counter eventually resets.
+            // Belt-and-suspenders: if somehow the key has no expiry, re-apply.
             await this.client.expire(fullKey, this.windowSeconds);
             remainingSeconds = this.windowSeconds;
           }
@@ -328,6 +353,91 @@ export async function createPingRateLimiterFromEnv(
     maxMintsPerWindow: max,
     windowSeconds,
     keyPrefix: 'pingrl:',
+    localFallback,
+    logger,
+  });
+}
+
+/**
+ * Build a {@link MintRateLimiter} for the `POST /api/v1/mint` route from
+ * environment variables, using the following priority order:
+ *
+ *   1. `MINTER_MINT_REDIS_URL` — dedicated Redis URL for mint rate limiting.
+ *   2. `REDIS_URL` — shared Redis URL (used when the dedicated var is absent).
+ *   3. In-memory fallback — when neither is set.
+ *
+ * Rate-limit parameters:
+ *   - `MINTER_MINT_RATE_LIMIT_MAX` — max requests per window (default 100).
+ *   - `MINTER_MINT_RATE_LIMIT_WINDOW_SECONDS` — window length in seconds (default 60).
+ *
+ * In multi-replica deployments, configure `REDIS_URL` (or
+ * `MINTER_MINT_REDIS_URL`) so the per-tenant limit is enforced fleet-wide.
+ * Without Redis, the effective cap is `MINTER_MINT_RATE_LIMIT_MAX × replicaCount`.
+ *
+ * `ioredis` is loaded with a runtime `require()` so operators that do not use
+ * Redis are not forced to install it.
+ */
+export async function createMintRateLimiterFromEnv(
+  env: NodeJS.ProcessEnv,
+  logger?: Logger,
+): Promise<MintRateLimiter> {
+  const maxRaw = parseInt(env['MINTER_MINT_RATE_LIMIT_MAX'] ?? '100', 10);
+  const max = Number.isFinite(maxRaw) && Number.isInteger(maxRaw) && maxRaw > 0 ? maxRaw : 100;
+
+  const windowRaw = parseInt(env['MINTER_MINT_RATE_LIMIT_WINDOW_SECONDS'] ?? '60', 10);
+  const windowSeconds =
+    Number.isFinite(windowRaw) && Number.isInteger(windowRaw) && windowRaw > 0 ? windowRaw : 60;
+
+  const redisUrl = env['MINTER_MINT_REDIS_URL'] || env['REDIS_URL'];
+
+  if (!redisUrl) {
+    logger?.warn(
+      '[minter] createMintRateLimiterFromEnv: neither MINTER_MINT_REDIS_URL nor REDIS_URL is set. ' +
+        'Using per-process in-memory rate limiter for POST /api/v1/mint. ' +
+        'In a multi-replica deployment the effective rate limit is ' +
+        `${max} req/${windowSeconds}s × replicaCount, which weakens brute-force protection. ` +
+        'Set REDIS_URL or MINTER_MINT_REDIS_URL to enforce the limit fleet-wide.',
+    );
+    return new InMemoryMintRateLimiter({ maxMintsPerWindow: max, windowSeconds });
+  }
+
+  let RedisCtor: unknown;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    RedisCtor = require('ioredis');
+  } catch (error) {
+    const detectedVar = env['MINTER_MINT_REDIS_URL'] ? 'MINTER_MINT_REDIS_URL' : 'REDIS_URL';
+    logger?.error(
+      `[minter] createMintRateLimiterFromEnv: ${detectedVar} is set but "ioredis" is not installed. ` +
+        'Install it (npm install ioredis) to enable fleet-wide mint rate limiting ' +
+        '(supports both MINTER_MINT_REDIS_URL and REDIS_URL). ' +
+        'Falling back to in-memory rate limiter.',
+      { error: error instanceof Error ? error.message : 'Unknown error', detectedVar },
+    );
+    return new InMemoryMintRateLimiter({ maxMintsPerWindow: max, windowSeconds });
+  }
+
+  const Ctor = (RedisCtor as { default?: unknown }).default ?? RedisCtor;
+  const client = new (Ctor as new (url: string, opts?: unknown) => RedisMintRateLimiterClient)(
+    redisUrl,
+    {
+      retryStrategy: (times: number) => Math.min(times * 50, 2000),
+      maxRetriesPerRequest: 3,
+      lazyConnect: false,
+    },
+  );
+
+  const localFallback = new InMemoryMintRateLimiter({ maxMintsPerWindow: max, windowSeconds });
+
+  logger?.info(
+    '[minter] createMintRateLimiterFromEnv: using Redis-backed fleet-wide rate limiter for POST /api/v1/mint',
+    { max, windowSeconds, dedicatedUrl: !!env['MINTER_MINT_REDIS_URL'] },
+  );
+
+  return new RedisBackedMintRateLimiter(client, {
+    maxMintsPerWindow: max,
+    windowSeconds,
+    keyPrefix: 'mintrl:mint:',
     localFallback,
     logger,
   });

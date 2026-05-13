@@ -509,3 +509,85 @@ should include only `network-policies.yaml`.
 In Helm, conditionally render the overlay template using a value such as
 `networkPolicy.devEgressOverlay: true` set per environment.
 
+
+---
+
+## Posture-emitter queue topology for HA issuers
+
+### Single-replica deployment (default)
+
+When the capability issuer runs as a **single replica**, `DurablePostureEmitter`
+can be used directly. It writes posture inventory records to a local SQLite
+database in WAL mode before the issuance HTTP response is sent. This is the
+simplest and lowest-latency configuration:
+
+```
+┌─────────────────────────┐
+│   Capability Issuer     │
+│   (single replica)      │
+│  ┌────────────────────┐ │
+│  │ DurablePostureEmitter│ │
+│  │  (SQLite WAL write) │ │
+│  └────────────────────┘ │
+└─────────────────────────┘
+```
+
+### High-Availability (multi-replica) deployment
+
+`DurablePostureEmitter` uses SQLite which enforces a **single-writer
+constraint**: only one process may hold an exclusive write lock at a time.
+Running `DurablePostureEmitter` on multiple issuer replicas targeting the
+same SQLite file (e.g. over a shared PVC) produces write contention and
+may result in data loss or corruption.
+
+**Do not run `DurablePostureEmitter` on more than one replica simultaneously.**
+
+The recommended HA topology is a **dedicated queue-drainer sidecar**:
+
+```
+┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
+│  Capability Issuer   │  │  Capability Issuer   │  │  Capability Issuer   │
+│  Replica 1           │  │  Replica 2           │  │  Replica 3           │
+│  QueuePostureEmitter │  │  QueuePostureEmitter │  │  QueuePostureEmitter │
+│  (XADD → stream)     │  │  (XADD → stream)     │  │  (XADD → stream)     │
+└──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
+           │                         │                          │
+           └─────────────────────────┼──────────────────────────┘
+                                     ▼
+                         ┌───────────────────────┐
+                         │        Redis          │
+                         │  Stream: posture:q    │
+                         └───────────────────────┘
+                                     │
+                                     ▼
+                  ┌──────────────────────────────────────┐
+                  │  Posture Queue Drainer (sidecar/Job) │
+                  │  XREADGROUP → DurablePostureEmitter  │
+                  │  (single SQLite writer, WAL mode)    │
+                  └──────────────────────────────────────┘
+```
+
+**Pattern summary:**
+
+1. Each issuer replica uses a `QueuePostureEmitter` (or equivalent) that
+   appends records to a shared Redis Stream (`posture:q` by convention).
+2. A single queue-drainer process (Kubernetes `Deployment` with `replicas: 1`,
+   or a `CronJob`) consumes from the stream via `XREADGROUP` and calls
+   `DurablePostureEmitter` to write to SQLite.
+3. Because only the drainer writes to SQLite, the single-writer constraint is
+   preserved regardless of how many issuer replicas are running.
+
+**Operational notes:**
+
+- Size the Redis Stream with `MAXLEN` to bound memory usage (e.g.
+  `MAXLEN ~ 10000` for typical throughput).
+- Use `XACK` after each successful SQLite write to prevent duplicate processing
+  on drainer restart.
+- Monitor the stream length (`XLEN posture:q`) — a growing backlog indicates
+  the drainer is falling behind.
+- The drainer is not on the critical path for issuance latency; issuer replicas
+  return HTTP 201 as soon as the `XADD` to the stream completes.
+
+See `euno-platform/packages/capability-issuer/src/issuance/posture.ts` for the
+`DurablePostureEmitter` implementation and the JSDoc single-writer constraint
+warning.
