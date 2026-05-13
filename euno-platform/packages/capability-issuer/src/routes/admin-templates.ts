@@ -135,10 +135,11 @@ function requireAdminAuth(
   // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars in
   // production), NOT a user password. HMAC-SHA256 is appropriate here; a KDF
   // (bcrypt/argon2) would add latency without security benefit for random tokens.
-  // lgtm[js/insufficient-password-hash]
-  const hmacKey = Buffer.alloc(32);
+  // The HMAC key is random per startup — both expectedHash and providedHash
+  // are computed with the same key (closure), so the timingSafeEqual still works.
+  const hmacKey = crypto.randomBytes(32);
   const expectedHash = crypto
-    .createHmac('sha256', hmacKey) // lgtm[js/insufficient-password-hash]
+    .createHmac('sha256', hmacKey)
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 

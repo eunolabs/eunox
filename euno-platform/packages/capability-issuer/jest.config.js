@@ -7,6 +7,7 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
+        baseUrl: '.',
         paths: {
           '@euno/common': ['../common/src'],
           '@euno/common/wire': ['../common/src/wire'],
