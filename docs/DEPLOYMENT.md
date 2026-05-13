@@ -440,6 +440,54 @@ allow clients to spoof their IP via forged `X-Forwarded-For` headers.
 
 ---
 
+## Admin API binding
+
+The gateway exposes an administrative HTTP surface on a **separate port**
+(`ADMIN_PORT`, default 3003).  The admin routes (`/admin/*`) control token
+revocation and the kill switch — exposing them to untrusted networks is a critical
+security misconfiguration.
+
+### Production requirement
+
+When `NODE_ENV=production`, the gateway **refuses to start** unless `ADMIN_HOST`
+is set to a non-wildcard interface.  The following values are **rejected**:
+
+| Value | Reason |
+|---|---|
+| *(unset)* | Express default binds to all interfaces (`0.0.0.0`). |
+| `0.0.0.0` | Explicit IPv4 wildcard — all interfaces. |
+| `::` | IPv6 wildcard — all interfaces. |
+| `::0` | Alternative IPv6 wildcard — equivalent to `::`. |
+
+**Recommended values:**
+
+| Scenario | `ADMIN_HOST` |
+|---|---|
+| Sidecar proxy (same pod) | `127.0.0.1` |
+| In-cluster pod-to-pod only | The pod's internal cluster IP (e.g. `10.0.1.5`) |
+| IPv6 loopback | `::1` |
+
+### Kubernetes deployment
+
+The reference manifest (`k8s/tool-gateway-deployment.yaml`) already exposes the
+admin port via a `ClusterIP` Service — the gateway is not reachable from the
+public load-balancer at the infrastructure level.  `ADMIN_HOST=127.0.0.1` adds
+a belt-and-suspenders check at the application level so a misconfigured Service
+object cannot accidentally expose the admin surface.
+
+### Error message
+
+If the guard fires the gateway logs:
+
+```
+CR-4: Gateway refused to start — ADMIN_HOST is "0.0.0.0", which binds the admin
+surface to all network interfaces. In production, ADMIN_HOST must be set to a
+non-wildcard interface (e.g. "127.0.0.1" for sidecar-only access, or the pod's
+cluster IP)...
+```
+
+---
+
 ## Egress network boundaries (Task 5)
 
 The Kubernetes network policies in `k8s/network-policies.yaml` follow a

@@ -518,15 +518,21 @@ export function checkProductionAdminHost(
 ): void {
   if (environment !== 'production') return;
   const adminHost = env.ADMIN_HOST?.trim();
-  if (!adminHost || adminHost === '0.0.0.0' || adminHost === '::') {
+  // All IPv4 and IPv6 wildcard equivalents that bind to all interfaces:
+  //   - undefined / '' (unset or whitespace-only after trim)
+  //   - '0.0.0.0'  — standard IPv4 wildcard
+  //   - '::'       — standard IPv6 wildcard
+  //   - '::0'      — alternative IPv6 wildcard (equivalent to ::)
+  const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '::0']);
+  if (!adminHost || WILDCARD_HOSTS.has(adminHost)) {
     throw new Error(
       `CR-4: Gateway refused to start — ADMIN_HOST is ` +
-        `${adminHost === undefined ? '<unset>' : `"${adminHost}"`}, which binds the admin surface ` +
+        `${!adminHost ? '<unset>' : `"${adminHost}"`}, which binds the admin surface ` +
         'to all network interfaces. In production, ADMIN_HOST must be set to a non-wildcard ' +
         'interface (e.g. "127.0.0.1" for sidecar-only access, or the pod\'s cluster IP). ' +
         'A wildcard binding allows a misconfigured ingress to expose /admin/* (revocation, ' +
         'kill-switch) on the public load-balancer. ' +
-        'See docs/DEPLOYMENT.md §"Admin API security".',
+        'See docs/DEPLOYMENT.md §"Admin API binding".',
     );
   }
 }

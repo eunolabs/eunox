@@ -126,6 +126,22 @@ async function main(): Promise<void> {
       max: config.MINTER_AUDIT_POOL_SIZE,
       connectionTimeoutMillis: config.MINTER_PG_CONNECTION_TIMEOUT_MS,
     });
+    // Fail-fast connectivity check: verify the DB is reachable before
+    // accepting traffic. A bad connection string or missing network route
+    // should fail the pod at startup (under a rolling deploy) rather than
+    // silently failing on the first live mint request.
+    try {
+      const hcClient = await (auditPool as unknown as { connect(): Promise<{ query(sql: string): Promise<unknown>; release(): void }> }).connect();
+      await hcClient.query('SELECT 1');
+      hcClient.release();
+      logger.info('Postgres audit DB health check passed');
+    } catch (hcErr) {
+      throw new Error(
+        `Minter failed to connect to audit DB at startup: ` +
+          `${hcErr instanceof Error ? hcErr.message : String(hcErr)}. ` +
+          'Verify MINTER_AUDIT_DB_URL and network connectivity.',
+      );
+    }
     const pgAuditStore = new PostgresMintAuditStore(auditPool as unknown as MintAuditPgPool);
     // Only run DDL when explicitly requested so the service can start under an
     // INSERT-only role (the recommended least-privilege configuration described
@@ -173,6 +189,19 @@ async function main(): Promise<void> {
       max: config.MINTER_API_KEY_POOL_SIZE,
       connectionTimeoutMillis: config.MINTER_PG_CONNECTION_TIMEOUT_MS,
     });
+    // Fail-fast connectivity check (mirrors audit pool check above).
+    try {
+      const hcClient = await (pgKeyPool as unknown as { connect(): Promise<{ query(sql: string): Promise<unknown>; release(): void }> }).connect();
+      await hcClient.query('SELECT 1');
+      hcClient.release();
+      logger.info('Postgres API-key DB health check passed');
+    } catch (hcErr) {
+      throw new Error(
+        `Minter failed to connect to API-key DB at startup: ` +
+          `${hcErr instanceof Error ? hcErr.message : String(hcErr)}. ` +
+          'Verify MINTER_API_KEY_DB_URL and network connectivity.',
+      );
+    }
     const pgKeyStore = new PostgresApiKeyStore(pgKeyPool as unknown as ApiKeyPgPool);
     if (config.MINTER_API_KEY_SCHEMA_INIT) {
       await pgKeyStore.ensureSchema();

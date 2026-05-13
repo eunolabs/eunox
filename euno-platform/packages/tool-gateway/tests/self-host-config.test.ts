@@ -656,6 +656,24 @@ describe('checkProductionAdminHost', () => {
       ).toThrow(/CR-4/);
     });
 
+    it('throws CR-4 when ADMIN_HOST is "::0" (alternative IPv6 wildcard)', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '::0' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is a whitespace-only string', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '   ' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is an empty string', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
     it('error message includes actionable guidance about non-wildcard interface', () => {
       expect(() =>
         checkProductionAdminHost({ ADMIN_HOST: '0.0.0.0' }, 'production'),
@@ -671,6 +689,12 @@ describe('checkProductionAdminHost', () => {
     it('error message mentions <unset> when ADMIN_HOST is absent', () => {
       expect(() =>
         checkProductionAdminHost({}, 'production'),
+      ).toThrow('<unset>');
+    });
+
+    it('error message mentions <unset> when ADMIN_HOST is whitespace-only', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '  ' }, 'production'),
       ).toThrow('<unset>');
     });
   });

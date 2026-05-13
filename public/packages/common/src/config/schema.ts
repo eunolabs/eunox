@@ -1800,7 +1800,7 @@ export const GatewayConfigSchema = z
     // used against tenant B's gateway. Operators must set a unique per-tenant
     // value (e.g. "tool-gateway:acme-corp-prod").
     if (cfg.HOSTED_MODE) {
-      const audience = cfg.GATEWAY_AUDIENCE;
+      const audience = cfg.GATEWAY_AUDIENCE?.trim();
       if (!audience || audience === 'tool-gateway') {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

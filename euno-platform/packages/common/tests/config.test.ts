@@ -999,4 +999,22 @@ describe('GatewayConfigSchema — Task 13 (HOSTED_MODE audience enforcement)', (
     const result = loadConfig({ HOSTED_MODE: 'false' }, 'gateway');
     expect(result.ok).toBe(true);
   });
+
+  it('rejects HOSTED_MODE=true when GATEWAY_AUDIENCE has leading/trailing whitespace around "tool-gateway"', () => {
+    // A padded default audience must not bypass the security guard.
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: '  tool-gateway  ' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts HOSTED_MODE=true when GATEWAY_AUDIENCE has whitespace but is tenant-scoped', () => {
+    // Whitespace-padded but non-default tenant-scoped value should be accepted.
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: '  tool-gateway:acme-corp  ' },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
 });

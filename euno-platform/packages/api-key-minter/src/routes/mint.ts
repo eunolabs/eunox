@@ -215,18 +215,23 @@ export function createMintRouter(opts: MintRouterOptions): Router {
         // Pre-auth failure (key present but verification failed): record against
         // the key prefix so failed-verify bursts on a single key are detected
         // even when the key is unknown/revoked and we never resolved a tenantId.
+        // extractKeyPrefix returns null when the bearer token does not match the
+        // expected sk-XXXXXXXX.<secret> pattern — skip detection in that case to
+        // avoid pushing arbitrary attacker-controlled strings into the detector.
         const keyPrefix = extractKeyPrefix(rawKeyOrNull);
-        void Promise.resolve(opts.anomalyDetector.recordMint(keyPrefix, false))
-          .then(firedRules => {
-            if (firedRules.length > 0) {
-              opts.logger.warn('Mint anomaly detected on pre-auth failure', { keyPrefix, rules: firedRules });
-            }
-          })
-          .catch((err: unknown) => {
-            opts.logger.debug('Anomaly detection error (non-fatal)', {
-              error: err instanceof Error ? err.message : String(err),
+        if (keyPrefix !== null) {
+          void Promise.resolve(opts.anomalyDetector.recordMint(keyPrefix, false))
+            .then(firedRules => {
+              if (firedRules.length > 0) {
+                opts.logger.warn('Mint anomaly detected on pre-auth failure', { keyPrefix, rules: firedRules });
+              }
+            })
+            .catch((err: unknown) => {
+              opts.logger.debug('Anomaly detection error (non-fatal)', {
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
+        }
       }
 
       // Translate KmsSigningError to a retryable 503 so clients can distinguish
@@ -293,9 +298,16 @@ function classifyErrorResult(error: unknown): string | null {
  * `sk-XXXXXXXX` segment before the first `.`. This gives enough identity to
  * detect repeated invalid-key attempts without leaking the full secret.
  *
- * If the key does not contain a `.` the entire raw key is returned as-is.
+ * Returns `null` when the raw token does not match the expected `sk-XXXXXXXX.`
+ * format. Callers **must** skip anomaly detection for `null` results to avoid
+ * pushing attacker-controlled high-cardinality or sensitive strings into the
+ * detector state and logs.
  */
-function extractKeyPrefix(rawKey: string): string {
-  const dotIndex = rawKey.indexOf('.');
-  return dotIndex >= 0 ? rawKey.slice(0, dotIndex) : rawKey;
+function extractKeyPrefix(rawKey: string): string | null {
+  // Only accept keys that start with 'sk-' followed by at least one char and
+  // a dot — the minimum viable prefix structure for our API key format.
+  // This prevents arbitrary bearer token values (JWTs, API tokens from other
+  // services) from being used as anomaly-detector bucket keys.
+  const match = /^(sk-[A-Za-z0-9]{1,32})\./.exec(rawKey);
+  return match ? match[1]! : null;
 }
