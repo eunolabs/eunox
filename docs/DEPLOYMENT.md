@@ -140,7 +140,7 @@ absent and logs a single error message listing all violations:
 | `MINTER_PEPPER_HEX` | 64-character hex string (32-byte pepper); generate with `openssl rand -hex 32`. |
 | `MINTER_KMS_PROVIDER` **or** `MINTER_PRIVATE_KEY_PEM` + `MINTER_PUBLIC_KEY_PEM` | At least one signing-key source must be configured; ephemeral keys are not permitted. |
 | `MINTER_AUDIT_DB_URL` | Postgres connection string for the durable mint-audit store. |
-| `MINTER_API_KEY_DB_URL` | Postgres connection string for the durable API-key store (implemented in Task 2). |
+| `MINTER_API_KEY_DB_URL` | Postgres connection string for the durable API-key store (Task 2). |
 
 Additionally, any Redis URL that is configured (`REDIS_URL`, `ANOMALY_REDIS_URL`,
 `MINTER_PING_REDIS_URL`) must use a Sentinel or Cluster scheme in production
@@ -149,6 +149,95 @@ Additionally, any Redis URL that is configured (`REDIS_URL`, `ANOMALY_REDIS_URL`
 Development and CI clusters may omit any of these variables; the minter will
 start with safe in-process fallbacks (no warnings emitted for absent variables
 in non-production environments).
+
+---
+
+## Durable API-key store (Task 2)
+
+Set `MINTER_API_KEY_DB_URL` to a Postgres connection string so that issued API
+keys, their revocation status, and their policy-capability mappings survive
+service restarts and rolling deploys.
+
+```
+MINTER_API_KEY_DB_URL=postgres://minter_app:secret@db:5432/minter_keys
+```
+
+### Schema
+
+The `PostgresApiKeyStore` manages a single `api_keys` table.  To let the
+minter create the table at startup, set `MINTER_API_KEY_SCHEMA_INIT=true`.
+For production deployments, prefer running DDL via a dedicated migration
+tool under a privileged role:
+
+```sql
+CREATE TABLE IF NOT EXISTS api_keys (
+  id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  prefix           TEXT        NOT NULL UNIQUE,
+  key_digest       TEXT        NOT NULL,
+  hmac_key_version TEXT        NOT NULL,
+  tenant_id        TEXT        NOT NULL,
+  policy_id        TEXT        NOT NULL,
+  capabilities     JSONB       NOT NULL DEFAULT '[]',
+  scopes           TEXT[]      NOT NULL DEFAULT '{}',
+  label            TEXT,
+  created_at       TIMESTAMPTZ NOT NULL,
+  last_used_at     TIMESTAMPTZ,
+  expires_at       TIMESTAMPTZ,
+  revoked_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS api_keys_tenant_idx ON api_keys (tenant_id);
+CREATE INDEX IF NOT EXISTS api_keys_policy_idx ON api_keys (policy_id)
+  WHERE revoked_at IS NULL;
+```
+
+### Role-level access control
+
+The minter's application role (`minter_app`) needs `INSERT`, `SELECT`, and
+`UPDATE` on `api_keys`.  It does not need `DELETE` or `TRUNCATE`.
+
+For hardened multi-tenant deployments, enable PostgreSQL Row-Level Security on
+`api_keys` — see §"Minter database multi-tenancy isolation (OQ-2)" below.
+
+---
+
+## Mint audit guarantees (Task 3)
+
+Audit writes are **synchronous and mandatory**.  The mint route does not return
+a `200 OK` until `auditStore.record()` has completed successfully.
+
+If the audit store is unavailable (network partition, database outage, etc.)
+the mint request fails with **503 Service Unavailable** and the capability token
+is not returned to the client.  The client should treat a 503 as a transient
+failure and retry.
+
+### Rationale
+
+Separating the mint decision (token issuance) from the audit record would allow
+a token to be issued but not audited.  Because the mint audit trail is the
+primary forensics artefact for key-compromise blast-radius enumeration (see
+`docs/security/minter-threat-model.md §2–3`), losing audit records is a higher
+risk than occasionally failing a mint request.
+
+### Alert on persistent audit failures
+
+The `euno_minter_audit_failure_total{stage="write"}` counter increments on
+every failed audit write.  Configure an alert that fires when the counter grows
+for more than 1 minute:
+
+```yaml
+- alert: MinterAuditStoreUnavailable
+  expr: increase(euno_minter_audit_failure_total{stage="write"}[1m]) > 0
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: Minter audit store is rejecting writes
+    description: >
+      Mint requests are failing with 503 because the audit store is unavailable.
+      All capability token issuance is blocked until the audit store recovers.
+```
+
+Load this rule alongside `euno-platform/packages/api-key-minter/prometheus/minter-alert-rules.yaml`.
 
 ---
 
@@ -348,4 +437,75 @@ When the gateway sits behind a reverse proxy or load balancer, also set
 `TRUST_PROXY` to the appropriate value (e.g. `1` for one hop, or a CIDR of your
 load-balancer IP range).  Misconfiguring `TRUST_PROXY` with a too-broad value can
 allow clients to spoof their IP via forged `X-Forwarded-For` headers.
+
+---
+
+## Egress network boundaries (Task 5)
+
+The Kubernetes network policies in `k8s/network-policies.yaml` follow a
+**production-safe default**: only in-cluster pod selectors are allowed in
+egress rules.  No `0.0.0.0/0` or `::/0` ipBlock rules appear in that file.
+
+### Base manifest (`network-policies.yaml`)
+
+The base manifest permits egress from gateway and issuer pods to:
+
+| Destination | Rule type |
+|---|---|
+| kube-system (DNS) | `namespaceSelector` |
+| In-cluster Redis (`app=redis`) | `podSelector` |
+| Capability Issuer (`app=capability-issuer`) | `podSelector` |
+| In-cluster services (gateway proxy targets) | `podSelector: {}` (gateway only) |
+
+All other egress, including to managed Redis endpoints and external backend
+services, must be explicitly added as `ipBlock` rules scoped to the private
+endpoint CIDRs of those services.
+
+### Adding managed Redis and backend CIDRs
+
+Uncomment and fill in the placeholder `ipBlock` examples in
+`network-policies.yaml` once you know the CIDRs:
+
+```yaml
+# Managed Redis private endpoint (add under gateway and issuer egress):
+- to:
+  - ipBlock:
+      cidr: 10.0.0.0/28      # replace with actual private endpoint CIDR
+  ports:
+  - protocol: TCP
+    port: 6380                # 6380 for Azure Cache TLS; 6379 for plain
+
+# External backend services (add under gateway egress):
+- to:
+  - ipBlock:
+      cidr: 203.0.113.0/24   # replace with actual backend CIDR
+  ports:
+  - protocol: TCP
+    port: 443
+```
+
+### Dev / staging clusters
+
+In environments where CIDRs are not yet known, apply the broad-egress overlay:
+
+```bash
+kubectl apply -f k8s/network-policies.yaml
+kubectl apply -f k8s/network-policies-dev-overlay.yaml
+```
+
+`network-policies-dev-overlay.yaml` adds **separate** NetworkPolicy objects
+(labelled `euno.dev/dev-only: 'true'`) that allow broad internet egress.
+Because Kubernetes NetworkPolicy is additive, this overlay opens the firewall
+surface without modifying the base manifest.
+
+**Do not apply the overlay in production clusters.**
+
+### Kustomize / Helm integration
+
+In a Kustomize setup, add `network-policies-dev-overlay.yaml` to `resources:`
+only in your dev/staging overlay directory.  The production base directory
+should include only `network-policies.yaml`.
+
+In Helm, conditionally render the overlay template using a value such as
+`networkPolicy.devEgressOverlay: true` set per environment.
 

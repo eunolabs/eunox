@@ -118,7 +118,12 @@ kubectl apply -f envoy-shard-router.yaml
 kubectl apply -f agent-runtime.yaml
 
 # Apply Network Policies (Sprint 1 requirement)
+# Production: base manifest only — no broad 0.0.0.0/0 egress rules.
 kubectl apply -f network-policies.yaml
+
+# Dev / staging only: also apply the egress overlay for broad internet access
+# before specific backend / Redis CIDRs are known.  DO NOT apply in production.
+# kubectl apply -f network-policies-dev-overlay.yaml
 
 # Apply HA policies (PodDisruptionBudgets + Capability Issuer HPA)
 kubectl apply -f ha-policies.yaml
@@ -321,6 +326,49 @@ kubectl describe networkpolicy -n euno-system
 4. **Image Scanning**: Scan container images for vulnerabilities before deployment
 5. **Network Policies**: Review and test network policies regularly
 6. **Audit Logging**: Enable Kubernetes audit logging for compliance
+
+## Egress hardening (Task 5)
+
+The base `network-policies.yaml` contains **no `0.0.0.0/0` or `::/0` egress
+rules**.  All gateway and issuer egress is scoped to in-cluster pod selectors
+(DNS, Redis, Capability Issuer).
+
+### Production egress configuration
+
+Before deploying to production, add explicit `ipBlock` rules for each external
+endpoint your cluster needs to reach.  The key endpoints to configure are:
+
+| Component | Endpoint type | Recommended approach |
+|---|---|---|
+| Gateway → managed Redis | Private endpoint | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
+| Gateway → backend services | Public or private | Add explicit backend CIDRs, or route via an egress gateway |
+| Issuer → Azure Key Vault / Azure AD | Private endpoint | Add `ipBlock` scoped to private endpoint IPs |
+| Issuer → managed Redis | Private endpoint | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
+
+See the commented-out examples in `network-policies.yaml` for the placeholder
+syntax.
+
+### Dev / staging clusters
+
+In environments where managed Redis and backend CIDRs are not yet known, apply
+the broad-egress overlay **in addition to** the base manifest:
+
+```bash
+kubectl apply -f network-policies.yaml
+kubectl apply -f network-policies-dev-overlay.yaml
+```
+
+`network-policies-dev-overlay.yaml` adds separate NetworkPolicy objects labelled
+`euno.dev/dev-only: 'true'` that allow broad internet egress from gateway and
+issuer pods.  This file **must not** be applied in production clusters.
+
+### Kustomize / Helm integration
+
+In a Kustomize setup, add `network-policies-dev-overlay.yaml` to the `resources:`
+list in your dev/staging overlay directory only, not in the production base.
+
+In Helm, use a value such as `networkPolicy.devEgressOverlay: true` to
+conditionally render the overlay template per environment.
 
 ## Sprint 1 Exit Criteria Verification
 

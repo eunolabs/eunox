@@ -1,0 +1,127 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  DEV / STAGING EGRESS OVERLAY — NOT FOR PRODUCTION                         ║
+# ║                                                                              ║
+# ║  This file patches the base network-policies.yaml with broad egress rules   ║
+# ║  (0.0.0.0/0 and ::/0) that are convenient during initial bring-up but are  ║
+# ║  unsafe in production.                                                       ║
+# ║                                                                              ║
+# ║  Apply in dev / staging clusters:                                            ║
+# ║    kubectl apply -f network-policies.yaml                                    ║
+# ║    kubectl apply -f network-policies-dev-overlay.yaml                        ║
+# ║                                                                              ║
+# ║  DO NOT apply in production.  Replace with explicit ipBlock rules scoped    ║
+# ║  to your managed Redis private endpoint CIDR and your backend service CIDRs ║
+# ║  (see the comments in network-policies.yaml for the placeholder examples).  ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# These policies PATCH / REPLACE the corresponding production rules.  They do
+# NOT add new NetworkPolicy objects — they rely on the named policies defined in
+# network-policies.yaml already being present in the cluster.  If you are using
+# a GitOps tool, ensure the base file is applied first.
+#
+# ── Why a separate overlay? ────────────────────────────────────────────────────
+#
+# Kubernetes NetworkPolicy uses an additive model: applying a second policy
+# with the same podSelector further OPENS (never closes) the firewall surface.
+# A separate overlay file makes it easy to:
+#   1. Audit exactly which broad rules are active in each environment.
+#   2. Remove the overlay in production by simply not applying this file.
+#   3. Track who approved the broad egress grant via Git history.
+#
+# In a Kustomize setup, add this file to `resources:` only in your
+# dev/staging overlay directory, not in the production base.
+
+---
+# Gateway — broad egress overlay for dev/staging
+# Allows gateway pods to reach any internet destination on ports 80, 443,
+# 6379, and 6380.  Replace with explicit ipBlock rules in production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-network-policy-dev-egress-overlay
+  namespace: euno-system
+  labels:
+    euno.dev/dev-only: 'true'
+  annotations:
+    euno.dev/purpose: >
+      Broad dev/staging egress overlay for tool-gateway pods.
+      Provides temporary access to managed Redis and external backend services
+      before their private endpoint CIDRs are known.
+      REMOVE THIS POLICY IN PRODUCTION.
+spec:
+  podSelector:
+    matchLabels:
+      app: tool-gateway
+  policyTypes:
+  - Egress
+  egress:
+  # Broad allow for managed Redis (dev/staging only).
+  # Replace with explicit managed Redis private endpoint CIDR in production.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380
+
+  # Broad allow for external backend services (dev/staging only).
+  # Replace with explicit backend CIDRs or an egress gateway in production.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+---
+# Capability Issuer — broad egress overlay for dev/staging
+# Allows issuer pods to reach any internet destination on ports 443, 6379,
+# and 6380.  Replace with explicit ipBlock rules in production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: issuer-network-policy-dev-egress-overlay
+  namespace: euno-system
+  labels:
+    euno.dev/dev-only: 'true'
+  annotations:
+    euno.dev/purpose: >
+      Broad dev/staging egress overlay for capability-issuer pods.
+      Provides temporary access to Azure Key Vault / Azure AD / GCP KMS and
+      managed Redis before their private endpoint CIDRs are known.
+      REMOVE THIS POLICY IN PRODUCTION.
+spec:
+  podSelector:
+    matchLabels:
+      app: capability-issuer
+  policyTypes:
+  - Egress
+  egress:
+  # Broad allow for cloud identity/KMS endpoints (dev/staging only).
+  # Replace with explicit private endpoint CIDRs in production.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 443
+
+  # Broad allow for managed Redis (dev/staging only).
+  # Replace with explicit managed Redis private endpoint CIDR in production.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    - ipBlock:
+        cidr: ::/0
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6380

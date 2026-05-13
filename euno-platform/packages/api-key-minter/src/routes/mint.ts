@@ -57,6 +57,14 @@ function parseMintRequestBody(body: unknown): { agentId: string; sessionId: stri
   return { agentId: b['agentId'], sessionId: b['sessionId'] };
 }
 
+/** Sentinel error class that marks an audit-write failure on the mint path. */
+class MintAuditError extends CapabilityError {
+  constructor(message: string) {
+    super(ErrorCode.GATEWAY_UNAVAILABLE, message, 503);
+    Object.defineProperty(this, 'name', { value: 'MintAuditError' });
+  }
+}
+
 export function createMintRouter(opts: MintRouterOptions): Router {
   const router = Router();
 
@@ -109,23 +117,33 @@ export function createMintRouter(opts: MintRouterOptions): Router {
         policyId: verified.policyId,
       });
 
-      // 5. Write mint audit record (fire-and-forget)
-      void opts.auditStore.record({
-        keyPrefix: verified.prefix,
-        tenantId,
-        agentId,
-        sessionId,
-        jti: result.jti,
-        policyId: verified.policyId,
-        issuedAt: new Date().toISOString(),
-        expiresAt: result.expiresAt,
-        kid: result.kid,
-        result: 'minted',
-      }).catch((err: unknown) => {
-        opts.logger.error('Failed to write mint audit record', {
-          error: err instanceof Error ? err.message : 'unknown',
+      // 5. Write mint audit record — acknowledged persistence (Task 3).
+      //    The audit write must complete before we return success so that
+      //    every minted token has a corresponding, durable audit entry.
+      //    If the audit store is unavailable the request fails with 503;
+      //    the euno_minter_audit_failure_total counter tracks these events.
+      try {
+        await opts.auditStore.record({
+          keyPrefix: verified.prefix,
+          tenantId,
+          agentId,
+          sessionId,
+          jti: result.jti,
+          policyId: verified.policyId,
+          issuedAt: new Date().toISOString(),
+          expiresAt: result.expiresAt,
+          kid: result.kid,
+          result: 'minted',
         });
-      });
+      } catch (auditErr: unknown) {
+        minterMetrics.mintAuditFailureTotal.inc({ stage: 'write' });
+        opts.logger.error('Failed to write mint audit record — mint aborted', {
+          error: auditErr instanceof Error ? auditErr.message : 'unknown',
+        });
+        throw new MintAuditError(
+          'Audit store unavailable — mint request rejected to preserve audit integrity',
+        );
+      }
 
       // 6. Record metrics
       minterMetrics.mintTotal.inc({ tenant: tenantId, result: 'minted' });
@@ -226,6 +244,11 @@ function classifyErrorResult(error: unknown): string | null {
     // KMS errors are recorded by MeteredTokenSigner on kmsErrorTotal;
     // here we only need the mintTotal result label.
     return 'kms_error';
+  }
+  if (error instanceof MintAuditError) {
+    // Audit failures have their own counter (mintAuditFailureTotal) but also
+    // appear in mintTotal so dashboards can measure total success/failure rates.
+    return 'audit_failure';
   }
   if (error instanceof CapabilityError) {
     switch (error.code) {

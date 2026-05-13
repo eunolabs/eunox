@@ -5,7 +5,7 @@ import { ApiKeyVerifier } from '../src/api-key-verifier';
 import { InMemoryApiKeyStore } from '../src/api-key-store';
 import { TokenMinter } from '../src/token-minter';
 import { LocalTokenSigner } from '../src/local-token-signer';
-import { InMemoryMintAuditStore } from '../src/mint-audit';
+import { InMemoryMintAuditStore, MintAuditStore } from '../src/mint-audit';
 import { InMemoryMintRateLimiter } from '../src/mint-rate-limiter';
 import { generateApiKey } from '../src/api-key';
 import { minterMetrics } from '../src/metrics';
@@ -13,11 +13,11 @@ import { createLogger } from '@euno/common';
 
 const logger = createLogger('test-mint');
 
-async function buildApp(opts: { maxMints?: number } = {}) {
+async function buildApp(opts: { maxMints?: number; auditStore?: MintAuditStore } = {}) {
   const pepper = { version: 'v1', key: crypto.randomBytes(32) };
   const store = new InMemoryApiKeyStore();
   const signer = await LocalTokenSigner.generate('RS256');
-  const auditStore = new InMemoryMintAuditStore();
+  const auditStore = opts.auditStore ?? new InMemoryMintAuditStore();
   const rateLimiter = new InMemoryMintRateLimiter({
     maxMintsPerWindow: opts.maxMints ?? 100,
     windowSeconds: 60,
@@ -165,5 +165,92 @@ describe('Minter tracing middleware (DI-5)', () => {
       .send({ agentId: 'agent-1', sessionId: 'session-1' });
 
     expect(res.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Acknowledged audit persistence (Task 3)
+// ---------------------------------------------------------------------------
+
+describe('POST /mint — acknowledged audit persistence (Task 3)', () => {
+  it('returns 503 when the audit store throws', async () => {
+    const failingAuditStore: MintAuditStore = {
+      record: async () => { throw new Error('DB connection lost'); },
+      listByTenant: async () => [],
+    };
+    const { app, key } = await buildApp({ auditStore: failingAuditStore });
+
+    const res = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    expect(res.status).toBe(503);
+  });
+
+  it('increments euno_minter_audit_failure_total when audit store throws', async () => {
+    await minterMetrics.registry.resetMetrics();
+
+    const failingAuditStore: MintAuditStore = {
+      record: async () => { throw new Error('audit write failed'); },
+      listByTenant: async () => [],
+    };
+    const { app, key } = await buildApp({ auditStore: failingAuditStore });
+
+    await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    const metrics = await minterMetrics.registry.metrics();
+    expect(metrics).toMatch(/euno_minter_audit_failure_total.*stage="write"/);
+  });
+
+  it('records audit_failure result label in mintTotal when audit store throws', async () => {
+    await minterMetrics.registry.resetMetrics();
+
+    const failingAuditStore: MintAuditStore = {
+      record: async () => { throw new Error('audit write failed'); },
+      listByTenant: async () => [],
+    };
+    const { app, key } = await buildApp({ auditStore: failingAuditStore });
+
+    await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    const metrics = await minterMetrics.registry.metrics();
+    expect(metrics).toMatch(/euno_minter_mint_total.*result="audit_failure"/);
+  });
+
+  it('does NOT return the capability token when audit store throws', async () => {
+    const failingAuditStore: MintAuditStore = {
+      record: async () => { throw new Error('audit write failed'); },
+      listByTenant: async () => [],
+    };
+    const { app, key } = await buildApp({ auditStore: failingAuditStore });
+
+    const res = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    expect(res.body.capabilityToken).toBeUndefined();
+  });
+
+  it('returns 200 and records audit entry when audit store succeeds', async () => {
+    const { app, key, auditStore } = await buildApp();
+
+    const res = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+
+    expect(res.status).toBe(200);
+    // The audit store must have the record for the minted token
+    const entries = await auditStore.listByTenant('tenant-test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.result).toBe('minted');
   });
 });

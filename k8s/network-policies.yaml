@@ -8,6 +8,45 @@
 #
 # Sprint 2: Ensures ALL external communications funnel through Gateway
 # Sprint 3: Extends policies to issuer and gateway services
+#
+# ── Egress hardening (Task 5) ──────────────────────────────────────────────────
+#
+# This file is the PRODUCTION BASE manifest.  It does NOT contain any
+# 0.0.0.0/0 or ::/0 egress rules.
+#
+# Broad "allow-all-internet" rules that are sometimes needed during initial
+# bring-up are kept in a SEPARATE overlay file:
+#
+#   k8s/network-policies-dev-overlay.yaml
+#
+# Apply that overlay in dev/staging clusters ONLY.  Never apply it in
+# production.
+#
+# ── How to configure external endpoints ────────────────────────────────────────
+#
+# 1. Managed Redis (Azure Cache, ElastiCache, Memorystore):
+#    Add an ipBlock rule scoped to your managed Redis private endpoint CIDR
+#    under the gateway and issuer egress sections below.  Example:
+#
+#      - to:
+#        - ipBlock:
+#            cidr: 10.20.30.0/28   # replace with actual private endpoint CIDR
+#        ports:
+#        - protocol: TCP
+#          port: 6380               # Azure Cache TLS port
+#
+# 2. External backend services (gateway proxy targets):
+#    Choose one of:
+#    Option A — add explicit ipBlock rules for each backend CIDR.
+#    Option B — remove the ipBlock rules and route via an egress gateway
+#               (Istio, Cilium Egress Gateway, or equivalent).
+#    Option C — if every backend is in-cluster, the `podSelector: {}`
+#               rule under gateway egress already covers them.
+#
+# 3. KMS / identity providers (issuer):
+#    Add explicit ipBlock rules for your cloud provider's service CIDRs
+#    (Azure Key Vault, AWS KMS, GCP Cloud KMS) or use private endpoints /
+#    VPC service controls so no public internet egress is required.
 
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -121,30 +160,23 @@ spec:
     - protocol: TCP
       port: 6379
 
-  # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
-  # ElastiCache, GCP Memorystore) when operators override `redis-url` in
-  # the `gateway-config` ConfigMap to point at an external service.
-  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.
+  # Managed Redis (Azure Cache for Redis, AWS ElastiCache, GCP Memorystore):
+  # Add an ipBlock rule here scoped to the private endpoint CIDR of your
+  # managed Redis instance.  Example (replace CIDR and port with actual values):
   #
-  # PRODUCTION HARDENING: replace 0.0.0.0/0 with the specific CIDR of
-  # your managed Redis endpoint or private endpoint IP range.  The
-  # broad allow is acceptable only during initial deployment; narrow
-  # it once the managed Redis CIDR is known.
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-        # replace with managed Redis private endpoint CIDR in production
-        # Exclude in-cluster pod / service CIDRs is recommended in
-        # production; left unset here because cluster CIDRs vary.
-    - ipBlock:
-        cidr: ::/0
-    ports:
-    - protocol: TCP
-      port: 6379
-    - protocol: TCP
-      port: 6380
+  # - to:
+  #   - ipBlock:
+  #       cidr: 10.0.0.0/28    # replace with managed Redis private endpoint CIDR
+  #   ports:
+  #   - protocol: TCP
+  #     port: 6380              # Azure Cache TLS; use 6379 for non-TLS
+  #
+  # See k8s/network-policies-dev-overlay.yaml for the broad fallback used in
+  # dev/staging clusters where the managed Redis CIDR is not yet known.
 
-  # Allow to in-cluster backend services on HTTP/HTTPS
+  # Allow to in-cluster backend services on HTTP/HTTPS.
+  # If every backend the gateway proxies lives in-cluster, this rule covers
+  # all proxy targets without requiring any ipBlock rules.
   - to:
     - podSelector: {}
     ports:
@@ -153,48 +185,19 @@ spec:
     - protocol: TCP
       port: 80
 
-  # Allow egress to external backend services for authorized proxy requests.
+  # External backend services (gateway proxy targets):
+  # Add explicit ipBlock rules here for each external backend CIDR, or
+  # route outbound traffic through an egress gateway instead.  Example:
   #
-  # PRODUCTION HARDENING — choose ONE of these options:
+  # - to:
+  #   - ipBlock:
+  #       cidr: 203.0.113.0/24   # replace with actual backend CIDR
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443
   #
-  # Option A (recommended): restrict to explicit backend CIDRs.
-  # Replace the broad 0.0.0.0/0 rules below with the specific CIDR block(s)
-  # of your backend services:
-  #
-  #   - to:
-  #     - ipBlock:
-  #         cidr: 10.20.30.0/24      # replace with actual backend CIDR
-  #     ports:
-  #     - protocol: TCP
-  #       port: 443
-  #
-  # Option B: use an egress gateway / service mesh.
-  # Remove these rules entirely and route all outbound traffic through
-  # an Istio egress gateway or equivalent so external destinations are
-  # allow-listed in mesh policy rather than in NetworkPolicy.
-  #
-  # Option C: service-selector-only (in-cluster backends only).
-  # If every backend the gateway proxies lives in the same namespace,
-  # the `podSelector: {}` rule above already covers them — remove
-  # these ipBlock rules.
-  #
-  # DEVELOPMENT / STAGING FALLBACK (not recommended for production):
-  # The broad rules below allow any internet destination on 80/443.
-  # Restrict these per environment using one of the options above
-  # (e.g. via Kustomize patches or Helm values that override this file
-  # per environment) rather than editing this shared base directly.
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-        # exclude: []  # Add cluster pod/service CIDRs here to prevent
-        #               # bypassing internal policies via this rule.
-    - ipBlock:
-        cidr: ::/0
-    ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 80
+  # See k8s/network-policies-dev-overlay.yaml for the broad fallback used in
+  # dev/staging clusters where backend CIDRs are not yet known.
 
   ingress:
   # Allow from agents (tool calls on the public port)
@@ -252,14 +255,22 @@ spec:
     - protocol: TCP
       port: 53
 
-  # Allow to Azure services (Key Vault, Azure AD) over internet TCP/443
-  # In production, restrict to specific Azure service CIDRs or use private endpoints
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-    ports:
-    - protocol: TCP
-      port: 443
+  # Cloud identity provider / KMS endpoints (Azure Key Vault, Azure AD,
+  # AWS KMS, GCP Cloud KMS, etc.):
+  # Add explicit ipBlock rules here scoped to your cloud provider's service
+  # CIDRs or private endpoint IPs.  Using private endpoints is strongly
+  # preferred because it removes the need for any public internet egress.
+  #
+  # Example for a private Azure Key Vault endpoint:
+  # - to:
+  #   - ipBlock:
+  #       cidr: 10.1.2.3/32      # replace with private endpoint IP
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443
+  #
+  # See k8s/network-policies-dev-overlay.yaml for the broad fallback used in
+  # dev/staging clusters where endpoint CIDRs are not yet known.
 
   # Allow to in-cluster Redis (distributed per-subject issuance rate
   # limiter).  Required so multi-replica issuers share rate-limit state.
@@ -271,26 +282,17 @@ spec:
     - protocol: TCP
       port: 6379
 
-  # Allow to managed Redis endpoints (Azure Cache for Redis, AWS
-  # ElastiCache, GCP Memorystore) when operators override `redis-url`
-  # in the `issuer-config` ConfigMap to point at an external service.
-  # Standard Redis: 6379, TLS (e.g. Azure Cache): 6380.
+  # Managed Redis (Azure Cache, ElastiCache, Memorystore):
+  # Add an ipBlock rule here scoped to the private endpoint CIDR.  Example:
   #
-  # PRODUCTION HARDENING: replace 0.0.0.0/0 with the specific CIDR of
-  # your managed Redis endpoint or private endpoint IP range.  The
-  # broad allow is acceptable only during initial deployment; narrow
-  # it once the managed Redis CIDR is known.
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-        # replace with managed Redis private endpoint CIDR in production
-    - ipBlock:
-        cidr: ::/0
-    ports:
-    - protocol: TCP
-      port: 6379
-    - protocol: TCP
-      port: 6380
+  # - to:
+  #   - ipBlock:
+  #       cidr: 10.0.0.0/28    # replace with managed Redis private endpoint CIDR
+  #   ports:
+  #   - protocol: TCP
+  #     port: 6380              # Azure Cache TLS; use 6379 for non-TLS
+  #
+  # See k8s/network-policies-dev-overlay.yaml for the broad fallback.
 
   ingress:
   # Allow from agents (for token requests)

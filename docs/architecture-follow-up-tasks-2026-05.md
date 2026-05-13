@@ -25,17 +25,39 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      minter Redis URL. 24 new tests in `tests/bootstrap.test.ts`.
      Docs: `docs/DEPLOYMENT.md §"Minter production configuration"`.
 
-2. **Add a durable API-key store for the minter**
+2. **Add a durable API-key store for the minter** ✅ DONE
    - Replace the current in-memory-only API-key store with a durable backend.
    - Ensure key creation, revocation, lookup, and policy fan-out survive restarts
      and rolling deploys.
    - Dependencies: Task 1.
+   - **Fix:** `PostgresApiKeyStore` in
+     `euno-platform/packages/api-key-minter/src/postgres-api-key-store.ts`
+     (exported for testing). Implements all `ApiKeyStore` methods against a
+     `api_keys` Postgres table (`BIGINT GENERATED ALWAYS AS IDENTITY` PK, JSONB
+     capabilities, `TEXT[]` scopes, optional `revoked_at` / `expires_at` /
+     `last_used_at`).  Schema managed via `ensureSchema()` (idempotent DDL) or an
+     external migration tool.  Bootstrap selects `PostgresApiKeyStore` when
+     `MINTER_API_KEY_DB_URL` is set; falls back to `InMemoryApiKeyStore` in dev.
+     `API_KEY_DDL` exported for external migration tools.
+     37 new tests in `tests/postgres-api-key-store.test.ts`.
+     Docs: `docs/DEPLOYMENT.md §"Durable API-key store"`.
 
-3. **Make mint audit guarantees explicit and enforceable**
+3. **Make mint audit guarantees explicit and enforceable** ✅ DONE
    - Decide whether mint audit writes are required before returning success.
    - If audit is mandatory, move from fire-and-forget to acknowledged persistence;
      if best-effort is acceptable, document the loss model and alert on failures.
    - Dependencies: Task 1.
+   - **Fix:** Audit write in `euno-platform/packages/api-key-minter/src/routes/mint.ts`
+     changed from fire-and-forget (`void …catch`) to `await`ed with explicit
+     failure handling. A failed audit write returns **503 Service Unavailable**
+     (token not returned) and increments the new
+     `euno_minter_audit_failure_total{stage="write"}` counter.
+     A local `MintAuditError` sentinel class allows `classifyErrorResult` to label
+     the `euno_minter_mint_total` counter with `result="audit_failure"` for
+     per-tenant dashboards.  New metric exported from `metrics.ts` and `index.ts`.
+     5 new tests in `tests/mint-route.test.ts`.
+     Docs: `docs/DEPLOYMENT.md §"Mint audit guarantees"` including alert rule
+     template.
 
 4. **Replace single-node Redis assumptions in production** ✅ DONE
    - Make HA Redis mandatory for production deployments and keep the shipped
@@ -55,11 +77,23 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      Docs: `docs/DEPLOYMENT.md §"Redis HA for production"` updated to reflect
      the fatal behaviour.
 
-5. **Tighten gateway and issuer egress boundaries**
+5. **Tighten gateway and issuer egress boundaries** ✅ DONE
    - Remove broad production egress to `0.0.0.0/0` and `::/0`.
    - Restrict outbound traffic to explicit backends, private endpoints, or an
      egress gateway.
    - Dependencies: Task 4 for managed Redis/private endpoint targeting.
+   - **Fix:** All `0.0.0.0/0` and `::/0` ipBlock entries removed from the egress
+     sections of `gateway-network-policy` and `issuer-network-policy` in
+     `k8s/network-policies.yaml`.  The base manifest now contains only
+     in-cluster pod-selector rules; each removed broad rule is replaced with a
+     commented-out placeholder showing the exact syntax operators need to fill
+     in once their private endpoint CIDRs are known.  Broad-egress rules
+     extracted into `k8s/network-policies-dev-overlay.yaml` (two
+     separate NetworkPolicy objects labelled `euno.dev/dev-only: 'true'`) that
+     may be applied in dev/staging clusters alongside the base manifest.
+     `k8s/README.md` updated with egress hardening section and Kustomize/Helm
+     integration guidance.
+     Docs: `docs/DEPLOYMENT.md §"Egress network boundaries"`.
 
 ---
 
