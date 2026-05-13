@@ -27,7 +27,13 @@ import * as crypto from 'crypto';
 import * as jose from 'jose';
 import rateLimit from 'express-rate-limit';
 import { Router, Request, Response, NextFunction } from 'express';
-import { CapabilityError, ErrorCode, createLogger } from '@euno/common';
+import {
+  CapabilityError,
+  ErrorCode,
+  ManifestValidationError,
+  createLogger,
+  validateManifest,
+} from '@euno/common';
 import {
   ManifestTemplateStore,
   TemplateBinding,
@@ -158,6 +164,7 @@ function requireAdminAuth(
             res.locals['operatorId'] = principal.operatorId;
             res.locals['tenantId'] = principal.tenantId;
             res.locals['isPlatformAdmin'] = principal.isPlatformAdmin;
+            res.locals['jwtAuthenticated'] = true;
             next();
           })
           .catch(() => {
@@ -168,6 +175,13 @@ function requireAdminAuth(
     }
 
     // ── Fallback path: X-Admin-Key shared secret ──────────────────────────
+    // This path is only active when a real adminApiKey was configured.
+    // When adminApiKey is empty (JWT-only mode), reject — avoids accepting
+    // empty-string X-Admin-Key headers that would bypass authentication.
+    if (adminApiKey.length === 0) {
+      fail();
+      return;
+    }
     const provided = req.headers['x-admin-key'];
     const providedBuf =
       typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
@@ -196,10 +210,20 @@ function getOperatorId(res: Response): string {
 /** Resolve the tenantId from the JWT or the request body. */
 function resolveTenantId(res: Response, body: Record<string, unknown>): string {
   // JWT path: tenantId from the verified JWT principal.
-  if (typeof res.locals['tenantId'] === 'string' && res.locals['tenantId'].length > 0) {
-    return res.locals['tenantId'] as string;
+  if (res.locals['jwtAuthenticated'] === true) {
+    const jwtTenantId =
+      typeof res.locals['tenantId'] === 'string' ? (res.locals['tenantId'] as string) : '';
+    const isPlatformAdmin = res.locals['isPlatformAdmin'] === true;
+    // A non-platformAdmin JWT MUST carry a tenantId claim — falling through
+    // to the request body would let any valid-audience token choose an
+    // arbitrary tenant and mutate any other tenant's templates.
+    if (!isPlatformAdmin && jwtTenantId.length === 0) {
+      return ''; // caller checks for empty → 400 "ownerTenantId is required"
+    }
+    // PlatformAdmin with no tenantId in the JWT → use body value.
+    if (jwtTenantId.length > 0) return jwtTenantId;
   }
-  // Fallback (X-Admin-Key path): tenantId from the request body.
+  // Fallback (X-Admin-Key path or platformAdmin-JWT without tenantId claim):
   if (typeof body['ownerTenantId'] === 'string' && body['ownerTenantId'].length > 0) {
     return body['ownerTenantId'] as string;
   }
@@ -262,10 +286,24 @@ export function createAdminTemplatesRouter(opts: AdminTemplatesRouterOptions): R
         );
       }
 
+      let validatedManifest: Parameters<ManifestTemplateStore['createTemplate']>[0]['manifest'];
+      try {
+        validatedManifest = validateManifest(manifest);
+      } catch (err) {
+        if (err instanceof ManifestValidationError) {
+          throw new CapabilityError(
+            ErrorCode.INVALID_REQUEST,
+            `Invalid manifest: ${err.message}`,
+            400,
+          );
+        }
+        throw err;
+      }
+
       const { record, version } = await opts.store.createTemplate({
         ownerTenantId,
         name: name.trim(),
-        manifest: manifest as Parameters<ManifestTemplateStore['createTemplate']>[0]['manifest'],
+        manifest: validatedManifest,
         createdBy: getOperatorId(res),
       });
 
@@ -431,10 +469,24 @@ export function createAdminTemplatesRouter(opts: AdminTemplatesRouterOptions): R
           throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'manifest must be an object', 400);
         }
 
+        let validatedManifest: Parameters<ManifestTemplateStore['createTemplate']>[0]['manifest'];
+        try {
+          validatedManifest = validateManifest(manifest);
+        } catch (err) {
+          if (err instanceof ManifestValidationError) {
+            throw new CapabilityError(
+              ErrorCode.INVALID_REQUEST,
+              `Invalid manifest: ${err.message}`,
+              400,
+            );
+          }
+          throw err;
+        }
+
         const version = await opts.store.appendVersion({
           templateId: req.params['id']!,
           ownerTenantId,
-          manifest: manifest as Parameters<ManifestTemplateStore['createTemplate']>[0]['manifest'],
+          manifest: validatedManifest,
           createdBy: getOperatorId(res),
         });
 
@@ -491,29 +543,54 @@ export function createAdminTemplatesRouter(opts: AdminTemplatesRouterOptions): R
 
         // Validate bindings and check cross-tenant guard.
         const parsedBindings: TemplateBinding[] = [];
-        for (const b of bindings as Record<string, unknown>[]) {
-          if (typeof b['tenantId'] !== 'string' || b['tenantId'].length === 0) {
+        for (const b of bindings) {
+          // Guard against null/non-object entries (e.g. bindings: [null]).
+          if (b === null || typeof b !== 'object' || Array.isArray(b)) {
+            throw new CapabilityError(
+              ErrorCode.INVALID_REQUEST,
+              'Each binding must be an object with tenantId, agentId, and role',
+              400,
+            );
+          }
+          const bObj = b as Record<string, unknown>;
+          if (typeof bObj['tenantId'] !== 'string' || bObj['tenantId'].length === 0) {
             throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'Each binding must have a tenantId', 400);
           }
-          if (typeof b['agentId'] !== 'string' || b['agentId'].length === 0) {
+          if (typeof bObj['agentId'] !== 'string' || bObj['agentId'].length === 0) {
             throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'Each binding must have an agentId', 400);
           }
-          if (typeof b['role'] !== 'string' || b['role'].length === 0) {
+          if (typeof bObj['role'] !== 'string' || bObj['role'].length === 0) {
             throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'Each binding must have a role', 400);
           }
+          // Optional version: when provided must be a positive integer.
+          let bindingVersion: number | undefined;
+          if (bObj['version'] !== undefined) {
+            if (
+              typeof bObj['version'] !== 'number' ||
+              !Number.isInteger(bObj['version']) ||
+              bObj['version'] < 1
+            ) {
+              throw new CapabilityError(
+                ErrorCode.INVALID_REQUEST,
+                'binding.version must be a positive integer when provided',
+                400,
+              );
+            }
+            bindingVersion = bObj['version'] as number;
+          }
           // Cross-tenant guard: bindings for a different tenant require platformAdmin.
-          if (b['tenantId'] !== ownerTenantId && !isPlatformAdmin) {
+          if (bObj['tenantId'] !== ownerTenantId && !isPlatformAdmin) {
             throw new CapabilityError(
               ErrorCode.INSUFFICIENT_PERMISSIONS,
-              `Cross-tenant assignment to tenantId=${b['tenantId']} requires platformAdmin privilege`,
+              `Cross-tenant assignment to tenantId=${bObj['tenantId']} requires platformAdmin privilege`,
               403,
             );
           }
           parsedBindings.push({
-            tenantId: b['tenantId'],
-            agentId: b['agentId'],
-            role: b['role'],
-            version: typeof b['version'] === 'number' ? b['version'] : undefined,
+            tenantId: bObj['tenantId'],
+            agentId: bObj['agentId'],
+            role: bObj['role'],
+            version: bindingVersion,
           });
         }
 

@@ -24,7 +24,19 @@ import {
   TemplateStoreError,
 } from '../src/manifest-template-store';
 import { buildIssuerDdl, IssuerMigrationRunner, IssuerPgPool } from '../src/migrations';
+import { CapabilityIssuerService } from '../src/issuer-service';
 import type { AgentCapabilityManifest } from '@euno/common';
+import {
+  IdentityAdapter,
+  SigningAdapter,
+  createLogger,
+} from '@euno/common';
+import type {
+  IdentityAdapterConfig,
+  UserContext,
+  CapabilityTokenPayload,
+  SigningAdapterConfig,
+} from '@euno/common';
 import express from 'express';
 import request from 'supertest';
 
@@ -109,6 +121,38 @@ class StubPool {
     if (table === 'template_assignments' && !('assigned_at' in row)) {
       row['assigned_at'] = new Date();
     }
+
+    // Simulate unique-constraint violations.
+    if (table === 'templates') {
+      // Unique partial index on (owner_tenant_id, name) WHERE deleted_at IS NULL.
+      const duplicate = rows.find(
+        (r) =>
+          r['owner_tenant_id'] === row['owner_tenant_id'] &&
+          r['name'] === row['name'] &&
+          r['deleted_at'] == null,
+      );
+      if (duplicate) {
+        const err = new Error('duplicate key value violates unique constraint') as Error & { code: string };
+        err.code = '23505';
+        throw err;
+      }
+    }
+    if (table === 'template_assignments') {
+      // Unique partial index on (tenant_id, agent_id, role) WHERE revoked_at IS NULL.
+      const duplicate = rows.find(
+        (r) =>
+          r['tenant_id'] === row['tenant_id'] &&
+          r['agent_id'] === row['agent_id'] &&
+          r['role'] === row['role'] &&
+          r['revoked_at'] == null,
+      );
+      if (duplicate) {
+        const err = new Error('duplicate key value violates unique constraint') as Error & { code: string };
+        err.code = '23505';
+        throw err;
+      }
+    }
+
     rows.push(row);
 
     // Handle RETURNING created_at / deleted_at.
@@ -163,7 +207,7 @@ class StubPool {
       return this.getAssignments(values[0] as string);
     }
     if (/FROM.*templates.*JOIN LATERAL/.test(normalized)) {
-      return this.listTemplates(values);
+      return this.listTemplates(values, normalized);
     }
     // FOR UPDATE (locking) queries in appendVersion / assignTemplate — treat as a regular SELECT.
     if (/FROM.*templates.*WHERE.*template_id.*owner_tenant_id.*FOR UPDATE/.test(normalized)) {
@@ -225,12 +269,18 @@ class StubPool {
     return { rows: assignments };
   }
 
-  private listTemplates(values: unknown[]): { rows: StubRow[] } {
+  private listTemplates(values: unknown[], normalizedSql: string): { rows: StubRow[] } {
     const ownerTenantId = values[0] as string;
     const limit = values[1] as number;
     const allTemplates = this.getTable('euno_issuer', 'templates');
-    // Simple filter: by owner tenant, then apply cursor (templateId > cursor).
-    let filtered = allTemplates.filter((r) => r['owner_tenant_id'] === ownerTenantId);
+    // Filter by owner tenant; honour the deleted_at IS NULL condition when
+    // the SQL contains it (i.e. includeDeleted=false in the store call).
+    const excludeDeleted = /deleted_at IS NULL/.test(normalizedSql);
+    let filtered = allTemplates.filter((r) => {
+      if (r['owner_tenant_id'] !== ownerTenantId) return false;
+      if (excludeDeleted && r['deleted_at'] != null) return false;
+      return true;
+    });
     if (values.length > 2) {
       const cursorId = values[2] as string;
       filtered = filtered.filter((r) => (r['template_id'] as string) > cursorId);
@@ -380,15 +430,21 @@ describe('PostgresManifestTemplateStore', () => {
     });
 
     it('excludes soft-deleted templates by default', async () => {
-      const { record } = await store.createTemplate({ ownerTenantId: TENANT, name: 'Deleted', manifest: MANIFEST_A, createdBy: OPERATOR });
-      await store.softDelete(record.templateId, TENANT);
+      const { record: alive } = await store.createTemplate({ ownerTenantId: TENANT, name: 'Alive', manifest: MANIFEST_A, createdBy: OPERATOR });
+      const { record: dead } = await store.createTemplate({ ownerTenantId: TENANT, name: 'Deleted', manifest: MANIFEST_A, createdBy: OPERATOR });
+      await store.softDelete(dead.templateId, TENANT);
 
-      const { items } = await store.listTemplates(TENANT);
-      // The stub doesn't filter deleted_at in listTemplates — it relies on the
-      // real Postgres WHERE clause.  For unit coverage we test the stub returns
-      // the row; integration coverage verifies the DB-level filter.
-      // The important unit-level assertion is that the call does not throw.
-      expect(Array.isArray(items)).toBe(true);
+      // Default list (includeDeleted=false) should omit the deleted template.
+      const { items: defaultItems } = await store.listTemplates(TENANT);
+      const ids = defaultItems.map((i) => i.templateId);
+      expect(ids).toContain(alive.templateId);
+      expect(ids).not.toContain(dead.templateId);
+
+      // With includeDeleted=true both should appear.
+      const { items: allItems } = await store.listTemplates(TENANT, { includeDeleted: true });
+      const allIds = allItems.map((i) => i.templateId);
+      expect(allIds).toContain(alive.templateId);
+      expect(allIds).toContain(dead.templateId);
     });
 
     it('supports limit option', async () => {
@@ -634,25 +690,22 @@ describe('PostgresManifestTemplateStore', () => {
 
     it('ignores cross-tenant assignments', async () => {
       const { record } = await store.createTemplate({ ownerTenantId: TENANT, name: 'CrossLookup', manifest: MANIFEST_A, createdBy: OPERATOR });
-      // Assign to a different tenant.
-      const rows = pool.tables.get('euno_issuer.template_assignments');
-      if (rows) {
-        // Directly inject a row simulating a cross-tenant assignment.
-        rows.push({
-          assignment_id: 'asgn_injected',
-          template_id: record.templateId,
-          template_version: 1,
-          tenant_id: 'tenant-b',
-          agent_id: 'agent-cross',
-          role: 'analyst',
-          assigned_by: OPERATOR,
-          revoked_at: null,
-        });
-      }
+      // Assign the template to a different tenant (cross-tenant assignments
+      // are allowed at the store layer; enforcement is in the route layer).
+      await store.assignTemplate(
+        record.templateId,
+        TENANT,
+        [{ tenantId: 'tenant-b', agentId: 'agent-cross', role: 'analyst' }],
+        OPERATOR,
+      );
 
-      // Lookup for tenant-acme should NOT find the tenant-b assignment.
-      const result = await store.findActiveAssignment(TENANT, 'agent-cross', 'analyst');
-      expect(result).toBeUndefined();
+      // Lookup for TENANT should NOT find the tenant-b assignment.
+      const resultForTenantA = await store.findActiveAssignment(TENANT, 'agent-cross', 'analyst');
+      expect(resultForTenantA).toBeUndefined();
+
+      // Lookup for tenant-b SHOULD find it.
+      const resultForTenantB = await store.findActiveAssignment('tenant-b', 'agent-cross', 'analyst');
+      expect(resultForTenantB).toBeDefined();
     });
 
     it('ignores revoked assignments', async () => {
@@ -825,6 +878,30 @@ describe('Admin Templates Router (HTTP)', () => {
       .expect(400);
   });
 
+  it('POST / returns 409 when a template with the same tenant+name already exists', async () => {
+    await request(app)
+      .post('/api/v1/admin/templates')
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, name: 'Duplicate Name', manifest: MANIFEST_A })
+      .expect(201);
+
+    // Second create with same tenant + name → 409 Conflict.
+    const res = await request(app)
+      .post('/api/v1/admin/templates')
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, name: 'Duplicate Name', manifest: MANIFEST_B })
+      .expect(409);
+    expect(res.body).toMatchObject({ error: expect.stringContaining('already exists') });
+  });
+
+  it('POST / returns 400 when manifest fails validation', async () => {
+    await request(app)
+      .post('/api/v1/admin/templates')
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, name: 'Bad Manifest', manifest: { foo: 'bar' } })
+      .expect(400);
+  });
+
   // ── GET /:id — Fetch latest version ───────────────────────────────────
 
   it('GET /:id returns 200 with template details', async () => {
@@ -964,6 +1041,44 @@ describe('Admin Templates Router (HTTP)', () => {
       .expect(403);
   });
 
+  it('POST /:id/assign returns 400 when a binding item is null', async () => {
+    const createRes = await request(app)
+      .post('/api/v1/admin/templates')
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, name: 'NullBinding', manifest: MANIFEST_A })
+      .expect(201);
+    const { templateId } = createRes.body;
+
+    await request(app)
+      .post(`/api/v1/admin/templates/${templateId}/assign`)
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, bindings: [null] })
+      .expect(400);
+  });
+
+  it('POST /:id/assign returns 400 when binding.version is not a positive integer', async () => {
+    const createRes = await request(app)
+      .post('/api/v1/admin/templates')
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, name: 'BadVersion', manifest: MANIFEST_A })
+      .expect(201);
+    const { templateId } = createRes.body;
+
+    // Negative version.
+    await request(app)
+      .post(`/api/v1/admin/templates/${templateId}/assign`)
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, bindings: [{ tenantId: TENANT, agentId: 'a', role: 'r', version: -1 }] })
+      .expect(400);
+
+    // Non-integer version.
+    await request(app)
+      .post(`/api/v1/admin/templates/${templateId}/assign`)
+      .set(adminHeaders)
+      .send({ ownerTenantId: TENANT, bindings: [{ tenantId: TENANT, agentId: 'a', role: 'r', version: 1.5 }] })
+      .expect(400);
+  });
+
   // ── DELETE /:id — Soft-delete ──────────────────────────────────────────
 
   it('DELETE /:id returns 200 with deletedAt', async () => {
@@ -1058,5 +1173,163 @@ describe('Full round-trip', () => {
     await expect(
       store.assignTemplate(record.templateId, TENANT, [{ tenantId: TENANT, agentId: 'agent-rt2', role: 'reader' }], OPERATOR),
     ).rejects.toMatchObject({ code: 'DELETED' });
+  });
+});
+
+// ── IssueController + templateStore integration ────────────────────────────
+//
+// Verifies that IssueController (via CapabilityIssuerService) uses the
+// templateStore on the hot path: assigned templates constrain default
+// issuance, and the fallback to request manifest when no assignment exists.
+
+class StubIdentityProvider extends IdentityAdapter {
+  public readonly name = 'stub';
+  constructor(private context: UserContext) {
+    super({ type: 'stub', name: 'stub' } as IdentityAdapterConfig);
+  }
+  async validateToken(_token: string): Promise<UserContext> {
+    return this.context;
+  }
+  async getUserRoles(_userId: string): Promise<string[]> {
+    return this.context.roles;
+  }
+}
+
+class StubSigner extends SigningAdapter {
+  constructor() {
+    super({ type: 'stub', name: 'stub', algorithm: 'RS256' } as SigningAdapterConfig);
+  }
+  async sign(payload: CapabilityTokenPayload): Promise<string> {
+    return `stub.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
+  }
+  async getPublicKey(): Promise<string> {
+    return '-----BEGIN PUBLIC KEY-----\nstub\n-----END PUBLIC KEY-----';
+  }
+  async getKeyId(): Promise<string> {
+    return 'stub-key-id';
+  }
+}
+
+const integrationLogger = createLogger('template-integration-test', 'test');
+
+function makeServiceWithStore(
+  ctx: UserContext,
+  templateStore?: ManifestTemplateStore,
+): CapabilityIssuerService {
+  return new CapabilityIssuerService(
+    new StubSigner(),
+    new StubIdentityProvider(ctx),
+    'did:web:example.com',
+    900,
+    integrationLogger,
+    { templateStore },
+  );
+}
+
+integrationLogger;
+
+describe('IssueController + templateStore integration', () => {
+  // Using Viewer role (mapped to api://crm/customers read in the default policy).
+  const VIEWER_MANIFEST: AgentCapabilityManifest = {
+    agentId: 'agent-crm',
+    name: 'CRM Viewer',
+    version: '1.0.0',
+    requiredCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
+  };
+
+  const ctx: UserContext = {
+    userId: 'user-1',
+    email: 'user@example.com',
+    roles: ['Viewer'],
+    tenantId: TENANT,
+    claims: {},
+  };
+
+  let pool: StubPool;
+  let store: PostgresManifestTemplateStore;
+
+  beforeEach(() => {
+    pool = new StubPool();
+    store = new PostgresManifestTemplateStore(pool as unknown as IssuerPgPool, 'euno_issuer');
+  });
+
+  it('uses template requiredCapabilities as effective capabilities when assignment exists and no requestedCapabilities', async () => {
+    // Create a narrow template: api://crm/customers read only.
+    const { record } = await store.createTemplate({
+      ownerTenantId: TENANT,
+      name: 'IssCtrl-1',
+      manifest: VIEWER_MANIFEST,
+      createdBy: OPERATOR,
+    });
+    await store.assignTemplate(
+      record.templateId, TENANT,
+      [{ tenantId: TENANT, agentId: 'agent-crm', role: 'Viewer' }],
+      OPERATOR,
+    );
+
+    const service = makeServiceWithStore(ctx, store);
+    const result = await service.issueCapability(
+      { authToken: 'tok', agentId: 'agent-crm' },
+    );
+    expect(result.token).toBeTruthy();
+    // The issued token payload should contain only the template capabilities.
+    const payloadB64 = result.token.split('.')[1]!;
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    expect(payload.capabilities).toMatchObject(VIEWER_MANIFEST.requiredCapabilities);
+  });
+
+  it('falls back to role-derived capabilities when no template assignment exists', async () => {
+    const service = makeServiceWithStore(ctx, store);
+    // No template assigned — viewer gets role-derived capabilities.
+    const result = await service.issueCapability(
+      { authToken: 'tok', agentId: 'agent-notemplate' },
+    );
+    expect(result.token).toBeTruthy();
+  });
+
+  it('falls back to request manifest when templateStore.findActiveAssignment rejects', async () => {
+    // Construct a store that throws on findActiveAssignment.
+    const faultyStore: ManifestTemplateStore = {
+      createTemplate: store.createTemplate.bind(store),
+      listTemplates: store.listTemplates.bind(store),
+      getTemplate: store.getTemplate.bind(store),
+      getTemplateVersion: store.getTemplateVersion.bind(store),
+      appendVersion: store.appendVersion.bind(store),
+      assignTemplate: store.assignTemplate.bind(store),
+      softDelete: store.softDelete.bind(store),
+      findActiveAssignment: async () => { throw new Error('DB unavailable'); },
+    };
+
+    const service = makeServiceWithStore(ctx, faultyStore);
+    // Should not throw — lookup failure is non-fatal.
+    const result = await service.issueCapability(
+      { authToken: 'tok', agentId: 'agent-fault' },
+    );
+    expect(result.token).toBeTruthy();
+  });
+
+  it('validates requested capabilities against template manifest when assignment exists', async () => {
+    // Template only allows api://crm/customers read.
+    const { record } = await store.createTemplate({
+      ownerTenantId: TENANT,
+      name: 'IssCtrl-Validate',
+      manifest: VIEWER_MANIFEST,
+      createdBy: OPERATOR,
+    });
+    await store.assignTemplate(
+      record.templateId, TENANT,
+      [{ tenantId: TENANT, agentId: 'agent-validate', role: 'Viewer' }],
+      OPERATOR,
+    );
+
+    const service = makeServiceWithStore(ctx, store);
+    // Requesting a resource NOT in the template should be rejected.
+    await expect(
+      service.issueCapability({
+        authToken: 'tok',
+        agentId: 'agent-validate',
+        requestedCapabilities: [{ resource: 'api://unlisted', actions: ['read'] }],
+      }),
+    ).rejects.toThrow();
   });
 });

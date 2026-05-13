@@ -215,43 +215,56 @@ export class PostgresManifestTemplateStore implements ManifestTemplateStore {
     const policyHash = canonicalSha256(input.manifest);
     const version = 1;
 
-    // Insert header + version 1 atomically.
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.templates
-         (template_id, owner_tenant_id, name, created_by)
-       VALUES ($1, $2, $3, $4)`,
-      [templateId, input.ownerTenantId, input.name, input.createdBy],
-    );
+    // Insert header + version 1 atomically so a failed version INSERT
+    // cannot leave an orphan template with no versions.
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const { rows } = await this.pool.query(
-      `INSERT INTO ${this.schema}.template_versions
-         (template_id, version, manifest, policy_hash, created_by)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING created_at`,
-      [templateId, version, JSON.stringify(input.manifest), policyHash, input.createdBy],
-    );
+      await client.query(
+        `INSERT INTO ${this.schema}.templates
+           (template_id, owner_tenant_id, name, created_by)
+         VALUES ($1, $2, $3, $4)`,
+        [templateId, input.ownerTenantId, input.name, input.createdBy],
+      );
 
-    const createdAt = toIso(rows[0]!['created_at']);
+      const { rows } = await client.query(
+        `INSERT INTO ${this.schema}.template_versions
+           (template_id, version, manifest, policy_hash, created_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING created_at`,
+        [templateId, version, JSON.stringify(input.manifest), policyHash, input.createdBy],
+      );
 
-    const record: TemplateRecord = {
-      templateId,
-      ownerTenantId: input.ownerTenantId,
-      name: input.name,
-      createdBy: input.createdBy,
-      createdAt,
-      deletedAt: null,
-    };
+      await client.query('COMMIT');
 
-    const versionRecord: TemplateVersionRecord = {
-      templateId,
-      version,
-      manifest: input.manifest,
-      policyHash,
-      createdBy: input.createdBy,
-      createdAt,
-    };
+      const createdAt = toIso(rows[0]!['created_at']);
 
-    return { record, version: versionRecord };
+      const record: TemplateRecord = {
+        templateId,
+        ownerTenantId: input.ownerTenantId,
+        name: input.name,
+        createdBy: input.createdBy,
+        createdAt,
+        deletedAt: null,
+      };
+
+      const versionRecord: TemplateVersionRecord = {
+        templateId,
+        version,
+        manifest: input.manifest,
+        policyHash,
+        createdBy: input.createdBy,
+        createdAt,
+      };
+
+      return { record, version: versionRecord };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // ── listTemplates ─────────────────────────────────────────────────────────

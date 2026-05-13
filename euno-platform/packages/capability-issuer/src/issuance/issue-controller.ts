@@ -303,6 +303,14 @@ export class IssueController {
         }
 
         capabilities = request.requestedCapabilities;
+      } else if (templateManifest) {
+        // Step 3b (no requestedCapabilities): when a template assignment is
+        // active, use the template's requiredCapabilities as the effective set
+        // instead of the full role-derived capabilities — the operator-defined
+        // template constrains default issuance.
+        const templateCaps = templateManifest.requiredCapabilities;
+        this.assertRequestedWithinRoleScope(capabilities, templateCaps);
+        capabilities = templateCaps;
       } else if (this.requireConsent) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,

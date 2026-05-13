@@ -418,7 +418,9 @@ async function initializeServices() {
         logger.info('Issuer DB schema migration complete', { schema: dbSchema });
       }
 
-      // Mount the admin templates router (requires store to be ready).
+      // Mount the admin templates router into the pre-registered forwarding router.
+      // Using adminTemplatesForwarder (registered before the error handler) ensures
+      // CapabilityError throws propagate through the shared error middleware.
       const { createAdminTemplatesRouter, createIssuerAdminJwtVerifier } = await import('./routes/admin-templates');
       const jwtVerifier = createIssuerAdminJwtVerifier(process.env);
       // Require ISSUER_ADMIN_API_KEY when no JWT verifier is configured —
@@ -434,11 +436,14 @@ async function initializeServices() {
       } else {
         const adminRouter = createAdminTemplatesRouter({
           store: templateStore,
+          // Pass '' when JWT-only (adminApiKey is undefined).  requireAdminAuth
+          // treats an empty adminApiKey as "X-Admin-Key path disabled" so
+          // requests without a Bearer JWT are rejected rather than accepted.
           adminApiKey: adminApiKey ?? '',
           logger,
           jwtVerifier,
         });
-        app.use('/api/v1/admin/templates', adminRouter);
+        adminTemplatesForwarder.use('/', adminRouter);
         logger.info('Admin templates router mounted at /api/v1/admin/templates');
       }
     }
@@ -1031,6 +1036,15 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
   }
   res.json(body);
 });
+
+// Admin templates forwarding router — must be registered BEFORE the error-handling
+// middleware so that CapabilityError throws from the admin routes are correctly
+// converted to JSON responses by the error handler.
+//
+// The router is populated lazily inside initializeServices() when ISSUER_DB_URL
+// is configured.  Until then, requests fall through to the catch-all 404 handler.
+const adminTemplatesForwarder = express.Router({ mergeParams: true });
+app.use('/api/v1/admin/templates', adminTemplatesForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
