@@ -97,7 +97,7 @@ export function validateProductionMinterConfig(
   const hasPem = Boolean(env['MINTER_PRIVATE_KEY_PEM'] && env['MINTER_PUBLIC_KEY_PEM']);
   if (!hasKms && !hasPem) {
     violations.push(
-      'No signing key is configured. Ephemeral RSA key pairs cannot be used in production. ' +
+      'No signing key is configured. Ephemeral key pairs cannot be used in production. ' +
         'Set MINTER_KMS_PROVIDER (HSM-backed) or both MINTER_PRIVATE_KEY_PEM and ' +
         'MINTER_PUBLIC_KEY_PEM (static software key). ' +
         'See docs/DEPLOYMENT.md §"GCP Cloud KMS per-tenant key isolation" for GCP deployments.',
