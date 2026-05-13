@@ -253,4 +253,29 @@ describe('POST /mint — acknowledged audit persistence (Task 3)', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]!.result).toBe('minted');
   });
+
+  it('restores the rate-limit slot when the audit store fails (retry is not 429d)', async () => {
+    // Use maxMints=1 so the second request would normally be 429'd.
+    // If the rate-limit slot is correctly restored after the audit failure,
+    // the retry should receive 503 (not 429).
+    const failingAuditStore: MintAuditStore = {
+      record: async () => { throw new Error('audit write failed'); },
+      listByTenant: async () => [],
+    };
+    const { app, key } = await buildApp({ maxMints: 1, auditStore: failingAuditStore });
+
+    // First request: rate-limit slot is consumed but returned on audit failure → 503.
+    const first = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+    expect(first.status).toBe(503);
+
+    // Second request: slot was restored, so this should also get 503 (not 429).
+    const retry = await request(app)
+      .post('/mint')
+      .set('Authorization', `Bearer ${key.raw}`)
+      .send({ agentId: 'agent-1', sessionId: 'session-1' });
+    expect(retry.status).toBe(503);
+  });
 });

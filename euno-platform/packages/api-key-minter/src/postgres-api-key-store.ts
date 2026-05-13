@@ -32,11 +32,22 @@
  *
  * ## Multi-tenancy isolation
  *
- * Every query that retrieves or modifies records includes a `tenant_id`
- * predicate so that a single table can serve multiple tenants without
- * cross-tenant data leaks.  For stronger isolation, enable PostgreSQL
- * Row-Level Security — see `docs/DEPLOYMENT.md §"Minter database
- * multi-tenancy isolation"`.
+ * Isolation varies by operation:
+ *
+ * - **Tenant-scoped** — `listByTenant(tenantId)` includes a `WHERE tenant_id = $1`
+ *   predicate, so callers can only enumerate their own keys.
+ * - **Prefix-scoped** — `getByPrefix(prefix)` looks up by the key's unique prefix,
+ *   which is an unguessable random value embedded in the API key.  The lookup does
+ *   not filter by `tenant_id`; the caller (verifier) is responsible for checking the
+ *   returned record's `tenantId` field.
+ * - **Policy-scoped** — `updateCapabilitiesByPolicyId(policyId, …)` updates all
+ *   non-revoked keys that reference the given policy across all tenants.  This
+ *   matches the intended fan-out semantics (a policy change propagates to every key
+ *   that uses it) and is only callable via the privileged admin API.
+ *
+ * For row-level isolation between tenants at the database level, enable PostgreSQL
+ * Row-Level Security — see `docs/DEPLOYMENT.md §"Minter database multi-tenancy
+ * isolation"`.
  *
  * ## Structural typing
  *

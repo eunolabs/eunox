@@ -14,10 +14,12 @@
 # ║  (see the comments in network-policies.yaml for the placeholder examples).  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-# These policies PATCH / REPLACE the corresponding production rules.  They do
-# NOT add new NetworkPolicy objects — they rely on the named policies defined in
-# network-policies.yaml already being present in the cluster.  If you are using
-# a GitOps tool, ensure the base file is applied first.
+# These policies ADD new NetworkPolicy objects with distinct names alongside
+# the base policies from network-policies.yaml.  Kubernetes NetworkPolicy uses
+# an additive (union) model: two policies that match the same pod selector
+# OPEN the firewall surface further — they do not replace or override each other.
+# Deleting this overlay file (or not applying it) is the correct way to remove
+# the broad egress in production; the named base policies are unaffected.
 #
 # ── Why a separate overlay? ────────────────────────────────────────────────────
 #

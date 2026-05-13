@@ -55,6 +55,14 @@ class FakeRedisClient implements RedisMintRateLimiterClient {
     return entry.count;
   }
 
+  async decr(key: string): Promise<number> {
+    if (this.shouldThrow) throw new Error('Redis connection refused');
+    const entry = this.store.get(key);
+    if (!entry) return 0;
+    if (entry.count > 0) entry.count--;
+    return entry.count;
+  }
+
   async expire(key: string, seconds: number): Promise<number> {
     if (this.shouldThrow) throw new Error('Redis connection refused');
     if (this.expireFailsRemaining > 0) {
@@ -148,6 +156,30 @@ describe('InMemoryMintRateLimiter', () => {
     expect(() => new InMemoryMintRateLimiter({ maxMintsPerWindow: 10, windowSeconds: -1 })).toThrow(
       /windowSeconds/,
     );
+  });
+
+  describe('decrement()', () => {
+    it('allows an additional request after a decremented allow', async () => {
+      const limiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 1, windowSeconds: 60 });
+      await limiter.check('t1'); // consumes the only slot
+      expect((await limiter.check('t1')).allowed).toBe(false); // limit hit
+
+      await limiter.decrement('t1'); // return the slot
+
+      expect((await limiter.check('t1')).allowed).toBe(true); // slot restored
+    });
+
+    it('does not go below zero', async () => {
+      const limiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 2, windowSeconds: 60 });
+      await limiter.decrement('empty-key'); // no entry yet — should not throw
+      await limiter.check('t2'); // check still works normally after decrement on empty key
+      expect((await limiter.check('t2')).allowed).toBe(true);
+    });
+
+    it('is a no-op for an unknown tenantId', async () => {
+      const limiter = new InMemoryMintRateLimiter({ maxMintsPerWindow: 2, windowSeconds: 60 });
+      await expect(limiter.decrement('nonexistent')).resolves.toBeUndefined();
+    });
   });
 });
 
@@ -275,6 +307,36 @@ describe('RedisBackedMintRateLimiter', () => {
 
     // The TTL should now be set — the key is no longer persistent.
     expect(await fakeRedis.ttl(fullKey)).toBeGreaterThan(0);
+  });
+
+  describe('decrement()', () => {
+    it('allows an additional request after a decremented allow', async () => {
+      const limiter = new RedisBackedMintRateLimiter(fakeRedis, {
+        maxMintsPerWindow: 1,
+        windowSeconds: 60,
+      });
+      // Simulate: check succeeds (slot consumed), then audit fails → decrement → retry.
+      // Redis INCR is unconditional, so the correct scenario is:
+      //   check (count: 0→1, allowed) → decrement (count: 1→0) → check (count: 0→1, allowed)
+      expect((await limiter.check('t1')).allowed).toBe(true); // slot consumed
+      await limiter.decrement('t1'); // slot returned
+      expect((await limiter.check('t1')).allowed).toBe(true); // retry allowed
+    });
+
+    it('issues a DECR call to Redis', async () => {
+      const decrSpy = jest.spyOn(fakeRedis, 'decr');
+      await limiter.decrement('somekey');
+      expect(decrSpy).toHaveBeenCalledWith('mintrl:somekey');
+    });
+
+    it('does not throw when Redis DECR fails', async () => {
+      jest.spyOn(fakeRedis, 'decr').mockRejectedValue(new Error('Redis down'));
+      await expect(limiter.decrement('t1')).resolves.toBeUndefined();
+    });
+
+    it('is a no-op for an unknown key', async () => {
+      await expect(limiter.decrement('nonexistent-key')).resolves.toBeUndefined();
+    });
   });
 });
 

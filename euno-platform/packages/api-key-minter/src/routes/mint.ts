@@ -136,6 +136,9 @@ export function createMintRouter(opts: MintRouterOptions): Router {
           result: 'minted',
         });
       } catch (auditErr: unknown) {
+        // Return the rate-limit slot so audit-failure retries don't burn the
+        // tenant's quota.  Non-fatal if the decrement itself fails.
+        await opts.rateLimiter.decrement(tenantId).catch(() => { /* non-fatal */ });
         minterMetrics.mintAuditFailureTotal.inc({ stage: 'write' });
         opts.logger.error('Failed to write mint audit record — mint aborted', {
           error: auditErr instanceof Error ? auditErr.message : 'unknown',
