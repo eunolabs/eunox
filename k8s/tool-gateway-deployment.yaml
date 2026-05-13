@@ -44,6 +44,41 @@ spec:
       serviceAccountName: tool-gateway-sa
       automountServiceAccountToken: false
 
+      # Task 7: Topology spread + anti-affinity so replica count translates into
+      # real failure-domain redundancy.
+      #
+      # topologySpreadConstraints spread pods across availability zones first,
+      # then nodes within a zone.  `DoNotSchedule` on the zone constraint
+      # prevents all three replicas landing in one AZ during an AZ restart or
+      # initial rollout.
+      #
+      # The hostname constraint is `ScheduleAnyway` so a small cluster with
+      # fewer nodes than replicas (e.g. dev / CI) can still schedule pods.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: tool-gateway
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: tool-gateway
+
+      affinity:
+        podAntiAffinity:
+          # Hard: refuse to place two gateway pods on the same node.  The
+          # gateway is the data-plane critical path; co-location means a
+          # single node failure cuts availability in half.
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: tool-gateway
+            topologyKey: kubernetes.io/hostname
+
       # Sprint 3: Security context at pod level
       securityContext:
         runAsNonRoot: true

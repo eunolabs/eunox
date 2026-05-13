@@ -80,6 +80,7 @@ export function createMinterApp(deps: MinterDependencies): Express {
       keyStore: deps.adminKeysRouterOpts.keyStore,
       adminApiKey: deps.adminKeysRouterOpts.adminApiKey,
       logger: deps.logger,
+      jwtVerifier: deps.adminKeysRouterOpts.jwtVerifier,
     }),
   );
 

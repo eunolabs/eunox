@@ -99,22 +99,60 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
 
 ## P1 — Structural fixes for scalability and operational safety
 
-6. **Move admin control surfaces to identity-based access**
+6. **Move admin control surfaces to identity-based access** ✅ DONE
    - Replace shared admin keys with operator identity, scoped authorization, and
      attributable audit events.
    - Keep current shared-secret auth only as an explicitly temporary fallback.
    - Dependencies: Task 1.
+   - **Fix:** New `AdminJwtVerifier` class in
+     `euno-platform/packages/api-key-minter/src/admin-jwt-verifier.ts`
+     (exported for testing).  Uses `jose.createRemoteJWKSet` + `jose.jwtVerify`
+     to verify operator JWTs against a configurable JWKS endpoint.  Extracts
+     `sub` as `operatorId`; optionally enforces a required scope from `scp`/`scope`
+     claims.  Both `admin-keys.ts` and `admin-policies.ts` now attempt Bearer JWT
+     verification first; the `X-Admin-Key` shared secret remains as an explicit
+     temporary fallback that logs a deprecation warning on each use.  Operator
+     identity is attached to all audit log entries (`operator` field).
+     Bootstrap wires in the verifier via `createAdminJwtVerifierFromEnv()` when
+     `MINTER_ADMIN_JWKS_URI` + `MINTER_ADMIN_JWT_AUDIENCE` are set; logs a clear
+     warning when JWT auth is not configured.  `AdminJwtVerifier` and
+     `createAdminJwtVerifierFromEnv` are exported from the package `index.ts`.
+     15 new tests in `tests/admin-jwt-auth.test.ts` (322 total minter tests).
 
-7. **Add workload placement controls for HA services**
+7. **Add workload placement controls for HA services** ✅ DONE
    - Add topology spread constraints and anti-affinity for gateway and issuer
      pods so replica count translates into real failure-domain redundancy.
    - Dependencies: Task 4.
+   - **Fix:** `topologySpreadConstraints` (zone: `DoNotSchedule`, hostname:
+     `ScheduleAnyway`) and `podAntiAffinity` (`requiredDuringScheduling` on
+     `kubernetes.io/hostname`) added to:
+     - `k8s/capability-issuer-deployment.yaml` (2 replicas)
+     - `k8s/tool-gateway-deployment.yaml` (3 replicas, plain Deployment)
+     - `k8s/tool-gateway.yaml` (3 shards, StatefulSet)
+     The zone `DoNotSchedule` constraint prevents all replicas landing in a
+     single AZ during rollout.  The hostname `requiredDuringScheduling`
+     anti-affinity ensures no two gateway shards share a node, preventing
+     a single node failure from halving gateway capacity.
+     `k8s/README.md` updated with workload-placement-controls section documenting
+     node count and AZ requirements.
 
-8. **Improve audit query storage for scale**
+8. **Improve audit query storage for scale** ✅ DONE
    - Add indexed relational access paths for tenant, decision, token ID, denial
      code, and time-window queries.
    - Avoid relying on unindexed `payload->>` predicates for growing audit tables.
    - Dependencies: None.
+   - **Fix:** `PostgresLedgerBackend.migrate()` and
+     `PerReplicaPostgresLedgerBackend.migrate()` in
+     `euno-platform/packages/common-infra/src/ledger-signer.ts` now emit five
+     additional `CREATE INDEX IF NOT EXISTS` statements covering
+     `(payload->>'tenantId')`, `(payload->>'decision')`,
+     `(payload->>'capabilityId')`, `(payload->>'agentId')`, and
+     `(payload->>'denialCode')` — the five JSONB fields queried by
+     `queryEntries()` filter predicates.  Indexes are expression indexes so
+     PostgreSQL can use them for equality predicates without a full-table JSONB
+     scan.  Schema docstrings in `ledger-signer.ts` updated.
+     9 new tests in `euno-platform/packages/common/tests/ledger-signer.test.ts`
+     covering both backends (868 total common tests).
 
 ---
 
@@ -137,5 +175,5 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
 
 1. Tasks 1, 4
 2. Tasks 2, 3, 5
-3. Tasks 6, 7, 8
+3. Tasks 6, 7, 8 ✅ DONE
 4. Tasks 9, 10
