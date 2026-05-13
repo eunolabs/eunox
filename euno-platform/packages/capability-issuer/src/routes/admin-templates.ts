@@ -218,7 +218,12 @@ function resolveTenantId(res: Response, body: Record<string, unknown>): string {
     // to the request body would let any valid-audience token choose an
     // arbitrary tenant and mutate any other tenant's templates.
     if (!isPlatformAdmin && jwtTenantId.length === 0) {
-      return ''; // caller checks for empty → 400 "ownerTenantId is required"
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'JWT is missing required tenantId (tid) claim. ' +
+          'Non-platform-admin tokens must include a tenant identifier.',
+        401,
+      );
     }
     // PlatformAdmin with no tenantId in the JWT → use body value.
     if (jwtTenantId.length > 0) return jwtTenantId;

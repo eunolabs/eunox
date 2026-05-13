@@ -1226,8 +1226,6 @@ function makeServiceWithStore(
   );
 }
 
-integrationLogger;
-
 describe('IssueController + templateStore integration', () => {
   // Using Viewer role (mapped to api://crm/customers read in the default policy).
   const VIEWER_MANIFEST: AgentCapabilityManifest = {
