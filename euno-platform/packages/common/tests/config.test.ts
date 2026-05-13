@@ -742,6 +742,39 @@ describe('loadConfig (minter) — defaults and type coercion', () => {
     expect(result.config.MINTER_PORT).toBe(3004);
     expect(result.config.MINTER_TOKEN_TTL_SECONDS).toBe(300);
   });
+
+  it('accepts MINTER_ADMIN_JWT_ISSUER as an optional string', () => {
+    const result = loadConfig({ MINTER_ADMIN_JWT_ISSUER: 'https://idp.example.com' }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_ADMIN_JWT_ISSUER).toBe('https://idp.example.com');
+  });
+
+  it('accepts a valid 64-hex-char MINTER_PEPPER_HEX', () => {
+    const result = loadConfig({ MINTER_PEPPER_HEX: 'a'.repeat(64) }, 'minter');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.MINTER_PEPPER_HEX).toBe('a'.repeat(64));
+  });
+
+  it('rejects a MINTER_PEPPER_HEX that is not 64 hex chars', () => {
+    const result = loadConfig({ MINTER_PEPPER_HEX: 'not-hex-and-too-short' }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PEPPER_HEX')).toBe(true);
+  });
+
+  it('rejects a MINTER_PEPPER_HEX that is 64 chars but contains non-hex characters', () => {
+    const result = loadConfig({ MINTER_PEPPER_HEX: 'g'.repeat(64) }, 'minter');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'MINTER_PEPPER_HEX')).toBe(true);
+  });
+
+  it('accepts MINTER_PEPPER_HEX with uppercase hex digits', () => {
+    const result = loadConfig({ MINTER_PEPPER_HEX: 'A'.repeat(64) }, 'minter');
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe('loadConfig (minter) — production validation', () => {

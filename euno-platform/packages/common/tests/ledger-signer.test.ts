@@ -1730,4 +1730,35 @@ describe('PostgresAuditQueryStore', () => {
     await store.close!();
     expect(pool.closed).toBe(true);
   });
+
+  it('ignores a malformed cursor (partial-numeric like "10abc") instead of silently truncating', async () => {
+    // Before the strict-parse fix, parseInt("10abc", 10) → 10, which would
+    // silently apply a seq > 10 predicate. Now parseCursorSeq rejects non-all-digit
+    // strings, so the cursor condition is omitted and all rows are returned.
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const capturedParams: unknown[][] = [];
+    const pool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(_sql: string, params: unknown[]): Promise<PgQueryResult<R>> {
+          capturedParams.push(params);
+          return Promise.resolve({ rows: rows as unknown as R[], rowCount: rows.length }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const store = new PostgresAuditQueryStore(pool);
+    await store.queryEntries({}, { cursor: '10abc' });
+
+    // None of the captured params should equal 10 (the would-be truncated cursor seq).
+    const allParams = capturedParams.flat();
+    expect(allParams).not.toContain(10);
+  });
+
+  it('rejects an invalid table name with a PostgresAuditQueryStore-prefixed error', () => {
+    const pool = makeQueryPool([]);
+    expect(() => new PostgresAuditQueryStore(pool, { table: 'bad name; DROP TABLE x' })).toThrow(
+      /PostgresAuditQueryStore/,
+    );
+  });
 });

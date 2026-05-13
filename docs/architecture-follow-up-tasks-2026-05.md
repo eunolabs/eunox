@@ -189,7 +189,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
       `MinterConfigSchema.superRefine` validates the same production constraints as
       `validateProductionMinterConfig` (ADMIN_API_KEY, PEPPER_HEX, signing key, both DB URLs)
       so misconfiguration is caught by both the Zod loader and the existing production guard.
-      38 new tests: 22 schema/validation tests in `tests/config.test.ts` (common package)
+      25 new tests in `tests/config.test.ts` (common package): 22 schema/validation tests
       and 3 dumpEnvTemplate tests.
 
 ---

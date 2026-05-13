@@ -2337,13 +2337,33 @@ export const MinterConfigSchema = z
     MINTER_ADMIN_JWT_AUDIENCE: optionalString.describe(
       'Expected `aud` claim in admin JWTs. Required alongside MINTER_ADMIN_JWKS_URI.',
     ),
+    MINTER_ADMIN_JWT_ISSUER: optionalString.describe(
+      'Expected `iss` claim in admin JWTs. ' +
+      'When set, tokens whose issuer does not match are rejected. ' +
+      'Omit to skip issuer validation (useful during migration between IdPs). ' +
+      'Requires MINTER_ADMIN_JWKS_URI and MINTER_ADMIN_JWT_AUDIENCE to be set.',
+    ),
 
     // Pepper / key derivation
-    MINTER_PEPPER_HEX: optionalString.describe(
-      '256-bit API-key pepper as a lowercase 64-character hex string. ' +
-      'MUST be set in production. Defaults to a random ephemeral value in development ' +
-      '(keys will not survive restarts).',
-    ),
+    MINTER_PEPPER_HEX: optionalString
+      .pipe(
+        z
+          .string()
+          .optional()
+          .refine(
+            (v) => v === undefined || /^[0-9a-fA-F]{64}$/.test(v),
+            (v) => ({
+              message:
+                `MINTER_PEPPER_HEX must be a 64-character hex string (32 bytes / 256-bit pepper); ` +
+                `got ${v === undefined ? 'undefined' : `"${v}" (${v.length} chars)`}.`,
+            }),
+          ),
+      )
+      .describe(
+        '256-bit API-key pepper as a 64-character hex string (case-insensitive). ' +
+        'MUST be set in production. Defaults to a random ephemeral value in development ' +
+        '(keys will not survive restarts).',
+      ),
     MINTER_PEPPER_VERSION: optionalString.describe(
       'Symbolic version label for MINTER_PEPPER_HEX (e.g. "v1", "v2"). ' +
       'Used to support pepper rotation. Default "v1".',

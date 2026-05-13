@@ -56,6 +56,7 @@ export async function startServer(): Promise<void> {
     ledgerPgPool,
     crossChainAnchor,
     gatewayTelemetry = null,
+    auditQueryStore,
   } = deps;
 
   const server = app.listen(config.port, () => {
@@ -278,6 +279,19 @@ export async function startServer(): Promise<void> {
       // a loud error rather than a silent SIGKILL.
       if (ledgerPgPool) {
         await closeWithTimeout('ledger Postgres pool', () => ledgerPgPool.end());
+      }
+
+      // Phase 7: close a dedicated audit-query-store pool when present and
+      // owning its own pool (i.e. it was injected via
+      // `GatewayDependencies.auditQueryStore` with a separate read-replica
+      // pool rather than sharing `ledgerPgPool`).  In the typical bootstrap
+      // the store shares the write backend's pool and `close()` is a no-op,
+      // but calling it here is always safe: `pool.end()` on an already-ended
+      // pool resolves immediately without error.
+      if (auditQueryStore && typeof (auditQueryStore as { close?: unknown }).close === 'function') {
+        await closeWithTimeout('audit query store', () =>
+          (auditQueryStore as { close(): Promise<void> }).close(),
+        );
       }
 
       logger.info('Server closed');
