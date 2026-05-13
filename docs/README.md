@@ -21,6 +21,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | [capability-model.md](./capability-model.md) | Security model, capability design. |
 | [enforcement.md](./enforcement.md) | Policy decision point, enforcement guarantees. |
 | [diagrams.md](./diagrams.md) | Mermaid architecture diagrams. |
+| [architecture-follow-up-tasks-2026-05.md](./architecture-follow-up-tasks-2026-05.md) | Numbered architecture review follow-up task list. |
 | [mvp.md](./mvp.md) | Staged execution plan, gate criteria, business model. |
 
 ## 3. Design references
