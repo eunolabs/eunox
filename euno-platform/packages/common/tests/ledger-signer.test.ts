@@ -1710,7 +1710,7 @@ describe('PostgresAuditQueryStore', () => {
     expect(capturedSql.filter((s) => s.startsWith('SELECT')).length).toBe(1);
   });
 
-    it('delegates close() to pool.end()', async () => {
+  it('delegates close() to pool.end()', async () => {
     const rows: never[] = [];
     const rawPool = makeQueryPool(rows);
     // Access the `closed` state via Object.defineProperty so the getter closure
