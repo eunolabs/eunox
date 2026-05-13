@@ -25,6 +25,7 @@ import * as http from 'http';
 import * as crypto from 'crypto';
 import { createLogger } from '@euno/common';
 import { createKmsTokenSignerFromEnv } from '@euno/common-infra';
+import { validateProductionMinterConfig } from './production-guard';
 import { InMemoryApiKeyStore } from './api-key-store';
 import { ApiKeyVerifier, PepperEntry } from './api-key-verifier';
 import { TokenMinter } from './token-minter';
@@ -42,6 +43,11 @@ import os from 'os';
 const logger = createLogger('api-key-minter');
 
 async function main(): Promise<void> {
+  // ── Production safety guard ─────────────────────────────────────────────────
+  // Fail immediately if any unsafe fallback would be activated in production.
+  // Must run before any resource allocation so startup fails fast and cleanly.
+  validateProductionMinterConfig(process.env);
+
   const port = parseInt(process.env['MINTER_PORT'] ?? '3004', 10);
   if (isNaN(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid MINTER_PORT: ${process.env['MINTER_PORT']}. Must be 1–65535.`);
