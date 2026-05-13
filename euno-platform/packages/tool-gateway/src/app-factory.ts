@@ -156,13 +156,16 @@ export function createApp(deps: GatewayDependencies): Express {
   // Tool invocation endpoint
   app.use(createToolsRouter({ enforcementEngine, logger, actionResolver: deps.actionResolver }));
 
-  // Audit record query endpoint (Task 7) — only mounted when a ledger backend
-  // is configured. When no backend is present (e.g. software-only signer mode),
+  // Audit record query endpoint (Task 7) — only mounted when a query store is
+  // configured. When no backend is present (e.g. software-only signer mode),
   // the route is simply absent and callers receive a 404.
-  if (deps.auditLedgerBackend) {
+  // For backward compatibility, falls back to auditLedgerBackend when
+  // auditQueryStore is not set (LedgerBackend satisfies AuditQueryStore structurally).
+  const auditQueryStore = deps.auditQueryStore ?? deps.auditLedgerBackend;
+  if (auditQueryStore) {
     app.use(
       createAuditRouter({
-        ledgerBackend: deps.auditLedgerBackend,
+        queryStore: auditQueryStore,
         verifier: deps.verifier,
         logger,
       }),

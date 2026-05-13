@@ -20,6 +20,7 @@ import {
   AuditAnchor,
   AuditBatchSigner,
   AuditPipeline,
+  AuditQueryStore,
   AzureConfidentialLedgerBackend,
   AzureConfidentialLedgerClient,
   BackpressurePolicy,
@@ -40,6 +41,7 @@ import {
   LedgerChainError,
   OcsfAuditTransport,
   PerReplicaPostgresLedgerBackend,
+  PostgresAuditQueryStore,
   PostgresLedgerBackend,
   Registry,
   ServiceConfig,
@@ -152,6 +154,20 @@ export interface AuditModuleResult {
    * DB connection pool.
    */
   auditLedgerBackend?: import('@euno/common').LedgerBackend;
+  /**
+   * Query-only projection of the audit ledger (Task 9).
+   *
+   * For the `postgres` and `per-replica-postgres` backends this is a
+   * {@link PostgresAuditQueryStore} backed by the same pool as the write
+   * backend — no additional DB connection pool is needed.  For the
+   * `in-memory` backend this is the same {@link InMemoryLedgerBackend}
+   * instance (it satisfies {@link AuditQueryStore} structurally).
+   *
+   * The audit query route SHOULD prefer this over {@link auditLedgerBackend}
+   * because the query store carries no chain state, advisory locks, or HMAC
+   * material — it is a lighter-weight read path.
+   */
+  auditQueryStore?: AuditQueryStore;
 }
 
 /**
@@ -205,6 +221,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   let crossChainAnchor: CrossChainAnchor | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
   let auditLedgerBackend: LedgerBackend | undefined;
+  let auditQueryStore: AuditQueryStore | undefined;
 
   try {
     // Select the evidence signer: KMS-backed (AUDIT_SIGNING_KMS_PROVIDER) takes
@@ -297,6 +314,9 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
         auditLedgerBackend = pgBackend;
+        // Task 9: Dedicated query-only store backed by the same pool.
+        // The query route only needs SELECT; no chain state or HMAC material required.
+        auditQueryStore = new PostgresAuditQueryStore(pgPool, { table });
 
         logger.info('Audit ledger backend: postgres', {
           table: table ?? 'euno_audit_ledger',
@@ -337,6 +357,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
         auditLedgerBackend = inMemBackend;
+        // Task 9: InMemoryLedgerBackend satisfies AuditQueryStore structurally.
+        auditQueryStore = inMemBackend;
         logger.info('Audit ledger backend: in-memory (development only — not tamper-resistant)');
       } else if (ledgerBackendName === 'per-replica-postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=per-replica-postgres requires AUDIT_LEDGER_PG_URL to be set.');
@@ -374,6 +396,11 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         evidenceSigner = ledgerSigner;
         auditBatchSigner = activeSigner;
         auditLedgerBackend = perReplicaBackend;
+        // Task 9: Dedicated query-only store backed by the same pool.
+        // The per-replica table has the same column layout as the standard table.
+        auditQueryStore = new PostgresAuditQueryStore(pgPool, {
+          table: table ?? 'euno_audit_ledger_v2',
+        });
 
         if (s3Bucket) {
           logger.warn(
@@ -641,5 +668,6 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     ledgerPgPool,
     crossChainAnchor,
     auditLedgerBackend,
+    auditQueryStore,
   };
 }

@@ -237,6 +237,52 @@ export interface AuditQueryPage {
   total?: number;
 }
 
+// ── AuditQueryStore ───────────────────────────────────────────────────────────
+
+/**
+ * Read-only projection of the audit ledger, focused exclusively on
+ * query/pagination access.
+ *
+ * Separates the query read-path from the write/integrity path so that:
+ *   - The enforcement/audit pipeline (write path) uses {@link LedgerBackend}.
+ *   - Tenant dashboards and operator queries (read path) use {@link AuditQueryStore}.
+ *
+ * Both paths can be backed by the same Postgres table; the distinction is
+ * architectural: an {@link AuditQueryStore} implementation never needs to
+ * acquire advisory locks, compute row HMACs, or maintain in-process chain
+ * state — it is a thin, SELECT-only view over the audit table.
+ *
+ * ### Implementations
+ *
+ *   - {@link PostgresAuditQueryStore} — thin SELECT-only wrapper for the
+ *     `postgres` and `per-replica-postgres` ledger table schemas. Can be
+ *     backed by the same pool as the write backend or a dedicated
+ *     read-replica pool.
+ *   - {@link InMemoryLedgerBackend} — satisfies this interface structurally
+ *     (used for development and unit tests).
+ */
+export interface AuditQueryStore {
+  /**
+   * Paginated, filterable query over the audit ledger.
+   *
+   * Returns a single page of {@link LedgerEntry} records that satisfy
+   * every constraint in `filter`, ordered by `seq` (ascending by default).
+   * Implementations MUST NOT return more than `pagination.limit` entries.
+   * Implementations MAY return `total` when it is inexpensive to compute.
+   */
+  queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage>;
+
+  /**
+   * Gracefully release any external resources owned exclusively by this
+   * store instance (e.g. a dedicated read-replica pool).
+   *
+   * When the store shares a pool with the write ledger backend the pool
+   * lifecycle is managed by the backend; do NOT call `close()` here in
+   * that case.
+   */
+  close?(): Promise<void>;
+}
+
 /**
  * Pluggable backend that owns the authoritative chain state.
  *
@@ -620,16 +666,151 @@ export interface S3AnchorClient {
  * Accepts only safe identifiers: ASCII letters, digits, underscores, and
  * schema-qualified names (one dot allowed, e.g. `audit.euno_ledger`).
  * Rejects quotes, semicolons, spaces, or any other special characters.
+ *
+ * @param name   The table name to validate.
+ * @param caller Optional caller label used in the error message (defaults to
+ *               `'PostgresLedgerBackend'`).  Pass `'PostgresAuditQueryStore'`
+ *               (or any other class name) so error messages correctly identify
+ *               the component that rejected the name.
  */
-function validateTableName(name: string): string {
+function validateTableName(name: string, caller = 'PostgresLedgerBackend'): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/.test(name)) {
     throw new Error(
-      `PostgresLedgerBackend: invalid table name "${name}". ` +
+      `${caller}: invalid table name "${name}". ` +
         'Table name must be a safe SQL identifier (letters, digits, underscores; ' +
         'one dot allowed for schema-qualified names, e.g. "audit.euno_ledger").',
     );
   }
   return name;
+}
+
+/**
+ * Parses a pagination cursor string into a sequence number, applying the
+ * same strict-integer convention used throughout the codebase
+ * (`envPositiveInt` in the config schema).
+ *
+ * Returns `undefined` when the cursor is `undefined` or malformed so callers
+ * can silently skip the predicate rather than propagating an error to the
+ * client. Partially-numeric inputs (e.g. `"10abc"`) are rejected to match
+ * the "no silent coercion" philosophy.
+ */
+function parseCursorSeq(cursor: string | undefined): number | undefined {
+  if (cursor === undefined) return undefined;
+  // Require an all-digits string to prevent silent truncation by parseInt
+  // (e.g. parseInt("10abc", 10) → 10).
+  if (!/^\d+$/.test(cursor)) return undefined;
+  const n = Number(cursor);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Coerce a Postgres `created_at` column value (Date object or ISO string) to an ISO-8601 string. */
+function rowTimestampToIso(value: Date | unknown): string {
+  return (value instanceof Date ? value : new Date(value as string)).toISOString();
+}
+
+/** Coerce a Postgres `row_hmac` column value (Buffer or hex string) to a Buffer. */
+function rowHmacToBuffer(value: Buffer | unknown): Buffer {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value as string, 'hex');
+}
+
+/**
+ * Shared SQL query builder for the ledger `SELECT` path.
+ *
+ * Both {@link PostgresLedgerBackend} and {@link PostgresAuditQueryStore}
+ * serve the same query shape; this helper keeps them in lock-step so that
+ * filter additions, index-optimisation tweaks, and cursor semantic changes
+ * only need a single edit.
+ *
+ * @returns `{ sql, params }` ready to pass to `conn.query(sql, params)`.
+ */
+function buildLedgerSelectQuery(
+  table: string,
+  filter: AuditQueryFilter,
+  pagination: AuditQueryPagination,
+): { sql: string; params: unknown[] } {
+  const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
+  const direction = pagination.direction ?? 'asc';
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+
+  const cursorSeq = parseCursorSeq(pagination.cursor);
+  if (cursorSeq !== undefined) {
+    params.push(cursorSeq);
+    conditions.push(`seq ${direction === 'asc' ? '>' : '<'} $${params.length}`);
+  }
+
+  if (filter.agentId !== undefined) {
+    params.push(filter.agentId);
+    conditions.push(`payload->>'agentId' = $${params.length}`);
+  }
+  if (filter.jti !== undefined) {
+    params.push(filter.jti);
+    conditions.push(`payload->>'capabilityId' = $${params.length}`);
+  }
+  if (filter.decision !== undefined) {
+    params.push(filter.decision);
+    conditions.push(`payload->>'decision' = $${params.length}`);
+  }
+  if (filter.tenantId !== undefined) {
+    params.push(filter.tenantId);
+    conditions.push(`payload->>'tenantId' = $${params.length}`);
+  }
+  if (filter.conditionType !== undefined) {
+    params.push(filter.conditionType);
+    conditions.push(`payload->>'conditionType' = $${params.length}`);
+  }
+  if (filter.denialCode !== undefined) {
+    params.push(filter.denialCode);
+    conditions.push(`payload->>'denialCode' = $${params.length}`);
+  }
+  if (filter.fromTs !== undefined) {
+    params.push(filter.fromTs);
+    // Compare against created_at (TIMESTAMPTZ, indexed) rather than the JSONB
+    // payload->'ts' string so the query uses the created_at index and handles
+    // non-canonical ISO inputs correctly via Postgres timestamptz casting.
+    conditions.push(`created_at >= $${params.length}::timestamptz`);
+  }
+  if (filter.toTs !== undefined) {
+    params.push(filter.toTs);
+    conditions.push(`created_at <= $${params.length}::timestamptz`);
+  }
+
+  // Fetch limit+1 rows to detect whether there is a next page.
+  params.push(limit + 1);
+  const limitParam = `$${params.length}`;
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderDir = direction === 'asc' ? 'ASC' : 'DESC';
+  const sql = `
+    SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
+      FROM ${table}
+    ${whereClause}
+    ORDER BY seq ${orderDir}
+    LIMIT ${limitParam}
+  `;
+  return { sql, params };
+}
+
+/**
+ * Materialise a page of {@link LedgerEntry} objects from the raw DB rows
+ * returned by {@link buildLedgerSelectQuery}.
+ */
+function buildLedgerPage(rows: LedgerSelectRow[], limit: number): AuditQueryPage {
+  const effectiveLimit = Math.min(limit, LEDGER_QUERY_MAX_LIMIT);
+  const hasMore = rows.length > effectiveLimit;
+  const pageRows = hasMore ? rows.slice(0, effectiveLimit) : rows;
+  const entries: LedgerEntry[] = pageRows.map((row) => ({
+    seq: Number(row.seq),
+    previousHash: row.previous_hash,
+    recordHash: row.record_hash,
+    replicaId: row.replica_id,
+    signedEvidence: row.payload,
+    ts: rowTimestampToIso(row.created_at),
+    rowHmac: rowHmacToBuffer(row.row_hmac),
+  }));
+  const lastEntry = entries[entries.length - 1];
+  const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
+  return { entries, nextCursor };
 }
 
 /**
@@ -1207,68 +1388,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
 
   async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
     const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
-    const direction = pagination.direction ?? 'asc';
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-
-    // Cursor is the seq value to paginate from.
-    if (pagination.cursor !== undefined) {
-      const cursorSeq = parseInt(pagination.cursor, 10);
-      if (!Number.isNaN(cursorSeq)) {
-        params.push(cursorSeq);
-        conditions.push(`seq ${direction === 'asc' ? '>' : '<'} $${params.length}`);
-      }
-    }
-
-    if (filter.agentId !== undefined) {
-      params.push(filter.agentId);
-      conditions.push(`payload->>'agentId' = $${params.length}`);
-    }
-    if (filter.jti !== undefined) {
-      params.push(filter.jti);
-      conditions.push(`payload->>'capabilityId' = $${params.length}`);
-    }
-    if (filter.decision !== undefined) {
-      params.push(filter.decision);
-      conditions.push(`payload->>'decision' = $${params.length}`);
-    }
-    if (filter.tenantId !== undefined) {
-      params.push(filter.tenantId);
-      conditions.push(`payload->>'tenantId' = $${params.length}`);
-    }
-    if (filter.conditionType !== undefined) {
-      params.push(filter.conditionType);
-      conditions.push(`payload->>'conditionType' = $${params.length}`);
-    }
-    if (filter.denialCode !== undefined) {
-      params.push(filter.denialCode);
-      conditions.push(`payload->>'denialCode' = $${params.length}`);
-    }
-    if (filter.fromTs !== undefined) {
-      params.push(filter.fromTs);
-      // Compare against created_at (TIMESTAMPTZ, indexed) rather than the JSONB
-      // payload->'ts' string so the query uses idx_euno_audit_ledger_created_at
-      // and handles non-canonical ISO inputs correctly via Postgres timestamptz casting.
-      conditions.push(`created_at >= $${params.length}::timestamptz`);
-    }
-    if (filter.toTs !== undefined) {
-      params.push(filter.toTs);
-      conditions.push(`created_at <= $${params.length}::timestamptz`);
-    }
-
-    // Fetch limit+1 rows to detect whether there is a next page.
-    params.push(limit + 1);
-    const limitParam = `$${params.length}`;
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const orderDir = direction === 'asc' ? 'ASC' : 'DESC';
-    const sql = `
-      SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
-        FROM ${this.table}
-      ${whereClause}
-      ORDER BY seq ${orderDir}
-      LIMIT ${limitParam}
-    `;
+    const { sql, params } = buildLedgerSelectQuery(this.table, filter, pagination);
 
     const conn = await this.pool.connect();
     let rows: LedgerSelectRow[];
@@ -1279,21 +1399,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
       conn.release();
     }
 
-    const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-    const entries: LedgerEntry[] = pageRows.map((row) => ({
-      seq: Number(row.seq),
-      previousHash: row.previous_hash,
-      recordHash: row.record_hash,
-      replicaId: row.replica_id,
-      signedEvidence: row.payload,
-      ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
-      rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
-    }));
-
-    const lastEntry = entries[entries.length - 1];
-    const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
-    return { entries, nextCursor };
+    return buildLedgerPage(rows, limit);
   }
 
   /**
@@ -1373,6 +1479,90 @@ export class PostgresLedgerBackend implements LedgerBackend {
       body: anchorPayload,
       contentType: 'application/json',
     });
+  }
+}
+
+// ── PostgresAuditQueryStore ───────────────────────────────────────────────────
+
+/**
+ * Options for {@link PostgresAuditQueryStore}.
+ */
+export interface PostgresAuditQueryStoreOptions {
+  /**
+   * Postgres table to query.
+   *
+   * Must be the same table written by the corresponding {@link LedgerBackend}
+   * — either `euno_audit_ledger` (postgres backend) or `euno_audit_ledger_v2`
+   * (per-replica-postgres backend).
+   *
+   * Defaults to `'euno_audit_ledger'` so it aligns with the default used by
+   * {@link PostgresLedgerBackend}.
+   */
+  table?: string;
+}
+
+/**
+ * SELECT-only projection of the audit ledger table.
+ *
+ * Implements {@link AuditQueryStore} without owning any chain state, advisory
+ * locks, or row-HMAC material — it is a thin wrapper around a single
+ * `SELECT … WHERE … ORDER BY seq … LIMIT …` query.
+ *
+ * ### Motivation (Task 9)
+ *
+ * {@link PostgresLedgerBackend} and {@link PerReplicaPostgresLedgerBackend}
+ * carry a lot of write-path complexity (advisory locking, HMAC secrets, S3
+ * anchoring) that is irrelevant for the read path. Serving audit queries from
+ * a dedicated `PostgresAuditQueryStore` instance:
+ *
+ *   - Keeps the query route free of signing credentials and lock state.
+ *   - Allows the query store to be pointed at a **read replica** by providing
+ *     a separate pool (useful for deployments with high audit query traffic).
+ *   - Makes it straightforward to introduce a materialised-view or dedicated
+ *     search index in future without touching the write backend.
+ *
+ * ### Sharing vs. owning the pool
+ *
+ * In the typical bootstrap the query store shares a pool with the write
+ * backend.  In that case the pool's lifecycle is managed by the backend;
+ * callers MUST NOT call `close()` on this instance.  When a dedicated
+ * read-replica pool is provided, the caller owns both the pool and this
+ * instance and MUST call `pool.end()` (or `close()` here, which delegates)
+ * during graceful shutdown.
+ */
+export class PostgresAuditQueryStore implements AuditQueryStore {
+  private readonly table: string;
+
+  constructor(
+    private readonly pool: PgPool,
+    options: PostgresAuditQueryStoreOptions = {},
+  ) {
+    this.table = validateTableName(options.table ?? 'euno_audit_ledger', 'PostgresAuditQueryStore');
+  }
+
+  async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
+    const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
+    const { sql, params } = buildLedgerSelectQuery(this.table, filter, pagination);
+
+    const conn = await this.pool.connect();
+    let rows: LedgerSelectRow[];
+    try {
+      const result = await conn.query<LedgerSelectRow>(sql, params);
+      rows = result.rows;
+    } finally {
+      conn.release();
+    }
+
+    return buildLedgerPage(rows, limit);
+  }
+
+  /**
+   * Release the pool when this instance owns it (e.g. a dedicated
+   * read-replica pool).  When the pool is shared with the write backend,
+   * callers MUST NOT invoke this — pool lifecycle is the backend's responsibility.
+   */
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }
 
@@ -2181,68 +2371,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
 
   async queryEntries(filter: AuditQueryFilter, pagination: AuditQueryPagination): Promise<AuditQueryPage> {
     const limit = Math.min(pagination.limit ?? LEDGER_QUERY_DEFAULT_LIMIT, LEDGER_QUERY_MAX_LIMIT);
-    const direction = pagination.direction ?? 'asc';
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-
-    // Cursor is the seq value to paginate from (within this replica).
-    if (pagination.cursor !== undefined) {
-      const cursorSeq = parseInt(pagination.cursor, 10);
-      if (!Number.isNaN(cursorSeq)) {
-        params.push(cursorSeq);
-        conditions.push(`seq ${direction === 'asc' ? '>' : '<'} $${params.length}`);
-      }
-    }
-
-    if (filter.agentId !== undefined) {
-      params.push(filter.agentId);
-      conditions.push(`payload->>'agentId' = $${params.length}`);
-    }
-    if (filter.jti !== undefined) {
-      params.push(filter.jti);
-      conditions.push(`payload->>'capabilityId' = $${params.length}`);
-    }
-    if (filter.decision !== undefined) {
-      params.push(filter.decision);
-      conditions.push(`payload->>'decision' = $${params.length}`);
-    }
-    if (filter.tenantId !== undefined) {
-      params.push(filter.tenantId);
-      conditions.push(`payload->>'tenantId' = $${params.length}`);
-    }
-    if (filter.conditionType !== undefined) {
-      params.push(filter.conditionType);
-      conditions.push(`payload->>'conditionType' = $${params.length}`);
-    }
-    if (filter.denialCode !== undefined) {
-      params.push(filter.denialCode);
-      conditions.push(`payload->>'denialCode' = $${params.length}`);
-    }
-    if (filter.fromTs !== undefined) {
-      params.push(filter.fromTs);
-      // Compare against created_at (TIMESTAMPTZ, indexed) rather than the JSONB
-      // payload->'ts' string so the query can use the created_at index and
-      // handles non-canonical ISO inputs correctly via Postgres timestamptz casting.
-      conditions.push(`created_at >= $${params.length}::timestamptz`);
-    }
-    if (filter.toTs !== undefined) {
-      params.push(filter.toTs);
-      conditions.push(`created_at <= $${params.length}::timestamptz`);
-    }
-
-    // Fetch limit+1 rows to detect whether there is a next page.
-    params.push(limit + 1);
-    const limitParam = `$${params.length}`;
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const orderDir = direction === 'asc' ? 'ASC' : 'DESC';
-    const sql = `
-      SELECT seq, previous_hash, record_hash, replica_id, payload, row_hmac, created_at
-        FROM ${this.table}
-      ${whereClause}
-      ORDER BY seq ${orderDir}
-      LIMIT ${limitParam}
-    `;
+    const { sql, params } = buildLedgerSelectQuery(this.table, filter, pagination);
 
     const conn = await this.pool.connect();
     let rows: PerReplicaSelectRow[];
@@ -2253,21 +2382,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       conn.release();
     }
 
-    const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-    const entries: LedgerEntry[] = pageRows.map((row) => ({
-      seq: Number(row.seq),
-      previousHash: row.previous_hash,
-      recordHash: row.record_hash,
-      replicaId: row.replica_id,
-      signedEvidence: row.payload,
-      ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
-      rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
-    }));
-
-    const lastEntry = entries[entries.length - 1];
-    const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
-    return { entries, nextCursor };
+    return buildLedgerPage(rows, limit);
   }
 
   /**

@@ -18,6 +18,8 @@ import {
   LedgerEntry,
   PostgresLedgerBackend,
   PerReplicaPostgresLedgerBackend,
+  PostgresAuditQueryStore,
+  AuditQueryStore,
   AzureConfidentialLedgerBackend,
   AzureConfidentialLedgerClient,
   PgPool,
@@ -1398,5 +1400,365 @@ describe('PerReplicaPostgresLedgerBackend.migrate()', () => {
         expect(nameMatch[1]).not.toMatch(/\./);
       }
     }
+  });
+});
+
+// ── PostgresAuditQueryStore ───────────────────────────────────────────────────
+
+describe('PostgresAuditQueryStore', () => {
+  /** Build a mock PgPool whose SELECT queries scan an in-memory rows array. */
+  function makeQueryPool(rows: Array<{
+    seq: number;
+    previous_hash: string;
+    record_hash: string;
+    replica_id: string;
+    payload: Record<string, unknown>;
+    row_hmac: Buffer;
+    created_at: Date;
+  }>): PgPool {
+    let closed = false;
+    const pool: PgPool = {
+      connect() {
+        const client: PgClientConnection = {
+          query<R extends Record<string, unknown>>(sql: string, values?: unknown[]): Promise<PgQueryResult<R>> {
+            // Parse LIMIT from the query (always the last $N param).
+            const limitMatch = sql.match(/LIMIT\s+\$(\d+)/i);
+            const limitIdx = limitMatch ? parseInt(limitMatch[1]!, 10) - 1 : null;
+            const limitVal = limitIdx !== null && values ? Number(values[limitIdx]) : rows.length + 1;
+
+            // Build candidates from all rows, applying WHERE predicates inline.
+            let candidates = rows.filter((row) => {
+              if (!values) return true;
+              // cursor predicate (seq > $N or seq < $N)
+              const ascMatch = sql.match(/seq\s*>\s*\$(\d+)/i);
+              const descMatch = sql.match(/seq\s*<\s*\$(\d+)/i);
+              if (ascMatch) {
+                const idx = parseInt(ascMatch[1]!, 10) - 1;
+                if (row.seq <= Number(values[idx])) return false;
+              }
+              if (descMatch) {
+                const idx = parseInt(descMatch[1]!, 10) - 1;
+                if (row.seq >= Number(values[idx])) return false;
+              }
+              // JSONB predicates
+              const jsonbMatches = [...sql.matchAll(/payload->>'(\w+)'\s*=\s*\$(\d+)/gi)];
+              for (const m of jsonbMatches) {
+                const field = m[1]!;
+                const idx = parseInt(m[2]!, 10) - 1;
+                if (row.payload[field] !== values[idx]) return false;
+              }
+              return true;
+            });
+
+            // Apply ORDER BY direction.
+            if (/ORDER BY seq DESC/i.test(sql)) {
+              candidates = [...candidates].reverse();
+            }
+
+            const page = candidates.slice(0, limitVal);
+            return Promise.resolve({
+              rows: page.map((r) => ({
+                seq: String(r.seq),
+                previous_hash: r.previous_hash,
+                record_hash: r.record_hash,
+                replica_id: r.replica_id,
+                payload: r.payload,
+                row_hmac: r.row_hmac,
+                created_at: r.created_at,
+              })),
+              rowCount: page.length,
+            }) as unknown as Promise<PgQueryResult<R>>;
+          },
+          release() { /* no-op */ },
+        };
+        return Promise.resolve(client);
+      },
+      end() {
+        closed = true;
+        return Promise.resolve();
+      },
+    };
+    return Object.assign(pool, { get closed() { return closed; } });
+  }
+
+  function makeRow(seq: number, overrides: Partial<Record<string, unknown>> = {}): {
+    seq: number;
+    previous_hash: string;
+    record_hash: string;
+    replica_id: string;
+    payload: Record<string, unknown>;
+    row_hmac: Buffer;
+    created_at: Date;
+  } {
+    return {
+      seq,
+      previous_hash: 'hash-prev',
+      record_hash: `hash-${seq}`,
+      replica_id: 'r1',
+      payload: {
+        id: `ev-${seq}`,
+        tenantId: 'tenant-1',
+        agentId: 'agent-1',
+        decision: 'allow',
+        capabilityId: `cap-${seq}`,
+        ts: new Date(1700000000000 + seq * 1000).toISOString(),
+        ...overrides,
+      },
+      row_hmac: Buffer.alloc(32, seq),
+      created_at: new Date(1700000000000 + seq * 1000),
+    };
+  }
+
+  it('implements AuditQueryStore', () => {
+    const pool = makeQueryPool([]);
+    const store: AuditQueryStore = new PostgresAuditQueryStore(pool);
+    expect(typeof store.queryEntries).toBe('function');
+  });
+
+  it('returns all rows when no filter is applied', async () => {
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({}, { limit: 10 });
+    expect(result.entries).toHaveLength(3);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('returns an empty result when the table is empty', async () => {
+    const pool = makeQueryPool([]);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({}, {});
+    expect(result.entries).toHaveLength(0);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('filters by tenantId via JSONB predicate', async () => {
+    const rows = [
+      makeRow(1, { tenantId: 'tenant-A' }),
+      makeRow(2, { tenantId: 'tenant-B' }),
+      makeRow(3, { tenantId: 'tenant-A' }),
+    ];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({ tenantId: 'tenant-A' }, { limit: 10 });
+    expect(result.entries).toHaveLength(2);
+    for (const e of result.entries) {
+      expect(e.signedEvidence.tenantId).toBe('tenant-A');
+    }
+  });
+
+  it('filters by decision via JSONB predicate', async () => {
+    const rows = [
+      makeRow(1, { decision: 'allow' }),
+      makeRow(2, { decision: 'deny' }),
+      makeRow(3, { decision: 'allow' }),
+    ];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({ decision: 'deny' }, { limit: 10 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]!.signedEvidence.decision).toBe('deny');
+  });
+
+  it('filters by agentId via JSONB predicate', async () => {
+    const rows = [
+      makeRow(1, { agentId: 'agent-X' }),
+      makeRow(2, { agentId: 'agent-Y' }),
+    ];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({ agentId: 'agent-X' }, { limit: 10 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]!.signedEvidence.agentId).toBe('agent-X');
+  });
+
+  it('filters by denialCode via JSONB predicate', async () => {
+    const rows = [
+      makeRow(1, { decision: 'deny', denialCode: 'QUOTA_EXCEEDED' }),
+      makeRow(2, { decision: 'allow' }),
+      makeRow(3, { decision: 'deny', denialCode: 'CONDITION_FAILED' }),
+    ];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({ denialCode: 'QUOTA_EXCEEDED' }, { limit: 10 });
+    expect(result.entries).toHaveLength(1);
+  });
+
+  it('filters by jti (capabilityId) via JSONB predicate', async () => {
+    const rows = [
+      makeRow(1, { capabilityId: 'cap-abc' }),
+      makeRow(2, { capabilityId: 'cap-xyz' }),
+    ];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({ jti: 'cap-abc' }, { limit: 10 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]!.signedEvidence.capabilityId).toBe('cap-abc');
+  });
+
+  it('returns nextCursor when there are more rows than limit', async () => {
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    // limit=2 fetches limit+1=3 rows; 3 rows available → hasMore=true → cursor='2'
+    const result = await store.queryEntries({}, { limit: 2 });
+    expect(result.entries).toHaveLength(2);
+    expect(result.nextCursor).toBe('2');
+  });
+
+  it('returns undefined nextCursor when the last page is reached', async () => {
+    const rows = [makeRow(1), makeRow(2)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({}, { limit: 10 });
+    expect(result.entries).toHaveLength(2);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('returns results in ascending order by default', async () => {
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({}, { limit: 10, direction: 'asc' });
+    const seqs = result.entries.map((e) => e.seq);
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  it('returns results in descending order when direction=desc', async () => {
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    const result = await store.queryEntries({}, { limit: 10, direction: 'desc' });
+    const seqs = result.entries.map((e) => e.seq);
+    expect(seqs).toEqual([3, 2, 1]);
+  });
+
+  it('respects a cursor in ascending mode (returns entries after the cursor seq)', async () => {
+    const rows = [makeRow(1), makeRow(2), makeRow(3), makeRow(4)];
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    // cursor='2' in asc mode → only seq > 2
+    const result = await store.queryEntries({}, { limit: 10, direction: 'asc', cursor: '2' });
+    const seqs = result.entries.map((e) => e.seq);
+    expect(seqs).toEqual([3, 4]);
+  });
+
+  it('caps result count at LEDGER_QUERY_MAX_LIMIT (1000) even when a higher limit is requested', async () => {
+    // Build more than 1000 rows to exceed the cap.
+    const rows = Array.from({ length: 1002 }, (_, i) => makeRow(i + 1));
+    const pool = makeQueryPool(rows);
+    const store = new PostgresAuditQueryStore(pool);
+
+    // Requesting more than the hard cap should be silently clamped.
+    const result = await store.queryEntries({}, { limit: 5000 });
+    expect(result.entries.length).toBeLessThanOrEqual(1000);
+  });
+
+  it('uses the custom table name supplied in options', async () => {
+    const capturedSql: string[] = [];
+    const pool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql);
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+
+    const store = new PostgresAuditQueryStore(pool, { table: 'audit.custom_table' });
+    await store.queryEntries({}, {});
+
+    expect(capturedSql.some((s) => s.includes('audit.custom_table'))).toBe(true);
+  });
+
+  it('does not carry chain state, HMAC material, or advisory lock operations', async () => {
+    const capturedSql: string[] = [];
+    const pool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql.trim().toUpperCase());
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+
+    const store = new PostgresAuditQueryStore(pool);
+    await store.queryEntries({}, {});
+
+    // Must not issue BEGIN/COMMIT/ROLLBACK (no transaction needed for a plain SELECT).
+    expect(capturedSql).not.toContain('BEGIN');
+    expect(capturedSql).not.toContain('COMMIT');
+    // Must not acquire advisory locks.
+    expect(capturedSql.some((s) => s.includes('PG_ADVISORY'))).toBe(false);
+    // Must issue exactly one SELECT.
+    expect(capturedSql.filter((s) => s.startsWith('SELECT')).length).toBe(1);
+  });
+
+  it('delegates close() to pool.end()', async () => {
+    const rows: never[] = [];
+    const rawPool = makeQueryPool(rows);
+    // Access the `closed` state via Object.defineProperty so the getter closure
+    // is correctly propagated (Object.assign copies values, not getters).
+    let _closed = false;
+    const origEnd = rawPool.end.bind(rawPool);
+    const pool: typeof rawPool & { readonly closed: boolean } = Object.defineProperty(
+      Object.assign(rawPool, {
+        async end() { await origEnd(); _closed = true; },
+      }),
+      'closed',
+      { get: () => _closed, enumerable: true },
+    ) as typeof rawPool & { readonly closed: boolean };
+
+    const store = new PostgresAuditQueryStore(pool);
+    expect(pool.closed).toBe(false);
+    await store.close!();
+    expect(pool.closed).toBe(true);
+  });
+
+  it('ignores a malformed cursor (partial-numeric like "10abc") instead of silently truncating', async () => {
+    // Before the strict-parse fix, parseInt("10abc", 10) → 10, which would
+    // silently apply a seq > 10 predicate. Now parseCursorSeq rejects non-all-digit
+    // strings, so the cursor condition is omitted and all rows are returned.
+    const rows = [makeRow(1), makeRow(2), makeRow(3)];
+    const capturedParams: unknown[][] = [];
+    const pool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(_sql: string, params: unknown[]): Promise<PgQueryResult<R>> {
+          capturedParams.push(params);
+          return Promise.resolve({ rows: rows as unknown as R[], rowCount: rows.length }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const store = new PostgresAuditQueryStore(pool);
+    await store.queryEntries({}, { cursor: '10abc' });
+
+    // None of the captured params should equal 10 (the would-be truncated cursor seq).
+    const allParams = capturedParams.flat();
+    expect(allParams).not.toContain(10);
+  });
+
+  it('rejects an invalid table name with a PostgresAuditQueryStore-prefixed error', () => {
+    const pool = makeQueryPool([]);
+    expect(() => new PostgresAuditQueryStore(pool, { table: 'bad name; DROP TABLE x' })).toThrow(
+      /PostgresAuditQueryStore/,
+    );
   });
 });

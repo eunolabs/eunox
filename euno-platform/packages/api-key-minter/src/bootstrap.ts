@@ -23,7 +23,7 @@
  */
 import * as http from 'http';
 import * as crypto from 'crypto';
-import { createLogger } from '@euno/common';
+import { createLogger, loadConfigOrExit } from '@euno/common';
 import { createKmsTokenSignerFromEnv } from '@euno/common-infra';
 import { validateProductionMinterConfig } from './production-guard';
 import { InMemoryApiKeyStore } from './api-key-store';
@@ -51,27 +51,20 @@ async function main(): Promise<void> {
   // Must run before any resource allocation so startup fails fast and cleanly.
   validateProductionMinterConfig(process.env);
 
-  const port = parseInt(process.env['MINTER_PORT'] ?? '3004', 10);
-  if (isNaN(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid MINTER_PORT: ${process.env['MINTER_PORT']}. Must be 1–65535.`);
-  }
-  const issuerDid = process.env['MINTER_ISSUER_DID'] ?? 'did:web:minter.euno.local';
-  const gatewayAudience = process.env['MINTER_GATEWAY_AUDIENCE'] ?? 'tool-gateway';
+  // ── Typed configuration ─────────────────────────────────────────────────────
+  // Validates and coerces all env vars into their typed counterparts.
+  // Exits with a structured error report on misconfiguration.
+  const config = loadConfigOrExit(process.env, 'minter');
 
-  // Validate MINTER_TOKEN_TTL_SECONDS: must parse to a finite positive integer ≤ max.
-  const ttlRaw = parseInt(process.env['MINTER_TOKEN_TTL_SECONDS'] ?? '300', 10);
-  if (!Number.isFinite(ttlRaw) || !Number.isInteger(ttlRaw) || ttlRaw <= 0) {
-    throw new Error(
-      `Invalid MINTER_TOKEN_TTL_SECONDS: ${process.env['MINTER_TOKEN_TTL_SECONDS']}. Must be a positive integer.`,
-    );
-  }
-  const ttlSeconds = ttlRaw;
+  const port = config.MINTER_PORT;
+  const issuerDid = config.MINTER_ISSUER_DID ?? 'did:web:minter.euno.local';
+  const gatewayAudience = config.MINTER_GATEWAY_AUDIENCE ?? 'tool-gateway';
+  const ttlSeconds = config.MINTER_TOKEN_TTL_SECONDS;
+  const adminApiKey = config.MINTER_ADMIN_API_KEY ?? 'dev-admin-key';
+  const rlMaxRaw = config.MINTER_RATE_LIMIT_MAX;
+  const rlWindowRaw = config.MINTER_RATE_LIMIT_WINDOW_SECONDS;
 
-  const adminApiKey = process.env['MINTER_ADMIN_API_KEY'] ?? 'dev-admin-key';
-
-  // Validate MINTER_PEPPER_HEX: must be a valid lowercase hex string that decodes
-  // to exactly 32 bytes (256-bit pepper).
-  const pepperHex = process.env['MINTER_PEPPER_HEX'];
+  const pepperHex = config.MINTER_PEPPER_HEX;
   let peppers: PepperEntry[];
   if (pepperHex) {
     if (!/^[0-9a-fA-F]{64}$/.test(pepperHex)) {
@@ -79,38 +72,24 @@ async function main(): Promise<void> {
         'Invalid MINTER_PEPPER_HEX: must be a 64-character hex string (32 bytes / 256-bit pepper).',
       );
     }
-    peppers = [{ version: process.env['MINTER_PEPPER_VERSION'] ?? 'v1', key: Buffer.from(pepperHex, 'hex') }];
+    peppers = [{ version: config.MINTER_PEPPER_VERSION ?? 'v1', key: Buffer.from(pepperHex, 'hex') }];
   } else {
     logger.warn('MINTER_PEPPER_HEX not set; using ephemeral random pepper (dev mode only — keys will not survive restarts)');
     peppers = [{ version: 'dev', key: crypto.randomBytes(32) }];
   }
 
-  // Validate rate-limiter env vars: must be finite positive integers.
-  const rlMaxRaw = parseInt(process.env['MINTER_RATE_LIMIT_MAX'] ?? '100', 10);
-  if (!Number.isFinite(rlMaxRaw) || !Number.isInteger(rlMaxRaw) || rlMaxRaw <= 0) {
-    throw new Error(
-      `Invalid MINTER_RATE_LIMIT_MAX: ${process.env['MINTER_RATE_LIMIT_MAX']}. Must be a positive integer.`,
-    );
-  }
-  const rlWindowRaw = parseInt(process.env['MINTER_RATE_LIMIT_WINDOW_SECONDS'] ?? '60', 10);
-  if (!Number.isFinite(rlWindowRaw) || !Number.isInteger(rlWindowRaw) || rlWindowRaw <= 0) {
-    throw new Error(
-      `Invalid MINTER_RATE_LIMIT_WINDOW_SECONDS: ${process.env['MINTER_RATE_LIMIT_WINDOW_SECONDS']}. Must be a positive integer.`,
-    );
-  }
-
   let signer: TokenSigner;
 
-  const privateKeyPem = process.env['MINTER_PRIVATE_KEY_PEM'];
-  const publicKeyPem = process.env['MINTER_PUBLIC_KEY_PEM'];
+  const privateKeyPem = config.MINTER_PRIVATE_KEY_PEM;
+  const publicKeyPem = config.MINTER_PUBLIC_KEY_PEM;
 
   // 1. KMS provider (production — HSM-backed, non-exportable keys)
-  const kmsProvider = process.env['MINTER_KMS_PROVIDER'];
+  const kmsProvider = config.MINTER_KMS_PROVIDER;
   const kmsSigner = createKmsTokenSignerFromEnv(process.env);
   if (kmsSigner) {
     logger.info('Using KMS-backed token signer', {
       provider: kmsProvider,
-      algorithm: kmsSigner.getAlgorithm() ?? process.env['MINTER_SIGNING_ALGORITHM'] ?? 'ES256',
+      algorithm: kmsSigner.getAlgorithm() ?? config.MINTER_SIGNING_ALGORITHM ?? 'ES256',
     });
     // Wrap with MeteredTokenSigner so sign latency and KMS errors are tracked.
     signer = new MeteredTokenSigner(kmsSigner, kmsProvider ?? 'unknown');
@@ -126,7 +105,7 @@ async function main(): Promise<void> {
   // ── Audit store ────────────────────────────────────────────────────────────
   // Production: Postgres-backed append-only store with separate credentials.
   // Dev: in-memory (audit trail lost on restart).
-  const auditDbUrl = process.env['MINTER_AUDIT_DB_URL'];
+  const auditDbUrl = config.MINTER_AUDIT_DB_URL;
   let auditStoreBase: InMemoryMintAuditStore | PostgresMintAuditStore;
   if (auditDbUrl) {
     // Dynamically require 'pg' so the package is not a hard deploy-time
@@ -146,7 +125,7 @@ async function main(): Promise<void> {
     // Only run DDL when explicitly requested so the service can start under an
     // INSERT-only role (the recommended least-privilege configuration described
     // in the threat model §6).  Schema should be deployed via a migration step.
-    if (process.env['MINTER_AUDIT_SCHEMA_INIT']?.toLowerCase() === 'true') {
+    if (config.MINTER_AUDIT_SCHEMA_INIT) {
       await pgAuditStore.ensureSchema();
       logger.info('Postgres mint audit schema initialised');
     } else {
@@ -168,7 +147,7 @@ async function main(): Promise<void> {
   // Production: Postgres-backed durable store — keys survive restarts and
   // rolling deploys.
   // Dev: in-memory (all keys lost on restart).
-  const apiKeyDbUrl = process.env['MINTER_API_KEY_DB_URL'];
+  const apiKeyDbUrl = config.MINTER_API_KEY_DB_URL;
   let keyStore: InMemoryApiKeyStore | PostgresApiKeyStore;
   if (apiKeyDbUrl) {
     let pgKeyModule: { Pool: new (opts: { connectionString: string }) => unknown };
@@ -183,7 +162,7 @@ async function main(): Promise<void> {
     }
     const keyPool = new pgKeyModule.Pool({ connectionString: apiKeyDbUrl });
     const pgKeyStore = new PostgresApiKeyStore(keyPool as ApiKeyPgPool);
-    if (process.env['MINTER_API_KEY_SCHEMA_INIT']?.toLowerCase() === 'true') {
+    if (config.MINTER_API_KEY_SCHEMA_INIT) {
       await pgKeyStore.ensureSchema();
       logger.info('Postgres API-key store schema initialised');
     } else {
@@ -210,12 +189,12 @@ async function main(): Promise<void> {
   // Anomaly detector — fleet-wide when ANOMALY_REDIS_URL or REDIS_URL is
   // configured (CR-4: backs bucket state in Redis so all replicas share a
   // coherent view), per-replica in-memory otherwise.
-  const replicaId = process.env['MINTER_REPLICA_ID'] ?? os.hostname();
+  const replicaId = config.MINTER_REPLICA_ID ?? os.hostname();
   const anomalyDetector = createAnomalyDetectorFromEnv(process.env, { replicaId });
   if (anomalyDetector instanceof RedisAnomalyDetector) {
     logger.info('Using Redis-backed anomaly detector (fleet-wide view)', {
       replicaId,
-      redisUrl: (process.env['ANOMALY_REDIS_URL'] ?? process.env['REDIS_URL'] ?? '').replace(
+      redisUrl: (config.ANOMALY_REDIS_URL ?? config.REDIS_URL ?? '').replace(
         /\/\/[^@/\s]*@/,
         '//<redacted>@',
       ),
@@ -237,7 +216,7 @@ async function main(): Promise<void> {
     logger.info(
       'Admin JWT auth enabled (primary path). ' +
       'X-Admin-Key is the explicit temporary fallback.',
-      { jwksUri: process.env['MINTER_ADMIN_JWKS_URI'] },
+      { jwksUri: config.MINTER_ADMIN_JWKS_URI },
     );
   } else {
     logger.warn(

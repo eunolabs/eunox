@@ -158,16 +158,39 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
 
 ## P2 — Longer-horizon maintainability and architecture simplification
 
-9. **Separate immutable evidence storage from query storage**
+9. **Separate immutable evidence storage from query storage** ✅ DONE
    - Keep the cryptographic ledger focused on integrity and append semantics.
    - Serve tenant/operator queries from a query-optimized store or projection.
    - Dependencies: Task 8.
+   - **Fix:** Added `AuditQueryStore` interface and `PostgresAuditQueryStore` class to
+     `euno-platform/packages/common-infra/src/ledger-signer.ts`. The interface isolates the
+     SELECT-only read path from `LedgerBackend` (which owns chain state, advisory locks,
+     and HMAC material). `PostgresAuditQueryStore` is a thin, transaction-free wrapper that
+     issues a single `SELECT … WHERE … ORDER BY seq … LIMIT` query per call — no advisory
+     locks, no HMAC secrets required. Updated `routes/audit.ts` to accept `AuditQueryStore`
+     instead of `LedgerBackend`, updated `AuditModuleResult` and `buildAuditModule` to
+     produce a `PostgresAuditQueryStore` for `postgres` and `per-replica-postgres` backends
+     (backed by the same pool as the write backend — no extra connections), and updated
+     `app-factory.ts` with backward-compat fallback to `auditLedgerBackend`. 16 new tests in
+     `euno-platform/packages/common/tests/ledger-signer.test.ts`.
 
-10. **Align issuer and minter bootstrap patterns with the gateway**
+10. **Align issuer and minter bootstrap patterns with the gateway** ✅ DONE
     - Move remaining large bootstraps toward typed config loading and explicit
       composition boundaries.
     - Reduce environment parsing drift and production/dev behavior mismatches.
     - Dependencies: Task 1.
+    - **Fix:** Added `MinterConfigSchema` and `MinterConfig` to
+      `public/packages/common/src/config/schema.ts`. Registered `'minter'` in
+      `EUNO_SERVICE_NAMES`, `EUNO_CONFIG_SCHEMAS`, `EunoConfigFor`, and `EunoConfig`.
+      Added `'minter'` header to `SERVICE_HEADERS` in `dump-template.ts`.
+      Updated minter `bootstrap.ts` to call `loadConfigOrExit(process.env, 'minter')`
+      at startup and access all env vars through the typed `MinterConfig` object — eliminating
+      all ad-hoc `parseInt`/`process.env[...]` reads with inline validation.
+      `MinterConfigSchema.superRefine` validates the same production constraints as
+      `validateProductionMinterConfig` (ADMIN_API_KEY, PEPPER_HEX, signing key, both DB URLs)
+      so misconfiguration is caught by both the Zod loader and the existing production guard.
+      25 new tests in `tests/config.test.ts` (common package): 22 schema/validation tests
+      and 3 dumpEnvTemplate tests.
 
 ---
 
@@ -176,4 +199,4 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
 1. Tasks 1, 4
 2. Tasks 2, 3, 5
 3. Tasks 6, 7, 8 ✅ DONE
-4. Tasks 9, 10
+4. Tasks 9, 10 ✅ DONE
