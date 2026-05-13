@@ -100,6 +100,16 @@ export interface EnforceRouterOptions {
 // ---------------------------------------------------------------------------
 
 /**
+ * The set of context field names that are understood by the enforcement engine.
+ * Unknown fields are stripped in {@link parseEnforceRequestBody} before the
+ * request is passed to condition handlers or written to audit records.
+ *
+ * Declared as a module-level constant to avoid repeated allocation on every
+ * request.
+ */
+const KNOWN_CONTEXT_FIELDS = new Set<string>(['sourceIp', 'recipients', 'now']);
+
+/**
  * Normalize an IPv4-mapped IPv6 address (e.g. `::ffff:127.0.0.1`) to its
  * plain IPv4 form (`127.0.0.1`). Other addresses are returned unchanged.
  *
@@ -243,7 +253,6 @@ function parseEnforceRequestBody(body: unknown): EnforceRequest {
   // condition handler and retaining them would allow untrusted client data to
   // pollute the ConditionContext and potentially reach log sinks or SIEM
   // pipelines in an unexpected shape.
-  const KNOWN_CONTEXT_FIELDS = new Set<string>(['sourceIp', 'recipients', 'now']);
   for (const key of Object.keys(ctx)) {
     if (!KNOWN_CONTEXT_FIELDS.has(key)) {
       delete ctx[key];

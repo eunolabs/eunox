@@ -318,8 +318,12 @@ export async function createPingRateLimiterFromEnv(
 
   let RedisCtor: unknown;
   try {
-    // ioredis is an optional peer dependency; require() is intentional so that
-    // TypeScript does not attempt to resolve types for an uninstalled module.
+    // ioredis is an optional peer dependency.  We use require() rather than
+    // await import() because this function is synchronous-style — it does not
+    // need the async microtask overhead just to load a module — and because
+    // require() gives synchronous error handling (the catch block below) for
+    // the "ioredis not installed" path. Both factories (createPingRateLimiterFromEnv
+    // and createMintRateLimiterFromEnv) use the same pattern for consistency.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {
@@ -405,8 +409,12 @@ export async function createMintRateLimiterFromEnv(
 
   let RedisCtor: unknown;
   try {
-    // ioredis is an optional peer dependency; require() is intentional so that
-    // TypeScript does not attempt to resolve types for an uninstalled module.
+    // ioredis is an optional peer dependency.  We use require() rather than
+    // await import() because this function is synchronous-style — it does not
+    // need the async microtask overhead just to load a module — and because
+    // require() gives synchronous error handling (the catch block below) for
+    // the "ioredis not installed" path. Both factories (createPingRateLimiterFromEnv
+    // and createMintRateLimiterFromEnv) use the same pattern for consistency.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {

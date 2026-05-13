@@ -245,21 +245,19 @@ async function main(): Promise<void> {
 
   const server = http.createServer(app);
 
-  logger.info('Minter startup complete', {
-    port,
-    environment: config.NODE_ENV,
-    signerType: kmsSigner ? 'kms' : (privateKeyPem ? 'local-pem' : 'ephemeral'),
-    auditStore: auditDbUrl ? 'postgres' : 'in-memory',
-    apiKeyStore: apiKeyDbUrl ? 'postgres' : 'in-memory',
-    rateLimiterType: rateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
-    anomalyDetectorType: anomalyDetector instanceof RedisAnomalyDetector ? 'redis' : 'in-memory',
-    pingRateLimiterType: pingRateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
-    issuerDid,
-    gatewayAudience,
-  });
-
   server.listen(port, () => {
-    logger.info('Minter listening', { port });
+    logger.info('Minter ready', {
+      port,
+      environment: config.NODE_ENV,
+      signerType: kmsSigner ? 'kms' : (privateKeyPem ? 'local-pem' : 'ephemeral'),
+      auditStore: auditDbUrl ? 'postgres' : 'in-memory',
+      apiKeyStore: apiKeyDbUrl ? 'postgres' : 'in-memory',
+      rateLimiterType: rateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
+      anomalyDetectorType: anomalyDetector instanceof RedisAnomalyDetector ? 'redis' : 'in-memory',
+      pingRateLimiterType: pingRateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
+      issuerDid,
+      gatewayAudience,
+    });
   });
 
   const shutdown = (): void => {
