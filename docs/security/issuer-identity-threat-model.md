@@ -15,11 +15,14 @@
 ## Background
 
 The API-key minter threat model ([`docs/security/minter-threat-model.md`](./minter-threat-model.md))
-covered the case where a managed signing key with platform-wide blast radius signs tokens
-on behalf of opaque API keys. Stage 4 promotes the capability issuer from an internal
-token factory to a first-class user-facing service that accepts authenticated end-users
-via enterprise Identity Providers (Entra ID, AWS Cognito) and mints signed capability
-tokens bound to their verified identity and role.
+covered the case where a managed signing authority with high blast radius if the minter
+service identity is compromised signs tokens on behalf of opaque API keys (the minter
+uses per-tenant HSM keys, so the blast radius of an individual key compromise is one
+tenant, but a compromise of the minter *service identity* can request signatures across
+all tenants that identity can reach). Stage 4 promotes the capability issuer from an
+internal token factory to a first-class user-facing service that accepts authenticated
+end-users via enterprise Identity Providers (Entra ID, AWS Cognito) and mints signed
+capability tokens bound to their verified identity and role.
 
 This changes the attack surface in three important ways relative to Stage 3:
 
@@ -176,13 +179,21 @@ The issuer includes a `nonce` claim in every authorization request sent to the I
 
 On receiving the ID token from the IdP, the issuer verifies:
 - `nonce` in the ID token matches the `nonce` sent in the authorization request.
-- The `nonce` has not been seen before (the issuer maintains a per-tenant
-  short-lived nonce cache with TTL = max IdP token lifetime + 60 seconds, backed by
-  Redis when available and falling back to an in-process LRU cache).
+- The `nonce` has not been seen before. The nonce deduplication store operates in one
+  of two modes:
+  - **Redis not configured** (single-replica deployments): an in-process LRU cache
+    with TTL = max IdP token lifetime + 60 seconds is used. This provides adequate
+    replay protection for single-process deployments and is acceptable in development.
+  - **Redis configured**: the nonce is checked and recorded in Redis with the same TTL.
+    This is required for multi-replica hosted deployments, where an in-process cache
+    would miss replays routed to a different pod.
 
-**Fail-closed:** if the Redis nonce store is unavailable, the issuer rejects issuance
-(`NONCE_STORE_UNAVAILABLE` → 503). The cache is intentionally fail-closed, not
-fail-open, because a failed nonce check opens a replay window.
+**Fail-closed when Redis is configured but unavailable:** if the issuer is configured
+to use Redis for nonce deduplication (`ISSUER_NONCE_REDIS_URL` or `REDIS_URL` is set)
+and the Redis connection fails at issuance time, the issuer rejects the request with
+`NONCE_STORE_UNAVAILABLE` → 503. Falling back to the in-process cache when Redis is
+down would allow replay across pods, which defeats the purpose of Redis deduplication.
+The in-process fallback is **only** active when Redis is not configured at all.
 
 ### 2.3 ID-token claim validation
 
@@ -191,11 +202,11 @@ JOSE validation via the `jose` library before returning a `UserContext`:
 
 | Claim | Validation |
 |---|---|
-| `aud` | Must exactly match the configured `ISSUER_AZURE_AUDIENCE` or `ISSUER_COGNITO_CLIENT_ID`. Validation rejects the token if the audience is absent or is an array that does not include the expected value. |
+| `aud` | Must exactly match the configured `AZURE_AD_CLIENT_ID` (for Entra ID) or `AWS_COGNITO_CLIENT_ID` (for Cognito ID tokens; access tokens are verified via the `client_id` claim instead). Validation rejects the token if the audience is absent or is an array that does not include the expected value. |
 | `iss` | Must exactly match the tenant's configured OIDC issuer URL (e.g., `https://login.microsoftonline.com/<tid>/v2.0` or `https://cognito-idp.<region>.amazonaws.com/<poolId>`). |
 | `exp` | Must be in the future; the issuer applies a 60-second clock-skew tolerance. Tokens more than 60 seconds past their `exp` are rejected. |
 | `iat` | Must be in the past; the issuer rejects tokens with an `iat` more than 60 seconds in the future (anti-clockskew-future). |
-| Signature | Verified against the IdP's JWKS endpoint, fetched at startup and refreshed every 15 minutes (configurable via `ISSUER_JWKS_CACHE_TTL_SECONDS`). A failed JWKS refresh does not invalidate the current cache (fail-safe for JWKS endpoint flaps), but a cache older than `2 × ISSUER_JWKS_CACHE_TTL_SECONDS` causes the issuer to reject tokens until the JWKS is refreshed. |
+| Signature | Verified against the IdP's JWKS endpoint. The `AzureADIdentityProvider` and `AWSCognitoIdentityProvider` use `jose.createRemoteJWKSet()`, which handles caching and refresh internally. The gateway's own JWKS verifier (for capability tokens) uses `EUNO_JWKS_CACHE_TTL_SECONDS` (existing config, default 300 s; defined in `public/packages/common/src/config/schema.ts`). The IdP-side JWKS refresh interval for the issuer's identity providers is controlled by `jose.createRemoteJWKSet()`'s internal defaults; Task 2 must wire an explicit cache TTL option and document the corresponding env var if configurable behaviour is required. A failed JWKS refresh does not invalidate the current cache (fail-safe for JWKS endpoint flaps); the issuer rejects tokens only if no cached JWKS is available at all. |
 | `alg` | Only `RS256` and `ES256` are accepted. `none` and symmetric algorithms (`HS256`, etc.) are explicitly rejected. |
 
 Validation is performed **before** any role lookup or capability derivation. If any
@@ -333,13 +344,18 @@ misconfigured manifest that widens capabilities):
 
 2. **Active tokens:** Existing tokens already issued under the malicious template remain
    valid until their `exp`. Use the issuer's audit log to enumerate all `jti` values
-   issued with the affected `policyHash` (the `ISSUANCE` audit row includes `policyHash`):
+   issued with the affected `policyHash` (the `ISSUANCE` audit row includes `policyHash`
+   in its `payload` JSONB). The issuer writes to the same `euno_audit_ledger` table used
+   by the gateway (configurable via `PostgresLedgerOptions.table`; default
+   `euno_audit_ledger`):
 
    ```sql
-   SELECT token_id, user_id, agent_id, exp
-   FROM euno_issuer_audit
+   SELECT payload->>'capabilityId' AS token_id,
+          payload->>'userId'       AS user_id,
+          payload->>'agentId'      AS agent_id
+   FROM euno_audit_ledger
    WHERE payload->>'policyHash' = :affected_policy_hash
-     AND payload->>'decision' = 'allow'
+     AND payload->>'decision'   = 'allow'
    ORDER BY created_at DESC;
    ```
 

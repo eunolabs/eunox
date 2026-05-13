@@ -79,31 +79,43 @@ non-primary for Stage 4 hosted.
 
 ### 1.3 Configuration surface
 
-Both IdPs are activated via the `ISSUER_IDP_PROVIDER` environment variable and their
-respective provider-specific variables. The config schema (`MinterConfigSchema`-equivalent
-for the issuer, to be finalised in Task 2) handles both:
+The issuer's `index.ts` already reads IdP selection and provider settings using the
+following validated env var names (confirmed in `euno-platform/packages/capability-issuer/src/index.ts`
+via `loadConfigOrExit(process.env, 'issuer')`):
 
 ```
 # Select the primary IdP for this deployment
-ISSUER_IDP_PROVIDER=azure|cognito|gcp
+IDENTITY_PROVIDER=azure-ad|aws-cognito|gcp-identity
 
 # Azure AD (Entra ID)
-ISSUER_AZURE_TENANT_ID=<guid>
-ISSUER_AZURE_CLIENT_ID=<guid>
-ISSUER_AZURE_CLIENT_SECRET=<secret>   # injected from secret manager, not baked in
-ISSUER_AZURE_AUDIENCE=<app-id-uri>
-ISSUER_AZURE_JWKS_URI=https://login.microsoftonline.com/<tid>/discovery/v2.0/keys
+AZURE_AD_TENANT_ID=<guid>
+AZURE_AD_CLIENT_ID=<guid>
+AZURE_AD_CLIENT_SECRET=<secret>   # injected from secret manager, not baked in
+AZURE_AD_AUTHORITY=https://login.microsoftonline.com/<tid>
 
 # AWS Cognito
-ISSUER_COGNITO_USER_POOL_ID=<region>_<id>
-ISSUER_COGNITO_CLIENT_ID=<client-id>
-ISSUER_COGNITO_REGION=<region>
-ISSUER_COGNITO_TOKEN_USE=id|access   # default: id
+AWS_COGNITO_USER_POOL_ID=<region>_<id>
+AWS_COGNITO_CLIENT_ID=<client-id>
+AWS_COGNITO_REGION=<region>
+AWS_COGNITO_ISSUER=<optional explicit issuer URL>
+AWS_COGNITO_JWKS_URI=<optional explicit JWKS URI>
+AWS_COGNITO_TOKEN_USE=id|access   # default: id
+
+# GCP Cloud Identity
+GCP_IDENTITY_AUDIENCE=<audience>
+GCP_IDENTITY_ISSUER=<issuer URL>
+GCP_IDENTITY_JWKS_URI=<JWKS URI>
+GCP_IDENTITY_PROJECT_ID=<project>
+GCP_IDENTITY_ROLES_CLAIM=<claim name>
 ```
 
-Per-tenant IdP overrides follow the same tenant-config loader pattern used in
-`api-key-minter` (loaded from the Postgres tenant-config table at bootstrap;
-refreshed on SIGHUP).
+These names are the **existing** validated config surface of the issuer package. Task 2
+works within this surface; no renaming is required.
+
+Per-tenant IdP overrides are a **new component** to be designed and built in Task 2.
+No per-tenant config loader or hot-reload mechanism currently exists in the codebase.
+Task 2 must specify and implement the tenant-config storage and refresh strategy; this
+RFC defers that design to the Task 2 implementer.
 
 ---
 
@@ -187,6 +199,13 @@ CREATE TABLE euno_issuer.templates (
 CREATE INDEX idx_templates_owner
   ON euno_issuer.templates (owner_tenant_id)
   WHERE deleted_at IS NULL;
+
+-- Enforce name uniqueness per tenant among active (non-deleted) templates.
+-- Soft-deleted names are intentionally excluded so a new template may reuse a
+-- deleted name after soft-deletion.
+CREATE UNIQUE INDEX idx_templates_name_unique
+  ON euno_issuer.templates (owner_tenant_id, name)
+  WHERE deleted_at IS NULL;
 ```
 
 **Soft-delete semantics:** setting `deleted_at` prevents new assignments but does not
@@ -248,15 +267,24 @@ CREATE INDEX idx_template_assignments_lookup
   ON euno_issuer.template_assignments (tenant_id, agent_id, role)
   WHERE revoked_at IS NULL;
 
+-- Enforce at most one active assignment per (tenant_id, agent_id, role) at the DB level.
+-- Using a partial unique index rather than an application-layer check prevents races
+-- under concurrent assigns while keeping revoked assignments visible in the audit trail.
+CREATE UNIQUE INDEX idx_template_assignments_active_unique
+  ON euno_issuer.template_assignments (tenant_id, agent_id, role)
+  WHERE revoked_at IS NULL;
+
 -- Audit: all assignments per template
 CREATE INDEX idx_template_assignments_template
   ON euno_issuer.template_assignments (template_id, assigned_at DESC);
 ```
 
 **Uniqueness constraint:** at most one active assignment per `(tenant_id, agent_id, role)`
-triple at any point in time. Enforced at the application layer (check before insert;
-return 409 Conflict if an active assignment already exists) rather than a database unique
-constraint, so that revoked assignments remain visible in the audit trail.
+triple at any point in time. Enforced at the database level by the partial unique index
+`idx_template_assignments_active_unique` on `(tenant_id, agent_id, role) WHERE revoked_at
+IS NULL`. This prevents races under concurrent assigns while keeping revoked assignments
+visible in the audit trail. The application layer surfaces a PostgreSQL unique-violation
+(`pg 23505`) as a 409 Conflict response.
 
 **Cross-tenant binding:** The `owner_tenant_id` on `templates` and the `tenant_id` on
 `template_assignments` may differ — a platform operator may own the template but bind it
@@ -305,7 +333,8 @@ every read and write operation is filtered to `owner_tenant_id = :tenantId`.
 }
 ```
 
-**Errors:** 400 if `name` is blank or `manifest` fails schema validation; 409 if a
+**Errors:** 400 if `name` is blank or `manifest` fails schema validation; 409 (surfaced
+from the PostgreSQL unique-violation `pg 23505` on `idx_templates_name_unique`) if a
 non-deleted template with the same name already exists in the tenant.
 
 **Audit:** `TEMPLATE_CREATED` OCSF authorization event (class_uid 3003) written for
