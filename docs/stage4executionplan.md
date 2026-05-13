@@ -362,10 +362,11 @@ profiles (Stage 3 Task 13). Stage 4 work:
 
 Token claim set is **unchanged** from Stage 3:
 
-- `iss` = the issuer service URL (was the minter URL for the Stage-3
-  on-ramp; both are valid `iss` values in the gateway's allow-list).
-- `sub` = the IdP-resolved subject (real user identity for Stage 4;
-  a synthetic `mint:<apiKeyPrefix>:<agentId>` for Stage 3).
+- `iss` = the issuer DID (`issuerDid`).
+- `sub` = the agent ID.
+- `authorizedBy.userId` = the user identity. In Stage 3, the minter
+  carries `apiKeyPrefix`; in Stage 4, the issuer carries the
+  IdP-resolved `userId`.
 - `vc` = the VC envelope built by `payload-builder.ts`. Schema
   unchanged.
 - `policyHash` = canonical hash of the resolved manifest (template
