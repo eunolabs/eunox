@@ -31,6 +31,7 @@ import {
   RoleCapabilityPolicy,
   TokenSigner,
   TransparencyLog,
+  UserContext,
   createAuditLogger,
 } from '@euno/common';
 import * as crypto from 'crypto';
@@ -44,6 +45,7 @@ import {
 import {
   AttenuateController,
   IssueController,
+  IssueFromUserContextRequest,
   MintingPipeline,
   RenewalController,
   computeCapabilityPolicyHash,
@@ -259,6 +261,14 @@ export class CapabilityIssuerService {
   private readonly region: string;
 
   /**
+   * The configured global identity provider. Stored here so
+   * {@link getIdentityProvider} can return it for callers that need to
+   * perform token validation outside the standard issuance pipeline (e.g.
+   * the OIDC code-exchange endpoint).
+   */
+  private readonly globalIdentityProvider: IdentityProvider;
+
+  /**
    * Shared minting machinery backing all three controllers.
    */
   private readonly pipeline: MintingPipeline;
@@ -278,6 +288,7 @@ export class CapabilityIssuerService {
     logger: Logger,
     options: CapabilityIssuerServiceOptions = {},
   ) {
+    this.globalIdentityProvider = identityProvider;
     // F-7: `region` is the canonical setting; `postureRegion` is the
     // legacy fallback so existing wiring keeps working unchanged.
     this.region = options.region ?? options.postureRegion ?? '';
@@ -351,6 +362,31 @@ export class CapabilityIssuerService {
    */
   getRegion(): string {
     return this.region;
+  }
+
+  /**
+   * Returns the global identity provider configured for this issuer instance.
+   * Used by the OIDC code-exchange endpoint to perform token validation
+   * against the right IdP when no per-tenant override is present.
+   */
+  getIdentityProvider(): IdentityProvider {
+    return this.globalIdentityProvider;
+  }
+
+  /**
+   * Issue a capability token from a pre-validated {@link UserContext}.
+   *
+   * Equivalent to {@link issueCapability} but skips the identity-provider
+   * token validation step. Use this when the caller has already validated
+   * the upstream IdP token (e.g. the OIDC code-exchange endpoint), so that
+   * the validation is not repeated and per-tenant IdP adapters are honoured
+   * correctly.
+   */
+  async issueCapabilityFromUserContext(
+    request: IssueFromUserContextRequest,
+    enforcement?: IssuerEnforcementContext,
+  ): Promise<IssueCapabilityResponse> {
+    return this.issueCtrl.handleFromUserContext(request, enforcement);
   }
 
   /**

@@ -47,6 +47,8 @@ import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credentia
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { DurablePostureEmitter } from '@euno/posture-emitter';
 import { parseDidWebHttpAllowList } from './did-resolver';
+import { TenantIdpRegistry } from './tenant-idp-config';
+import { OidcStateStore } from './oidc-state-store';
 
 // Load environment variables
 dotenv.config();
@@ -134,6 +136,22 @@ const config: ServiceConfig = {
 
 // Create logger
 const logger = createLogger(config.name, config.environment);
+
+/**
+ * Per-tenant IdP registry. Loaded once at startup from
+ * ISSUER_TENANT_IDP_CONFIG_FILE and reloaded on SIGHUP. Falls back to the
+ * global identity provider when a tenantId is not present in the file.
+ */
+const tenantIdpRegistry = new TenantIdpRegistry(
+  env.ISSUER_TENANT_IDP_CONFIG_FILE,
+  logger,
+);
+
+/**
+ * OIDC state store — tracks nonce/state pairs for authorize→token flows and
+ * prevents authorization-code replay (Stage-4 threat model requirement).
+ */
+const oidcStateStore = new OidcStateStore(env.OIDC_CODE_TTL_SECONDS);
 
 // Initialize signer based on configuration
 async function createSigner(): Promise<TokenSigner> {
@@ -982,6 +1000,253 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
     body.region = issuerRegion;
   }
   res.json(body);
+});
+
+/**
+ * OIDC Discovery document endpoint
+ * GET /.well-known/openid-configuration
+ * GET /.well-known/openid-configuration?tenantId=<id>
+ *
+ * Returns an RFC 8414 / OpenID Connect Discovery 1.0 document describing
+ * this issuer's OIDC capabilities. The document is used by clients (e.g. the
+ * `euno request` CLI command) to discover the authorization and token
+ * endpoints.
+ *
+ * Per-tenant: when `?tenantId=<id>` is supplied and a per-tenant IdP entry
+ * exists in ISSUER_TENANT_IDP_CONFIG_FILE, the document reflects that
+ * tenant's IdP configuration (same endpoints, but the tenant context is
+ * surfaced). The capability-issuer always issues the final capability token;
+ * only the upstream IdP changes per tenant.
+ */
+app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
+  const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+
+  // The public base URL is required to construct absolute endpoint URLs.
+  // When unset we still return a partial document (useful for introspection)
+  // but omit the endpoint URLs so clients can detect the misconfiguration.
+  const baseUrl = env.ISSUER_PUBLIC_URL ? env.ISSUER_PUBLIC_URL.replace(/\/$/, '') : undefined;
+
+  const doc: Record<string, unknown> = {
+    issuer: config.issuerDid,
+    jwks_uri: baseUrl ? `${baseUrl}/.well-known/jwks.json` : undefined,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code'],
+    subject_types_supported: ['public'],
+    id_token_signing_alg_values_supported: Array.from(SIGNING_ALGORITHMS),
+    scopes_supported: ['openid', 'profile', 'email'],
+    token_endpoint_auth_methods_supported: ['none'],
+    code_challenge_methods_supported: ['S256'],
+  };
+
+  if (baseUrl) {
+    const tenantParam = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+    doc.authorization_endpoint = `${baseUrl}/api/v1/oidc/authorize${tenantParam}`;
+    doc.token_endpoint = `${baseUrl}/api/v1/oidc/token`;
+  }
+
+  if (tenantId) {
+    // Signal which tenantId this document was constructed for.
+    doc.tenant_id = tenantId;
+    // Surface the configured provider for this tenant (or the global one).
+    const hasPerTenantConfig = !!tenantIdpRegistry.getAdapter(tenantId);
+    doc.identity_provider = hasPerTenantConfig
+      ? `per-tenant[${tenantId}]`
+      : (config.identityProvider || 'azure-ad');
+  } else {
+    doc.identity_provider = config.identityProvider || 'azure-ad';
+  }
+
+  res.json(doc);
+});
+
+/**
+ * OIDC Authorization endpoint
+ * GET /api/v1/oidc/authorize
+ *
+ * Generates a nonce + state pair, stores them in the OidcStateStore, and
+ * returns a JSON body with the upstream IdP authorization URL that the caller
+ * (typically the CLI) should open in a browser.
+ *
+ * Query parameters:
+ *   - tenantId   (optional) — select per-tenant IdP
+ *   - agentId    (required) — bound into the pending state for capability issuance
+ *   - redirectUri (optional) — the CLI's loopback redirect URI for the code
+ *
+ * The returned `state` and `nonce` must be included in the authorization
+ * request to the IdP. The `nonce` is validated when the code is exchanged via
+ * POST /api/v1/oidc/token.
+ */
+app.get('/api/v1/oidc/authorize', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
+    if (!agentId) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'agentId query parameter is required', 400);
+    }
+
+    const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const redirectUri = typeof req.query.redirectUri === 'string' ? req.query.redirectUri : undefined;
+
+    const { state, nonce } = oidcStateStore.createState({ tenantId, agentId, redirectUri });
+
+    const baseUrl = env.ISSUER_PUBLIC_URL ? env.ISSUER_PUBLIC_URL.replace(/\/$/, '') : undefined;
+
+    res.json({
+      state,
+      nonce,
+      // Convenience: include the callback URL the IdP should redirect to.
+      // Callers must include state, nonce, and code_challenge in the actual
+      // IdP auth request; the issuer does not construct that URL here because
+      // it does not hold the PKCE code_challenge (that lives client-side).
+      callbackUrl: baseUrl ? `${baseUrl}/api/v1/oidc/token` : undefined,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * OIDC Token endpoint (authorization-code exchange)
+ * POST /api/v1/oidc/token
+ *
+ * Validates a pre-exchanged IdP identity token, enforces OIDC security
+ * invariants, then issues a signed capability token. The client (typically
+ * the `euno request` CLI command) performs the PKCE code exchange directly
+ * against the upstream IdP token endpoint, then submits the resulting ID
+ * token to this endpoint along with the original authorization code (used
+ * only for replay prevention at the issuer boundary).
+ *
+ * Request body (JSON):
+ * ```json
+ * {
+ *   "idToken":        "...",        // ID token returned by the upstream IdP
+ *   "nonce":          "...",        // nonce embedded in the ID token's claims
+ *   "code":           "...",        // original authorization code (replay prevention)
+ *   "agentId":        "...",        // capability token subject
+ *   "tenantId":       "...",        // optional — selects per-tenant IdP adapter
+ *   "requestedCapabilities": [...]  // optional capability constraints
+ * }
+ * ```
+ *
+ * Security invariants enforced here (Stage-4 threat model §5):
+ *  1. **Authorization-code replay prevention** — each code value may be
+ *     submitted at most once within the OIDC_CODE_TTL_SECONDS window.
+ *  2. **Nonce binding** — the `nonce` claim inside the IdP's signed ID token
+ *     must equal the `nonce` field in the request body.
+ *  3. **Audience / issuer / expiry** — validated inside each IdP adapter via
+ *     jose `jwtVerify` (enforces `aud`, `iss`, `exp`, `iat`).
+ *  4. **Role-from-token** — capabilities are derived exclusively from the
+ *     IdP token's role claims; the request body cannot escalate privileges.
+ *  5. **State / nonce binding** (optional) — when `state` is provided and a
+ *     pending state was created via GET /api/v1/oidc/authorize, the stored
+ *     nonce is cross-checked against the request nonce before token validation.
+ */
+app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { idToken, nonce, code, state, agentId, tenantId, requestedCapabilities } = req.body ?? {};
+
+    // --- Validate required fields -------------------------------------------
+    if (typeof idToken !== 'string' || !idToken) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'idToken is required', 400);
+    }
+    if (typeof agentId !== 'string' || !agentId) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'agentId is required', 400);
+    }
+    if (typeof nonce !== 'string' || !nonce) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'nonce is required — pass the nonce that was embedded in the IdP authorization request',
+        400,
+      );
+    }
+    if (typeof code !== 'string' || !code) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'code is required for authorization-code replay prevention',
+        400,
+      );
+    }
+
+    // --- Code replay prevention (threat model §5 "IdP-token replay") ---------
+    // The code is marked as used immediately after the first submission —
+    // fail-closed semantics: even if a later step (IdP validation, issuance)
+    // fails, the same code cannot be retried. The caller must restart the
+    // authorization flow and obtain a fresh code.
+    if (oidcStateStore.isCodeUsed(code)) {
+      logger.warn('OIDC code replay attempt detected', { agentId, tenantId });
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Authorization code has already been used — request a new authorization code',
+        401,
+      );
+    }
+    // Eagerly mark the code before any remote call.
+    oidcStateStore.markCodeUsed(code);
+
+    // --- Optional state/nonce binding (if flow was started via /authorize) ---
+    if (typeof state === 'string' && state) {
+      const pending = oidcStateStore.consumeState(state);
+      if (!pending) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'Unknown or expired state parameter — restart the authorization flow',
+          401,
+        );
+      }
+      // The nonce in the request must match what was stored for this state.
+      if (pending.nonce !== nonce) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'Nonce mismatch — the nonce in the request does not match the stored state',
+          401,
+        );
+      }
+    }
+
+    // --- Resolve identity provider (per-tenant override or global) ----------
+    const effectiveTenantId = typeof tenantId === 'string' && tenantId ? tenantId : undefined;
+    const perTenantIdp = effectiveTenantId ? tenantIdpRegistry.getAdapter(effectiveTenantId) : undefined;
+    const idp = perTenantIdp ?? getIssuerService().getIdentityProvider();
+
+    // --- Validate the ID token (signature, iss, aud, exp, iat) --------------
+    const userContext = await idp.validateToken(idToken);
+
+    // --- Enforce nonce claim binding (invariant 2) --------------------------
+    // The `nonce` claim in the ID token must equal the nonce submitted by the
+    // client. This binds the token to the specific authorization request and
+    // prevents an attacker from re-using a token obtained from a different
+    // session that happens to have the same aud/iss/sub.
+    const tokenNonce = userContext.claims?.['nonce'] as string | undefined;
+    if (!tokenNonce || tokenNonce !== nonce) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Nonce claim in the ID token does not match the expected nonce',
+        401,
+      );
+    }
+
+    // --- Issue capability token from the validated UserContext --------------
+    const enforcementCtx: IssuerEnforcementContext = { clientIp: req.ip };
+    const response = await getIssuerService().issueCapabilityFromUserContext(
+      {
+        agentId,
+        userContext,
+        requestedCapabilities: Array.isArray(requestedCapabilities) ? requestedCapabilities : undefined,
+      },
+      enforcementCtx,
+    );
+
+    issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.AGENT_ID]: agentId,
+      [EUNO_ATTR.JTI]: response.tokenId,
+      [EUNO_ATTR.OUTCOME]: 'success',
+    });
+
+    res.json(response);
+  } catch (error) {
+    issuanceCounter.inc({ operation: 'issue', outcome: 'error' });
+    next(error);
+  }
 });
 
 // Error handling middleware

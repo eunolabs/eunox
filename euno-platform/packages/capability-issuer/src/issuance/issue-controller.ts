@@ -15,6 +15,7 @@
 
 import {
   ActionResolver,
+  AgentCapabilityManifest,
   AuditLogEntry,
   BUILTIN_ACTION_RESOLVER,
   CapabilityConstraint,
@@ -30,6 +31,7 @@ import {
   RoleCapabilityPolicy,
   StorageGrant,
   UserConsent,
+  UserContext,
   generateId,
   getCurrentTimestamp,
   getExpirationTimestamp,
@@ -66,6 +68,29 @@ export interface IssuerEnforcementContext {
    * Included in the issuance rate-limit key as the `ip` dimension.
    */
   clientIp?: string;
+}
+
+/**
+ * Variant of {@link IssueCapabilityRequest} for callers that have already
+ * validated the identity token (e.g. the OIDC code-exchange endpoint).
+ * Accepts a pre-validated {@link UserContext} instead of a raw `authToken`
+ * so the identity-provider round-trip is not performed twice.
+ */
+export interface IssueFromUserContextRequest {
+  /** Pre-validated user identity. */
+  userContext: UserContext;
+  /** Agent identifier requesting capabilities. */
+  agentId: string;
+  /** Optional: specific capabilities (validated against role scope). */
+  requestedCapabilities?: CapabilityConstraint[];
+  /** Optional: per-agent capability manifest for additional validation. */
+  manifest?: AgentCapabilityManifest;
+  /** Optional: explicit user consent record. */
+  consent?: UserConsent;
+  /** Optional: DPoP JWK thumbprint (sender-constrained tokens). */
+  dpopJkt?: string;
+  /** Optional: DPoP public JWK (thumbprint computed server-side). */
+  dpopJwk?: Record<string, unknown>;
 }
 
 export interface IssueControllerOptions {
@@ -376,6 +401,195 @@ export class IssueController {
       return response;
     } catch (error) {
       this.logger.error('Failed to issue capability token', {
+        agentId: request.agentId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
+
+      throw new CapabilityError(
+        ErrorCode.INTERNAL_ERROR,
+        `Failed to issue capability: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        500,
+      );
+    }
+  }
+
+  // ── Public API ────────────────────────────────────────────────────────────
+
+  /**
+   * Issue a capability token when the caller already holds a validated
+   * {@link UserContext} (e.g. the OIDC code-exchange endpoint). Skips the
+   * {@link IdentityProvider.validateToken} call in step 1; all other pipeline
+   * steps (rate limiting, PIM enforcement, consent, CA, signing, audit) are
+   * identical to {@link handle}.
+   */
+  async handleFromUserContext(
+    request: IssueFromUserContextRequest,
+    enforcement?: IssuerEnforcementContext,
+  ): Promise<IssueCapabilityResponse> {
+    try {
+      const { userContext } = request;
+
+      // Step 1a: Per-(tenantId, userId, agentId, jti, ip) issuance rate limit.
+      await this.pipeline.enforceRateLimit({
+        tenantId: userContext.tenantId,
+        userId: userContext.userId,
+        agentId: request.agentId,
+        ip: enforcement?.clientIp,
+      });
+
+      // Step 1b: Enforce PIM-required roles.
+      enforcePimRequiredRoles(
+        userContext,
+        request.agentId,
+        this.pimRequiredRoles,
+        this.auditLogger,
+      );
+
+      // Step 2: Determine capabilities based on user roles.
+      let capabilities = mapRolesToCapabilitiesForPolicy(
+        userContext.roles,
+        this.policy,
+        userContext.tenantId,
+      );
+
+      // Step 3: If specific capabilities were requested, validate them.
+      if (request.requestedCapabilities) {
+        this.assertRequestedWithinRoleScope(capabilities, request.requestedCapabilities);
+
+        if (request.manifest) {
+          validateAgainstManifest(
+            request.manifest,
+            request.agentId,
+            request.requestedCapabilities,
+          );
+        }
+
+        const requiresConsent =
+          this.requireConsent ||
+          requestedCapabilitiesIncludeSensitive(request.requestedCapabilities);
+
+        if (requiresConsent || request.consent) {
+          validateConsent(
+            request.consent,
+            userContext.userId,
+            request.agentId,
+            request.requestedCapabilities,
+          );
+        }
+
+        capabilities = request.requestedCapabilities;
+      } else if (this.requireConsent) {
+        throw new CapabilityError(
+          ErrorCode.INVALID_REQUEST,
+          'Explicit user consent (requestedCapabilities + consent) is required by this issuer',
+          400,
+        );
+      }
+
+      // Step 3d: Conditional Access enforcement.
+      enforceConditionalAccess(
+        userContext,
+        capabilities,
+        request.agentId,
+        this.auditLogger,
+        this.actionResolver,
+      );
+
+      // Step 3e: Validate every typed condition before signing.
+      validateConditionsForCapabilities(capabilities);
+
+      // Step 4: Compute the payload validity window.
+      const now = getCurrentTimestamp();
+      let expiresAt = getExpirationTimestamp(this.defaultTtl);
+
+      const contributingRoleSources = filterRolesContributingToCapabilities(
+        userContext,
+        capabilities,
+        this.policy,
+      );
+      const pimCappedExpiry = computePimCappedExpiry(
+        contributingRoleSources,
+        this.capTtlToPimActivation,
+        expiresAt,
+      );
+      if (pimCappedExpiry !== undefined) {
+        if (pimCappedExpiry <= now) {
+          this.denyExpiredPimActivation(request.agentId, userContext.userId, now, pimCappedExpiry);
+        }
+        if (pimCappedExpiry < expiresAt) {
+          expiresAt = pimCappedExpiry;
+        }
+      }
+
+      // Step 5: Build and sign the token.
+      const tokenId = generateId();
+      const dpopJkt = await this.pipeline.resolveDpopJkt(request);
+      const regionClaim = this.getRegionClaim();
+      const payload = buildIssuancePayload({
+        issuerDid: this.pipeline.issuerDid,
+        agentId: request.agentId,
+        iat: now,
+        exp: expiresAt,
+        jti: tokenId,
+        capabilities,
+        userContext,
+        audience: this.pipeline.gatewayAudience,
+        ...(regionClaim !== undefined ? { region: regionClaim } : {}),
+        ...(dpopJkt ? { dpopJkt } : {}),
+      });
+
+      await this.pipeline.attachProofs(payload);
+      payload.policyHash = this.pipeline.cachedPolicyHash;
+      const issuanceContext = buildIssuanceContext({
+        policyHash: this.pipeline.cachedPolicyHash,
+        manifest: request.manifest,
+        subject: request.agentId,
+        audience: this.pipeline.gatewayAudience,
+      });
+      const token = await this.pipeline.signToken(payload, issuanceContext);
+
+      // Step 5b: Mint side credentials AFTER JWT signing.
+      const { storageGrants, dbCredentials } = await this.pipeline.mintSideCredentials(
+        token,
+        request,
+        userContext,
+        capabilities,
+        expiresAt - now,
+      );
+
+      // Step 6: Audit log the issuance.
+      await this.logIssuance(
+        userContext.userId,
+        request.agentId,
+        tokenId,
+        capabilities,
+        request.consent,
+        storageGrants,
+        dbCredentials,
+      );
+
+      await emitPostureRecord(this.postureEmitter, this.logger, {
+        agentId: request.agentId,
+        manifest: request.manifest,
+        capabilities,
+        region: this.postureRegion,
+      });
+
+      const response: IssueCapabilityResponse = {
+        token,
+        expiresAt,
+        tokenId,
+        capabilities,
+      };
+      if (storageGrants && storageGrants.length > 0) response.storageGrants = storageGrants;
+      if (dbCredentials && dbCredentials.length > 0) response.dbCredentials = dbCredentials;
+      return response;
+    } catch (error) {
+      this.logger.error('Failed to issue capability token (from user context)', {
         agentId: request.agentId,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
