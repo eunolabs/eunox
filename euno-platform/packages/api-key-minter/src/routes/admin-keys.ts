@@ -1,7 +1,17 @@
 /**
  * Admin API for API key management.
  *
- * Routes (all require admin authentication via X-Admin-Key header):
+ * Authentication (two paths, tried in order):
+ *   1. PRIMARY — `Authorization: Bearer <jwt>` verified against the JWKS
+ *      endpoint configured by `jwtVerifier`.  Operator identity is extracted
+ *      from the JWT `sub` claim and written to `res.locals.operatorId` for
+ *      downstream use in audit logs.
+ *   2. FALLBACK — `X-Admin-Key: <secret>` shared-secret (explicitly temporary;
+ *      logs a deprecation warning each time it is used).  Set
+ *      `MINTER_ADMIN_JWKS_URI` + `MINTER_ADMIN_JWT_AUDIENCE` to activate the
+ *      primary path and retire this fallback.
+ *
+ * Routes (all require admin authentication):
  *   POST   /admin/v1/keys          Create a new API key (returns raw key once)
  *   GET    /admin/v1/keys          List all keys for tenant (including revoked/expired)
  *   DELETE /admin/v1/keys/:prefix  Revoke a key
@@ -17,6 +27,7 @@ import {
 import { ApiKeyStore } from '../api-key-store';
 import { generateApiKey } from '../api-key';
 import { PepperEntry } from '../api-key-verifier';
+import { AdminJwtVerifier } from '../admin-jwt-verifier';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -25,32 +36,80 @@ export interface AdminKeysRouterOptions {
   peppers: PepperEntry[];
   adminApiKey: string;
   logger: Logger;
+  /**
+   * Optional JWKS-backed JWT verifier for operator tokens.
+   * When provided, `Authorization: Bearer <jwt>` is accepted as the primary
+   * authentication path.  The shared `X-Admin-Key` remains as an explicit
+   * temporary fallback but emits a deprecation warning on each use.
+   * Create via `createAdminJwtVerifierFromEnv()` in bootstrap.
+   */
+  jwtVerifier?: AdminJwtVerifier;
 }
 
-function requireAdminAuth(adminApiKey: string): (req: Request, res: Response, next: NextFunction) => void {
-  // Pre-compute a fixed-size HMAC of the expected key (using a zero key) so that
-  // all comparisons are on 32-byte buffers regardless of the input length.
-  // This eliminates the timing oracle that would otherwise leak the expected key length
-  // when the provided value has a different byte length.
-  const hmacKey = Buffer.alloc(32); // fixed zero key: we're normalising length, not doing MAC-as-auth
-  const expectedHash = crypto.createHmac('sha256', hmacKey)
+/**
+ * Build admin authentication middleware.
+ *
+ * When `jwtVerifier` is supplied it tries Bearer JWT first; the X-Admin-Key
+ * shared secret is used as a fallback whenever the request does not carry a
+ * `Bearer` Authorization header (including when Authorization is absent or
+ * set to a non-Bearer scheme such as `Basic`).  Using the shared key logs a
+ * deprecation warning so operators know to migrate.
+ */
+function requireAdminAuth(
+  adminApiKey: string,
+  logger: Logger,
+  jwtVerifier?: AdminJwtVerifier,
+): (req: Request, res: Response, next: NextFunction) => void {
+  // Pre-compute a fixed-size HMAC of the expected key so that all comparisons
+  // are on 32-byte buffers regardless of input length (eliminates timing oracle).
+  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars enforced
+  // by the production guard), NOT a user password.  HMAC-SHA256 is appropriate here;
+  // a KDF (bcrypt/argon2) would add latency without security benefit for random tokens.
+  // lgtm[js/insufficient-password-hash]
+  const hmacKey = Buffer.alloc(32);
+  const expectedHash = crypto.createHmac('sha256', hmacKey) // lgtm[js/insufficient-password-hash]
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    const provided = req.headers['x-admin-key'];
+  return (req: Request, res: Response, next: NextFunction): void => {
     const fail = (): void => {
       next(new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Admin authentication required', 401));
     };
 
-    // Always hash the provided value (empty string on missing header) and compare
-    // against the expected hash.  Both paths call timingSafeEqual on 32-byte buffers,
-    // so the comparison time does not depend on input length.
+    // ── Primary path: Bearer JWT ──────────────────────────────────────────
+    if (jwtVerifier) {
+      const authHeader = req.headers['authorization'];
+      if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+        const token = authHeader.slice('bearer '.length).trim();
+        jwtVerifier.verify(token).then((principal) => {
+          // Attach verified operator identity for downstream audit logging.
+          res.locals['operatorId'] = principal.operatorId;
+          next();
+        }).catch(() => {
+          fail();
+        });
+        return;
+      }
+    }
+
+    // ── Fallback path: X-Admin-Key shared secret ──────────────────────────
+    // This path is intentionally kept as a temporary fallback while teams
+    // migrate to operator JWT tokens.  Each use emits a deprecation warning.
+    const provided = req.headers['x-admin-key'];
     const providedBuf = typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
     const providedHash = crypto.createHmac('sha256', hmacKey).update(providedBuf).digest();
     if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
       fail();
       return;
+    }
+
+    if (jwtVerifier) {
+      // Verifier is configured but the caller is using the shared key.
+      logger.warn(
+        'Admin request authenticated via deprecated X-Admin-Key shared secret. ' +
+        'Migrate to operator JWT tokens (MINTER_ADMIN_JWKS_URI / MINTER_ADMIN_JWT_AUDIENCE).',
+        { path: req.path },
+      );
     }
     next();
   };
@@ -117,7 +176,7 @@ function parseCreateKeyBody(body: unknown): CreateKeyBody {
 
 export function createAdminKeysRouter(opts: AdminKeysRouterOptions): Router {
   const router = Router();
-  const auth = requireAdminAuth(opts.adminApiKey);
+  const auth = requireAdminAuth(opts.adminApiKey, opts.logger, opts.jwtVerifier);
 
   const activePepper = opts.peppers[0];
   if (!activePepper) throw new Error('At least one pepper is required for API key issuance');
@@ -149,7 +208,12 @@ export function createAdminKeysRouter(opts: AdminKeysRouterOptions): Router {
         expiresAt: body.expiresAt,
       });
 
-      opts.logger.info('API key created', { tenantId: body.tenantId, prefix, policyId: body.policyId });
+      opts.logger.info('API key created', {
+        tenantId: body.tenantId,
+        prefix,
+        policyId: body.policyId,
+        operator: (res.locals['operatorId'] as string | undefined) ?? 'shared-key',
+      });
 
       res.status(201).json({
         prefix,
@@ -203,7 +267,11 @@ export function createAdminKeysRouter(opts: AdminKeysRouterOptions): Router {
         throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'API key not found or already revoked', 404);
       }
       await opts.keyStore.revokeKey(prefix);
-      opts.logger.info('API key revoked', { tenantId: existing.tenantId, prefix });
+      opts.logger.info('API key revoked', {
+        tenantId: existing.tenantId,
+        prefix,
+        operator: (res.locals['operatorId'] as string | undefined) ?? 'shared-key',
+      });
       res.status(200).json({ prefix, revokedAt: new Date().toISOString() });
     } catch (error) {
       next(error);

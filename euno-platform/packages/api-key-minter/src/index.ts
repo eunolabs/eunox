@@ -34,6 +34,8 @@ export { createMintRouter } from './routes/mint';
 export type { MintRouterOptions } from './routes/mint';
 export { createAdminKeysRouter } from './routes/admin-keys';
 export type { AdminKeysRouterOptions } from './routes/admin-keys';
+export type { AdminPrincipal, AdminJwtVerifierOptions } from './admin-jwt-verifier';
+export { AdminJwtVerifier, createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 export type { MinterDependencies } from './app-factory';
 export { createMinterApp } from './app-factory';
 export {

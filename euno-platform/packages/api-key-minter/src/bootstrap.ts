@@ -39,6 +39,7 @@ import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
 import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
+import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import type { TokenSigner } from '@euno/common';
 import os from 'os';
 
@@ -227,9 +228,28 @@ async function main(): Promise<void> {
   // in-memory otherwise (suitable for single-replica / dev deployments).
   const pingRateLimiter = await createPingRateLimiterFromEnv(process.env, logger);
 
+  // ── Admin JWT verifier (Task 6) ─────────────────────────────────────────────
+  // When MINTER_ADMIN_JWKS_URI + MINTER_ADMIN_JWT_AUDIENCE are set, operator
+  // JWTs are accepted as the primary authentication path for admin routes.
+  // The shared X-Admin-Key remains as an explicit temporary fallback.
+  const adminJwtVerifier = createAdminJwtVerifierFromEnv(process.env);
+  if (adminJwtVerifier) {
+    logger.info(
+      'Admin JWT auth enabled (primary path). ' +
+      'X-Admin-Key is the explicit temporary fallback.',
+      { jwksUri: process.env['MINTER_ADMIN_JWKS_URI'] },
+    );
+  } else {
+    logger.warn(
+      'Admin JWT auth not configured (MINTER_ADMIN_JWKS_URI / MINTER_ADMIN_JWT_AUDIENCE not set). ' +
+      'Admin routes will only accept the X-Admin-Key shared secret. ' +
+      'Set MINTER_ADMIN_JWKS_URI and MINTER_ADMIN_JWT_AUDIENCE to enable operator identity-based access.',
+    );
+  }
+
   const app = createMinterApp({
     mintRouterOpts: { verifier, minter, auditStore, rateLimiter, logger },
-    adminKeysRouterOpts: { keyStore, peppers, adminApiKey, logger },
+    adminKeysRouterOpts: { keyStore, peppers, adminApiKey, logger, jwtVerifier: adminJwtVerifier },
     anomalyDetector,
     pingRateLimiter,
     logger,

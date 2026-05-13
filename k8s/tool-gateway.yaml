@@ -36,6 +36,38 @@ spec:
         component: data-plane
     spec:
       serviceAccountName: tool-gateway
+      # Task 7: Topology spread + anti-affinity so replica count translates into
+      # real failure-domain redundancy.
+      #
+      # For the StatefulSet (sharded deployment), spreading pods across zones
+      # ensures that a single AZ outage does not take down all shards at once.
+      # The hostname constraint is `ScheduleAnyway` to allow ordinal-stable
+      # scheduling in clusters where node count equals replica count.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: tool-gateway
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: tool-gateway
+
+      affinity:
+        podAntiAffinity:
+          # Hard: refuse to place two gateway shards on the same node.
+          # A StatefulSet ordinal maps to a shard ID; losing two shards on
+          # a single node failure would split the hash ring unevenly.
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: tool-gateway
+            topologyKey: kubernetes.io/hostname
+
       # Init container: extract the pod ordinal from $POD_NAME
       # (e.g. "tool-gateway-2" → "2") and write it to a shared volume as
       # GATEWAY_SHARD_INDEX so the main container can read it via envFrom.

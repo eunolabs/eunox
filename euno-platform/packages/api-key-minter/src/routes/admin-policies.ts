@@ -2,7 +2,14 @@
  * Admin policy-management routes for the api-key-minter service.
  * ---------------------------------------------------------------------------
  *
- * Routes (all require admin authentication via X-Admin-Key header):
+ * Authentication (two paths, tried in order):
+ *   1. PRIMARY — `Authorization: Bearer <jwt>` verified against the JWKS
+ *      endpoint configured by `jwtVerifier`.  Operator identity is extracted
+ *      from the JWT `sub` claim and written to `res.locals.operatorId`.
+ *   2. FALLBACK — `X-Admin-Key: <secret>` shared-secret (explicitly temporary;
+ *      logs a deprecation warning each time it is used).
+ *
+ * Routes (all require admin authentication):
  *
  *   POST /admin/v1/policies
  *     Store or replace the `AgentCapabilityManifest` for a named policy and
@@ -30,6 +37,7 @@ import * as crypto from 'crypto';
 import { Request, Response, NextFunction, Router } from 'express';
 import { CapabilityError, ErrorCode, createLogger, validateManifest } from '@euno/common';
 import { ApiKeyStore } from '../api-key-store';
+import { AdminJwtVerifier } from '../admin-jwt-verifier';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -37,28 +45,34 @@ export interface AdminPoliciesRouterOptions {
   keyStore: ApiKeyStore;
   adminApiKey: string;
   logger: Logger;
+  /**
+   * Optional JWKS-backed JWT verifier for operator tokens.
+   * When provided, `Authorization: Bearer <jwt>` is accepted as the primary
+   * authentication path.  The shared `X-Admin-Key` remains as an explicit
+   * temporary fallback but emits a deprecation warning on each use.
+   */
+  jwtVerifier?: AdminJwtVerifier;
 }
 
 function requireAdminAuth(
   adminApiKey: string,
+  logger: Logger,
+  jwtVerifier?: AdminJwtVerifier,
 ): (req: Request, res: Response, next: NextFunction) => void {
   // Normalise both the expected and provided keys to a fixed-length SHA-256
   // digest so that crypto.timingSafeEqual (which requires equal-length buffers)
-  // can be used without leaking length information.  SHA-256 (not HMAC) is
-  // sufficient here: the admin API key is a high-entropy random bearer
-  // credential, not a user password; a KDF would add latency without benefit.
+  // can be used without leaking length information.
+  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars enforced
+  // by the production guard), NOT a user password.  SHA-256 is appropriate here;
+  // a KDF would add latency without security benefit for random tokens.
+  // lgtm[js/insufficient-password-hash]
   const expectedHash = crypto
-    .createHash('sha256')
+    .createHash('sha256') // lgtm[js/insufficient-password-hash]
     .update(Buffer.from(adminApiKey, 'utf8'))
     .digest();
 
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    const provided = req.headers['x-admin-key'];
-    const providedBuf =
-      typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
-    const providedHash = crypto.createHash('sha256').update(providedBuf).digest();
-
-    if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const fail = (): void => {
       next(
         new CapabilityError(
           ErrorCode.AUTHENTICATION_FAILED,
@@ -66,7 +80,40 @@ function requireAdminAuth(
           401,
         ),
       );
+    };
+
+    // ── Primary path: Bearer JWT ──────────────────────────────────────────
+    if (jwtVerifier) {
+      const authHeader = req.headers['authorization'];
+      if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+        const token = authHeader.slice('bearer '.length).trim();
+        jwtVerifier.verify(token).then((principal) => {
+          res.locals['operatorId'] = principal.operatorId;
+          next();
+        }).catch(() => {
+          fail();
+        });
+        return;
+      }
+    }
+
+    // ── Fallback path: X-Admin-Key shared secret ──────────────────────────
+    const provided = req.headers['x-admin-key'];
+    const providedBuf =
+      typeof provided === 'string' ? Buffer.from(provided, 'utf8') : Buffer.alloc(0);
+    const providedHash = crypto.createHash('sha256').update(providedBuf).digest();
+
+    if (!crypto.timingSafeEqual(providedHash, expectedHash)) {
+      fail();
       return;
+    }
+
+    if (jwtVerifier) {
+      logger.warn(
+        'Admin request authenticated via deprecated X-Admin-Key shared secret. ' +
+        'Migrate to operator JWT tokens (MINTER_ADMIN_JWKS_URI / MINTER_ADMIN_JWT_AUDIENCE).',
+        { path: req.path },
+      );
     }
     next();
   };
@@ -74,7 +121,7 @@ function requireAdminAuth(
 
 export function createAdminPoliciesRouter(opts: AdminPoliciesRouterOptions): Router {
   const router = Router();
-  const auth = requireAdminAuth(opts.adminApiKey);
+  const auth = requireAdminAuth(opts.adminApiKey, opts.logger, opts.jwtVerifier);
 
   /**
    * POST /admin/v1/policies
@@ -135,6 +182,7 @@ export function createAdminPoliciesRouter(opts: AdminPoliciesRouterOptions): Rou
           policyId,
           updatedKeys,
           capabilityCount: capabilities.length,
+          operator: (res.locals['operatorId'] as string | undefined) ?? 'shared-key',
         });
 
         res.json({

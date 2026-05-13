@@ -26,6 +26,44 @@ spec:
       serviceAccountName: capability-issuer-sa
       automountServiceAccountToken: false
 
+      # Task 7: Topology spread + anti-affinity so replica count translates into
+      # real failure-domain redundancy.
+      #
+      # topologySpreadConstraints spread pods across availability zones first,
+      # then nodes within a zone, with a maxSkew of 1.  `whenUnsatisfiable:
+      # DoNotSchedule` prevents both replicas landing on the same zone even when
+      # one zone is temporarily empty.
+      #
+      # podAntiAffinity (hard, required) prevents two issuer pods from being
+      # scheduled on the same node.  This is enforced at scheduling time, so a
+      # cluster must have at least as many nodes as replicas.  See the README
+      # for single-node / small-cluster override guidance.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: capability-issuer
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: capability-issuer
+
+      affinity:
+        podAntiAffinity:
+          # Hard: refuse to schedule two issuer pods on the same node when a
+          # spread across nodes is possible.  This is a stronger guarantee than
+          # a preferred rule and is safe here because the issuer runs ≥ 2
+          # replicas on a cluster that always has ≥ 2 nodes.
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: capability-issuer
+            topologyKey: kubernetes.io/hostname
+
       # Sprint 3: Security context at pod level
       securityContext:
         runAsNonRoot: true

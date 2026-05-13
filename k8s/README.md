@@ -327,7 +327,41 @@ kubectl describe networkpolicy -n euno-system
 5. **Network Policies**: Review and test network policies regularly
 6. **Audit Logging**: Enable Kubernetes audit logging for compliance
 
-## Egress hardening (Task 5)
+## Workload placement controls (Task 7)
+
+Both the gateway and the capability issuer carry topology spread constraints and
+pod anti-affinity rules so that the replica count translates into real
+failure-domain redundancy.
+
+### What is configured
+
+| Rule type | Constraint | Effect |
+|---|---|---|
+| `topologySpreadConstraints` | `topology.kubernetes.io/zone`, `maxSkew: 1`, `DoNotSchedule` | Prevents scheduler from putting all replicas in the same availability zone |
+| `topologySpreadConstraints` | `kubernetes.io/hostname`, `maxSkew: 1`, `ScheduleAnyway` | Encourages spreading across nodes; `ScheduleAnyway` keeps dev/CI clusters schedulable |
+| `podAntiAffinity` | `requiredDuringSchedulingIgnoredDuringExecution`, `kubernetes.io/hostname` | Refuses to co-locate two replicas of the same workload on the same node |
+
+### Node count requirement
+
+The hard `podAntiAffinity` rule on `kubernetes.io/hostname` requires the cluster
+to have **at least as many schedulable nodes as replicas** for each workload:
+
+- `capability-issuer-deployment.yaml`: 2 replicas → requires ≥ 2 nodes
+- `tool-gateway-deployment.yaml`: 3 replicas → requires ≥ 3 nodes
+- `tool-gateway.yaml` (StatefulSet): 3 shards → requires ≥ 3 nodes
+
+In single-node dev / CI environments, either reduce the replica count to 1 or
+change `requiredDuringSchedulingIgnoredDuringExecution` to
+`preferredDuringSchedulingIgnoredDuringExecution`.
+
+### AZ-spread requirement
+
+The `DoNotSchedule` zone constraint ensures pods are spread across available
+zones with a maximum skew of 1.  It does **not** require a specific number of
+AZs — a 2-AZ cluster (e.g. 2+1 distribution for 3 replicas) fully satisfies
+the constraint.  For single-AZ environments, change the zone constraint from
+`DoNotSchedule` to `ScheduleAnyway`.
+
 
 The base `network-policies.yaml` contains **no `0.0.0.0/0` or `::/0` egress
 rules**.  All gateway and issuer egress is scoped to in-cluster pod selectors
