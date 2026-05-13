@@ -37,7 +37,7 @@ import { createAnomalyDetectorFromEnv, RedisAnomalyDetector } from './redis-anom
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
-import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv } from './mint-rate-limiter';
+import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv, createMintRateLimiterFromEnv, RedisBackedMintRateLimiter } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
 import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import type { TokenSigner } from '@euno/common';
@@ -61,8 +61,6 @@ async function main(): Promise<void> {
   const gatewayAudience = config.MINTER_GATEWAY_AUDIENCE ?? 'tool-gateway';
   const ttlSeconds = config.MINTER_TOKEN_TTL_SECONDS;
   const adminApiKey = config.MINTER_ADMIN_API_KEY ?? 'dev-admin-key';
-  const rlMaxRaw = config.MINTER_RATE_LIMIT_MAX;
-  const rlWindowRaw = config.MINTER_RATE_LIMIT_WINDOW_SECONDS;
 
   const pepperHex = config.MINTER_PEPPER_HEX;
   let peppers: PepperEntry[];
@@ -107,21 +105,44 @@ async function main(): Promise<void> {
   // Dev: in-memory (audit trail lost on restart).
   const auditDbUrl = config.MINTER_AUDIT_DB_URL;
   let auditStoreBase: InMemoryMintAuditStore | PostgresMintAuditStore;
+  // Hoisted so the graceful-shutdown handler can call auditPool.end().
+  let auditPool: { end(): Promise<void> } | undefined;
   if (auditDbUrl) {
-    // Dynamically require 'pg' so the package is not a hard deploy-time
+    // Dynamically import 'pg' so the package is not a hard deploy-time
     // dependency for self-host operators who use the in-memory mode.
-    let pgModule: { Pool: new (opts: { connectionString: string }) => unknown };
+    type PgPoolCtor = new (opts: { connectionString: string; max?: number; connectionTimeoutMillis?: number }) => { end(): Promise<void> };
+    let PgPool: PgPoolCtor;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      pgModule = require('pg');
+      const pgMod = await import('pg') as unknown as { default?: { Pool: PgPoolCtor }; Pool?: PgPoolCtor };
+      PgPool = (pgMod.default?.Pool ?? pgMod.Pool)!;
     } catch {
       throw new Error(
         'MINTER_AUDIT_DB_URL is set but the `pg` package is not installed. ' +
           'Add it to your deployment image: npm install pg',
       );
     }
-    const pool = new pgModule.Pool({ connectionString: auditDbUrl });
-    const pgAuditStore = new PostgresMintAuditStore(pool as MintAuditPgPool);
+    auditPool = new PgPool({
+      connectionString: auditDbUrl,
+      max: config.MINTER_AUDIT_POOL_SIZE,
+      connectionTimeoutMillis: config.MINTER_PG_CONNECTION_TIMEOUT_MS,
+    });
+    // Fail-fast connectivity check: verify the DB is reachable before
+    // accepting traffic. A bad connection string or missing network route
+    // should fail the pod at startup (under a rolling deploy) rather than
+    // silently failing on the first live mint request.
+    try {
+      const hcClient = await (auditPool as unknown as { connect(): Promise<{ query(sql: string): Promise<unknown>; release(): void }> }).connect();
+      await hcClient.query('SELECT 1');
+      hcClient.release();
+      logger.info('Postgres audit DB health check passed');
+    } catch (hcErr) {
+      throw new Error(
+        `Minter failed to connect to audit DB at startup: ` +
+          `${hcErr instanceof Error ? hcErr.message : String(hcErr)}. ` +
+          'Verify MINTER_AUDIT_DB_URL and network connectivity.',
+      );
+    }
+    const pgAuditStore = new PostgresMintAuditStore(auditPool as unknown as MintAuditPgPool);
     // Only run DDL when explicitly requested so the service can start under an
     // INSERT-only role (the recommended least-privilege configuration described
     // in the threat model §6).  Schema should be deployed via a migration step.
@@ -149,19 +170,39 @@ async function main(): Promise<void> {
   // Dev: in-memory (all keys lost on restart).
   const apiKeyDbUrl = config.MINTER_API_KEY_DB_URL;
   let keyStore: InMemoryApiKeyStore | PostgresApiKeyStore;
+  // Hoisted so the graceful-shutdown handler can call pgKeyPool.end().
+  let pgKeyPool: { end(): Promise<void> } | undefined;
   if (apiKeyDbUrl) {
-    let pgKeyModule: { Pool: new (opts: { connectionString: string }) => unknown };
+    type PgPoolCtor = new (opts: { connectionString: string; max?: number; connectionTimeoutMillis?: number }) => { end(): Promise<void> };
+    let PgPool: PgPoolCtor;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      pgKeyModule = require('pg');
+      const pgMod = await import('pg') as unknown as { default?: { Pool: PgPoolCtor }; Pool?: PgPoolCtor };
+      PgPool = (pgMod.default?.Pool ?? pgMod.Pool)!;
     } catch {
       throw new Error(
         'MINTER_API_KEY_DB_URL is set but the `pg` package is not installed. ' +
           'Add it to your deployment image: npm install pg',
       );
     }
-    const keyPool = new pgKeyModule.Pool({ connectionString: apiKeyDbUrl });
-    const pgKeyStore = new PostgresApiKeyStore(keyPool as ApiKeyPgPool);
+    pgKeyPool = new PgPool({
+      connectionString: apiKeyDbUrl,
+      max: config.MINTER_API_KEY_POOL_SIZE,
+      connectionTimeoutMillis: config.MINTER_PG_CONNECTION_TIMEOUT_MS,
+    });
+    // Fail-fast connectivity check (mirrors audit pool check above).
+    try {
+      const hcClient = await (pgKeyPool as unknown as { connect(): Promise<{ query(sql: string): Promise<unknown>; release(): void }> }).connect();
+      await hcClient.query('SELECT 1');
+      hcClient.release();
+      logger.info('Postgres API-key DB health check passed');
+    } catch (hcErr) {
+      throw new Error(
+        `Minter failed to connect to API-key DB at startup: ` +
+          `${hcErr instanceof Error ? hcErr.message : String(hcErr)}. ` +
+          'Verify MINTER_API_KEY_DB_URL and network connectivity.',
+      );
+    }
+    const pgKeyStore = new PostgresApiKeyStore(pgKeyPool as unknown as ApiKeyPgPool);
     if (config.MINTER_API_KEY_SCHEMA_INIT) {
       await pgKeyStore.ensureSchema();
       logger.info('Postgres API-key store schema initialised');
@@ -179,10 +220,7 @@ async function main(): Promise<void> {
     keyStore = new InMemoryApiKeyStore();
   }
 
-  const rateLimiter = new InMemoryMintRateLimiter({
-    maxMintsPerWindow: rlMaxRaw,
-    windowSeconds: rlWindowRaw,
-  });
+  const rateLimiter = await createMintRateLimiterFromEnv(process.env, logger);
   const verifier = new ApiKeyVerifier({ store: keyStore, peppers, logger });
   const minter = new TokenMinter({ signer, issuerDid, gatewayAudience, ttlSeconds });
 
@@ -235,8 +273,20 @@ async function main(): Promise<void> {
   });
 
   const server = http.createServer(app);
+
   server.listen(port, () => {
-    logger.info(`API-key minter listening on port ${port}`, { issuerDid, gatewayAudience });
+    logger.info('Minter ready', {
+      port,
+      environment: config.NODE_ENV,
+      signerType: kmsSigner ? 'kms' : (privateKeyPem ? 'local-pem' : 'ephemeral'),
+      auditStore: auditDbUrl ? 'postgres' : 'in-memory',
+      apiKeyStore: apiKeyDbUrl ? 'postgres' : 'in-memory',
+      rateLimiterType: rateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
+      anomalyDetectorType: anomalyDetector instanceof RedisAnomalyDetector ? 'redis' : 'in-memory',
+      pingRateLimiterType: pingRateLimiter instanceof RedisBackedMintRateLimiter ? 'redis' : 'in-memory',
+      issuerDid,
+      gatewayAudience,
+    });
   });
 
   const shutdown = (): void => {
@@ -245,7 +295,11 @@ async function main(): Promise<void> {
     if (anomalyDetector instanceof RedisAnomalyDetector) {
       void anomalyDetector.close();
     }
-    server.close(() => process.exit(0));
+    // Drain Postgres connection pools gracefully before exiting.
+    void Promise.allSettled([
+      auditPool?.end(),
+      pgKeyPool?.end(),
+    ]).then(() => server.close(() => process.exit(0)));
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

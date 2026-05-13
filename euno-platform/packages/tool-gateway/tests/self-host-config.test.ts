@@ -23,6 +23,7 @@ import {
   deriveIssuerMetadataUrl,
   checkActionResolverHashParity,
   checkProductionRedisHa,
+  checkProductionAdminHost,
 } from '../src/bootstrap';
 import { createLogger } from '@euno/common';
 
@@ -585,6 +586,116 @@ describe('checkProductionRedisHa', () => {
         callCount++;
       }
       expect(callCount).toBe(1);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// checkProductionAdminHost
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('checkProductionAdminHost', () => {
+  describe('non-production environments — always a no-op', () => {
+    it('does not throw when NODE_ENV=development and ADMIN_HOST is unset', () => {
+      expect(() => checkProductionAdminHost({}, 'development')).not.toThrow();
+    });
+
+    it('does not throw when NODE_ENV=staging and ADMIN_HOST is "0.0.0.0"', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '0.0.0.0' }, 'staging'),
+      ).not.toThrow();
+    });
+
+    it('does not throw when environment is test and ADMIN_HOST is "::"', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '::' }, 'test'),
+      ).not.toThrow();
+    });
+  });
+
+  describe('production — valid (non-wildcard) hosts accepted', () => {
+    it('accepts "127.0.0.1" (loopback — sidecar-only)', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '127.0.0.1' }, 'production'),
+      ).not.toThrow();
+    });
+
+    it('accepts a pod cluster IP (e.g. "10.0.1.5")', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '10.0.1.5' }, 'production'),
+      ).not.toThrow();
+    });
+
+    it('accepts "::1" (IPv6 loopback)', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '::1' }, 'production'),
+      ).not.toThrow();
+    });
+
+    it('trims surrounding whitespace before validation', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '  127.0.0.1  ' }, 'production'),
+      ).not.toThrow();
+    });
+  });
+
+  describe('production — wildcard / unset bindings rejected', () => {
+    it('throws CR-4 when ADMIN_HOST is unset', () => {
+      expect(() => checkProductionAdminHost({}, 'production')).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is "0.0.0.0"', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '0.0.0.0' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is "::"', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '::' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is "::0" (alternative IPv6 wildcard)', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '::0' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is a whitespace-only string', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '   ' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('throws CR-4 when ADMIN_HOST is an empty string', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '' }, 'production'),
+      ).toThrow(/CR-4/);
+    });
+
+    it('error message includes actionable guidance about non-wildcard interface', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '0.0.0.0' }, 'production'),
+      ).toThrow(/non-wildcard/i);
+    });
+
+    it('error message mentions the rejected ADMIN_HOST value', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '0.0.0.0' }, 'production'),
+      ).toThrow('"0.0.0.0"');
+    });
+
+    it('error message mentions <unset> when ADMIN_HOST is absent', () => {
+      expect(() =>
+        checkProductionAdminHost({}, 'production'),
+      ).toThrow('<unset>');
+    });
+
+    it('error message mentions <unset> when ADMIN_HOST is whitespace-only', () => {
+      expect(() =>
+        checkProductionAdminHost({ ADMIN_HOST: '  ' }, 'production'),
+      ).toThrow('<unset>');
     });
   });
 });

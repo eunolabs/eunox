@@ -11,7 +11,7 @@ Prior task list: [architecture-follow-up-tasks-2026-05.md](./architecture-follow
 
 ## P0 — Must complete before Stage 3 ships to paying customers
 
-### Task 11 — Wire fleet-wide Redis rate limiter for the primary `/mint` route
+### Task 11 — Wire fleet-wide Redis rate limiter for the primary `/mint` route ✅ DONE
 
 **Review item:** CR-NEW-1
 **Dependencies:** None (all supporting classes already exist)
@@ -80,7 +80,7 @@ window fleet-wide.
 
 ---
 
-### Task 12 — Close Postgres connection pools on minter graceful shutdown
+### Task 12 — Close Postgres connection pools on minter graceful shutdown ✅ DONE
 
 **Review item:** CR-NEW-2
 **Dependencies:** None
@@ -147,7 +147,7 @@ writes to fail with 503 on the new pods.
 
 ---
 
-### Task 13 — Mandate unique `gatewayAudience` per tenant in hosted mode
+### Task 13 — Mandate unique `gatewayAudience` per tenant in hosted mode ✅ DONE
 
 **Review item:** CR-NEW-3
 **Dependencies:** None
@@ -199,7 +199,7 @@ replay, but a valid unexpired token is accepted at any tenant's resource path.
 
 ## P1 — Structural fixes for correctness and operational safety
 
-### Task 14 — Strip unknown context fields in `parseEnforceRequestBody`
+### Task 14 — Strip unknown context fields in `parseEnforceRequestBody` ✅ DONE
 
 **Review item:** CR-NEW-4
 **Dependencies:** None
@@ -260,7 +260,7 @@ a v1 gateway receives no error, and the unknown data leaks into audit records.
 
 ---
 
-### Task 15 — Fix production guard to collect all Redis HA violations
+### Task 15 — Fix production guard to collect all Redis HA violations ✅ DONE
 
 **Review item:** DI-NEW-3
 **Dependencies:** None
@@ -301,7 +301,7 @@ that asserts the message content, to verify that when both `REDIS_URL` *and*
 
 ---
 
-### Task 16 — Enforce non-wildcard `adminHost` at gateway startup
+### Task 16 — Enforce non-wildcard `adminHost` at gateway startup ✅ DONE
 
 **Review item:** DI-NEW-2
 **Dependencies:** None
@@ -365,7 +365,7 @@ API (kill-switch, revocation, partner-DID) is reachable on the public interface.
 
 ---
 
-### Task 17 — Expose Postgres pool configuration on the minter
+### Task 17 — Expose Postgres pool configuration on the minter ✅ DONE
 
 **Review item:** DI-NEW-5
 **Dependencies:** None (can be done standalone)
@@ -434,7 +434,7 @@ check; pool errors are only discovered on the first real request.
 
 ## P2 — Longer-horizon correctness and operational improvements
 
-### Task 18 — Document and enforce SQLite posture-emitter single-writer constraint
+### Task 18 — Document and enforce SQLite posture-emitter single-writer constraint ✅ DONE
 
 **Review item:** DI-NEW-1
 **Dependencies:** None
@@ -479,7 +479,7 @@ writing to a shared PVC SQLite file can corrupt data.
 
 ---
 
-### Task 19 — Document kill-switch staleness SLA and make interval configurable
+### Task 19 — Document kill-switch staleness SLA and make interval configurable ✅ DONE
 
 **Review item:** DI-NEW-4
 **Dependencies:** None
@@ -534,7 +534,7 @@ containment need to know the worst-case bound.
 
 ---
 
-### Task 20 — Confirm gateway-clock wins for `timeWindow` conditions
+### Task 20 — Confirm gateway-clock wins for `timeWindow` conditions ✅ DONE
 
 **Review item:** CI-NEW-2
 **Dependencies:** None
@@ -581,7 +581,7 @@ client-supplied `context.now`. If `timeWindow` conditions read the client-suppli
 
 ---
 
-### Task 21 — Make `RedisBackedMintRateLimiter` INCR+EXPIRE atomic
+### Task 21 — Make `RedisBackedMintRateLimiter` INCR+EXPIRE atomic ✅ DONE
 
 **Review item:** CI-NEW-3
 **Dependencies:** None
@@ -639,7 +639,7 @@ the new interface method.
 
 ---
 
-### Task 22 — Replace `require('pg')` with optional peer dep + dynamic ESM import
+### Task 22 — Replace `require('pg')` with optional peer dep + dynamic ESM import ✅ DONE
 
 **Review item:** CI-NEW-1
 **Dependencies:** None
@@ -701,7 +701,7 @@ with typed optional peer dependencies.
 
 ## P3 — Observability and documentation improvements
 
-### Task 23 — Feed authentication-failure events to the anomaly detector
+### Task 23 — Feed authentication-failure events to the anomaly detector ✅ DONE
 
 **Review item:** CI-NEW-4
 **Dependencies:** None
@@ -760,7 +760,7 @@ invisible to the anomaly detector.
 
 ---
 
-### Task 24 — Add consolidated startup summary log to the minter bootstrap
+### Task 24 — Add consolidated startup summary log to the minter bootstrap ✅ DONE
 
 **Review item:** CI-NEW-5
 **Dependencies:** None (but ideally after Task 11 and Task 12 are done, so the
@@ -810,7 +810,7 @@ Adjust field names to match the actual variable names in scope at the end of `ma
 
 ---
 
-### Task 25 — Write minter pepper rotation runbook
+### Task 25 — Write minter pepper rotation runbook ✅ DONE
 
 **Review item:** OQ-NEW-1
 **Dependencies:** None
@@ -863,7 +863,7 @@ Create `docs/runbooks/minter-pepper-rotation.md` covering:
 
 ---
 
-### Task 26 — Document posture-emitter queue topology for HA issuer
+### Task 26 — Document posture-emitter queue topology for HA issuer ✅ DONE
 
 **Review item:** OQ-NEW-2
 **Dependencies:** Task 18 (DI-NEW-1 SQLite constraint doc)

@@ -171,6 +171,34 @@ describe('production safety violations', () => {
       }),
     ).toThrow(/single-node Redis/i);
   });
+
+  it('throws when MINTER_MINT_REDIS_URL points at a single-node instance', () => {
+    expect(() =>
+      validateProductionMinterConfig({
+        ...SAFE_PROD_ENV,
+        MINTER_MINT_REDIS_URL: 'redis://mint-redis:6379',
+      }),
+    ).toThrow(/single-node Redis/i);
+  });
+
+  it('reports ALL single-node Redis violations (not just the first)', () => {
+    // Before Task 15, the loop had a `break` so only the first single-node
+    // URL was reported. After the fix, all violations appear in one error.
+    let caught: Error | undefined;
+    try {
+      validateProductionMinterConfig({
+        ...SAFE_PROD_ENV,
+        REDIS_URL: 'redis://localhost:6379',
+        ANOMALY_REDIS_URL: 'redis://anomaly-redis:6379',
+      });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught).toBeDefined();
+    // Both single-node URLs must be mentioned in the single error.
+    expect(caught?.message).toContain('REDIS_URL');
+    expect(caught?.message).toContain('ANOMALY_REDIS_URL');
+  });
 });
 
 // ── Multiple violations in one error ──────────────────────────────────────────

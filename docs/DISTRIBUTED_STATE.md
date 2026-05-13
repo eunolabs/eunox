@@ -124,6 +124,44 @@ REDIS_URL not configured, using in-memory kill-switch manager
   The default (30 s) is appropriate for most deployments; lowering it is only
   necessary if pub/sub messages are frequently dropped.
 
+### Propagation SLA and staleness window
+
+| Propagation path | Latency | SLA guarantee |
+|-----------------|---------|---------------|
+| Pub/sub (issuing pod → all other pods) | < 10 ms typical | Sub-second under normal Redis connectivity |
+| Periodic refresh safety net | Up to `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30 s default |
+| Startup seed (new/restarted pod) | At startup, before first request | Always current at boot |
+
+**Worst-case staleness** is `KILL_SWITCH_REFRESH_INTERVAL_MS` (default **30 s**).
+This is the bounded window during which a newly-activated kill switch may not
+have propagated to all gateway replicas:
+
+- If the pub/sub message for the kill-switch activation is dropped (network
+  blip, Redis subscriber reconnect, etc.), remote replicas will not observe
+  the kill until the next periodic refresh tick.
+- The issuing replica applies the kill immediately (write-through).
+- Other replicas apply it within single-digit milliseconds via pub/sub in the
+  nominal case, or within 30 s via the safety-net refresh in the worst case.
+
+**Operational implications:**
+
+1. **Emergency containment:** After issuing a `POST /admin/kill-switch/global`
+   command, treat the operation as "globally effective" only after
+   `KILL_SWITCH_REFRESH_INTERVAL_MS` has elapsed. For the default 30-second
+   window there is a theoretical attack vector where a request reaches a
+   replica that has not yet received the pub/sub event. Reduce this window by
+   lowering `KILL_SWITCH_REFRESH_INTERVAL_MS` (e.g. `5000`) at the cost of
+   higher Redis read load.
+
+2. **SLA alerting:** The kill switch is not a low-latency revocation primitive.
+   For immediate per-token invalidation use the token revocation endpoint instead
+   (`POST /admin/revoke`), which has the same pub/sub / refresh SLA but applies
+   to a single token ID and is more surgical.
+
+3. **Pub/sub monitoring:** Alert on dropped pub/sub messages (Redis
+   disconnects, subscriber reconnect events in gateway logs) to detect when the
+   fleet is operating on safety-net-only propagation with up to 30-second lag.
+
 ---
 
 ## Token Revocation

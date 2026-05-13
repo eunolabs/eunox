@@ -1365,6 +1365,16 @@ export const GatewayConfigSchema = z
       'MUST match the GATEWAY_AUDIENCE configured on the corresponding capability-issuer instance.',
     ),
 
+    // Hosted/SaaS mode -------------------------------------------------------
+    HOSTED_MODE: envBoolean({
+      default: false,
+      description:
+        'Set to "true" when this gateway instance is operating in a hosted / multi-tenant SaaS ' +
+        'deployment. When enabled, GATEWAY_AUDIENCE MUST be set to a unique per-tenant value ' +
+        '(not the default "tool-gateway") to prevent cross-tenant token replay. ' +
+        'The gateway will refuse to start with the default audience in this mode.',
+    }),
+
     // Response redaction safety limit ----------------------------------------
     RESPONSE_REDACTION_MAX_BYTES: envPositiveInt({
       default: 1048576,
@@ -1784,6 +1794,27 @@ export const GatewayConfigSchema = z
     ),
   })
   .superRefine((cfg, ctx) => {
+    // Hosted mode audience guard — must be checked in all environments.
+    // A HOSTED_MODE deployment with the default audience "tool-gateway" would
+    // allow cross-tenant token replay: a token minted for tenant A could be
+    // used against tenant B's gateway. Operators must set a unique per-tenant
+    // value (e.g. "tool-gateway:acme-corp-prod").
+    if (cfg.HOSTED_MODE) {
+      const audience = cfg.GATEWAY_AUDIENCE?.trim();
+      if (!audience || audience === 'tool-gateway') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['GATEWAY_AUDIENCE'],
+          message:
+            'GATEWAY_AUDIENCE must be set to a unique per-tenant value when HOSTED_MODE=true. ' +
+            `Got ${audience ? `"${audience}" (the insecure default)` : '<unset>'}. ` +
+            'A non-unique audience allows a token minted for one tenant\'s gateway to be ' +
+            'replayed at any other tenant\'s gateway. ' +
+            'Set GATEWAY_AUDIENCE to a value like "tool-gateway:acme-corp-prod".',
+        });
+      }
+    }
+
     // Admin API protection is a hard requirement in production: an
     // unprotected /admin/* surface controls revocation and kill-switch
     // state and must never be reachable without authentication.
@@ -2429,6 +2460,27 @@ export const MinterConfigSchema = z
         'Set "true" only when the service account has DDL privileges.',
     }),
 
+    // Postgres connection pool configuration
+    MINTER_AUDIT_POOL_SIZE: envPositiveInt({
+      default: 5,
+      description:
+        'Maximum number of connections in the Postgres audit store connection pool. ' +
+        'Increase for high-throughput minting workloads. Default 5.',
+    }),
+    MINTER_API_KEY_POOL_SIZE: envPositiveInt({
+      default: 5,
+      description:
+        'Maximum number of connections in the Postgres API-key store connection pool. ' +
+        'Increase when many concurrent key lookups are expected. Default 5.',
+    }),
+    MINTER_PG_CONNECTION_TIMEOUT_MS: envPositiveInt({
+      default: 5000,
+      description:
+        'Timeout in milliseconds for acquiring a connection from any Postgres pool. ' +
+        'Requests that cannot obtain a connection within this window are rejected with an error. ' +
+        'Default 5000 ms.',
+    }),
+
     // Replica identity
     MINTER_REPLICA_ID: optionalString.describe(
       'Identifier for this minter replica. ' +
@@ -2449,6 +2501,11 @@ export const MinterConfigSchema = z
     MINTER_PING_REDIS_URL: optionalString.describe(
       'Optional dedicated Redis URL for the ping rate limiter. ' +
       'Overrides REDIS_URL for this store.',
+    ),
+    MINTER_MINT_REDIS_URL: optionalString.describe(
+      'Optional dedicated Redis URL for the mint rate limiter (POST /api/v1/mint). ' +
+      'Overrides REDIS_URL for this store. ' +
+      'In production MUST point at an HA endpoint (Sentinel or Cluster).',
     ),
   })
   .superRefine((cfg, ctx) => {

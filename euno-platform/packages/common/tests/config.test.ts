@@ -899,3 +899,122 @@ describe('dumpEnvTemplate (minter)', () => {
     expect(EUNO_SERVICE_NAMES).toContain('minter');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New schema fields — Tasks 11 / 13 / 17
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('MinterConfigSchema — Task 11 (MINTER_MINT_REDIS_URL)', () => {
+  it('accepts a valid Redis URL for MINTER_MINT_REDIS_URL', () => {
+    const result = loadConfig(
+      { MINTER_MINT_REDIS_URL: 'redis://mint-redis:6379' },
+      'minter',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_MINT_REDIS_URL).toBe(
+        'redis://mint-redis:6379',
+      );
+    }
+  });
+
+  it('leaves MINTER_MINT_REDIS_URL undefined when not set', () => {
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_MINT_REDIS_URL).toBeUndefined();
+    }
+  });
+});
+
+describe('MinterConfigSchema — Task 17 (Postgres pool config)', () => {
+  it('defaults MINTER_AUDIT_POOL_SIZE to 5', () => {
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_AUDIT_POOL_SIZE).toBe(5);
+    }
+  });
+
+  it('defaults MINTER_API_KEY_POOL_SIZE to 5', () => {
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_API_KEY_POOL_SIZE).toBe(5);
+    }
+  });
+
+  it('defaults MINTER_PG_CONNECTION_TIMEOUT_MS to 5000', () => {
+    const result = loadConfig({}, 'minter');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_PG_CONNECTION_TIMEOUT_MS).toBe(5000);
+    }
+  });
+
+  it('accepts custom pool sizes', () => {
+    const result = loadConfig(
+      { MINTER_AUDIT_POOL_SIZE: '10', MINTER_API_KEY_POOL_SIZE: '20' },
+      'minter',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).MINTER_AUDIT_POOL_SIZE).toBe(10);
+      expect((result.config as Record<string, unknown>).MINTER_API_KEY_POOL_SIZE).toBe(20);
+    }
+  });
+});
+
+describe('GatewayConfigSchema — Task 13 (HOSTED_MODE audience enforcement)', () => {
+  it('HOSTED_MODE defaults to false when not set', () => {
+    const result = loadConfig({}, 'gateway');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.config as Record<string, unknown>).HOSTED_MODE).toBe(false);
+    }
+  });
+
+  it('accepts HOSTED_MODE=true with a unique non-default GATEWAY_AUDIENCE', () => {
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: 'tool-gateway:acme-corp' },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects HOSTED_MODE=true when GATEWAY_AUDIENCE is the default "tool-gateway"', () => {
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: 'tool-gateway' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects HOSTED_MODE=true when GATEWAY_AUDIENCE is absent (falls back to default)', () => {
+    const result = loadConfig({ HOSTED_MODE: 'true' }, 'gateway');
+    expect(result.ok).toBe(false);
+  });
+
+  it('HOSTED_MODE=false with default GATEWAY_AUDIENCE passes (no constraint)', () => {
+    const result = loadConfig({ HOSTED_MODE: 'false' }, 'gateway');
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects HOSTED_MODE=true when GATEWAY_AUDIENCE has leading/trailing whitespace around "tool-gateway"', () => {
+    // A padded default audience must not bypass the security guard.
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: '  tool-gateway  ' },
+      'gateway',
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts HOSTED_MODE=true when GATEWAY_AUDIENCE has whitespace but is tenant-scoped', () => {
+    // Whitespace-padded but non-default tenant-scoped value should be accepted.
+    const result = loadConfig(
+      { HOSTED_MODE: 'true', GATEWAY_AUDIENCE: '  tool-gateway:acme-corp  ' },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+});
