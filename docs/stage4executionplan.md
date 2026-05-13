@@ -439,12 +439,24 @@ Wire both `AzureADIdentityProvider` and the Task-0-chosen second IdP into the is
 - **Tests**: integration test exercising the OIDC code-exchange flow against a mock IdP for each provider; rejection tests for missing `nonce`, replay of `code`, mismatched `aud`.
 - **Docs**: `docs/issuer-idp-setup.md` covering Entra ID app registration + Cognito user pool setup (the two cloud-side prerequisites).
 
-### Task 3 — Role-to-capability mapping production hardening
+### Task 3 — Role-to-capability mapping production hardening ✅ COMPLETE
 The existing `RoleCapabilityPolicy` machinery is already implemented. Production-harden it:
 - Move the active mapping out of `DEFAULT_ROLE_CAPABILITY_MAP` (which is documentation-grade) into a Postgres-backed `role_policies` table loaded at issuer startup, with a documented hot-reload signal.
 - Authorise mutations via the same operator-JWT pattern used in the minter admin routes (see the stored fact about admin JWT auth in the minter — apply the same pattern here; do not reinvent).
 - Audit log every role-policy mutation with operator identity (mirror `mintTotal` audit pattern).
 - **Tests**: unit tests for hot-reload; integration test for unauthorized mutation returning 401; OCSF authorization event test.
+
+**Implemented in this PR:**
+- `src/admin-jwt-verifier.ts` — JWKS-backed JWT verifier for the admin API (same pattern as minter's `AdminJwtVerifier`); `createAdminJwtVerifierFromEnv` reads `ISSUER_ADMIN_JWKS_URI` / `ISSUER_ADMIN_JWT_AUDIENCE` / `ISSUER_ADMIN_JWT_ISSUER`.
+- `src/postgres-role-policy-store.ts` — `PostgresRolePolicyStore` persists policy versions to an append-only `role_policies` table; `ensureSchema()` / `loadLatest()` / `save(policy, operatorId)`.
+- `src/routes/admin-role-policy.ts` — `PUT /api/v1/admin/role-policy` + `GET /api/v1/admin/role-policy`; JWT primary + X-Admin-Key fallback; `validateRoleCapabilityPolicy`; persists to store; calls `onPolicyUpdated` hot-reload callback; emits structured OCSF-shaped audit log entry.
+- `src/issuance/minting-pipeline.ts` — `policy` + `cachedPolicyHash` made mutable; `updatePolicy()` added.
+- `src/issuance/issue-controller.ts` — `policy` made mutable; `updatePolicy()` added.
+- `src/issuer-service.ts` — `updatePolicy()` propagates to both pipeline and controller.
+- `src/index.ts` — Postgres store init, SIGHUP hot-reload handler, admin routes mounted after `express.json()`.
+- `public/packages/common/src/config/schema.ts` — `ISSUER_ROLE_POLICY_DB_URL`, `ISSUER_ADMIN_API_KEY`, `ISSUER_ADMIN_JWKS_URI`, `ISSUER_ADMIN_JWT_AUDIENCE`, `ISSUER_ADMIN_JWT_ISSUER` added to `IssuerConfigSchema`.
+- Tests (57 new): `tests/postgres-role-policy-store.test.ts`, `tests/admin-role-policy.test.ts`, `tests/hot-reload.test.ts`; 5 new config schema tests in `euno-platform/packages/common/tests/config.test.ts`.
+- Total: 506 capability-issuer tests pass, 936 common tests pass.
 
 ### Task 4 — Token attenuation & renewal as live, supported endpoints
 The endpoints exist. The Stage-4 work is to:

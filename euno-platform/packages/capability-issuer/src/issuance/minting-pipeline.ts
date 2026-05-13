@@ -43,6 +43,7 @@ import {
 import type { IssueCapabilityRequest } from '@euno/common';
 import { BrokerCallError, SideCredentialBroker } from '../side-credential-broker';
 import { signPayload } from './signer-pipeline';
+import { computeCapabilityPolicyHash } from './issuance-context';
 
 /**
  * Identifies which rate limiter fired when the `onIssuanceRateLimited`
@@ -133,8 +134,10 @@ export class MintingPipeline {
   readonly signer: TokenSigner;
   readonly issuerDid: string;
   readonly gatewayAudience: string;
-  readonly cachedPolicyHash: string;
-  readonly policy: RoleCapabilityPolicy;
+  // Not `readonly` — hot-reloadable via `updatePolicy()`.
+  cachedPolicyHash: string;
+  // Not `readonly` — hot-reloadable via `updatePolicy()`.
+  policy: RoleCapabilityPolicy;
 
   private readonly issuanceRateLimiter?: IssuanceRateLimiter;
   private readonly storageGrantRateLimiter?: IssuanceRateLimiter;
@@ -172,6 +175,22 @@ export class MintingPipeline {
     this.transparencyLogs = opts.transparencyLogs ?? [];
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
+  }
+
+  // ── Hot-reload ────────────────────────────────────────────────────────────
+
+  /**
+   * Hot-reload the active role → capability policy.
+   *
+   * Called by the admin API route after a mutation is persisted (or by
+   * the SIGHUP handler after re-reading the Postgres store).  Updates
+   * both the in-memory policy reference (used by the side-credential
+   * broker for DB username lookup) and the cached policy hash (stamped
+   * on every minted token's `policyHash` claim).
+   */
+  updatePolicy(policy: RoleCapabilityPolicy): void {
+    this.policy = policy;
+    this.cachedPolicyHash = computeCapabilityPolicyHash(policy);
   }
 
   // ── DPoP ─────────────────────────────────────────────────────────────────

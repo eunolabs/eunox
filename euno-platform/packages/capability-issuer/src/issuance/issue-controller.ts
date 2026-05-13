@@ -143,7 +143,8 @@ export class IssueController {
   private readonly pipeline: MintingPipeline;
   private readonly identityProvider: IdentityProvider;
   private readonly requireConsent: boolean;
-  private readonly policy: RoleCapabilityPolicy;
+  // Not `readonly` — hot-reloadable via `updatePolicy()`.
+  private policy: RoleCapabilityPolicy;
   private readonly pimRequiredRoles: string[];
   private readonly capTtlToPimActivation: boolean;
   private readonly postureEmitter?: PostureEmitterLike;
@@ -169,6 +170,19 @@ export class IssueController {
     this.defaultTtl = opts.defaultTtl ?? 900;
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
+  }
+
+  // ── Hot-reload ────────────────────────────────────────────────────────────
+
+  /**
+   * Hot-reload the active role → capability policy.
+   *
+   * Called by {@link CapabilityIssuerService.updatePolicy} after an admin
+   * mutation is persisted or after a SIGHUP-triggered Postgres re-read.
+   * Updates the policy used by all subsequent `handle()` calls.
+   */
+  updatePolicy(policy: RoleCapabilityPolicy): void {
+    this.policy = policy;
   }
 
   /**

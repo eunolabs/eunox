@@ -220,6 +220,80 @@ describe('loadConfig (issuer)', () => {
       expect(result.ok).toBe(true);
     });
   });
+
+  // ── Task 3: role-policy admin API config fields ──────────────────────────
+
+  describe('IssuerConfigSchema — Task 3 (role-policy admin API)', () => {
+    const baseMin = {
+      SIGNING_PROVIDER: 'local-pem',
+      ISSUER_PRIVATE_KEY: '-----BEGIN EC PRIVATE KEY-----\ntest\n-----END EC PRIVATE KEY-----',
+    };
+
+    it('accepts config without any Task 3 fields (all optional)', () => {
+      const result = loadConfig(baseMin, 'issuer');
+      // Any parsing errors should not involve the Task 3 fields.
+      if (!result.ok) {
+        const task3Fields = ['ISSUER_ROLE_POLICY_DB_URL', 'ISSUER_ADMIN_API_KEY', 'ISSUER_ADMIN_JWKS_URI', 'ISSUER_ADMIN_JWT_AUDIENCE', 'ISSUER_ADMIN_JWT_ISSUER'];
+        const task3Errors = result.errors.filter((e) => task3Fields.includes(e.field));
+        expect(task3Errors).toEqual([]);
+      }
+    });
+
+    it('accepts ISSUER_ROLE_POLICY_DB_URL as a valid connection string', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ROLE_POLICY_DB_URL: 'postgres://user:pass@host:5432/db' },
+        'issuer',
+      );
+      if (!result.ok) {
+        const dbError = result.errors.find((e) => e.field === 'ISSUER_ROLE_POLICY_DB_URL');
+        expect(dbError).toBeUndefined();
+      }
+    });
+
+    it('accepts ISSUER_ADMIN_API_KEY as an optional string', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ADMIN_API_KEY: 'a-secret-key-for-admin-api-at-least-32-chars' },
+        'issuer',
+      );
+      if (!result.ok) {
+        const keyError = result.errors.find((e) => e.field === 'ISSUER_ADMIN_API_KEY');
+        expect(keyError).toBeUndefined();
+      }
+    });
+
+    it('accepts ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE together', () => {
+      const result = loadConfig(
+        {
+          ...baseMin,
+          ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
+          ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
+        },
+        'issuer',
+      );
+      if (!result.ok) {
+        const jwtErrors = result.errors.filter((e) =>
+          ['ISSUER_ADMIN_JWKS_URI', 'ISSUER_ADMIN_JWT_AUDIENCE'].includes(e.field),
+        );
+        expect(jwtErrors).toEqual([]);
+      }
+    });
+
+    it('accepts ISSUER_ADMIN_JWT_ISSUER as optional alongside JWKS config', () => {
+      const result = loadConfig(
+        {
+          ...baseMin,
+          ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
+          ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
+          ISSUER_ADMIN_JWT_ISSUER: 'https://idp.example.com',
+        },
+        'issuer',
+      );
+      if (!result.ok) {
+        const issuerError = result.errors.find((e) => e.field === 'ISSUER_ADMIN_JWT_ISSUER');
+        expect(issuerError).toBeUndefined();
+      }
+    });
+  });
 });
 
 describe('loadConfig (gateway)', () => {

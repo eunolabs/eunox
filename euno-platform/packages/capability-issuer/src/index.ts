@@ -19,6 +19,7 @@ import {
   TokenSigner,
   IdentityProvider,
   RoleCapabilityPolicy,
+  DEFAULT_ROLE_CAPABILITY_MAP,
   loadActionResolverFromFileWithHash,
   loadRoleCapabilityPolicyFromFile,
   computeActionResolverHash,
@@ -47,6 +48,9 @@ import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credentia
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { DurablePostureEmitter } from '@euno/posture-emitter';
 import { parseDidWebHttpAllowList } from './did-resolver';
+import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
+import { PostgresRolePolicyStore } from './postgres-role-policy-store';
+import { createAdminRolePolicyRouter } from './routes/admin-role-policy';
 
 // Load environment variables
 dotenv.config();
@@ -252,6 +256,22 @@ let isInitialized = false;
  */
 let actionResolverHash: string | undefined;
 
+/**
+ * Postgres-backed role-policy store (Task 3 — Stage 4 production hardening).
+ * Module-level so the SIGHUP hot-reload handler can call `loadLatest()` after
+ * the store is initialised by `initializeServices()`.
+ */
+let rolePolicyStore: PostgresRolePolicyStore | undefined;
+
+/**
+ * Current active role → capability policy (Task 3).  Starts as `undefined`
+ * until `initializeServices()` resolves it from Postgres, the file-based
+ * policy, or the in-code default.  Updated in place by the admin API route
+ * and the SIGHUP hot-reload handler.  Reading/writing is safe in the Node.js
+ * single-threaded event loop — no locks are required.
+ */
+let activeRolePolicy: RoleCapabilityPolicy | undefined;
+
 async function initializeServices() {
   try {
     const signer = await createSigner();
@@ -271,6 +291,44 @@ async function initializeServices() {
         defaultRoles: Object.keys(rolePolicy.default).sort(),
         tenantOverrides: rolePolicy.tenants ? Object.keys(rolePolicy.tenants).sort() : [],
       });
+    }
+
+    // Task 3 (Stage 4 production hardening): when ISSUER_ROLE_POLICY_DB_URL is
+    // set, load the initial role → capability policy from Postgres rather than
+    // a static file.  The DB-sourced policy takes precedence over ROLE_POLICY_FILE
+    // so operators can use the admin API to update the mapping at runtime.
+    if (env.ISSUER_ROLE_POLICY_DB_URL) {
+      try {
+        // Lazily require `pg` so it remains an optional peer dep — callers who
+        // never set ISSUER_ROLE_POLICY_DB_URL don't need the module installed.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { Pool } = require('pg') as typeof import('pg');
+        const pool = new Pool({ connectionString: env.ISSUER_ROLE_POLICY_DB_URL });
+        rolePolicyStore = new PostgresRolePolicyStore(pool);
+        await rolePolicyStore.ensureSchema();
+        const record = await rolePolicyStore.loadLatest();
+        if (record) {
+          rolePolicy = record.policy;
+          logger.info('Role policy loaded from Postgres', {
+            rowId: record.id,
+            operator: record.operatorId,
+            createdAt: record.createdAt,
+            defaultRoles: Object.keys(record.policy.default).sort(),
+            tenantOverrides: record.policy.tenants
+              ? Object.keys(record.policy.tenants).sort()
+              : [],
+          });
+        } else {
+          logger.info(
+            'No role policy found in Postgres — using ROLE_POLICY_FILE or in-code default',
+          );
+        }
+      } catch (err) {
+        logger.error('Failed to initialise Postgres role-policy store', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
     }
 
     // R-7: load operator-supplied ActionResolver from disk if
@@ -553,6 +611,9 @@ async function initializeServices() {
     );
 
     logger.info('Services initialized successfully');
+    // Snapshot the active policy for hot-reload and the admin GET route.
+    // Falls back to the in-code default when no policy file or DB row was found.
+    activeRolePolicy = rolePolicy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
     isInitialized = true;
   } catch (error) {
     logger.error('Failed to initialize services', { error: error instanceof Error ? error.message : 'Unknown error' });
@@ -578,6 +639,78 @@ function getIssuerService(): CapabilityIssuerService {
 
 // Create Express app
 const app = express();
+
+// ── Task 3: role-policy admin routes and SIGHUP hot-reload ─────────────────
+//
+// The admin JWT verifier is constructed now (module-level, once) so the
+// JWKS fetch cache is shared across all requests.  The routes themselves
+// are mounted after `express.json()` so request bodies are parsed.
+
+/**
+ * Operator-JWT verifier for the role-policy admin routes.
+ * `undefined` when ISSUER_ADMIN_JWKS_URI / ISSUER_ADMIN_JWT_AUDIENCE are
+ * not set — the X-Admin-Key fallback remains active in that case.
+ */
+const adminJwtVerifier = createAdminJwtVerifierFromEnv(process.env);
+
+/**
+ * Fallback shared admin API key for the role-policy admin routes.
+ * Defaults to a non-guessable dev value; the production guard (schema
+ * superRefine) will enforce ≥32 chars when NODE_ENV=production once
+ * that check is wired — for now the routes reject any request that
+ * does not supply the configured value.
+ */
+const issuerAdminApiKey: string =
+  process.env['ISSUER_ADMIN_API_KEY'] ?? 'dev-issuer-admin-key';
+
+/**
+ * Hot-reload helper — updates the in-memory policy on the live
+ * `issuerService` and the module-level `activeRolePolicy` snapshot.
+ * Called by both the admin PUT route and the SIGHUP handler.
+ */
+function applyPolicyUpdate(policy: RoleCapabilityPolicy, operatorId: string): void {
+  activeRolePolicy = policy;
+  if (issuerService) {
+    issuerService.updatePolicy(policy);
+  }
+  logger.info('Role policy hot-reloaded', {
+    operator: operatorId,
+    defaultRoles: Object.keys(policy.default).sort(),
+    tenantOverrides: policy.tenants ? Object.keys(policy.tenants).sort() : [],
+  });
+}
+
+// SIGHUP handler for hot-reload from Postgres (Task 3).  Send SIGHUP to
+// reload the role-policy without restarting the process:
+//   kill -HUP <pid>
+// The handler is registered at module load time (before initializeServices)
+// so it is always active once the process starts — if SIGHUP arrives before
+// initialisation completes, the guard `if (!rolePolicyStore)` is a no-op
+// and the signal is silently ignored.
+process.on('SIGHUP', () => {
+  if (!rolePolicyStore) {
+    logger.warn('SIGHUP received but no Postgres role-policy store configured; ignoring.');
+    return;
+  }
+  logger.info('SIGHUP received — reloading role policy from Postgres');
+  rolePolicyStore.loadLatest().then((record) => {
+    if (record) {
+      applyPolicyUpdate(record.policy, `sighup/${record.operatorId}`);
+      logger.info('Role policy reloaded from Postgres via SIGHUP', {
+        rowId: record.id,
+        operator: record.operatorId,
+        createdAt: record.createdAt,
+      });
+    } else {
+      logger.warn('SIGHUP reload: no policy found in Postgres; active policy unchanged.');
+    }
+  }).catch((err) => {
+    logger.error('SIGHUP reload failed — active policy unchanged', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+});
+
 
 // OpenTelemetry context propagation (R-3). First middleware so every
 // handler — including audit logging — runs inside the request span.
@@ -630,6 +763,21 @@ app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
 app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
 
 app.use(express.json());
+
+// Task 3: role-policy admin routes.
+// Mounted after express.json() so PUT /api/v1/admin/role-policy can parse
+// request bodies.
+app.use(
+  createAdminRolePolicyRouter({
+    adminApiKey: issuerAdminApiKey,
+    jwtVerifier: adminJwtVerifier,
+    get policyStore() { return rolePolicyStore; },
+    onPolicyUpdated: applyPolicyUpdate,
+    getCurrentPolicy: () =>
+      activeRolePolicy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP },
+    logger,
+  }),
+);
 
 // Request logging middleware
 app.use((req: Request, _res: Response, next: NextFunction) => {
