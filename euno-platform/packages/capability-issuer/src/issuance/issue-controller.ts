@@ -50,6 +50,7 @@ import {
   validateConditionsForCapabilities,
   validateConsent,
 } from './index';
+import type { ManifestTemplateStore } from '../manifest-template-store';
 
 /**
  * Per-request enforcement context supplied by the HTTP layer.
@@ -132,6 +133,18 @@ export interface IssueControllerOptions {
    * Operational logger for info/warn/error lines.
    */
   logger: Logger;
+  /**
+   * Optional manifest template store.
+   *
+   * When set, {@link handle} looks up the active template assignment for
+   * `(tenantId, agentId, role)` on the hot path. The template manifest
+   * takes precedence over the caller-supplied manifest in the request
+   * (operator-defined capability floor).
+   *
+   * When unset the issuance pipeline skips the lookup and falls back to
+   * the per-deployment role-capability policy (backward-compatible default).
+   */
+  templateStore?: ManifestTemplateStore;
 }
 
 /**
@@ -154,6 +167,7 @@ export class IssueController {
   private readonly defaultTtl: number;
   private readonly auditLogger: Logger;
   private readonly logger: Logger;
+  private readonly templateStore: ManifestTemplateStore | undefined;
 
   constructor(pipeline: MintingPipeline, opts: IssueControllerOptions) {
     this.pipeline = pipeline;
@@ -169,6 +183,7 @@ export class IssueController {
     this.defaultTtl = opts.defaultTtl ?? 900;
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
+    this.templateStore = opts.templateStore;
   }
 
   /**
@@ -220,14 +235,54 @@ export class IssueController {
         userContext.tenantId,
       );
 
+      // Step 2b: Template-assignment hot path (Task 6).
+      // When a template store is configured, look up the active assignment
+      // for (tenantId, agentId, primaryRole). When found, the template
+      // manifest's requiredCapabilities take precedence over the caller-
+      // supplied manifest (operator-defined floor), and the policyHash
+      // is updated to the template version's hash.
+      let templateManifest = request.manifest;
+      if (this.templateStore && userContext.tenantId && request.agentId) {
+        const primaryRole = userContext.roles.length > 0 ? userContext.roles[0] : undefined;
+        if (primaryRole) {
+          try {
+            const assignment = await this.templateStore.findActiveAssignment(
+              userContext.tenantId,
+              request.agentId,
+              primaryRole,
+            );
+            if (assignment) {
+              this.logger.info('Template assignment found', {
+                templateId: assignment.templateId,
+                version: assignment.version,
+                agentId: request.agentId,
+                tenantId: userContext.tenantId,
+                role: primaryRole,
+              });
+              // The template manifest overrides the caller-supplied manifest.
+              templateManifest = assignment.manifest;
+            }
+          } catch (lookupErr) {
+            // Template lookup is non-fatal: if the store is temporarily
+            // unavailable, fall back to the request manifest so issuance
+            // can continue. Log the failure for operator visibility.
+            this.logger.warn('Template assignment lookup failed — falling back to request manifest', {
+              agentId: request.agentId,
+              tenantId: userContext.tenantId,
+              error: lookupErr instanceof Error ? lookupErr.message : String(lookupErr),
+            });
+          }
+        }
+      }
+
       // Step 3: If specific capabilities were requested, validate them.
       if (request.requestedCapabilities) {
         this.assertRequestedWithinRoleScope(capabilities, request.requestedCapabilities);
 
         // Step 3b: enforce per-agent manifest constraint at issuance time.
-        if (request.manifest) {
+        if (templateManifest) {
           validateAgainstManifest(
-            request.manifest,
+            templateManifest,
             request.agentId,
             request.requestedCapabilities,
           );
@@ -248,6 +303,14 @@ export class IssueController {
         }
 
         capabilities = request.requestedCapabilities;
+      } else if (templateManifest) {
+        // Step 3b (no requestedCapabilities): when a template assignment is
+        // active, use the template's requiredCapabilities as the effective set
+        // instead of the full role-derived capabilities — the operator-defined
+        // template constrains default issuance.
+        const templateCaps = templateManifest.requiredCapabilities;
+        this.assertRequestedWithinRoleScope(capabilities, templateCaps);
+        capabilities = templateCaps;
       } else if (this.requireConsent) {
         throw new CapabilityError(
           ErrorCode.INVALID_REQUEST,
@@ -321,7 +384,7 @@ export class IssueController {
       payload.policyHash = this.pipeline.cachedPolicyHash;
       const issuanceContext = buildIssuanceContext({
         policyHash: this.pipeline.cachedPolicyHash,
-        manifest: request.manifest,
+        manifest: templateManifest,
         subject: request.agentId,
         audience: this.pipeline.gatewayAudience,
       });
@@ -353,7 +416,7 @@ export class IssueController {
       // inside emitPostureRecord and never propagate here.
       await emitPostureRecord(this.postureEmitter, this.logger, {
         agentId: request.agentId,
-        manifest: request.manifest,
+        manifest: templateManifest,
         capabilities,
         region: this.postureRegion,
       });

@@ -397,6 +397,57 @@ async function initializeServices() {
       });
     }
 
+    // Task 6 (Stage 4): manifest template store.
+    // When ISSUER_DB_URL is set, create a Postgres-backed store and
+    // optionally run DDL migrations at startup (ISSUER_DB_SCHEMA_INIT=true).
+    // The store is injected into CapabilityIssuerService so the issuance
+    // hot path can look up template assignments.
+    let templateStore: import('./manifest-template-store').ManifestTemplateStore | undefined;
+    if (env.ISSUER_DB_URL) {
+      const { Pool } = await import('pg');
+      const dbSchema = env.ISSUER_DB_SCHEMA ?? 'euno_issuer';
+      const pool = new Pool({ connectionString: env.ISSUER_DB_URL });
+      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
+      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
+      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
+
+      if (env.ISSUER_DB_SCHEMA_INIT) {
+        const { IssuerMigrationRunner } = await import('./migrations');
+        const migrationRunner = new IssuerMigrationRunner(pool, dbSchema);
+        await migrationRunner.migrate();
+        logger.info('Issuer DB schema migration complete', { schema: dbSchema });
+      }
+
+      // Mount the admin templates router into the pre-registered forwarding router.
+      // Using adminTemplatesForwarder (registered before the error handler) ensures
+      // CapabilityError throws propagate through the shared error middleware.
+      const { createAdminTemplatesRouter, createIssuerAdminJwtVerifier } = await import('./routes/admin-templates');
+      const jwtVerifier = createIssuerAdminJwtVerifier(process.env);
+      // Require ISSUER_ADMIN_API_KEY when no JWT verifier is configured —
+      // prevents the admin API from being reachable via a predictable default key.
+      const adminApiKey = env.ISSUER_ADMIN_API_KEY;
+      if (!adminApiKey && !jwtVerifier) {
+        logger.warn(
+          'ISSUER_ADMIN_API_KEY is not set and ISSUER_ADMIN_JWKS_URI is not configured. ' +
+            'The admin template API (/api/v1/admin/templates) is DISABLED. ' +
+            'Set ISSUER_ADMIN_API_KEY or configure ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE to enable it.',
+        );
+        // Do not mount the router.
+      } else {
+        const adminRouter = createAdminTemplatesRouter({
+          store: templateStore,
+          // Pass '' when JWT-only (adminApiKey is undefined).  requireAdminAuth
+          // treats an empty adminApiKey as "X-Admin-Key path disabled" so
+          // requests without a Bearer JWT are rejected rather than accepted.
+          adminApiKey: adminApiKey ?? '',
+          logger,
+          jwtVerifier,
+        });
+        adminTemplatesForwarder.use('/', adminRouter);
+        logger.info('Admin templates router mounted at /api/v1/admin/templates');
+      }
+    }
+
     // Prometheus counter for side-credential broker errors in best-effort mode.
     const sideCredentialErrorCounter = new Counter({
       name: 'euno_issuer_side_credential_errors_total',
@@ -549,6 +600,8 @@ async function initializeServices() {
             reason: reason === 'exceeded' ? `${kind}_rate_limit_exceeded` : `${kind}_rate_limiter_unavailable`,
           });
         },
+        // Task 6: inject manifest template store when configured.
+        ...(templateStore ? { templateStore } : {}),
       }
     );
 
@@ -983,6 +1036,15 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
   }
   res.json(body);
 });
+
+// Admin templates forwarding router — must be registered BEFORE the error-handling
+// middleware so that CapabilityError throws from the admin routes are correctly
+// converted to JSON responses by the error handler.
+//
+// The router is populated lazily inside initializeServices() when ISSUER_DB_URL
+// is configured.  Until then, requests fall through to the catch-all 404 handler.
+const adminTemplatesForwarder = express.Router({ mergeParams: true });
+app.use('/api/v1/admin/templates', adminTemplatesForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
