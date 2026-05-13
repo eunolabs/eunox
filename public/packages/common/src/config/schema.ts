@@ -764,6 +764,60 @@ export const IssuerConfigSchema = z
         '(replay prevention). Default 600 (10 minutes). ' +
         'Should be set to at least the IdP\'s maximum authorization-code lifetime.',
     }),
+
+    // Manifest template store (Task 6 — Stage 4) ----------------------------
+    // Enables the Postgres-backed manifest template store and the
+    // /api/v1/admin/templates admin API.  When ISSUER_DB_URL is unset the
+    // admin API is disabled (404) and the hot-path template lookup is skipped.
+    ISSUER_DB_URL: optionalString.describe(
+      'Postgres connection string for the manifest template store. ' +
+      'When set, the issuer persists manifest templates and their assignments in ' +
+      'the configured database and exposes /api/v1/admin/templates. ' +
+      'Example: postgres://issuer:secret@db:5432/issuer_db',
+    ),
+    ISSUER_DB_SCHEMA: z
+      .string()
+      .regex(
+        /^[a-zA-Z_][a-zA-Z0-9_]*$/,
+        'ISSUER_DB_SCHEMA must be a safe SQL identifier (letters, digits, underscores; must start with a letter or underscore)',
+      )
+      .max(63, 'ISSUER_DB_SCHEMA must be 63 characters or fewer (PostgreSQL identifier limit)')
+      .optional()
+      .describe(
+        'Postgres schema name for the manifest template tables. Default: euno_issuer. ' +
+        'Override when sharing a Postgres instance with other services. ' +
+        'Must be a safe SQL identifier (letters, digits, underscores only).',
+      ),
+    ISSUER_DB_SCHEMA_INIT: envBoolean({
+      default: false,
+      description:
+        'When true, run CREATE TABLE IF NOT EXISTS migrations at startup for the manifest ' +
+        'template store. Safe to use in development and smoke tests; for production prefer ' +
+        'running migrations with a dedicated role before deploying.',
+    }),
+
+    // Manifest template admin API auth (Task 6) -----------------------------
+    // Mirrors the minter admin JWT pattern: Bearer JWT (primary) +
+    // X-Admin-Key shared-secret (deprecated fallback).
+    ISSUER_ADMIN_API_KEY: optionalString.describe(
+      'Shared-secret API key for the /api/v1/admin/templates endpoints. ' +
+      'Pass in the X-Admin-Key request header. ' +
+      'Superseded by ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE when both are set. ' +
+      'Required when ISSUER_DB_URL is set and ISSUER_ADMIN_JWKS_URI is not configured.',
+    ),
+    ISSUER_ADMIN_JWKS_URI: optionalString.describe(
+      'URL of the IdP JWKS endpoint for operator JWT verification on admin template routes. ' +
+      'When set alongside ISSUER_ADMIN_JWT_AUDIENCE, operator JWTs are accepted as ' +
+      'Authorization: Bearer <jwt>. The X-Admin-Key fallback remains operational but emits ' +
+      'a deprecation warning.',
+    ),
+    ISSUER_ADMIN_JWT_AUDIENCE: optionalString.describe(
+      'Expected `aud` claim in admin JWTs. Required alongside ISSUER_ADMIN_JWKS_URI.',
+    ),
+    ISSUER_ADMIN_JWT_ISSUER: optionalString.describe(
+      'Expected `iss` claim in admin JWTs. Optional — when unset, issuer validation is skipped. ' +
+      'Requires ISSUER_ADMIN_JWKS_URI and ISSUER_ADMIN_JWT_AUDIENCE to be set.',
+    ),
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -886,6 +940,46 @@ export const IssuerConfigSchema = z
           path: ['TRANSPARENCY_LOG_KEY_PEM'],
           message:
             'TRANSPARENCY_LOG_KEY_PEM or TRANSPARENCY_LOG_KEY_FILE is required when TRANSPARENCY_LOG_ENABLED=true.',
+        });
+      }
+    }
+
+    // Task 6 (Stage 4): admin templates JWT config cross-field validation.
+    // Exactly one of JWKS_URI or JWT_AUDIENCE without the other is a
+    // misconfiguration that silently disables JWT auth at runtime — catch
+    // it at boot time instead.
+    const jwksUri = cfg.ISSUER_ADMIN_JWKS_URI;
+    const jwtAudience = cfg.ISSUER_ADMIN_JWT_AUDIENCE;
+    if (Boolean(jwksUri) !== Boolean(jwtAudience)) {
+      const missingKey = !jwksUri ? 'ISSUER_ADMIN_JWKS_URI' : 'ISSUER_ADMIN_JWT_AUDIENCE';
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [missingKey],
+        message:
+          `${missingKey} must be set alongside its pair — ` +
+          'ISSUER_ADMIN_JWKS_URI and ISSUER_ADMIN_JWT_AUDIENCE are required together ' +
+          'to enable operator JWT authentication on admin template routes. ' +
+          'Set both or neither.',
+      });
+    }
+
+    // Task 6: production hardening for ISSUER_ADMIN_API_KEY.
+    // Mirrors the MINTER_ADMIN_API_KEY validation pattern.
+    if (cfg.NODE_ENV === 'production' && cfg.ISSUER_ADMIN_API_KEY) {
+      if (cfg.ISSUER_ADMIN_API_KEY === 'dev-admin-key') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_ADMIN_API_KEY'],
+          message:
+            'ISSUER_ADMIN_API_KEY must not use the insecure default "dev-admin-key" in production.',
+        });
+      } else if (cfg.ISSUER_ADMIN_API_KEY.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_ADMIN_API_KEY'],
+          message:
+            'ISSUER_ADMIN_API_KEY is too short for production use. ' +
+            'Minimum length is 32 characters.',
         });
       }
     }

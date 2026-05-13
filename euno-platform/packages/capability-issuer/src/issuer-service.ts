@@ -242,6 +242,16 @@ export interface CapabilityIssuerServiceOptions {
    * every issuance.
    */
   transparencyLogs?: ReadonlyArray<TransparencyLog>;
+  /**
+   * Optional manifest template store (Task 6 — Stage 4).
+   *
+   * When set, the issuance hot path queries the store for an active
+   * template assignment on `(tenantId, agentId, primaryRole)` and uses
+   * the template manifest as the operator-defined capability floor.
+   * When unset the pipeline falls back to the role-capability policy
+   * (backward-compatible default).
+   */
+  templateStore?: import('./manifest-template-store').ManifestTemplateStore;
 }
 
 /**
@@ -348,6 +358,7 @@ export class CapabilityIssuerService {
       defaultTtl: defaultTTL,
       auditLogger,
       logger,
+      ...(options.templateStore ? { templateStore: options.templateStore } : {}),
     });
 
     this.attenuateCtrl = new AttenuateController(this.pipeline, { defaultTtl: defaultTTL });
