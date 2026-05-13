@@ -17,6 +17,7 @@ import {
   LedgerChainError,
   LedgerEntry,
   PostgresLedgerBackend,
+  PerReplicaPostgresLedgerBackend,
   AzureConfidentialLedgerBackend,
   AzureConfidentialLedgerClient,
   PgPool,
@@ -620,6 +621,34 @@ describe('PostgresLedgerBackend', () => {
     await expect(backend.migrate()).resolves.toBeUndefined();
   });
 
+  it('migrate creates expression indexes for all queryEntries() JSONB predicates', async () => {
+    const capturedSql: string[] = [];
+    const fakePool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql.trim());
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const backend = new PostgresLedgerBackend(fakePool, { hmacSecret: HMAC_SECRET });
+    await backend.migrate();
+
+    const indexSqls = capturedSql.filter((s) => s.toUpperCase().startsWith('CREATE INDEX'));
+    const allIndexSql = indexSqls.join('\n');
+
+    // All five JSONB expression indexes must be present.
+    expect(allIndexSql).toMatch(/payload->>'tenantId'/);
+    expect(allIndexSql).toMatch(/payload->>'decision'/);
+    expect(allIndexSql).toMatch(/payload->>'capabilityId'/);
+    expect(allIndexSql).toMatch(/payload->>'agentId'/);
+    expect(allIndexSql).toMatch(/payload->>'denialCode'/);
+    // The created_at structural index must still be present.
+    expect(allIndexSql).toMatch(/idx_euno_audit_ledger_created_at/);
+  });
+
   it('getEntries returns the expected slice', async () => {
     const { pool } = makeMockPgPool();
     const backend = new PostgresLedgerBackend(pool, { hmacSecret: HMAC_SECRET });
@@ -782,13 +811,18 @@ describe('PostgresLedgerBackend.migrate() schema-qualified table name', () => {
     });
     await backend.migrate();
 
-    const indexSql = capturedSql.find((s) => s.toUpperCase().startsWith('CREATE INDEX'));
-    expect(indexSql).toBeDefined();
-    // The index name must NOT contain a dot — 'audit.euno_ledger_created_at' is
-    // invalid SQL (dot in unquoted identifier is parsed as schema.name).
-    expect(indexSql).not.toMatch(/idx_audit\./);
-    // Should use just the table name part as the identifier.
-    expect(indexSql).toMatch(/idx_euno_ledger_created_at/);
+    const indexSqls = capturedSql.filter((s) => s.toUpperCase().startsWith('CREATE INDEX'));
+    expect(indexSqls.length).toBeGreaterThan(0);
+    // The first index is the created_at one; validate name correctness.
+    expect(indexSqls[0]).not.toMatch(/idx_audit\./);
+    expect(indexSqls[0]).toMatch(/idx_euno_ledger_created_at/);
+    // None of the index names should contain a dot (schema-qualified name collision).
+    for (const sql of indexSqls) {
+      const nameMatch = sql.match(/CREATE INDEX IF NOT EXISTS (\S+)/i);
+      if (nameMatch) {
+        expect(nameMatch[1]).not.toMatch(/\./);
+      }
+    }
   });
 });
 
@@ -1287,5 +1321,82 @@ describe('PostgresLedgerBackend — advisoryLockMode (DI-2)', () => {
     await expect(
       backend.appendEntry(ev, 'r-1', (prev, seq) => signEvidenceWithChain(ev, testSigner, prev, seq)),
     ).rejects.toThrow(/per-tenant mode.*tenantId is required/);
+  });
+});
+
+// ── PerReplicaPostgresLedgerBackend — migrate() JSONB indexes ─────────────────
+
+describe('PerReplicaPostgresLedgerBackend.migrate()', () => {
+  const HMAC_SECRET = 'a'.repeat(64);
+
+  it('migrate runs without error', async () => {
+    const fakePool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(_sql: string): Promise<PgQueryResult<R>> {
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const backend = new PerReplicaPostgresLedgerBackend(fakePool, 'r1', { hmacSecret: HMAC_SECRET });
+    await expect(backend.migrate()).resolves.toBeUndefined();
+  });
+
+  it('creates expression indexes for all queryEntries() JSONB predicates', async () => {
+    const capturedSql: string[] = [];
+    const fakePool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql.trim());
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const backend = new PerReplicaPostgresLedgerBackend(fakePool, 'r1', { hmacSecret: HMAC_SECRET });
+    await backend.migrate();
+
+    const indexSqls = capturedSql.filter((s) => s.toUpperCase().startsWith('CREATE INDEX'));
+    const allIndexSql = indexSqls.join('\n');
+
+    // Structural indexes.
+    expect(allIndexSql).toMatch(/idx_euno_audit_ledger_v2_replica_seq/);
+    expect(allIndexSql).toMatch(/idx_euno_audit_ledger_v2_created_at/);
+    // JSONB expression indexes.
+    expect(allIndexSql).toMatch(/payload->>'tenantId'/);
+    expect(allIndexSql).toMatch(/payload->>'decision'/);
+    expect(allIndexSql).toMatch(/payload->>'capabilityId'/);
+    expect(allIndexSql).toMatch(/payload->>'agentId'/);
+    expect(allIndexSql).toMatch(/payload->>'denialCode'/);
+  });
+
+  it('does not include a dot in index names for schema-qualified table', async () => {
+    const capturedSql: string[] = [];
+    const fakePool: PgPool = {
+      connect: () => Promise.resolve({
+        query<R extends Record<string, unknown>>(sql: string): Promise<PgQueryResult<R>> {
+          capturedSql.push(sql.trim());
+          return Promise.resolve({ rows: [], rowCount: 0 }) as unknown as Promise<PgQueryResult<R>>;
+        },
+        release() { /* no-op */ },
+      }),
+      end: () => Promise.resolve(),
+    };
+    const backend = new PerReplicaPostgresLedgerBackend(fakePool, 'r1', {
+      hmacSecret: HMAC_SECRET,
+      table: 'audit.euno_ledger_v2',
+    });
+    await backend.migrate();
+
+    const indexSqls = capturedSql.filter((s) => s.toUpperCase().startsWith('CREATE INDEX'));
+    // No index name should contain a dot (that would be parsed as schema.index and fail).
+    for (const sql of indexSqls) {
+      const nameMatch = sql.match(/CREATE INDEX IF NOT EXISTS (\S+)/i);
+      if (nameMatch) {
+        expect(nameMatch[1]).not.toMatch(/\./);
+      }
+    }
   });
 });

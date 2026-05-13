@@ -853,6 +853,12 @@ interface LedgerSelectRow extends Record<string, unknown> {
  *   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
  * );
  * CREATE INDEX idx_euno_audit_ledger_created_at ON euno_audit_ledger (created_at);
+ * -- Expression indexes for queryEntries() JSONB predicates:
+ * CREATE INDEX idx_euno_audit_ledger_payload_tenant_id     ON euno_audit_ledger ((payload->>'tenantId'));
+ * CREATE INDEX idx_euno_audit_ledger_payload_decision      ON euno_audit_ledger ((payload->>'decision'));
+ * CREATE INDEX idx_euno_audit_ledger_payload_capability_id ON euno_audit_ledger ((payload->>'capabilityId'));
+ * CREATE INDEX idx_euno_audit_ledger_payload_agent_id      ON euno_audit_ledger ((payload->>'agentId'));
+ * CREATE INDEX idx_euno_audit_ledger_payload_denial_code   ON euno_audit_ledger ((payload->>'denialCode'));
  * ```
  *
  * ### Why explicit seq (not IDENTITY)
@@ -994,6 +1000,29 @@ export class PostgresLedgerBackend implements LedgerBackend {
       await conn.query(`
         CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_created_at
           ON ${this.table} (created_at)
+      `);
+      // Expression indexes on frequently-queried JSONB payload fields.
+      // These turn `payload->>'field' = $N` predicates in queryEntries() from
+      // full-table scans into fast index lookups as the audit table grows.
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_tenant_id
+          ON ${this.table} ((payload->>'tenantId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_decision
+          ON ${this.table} ((payload->>'decision'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_capability_id
+          ON ${this.table} ((payload->>'capabilityId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_agent_id
+          ON ${this.table} ((payload->>'agentId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_denial_code
+          ON ${this.table} ((payload->>'denialCode'))
       `);
     } finally {
       if (shouldRelease) conn.release();
@@ -1841,6 +1870,12 @@ interface ReplicaTipsRow extends Record<string, unknown> {
  *   ON euno_audit_ledger_v2 (replica_id, seq DESC);
  * CREATE INDEX idx_euno_audit_ledger_v2_created_at
  *   ON euno_audit_ledger_v2 (created_at);
+ * -- Expression indexes for queryEntries() JSONB predicates:
+ * CREATE INDEX idx_euno_audit_ledger_v2_payload_tenant_id     ON euno_audit_ledger_v2 ((payload->>'tenantId'));
+ * CREATE INDEX idx_euno_audit_ledger_v2_payload_decision      ON euno_audit_ledger_v2 ((payload->>'decision'));
+ * CREATE INDEX idx_euno_audit_ledger_v2_payload_capability_id ON euno_audit_ledger_v2 ((payload->>'capabilityId'));
+ * CREATE INDEX idx_euno_audit_ledger_v2_payload_agent_id      ON euno_audit_ledger_v2 ((payload->>'agentId'));
+ * CREATE INDEX idx_euno_audit_ledger_v2_payload_denial_code   ON euno_audit_ledger_v2 ((payload->>'denialCode'));
  * ```
  *
  * ## Comparison with PostgresLedgerBackend (global lock)
@@ -1921,6 +1956,29 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       await conn.query(`
         CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_created_at
           ON ${this.table} (created_at)
+      `);
+      // Expression indexes on frequently-queried JSONB payload fields.
+      // These turn `payload->>'field' = $N` predicates in queryEntries() from
+      // full-table scans into fast index lookups as the audit table grows.
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_tenant_id
+          ON ${this.table} ((payload->>'tenantId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_decision
+          ON ${this.table} ((payload->>'decision'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_capability_id
+          ON ${this.table} ((payload->>'capabilityId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_agent_id
+          ON ${this.table} ((payload->>'agentId'))
+      `);
+      await conn.query(`
+        CREATE INDEX IF NOT EXISTS idx_${tableNameOnly}_payload_denial_code
+          ON ${this.table} ((payload->>'denialCode'))
       `);
     } finally {
       if (shouldRelease) conn.release();
