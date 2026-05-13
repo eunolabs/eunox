@@ -152,6 +152,26 @@ export const anomalyAlertsTotal = new promClient.Counter({
 });
 
 /**
+ * Mint audit write failures.
+ *
+ * Incremented every time the audit store rejects the `record()` call during a
+ * mint request.  Because audit writes are now synchronous (acknowledged
+ * persistence), an audit failure causes the mint to fail with 503.  This
+ * counter allows operators to alert on persistent audit-store outages
+ * independently of the general `euno_minter_mint_total{result="internal_error"}`
+ * bucket.
+ *
+ * `stage` label values:
+ * - `'write'` — the `record()` call itself failed (DB error, network partition)
+ */
+export const mintAuditFailureTotal = new promClient.Counter({
+  name: 'euno_minter_audit_failure_total',
+  help: 'Mint audit write failures — audit store unavailable or rejected the record',
+  labelNames: ['stage'] as const,
+  registers: [minterRegistry],
+});
+
+/**
  * Key rotation events, partitioned by key ID and reason.
  *
  * Incremented by {@link KeyRotationManager} at the start and completion of
@@ -184,4 +204,5 @@ export const minterMetrics = {
   kmsErrorTotal,
   anomalyAlertsTotal,
   keyRotationTotal,
+  mintAuditFailureTotal,
 } as const;

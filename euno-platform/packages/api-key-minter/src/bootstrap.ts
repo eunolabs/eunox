@@ -27,6 +27,8 @@ import { createLogger } from '@euno/common';
 import { createKmsTokenSignerFromEnv } from '@euno/common-infra';
 import { validateProductionMinterConfig } from './production-guard';
 import { InMemoryApiKeyStore } from './api-key-store';
+import { PostgresApiKeyStore } from './postgres-api-key-store';
+import type { ApiKeyPgPool } from './postgres-api-key-store';
 import { ApiKeyVerifier, PepperEntry } from './api-key-verifier';
 import { TokenMinter } from './token-minter';
 import { LocalTokenSigner } from './local-token-signer';
@@ -161,7 +163,42 @@ async function main(): Promise<void> {
   }
   const auditStore = auditStoreBase;
 
-  const keyStore = new InMemoryApiKeyStore();
+  // ── API-key store ───────────────────────────────────────────────────────────
+  // Production: Postgres-backed durable store — keys survive restarts and
+  // rolling deploys.
+  // Dev: in-memory (all keys lost on restart).
+  const apiKeyDbUrl = process.env['MINTER_API_KEY_DB_URL'];
+  let keyStore: InMemoryApiKeyStore | PostgresApiKeyStore;
+  if (apiKeyDbUrl) {
+    let pgKeyModule: { Pool: new (opts: { connectionString: string }) => unknown };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+      pgKeyModule = require('pg');
+    } catch {
+      throw new Error(
+        'MINTER_API_KEY_DB_URL is set but the `pg` package is not installed. ' +
+          'Add it to your deployment image: npm install pg',
+      );
+    }
+    const keyPool = new pgKeyModule.Pool({ connectionString: apiKeyDbUrl });
+    const pgKeyStore = new PostgresApiKeyStore(keyPool as ApiKeyPgPool);
+    if (process.env['MINTER_API_KEY_SCHEMA_INIT']?.toLowerCase() === 'true') {
+      await pgKeyStore.ensureSchema();
+      logger.info('Postgres API-key store schema initialised');
+    } else {
+      logger.info(
+        'Skipping API-key store schema init (set MINTER_API_KEY_SCHEMA_INIT=true to run DDL at startup)',
+      );
+    }
+    logger.info('Using Postgres-backed API-key store');
+    keyStore = pgKeyStore;
+  } else {
+    logger.warn(
+      'MINTER_API_KEY_DB_URL not set; using in-memory API-key store (dev mode only — all keys lost on restart)',
+    );
+    keyStore = new InMemoryApiKeyStore();
+  }
+
   const rateLimiter = new InMemoryMintRateLimiter({
     maxMintsPerWindow: rlMaxRaw,
     windowSeconds: rlWindowRaw,

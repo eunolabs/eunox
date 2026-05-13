@@ -9,6 +9,19 @@ export interface MintRateLimiterOptions {
 
 export interface MintRateLimiter {
   check(tenantId: string): Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+  /**
+   * Decrement the rate-limit counter for a tenant by one.
+   *
+   * Called when a mint request was allowed through the rate limiter but
+   * subsequently failed for a reason unrelated to the tenant's behaviour
+   * (e.g. the audit store was unavailable).  Returning the slot prevents
+   * audit-store transients from permanently eroding the tenant's quota.
+   *
+   * Implementations should treat a failed decrement as non-fatal (the slot
+   * remains consumed for the current window, which is acceptable for abnormal
+   * error paths).
+   */
+  decrement(tenantId: string): Promise<void>;
 }
 
 export class InMemoryMintRateLimiter implements MintRateLimiter {
@@ -48,6 +61,13 @@ export class InMemoryMintRateLimiter implements MintRateLimiter {
     entry.count++;
     return { allowed: true };
   }
+
+  async decrement(tenantId: string): Promise<void> {
+    const entry = this.counts.get(tenantId);
+    if (entry && entry.count > 0) {
+      entry.count--;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +83,7 @@ export class InMemoryMintRateLimiter implements MintRateLimiter {
  */
 export interface RedisMintRateLimiterClient {
   incr(key: string): Promise<number>;
+  decr(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
   ttl(key: string): Promise<number>;
   quit(): Promise<unknown>;
@@ -195,9 +216,23 @@ export class RedisBackedMintRateLimiter implements MintRateLimiter {
     }
   }
 
-  /** Close the underlying Redis client. Idempotent best-effort. */
-  async close(): Promise<void> {
+  async decrement(tenantId: string): Promise<void> {
+    const fullKey = `${this.keyPrefix}${tenantId}`;
     try {
+      await this.client.decr(fullKey);
+    } catch (error) {
+      // Non-fatal: if the decrement fails, the slot remains consumed for this
+      // window.  Audit failures are already abnormal; a best-effort decrement is
+      // acceptable.  Log at warn so operators can spot persistent Redis issues.
+      this.logger?.warn('RedisBackedMintRateLimiter: failed to decrement rate-limit counter', {
+        key: fullKey,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /** Close the underlying Redis client. Idempotent best-effort. */
+  async close(): Promise<void> {    try {
       await this.client.quit();
     } catch (error) {
       this.logger?.warn('RedisBackedMintRateLimiter: error closing Redis client', {

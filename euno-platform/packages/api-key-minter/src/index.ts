@@ -2,6 +2,8 @@ export { generateApiKey, parseApiKey, isValidApiKeyFormat, encodeBase58, API_KEY
 export type { ParsedApiKey } from './api-key';
 export type { ApiKeyRecord, ApiKeyStore, CreateApiKeyInput } from './api-key-store';
 export { InMemoryApiKeyStore } from './api-key-store';
+export type { ApiKeyPgPool } from './postgres-api-key-store';
+export { PostgresApiKeyStore, API_KEY_DDL } from './postgres-api-key-store';
 export type { PepperEntry, ApiKeyVerifierOptions, VerifiedApiKey } from './api-key-verifier';
 export { ApiKeyVerifier } from './api-key-verifier';
 export type { MintTokenInput, MintTokenResult, TokenMinterOptions } from './token-minter';
@@ -43,4 +45,5 @@ export {
   kmsErrorTotal,
   anomalyAlertsTotal,
   keyRotationTotal,
+  mintAuditFailureTotal,
 } from './metrics';
