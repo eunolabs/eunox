@@ -217,11 +217,12 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     function makeAzureProvider() {
       return new AzureADIdentityProvider({
         type: 'azure-ad',
+        name: 'azure-test',
         azureAD: {
           tenantId: AZURE_TENANT_ID,
           clientId: AZURE_CLIENT_ID,
         },
-      } as any);
+      });
     }
 
     it('accepts a valid Azure AD token with correct nonce claim', async () => {
@@ -307,13 +308,14 @@ describe('OIDC endpoint wiring (Task 2)', () => {
     function makeCognitoProvider() {
       return new AWSCognitoIdentityProvider({
         type: 'aws-cognito',
+        name: 'cognito-test',
         awsCognito: {
           region: COGNITO_REGION,
           userPoolId: COGNITO_POOL_ID,
           clientId: COGNITO_CLIENT_ID,
           tokenUse: 'id',
         },
-      } as any);
+      });
     }
 
     it('validates a Cognito ID token and extracts nonce claim', async () => {
