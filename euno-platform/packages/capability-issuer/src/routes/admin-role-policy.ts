@@ -92,7 +92,16 @@ export interface AdminRolePolicyRouterOptions {
  * as `api-key-minter`'s `requireAdminAuth`:
  *
  *   1. Bearer JWT (primary) — validated via `jwtVerifier` when supplied.
- *   2. X-Admin-Key (fallback) — constant-time comparison via HMAC-SHA256.
+ *      If the request includes an `Authorization: Bearer <token>` header
+ *      and `jwtVerifier` is configured, the JWT is verified.  A
+ *      present-but-invalid token always returns 401; the X-Admin-Key path
+ *      is **not** attempted in that case.
+ *
+ *   2. X-Admin-Key (fallback, deprecated) — constant-time HMAC-SHA256
+ *      comparison.  This path is only attempted when `jwtVerifier` is not
+ *      configured *or* when no `Authorization: Bearer` header is present
+ *      at all.  Requests that include *both* headers will have X-Admin-Key
+ *      silently ignored once the JWT path succeeds or fails.
  */
 function requireAdminAuth(
   adminApiKey: string,

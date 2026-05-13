@@ -25,16 +25,22 @@ interface StoredRow {
  * Lightweight in-memory Postgres pool fake.  Supports the three query
  * patterns used by PostgresRolePolicyStore: DDL statements, SELECT, and
  * INSERT RETURNING.
+ *
+ * The DDL branch accepts multi-statement strings (the real `pg` client
+ * uses the simple query protocol for parameter-free calls, which supports
+ * multiple statements in one call — matching the `ensureSchema()` approach).
  */
-function makeFakePool(rows: StoredRow[] = []): RolePolicyPgPool & { rows: StoredRow[] } {
+function makeFakePool(rows: StoredRow[] = []): RolePolicyPgPool & { rows: StoredRow[]; insertCount: number } {
   let nextId = rows.length + 1;
+  let insertCount = 0;
   return {
     rows,
+    get insertCount() { return insertCount; },
     async query(text: string, values?: unknown[]) {
       const t = text.trim().toUpperCase();
 
-      // ── DDL (CREATE TABLE / INDEX) ─────────────────────────────────
-      if (t.startsWith('CREATE TABLE') || t.startsWith('CREATE INDEX')) {
+      // ── DDL (CREATE TABLE / INDEX — may be a multi-statement string) ──
+      if (t.includes('CREATE TABLE') || t.includes('CREATE INDEX')) {
         return { rows: [] };
       }
 
@@ -46,6 +52,7 @@ function makeFakePool(rows: StoredRow[] = []): RolePolicyPgPool & { rows: Stored
 
       // ── INSERT … RETURNING (save) ──────────────────────────────────
       if (t.startsWith('INSERT')) {
+        insertCount++;
         const id = nextId++;
         const [policyJson, operatorId] = values as [string, string];
         const row: StoredRow = {
@@ -231,7 +238,9 @@ describe('PostgresRolePolicyStore', () => {
       await expect(
         store.save({ notADefaultKey: {} } as unknown as RoleCapabilityPolicy, 'op-1'),
       ).rejects.toThrow();
-      // The pool should have received no INSERT query
+      // Validation throws before any INSERT — pool must not have been written to.
+      expect(pool.insertCount).toBe(0);
+      // Confirm the table is still empty (cross-check via loadLatest).
       const record = await store.loadLatest();
       expect(record).toBeNull();
     });

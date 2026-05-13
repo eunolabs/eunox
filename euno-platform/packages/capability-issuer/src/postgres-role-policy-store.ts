@@ -92,15 +92,12 @@ export class PostgresRolePolicyStore {
    * Idempotent — safe to call at every startup.
    */
   async ensureSchema(): Promise<void> {
-    // Execute each statement individually; `pg` does not support multi-
-    // statement strings in a single `query()` call without using a
-    // transaction helper.
-    const statements = ROLE_POLICY_DDL.split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    for (const stmt of statements) {
-      await this.pool.query(stmt + ';');
-    }
+    // Execute the full DDL string in a single query() call.  pg's simple
+    // query protocol (no parameters) supports multi-statement strings, and
+    // the monolithic approach avoids fragility from splitting on ';' (which
+    // would break future additions like DO $$ … $$ blocks or string literals
+    // containing semicolons).
+    await this.pool.query(ROLE_POLICY_DDL);
   }
 
   /**

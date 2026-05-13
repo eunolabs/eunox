@@ -264,6 +264,12 @@ let actionResolverHash: string | undefined;
 let rolePolicyStore: PostgresRolePolicyStore | undefined;
 
 /**
+ * The raw `pg.Pool` backing `rolePolicyStore` (when ISSUER_ROLE_POLICY_DB_URL
+ * is set).  Tracked separately so the SIGTERM handler can close it cleanly.
+ */
+let rolePolicyPool: { end(): Promise<void> } | undefined;
+
+/**
  * Current active role → capability policy (Task 3).  Starts as `undefined`
  * until `initializeServices()` resolves it from Postgres, the file-based
  * policy, or the in-code default.  Updated in place by the admin API route
@@ -304,6 +310,7 @@ async function initializeServices() {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { Pool } = require('pg') as typeof import('pg');
         const pool = new Pool({ connectionString: env.ISSUER_ROLE_POLICY_DB_URL });
+        rolePolicyPool = pool;
         rolePolicyStore = new PostgresRolePolicyStore(pool);
         await rolePolicyStore.ensureSchema();
         const record = await rolePolicyStore.loadLatest();
@@ -683,11 +690,15 @@ function applyPolicyUpdate(policy: RoleCapabilityPolicy, operatorId: string): vo
 // SIGHUP handler for hot-reload from Postgres (Task 3).  Send SIGHUP to
 // reload the role-policy without restarting the process:
 //   kill -HUP <pid>
-// The handler is registered at module load time (before initializeServices)
-// so it is always active once the process starts — if SIGHUP arrives before
-// initialisation completes, the guard `if (!rolePolicyStore)` is a no-op
-// and the signal is silently ignored.
+// The handler is registered at module load time (before initializeServices).
+// It is gated on `isInitialized` so a signal that races startup cannot set
+// `activeRolePolicy` and then have it silently overwritten by the normal
+// init flow completing on line 616.
 process.on('SIGHUP', () => {
+  if (!isInitialized) {
+    logger.warn('SIGHUP received before initialization completed; ignoring.');
+    return;
+  }
   if (!rolePolicyStore) {
     logger.warn('SIGHUP received but no Postgres role-policy store configured; ignoring.');
     return;
@@ -1211,6 +1222,15 @@ if (require.main === module) {
         // connection cleanly.
         if (postureEmitter) {
           await postureEmitter.stop();
+        }
+        // Close the role-policy Postgres pool (Task 3) so integration
+        // test runners and rolling deploys don't leak idle connections.
+        if (rolePolicyPool) {
+          await rolePolicyPool.end().catch((err: unknown) => {
+            logger.warn('Error closing role-policy Postgres pool', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
         logger.info('Server closed');
         process.exit(0);

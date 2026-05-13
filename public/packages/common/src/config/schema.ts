@@ -865,6 +865,59 @@ export const IssuerConfigSchema = z
           'reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md.',
       });
     }
+    // ── Admin API key / JWT guards (Task 3) ─────────────────────────────────
+    // When ISSUER_ADMIN_JWKS_URI is set, ISSUER_ADMIN_JWT_AUDIENCE is also
+    // required — without the audience claim the JWT verifier would accept
+    // tokens from any audience and silently fall back to the X-Admin-Key path.
+    if (cfg.ISSUER_ADMIN_JWKS_URI && !cfg.ISSUER_ADMIN_JWT_AUDIENCE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ISSUER_ADMIN_JWT_AUDIENCE'],
+        message:
+          'ISSUER_ADMIN_JWT_AUDIENCE is required when ISSUER_ADMIN_JWKS_URI is set.',
+      });
+    }
+    // ISSUER_ADMIN_JWT_ISSUER has no meaning without the JWKS URI.
+    if (cfg.ISSUER_ADMIN_JWT_ISSUER && !cfg.ISSUER_ADMIN_JWKS_URI) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ISSUER_ADMIN_JWT_ISSUER'],
+        message:
+          'ISSUER_ADMIN_JWT_ISSUER requires ISSUER_ADMIN_JWKS_URI to be set.',
+      });
+    }
+    // In production, when JWT auth is not configured, require a strong
+    // ISSUER_ADMIN_API_KEY so the X-Admin-Key fallback cannot be guessed
+    // (mirrors the MINTER_ADMIN_API_KEY guard in MinterConfigSchema).
+    if (cfg.NODE_ENV === 'production' && !cfg.ISSUER_ADMIN_JWKS_URI) {
+      if (!cfg.ISSUER_ADMIN_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_ADMIN_API_KEY'],
+          message:
+            'ISSUER_ADMIN_API_KEY must be set when NODE_ENV=production and ' +
+            'ISSUER_ADMIN_JWKS_URI is not configured. ' +
+            'Use a securely-generated random string of at least 32 characters.',
+        });
+      } else if (cfg.ISSUER_ADMIN_API_KEY === 'dev-issuer-admin-key') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_ADMIN_API_KEY'],
+          message:
+            'ISSUER_ADMIN_API_KEY must not use the insecure default "dev-issuer-admin-key" in production.',
+        });
+      } else if (cfg.ISSUER_ADMIN_API_KEY.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ISSUER_ADMIN_API_KEY'],
+          message:
+            'ISSUER_ADMIN_API_KEY is too short for production use. ' +
+            'Minimum length is 32 characters.',
+        });
+      }
+    }
+
+    // ── Transparency-log trust hardening ─────────────────────────────────────
     // Multi-issuer trust hardening: when the transparency log is enabled,
     // its identifier, kid, and a private key (inline OR file) MUST all be
     // present — otherwise the issuer would silently fall back to issuing
