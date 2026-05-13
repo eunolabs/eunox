@@ -39,30 +39,41 @@ window fleet-wide.
 1. **Add `createMintRateLimiterFromEnv` factory** in
    `mint-rate-limiter.ts` (alongside `createPingRateLimiterFromEnv`).
    - Accept `env: NodeJS.ProcessEnv` and `logger: Logger` (same signature).
-   - Check `env['MINTER_REDIS_URL'] ?? env['REDIS_URL']`. If present, construct a
-     `RedisBackedMintRateLimiter` with `keyPrefix: 'mintrl:mint:'` (distinct from
-     ping's `'mintrl:ping:'`), `maxMintsPerWindow` from
-     `env['MINTER_RATE_LIMIT_MAX']` (parse as integer, default 100), and
-     `windowSeconds` from `env['MINTER_RATE_LIMIT_WINDOW_SECONDS']` (default 60).
+   - Check `env['MINTER_MINT_REDIS_URL'] ?? env['REDIS_URL']`. If present, construct a
+     `RedisBackedMintRateLimiter` with `keyPrefix: 'mintrl:mint:'`,
+     `maxMintsPerWindow` from `env['MINTER_RATE_LIMIT_MAX']` (parse as integer,
+     default 100), and `windowSeconds` from
+     `env['MINTER_RATE_LIMIT_WINDOW_SECONDS']` (default 60).
    - If Redis URL is absent, construct `InMemoryMintRateLimiter` with the same
-     defaults and emit `logger.warn('No Redis URL configured for mint rate limiter; using in-memory (per-replica only). Set MINTER_REDIS_URL or REDIS_URL for fleet-wide limiting.')`.
+     defaults and emit `logger.warn('No Redis URL configured for mint rate limiter; using in-memory (per-replica only). Set MINTER_MINT_REDIS_URL or REDIS_URL for fleet-wide limiting.')`.
    - Return the constructed `MintRateLimiter`.
 
 2. **Update `bootstrap.ts`** to call `await createMintRateLimiterFromEnv(process.env, logger)`
    instead of `new InMemoryMintRateLimiter(...)`. The `await` is needed because the
    factory may open a Redis connection (same pattern as `createPingRateLimiterFromEnv`).
 
-3. **Add tests** in `euno-platform/packages/api-key-minter/tests/` (new file
+3. **Update configuration validation and operator-facing docs** for the new dedicated
+   mint Redis URL:
+   - Extend `validateProductionMinterConfig` so production/HA checks cover
+     `MINTER_MINT_REDIS_URL` the same way other dedicated Redis URLs are handled.
+   - Add `MINTER_MINT_REDIS_URL` to `docs/DEPLOYMENT.md` with its fallback to
+     `REDIS_URL` and when to use it.
+   - Add `MINTER_MINT_REDIS_URL` to the minter env template/example so the setting
+     is discoverable.
+
+4. **Add tests** in `euno-platform/packages/api-key-minter/tests/` (new file
    `mint-rate-limiter.test.ts` or extend the existing one if it exists):
    - `createMintRateLimiterFromEnv` returns `RedisBackedMintRateLimiter` when
-     `MINTER_REDIS_URL` is set.
+     `MINTER_MINT_REDIS_URL` is set.
    - Returns `InMemoryMintRateLimiter` and logs a warn when no Redis URL is present.
    - Verify the returned instance is wired into `MintRouterOptions.rateLimiter` in
      the bootstrap (integration-level test via the existing bootstrap test pattern).
+   - Add/adjust validation coverage so production config checks fail loudly for an
+     invalid dedicated mint Redis URL configuration.
 
 #### Acceptance criteria
 
-- `MINTER_REDIS_URL` set → `RedisBackedMintRateLimiter` used for `/mint`.
+- `MINTER_MINT_REDIS_URL` set → `RedisBackedMintRateLimiter` used for `/mint`.
 - `REDIS_URL` set (no specific mint URL) → same Redis instance shared with anomaly detector.
 - Neither set → `InMemoryMintRateLimiter` with structured warn.
 - All existing minter tests continue to pass.
