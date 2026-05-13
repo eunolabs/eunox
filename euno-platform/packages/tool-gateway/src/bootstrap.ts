@@ -453,13 +453,13 @@ export function checkProductionRedisHa(
   if (environment !== 'production') return;
 
   const redisUrls = [
-    env.REDIS_URL,
-    env.REVOCATION_REDIS_URL,
-    env.KILL_SWITCH_REDIS_URL,
-    env.CALL_COUNTER_REDIS_URL,
-  ].filter(Boolean) as string[];
+    ['REDIS_URL', env.REDIS_URL],
+    ['REVOCATION_REDIS_URL', env.REVOCATION_REDIS_URL],
+    ['KILL_SWITCH_REDIS_URL', env.KILL_SWITCH_REDIS_URL],
+    ['CALL_COUNTER_REDIS_URL', env.CALL_COUNTER_REDIS_URL],
+  ].filter(([, url]) => Boolean(url)) as Array<[string, string]>;
 
-  for (const url of redisUrls) {
+  for (const [varName, url] of redisUrls) {
     const isHa =
       url.startsWith('redis+sentinel://') ||
       url.startsWith('rediss+sentinel://') ||
@@ -468,7 +468,7 @@ export function checkProductionRedisHa(
       url.includes(','); // multiple comma-separated seed nodes → cluster
     if (!isHa) {
       throw new Error(
-        'CR-3: Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance. ' +
+        `CR-3: Gateway refused to start — ${varName} appears to point at a single-node Redis instance. ` +
           'In production, all runtime-security state stores (revocation, kill-switch, ' +
           'call counters, DPoP replay) share this Redis. A single-node outage causes ' +
           '100 % of enforcement decisions to be denied (fail-closed default) or all ' +

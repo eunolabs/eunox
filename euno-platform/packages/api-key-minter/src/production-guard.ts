@@ -8,9 +8,9 @@
  *
  * Enforced conditions (all only when `NODE_ENV=production`):
  *
- * 1. **Admin API key** — `MINTER_ADMIN_API_KEY` must be set; the default
- *    `dev-admin-key` cannot be used in production (anyone who has read the
- *    source code could authenticate as admin).
+ * 1. **Admin API key** — `MINTER_ADMIN_API_KEY` must be set, must not equal the
+ *    default `dev-admin-key` literal (publicly known from source code), and must
+ *    be at least 32 characters long.
  *
  * 2. **Pepper material** — `MINTER_PEPPER_HEX` must be set; ephemeral pepper
  *    keys are regenerated on every restart, making previously-issued API keys
@@ -75,11 +75,23 @@ export function validateProductionMinterConfig(
 
   const violations: string[] = [];
 
-  // 1. Admin API key — default value is publicly known source-code literal.
-  if (!env['MINTER_ADMIN_API_KEY']) {
+  // 1. Admin API key — default value is publicly known source-code literal; ≥32 chars required.
+  const adminKey = env['MINTER_ADMIN_API_KEY'];
+  if (!adminKey) {
     violations.push(
       "MINTER_ADMIN_API_KEY is not set. The default 'dev-admin-key' cannot be used in " +
         'production. Set MINTER_ADMIN_API_KEY to a secret value of at least 32 characters.',
+    );
+  } else if (adminKey === 'dev-admin-key') {
+    violations.push(
+      "MINTER_ADMIN_API_KEY is set to the insecure default 'dev-admin-key'. " +
+        'This value is publicly known from the source code. ' +
+        'Set MINTER_ADMIN_API_KEY to a unique secret value of at least 32 characters.',
+    );
+  } else if (adminKey.length < 32) {
+    violations.push(
+      `MINTER_ADMIN_API_KEY is too short (${adminKey.length} characters). ` +
+        'Set MINTER_ADMIN_API_KEY to a secret value of at least 32 characters.',
     );
   }
 

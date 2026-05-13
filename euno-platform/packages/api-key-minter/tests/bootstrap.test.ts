@@ -97,6 +97,24 @@ describe('production safety violations', () => {
     expect(() => validateProductionMinterConfig(rest)).toThrow(/MINTER_ADMIN_API_KEY/);
   });
 
+  it("throws when MINTER_ADMIN_API_KEY equals the insecure default 'dev-admin-key'", () => {
+    expect(() =>
+      validateProductionMinterConfig({ ...SAFE_PROD_ENV, MINTER_ADMIN_API_KEY: 'dev-admin-key' }),
+    ).toThrow(/insecure default/i);
+  });
+
+  it('throws when MINTER_ADMIN_API_KEY is shorter than 32 characters', () => {
+    expect(() =>
+      validateProductionMinterConfig({ ...SAFE_PROD_ENV, MINTER_ADMIN_API_KEY: 'short' }),
+    ).toThrow(/too short/i);
+  });
+
+  it('accepts MINTER_ADMIN_API_KEY of exactly 32 characters', () => {
+    expect(() =>
+      validateProductionMinterConfig({ ...SAFE_PROD_ENV, MINTER_ADMIN_API_KEY: 'a'.repeat(32) }),
+    ).not.toThrow();
+  });
+
   it('throws when MINTER_PEPPER_HEX is absent', () => {
     const { MINTER_PEPPER_HEX: _, ...rest } = SAFE_PROD_ENV;
     expect(() => validateProductionMinterConfig(rest)).toThrow(/MINTER_PEPPER_HEX/);

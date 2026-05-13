@@ -531,37 +531,37 @@ describe('checkProductionRedisHa', () => {
   });
 
   describe('production — single-node URLs rejected', () => {
-    it('throws for a plain redis:// URL on REDIS_URL', () => {
+    it('throws for a plain redis:// URL on REDIS_URL and includes REDIS_URL in message', () => {
       expect(() =>
         checkProductionRedisHa({ REDIS_URL: 'redis://redis.euno-system:6379' }, 'production'),
-      ).toThrow(/single-node Redis/i);
+      ).toThrow(/REDIS_URL.*single-node Redis/i);
     });
 
-    it('throws for a plain redis:// URL on REVOCATION_REDIS_URL', () => {
+    it('throws for a plain redis:// URL on REVOCATION_REDIS_URL and includes var name in message', () => {
       expect(() =>
         checkProductionRedisHa(
           { REVOCATION_REDIS_URL: 'redis://revocation-redis:6379' },
           'production',
         ),
-      ).toThrow(/single-node Redis/i);
+      ).toThrow(/REVOCATION_REDIS_URL.*single-node Redis/i);
     });
 
-    it('throws for a plain redis:// URL on KILL_SWITCH_REDIS_URL', () => {
+    it('throws for a plain redis:// URL on KILL_SWITCH_REDIS_URL and includes var name in message', () => {
       expect(() =>
         checkProductionRedisHa(
           { KILL_SWITCH_REDIS_URL: 'redis://killswitch-redis:6379' },
           'production',
         ),
-      ).toThrow(/single-node Redis/i);
+      ).toThrow(/KILL_SWITCH_REDIS_URL.*single-node Redis/i);
     });
 
-    it('throws for a plain redis:// URL on CALL_COUNTER_REDIS_URL', () => {
+    it('throws for a plain redis:// URL on CALL_COUNTER_REDIS_URL and includes var name in message', () => {
       expect(() =>
         checkProductionRedisHa(
           { CALL_COUNTER_REDIS_URL: 'redis://counter-redis:6379' },
           'production',
         ),
-      ).toThrow(/single-node Redis/i);
+      ).toThrow(/CALL_COUNTER_REDIS_URL.*single-node Redis/i);
     });
 
     it('error message includes actionable guidance', () => {

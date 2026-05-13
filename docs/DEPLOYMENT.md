@@ -147,7 +147,8 @@ Additionally, any Redis URL that is configured (`REDIS_URL`, `ANOMALY_REDIS_URL`
 (see §"Redis HA for production" below).
 
 Development and CI clusters may omit any of these variables; the minter will
-start with safe in-process fallbacks and log a `WARN` for each one.
+start with safe in-process fallbacks (no warnings emitted for absent variables
+in non-production environments).
 
 ---
 
