@@ -768,6 +768,71 @@ export const IssuerConfigSchema = z
       'Google Cloud Security Command Center source resource name to publish posture findings ' +
       'to. Required when POSTURE_EMITTER_PLUGINS includes "gcp-security-command-center".',
     ),
+
+    // OIDC / IdP wiring (Task 2) -------------------------------------------
+    // The three fields below support the hosted IdP code-exchange flow and
+    // per-tenant IdP configuration.
+
+    ISSUER_PUBLIC_URL: optionalString.describe(
+      'Public base URL of this capability-issuer instance ' +
+      '(e.g. "https://issuer.example.com"). ' +
+      'Used to construct the `authorization_endpoint` and `token_endpoint` URLs ' +
+      'in the GET /.well-known/openid-configuration discovery document. ' +
+      'Required when the OIDC code-exchange endpoints (/api/v1/oidc/authorize and ' +
+      '/api/v1/oidc/token) are exposed to external clients. ' +
+      'When unset the discovery document omits the endpoint URLs.',
+    ),
+
+    ISSUER_TENANT_IDP_CONFIG_FILE: optionalString.describe(
+      'Optional path to a JSON file that maps tenantId values to provider-specific ' +
+      'IdP configuration overrides. When a request carries a tenantId that appears in ' +
+      'this file the matching provider is used instead of the global IDENTITY_PROVIDER. ' +
+      'Format: { "tenants": { "<tenantId>": { "provider": "azure-ad|aws-cognito|gcp-identity", ' +
+      '"azureAD": {...} | "awsCognito": {...} | "gcpIdentity": {...} } } }. ' +
+      'Reloaded automatically on SIGHUP without a restart.',
+    ),
+
+    OIDC_CODE_TTL_SECONDS: envPositiveInt({
+      default: 600,
+      description:
+        'Time-to-live (seconds) for the in-memory authorization-code replay-prevention cache. ' +
+        'An authorization code received by POST /api/v1/oidc/token is recorded for this many ' +
+        'seconds; a second request with the same code within the TTL window is rejected ' +
+        '(replay prevention). Default 600 (10 minutes). ' +
+        'Should be set to at least the IdP\'s maximum authorization-code lifetime.',
+    }),
+
+    // Manifest template store (Task 6 — Stage 4) ----------------------------
+    // Enables the Postgres-backed manifest template store and the
+    // /api/v1/admin/templates admin API.  When ISSUER_DB_URL is unset the
+    // admin API is disabled (404) and the hot-path template lookup is skipped.
+    ISSUER_DB_URL: optionalString.describe(
+      'Postgres connection string for the manifest template store. ' +
+      'When set, the issuer persists manifest templates and their assignments in ' +
+      'the configured database and exposes /api/v1/admin/templates. ' +
+      'Example: postgres://issuer:secret@db:5432/issuer_db',
+    ),
+    ISSUER_DB_SCHEMA: z
+      .string()
+      .regex(
+        /^[a-zA-Z_][a-zA-Z0-9_]*$/,
+        'ISSUER_DB_SCHEMA must be a safe SQL identifier (letters, digits, underscores; must start with a letter or underscore)',
+      )
+      .max(63, 'ISSUER_DB_SCHEMA must be 63 characters or fewer (PostgreSQL identifier limit)')
+      .optional()
+      .describe(
+        'Postgres schema name for the manifest template tables. Default: euno_issuer. ' +
+        'Override when sharing a Postgres instance with other services. ' +
+        'Must be a safe SQL identifier (letters, digits, underscores only).',
+      ),
+    ISSUER_DB_SCHEMA_INIT: envBoolean({
+      default: false,
+      description:
+        'When true, run CREATE TABLE IF NOT EXISTS migrations at startup for the manifest ' +
+        'template store. Safe to use in development and smoke tests; for production prefer ' +
+        'running migrations with a dedicated role before deploying.',
+    }),
+
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -946,6 +1011,7 @@ export const IssuerConfigSchema = z
         });
       }
     }
+
   });
 
 export type IssuerConfig = z.infer<typeof IssuerConfigSchema>;

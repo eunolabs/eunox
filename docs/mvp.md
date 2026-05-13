@@ -731,7 +731,7 @@ threat model delays Stage 3, that is the correct trade.
 > - [ ] Task 3 — Role-to-capability mapping production hardening
 > - [ ] Task 4 — Token attenuation & renewal as live, supported endpoints
 > - [ ] Task 5 — `euno request` and `euno validate-token` wired to live issuer
-> - [ ] Task 6 — Manifest template store + admin API
+> - [x] Task 6 — Manifest template store + admin API: `PostgresManifestTemplateStore` + `IssuerMigrationRunner`; 7 admin endpoints under `/api/v1/admin/templates`; operator-JWT auth; template hot-path in `IssueController`; `IssuerConfigSchema` extended with `ISSUER_DB_*` + `ISSUER_ADMIN_*`; 53 new tests (502 total)
 > - [ ] Task 7 — Manifest templates UI under `web/admin/`
 > - [ ] Task 8 — Issuer in `infra/docker-compose.yml` + smoke wiring
 > - [ ] Task 9 — `docs/self-host.md` Stage-4 section

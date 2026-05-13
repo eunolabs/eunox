@@ -434,10 +434,17 @@ Produce `docs/security/issuer-identity-threat-model.md` answering every question
 
 Phase B — Issuer service hardening
 
-### Task 2 — Hosted IdP wiring (Entra ID + second IdP)
-Wire both `AzureADIdentityProvider` and the Task-0-chosen second IdP into the issuer's bootstrap (`euno-platform/packages/capability-issuer/src/index.ts`). Configuration via env (`ISSUER_IDP_PROVIDER`, provider-specific config). Per-tenant config supported via the existing tenant-config loader pattern used in `api-key-minter`. Add `GET /.well-known/openid-configuration` per-tenant.
-- **Tests**: integration test exercising the OIDC code-exchange flow against a mock IdP for each provider; rejection tests for missing `nonce`, replay of `code`, mismatched `aud`.
-- **Docs**: `docs/issuer-idp-setup.md` covering Entra ID app registration + Cognito user pool setup (the two cloud-side prerequisites).
+### Task 2 — Hosted IdP wiring (Entra ID + second IdP) ✅
+Wire both `AzureADIdentityProvider` and the Task-0-chosen second IdP into the issuer's bootstrap (`euno-platform/packages/capability-issuer/src/index.ts`). Configuration via env (`IDENTITY_PROVIDER`, provider-specific config). Per-tenant config supported via `TenantIdpRegistry` (`src/tenant-idp-config.ts`) — file-based JSON mapping with hot-reload. `GET /.well-known/openid-configuration` with optional `?tenantId=` scoping.
+
+`POST /api/v1/oidc/token` endpoint: accepts a pre-exchanged `idToken` (client performs PKCE code exchange), enforces nonce-claim binding, authorization-code replay prevention (eager fail-closed `OidcStateStore`), and issues a capability token via `issueCapabilityFromUserContext` (skips re-validation).
+
+New schema fields: `ISSUER_PUBLIC_URL`, `ISSUER_TENANT_IDP_CONFIG_FILE`, `OIDC_CODE_TTL_SECONDS`.
+
+New public service APIs: `CapabilityIssuerService.getIdentityProvider()`, `CapabilityIssuerService.issueCapabilityFromUserContext()`, `IssueController.handleFromUserContext()`, `IssueFromUserContextRequest`.
+
+- **Tests**: `tests/idp-wiring.test.ts` — 42 tests covering: OIDC discovery document, `GET /authorize` state/nonce generation, field-validation rejections, Azure AD token nonce-claim check, AWS Cognito token nonce-claim check, code-replay prevention, state/nonce binding round-trip, role-from-token invariant. Unit tests for `OidcStateStore` (13 cases) and `TenantIdpRegistry` (10 cases). Total: 491 passing.
+- **Docs**: `docs/issuer-idp-setup.md` — Entra ID app registration, Cognito user pool setup, per-tenant config file format, OIDC discovery, replay-prevention TTL, client flow, security checklist.
 
 ### Task 3 — Role-to-capability mapping production hardening ✅ COMPLETE
 The existing `RoleCapabilityPolicy` machinery is already implemented. Production-harden it:

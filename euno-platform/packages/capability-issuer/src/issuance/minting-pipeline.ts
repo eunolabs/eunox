@@ -46,6 +46,15 @@ import { signPayload } from './signer-pipeline';
 import { computeCapabilityPolicyHash } from './issuance-context';
 
 /**
+ * Minimal request shape needed by {@link MintingPipeline.mintSideCredentials}.
+ * Both {@link IssueCapabilityRequest} and {@link IssueFromUserContextRequest}
+ * satisfy this interface because only `agentId` is used in that path.
+ */
+interface MintRequestMinimal {
+  agentId: string;
+}
+
+/**
  * Identifies which rate limiter fired when the `onIssuanceRateLimited`
  * callback is invoked. Typed union prevents unbounded label values from
  * accidentally reaching Prometheus metric labels or audit log `reason` fields.
@@ -424,7 +433,7 @@ export class MintingPipeline {
    */
   async mintSideCredentials(
     signedToken: string,
-    request: IssueCapabilityRequest,
+    request: MintRequestMinimal,
     userContext: UserContext,
     capabilities: CapabilityConstraint[],
     capabilityTtlSeconds: number,

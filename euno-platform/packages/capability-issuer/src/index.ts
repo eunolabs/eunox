@@ -4,6 +4,7 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -51,6 +52,8 @@ import { parseDidWebHttpAllowList } from './did-resolver';
 import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import { PostgresRolePolicyStore } from './postgres-role-policy-store';
 import { createAdminRolePolicyRouter } from './routes/admin-role-policy';
+import { TenantIdpRegistry } from './tenant-idp-config';
+import { OidcStateStore } from './oidc-state-store';
 
 // Load environment variables
 dotenv.config();
@@ -138,6 +141,22 @@ const config: ServiceConfig = {
 
 // Create logger
 const logger = createLogger(config.name, config.environment);
+
+/**
+ * Per-tenant IdP registry. Loaded once at startup from
+ * ISSUER_TENANT_IDP_CONFIG_FILE and reloaded on SIGHUP. Falls back to the
+ * global identity provider when a tenantId is not present in the file.
+ */
+const tenantIdpRegistry = new TenantIdpRegistry(
+  env.ISSUER_TENANT_IDP_CONFIG_FILE,
+  logger,
+);
+
+/**
+ * OIDC state store — tracks nonce/state pairs for authorize→token flows and
+ * prevents authorization-code replay (Stage-4 threat model requirement).
+ */
+const oidcStateStore = new OidcStateStore(env.OIDC_CODE_TTL_SECONDS);
 
 // Initialize signer based on configuration
 async function createSigner(): Promise<TokenSigner> {
@@ -462,6 +481,57 @@ async function initializeServices() {
       });
     }
 
+    // Task 6 (Stage 4): manifest template store.
+    // When ISSUER_DB_URL is set, create a Postgres-backed store and
+    // optionally run DDL migrations at startup (ISSUER_DB_SCHEMA_INIT=true).
+    // The store is injected into CapabilityIssuerService so the issuance
+    // hot path can look up template assignments.
+    let templateStore: import('./manifest-template-store').ManifestTemplateStore | undefined;
+    if (env.ISSUER_DB_URL) {
+      const { Pool } = await import('pg');
+      const dbSchema = env.ISSUER_DB_SCHEMA ?? 'euno_issuer';
+      const pool = new Pool({ connectionString: env.ISSUER_DB_URL });
+      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
+      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
+      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
+
+      if (env.ISSUER_DB_SCHEMA_INIT) {
+        const { IssuerMigrationRunner } = await import('./migrations');
+        const migrationRunner = new IssuerMigrationRunner(pool, dbSchema);
+        await migrationRunner.migrate();
+        logger.info('Issuer DB schema migration complete', { schema: dbSchema });
+      }
+
+      // Mount the admin templates router into the pre-registered forwarding router.
+      // Using adminTemplatesForwarder (registered before the error handler) ensures
+      // CapabilityError throws propagate through the shared error middleware.
+      const { createAdminTemplatesRouter, createIssuerAdminJwtVerifier } = await import('./routes/admin-templates');
+      const jwtVerifier = createIssuerAdminJwtVerifier(process.env);
+      // Require ISSUER_ADMIN_API_KEY when no JWT verifier is configured —
+      // prevents the admin API from being reachable via a predictable default key.
+      const adminApiKey = env.ISSUER_ADMIN_API_KEY;
+      if (!adminApiKey && !jwtVerifier) {
+        logger.warn(
+          'ISSUER_ADMIN_API_KEY is not set and ISSUER_ADMIN_JWKS_URI is not configured. ' +
+            'The admin template API (/api/v1/admin/templates) is DISABLED. ' +
+            'Set ISSUER_ADMIN_API_KEY or configure ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE to enable it.',
+        );
+        // Do not mount the router.
+      } else {
+        const adminRouter = createAdminTemplatesRouter({
+          store: templateStore,
+          // Pass '' when JWT-only (adminApiKey is undefined).  requireAdminAuth
+          // treats an empty adminApiKey as "X-Admin-Key path disabled" so
+          // requests without a Bearer JWT are rejected rather than accepted.
+          adminApiKey: adminApiKey ?? '',
+          logger,
+          jwtVerifier,
+        });
+        adminTemplatesForwarder.use('/', adminRouter);
+        logger.info('Admin templates router mounted at /api/v1/admin/templates');
+      }
+    }
+
     // Prometheus counter for side-credential broker errors in best-effort mode.
     const sideCredentialErrorCounter = new Counter({
       name: 'euno_issuer_side_credential_errors_total',
@@ -614,6 +684,8 @@ async function initializeServices() {
             reason: reason === 'exceeded' ? `${kind}_rate_limit_exceeded` : `${kind}_rate_limiter_unavailable`,
           });
         },
+        // Task 6: inject manifest template store when configured.
+        ...(templateStore ? { templateStore } : {}),
       }
     );
 
@@ -1145,6 +1217,286 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
   }
   res.json(body);
 });
+
+/**
+ * OIDC Discovery document endpoint
+ * GET /.well-known/openid-configuration
+ * GET /.well-known/openid-configuration?tenantId=<id>
+ *
+ * Returns an RFC 8414 / OpenID Connect Discovery 1.0 document describing
+ * this issuer's OIDC capabilities. The document is used by clients (e.g. the
+ * `euno request` CLI command) to discover the authorization and token
+ * endpoints.
+ *
+ * Per-tenant: when `?tenantId=<id>` is supplied and a per-tenant IdP entry
+ * exists in ISSUER_TENANT_IDP_CONFIG_FILE, the document reflects that
+ * tenant's IdP configuration (same endpoints, but the tenant context is
+ * surfaced). The capability-issuer always issues the final capability token;
+ * only the upstream IdP changes per tenant.
+ */
+app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
+  const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+
+  // The public base URL is required to construct absolute endpoint URLs.
+  // When unset we still return a partial document (useful for introspection)
+  // but omit the endpoint URLs so clients can detect the misconfiguration.
+  const baseUrl = env.ISSUER_PUBLIC_URL ? env.ISSUER_PUBLIC_URL.replace(/\/$/, '') : undefined;
+
+  const doc: Record<string, unknown> = {
+    issuer: config.issuerDid,
+    jwks_uri: baseUrl ? `${baseUrl}/.well-known/jwks.json` : undefined,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code'],
+    subject_types_supported: ['public'],
+    id_token_signing_alg_values_supported: Array.from(SIGNING_ALGORITHMS),
+    scopes_supported: ['openid', 'profile', 'email'],
+    token_endpoint_auth_methods_supported: ['none'],
+    code_challenge_methods_supported: ['S256'],
+  };
+
+  if (baseUrl) {
+    const tenantParam = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+    doc.authorization_endpoint = `${baseUrl}/api/v1/oidc/authorize${tenantParam}`;
+    // token_endpoint also carries the tenantId hint so discovery-document consumers
+    // (clients / IdP libraries) can pass it as a body parameter on the token call.
+    doc.token_endpoint = `${baseUrl}/api/v1/oidc/token${tenantParam}`;
+  }
+
+  if (tenantId) {
+    // Signal which tenantId this document was constructed for.
+    doc.tenant_id = tenantId;
+    // Surface the configured provider for this tenant (or the global one).
+    const hasPerTenantConfig = !!tenantIdpRegistry.getAdapter(tenantId);
+    doc.identity_provider = hasPerTenantConfig
+      ? `per-tenant[${tenantId}]`
+      : (config.identityProvider || 'azure-ad');
+  } else {
+    doc.identity_provider = config.identityProvider || 'azure-ad';
+  }
+
+  res.json(doc);
+});
+
+/**
+ * OIDC Authorization endpoint
+ * GET /api/v1/oidc/authorize
+ *
+ * Generates a nonce + state pair, stores them in the OidcStateStore, and
+ * returns a JSON body with the upstream IdP authorization URL that the caller
+ * (typically the CLI) should open in a browser.
+ *
+ * Query parameters:
+ *   - tenantId   (optional) — select per-tenant IdP
+ *   - agentId    (required) — bound into the pending state for capability issuance
+ *   - redirectUri (optional) — the CLI's loopback redirect URI for the code
+ *
+ * The returned `state` and `nonce` must be included in the authorization
+ * request to the IdP. The `nonce` is validated when the code is exchanged via
+ * POST /api/v1/oidc/token.
+ */
+app.get('/api/v1/oidc/authorize', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
+    if (!agentId) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'agentId query parameter is required', 400);
+    }
+
+    const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const redirectUri = typeof req.query.redirectUri === 'string' ? req.query.redirectUri : undefined;
+
+    const { state, nonce } = oidcStateStore.createState({ tenantId, agentId, redirectUri });
+
+    const baseUrl = env.ISSUER_PUBLIC_URL ? env.ISSUER_PUBLIC_URL.replace(/\/$/, '') : undefined;
+
+    res.json({
+      state,
+      nonce,
+      // Convenience: include the callback URL the IdP should redirect to.
+      // Callers must include state, nonce, and code_challenge in the actual
+      // IdP auth request; the issuer does not construct that URL here because
+      // it does not hold the PKCE code_challenge (that lives client-side).
+      callbackUrl: baseUrl ? `${baseUrl}/api/v1/oidc/token` : undefined,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * OIDC Token endpoint (authorization-code exchange)
+ * POST /api/v1/oidc/token
+ *
+ * Validates a pre-exchanged IdP identity token, enforces OIDC security
+ * invariants, then issues a signed capability token. The client (typically
+ * the `euno request` CLI command) performs the PKCE code exchange directly
+ * against the upstream IdP token endpoint, then submits the resulting ID
+ * token to this endpoint along with the original authorization code (used
+ * only for replay prevention at the issuer boundary).
+ *
+ * Request body (JSON):
+ * ```json
+ * {
+ *   "idToken":        "...",        // ID token returned by the upstream IdP
+ *   "nonce":          "...",        // nonce embedded in the ID token's claims
+ *   "agentId":        "...",        // capability token subject
+ *   "tenantId":       "...",        // optional — selects per-tenant IdP adapter
+ *   "state":          "...",        // optional — opaque state from GET /authorize
+ *   "requestedCapabilities": [...]  // optional capability constraints
+ * }
+ * ```
+ *
+ * Security invariants enforced here (Stage-4 threat model §5):
+ *  1. **ID-token replay prevention** — a SHA-256 hash of the submitted
+ *     `idToken` is marked as used eagerly (fail-closed) before any remote
+ *     call. The same token cannot be resubmitted even if a subsequent step
+ *     fails. The caller must obtain a fresh token to retry.
+ *  2. **Nonce binding** — the `nonce` claim inside the IdP's signed ID token
+ *     must equal the `nonce` field in the request body.
+ *  3. **Audience / issuer / expiry** — validated inside each IdP adapter via
+ *     jose `jwtVerify` (enforces `aud`, `iss`, `exp`, `iat`).
+ *  4. **Role-from-token** — capabilities are derived exclusively from the
+ *     IdP token's role claims; the request body cannot escalate privileges.
+ *  5. **State binding** (optional) — when `state` is provided and a pending
+ *     state was created via GET /api/v1/oidc/authorize, the stored nonce,
+ *     agentId, and tenantId are cross-checked against the request values.
+ *     The effective tenantId is derived from the stored state when present.
+ */
+app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { idToken, nonce, state, agentId, tenantId, requestedCapabilities } = req.body ?? {};
+
+    // --- Validate required fields -------------------------------------------
+    if (typeof idToken !== 'string' || !idToken) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'idToken is required', 400);
+    }
+    if (typeof agentId !== 'string' || !agentId) {
+      throw new CapabilityError(ErrorCode.INVALID_REQUEST, 'agentId is required', 400);
+    }
+    if (typeof nonce !== 'string' || !nonce) {
+      throw new CapabilityError(
+        ErrorCode.INVALID_REQUEST,
+        'nonce is required — pass the nonce that was embedded in the IdP authorization request',
+        400,
+      );
+    }
+
+    // --- ID-token replay prevention (threat model §5 "IdP-token replay") ----
+    // Hash the submitted idToken and mark it as used eagerly (fail-closed).
+    // Even if a later step (IdP validation, issuance) fails, the same token
+    // cannot be resubmitted. The caller must obtain a fresh token to retry.
+    // Tracking the token hash (not a caller-supplied field) prevents bypassing
+    // this check by submitting the same stolen idToken with a fresh value.
+    const tokenHash = crypto.createHash('sha256').update(idToken).digest('hex');
+    if (oidcStateStore.isIdTokenHashUsed(tokenHash)) {
+      logger.warn('OIDC token replay attempt detected', { agentId, tenantId });
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'ID token has already been used — obtain a fresh token',
+        401,
+      );
+    }
+    // Eagerly mark the token hash before any remote call.
+    oidcStateStore.markIdTokenHashUsed(tokenHash);
+
+    // --- Optional state binding (if flow was started via /authorize) ---------
+    // When state is present, the stored nonce, agentId, and tenantId are all
+    // cross-checked. The effective tenantId is derived from the stored state
+    // (the request body cannot override it once a state has been issued).
+    let effectiveTenantId: string | undefined =
+      typeof tenantId === 'string' && tenantId ? tenantId : undefined;
+
+    if (typeof state === 'string' && state) {
+      const pending = oidcStateStore.consumeState(state);
+      if (!pending) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'Unknown or expired state parameter — restart the authorization flow',
+          401,
+        );
+      }
+      // The nonce in the request must match what was stored for this state.
+      if (pending.nonce !== nonce) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'Nonce mismatch — the nonce in the request does not match the stored state',
+          401,
+        );
+      }
+      // The agentId must match what was stored (if the state recorded one).
+      if (pending.agentId && pending.agentId !== agentId) {
+        throw new CapabilityError(
+          ErrorCode.AUTHENTICATION_FAILED,
+          'agentId mismatch — request agentId does not match the stored state',
+          401,
+        );
+      }
+      // The tenantId must match what was stored (if the state recorded one).
+      const pendingTenantId = pending.tenantId;
+      if (pendingTenantId) {
+        if (effectiveTenantId && effectiveTenantId !== pendingTenantId) {
+          throw new CapabilityError(
+            ErrorCode.AUTHENTICATION_FAILED,
+            'tenantId mismatch — request tenantId does not match the stored state',
+            401,
+          );
+        }
+        // Derive the effective tenantId from the stored state.
+        effectiveTenantId = pendingTenantId;
+      }
+    }
+    const perTenantIdp = effectiveTenantId ? tenantIdpRegistry.getAdapter(effectiveTenantId) : undefined;
+    const idp = perTenantIdp ?? getIssuerService().getIdentityProvider();
+
+    // --- Validate the ID token (signature, iss, aud, exp, iat) --------------
+    const userContext = await idp.validateToken(idToken);
+
+    // --- Enforce nonce claim binding (invariant 2) --------------------------
+    // The `nonce` claim in the ID token must equal the nonce submitted by the
+    // client. This binds the token to the specific authorization request and
+    // prevents an attacker from re-using a token obtained from a different
+    // session that happens to have the same aud/iss/sub.
+    const tokenNonce = userContext.claims?.['nonce'] as string | undefined;
+    if (!tokenNonce || tokenNonce !== nonce) {
+      throw new CapabilityError(
+        ErrorCode.AUTHENTICATION_FAILED,
+        'Nonce claim in the ID token does not match the expected nonce',
+        401,
+      );
+    }
+
+    // --- Issue capability token from the validated UserContext --------------
+    const enforcementCtx: IssuerEnforcementContext = { clientIp: req.ip };
+    const response = await getIssuerService().issueCapabilityFromUserContext(
+      {
+        agentId,
+        userContext,
+        requestedCapabilities: Array.isArray(requestedCapabilities) ? requestedCapabilities : undefined,
+      },
+      enforcementCtx,
+    );
+
+    issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
+    setActiveSpanEunoAttributes({
+      [EUNO_ATTR.AGENT_ID]: agentId,
+      [EUNO_ATTR.JTI]: response.tokenId,
+      [EUNO_ATTR.OUTCOME]: 'success',
+    });
+
+    res.json(response);
+  } catch (error) {
+    issuanceCounter.inc({ operation: 'issue', outcome: 'error' });
+    next(error);
+  }
+});
+
+// Admin templates forwarding router — must be registered BEFORE the error-handling
+// middleware so that CapabilityError throws from the admin routes are correctly
+// converted to JSON responses by the error handler.
+//
+// The router is populated lazily inside initializeServices() when ISSUER_DB_URL
+// is configured.  Until then, requests fall through to the catch-all 404 handler.
+const adminTemplatesForwarder = express.Router({ mergeParams: true });
+app.use('/api/v1/admin/templates', adminTemplatesForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
