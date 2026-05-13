@@ -723,6 +723,23 @@ threat model delays Stage 3, that is the correct trade.
 
 ## Stage 4: Capability Issuer + Identity
 
+> **Stage 4 status** (May 2026)
+>
+> - [x] Task 0 — Stage 4 design freeze & RFC: `docs/stage-4-design.md` authored; second IdP (AWS Cognito) selected with rationale; hosted-vs-self-host feature matrix, Postgres template schema, seven admin API endpoints, server-rendered UI decision, distinct KMS key alias decision, and zero-seam-additions confirmation all captured; pending engineer + security sign-off
+> - [x] Task 1 — Issuer identity threat model: `docs/security/issuer-identity-threat-model.md` produced; all eight §5 questions answered (IdP compromise, IdP-token replay, role-mapping privilege escalation, manifest template tampering, cross-tenant template leakage, per-tenant signing-key isolation, self-host operator key management, CLI token storage at rest); pending engineer + security sign-off
+> - [ ] Task 2 — Hosted IdP wiring (Entra ID + AWS Cognito)
+> - [ ] Task 3 — Role-to-capability mapping production hardening
+> - [ ] Task 4 — Token attenuation & renewal as live, supported endpoints
+> - [ ] Task 5 — `euno request` and `euno validate-token` wired to live issuer
+> - [ ] Task 6 — Manifest template store + admin API
+> - [ ] Task 7 — Manifest templates UI under `web/admin/`
+> - [ ] Task 8 — Issuer in `infra/docker-compose.yml` + smoke wiring
+> - [ ] Task 9 — `docs/self-host.md` Stage-4 section
+> - [ ] Task 10 — Telemetry continuity
+> - [ ] Task 11 — Cross-stage parity test extension
+> - [ ] Task 12 — Stage-5 readiness instrumentation
+> - [ ] Task 13 — Stage-4 status block + reference materials
+
 **What changes.** Multiple agents, multiple users, multiple policies
 tied to real identities rather than config files. Token issuance
 becomes necessary as a first-class user-visible service rather than
