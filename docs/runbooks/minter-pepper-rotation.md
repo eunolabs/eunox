@@ -62,7 +62,7 @@ active API keys and trigger a fleet-wide re-issuance.
 ```bash
 # 32 bytes of random entropy, hex-encoded (64 hex characters)
 openssl rand -hex 32
-# → e.g. 3a1f2b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2
+# → e.g. 3a1f2b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f23
 ```
 
 Store the new pepper in your key-management system. Never commit it to source

@@ -318,6 +318,8 @@ export async function createPingRateLimiterFromEnv(
 
   let RedisCtor: unknown;
   try {
+    // ioredis is an optional peer dependency; require() is intentional so that
+    // TypeScript does not attempt to resolve types for an uninstalled module.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {
@@ -403,6 +405,8 @@ export async function createMintRateLimiterFromEnv(
 
   let RedisCtor: unknown;
   try {
+    // ioredis is an optional peer dependency; require() is intentional so that
+    // TypeScript does not attempt to resolve types for an uninstalled module.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     RedisCtor = require('ioredis');
   } catch (error) {

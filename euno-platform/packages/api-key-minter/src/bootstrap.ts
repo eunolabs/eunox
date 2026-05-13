@@ -259,7 +259,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(port, () => {
-    logger.info(`API-key minter listening on port ${port}`, { issuerDid, gatewayAudience });
+    logger.info('Minter listening', { port });
   });
 
   const shutdown = (): void => {
