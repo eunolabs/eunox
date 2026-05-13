@@ -290,9 +290,10 @@ Issuance flow when a template is in scope:
    `RoleCapabilityPolicy` + `DEFAULT_ROLE_CAPABILITY_MAP` path. This
    preserves backward compat: deployments that don't author templates
    keep working.
-5. The signed token's `vc.policyHash` is computed over the **resolved
-   manifest** (not the template metadata), so the gateway's verifier
-   path is unchanged.
+5. The signed token's top-level `policyHash` claim is computed over
+   the **resolved manifest** (not the template metadata) and stamped
+   onto the JWT as a top-level claim, so the gateway's verifier path
+   is unchanged.
 
 UI surface (Task 7):
 
