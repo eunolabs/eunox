@@ -689,10 +689,10 @@ function validateTableName(name: string, caller = 'PostgresLedgerBackend'): stri
  * same strict-integer convention used throughout the codebase
  * (`envPositiveInt` in the config schema).
  *
- * Returns `undefined` when the cursor is absent or malformed so callers can
- * silently skip the predicate rather than propagating an error to the client.
- * Partially-numeric inputs (e.g. `"10abc"`) are rejected to match the
- * "no silent coercion" philosophy.
+ * Returns `undefined` when the cursor is `undefined` or malformed so callers
+ * can silently skip the predicate rather than propagating an error to the
+ * client. Partially-numeric inputs (e.g. `"10abc"`) are rejected to match
+ * the "no silent coercion" philosophy.
  */
 function parseCursorSeq(cursor: string | undefined): number | undefined {
   if (cursor === undefined) return undefined;
@@ -701,6 +701,16 @@ function parseCursorSeq(cursor: string | undefined): number | undefined {
   if (!/^\d+$/.test(cursor)) return undefined;
   const n = Number(cursor);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Coerce a Postgres `created_at` column value (Date object or ISO string) to an ISO-8601 string. */
+function rowTimestampToIso(value: Date | unknown): string {
+  return (value instanceof Date ? value : new Date(value as string)).toISOString();
+}
+
+/** Coerce a Postgres `row_hmac` column value (Buffer or hex string) to a Buffer. */
+function rowHmacToBuffer(value: Buffer | unknown): Buffer {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value as string, 'hex');
 }
 
 /**
@@ -795,8 +805,8 @@ function buildLedgerPage(rows: LedgerSelectRow[], limit: number): AuditQueryPage
     recordHash: row.record_hash,
     replicaId: row.replica_id,
     signedEvidence: row.payload,
-    ts: (row.created_at instanceof Date ? row.created_at : new Date(row.created_at as unknown as string)).toISOString(),
-    rowHmac: Buffer.isBuffer(row.row_hmac) ? row.row_hmac : Buffer.from(row.row_hmac as unknown as string, 'hex'),
+    ts: rowTimestampToIso(row.created_at),
+    rowHmac: rowHmacToBuffer(row.row_hmac),
   }));
   const lastEntry = entries[entries.length - 1];
   const nextCursor = hasMore && lastEntry ? String(lastEntry.seq) : undefined;
