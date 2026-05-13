@@ -226,7 +226,8 @@ describe('loadConfig (issuer)', () => {
   // ── Task 3: role-policy admin API config fields ──────────────────────────
 
   describe('IssuerConfigSchema — Task 3 (role-policy admin API)', () => {
-    // Minimal valid dev issuer config (default SIGNING_PROVIDER=azure-keyvault).
+    // Minimal valid dev issuer config (defaults to SIGNING_PROVIDER=azure-keyvault,
+    // so only AZURE_KEYVAULT_URL needs to be supplied for the schema to parse cleanly).
     const baseMin = { AZURE_KEYVAULT_URL: 'https://vault.example/' };
     // Minimal valid production config satisfying all production guards.
     const baseProdFull = {

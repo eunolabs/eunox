@@ -173,11 +173,11 @@ export class IssueController {
   /**
    * Hot-reload the active role → capability policy.
    *
-   * Called by {@link CapabilityIssuerService.updatePolicy} after an admin
-   * mutation is persisted or after a SIGHUP-triggered Postgres re-read.
-   * Policy is now owned by the injected {@link MintingPipeline}; `handle()`
-   * reads the current snapshot from the pipeline at the top of each call, so
-   * this method exists solely for API compatibility.
+   * @deprecated The policy is now owned by the injected {@link MintingPipeline}
+   * and `handle()` reads `pipeline.policySnapshot` atomically at the start of
+   * each call.  This method is a no-op kept for API compatibility only; it will
+   * be removed in a future release once all callers have been updated to drive
+   * policy updates exclusively through {@link MintingPipeline.updatePolicy}.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   updatePolicy(_policy: RoleCapabilityPolicy): void {
