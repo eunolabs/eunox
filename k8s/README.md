@@ -356,10 +356,11 @@ change `requiredDuringSchedulingIgnoredDuringExecution` to
 
 ### AZ-spread requirement
 
-The `DoNotSchedule` zone constraint requires the cluster to have nodes in at
-least **2 availability zones** (issuer) or **3 availability zones** (gateway).
-For single-AZ environments, change the zone constraint from `DoNotSchedule`
-to `ScheduleAnyway`.
+The `DoNotSchedule` zone constraint ensures pods are spread across available
+zones with a maximum skew of 1.  It does **not** require a specific number of
+AZs — a 2-AZ cluster (e.g. 2+1 distribution for 3 replicas) fully satisfies
+the constraint.  For single-AZ environments, change the zone constraint from
+`DoNotSchedule` to `ScheduleAnyway`.
 
 
 The base `network-policies.yaml` contains **no `0.0.0.0/0` or `::/0` egress

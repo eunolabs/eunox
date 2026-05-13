@@ -49,9 +49,11 @@ export interface AdminKeysRouterOptions {
 /**
  * Build admin authentication middleware.
  *
- * When `jwtVerifier` is supplied it tries Bearer JWT first; falling back to
- * the shared key only when no `Authorization` header is present.  Using the
- * shared key logs a deprecation warning so operators know to migrate.
+ * When `jwtVerifier` is supplied it tries Bearer JWT first; the X-Admin-Key
+ * shared secret is used as a fallback whenever the request does not carry a
+ * `Bearer` Authorization header (including when Authorization is absent or
+ * set to a non-Bearer scheme such as `Basic`).  Using the shared key logs a
+ * deprecation warning so operators know to migrate.
  */
 function requireAdminAuth(
   adminApiKey: string,

@@ -240,12 +240,22 @@ describe('AdminJwtVerifier', () => {
   });
 
   it('rejects tokens when the JWKS server is unreachable', async () => {
-    const v = new AdminJwtVerifier({
-      // Non-existent domain — JWKS fetch will fail.
-      jwksUri: 'https://jwks.invalid.example.com/.well-known/jwks.json',
-      audience: 'test-aud',
-    });
-    await expect(v.verify('some.jwt.token')).rejects.toThrow();
+    // Mock jose.jwtVerify to reject deterministically, simulating a network
+    // failure, so the test does not make real DNS/network calls in CI.
+    const jose = await import('jose');
+    const verifySpy = jest.spyOn(jose, 'jwtVerify').mockRejectedValue(
+      new Error('connect ECONNREFUSED'),
+    );
+
+    try {
+      const v = new AdminJwtVerifier({
+        jwksUri: 'https://jwks.example.com/.well-known/jwks.json',
+        audience: 'test-aud',
+      });
+      await expect(v.verify('some.jwt.token')).rejects.toThrow('connect ECONNREFUSED');
+    } finally {
+      verifySpy.mockRestore();
+    }
   });
 });
 

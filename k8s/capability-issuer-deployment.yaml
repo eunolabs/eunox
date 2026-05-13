@@ -34,10 +34,10 @@ spec:
       # DoNotSchedule` prevents both replicas landing on the same zone even when
       # one zone is temporarily empty.
       #
-      # podAntiAffinity (preferred, not hard) adds a second scheduling hint that
-      # discourages co-location on the same node.  Using preferredDuringScheduling
-      # avoids unschedulable pods in small clusters (e.g. dev / CI environments
-      # with fewer nodes than replicas).
+      # podAntiAffinity (hard, required) prevents two issuer pods from being
+      # scheduled on the same node.  This is enforced at scheduling time, so a
+      # cluster must have at least as many nodes as replicas.  See the README
+      # for single-node / small-cluster override guidance.
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: topology.kubernetes.io/zone
