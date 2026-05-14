@@ -1,0 +1,27 @@
+{
+  "default": {
+    "developer": [
+      { "resource": "api://smoke/**", "actions": ["read", "write"] },
+      { "resource": "api://tools/**", "actions": ["read", "write", "execute"] }
+    ],
+    "SalesManager": [
+      { "resource": "api://crm/customers", "actions": ["read", "write"] },
+      { "resource": "api://crm/reports", "actions": ["read"] },
+      { "resource": "storage://sales-data/**", "actions": ["read", "write"] }
+    ],
+    "Viewer": [
+      { "resource": "api://crm/customers", "actions": ["read"] },
+      { "resource": "api://crm/reports", "actions": ["read"] },
+      { "resource": "storage://sales-data/**", "actions": ["read"] }
+    ],
+    "DataScientist": [
+      { "resource": "api://analytics/**", "actions": ["read", "write"] },
+      { "resource": "storage://datasets/**", "actions": ["read"] },
+      { "resource": "api://ml-models/**", "actions": ["read", "execute"] }
+    ],
+    "Administrator": [
+      { "resource": "api://**", "actions": ["read", "write", "admin"] },
+      { "resource": "storage://**", "actions": ["read", "write", "delete"] }
+    ]
+  }
+}

@@ -732,8 +732,8 @@ threat model delays Stage 3, that is the correct trade.
 > - [ ] Task 4 — Token attenuation & renewal as live, supported endpoints
 > - [ ] Task 5 — `euno request` and `euno validate-token` wired to live issuer
 > - [x] Task 6 — Manifest template store + admin API: `PostgresManifestTemplateStore` + `IssuerMigrationRunner`; 7 admin endpoints under `/api/v1/admin/templates`; operator-JWT auth; template hot-path in `IssueController`; `IssuerConfigSchema` extended with `ISSUER_DB_*` + `ISSUER_ADMIN_*`; 53 new tests (502 total)
-> - [ ] Task 7 — Manifest templates UI under `web/admin/`
-> - [ ] Task 8 — Issuer in `infra/docker-compose.yml` + smoke wiring
+> - [x] Task 7 — Manifest templates UI under `web/admin/`: server-rendered admin pages served by the issuer's Express process at `/admin/`; 4 pages (list, create, detail/version-history, assign); auth via `Authorization: Bearer` JWT or `X-Admin-Key` shared secret; client-side JS calls existing admin API; 30 new tests (632 total)
+> - [x] Task 8 — Issuer in `infra/docker-compose.yml` + smoke wiring: `infra/mock-oidc/` minimal OIDC mock container; `infra/policies/role-policy.json` seed file; policies bind-mounted into issuer; mock-oidc service added to smoke profile; `infra/smoke-test.sh` extended with issuance round-trip (mock-oidc → issuer OIDC token exchange → gateway enforce)
 > - [ ] Task 9 — `docs/self-host.md` Stage-4 section
 > - [ ] Task 10 — Telemetry continuity
 > - [ ] Task 11 — Cross-stage parity test extension
