@@ -474,7 +474,7 @@ program
       console.log(`  Required capabilities: ${manifest.requiredCapabilities.length}`);
     } catch (error) {
       if (error instanceof ManifestValidationError) {
-        console.error(`✗ Validation failed: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`✗ Validation failed: ${error.message}`);
       } else {
         console.error(`✗ Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
@@ -697,7 +697,7 @@ configCmd
   .command('set <key> <value>')
   .description('Persist a configuration value to ~/.euno/config')
   .action((key: string, value: string) => {
-    const ALLOWED_KEYS = ['issuerUrl', 'idpAuthUrl', 'idpTokenUrl', 'idpClientId', 'defaultAgentId'];
+    const ALLOWED_KEYS = ['issuerUrl', 'idpAuthUrl', 'idpTokenUrl', 'idpClientId', 'agentId', 'region'];
     if (!ALLOWED_KEYS.includes(key)) {
       console.error(`✗ Unknown config key "${key}". Allowed keys: ${ALLOWED_KEYS.join(', ')}`);
       process.exit(1);
