@@ -7,6 +7,7 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         paths: {
+          '@euno/common-core': ['../../../public/packages/common/src'],
           '@euno/common': ['../../../euno-platform/packages/common/src'],
           '@euno/common/wire': ['../../../euno-platform/packages/common/src/wire'],
           '@euno/common/runtime': ['../../../euno-platform/packages/common/src/runtime'],
@@ -15,6 +16,7 @@ module.exports = {
     }],
   },
   moduleNameMapper: {
+    '^@euno/common-core$': '<rootDir>/../../../public/packages/common/src',
     '^@euno/common$': '<rootDir>/../../../euno-platform/packages/common/src',
     '^@euno/common/wire$': '<rootDir>/../../../euno-platform/packages/common/src/wire',
     '^@euno/common/runtime$': '<rootDir>/../../../euno-platform/packages/common/src/runtime',

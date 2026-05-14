@@ -93,6 +93,10 @@ import {
 } from '@euno/common';
 import { EnforcementEngine } from '../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
+import {
+  buildAttenuatedPayload,
+  buildRenewedPayload,
+} from '../../capability-issuer/src/issuance/payload-builder';
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -857,6 +861,204 @@ describe('Cross-stage enforcement parity — Task 19', () => {
         result: 'value',
         meta: { version: '1.0' },
       });
+    });
+  });
+});
+
+// ── Stage-4 parity: cnf.jkt and region preservation ─────────────────────
+
+describe('Stage-4 parity: cnf.jkt and region preservation across attenuation and renewal', () => {
+  const issuerDid = 'did:web:stage4-test.issuer';
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + 900;
+
+  function makeBasePayload(overrides: Partial<CapabilityTokenPayload> = {}): CapabilityTokenPayload {
+    return {
+      iss: issuerDid,
+      sub: 'agent-stage4',
+      aud: 'tool-gateway',
+      iat: now,
+      exp,
+      jti: `jti-base-${Math.random()}`,
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      authorizedBy: { userId: 'user-1', roles: ['Admin'], tenantId: 'tenant-1' },
+      ...overrides,
+    };
+  }
+
+  describe('buildAttenuatedPayload', () => {
+    it('preserves cnf.jkt from the parent token', () => {
+      const parent = makeBasePayload({ cnf: { jkt: 'test-jkt-thumbprint' } });
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      });
+      expect(child.cnf).toBeDefined();
+      expect(child.cnf?.jkt).toBe('test-jkt-thumbprint');
+    });
+
+    it('preserves region from the parent token', () => {
+      const parent = makeBasePayload({ region: 'eu-west-1' });
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      });
+      expect(child.region).toBe('eu-west-1');
+    });
+
+    it('preserves both cnf.jkt and region together', () => {
+      const parent = makeBasePayload({ cnf: { jkt: 'both-jkt' }, region: 'us-east-1' });
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      });
+      expect(child.cnf?.jkt).toBe('both-jkt');
+      expect(child.region).toBe('us-east-1');
+    });
+
+    it('does not add cnf when parent has none', () => {
+      const parent = makeBasePayload();
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      });
+      expect(child.cnf).toBeUndefined();
+    });
+
+    it('does not add region when parent has none', () => {
+      const parent = makeBasePayload();
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: [{ resource: 'api://svc/x', actions: ['read'] }],
+      });
+      expect(child.region).toBeUndefined();
+    });
+  });
+
+  describe('buildRenewedPayload', () => {
+    it('preserves cnf.jkt from the current token', () => {
+      const current = makeBasePayload({ cnf: { jkt: 'renew-jkt-thumbprint' } });
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.cnf).toBeDefined();
+      expect(renewed.cnf?.jkt).toBe('renew-jkt-thumbprint');
+    });
+
+    it('preserves region from the current token', () => {
+      const current = makeBasePayload({ region: 'ap-southeast-1' });
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.region).toBe('ap-southeast-1');
+    });
+
+    it('preserves both cnf.jkt and region together across renewal', () => {
+      const current = makeBasePayload({ cnf: { jkt: 'renew-both-jkt' }, region: 'ca-central-1' });
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.cnf?.jkt).toBe('renew-both-jkt');
+      expect(renewed.region).toBe('ca-central-1');
+    });
+
+    it('does not add cnf when current token has none', () => {
+      const current = makeBasePayload();
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.cnf).toBeUndefined();
+    });
+
+    it('does not add region when current token has none', () => {
+      const current = makeBasePayload();
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.region).toBeUndefined();
+    });
+  });
+
+  describe('multi-hop preservation (attenuation → renewal)', () => {
+    it('cnf.jkt survives attenuation followed by renewal', () => {
+      const parent = makeBasePayload({ cnf: { jkt: 'multi-hop-jkt' } });
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: parent.capabilities,
+      });
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current: child,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.cnf?.jkt).toBe('multi-hop-jkt');
+    });
+
+    it('region survives attenuation followed by renewal', () => {
+      const parent = makeBasePayload({ region: 'eu-central-1' });
+      const child = buildAttenuatedPayload({
+        issuerDid,
+        parent,
+        iat: now,
+        exp,
+        jti: `jti-child-${Math.random()}`,
+        capabilities: parent.capabilities,
+      });
+      const renewed = buildRenewedPayload({
+        issuerDid,
+        current: child,
+        iat: now,
+        exp: exp + 900,
+        jti: `jti-renewed-${Math.random()}`,
+      });
+      expect(renewed.region).toBe('eu-central-1');
     });
   });
 });
