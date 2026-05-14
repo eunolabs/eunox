@@ -21,7 +21,6 @@ import {
   CapabilityConstraint,
   CapabilityError,
   DbCredential,
-  DEFAULT_ROLE_CAPABILITY_MAP,
   ErrorCode,
   IdentityProvider,
   IssueCapabilityRequest,
@@ -181,7 +180,6 @@ export class IssueController {
   private readonly pipeline: MintingPipeline;
   private readonly identityProvider: IdentityProvider;
   private readonly requireConsent: boolean;
-  private readonly policy: RoleCapabilityPolicy;
   private readonly pimRequiredRoles: string[];
   private readonly capTtlToPimActivation: boolean;
   private readonly postureEmitter?: PostureEmitterLike;
@@ -198,7 +196,6 @@ export class IssueController {
     this.pipeline = pipeline;
     this.identityProvider = opts.identityProvider;
     this.requireConsent = opts.requireConsent === true;
-    this.policy = opts.policy ?? { default: DEFAULT_ROLE_CAPABILITY_MAP };
     this.pimRequiredRoles = opts.pimRequiredRoles ?? [];
     this.capTtlToPimActivation = opts.capTtlToPimActivation !== false;
     this.postureEmitter = opts.postureEmitter;
@@ -209,6 +206,25 @@ export class IssueController {
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
     this.templateStore = opts.templateStore;
+  }
+
+  // ── Hot-reload ────────────────────────────────────────────────────────────
+
+  /**
+   * Hot-reload the active role → capability policy.
+   *
+   * @deprecated The policy is now owned by the injected {@link MintingPipeline}
+   * and `handle()` reads `pipeline.policySnapshot` atomically at the start of
+   * each call.  This method is a no-op kept for API compatibility only; it will
+   * be removed in a future release once all callers have been updated to drive
+   * policy updates exclusively through {@link MintingPipeline.updatePolicy}.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  updatePolicy(_policy: RoleCapabilityPolicy): void {
+    // No-op: the pipeline's policySnapshot is the single source of truth.
+    // MintingPipeline.updatePolicy() is called first by
+    // CapabilityIssuerService.updatePolicy(), so the snapshot is already
+    // up-to-date by the time this method is invoked.
   }
 
   /**
@@ -222,6 +238,14 @@ export class IssueController {
     enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
+      // Capture the policy snapshot atomically before any `await`.  A
+      // SIGHUP hot-reload replaces the MintingPipeline's `_policyState`
+      // object in a single reference assignment; by reading it once here
+      // we guarantee that `activePolicy` and `activePolicyHash` are always
+      // a consistent (policy, hash) pair for the entire lifetime of this
+      // request, even if an update fires mid-flight.
+      const { policy: activePolicy, hash: activePolicyHash } = this.pipeline.policySnapshot;
+
       // Step 1: Validate the user's authentication token.
       this.logger.info('Validating user authentication token', { agentId: request.agentId });
       const userContext = await this.identityProvider.validateToken(request.authToken);
@@ -256,7 +280,7 @@ export class IssueController {
 
       let capabilities = mapRolesToCapabilitiesForPolicy(
         userContext.roles,
-        this.policy,
+        activePolicy,
         userContext.tenantId,
       );
 
@@ -365,7 +389,7 @@ export class IssueController {
       const contributingRoleSources = filterRolesContributingToCapabilities(
         userContext,
         capabilities,
-        this.policy,
+        activePolicy,
       );
       const pimCappedExpiry = computePimCappedExpiry(
         contributingRoleSources,
@@ -406,9 +430,9 @@ export class IssueController {
 
       this.logger.info('Signing capability token', { tokenId, agentId: request.agentId });
       await this.pipeline.attachProofs(payload);
-      payload.policyHash = this.pipeline.cachedPolicyHash;
+      payload.policyHash = activePolicyHash;
       const issuanceContext = buildIssuanceContext({
-        policyHash: this.pipeline.cachedPolicyHash,
+        policyHash: activePolicyHash,
         manifest: templateManifest,
         subject: request.agentId,
         audience: this.pipeline.gatewayAudience,
@@ -494,6 +518,11 @@ export class IssueController {
     enforcement?: IssuerEnforcementContext,
   ): Promise<IssueCapabilityResponse> {
     try {
+      // Capture the policy snapshot atomically before any `await`, matching
+      // the same pattern as `handle()` to ensure policy and hash are always
+      // a consistent pair for the entire lifetime of this request.
+      const { policy: activePolicy, hash: activePolicyHash } = this.pipeline.policySnapshot;
+
       const { userContext } = request;
 
       // Step 1a: Per-(tenantId, userId, agentId, jti, ip) issuance rate limit.
@@ -515,7 +544,7 @@ export class IssueController {
       // Step 2: Determine capabilities based on user roles.
       let capabilities = mapRolesToCapabilitiesForPolicy(
         userContext.roles,
-        this.policy,
+        activePolicy,
         userContext.tenantId,
       );
 
@@ -572,7 +601,7 @@ export class IssueController {
       const contributingRoleSources = filterRolesContributingToCapabilities(
         userContext,
         capabilities,
-        this.policy,
+        activePolicy,
       );
       const pimCappedExpiry = computePimCappedExpiry(
         contributingRoleSources,
@@ -606,9 +635,9 @@ export class IssueController {
       });
 
       await this.pipeline.attachProofs(payload);
-      payload.policyHash = this.pipeline.cachedPolicyHash;
+      payload.policyHash = activePolicyHash;
       const issuanceContext = buildIssuanceContext({
-        policyHash: this.pipeline.cachedPolicyHash,
+        policyHash: activePolicyHash,
         manifest: request.manifest,
         subject: request.agentId,
         audience: this.pipeline.gatewayAudience,

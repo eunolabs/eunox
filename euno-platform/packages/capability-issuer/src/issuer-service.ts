@@ -376,6 +376,27 @@ export class CapabilityIssuerService {
   }
 
   /**
+   * Hot-reload the active role → capability policy.
+   *
+   * Called by the admin API route after a mutation is persisted to Postgres,
+   * and by the SIGHUP handler after re-reading the role-policy store.
+   *
+   * Propagates the new policy to both the {@link MintingPipeline} (which uses
+   * it for DB-credential username lookup and stamps the derived hash on every
+   * minted token) and the {@link IssueController} (which uses it for role →
+   * capability mapping on fresh issuance requests).
+   *
+   * Node.js is single-threaded, so this update is atomic with respect to
+   * concurrent request handlers — a handler that has already entered its
+   * issuance pipeline uses the old policy to completion; all requests that
+   * start after the update see the new policy.
+   */
+  updatePolicy(policy: RoleCapabilityPolicy): void {
+    this.pipeline.updatePolicy(policy);
+    this.issueCtrl.updatePolicy(policy);
+  }
+
+  /**
    * Returns the global identity provider configured for this issuer instance.
    * Used by the OIDC code-exchange endpoint to perform token validation
    * against the right IdP when no per-tenant override is present.

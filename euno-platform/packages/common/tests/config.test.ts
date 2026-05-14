@@ -166,6 +166,8 @@ describe('loadConfig (issuer)', () => {
     const baseProd = {
       NODE_ENV: 'production',
       AZURE_KEYVAULT_URL: 'https://vault.example/',
+      // Task 3: required in production when JWT auth is not configured.
+      ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
     };
 
     it('rejects production + multi-replica without REDIS_URL', () => {
@@ -218,6 +220,168 @@ describe('loadConfig (issuer)', () => {
         'issuer',
       );
       expect(result.ok).toBe(true);
+    });
+  });
+
+  // ── Task 3: role-policy admin API config fields ──────────────────────────
+
+  describe('IssuerConfigSchema — Task 3 (role-policy admin API)', () => {
+    // Minimal valid dev issuer config (defaults to SIGNING_PROVIDER=azure-keyvault,
+    // so only AZURE_KEYVAULT_URL needs to be supplied for the schema to parse cleanly).
+    const baseMin = { AZURE_KEYVAULT_URL: 'https://vault.example/' };
+    // Minimal valid production config satisfying all production guards.
+    const baseProdFull = {
+      NODE_ENV: 'production',
+      AZURE_KEYVAULT_URL: 'https://vault.example/',
+      // Use single-replica tier to avoid the REDIS_URL requirement.
+      EUNO_DEPLOYMENT_TIER: 'single-replica',
+      // Satisfies the Task 3 ISSUER_ADMIN_API_KEY production guard.
+      ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+    };
+
+    it('accepts config without any Task 3 fields (all optional)', () => {
+      const result = loadConfig(baseMin, 'issuer');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ROLE_POLICY_DB_URL).toBeUndefined();
+      expect(result.config.ISSUER_ADMIN_API_KEY).toBeUndefined();
+    });
+
+    it('accepts ISSUER_ROLE_POLICY_DB_URL as a valid connection string', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ROLE_POLICY_DB_URL: 'postgres://user:pass@host:5432/db' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ROLE_POLICY_DB_URL).toBe('postgres://user:pass@host:5432/db');
+    });
+
+    it('accepts ISSUER_ADMIN_API_KEY as an optional string', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ADMIN_API_KEY: 'a-secret-key-for-admin-api-at-least-32-chars' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ADMIN_API_KEY).toBe('a-secret-key-for-admin-api-at-least-32-chars');
+    });
+
+    it('accepts ISSUER_ADMIN_JWKS_URI + ISSUER_ADMIN_JWT_AUDIENCE together', () => {
+      const result = loadConfig(
+        {
+          ...baseMin,
+          ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
+          ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ADMIN_JWKS_URI).toBe(
+        'https://idp.example.com/.well-known/jwks.json',
+      );
+      expect(result.config.ISSUER_ADMIN_JWT_AUDIENCE).toBe(
+        'https://api.example.com/issuer-admin',
+      );
+    });
+
+    it('accepts ISSUER_ADMIN_JWT_ISSUER as optional alongside JWKS config', () => {
+      const result = loadConfig(
+        {
+          ...baseMin,
+          ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
+          ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
+          ISSUER_ADMIN_JWT_ISSUER: 'https://idp.example.com',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ADMIN_JWT_ISSUER).toBe('https://idp.example.com');
+    });
+
+    // ── Production guard tests ────────────────────────────────────────────────
+
+    it('rejects production without ISSUER_ADMIN_API_KEY when JWT auth not configured', () => {
+      const result = loadConfig(
+        { ...baseMin, NODE_ENV: 'production' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_API_KEY');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('ISSUER_ADMIN_API_KEY must be set');
+    });
+
+    it('rejects production with the insecure dev default key when JWT auth not configured', () => {
+      const result = loadConfig(
+        { ...baseMin, NODE_ENV: 'production', ISSUER_ADMIN_API_KEY: 'dev-issuer-admin-key' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_API_KEY');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('dev-issuer-admin-key');
+    });
+
+    it('rejects production with a key shorter than 32 chars when JWT auth not configured', () => {
+      const result = loadConfig(
+        { ...baseMin, NODE_ENV: 'production', ISSUER_ADMIN_API_KEY: 'short' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_API_KEY');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('too short');
+    });
+
+    it('accepts production with a strong ISSUER_ADMIN_API_KEY when JWT auth not configured', () => {
+      const result = loadConfig(baseProdFull, 'issuer');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.ISSUER_ADMIN_API_KEY).toBe('a-strong-production-admin-key-min32!!');
+    });
+
+    it('accepts production without ISSUER_ADMIN_API_KEY when JWKS+AUDIENCE are configured', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          AZURE_KEYVAULT_URL: 'https://vault.example/',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
+          ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects ISSUER_ADMIN_JWKS_URI without ISSUER_ADMIN_JWT_AUDIENCE', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_JWT_AUDIENCE');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('ISSUER_ADMIN_JWT_AUDIENCE is required');
+    });
+
+    it('rejects ISSUER_ADMIN_JWT_ISSUER without ISSUER_ADMIN_JWKS_URI', () => {
+      const result = loadConfig(
+        { ...baseMin, ISSUER_ADMIN_JWT_ISSUER: 'https://idp.example.com' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_JWT_ISSUER');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('ISSUER_ADMIN_JWT_ISSUER requires ISSUER_ADMIN_JWKS_URI');
     });
   });
 });

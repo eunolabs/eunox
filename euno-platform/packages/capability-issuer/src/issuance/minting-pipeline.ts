@@ -43,6 +43,7 @@ import {
 import type { IssueCapabilityRequest } from '@euno/common';
 import { BrokerCallError, SideCredentialBroker } from '../side-credential-broker';
 import { signPayload } from './signer-pipeline';
+import { computeCapabilityPolicyHash } from './issuance-context';
 
 /**
  * Minimal request shape needed by {@link MintingPipeline.mintSideCredentials}.
@@ -138,12 +139,46 @@ export interface MintingPipelineOptions {
  * attachers, and audit logger. The per-endpoint controllers call into
  * it rather than duplicating these concerns.
  */
+/** Atomic snapshot of the active policy and its pre-computed hash. */
+export interface PolicySnapshot {
+  policy: RoleCapabilityPolicy;
+  hash: string;
+}
+
 export class MintingPipeline {
   readonly signer: TokenSigner;
   readonly issuerDid: string;
   readonly gatewayAudience: string;
-  readonly cachedPolicyHash: string;
-  readonly policy: RoleCapabilityPolicy;
+
+  // Stored as a single object so that `updatePolicy()` can replace both
+  // fields in one assignment — a single reference write is atomic in the
+  // JS engine, so an in-flight `handle()` that reads `policySnapshot` once
+  // at the top will always see a consistent (policy, hash) pair.
+  private _policyState: PolicySnapshot;
+
+  /** Active role → capability policy (read from the current snapshot). */
+  get policy(): RoleCapabilityPolicy {
+    return this._policyState.policy;
+  }
+
+  /**
+   * Pre-computed SHA-256 hash of the active policy (read from the current
+   * snapshot). Stamped on every minted token's `policyHash` claim.
+   */
+  get cachedPolicyHash(): string {
+    return this._policyState.hash;
+  }
+
+  /**
+   * Atomic snapshot of the currently active policy together with its
+   * pre-computed hash.  Callers that read both values (e.g. the issuance
+   * handler) should capture this once at the top of their call, before any
+   * `await`, to guarantee they observe a consistent pair even if a SIGHUP
+   * hot-reload fires during an in-flight async operation.
+   */
+  get policySnapshot(): PolicySnapshot {
+    return this._policyState;
+  }
 
   private readonly issuanceRateLimiter?: IssuanceRateLimiter;
   private readonly storageGrantRateLimiter?: IssuanceRateLimiter;
@@ -168,8 +203,7 @@ export class MintingPipeline {
     this.signer = opts.signer;
     this.issuerDid = opts.issuerDid;
     this.gatewayAudience = opts.gatewayAudience ?? 'tool-gateway';
-    this.cachedPolicyHash = opts.cachedPolicyHash;
-    this.policy = opts.policy;
+    this._policyState = { policy: opts.policy, hash: opts.cachedPolicyHash };
     this.issuanceRateLimiter = opts.issuanceRateLimiter;
     this.storageGrantRateLimiter = opts.storageGrantRateLimiter;
     this.dbTokenRateLimiter = opts.dbTokenRateLimiter;
@@ -181,6 +215,23 @@ export class MintingPipeline {
     this.transparencyLogs = opts.transparencyLogs ?? [];
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
+  }
+
+  // ── Hot-reload ────────────────────────────────────────────────────────────
+
+  /**
+   * Hot-reload the active role → capability policy.
+   *
+   * Called by the admin API route after a mutation is persisted (or by
+   * the SIGHUP handler after re-reading the Postgres store).  Updates
+   * both the in-memory policy reference (used by the side-credential
+   * broker for DB username lookup) and the cached policy hash (stamped
+   * on every minted token's `policyHash` claim).
+   */
+  updatePolicy(policy: RoleCapabilityPolicy): void {
+    // Single reference assignment — both `policy` and `hash` are visible
+    // together atomically to any subsequent read of `policySnapshot`.
+    this._policyState = { policy, hash: computeCapabilityPolicyHash(policy) };
   }
 
   // ── DPoP ─────────────────────────────────────────────────────────────────
