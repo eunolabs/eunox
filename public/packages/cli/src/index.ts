@@ -20,6 +20,9 @@ function readEunoConfig(): Record<string, string> {
   }
   return {};
 }
+
+const CONFIG_ALLOWED_KEYS = ['issuerUrl', 'idpAuthUrl', 'idpTokenUrl', 'idpClientId', 'agentId', 'region'];
+
 import {
   dumpEnvTemplate,
   EUNO_SERVICE_NAMES,
@@ -697,9 +700,8 @@ configCmd
   .command('set <key> <value>')
   .description('Persist a configuration value to ~/.euno/config')
   .action((key: string, value: string) => {
-    const ALLOWED_KEYS = ['issuerUrl', 'idpAuthUrl', 'idpTokenUrl', 'idpClientId', 'agentId', 'region'];
-    if (!ALLOWED_KEYS.includes(key)) {
-      console.error(`✗ Unknown config key "${key}". Allowed keys: ${ALLOWED_KEYS.join(', ')}`);
+    if (!CONFIG_ALLOWED_KEYS.includes(key)) {
+      console.error(`✗ Unknown config key "${key}". Allowed keys: ${CONFIG_ALLOWED_KEYS.join(', ')}`);
       process.exit(1);
     }
     const configDir = path.join(os.homedir(), '.euno');

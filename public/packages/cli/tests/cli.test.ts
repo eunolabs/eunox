@@ -688,7 +688,7 @@ describe('euno validate-token', () => {
     expect(r.stderr).toContain('No stored token');
   });
 
-  it('verifies a valid token against a mock JWKS server', async () => {
+  it('validates token signature and claims against a mock JWKS server', async () => {
     const jose = await import('jose');
     const { privateKey, publicKey } = await jose.generateKeyPair('RS256');
     const publicJwk = await jose.exportJWK(publicKey);
@@ -753,7 +753,7 @@ describe('euno request --refresh', () => {
     expect(r.stderr).toContain('No stored token');
   });
 
-  it('calls the renew endpoint with the stored token', async () => {
+  it('successfully renews token using stored credentials', async () => {
     // Create a stored token file
     const tokenDir = path.join(tmpDir, '.euno', 'tokens');
     fs.mkdirSync(tokenDir, { recursive: true });
