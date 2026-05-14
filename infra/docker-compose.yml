@@ -148,6 +148,11 @@ services:
   # Issues short-lived capability JWTs that the gateway verifies.
   # In a real deployment this runs separately and is shared across gateway
   # replicas.  It is included here so the local stack is self-contained.
+  #
+  # Identity provider defaults (Task 8):
+  #   The issuer is pre-configured to use the mock-oidc service for the smoke
+  #   profile.  Override all AWS_COGNITO_* variables (and IDENTITY_PROVIDER) in
+  #   your .env file to point at a real Cognito user pool or other IdP.
   capability-issuer:
     build:
       context: ..
@@ -164,6 +169,25 @@ services:
       # MUST be replaced in any internet-facing deployment — generate a fresh
       # value with: openssl rand -hex 32
       ISSUER_SEED: ${ISSUER_SEED:-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2}
+      # Identity provider — defaults to AWS Cognito backed by the smoke-profile
+      # mock-oidc service.  Override IDENTITY_PROVIDER and the provider-specific
+      # variables in your .env file for a real deployment.
+      IDENTITY_PROVIDER: ${IDENTITY_PROVIDER:-aws-cognito}
+      # AWS Cognito / mock-OIDC configuration.
+      # In the smoke profile these point at the local mock-oidc container.
+      # Replace with real Cognito pool values (or another IdP) for production.
+      AWS_COGNITO_ISSUER:    ${AWS_COGNITO_ISSUER:-http://mock-oidc:3003}
+      AWS_COGNITO_CLIENT_ID: ${AWS_COGNITO_CLIENT_ID:-euno-smoke-client}
+      AWS_COGNITO_JWKS_URI:  ${AWS_COGNITO_JWKS_URI:-http://mock-oidc:3003/.well-known/jwks.json}
+      # Role-to-capability policy file (bind-mounted from infra/policies/).
+      # Provides the smoke-test "developer" role and the default Sprint-1 roles.
+      ROLE_POLICY_FILE: /app/policies/role-policy.json
+      # Public URL — used to construct OIDC discovery endpoint URIs.
+      ISSUER_PUBLIC_URL: ${ISSUER_PUBLIC_URL:-http://capability-issuer:${ISSUER_PORT:-3001}}
+    volumes:
+      # Seed role-to-capability policy (read-only).  Operators may replace this
+      # file with a tenant-specific policy; set ROLE_POLICY_FILE to the new path.
+      - ./policies:/app/policies:ro
     ports:
       - "${ISSUER_EXPOSE_PORT:-3001}:${ISSUER_PORT:-3001}"
     healthcheck:
@@ -233,6 +257,35 @@ services:
       retries: 5
       start_period: 20s
 
+  # ── Mock OIDC server (smoke profile only) ─────────────────────────────────
+  # Provides a Cognito-compatible ID-token issuer for the smoke-test
+  # issuance round-trip.  Issues signed JWTs with an ephemeral EC key that is
+  # generated at startup; the JWKS endpoint exposes the corresponding public
+  # key so the capability-issuer can validate the tokens.
+  #
+  # This service MUST NOT be used outside the smoke-test profile — it has no
+  # authentication on its /token endpoint and is purely for integration testing.
+  mock-oidc:
+    build:
+      context: mock-oidc
+      dockerfile: Dockerfile
+    image: euno/mock-oidc:local
+    container_name: euno-mock-oidc
+    profiles: ["smoke"]
+    restart: unless-stopped
+    environment:
+      PORT: 3003
+      MOCK_OIDC_ISSUER:    "http://mock-oidc:3003"
+      MOCK_OIDC_CLIENT_ID: "euno-smoke-client"
+    ports:
+      - "${MOCK_OIDC_EXPOSE_PORT:-3004}:3003"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3003/.well-known/jwks.json || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   # ── Smoke test ─────────────────────────────────────────────────────────────
   # Lightweight container that exercises core gateway endpoints after the full
   # stack is healthy.  Exits 0 on success, 1 on failure.  Use with:
@@ -244,9 +297,13 @@ services:
     depends_on:
       gateway-full:
         condition: service_healthy
+      mock-oidc:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "/smoke-test.sh"]
     volumes:
       - ./smoke-test.sh:/smoke-test.sh:ro
     environment:
       GATEWAY_URL:     "http://gateway-full:${GATEWAY_PORT:-3002}"
+      ISSUER_URL:      "http://capability-issuer:${ISSUER_PORT:-3001}"
       ISSUER_JWKS_URL: "http://capability-issuer:${ISSUER_PORT:-3001}/.well-known/jwks.json"
+      MOCK_OIDC_URL:   "http://mock-oidc:3003"

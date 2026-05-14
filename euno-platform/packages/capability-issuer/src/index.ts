@@ -529,6 +529,19 @@ async function initializeServices() {
         });
         adminTemplatesForwarder.use('/', adminRouter);
         logger.info('Admin templates router mounted at /api/v1/admin/templates');
+
+        // Task 7 (Stage 4): server-rendered admin UI pages at /admin/*.
+        // Shares the same auth (JWT + X-Admin-Key fallback) as the API router.
+        const { createAdminUiRouter } = await import('./routes/admin-ui');
+        const uiRouter = createAdminUiRouter({
+          store: templateStore,
+          adminApiKey: adminApiKey ?? '',
+          logger,
+          jwtVerifier,
+          publicBaseUrl: env.ISSUER_PUBLIC_URL,
+        });
+        adminUiForwarder.use('/', uiRouter);
+        logger.info('Admin UI router mounted at /admin');
       }
     }
 
@@ -1497,6 +1510,11 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
 // is configured.  Until then, requests fall through to the catch-all 404 handler.
 const adminTemplatesForwarder = express.Router({ mergeParams: true });
 app.use('/api/v1/admin/templates', adminTemplatesForwarder);
+
+// Admin UI forwarding router (Task 7) — also populated lazily in initializeServices().
+// Serves server-rendered HTML pages at /admin/*.
+const adminUiForwarder = express.Router({ mergeParams: true });
+app.use('/admin', adminUiForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
