@@ -61,9 +61,37 @@ interface AuthResult {
   isPlatformAdmin: boolean;
 }
 
+/**
+ * Create a constant-time X-Admin-Key checker.
+ *
+ * Pre-computes the HMAC-SHA256 of the configured key at router creation time
+ * (NOT per-request) so the per-request comparison is always between two
+ * same-length buffers generated with the same hidden key — eliminating any
+ * timing oracle while avoiding unnecessary cryptographic work on the hot path.
+ *
+ * NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars in
+ * production), NOT a user password. HMAC-SHA256 is appropriate here; a KDF
+ * (bcrypt/argon2) would add latency without security benefit for random tokens.
+ */
+function createXAdminKeyChecker(adminApiKey: string): ((provided: string) => boolean) | null {
+  if (adminApiKey.length === 0) return null;
+  const hmacKey = crypto.randomBytes(32);
+  const expectedHash = crypto
+    .createHmac('sha256', hmacKey)
+    .update(Buffer.from(adminApiKey, 'utf8'))
+    .digest();
+  return (provided: string): boolean => {
+    const providedHash = crypto
+      .createHmac('sha256', hmacKey)
+      .update(Buffer.from(provided, 'utf8'))
+      .digest();
+    return crypto.timingSafeEqual(providedHash, expectedHash);
+  };
+}
+
 async function resolveAuth(
   req: Request,
-  adminApiKey: string,
+  checkXAdminKey: ((provided: string) => boolean) | null,
   jwtVerifier?: IssuerAdminJwtVerifier,
 ): Promise<AuthResult | null> {
   // 1. Try Bearer JWT (from Authorization header or ?token= query param).
@@ -90,16 +118,11 @@ async function resolveAuth(
     }
   }
 
-  // 2. Try X-Admin-Key shared secret.
-  if (adminApiKey.length > 0) {
+  // 2. Try X-Admin-Key shared secret (active only when adminApiKey was configured).
+  if (checkXAdminKey) {
     const provided = req.headers['x-admin-key'];
-    if (typeof provided === 'string') {
-      const hmacKey = crypto.randomBytes(32);
-      const expected = crypto.createHmac('sha256', hmacKey).update(Buffer.from(adminApiKey, 'utf8')).digest();
-      const actual = crypto.createHmac('sha256', hmacKey).update(Buffer.from(provided, 'utf8')).digest();
-      if (crypto.timingSafeEqual(actual, expected)) {
-        return { operatorId: 'x-admin-key', tenantId: '', isPlatformAdmin: true };
-      }
+    if (typeof provided === 'string' && checkXAdminKey(provided)) {
+      return { operatorId: 'x-admin-key', tenantId: '', isPlatformAdmin: true };
     }
   }
 
@@ -369,6 +392,7 @@ document.getElementById('create-form').addEventListener('submit', function(ev){
 // ── Page: template detail + version history ────────────────────────────────
 
 function renderDetailPage(templateId: string): string {
+  const safeId = encodeURIComponent(templateId);
   const body = `
 <div id="detail-loading" class="text-muted">Loading…</div>
 <div id="detail-error" class="alert alert-danger d-none"></div>
@@ -379,7 +403,7 @@ function renderDetailPage(templateId: string): string {
       <code class="text-muted small" id="detail-id"></code>
     </div>
     <div>
-      <a href="/admin/templates/${escHtml(templateId)}/assign" class="btn btn-sm btn-primary me-2">Manage assignments</a>
+      <a href="/admin/templates/${safeId}/assign" class="btn btn-sm btn-primary me-2">Manage assignments</a>
       <button class="btn btn-sm btn-outline-danger" id="btn-delete">Delete template</button>
     </div>
   </div>
@@ -512,9 +536,10 @@ function renderDetailPage(templateId: string): string {
 // ── Page: assignments ──────────────────────────────────────────────────────
 
 function renderAssignPage(templateId: string): string {
+  const safeId = encodeURIComponent(templateId);
   const body = `
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h2 class="h4 mb-0">Assignments — <a href="/admin/templates/${escHtml(templateId)}" class="text-decoration-none">${escHtml(templateId)}</a></h2>
+  <h2 class="h4 mb-0">Assignments — <a href="/admin/templates/${safeId}" class="text-decoration-none">${escHtml(templateId)}</a></h2>
 </div>
 
 <div class="row">
@@ -636,9 +661,12 @@ function renderAssignPage(templateId: string): string {
 export function createAdminUiRouter(opts: AdminUiRouterOptions): Router {
   const router = Router();
 
+  // Pre-compute the X-Admin-Key checker once at router creation time.
+  const checkXAdminKey = createXAdminKeyChecker(opts.adminApiKey);
+
   // Auth guard: applies to all routes in this router.
   const authGuard = (req: Request, res: Response, next: NextFunction): void => {
-    resolveAuth(req, opts.adminApiKey, opts.jwtVerifier)
+    resolveAuth(req, checkXAdminKey, opts.jwtVerifier)
       .then((result) => {
         if (!result) {
           // If it looks like a browser request, add a hint; otherwise plain 401.

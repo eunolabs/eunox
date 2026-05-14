@@ -140,7 +140,7 @@ if [ -n "$MOCK_OIDC_URL" ]; then
   printf "\n-- Issuance round-trip --\n"
 
   # Use a unique nonce so each smoke run can't replay a previous token.
-  SMOKE_NONCE="smoke-$(date +%s%N 2>/dev/null || date +%s)"
+  SMOKE_NONCE="smoke-$(date +%s%N 2>/dev/null || echo "${RANDOM}$(date +%s)")"
 
   # Step 1: mint a test ID token from the mock OIDC server.
   MINT_RESP=$(curl -s -X POST "${MOCK_OIDC_URL}/token" \

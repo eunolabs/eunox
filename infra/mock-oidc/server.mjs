@@ -149,14 +149,14 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
   } catch (err) {
     console.error('[mock-oidc] handler error', err);
-    json(res, 500, { error: String(err) });
+    json(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
   }
 });
 
 init()
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`[mock-oidc] listening on :{PORT}`);
+      console.log(`[mock-oidc] listening on :${PORT}`);
     });
   })
   .catch((err) => {
