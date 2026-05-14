@@ -727,10 +727,10 @@ threat model delays Stage 3, that is the correct trade.
 >
 > - [x] Task 0 — Stage 4 design freeze & RFC: `docs/stage-4-design.md` authored; second IdP (AWS Cognito) selected with rationale; hosted-vs-self-host feature matrix, Postgres template schema, seven admin API endpoints, server-rendered UI decision, distinct KMS key alias decision, and zero-seam-additions confirmation all captured; pending engineer + security sign-off
 > - [x] Task 1 — Issuer identity threat model: `docs/security/issuer-identity-threat-model.md` produced; all eight §5 questions answered (IdP compromise, IdP-token replay, role-mapping privilege escalation, manifest template tampering, cross-tenant template leakage, per-tenant signing-key isolation, self-host operator key management, CLI token storage at rest); pending engineer + security sign-off
-> - [ ] Task 2 — Hosted IdP wiring (Entra ID + AWS Cognito)
-> - [ ] Task 3 — Role-to-capability mapping production hardening
-> - [ ] Task 4 — Token attenuation & renewal as live, supported endpoints
-> - [ ] Task 5 — `euno request` and `euno validate-token` wired to live issuer
+> - [x] Task 2 — Hosted IdP wiring (Entra ID + AWS Cognito): `AzureADIdentityProvider` + `AWSCognitoIdentityProvider` wired; `TenantIdpRegistry` (hot-reload); `OidcStateStore` (replay prevention); `POST /api/v1/oidc/token` endpoint; 491 capability-issuer tests pass
+> - [x] Task 3 — Role-to-capability mapping production hardening: `PostgresRolePolicyStore` + `AdminJwtVerifier`; `PUT /GET /api/v1/admin/role-policy`; SIGHUP hot-reload; OCSF audit on mutation; 602 capability-issuer tests pass
+> - [x] Task 4 — Token attenuation & renewal as live, supported endpoints: F-1 rate limiting confirmed active on all three mint paths; `cnf.jkt` and `region` parity tests in `cross-stage-parity.test.ts` (49 tests); rate-limit boundary tests (16 tests); `docs/issuer-operator-runbook.md` and `docs/agent-sdk.md` published
+> - [x] Task 5 — `euno request` and `euno validate-token` wired to live issuer: PKCE flow (`--idp-auth-url`, `--idp-token-url`, `--client-id`), token persistence to `~/.euno/tokens/<agentId>.jwt` (0600), `--refresh` renewal path; top-level `euno validate-token` with JWKS verification; `euno revoke <jti>`; `euno config set`; 52 CLI tests pass; `docs/quickstart-stage-4.md` published
 > - [x] Task 6 — Manifest template store + admin API: `PostgresManifestTemplateStore` + `IssuerMigrationRunner`; 7 admin endpoints under `/api/v1/admin/templates`; operator-JWT auth; template hot-path in `IssueController`; `IssuerConfigSchema` extended with `ISSUER_DB_*` + `ISSUER_ADMIN_*`; 53 new tests (502 total)
 > - [ ] Task 7 — Manifest templates UI under `web/admin/`
 > - [ ] Task 8 — Issuer in `infra/docker-compose.yml` + smoke wiring
