@@ -8,8 +8,10 @@
 #   # Full stack (gateway + Redis + Postgres + capability-issuer):
 #   docker compose -f infra/docker-compose.yml --profile full up --build
 #
-#   # Smoke test (full stack + health/functional checks):
-#   docker compose -f infra/docker-compose.yml --profile smoke up --build --abort-on-container-exit
+#   # Smoke test (full stack + health/functional checks, including issuance round-trip):
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.smoke.yml \
+#     --profile smoke up --build --abort-on-container-exit
+#   (The smoke override file wires capability-issuer to the local mock-oidc service.)
 #
 # Configurable backends
 # ---------------------
@@ -149,10 +151,11 @@ services:
   # In a real deployment this runs separately and is shared across gateway
   # replicas.  It is included here so the local stack is self-contained.
   #
-  # Identity provider defaults (Task 8):
-  #   The issuer is pre-configured to use the mock-oidc service for the smoke
-  #   profile.  Override all AWS_COGNITO_* variables (and IDENTITY_PROVIDER) in
-  #   your .env file to point at a real Cognito user pool or other IdP.
+  # Identity provider: set IDENTITY_PROVIDER (and the corresponding provider
+  # variables) in your .env file or shell environment.  The smoke profile uses
+  # infra/docker-compose.smoke.yml to pre-configure IDENTITY_PROVIDER=aws-cognito
+  # against the local mock-oidc service; dev/full profiles leave it unset so the
+  # issuer boots without attempting to reach an unavailable IdP.
   capability-issuer:
     build:
       context: ..
@@ -169,16 +172,19 @@ services:
       # MUST be replaced in any internet-facing deployment — generate a fresh
       # value with: openssl rand -hex 32
       ISSUER_SEED: ${ISSUER_SEED:-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2}
-      # Identity provider — defaults to AWS Cognito backed by the smoke-profile
-      # mock-oidc service.  Override IDENTITY_PROVIDER and the provider-specific
-      # variables in your .env file for a real deployment.
-      IDENTITY_PROVIDER: ${IDENTITY_PROVIDER:-aws-cognito}
-      # AWS Cognito / mock-OIDC configuration.
-      # In the smoke profile these point at the local mock-oidc container.
-      # Replace with real Cognito pool values (or another IdP) for production.
-      AWS_COGNITO_ISSUER:    ${AWS_COGNITO_ISSUER:-http://mock-oidc:3003}
-      AWS_COGNITO_CLIENT_ID: ${AWS_COGNITO_CLIENT_ID:-euno-smoke-client}
-      AWS_COGNITO_JWKS_URI:  ${AWS_COGNITO_JWKS_URI:-http://mock-oidc:3003/.well-known/jwks.json}
+      # Identity provider — set in your .env or shell.  Unset → issuer boots
+      # without an active IdP (OIDC token-exchange endpoints will return errors
+      # until a provider is configured).  The smoke override sets aws-cognito.
+      IDENTITY_PROVIDER: ${IDENTITY_PROVIDER:-}
+      # Provider-specific variables — override in .env or shell.
+      # The smoke override (docker-compose.smoke.yml) sets these to point at
+      # the local mock-oidc container.  For a real Cognito pool, set here:
+      #   AWS_COGNITO_USER_POOL_ID=<pool-id>
+      #   AWS_COGNITO_CLIENT_ID=<client-id>
+      #   AWS_COGNITO_REGION=<region>
+      AWS_COGNITO_ISSUER:    ${AWS_COGNITO_ISSUER:-}
+      AWS_COGNITO_CLIENT_ID: ${AWS_COGNITO_CLIENT_ID:-}
+      AWS_COGNITO_JWKS_URI:  ${AWS_COGNITO_JWKS_URI:-}
       # Role-to-capability policy file (bind-mounted from infra/policies/).
       # Provides the smoke-test "developer" role and the default Sprint-1 roles.
       ROLE_POLICY_FILE: /app/policies/role-policy.json
