@@ -32,21 +32,24 @@ If the rate limiter throws an unexpected error the issuer **denies** the request
 - `POST /api/v1/attenuate` — attenuates a parent token to a narrower capability set. Inherits `cnf.jkt` and `region` from the parent.
 - `POST /api/v1/renew` — renews an expiring token, preserving `cnf.jkt`, `region`, and `policyHash`.
 
-Both endpoints share the same rate-limit bucket as `/api/v1/issue`.
+Both endpoints use the same rate limiter as `/api/v1/issue` but with a different bucket key: `/attenuate` and `/renew` include the parent/current token `jti` in the subject, while fresh `/issue` requests do not. They share the same limiter policy (window, max-requests) but do **not** share the same per-subject bucket as `/issue`.
 
 ## KMS Key Rotation
 
 1. Generate new key pair in KMS.
 2. Add new public key to `/.well-known/jwks.json` (multi-key JWKS).
-3. Update `SIGNING_KEY_ID` env var on the issuer deployment.
+3. Update the provider-specific signing-key env var on the issuer deployment:
+   - Azure Key Vault: `AZURE_KEYVAULT_KEY_NAME` / `AZURE_KEYVAULT_KEY_VERSION`
+   - AWS KMS: `AWS_KMS_KEY_ID`
+   - GCP Cloud KMS: `GCP_KMS_KEY_NAME` / `GCP_KMS_KEY_VERSION`
 4. Roll pods. New tokens are signed with the new key; verifiers accept both keys.
 5. After all old tokens have expired, remove the old key from JWKS.
 
 ## Alerting
 
 Wire Prometheus alerts on:
-- `euno_issuance_rate_limited_total` — spike indicates abuse or misconfiguration.
-- `euno_issuance_errors_total{code="SIGNING_ERROR"}` — KMS connectivity issue.
+- `euno_issuer_issuance_rate_limit_denied_total` — spike indicates abuse or misconfiguration.
+- `euno_issuer_issuance_total{outcome="error"}` — sustained errors indicate KMS or IdP degradation.
 - p99 latency of `/api/v1/issue` > 2s — KMS or IdP degradation.
 
 ## On-Call Playbook: IdP Outage
@@ -57,4 +60,4 @@ The issuer is **fail-closed** on IdP validation failure: if `validateToken()` th
 1. Check IdP status page. If IdP is down, inform users; no issuer action needed.
 2. If JWKS endpoint is unreachable, the gateway will reject all incoming tokens. Cache JWKS with a TTL and rotate on next successful fetch.
 3. Escalate to IdP vendor if outage persists > 15 min.
-4. To temporarily allow a specific service account, issue a token manually via `POST /api/v1/oidc/token` with a pre-validated `UserContext` (requires break-glass procedure documented in `docs/break-glass.md`).
+4. To temporarily allow a specific service account during an IdP outage, contact the Euno platform team; emergency issuance requires out-of-band operator access and is not available via a self-service CLI command.

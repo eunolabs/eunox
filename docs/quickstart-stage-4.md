@@ -24,7 +24,7 @@ euno config set issuerUrl https://issuer.example.com
 euno config set idpAuthUrl https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize
 euno config set idpTokenUrl https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
 euno config set idpClientId <your-client-id>
-euno config set defaultAgentId my-agent
+euno config set agentId my-agent
 ```
 
 Config is persisted to `~/.euno/config` (mode 0600).
@@ -51,7 +51,7 @@ Expected output:
   Subject: user@example.com
   Agent:   my-agent
   Token ID (jti): <uuid>
-  Expires: 2025-...
+  Expires: 2027-...
   Capabilities: 3
 ```
 
@@ -63,8 +63,10 @@ euno request --refresh --agent-id my-agent
 
 ## 6. Revoke the Token
 
+Token revocation is an admin operation handled by the gateway (not the issuer). Use the gateway admin API with your admin API key:
+
 ```bash
-euno revoke <jti> --agent-id my-agent
+euno revoke <jti> --admin-key $EUNO_ADMIN_API_KEY --gateway-url https://gateway.example.com
 ```
 
 ## Troubleshooting
@@ -74,5 +76,5 @@ euno revoke <jti> --agent-id my-agent
 | `✗ Azure AD bearer token is required` | Pass `--token $TOKEN` or set `AZURE_AD_TOKEN` |
 | `✗ No stored token found` | Run `euno request` first |
 | `✗ Token has expired` | Run `euno request --refresh --agent-id <id>` |
-| `✗ Signature verification FAILED` | Ensure `issuerUrl` points to the correct issuer |
+| `✗ Signature verification FAILED` | Ensure `--iss` matches the token's issuer and `issuerUrl` JWKS is reachable |
 | HTTP 429 | Wait and retry; rate limit is 20 requests / 60 seconds |

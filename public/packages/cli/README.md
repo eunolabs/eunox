@@ -36,18 +36,19 @@ euno request --refresh --agent-id my-agent
 ```
 
 ### `euno validate-token [token]`
-Verify a capability token's signature, expiry, aud, and iss against the issuer JWKS.
+Verify a capability token's signature and expiry against the issuer JWKS. Enforces the `aud` claim (default: `tool-gateway`) and the `iss` claim. Pass `--aud` and `--iss` to override the defaults.
 ```bash
 euno validate-token eyJ...
 euno validate-token --agent-id my-agent
 euno validate-token eyJ... --jwks-url https://issuer.example.com/.well-known/jwks.json
+euno validate-token eyJ... --iss did:web:issuer.example.com --aud tool-gateway
 ```
 
 ### `euno revoke <jti>`
-Revoke a capability token by its JTI.
+Revoke a capability token by its JTI via the **gateway** admin API (`POST /admin/revoke`).
 ```bash
-euno revoke <jti> --agent-id my-agent
-euno revoke <jti> --token $BEARER_TOKEN --issuer-url https://issuer.example.com
+euno revoke <jti> --admin-key $EUNO_ADMIN_API_KEY
+euno revoke <jti> --admin-key $KEY --gateway-url https://gateway.example.com
 ```
 
 ### `euno config set <key> <value>`

@@ -716,6 +716,7 @@ describe('euno validate-token', () => {
       const signedToken = await new jose.SignJWT({
         schemaVersion: '1.0',
         iss: 'did:web:test.com',
+        aud: 'tool-gateway',
         sub: 'agent-1',
         agentId: 'agent-1',
         jti: 'test-jti-1',
@@ -727,6 +728,7 @@ describe('euno validate-token', () => {
       const r = runCli([
         'validate-token', signedToken,
         '--jwks-url', `http://127.0.0.1:${port}/.well-known/jwks.json`,
+        '--iss', 'did:web:test.com',
       ]);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain('✓ Token is VALID');
@@ -805,24 +807,29 @@ describe('euno revoke', () => {
     expect(r.stdout).toContain('revoke');
   });
 
-  it('exits 1 when no bearer token is provided', () => {
+  it('exits 1 when no admin key is provided', () => {
     const r = runCli(['revoke', 'some-jti'], {
-      env: { ...process.env, HOME: tmpDir },
+      env: { ...process.env, HOME: tmpDir, EUNO_ADMIN_API_KEY: '' },
     });
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('bearer token');
+    expect(r.stderr).toContain('admin API key');
   });
 
-  it('calls the revocation endpoint and exits 0 on success', async () => {
+  it('calls the gateway revocation endpoint and exits 0 on success', async () => {
     const { spawn } = await import('child_process');
+    let capturedPath = '';
+    let capturedKey = '';
+    let capturedBody = '';
     const serverProcess = spawn(process.execPath, ['-e', `
       const http = require('http');
       const server = http.createServer((req, res) => {
+        capturedPath = req.url;
+        capturedKey = req.headers['x-admin-api-key'] || '';
         let body = '';
         req.on('data', d => body += d);
         req.on('end', () => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ revoked: true }));
+          res.end(JSON.stringify({ message: 'Token test-jti-123 has been revoked', tokenId: 'test-jti-123' }));
         });
       });
       server.listen(0, '127.0.0.1', () => process.send(server.address().port));
@@ -834,8 +841,8 @@ describe('euno revoke', () => {
     try {
       const r = runCli([
         'revoke', 'test-jti-123',
-        '--token', 'bearer-token-here',
-        '--issuer-url', `http://127.0.0.1:${port}`,
+        '--admin-key', 'test-admin-key',
+        '--gateway-url', `http://127.0.0.1:${port}`,
       ]);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain('revoked');
@@ -850,7 +857,7 @@ describe('euno revoke', () => {
       const http = require('http');
       const server = http.createServer((req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ message: 'Internal Server Error' }));
+        res.end(JSON.stringify({ error: { message: 'Internal Server Error' } }));
       });
       server.listen(0, '127.0.0.1', () => process.send(server.address().port));
     `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
@@ -861,8 +868,8 @@ describe('euno revoke', () => {
     try {
       const r = runCli([
         'revoke', 'test-jti-error',
-        '--token', 'bearer-token-here',
-        '--issuer-url', `http://127.0.0.1:${port}`,
+        '--admin-key', 'test-admin-key',
+        '--gateway-url', `http://127.0.0.1:${port}`,
       ]);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('Revocation failed');
@@ -870,4 +877,72 @@ describe('euno revoke', () => {
       serverProcess.kill();
     }
   }, 30000);
+});
+
+describe('euno request PKCE validation', () => {
+  it('exits 1 when --idp-auth-url is set but --idp-token-url is missing', () => {
+    const r = runCli([
+      'request', '--agent-id', 'test-agent',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-client-id', 'my-client',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('idp-token-url');
+  });
+
+  it('exits 1 when --idp-auth-url is set but --idp-client-id is missing', () => {
+    const r = runCli([
+      'request', '--agent-id', 'test-agent',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-token-url', 'https://login.test/token',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('idp-client-id');
+  });
+
+  it('exits 1 when --idp-auth-url is set but --agent-id is missing', () => {
+    const r = runCli([
+      'request',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-token-url', 'https://login.test/token',
+      '--idp-client-id', 'my-client',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('agent-id');
+  });
+});
+
+describe('euno config show reads persisted config', () => {
+  it('displays values written by config set', () => {
+    const home = path.join(tmpDir, 'show-test');
+    fs.mkdirSync(home, { recursive: true });
+
+    runCli(['config', 'set', 'issuerUrl', 'https://my-issuer.test'], {
+      env: { ...process.env, HOME: home },
+    });
+
+    const r = runCli(['config'], { env: { ...process.env, HOME: home } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('https://my-issuer.test');
+  });
+});
+
+describe('euno request uses agentId from config', () => {
+  it('falls back to config agentId for --refresh', () => {
+    const home = path.join(tmpDir, 'agent-config-test');
+    fs.mkdirSync(home, { recursive: true });
+
+    // Write agentId to config but no token file — should fail with
+    // "No stored token" rather than "--agent-id is required"
+    runCli(['config', 'set', 'agentId', 'config-agent'], {
+      env: { ...process.env, HOME: home },
+    });
+
+    const r = runCli(['request', '--refresh'], {
+      env: { ...process.env, HOME: home },
+    });
+    expect(r.status).toBe(1);
+    // Should reach the "no stored token" step, not the "agent-id required" step.
+    expect(r.stderr).toContain('No stored token');
+  });
 });

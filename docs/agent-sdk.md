@@ -16,7 +16,7 @@ curl -X POST https://issuer.example.com/api/v1/attenuate \
   -H "Authorization: Bearer <parent-token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "capabilities": [
+    "requestedCapabilities": [
       { "resource": "api://myservice/readonly", "actions": ["read"] }
     ]
   }'
@@ -31,7 +31,7 @@ const response = await fetch('https://issuer.example.com/api/v1/attenuate', {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    capabilities: [
+    requestedCapabilities: [
       { resource: 'api://myservice/readonly', actions: ['read'] }
     ]
   }),
@@ -55,7 +55,7 @@ import axios from 'axios';
 
 const { data } = await axios.post(
   'https://issuer.example.com/api/v1/attenuate',
-  { capabilities: [{ resource: 'api://myservice/readonly', actions: ['read'] }] },
+  { requestedCapabilities: [{ resource: 'api://myservice/readonly', actions: ['read'] }] },
   { headers: { Authorization: `Bearer ${parentToken}` } }
 );
 const childToken: string = data.token;
@@ -107,4 +107,4 @@ const { token: renewedToken } = await response.json();
 
 ## Rate Limiting
 
-Both `/attenuate` and `/renew` share the same rate-limit bucket as `/issue` (keyed by `tenantId + userId + agentId`). The default hosted limit is 20 requests per 60-second window. On 429, read the `Retry-After` response header and back off accordingly.
+Both `/attenuate` and `/renew` use the same rate limiter as `/issue`, but are keyed by a different subject: fresh `/issue` requests are keyed by `(tenantId, userId, agentId, ip)`, while `/attenuate` and `/renew` include the parent token `jti` in the bucket key. This means each parent token has its own rate-limit counter, independent of fresh issuance. The default hosted limit is 20 requests per 60-second window per subject. On 429, read the `Retry-After` response header and back off accordingly.

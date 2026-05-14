@@ -397,7 +397,7 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
       throw new Error('expected 429');
     } catch (err) {
       expect((err as CapabilityError).statusCode).toBe(429);
-      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBeDefined();
+      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBe('7');
     }
   });
 
@@ -414,7 +414,7 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
       throw new Error('expected 429');
     } catch (err) {
       expect((err as CapabilityError).statusCode).toBe(429);
-      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBeDefined();
+      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBe('7');
     }
   });
 });
