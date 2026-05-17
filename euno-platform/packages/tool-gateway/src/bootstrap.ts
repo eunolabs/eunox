@@ -347,7 +347,7 @@ function gatewayConfigToServiceConfig(cfg: GatewayConfig): ServiceConfig {
     signedAuditDecisions: cfg.EVIDENCE_SIGNED_DECISIONS as
       | Array<'allow' | 'deny'>
       | undefined,
-    policyVersion: cfg.POLICY_VERSION || '1.0.0',
+    policyVersion: cfg.POLICY_VERSION || '0.1.0',
   };
 }
 

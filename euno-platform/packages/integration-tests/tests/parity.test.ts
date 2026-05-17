@@ -266,7 +266,7 @@ const SHARED_CONSTRAINTS: CapabilityConstraint[] = [
 const PARITY_MANIFEST: AgentCapabilityManifest = {
   agentId: 'parity-test-agent',
   name: 'Parity Test Agent',
-  version: '1.0.0',
+  version: '0.1.0',
   requiredCapabilities: SHARED_CONSTRAINTS,
 };
 

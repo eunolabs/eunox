@@ -1,6 +1,6 @@
 {
   "name": "@euno/monorepo",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Capability-Native Agent Governance System with Azure Integration",
   "workspaces": [
@@ -39,6 +39,7 @@
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
-    "eslint": "^8.57.1"
+    "eslint": "^8.57.1",
+    "typescript": "^5.9.3"
   }
 }

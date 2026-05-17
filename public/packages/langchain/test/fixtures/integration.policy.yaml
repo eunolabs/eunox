@@ -2,7 +2,7 @@
 # Tests: max 5 calls on query_db, only SELECT/SHOW operations, send_email restricted to allowed domains
 agentId: test-integration-agent
 name: Test Integration Agent
-version: 1.0.0
+version: 0.1.0
 
 requiredCapabilities:
   - resource: query_db

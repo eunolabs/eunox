@@ -1,6 +1,6 @@
 {
   "name": "@euno/db-token-service",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Standalone DB-token microservice \u2014 mints short-lived database IAM credentials from a verified capability JWT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,8 +13,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@euno/capability-issuer": "^1.0.0",
-    "@euno/common": "^1.0.0",
+    "@euno/capability-issuer": "^0.1.0",
+    "@euno/common": "^0.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.18.2",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
+  "contentVersion": "0.1.0",
   "metadata": {
     "description": "Microsoft Sentinel scheduled analytic rules for the Euno capability-native agent governance pilot. Implements the detections called out in Sprint 3-5 of the execution plan: denied-action spikes, write attempts under read-only mode, repeated invalid tokens, and kill-switch activation."
   },

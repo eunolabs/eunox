@@ -11,7 +11,7 @@ info:
     Admin endpoints under `/admin/*` are protected by an optional API key
     (`x-admin-api-key` header).  Set `ADMIN_API_KEY` in the gateway's
     environment to enable enforcement.
-  version: "1.0.0"
+  version: "0.1.0"
   license:
     name: ISC
 servers:

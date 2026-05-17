@@ -9,7 +9,7 @@ info:
     All token-bearing endpoints expect an Azure AD bearer token (for the
     initial issue) or an existing capability token (for attenuate / renew)
     in the `Authorization: Bearer <token>` header.
-  version: "1.0.0"
+  version: "0.1.0"
   license:
     name: ISC
 servers:

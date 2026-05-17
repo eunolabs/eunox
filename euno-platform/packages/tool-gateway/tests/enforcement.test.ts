@@ -419,7 +419,7 @@ describe('EnforcementEngine', () => {
         logger,
         evidenceSigner: mockSigner,
         enableCryptographicAudit: true,
-        policyVersion: '1.0.0',
+        policyVersion: '0.1.0',
       });
 
       const token = await createTestToken(
@@ -454,7 +454,7 @@ describe('EnforcementEngine', () => {
         logger,
         evidenceSigner: mockSigner,
         enableCryptographicAudit: true,
-        policyVersion: '1.0.0',
+        policyVersion: '0.1.0',
       });
 
       const token = await createTestToken(
@@ -527,7 +527,7 @@ describe('EnforcementEngine', () => {
           logger,
           evidenceSigner: mockSigner,
           signedDecisions: ['deny'],
-          policyVersion: '1.0.0',
+          policyVersion: '0.1.0',
         });
 
         const token = await createTestToken(
@@ -568,7 +568,7 @@ describe('EnforcementEngine', () => {
           logger,
           evidenceSigner: mockSigner,
           signedDecisions: ['allow'],
-          policyVersion: '1.0.0',
+          policyVersion: '0.1.0',
         });
 
         const token = await createTestToken(
@@ -607,7 +607,7 @@ describe('EnforcementEngine', () => {
           evidenceSigner: mockSigner,
           signedDecisions: [],
           enableCryptographicAudit: true, // overridden by signedDecisions=[]
-          policyVersion: '1.0.0',
+          policyVersion: '0.1.0',
         });
 
         const token = await createTestToken(
@@ -638,7 +638,7 @@ describe('EnforcementEngine', () => {
           logger,
           evidenceSigner: mockSigner,
           enableCryptographicAudit: true,
-          policyVersion: '1.0.0',
+          policyVersion: '0.1.0',
         });
 
         const token = await createTestToken(
@@ -690,7 +690,7 @@ describe('EnforcementEngine', () => {
         logger,
         auditPipeline: pipeline,
         signedDecisions: ['allow'],
-        policyVersion: '1.0.0',
+        policyVersion: '0.1.0',
       });
 
       const token = await createTestToken(
@@ -737,7 +737,7 @@ describe('EnforcementEngine', () => {
         logger,
         auditPipeline: pipeline,
         signedDecisions: ['deny'],
-        policyVersion: '1.0.0',
+        policyVersion: '0.1.0',
       });
 
       const token = await createTestToken(

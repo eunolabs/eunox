@@ -92,7 +92,7 @@ async function connectClient(proxy: HttpProxy): Promise<Client> {
   }
   const url = new URL(`http://127.0.0.1:${port}/mcp`);
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name: 'test-host', version: '1.0.0' }, { capabilities: {} });
+  const client = new Client({ name: 'test-host', version: '0.1.0' }, { capabilities: {} });
   await client.connect(transport);
   return client;
 }
@@ -327,7 +327,7 @@ function ipRangePolicyYaml(cidrs: string[]): string {
   return `
 agentId: test-agent
 name: Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]

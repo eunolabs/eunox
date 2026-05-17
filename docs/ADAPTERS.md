@@ -316,7 +316,7 @@ Create a separate npm package:
 
 ```
 my-euno-provider/
-├── package.json          # peerDependencies: { "@euno/common": "^1.0.0" }
+├── package.json          # peerDependencies: { "@euno/common": "^0.1.0" }
 ├── tsconfig.json
 ├── src/
 │   ├── index.ts

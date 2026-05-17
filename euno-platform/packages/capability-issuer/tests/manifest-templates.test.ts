@@ -45,7 +45,7 @@ import request from 'supertest';
 const MANIFEST_A: AgentCapabilityManifest = {
   agentId: 'agent-alpha',
   name: 'Agent Alpha',
-  version: '1.0.0',
+  version: '0.1.0',
   requiredCapabilities: [{ resource: 'api://alpha', actions: ['read'] }],
 };
 
@@ -539,7 +539,7 @@ describe('PostgresManifestTemplateStore', () => {
       const v1 = await store.getTemplateVersion(record.templateId, 1, TENANT);
       expect(v1).toBeDefined();
       expect(v1!.version.version).toBe(1);
-      expect(v1!.version.manifest).toMatchObject({ version: '1.0.0' });
+      expect(v1!.version.manifest).toMatchObject({ version: '0.1.0' });
     });
 
     it('throws NOT_FOUND for unknown templateId', async () => {
@@ -1154,7 +1154,7 @@ describe('Full round-trip', () => {
     const found = await store.findActiveAssignment(TENANT, 'agent-rt', 'reader');
     expect(found).toBeDefined();
     expect(found!.version).toBe(1);
-    expect(found!.manifest).toMatchObject({ version: '1.0.0' });
+    expect(found!.manifest).toMatchObject({ version: '0.1.0' });
 
     // 5. List shows the template.
     const { items } = await store.listTemplates(TENANT);
@@ -1231,7 +1231,7 @@ describe('IssueController + templateStore integration', () => {
   const VIEWER_MANIFEST: AgentCapabilityManifest = {
     agentId: 'agent-crm',
     name: 'CRM Viewer',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [{ resource: 'api://crm/customers', actions: ['read'] }],
   };
 

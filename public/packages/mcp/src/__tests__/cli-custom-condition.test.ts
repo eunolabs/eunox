@@ -82,7 +82,7 @@ describe('euno-mcp proxy --custom-condition', () => {
     const policyFile = writeTempPolicy(`
 agentId: custom-test-agent
 name: Custom Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]

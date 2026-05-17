@@ -57,7 +57,7 @@ function makeSignedEvidence(overrides: Partial<AuditEvidence> = {}): SignedAudit
     argsHash: '0'.repeat(64),
     nonce: 'nonce-1',
     ts: new Date().toISOString(),
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
     agentId: 'agent-1',
     resource: 'api://crm/contacts',
     action: 'read',
@@ -172,7 +172,7 @@ async function buildDeps(opts?: {
     port: 0,
     environment: 'test' as ServiceConfig['environment'],
     enableCryptographicAudit: false,
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   };
 
   const metricsRegistry = createMetricsRegistry({

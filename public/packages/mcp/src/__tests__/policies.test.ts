@@ -185,35 +185,35 @@ describe('Reference policy library — loader tests', () => {
   it('filesystem.policy.yaml loads and has valid top-level fields', async () => {
     const m = await loadPolicy('filesystem.policy.yaml');
     expect(m.agentId).toBe('filesystem-agent');
-    expect(m.version).toBe('1.0.0');
+    expect(m.version).toBe('0.1.0');
     expect(m.requiredCapabilities.length).toBeGreaterThanOrEqual(1);
   });
 
   it('postgres.policy.yaml loads and has valid top-level fields', async () => {
     const m = await loadPolicy('postgres.policy.yaml');
     expect(m.agentId).toBe('postgres-read-agent');
-    expect(m.version).toBe('1.0.0');
+    expect(m.version).toBe('0.1.0');
     expect(m.requiredCapabilities.length).toBeGreaterThanOrEqual(1);
   });
 
   it('github.policy.yaml loads and has valid top-level fields', async () => {
     const m = await loadPolicy('github.policy.yaml');
     expect(m.agentId).toBe('github-agent');
-    expect(m.version).toBe('1.0.0');
+    expect(m.version).toBe('0.1.0');
     expect(m.requiredCapabilities.length).toBeGreaterThanOrEqual(1);
   });
 
   it('slack.policy.yaml loads and has valid top-level fields', async () => {
     const m = await loadPolicy('slack.policy.yaml');
     expect(m.agentId).toBe('slack-agent');
-    expect(m.version).toBe('1.0.0');
+    expect(m.version).toBe('0.1.0');
     expect(m.requiredCapabilities.length).toBeGreaterThanOrEqual(1);
   });
 
   it('fetch.policy.yaml loads and has valid top-level fields', async () => {
     const m = await loadPolicy('fetch.policy.yaml');
     expect(m.agentId).toBe('fetch-agent');
-    expect(m.version).toBe('1.0.0');
+    expect(m.version).toBe('0.1.0');
     expect(m.requiredCapabilities.length).toBeGreaterThanOrEqual(1);
   });
 });

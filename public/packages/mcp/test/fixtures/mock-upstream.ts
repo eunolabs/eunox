@@ -20,7 +20,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 const server = new Server(
-  { name: 'mock-upstream', version: '1.0.0' },
+  { name: 'mock-upstream', version: '0.1.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 

@@ -145,7 +145,7 @@ describe('Admin routes — Bearer JWT primary authentication', () => {
     const manifest = {
       name: 'test-agent',
       agentId: 'agent-1',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         { resource: '/api', actions: ['read'], conditions: [] },
       ],

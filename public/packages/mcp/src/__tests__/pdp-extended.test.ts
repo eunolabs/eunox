@@ -138,7 +138,7 @@ function singleToolManifest(
   return {
     agentId: 'test-agent',
     name: 'Test Agent',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       {
         resource: toolName,
@@ -633,7 +633,7 @@ describe('ConditionEnforcerPDP — multi-constraint manifests', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'multi',
       name: 'Multi Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'query_db',
@@ -665,7 +665,7 @@ describe('ConditionEnforcerPDP — multi-constraint manifests', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'two-counters',
       name: 'Two Counter Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'tool_a',
@@ -840,7 +840,7 @@ describe('ConditionEnforcerPDP — kill switch additional', () => {
   it('global kill switch denies all tools in all sessions', async () => {
     const killSwitchManager = new DefaultKillSwitchManager();
     const manifest: AgentCapabilityManifest = {
-      agentId: 'a', name: 'A', version: '1.0.0',
+      agentId: 'a', name: 'A', version: '0.1.0',
       requiredCapabilities: [
         { resource: 'tool_x', actions: ['call'] },
         { resource: 'tool_y', actions: ['call'] },

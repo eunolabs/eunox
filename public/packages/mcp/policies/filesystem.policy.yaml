@@ -22,7 +22,7 @@
 
 agentId: filesystem-agent
 name: "Filesystem Agent — Reference Policy"
-version: 1.0.0
+version: 0.1.0
 metadata:
   description: >-
     Read access is unrestricted by path but limited to safe text-based extensions.

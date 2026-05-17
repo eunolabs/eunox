@@ -3,7 +3,7 @@
   "info": {
     "title": "Euno Tool Gateway (AWS API Gateway profile)",
     "description": "Sprint-1 multi-cloud parity for the Azure APIM `validate-jwt` policy. This OpenAPI document is consumable by `aws apigateway import-rest-api` (or via the `aws_api_gateway_rest_api` Terraform resource with `body = file(...)`). It enforces capability-token verification at the edge using a Lambda authorizer (whose source is in `lambda-authorizer.js`) before forwarding to the in-cluster Tool Gateway service.\n\nFlow:\n  client → API Gateway (custom-authorizer = `EunoCapabilityAuthorizer`) → ALB / NLB → tool-gateway pod\n\nThe Lambda authorizer performs the same checks as `packages/tool-gateway/src/verifier.ts`: signature, audience, expiration. Scope-based payload validation still happens in the Tool Gateway pod itself (so the policy stays in one place).",
-    "version": "1.0.0",
+    "version": "0.1.0",
     "x-euno-parity": "infra/bicep/main.bicep + APIM validate-jwt"
   },
   "x-amazon-apigateway-request-validators": {

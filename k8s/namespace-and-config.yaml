@@ -23,7 +23,7 @@ data:
   backend-service-url: "https://api.example.com"
 
   # Policy version
-  policy-version: "1.0.0"
+  policy-version: "0.1.0"
 
   # Distributed coordination (Redis) — REQUIRED for multi-replica gateway
   # and issuer deployments.  Without it, revocation, kill-switch, maxCalls

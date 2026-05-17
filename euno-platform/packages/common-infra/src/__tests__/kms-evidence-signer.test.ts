@@ -229,7 +229,7 @@ function buildGcpBackedSigner(keyId = 'gcp-kms-test-key', algorithm = 'RS256'): 
 
 // ── Factory helpers ───────────────────────────────────────────────────────────
 
-const PRODUCT = { name: 'euno-tool-gateway', vendor: 'Euno', version: '1.0.0' };
+const PRODUCT = { name: 'euno-tool-gateway', vendor: 'Euno', version: '0.1.0' };
 
 function makeEvidence() {
   return createAuditEvidence({

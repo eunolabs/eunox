@@ -113,7 +113,7 @@ Cross-cutting obligations (apply to every task above)
 Schema parity is non-negotiable (see docs/mvp.md §"Policy and audit schema parity"). Any change to policy or audit shape must land in @euno/common-core first, with a parity test added in the same PR.
 No Stage-3-only types in @euno/mcp or tool-gateway that aren't also in @euno/common-core (see docs/mvp.md §"Critical risks" — "@euno/mcp" rule).
 Fail-closed defaults for hosted mode: unknown condition → deny; KMS unavailable → deny; Redis unavailable for counters → deny (operator-overridable for self-host).
-Each task ships with: unit tests, an integration test exercising the new wire path, a README/section update, and a CHANGELOG entry under the @euno/mcp 0.3.0 and tool-gateway 1.0.0 headings.
+Each task ships with: unit tests, an integration test exercising the new wire path, a README/section update, and a CHANGELOG entry under the @euno/mcp 0.1.0 and tool-gateway 0.1.0 headings.
 Status tracking format: mirror Stage 1 and Stage 2 — add a > **Stage 3 status** block to docs/mvp.md with one bullet per Task 0–20 and check them off as they land.
 Suggested sequencing (dependency order)
 Tasks 0, 1 (parallel; both blocking).

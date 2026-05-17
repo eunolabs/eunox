@@ -16,7 +16,7 @@ info:
     Scope-based payload validation still happens in the Tool Gateway pod
     itself (so the policy lives in one place — the same boundary as Azure
     APIM and AWS API Gateway).
-  version: "1.0.0"
+  version: "0.1.0"
   x-euno-parity: "infra/bicep/main.bicep + APIM validate-jwt"
 schemes:
   - https

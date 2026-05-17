@@ -534,7 +534,7 @@ in Stage 4:
    mutation.
 4. **Per-task PR contents**: unit tests, an integration test exercising
    the new wire path, a README/section update, and a CHANGELOG entry
-   under the `@euno/capability-issuer 1.0.0` and `@euno/cli 0.4.0`
+   under the `@euno/capability-issuer 0.1.0` and `@euno/cli 0.1.0`
    headings.
 5. **License boundary**: the issuer service runtime (the Express app,
    the admin API, the templates store) is **BSL** under

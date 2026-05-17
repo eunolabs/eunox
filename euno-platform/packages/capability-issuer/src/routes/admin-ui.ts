@@ -312,7 +312,7 @@ function renderCreatePage(): string {
     {
       agentId: 'my-agent',
       name: 'My Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://example/**', actions: ['read'] }],
     },
     null,

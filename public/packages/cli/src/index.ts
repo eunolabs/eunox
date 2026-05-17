@@ -22,7 +22,7 @@ const program = new Command();
 program
   .name('euno')
   .description('Euno - Capability management CLI for AI agents')
-  .version('1.0.0');
+  .version('0.1.0');
 
 /**
  * Supported framework adapters that `euno init --framework <name>` can
@@ -387,7 +387,7 @@ program
     const manifest = {
       agentId: agentName.toLowerCase().replace(/\s+/g, '-'),
       name: agentName,
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'api://service/endpoint',

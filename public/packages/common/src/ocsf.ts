@@ -348,7 +348,7 @@ export function createHttpOcsfTransport(opts: {
 /**
  * OCSF metadata describing the Euno emitter. The `version`,
  * `feature.name`, and `product.version` fields let SIEMs filter on
- * "events from Euno tool-gateway 1.0.0" without parsing the URL/host.
+ * "events from Euno tool-gateway 0.1.0" without parsing the URL/host.
  */
 export interface OcsfProductInfo {
   /** Logical product name, e.g. `"euno-tool-gateway"`. */

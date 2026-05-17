@@ -50,7 +50,7 @@ describe('FilePolicySource — multiple constraints', () => {
     const content = `
 agentId: multi-cap-agent
 name: Multi Cap Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://db"
     actions: [read]
@@ -68,7 +68,7 @@ requiredCapabilities:
     const content = `
 agentId: ordered-agent
 name: Ordered Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://first"
     actions: [read]
@@ -87,7 +87,7 @@ requiredCapabilities:
     const content = `
 agentId: mixed-caps-agent
 name: Mixed Caps Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -109,7 +109,7 @@ optionalCapabilities:
     const content = `
 agentId: multi-action-agent
 name: Multi Action Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://files"
     actions: [read, write, delete]
@@ -123,7 +123,7 @@ requiredCapabilities:
     const content = `
 agentId: multi-cond-agent
 name: Multi Condition Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://db"
     actions: [execute]
@@ -152,7 +152,7 @@ requiredCapabilities:
     const content = `
 agentId: open-agent
 name: Open Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://public"
     actions: [read]
@@ -172,7 +172,7 @@ describe('FilePolicySource — individual condition types', () => {
     const content = `
 agentId: test-agent
 name: Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://test"
     actions: [call]
@@ -271,7 +271,7 @@ describe('FilePolicySource — argumentSchema', () => {
     const content = `
 agentId: schema-agent
 name: Schema Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://exec"
     actions: [execute]
@@ -299,7 +299,7 @@ requiredCapabilities:
     const content = `
 agentId: combined-agent
 name: Combined Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://query"
     actions: [execute]
@@ -332,7 +332,7 @@ describe('FilePolicySource — agent ID and version formats', () => {
   it('accepts various agentId formats', async () => {
     const ids = ['simple', 'with-dashes', 'with_underscores', 'Agent123'];
     for (const agentId of ids) {
-      const content = `agentId: ${agentId}\nname: Test\nversion: 1.0.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]`;
+      const content = `agentId: ${agentId}\nname: Test\nversion: 0.1.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]`;
       const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
       const manifest = await src.load();
       expect(manifest.agentId).toBe(agentId);
@@ -340,7 +340,7 @@ describe('FilePolicySource — agent ID and version formats', () => {
   });
 
   it('accepts typical semver versions', async () => {
-    const versions = ['1.0.0', '2.1.3', '10.20.30'];
+    const versions = ['0.1.0', '2.1.3', '10.20.30'];
     for (const version of versions) {
       const content = `agentId: test\nname: Test\nversion: '${version}'\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]`;
       const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
@@ -359,14 +359,14 @@ describe('FilePolicySource — file format detection', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'euno-fmt-'));
     tempDirs.push(dir);
     const filePath = path.join(dir, 'manifest.yaml');
-    fs.writeFileSync(filePath, 'agentId: yaml-agent\nname: YAML Agent\nversion: 1.0.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]');
+    fs.writeFileSync(filePath, 'agentId: yaml-agent\nname: YAML Agent\nversion: 0.1.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]');
     const src = new FilePolicySource({ filePath });
     const manifest = await src.load();
     expect(manifest.agentId).toBe('yaml-agent');
   });
 
   it('detects YAML format from .yml extension', async () => {
-    const filePath = writeTempFile('yml', 'agentId: yml-agent\nname: YML Agent\nversion: 1.0.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]');
+    const filePath = writeTempFile('yml', 'agentId: yml-agent\nname: YML Agent\nversion: 0.1.0\nrequiredCapabilities:\n  - resource: "api://t"\n    actions: [call]');
     const src = new FilePolicySource({ filePath });
     const manifest = await src.load();
     expect(manifest.agentId).toBe('yml-agent');
@@ -376,7 +376,7 @@ describe('FilePolicySource — file format detection', () => {
     const content = JSON.stringify({
       agentId: 'json-agent',
       name: 'JSON Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://t', actions: ['call'] }],
     });
     const filePath = writeTempFile('json', content);
@@ -392,13 +392,13 @@ describe('FilePolicySource — file format detection', () => {
 
 describe('FilePolicySource — missing required fields', () => {
   it('throws ManifestValidationError when agentId is missing', async () => {
-    const content = `name: Test\nversion: 1.0.0\nrequiredCapabilities: []`;
+    const content = `name: Test\nversion: 0.1.0\nrequiredCapabilities: []`;
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toBeInstanceOf(ManifestValidationError);
   });
 
   it('throws ManifestValidationError when name is missing', async () => {
-    const content = `agentId: test\nversion: 1.0.0\nrequiredCapabilities: []`;
+    const content = `agentId: test\nversion: 0.1.0\nrequiredCapabilities: []`;
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toBeInstanceOf(ManifestValidationError);
   });
@@ -410,7 +410,7 @@ describe('FilePolicySource — missing required fields', () => {
   });
 
   it('throws ManifestValidationError when requiredCapabilities is missing', async () => {
-    const content = `agentId: test\nname: Test\nversion: 1.0.0`;
+    const content = `agentId: test\nname: Test\nversion: 0.1.0`;
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toBeInstanceOf(ManifestValidationError);
   });
@@ -425,7 +425,7 @@ describe('FilePolicySource — semantic validation errors', () => {
     const content = `
 agentId: test
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://t"
     actions: [call]
@@ -442,7 +442,7 @@ requiredCapabilities:
     const content = `
 agentId: test
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://t"
     actions: [call]
@@ -455,7 +455,7 @@ requiredCapabilities:
   });
 
   it('validation error has a meaningful message', async () => {
-    const content = `agentId: test\nname: Test\nversion: 1.0.0`;
+    const content = `agentId: test\nname: Test\nversion: 0.1.0`;
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     try {
       await src.load();
@@ -500,7 +500,7 @@ describe('FilePolicySource — JSON manifest variants', () => {
     const content = JSON.stringify({
       agentId: 'minimal-agent',
       name: 'Minimal Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://t', actions: ['call'] }],
     });
     const src = new FilePolicySource({ filePath: writeTempFile('json', content) });
@@ -512,7 +512,7 @@ describe('FilePolicySource — JSON manifest variants', () => {
     const content = JSON.stringify({
       agentId: 'json-cond-agent',
       name: 'JSON Condition Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{
         resource: 'api://db',
         actions: ['execute'],
@@ -528,7 +528,7 @@ describe('FilePolicySource — JSON manifest variants', () => {
     const content = JSON.stringify({
       agentId: 'full-json-agent',
       name: 'Full JSON Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{
         resource: 'api://multi',
         actions: ['call'],
@@ -551,7 +551,7 @@ describe('FilePolicySource — JSON manifest variants', () => {
     const content = JSON.stringify({
       agentId: 'opt-json-agent',
       name: 'Optional JSON Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://required', actions: ['read'] }],
       optionalCapabilities: [
         { resource: 'api://optional-a', actions: ['read'] },
@@ -573,7 +573,7 @@ describe('FilePolicySource — custom condition types', () => {
     const content = `
 agentId: custom-agent
 name: Custom Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://test"
     actions: [call]

@@ -32,7 +32,7 @@ function makeManifest(
   return {
     agentId: 'test-agent',
     name: 'Test Agent',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       {
         resource: toolName,
@@ -188,7 +188,7 @@ describe('LocalCapabilityRuntime', () => {
       const manifestWithSchema: AgentCapabilityManifest = {
         agentId: 'test-agent',
         name: 'Test Agent',
-        version: '1.0.0',
+        version: '0.1.0',
         requiredCapabilities: [
           {
             resource: 'send_email',
@@ -216,7 +216,7 @@ describe('LocalCapabilityRuntime', () => {
       const manifestWithSchema: AgentCapabilityManifest = {
         agentId: 'test-agent',
         name: 'Test Agent',
-        version: '1.0.0',
+        version: '0.1.0',
         requiredCapabilities: [
           {
             resource: 'send_email',
@@ -243,7 +243,7 @@ describe('LocalCapabilityRuntime', () => {
       const manifestWithSchema: AgentCapabilityManifest = {
         agentId: 'test-agent',
         name: 'Test Agent',
-        version: '1.0.0',
+        version: '0.1.0',
         requiredCapabilities: [
           {
             resource: 'send_email',
@@ -627,7 +627,7 @@ describe('createLocalRuntime', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'factory-test-agent',
       name: 'Factory Test Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'custom_tool',
@@ -659,7 +659,7 @@ describe('createLocalRuntime', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'sid-test',
       name: 'SessionId Test',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
     };
     const sink = new RecordingAuditSink();
@@ -677,7 +677,7 @@ describe('createLocalRuntime', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'sid-gen-test',
       name: 'SessionId Gen Test',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
     };
     const r1 = await createLocalRuntime({

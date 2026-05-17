@@ -73,7 +73,7 @@ The same YAML format accepted by `euno-mcp proxy --policy`:
 ```yaml
 agentId: my-analytics-agent
 name:    Analytics Agent
-version: 1.0.0
+version: 0.1.0
 
 requiredCapabilities:
   - resource: query_db

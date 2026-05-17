@@ -43,7 +43,7 @@ function makeEvidence() {
     action: 'read',
     capabilityId: 'cap-1',
     decision: 'allow',
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   });
 }
 

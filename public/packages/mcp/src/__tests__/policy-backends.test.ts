@@ -69,7 +69,7 @@ function policyConditionManifest(
   return {
     agentId: 'test-agent',
     name: 'Test Agent',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       {
         resource: toolName,
@@ -457,7 +457,7 @@ describe('FilePolicySource — policy condition (Stage-2 Task 5 gate lifted)', (
     const content = `
 agentId: policy-agent
 name: Policy Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://my_tool"
     actions: [call]
@@ -477,7 +477,7 @@ requiredCapabilities:
     const content = `
 agentId: mixed-agent
 name: Mixed Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://my_tool"
     actions: [call]
@@ -500,7 +500,7 @@ requiredCapabilities:
     const content = `
 agentId: opt-policy-agent
 name: Optional Policy Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -523,7 +523,7 @@ optionalCapabilities:
     const content = `
 agentId: redact-agent
 name: Redact Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -540,7 +540,7 @@ requiredCapabilities:
     const content = `
 agentId: custom-agent
 name: Custom Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]

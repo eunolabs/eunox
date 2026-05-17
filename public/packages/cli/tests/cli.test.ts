@@ -100,7 +100,7 @@ describe('euno init', () => {
     const parsed = yaml.load(fs.readFileSync(out, 'utf8')) as Record<string, unknown>;
     expect(parsed.agentId).toBe('my-agent');
     expect(parsed.name).toBe('My Agent');
-    expect(parsed.version).toBe('1.0.0');
+    expect(parsed.version).toBe('0.1.0');
     expect(Array.isArray(parsed.requiredCapabilities)).toBe(true);
     expect((parsed.requiredCapabilities as unknown[]).length).toBeGreaterThan(0);
   });
@@ -341,7 +341,7 @@ describe('euno validate', () => {
     const file = writeManifest({
       agentId: 'agent-1',
       name: 'Agent One',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://svc/data', actions: ['read'] }],
     });
     const r = runCli(['validate', file]);

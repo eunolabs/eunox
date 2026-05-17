@@ -22,7 +22,7 @@
 
 agentId: github-agent
 name: "GitHub Agent — Reference Policy (Read-Heavy)"
-version: 1.0.0
+version: 0.1.0
 metadata:
   description: >-
     Read-heavy GitHub access policy. All read tools are unrestricted (subject

@@ -56,7 +56,7 @@ injected content.
 ```yaml
 agentId: my-db-agent
 name: My Database Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://query_db"
     actions: [call]
@@ -94,7 +94,7 @@ denial code.
 # euno.policy.yaml
 agentId: demo-agent
 name: Demo Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://query_db"
     actions: [call]

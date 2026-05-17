@@ -132,7 +132,7 @@ See [`policies/README.md`](./policies/README.md) for quick-start instructions an
 ```yaml
 agentId: my-db-agent
 name: My Database Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://query_db"
     actions: [call]
@@ -193,7 +193,7 @@ module.exports = function register(api) {
 # euno.policy.yaml  (partial — required top-level fields omitted for brevity)
 agentId: my-agent
 name: My Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://sensitive_tool"
     actions: [call]

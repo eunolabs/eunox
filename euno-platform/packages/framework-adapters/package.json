@@ -1,6 +1,6 @@
 {
   "name": "@euno/framework-adapters",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Framework-native adapters (LangChain, Microsoft Agent Framework, CrewAI) that route tool calls through the Euno capability gateway",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,7 +20,7 @@
   "author": "EdgeObs",
   "license": "BUSL-1.1",
   "dependencies": {
-    "@euno/agent-runtime": "^1.0.0"
+    "@euno/agent-runtime": "^0.1.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

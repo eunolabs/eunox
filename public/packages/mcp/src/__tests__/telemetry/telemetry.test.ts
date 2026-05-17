@@ -55,7 +55,7 @@ function makeTempDir(): string {
 function sampleEvent(overrides: Partial<TelemetryEvent> = {}): TelemetryEvent {
   return {
     installId: 'test-install-id',
-    version: '1.0.0',
+    version: '0.1.0',
     osFamily: 'linux',
     nodeMajor: 20,
     subcommand: 'proxy',

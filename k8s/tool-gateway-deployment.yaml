@@ -141,7 +141,7 @@ spec:
               name: gateway-config
               key: backend-service-url
         - name: POLICY_VERSION
-          value: "1.0.0"
+          value: "0.1.0"
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
 

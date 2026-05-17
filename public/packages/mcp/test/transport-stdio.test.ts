@@ -130,7 +130,7 @@ describe('StdioProxy — integration (Task 4)', () => {
 
   beforeEach(async () => {
     transport = buildProxyTransport();
-    client = new Client({ name: 'test-host', version: '1.0.0' }, { capabilities: {} });
+    client = new Client({ name: 'test-host', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
   }, 30_000);
 
@@ -231,7 +231,7 @@ describe('StdioProxy — custom condition loader (Task 6)', () => {
     const policyPath = writeTempPolicy(`
 agentId: custom-stdio-agent
 name: Custom Stdio Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]
@@ -248,7 +248,7 @@ requiredCapabilities:
       '--custom-condition',
       CUSTOM_CONDITION_MODULE,
     ]);
-    client = new Client({ name: 'test-host', version: '1.0.0' }, { capabilities: {} });
+    client = new Client({ name: 'test-host', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
 
     const deniedRaw = await client.callTool(

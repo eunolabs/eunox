@@ -194,7 +194,7 @@ Create `/srv/euno/policies/agent.yaml` following the pattern from
 ```yaml
 agentId: "my-agent"
 name: "My Agent"
-version: "1.0.0"
+version: "0.1.0"
 metadata:
   description: "Example self-host policy"
 requiredCapabilities:

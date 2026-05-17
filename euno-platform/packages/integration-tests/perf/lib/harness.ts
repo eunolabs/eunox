@@ -533,7 +533,7 @@ export async function buildHarness(): Promise<PerfHarness> {
     port: 0,
     environment: 'production',
     enableCryptographicAudit: false,
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   };
 
   const gatewayDeps: GatewayDependencies = {

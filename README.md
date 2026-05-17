@@ -62,7 +62,7 @@ A minimal `euno.policy.yaml`:
 ```yaml
 agentId: filesystem-agent
 name:    Filesystem Agent
-version: 1.0.0
+version: 0.1.0
 
 requiredCapabilities:
   - resource: read_file
@@ -128,7 +128,7 @@ euno follows a [staged execution plan](./docs/mvp.md):
 |-------|-------|--------|
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit | ✅ Done |
-| 2 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ **Current MVP** |
+| 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ **Current MVP** |
 | 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ⏳ In progress — see [docs/mvp.md §Stage 3](./docs/mvp.md#stage-3-the-gateway-as-managed-boundary) |
 | 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | Planned |
 | 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | Planned |

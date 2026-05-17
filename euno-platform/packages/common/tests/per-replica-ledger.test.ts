@@ -38,7 +38,7 @@ function makeEvidence(i: number) {
     action: 'read',
     capabilityId: `cap-${i}`,
     decision: 'allow',
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   });
 }
 

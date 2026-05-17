@@ -20,7 +20,7 @@
 
 agentId: postgres-read-agent
 name: "Postgres Read-Only Agent — Reference Policy"
-version: 1.0.0
+version: 0.1.0
 metadata:
   description: >-
     Restricts all SQL execution to SELECT, EXPLAIN, and SHOW against an

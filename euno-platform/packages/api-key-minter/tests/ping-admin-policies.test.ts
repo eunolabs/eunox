@@ -152,7 +152,7 @@ describe('POST /admin/v1/policies', () => {
   const validManifest = {
     name: 'test-agent',
     agentId: 'agent-1',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       { resource: '/api', actions: ['read'], conditions: [] },
     ],

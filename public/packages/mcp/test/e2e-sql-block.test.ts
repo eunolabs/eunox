@@ -104,7 +104,7 @@ const FILE_IO_SETTLE_MS = 200;
 const SELECT_ONLY_POLICY_YAML = `
 name: e2e-block-agent
 agentId: e2e-block-agent-001
-version: "1.0.0"
+version: "0.1.0"
 requiredCapabilities:
   - resource: query_db
     actions:
@@ -285,7 +285,7 @@ describe('E2E: destructive SQL is blocked before upstream is called (Task 11)', 
     });
 
     client = new Client(
-      { name: 'e2e-test-host', version: '1.0.0' },
+      { name: 'e2e-test-host', version: '0.1.0' },
       { capabilities: {} },
     );
     await client.connect(transport);
@@ -437,7 +437,7 @@ describe('E2E: permitted SQL reaches the upstream (positive control)', () => {
     });
 
     client = new Client(
-      { name: 'e2e-positive-host', version: '1.0.0' },
+      { name: 'e2e-positive-host', version: '0.1.0' },
       { capabilities: {} },
     );
     await client.connect(transport);

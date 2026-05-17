@@ -85,7 +85,7 @@ describe('CapabilityIssuerService — manifest enforcement at issuance time', ()
   const baseManifest: AgentCapabilityManifest = {
     agentId: 'agent-1',
     name: 'CRM Bot',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       { resource: 'api://crm/customers', actions: ['read'] },
     ],

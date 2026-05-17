@@ -26,7 +26,7 @@
 
 agentId: slack-agent
 name: "Slack Agent — Reference Policy (Internal Only)"
-version: 1.0.0
+version: 0.1.0
 metadata:
   description: >-
     Restricts outbound Slack messages so only internal company.com users can be

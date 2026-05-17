@@ -269,7 +269,7 @@ describe('HttpProxy upstreamTimeoutMs — hung upstream returns UPSTREAM_TIMEOUT
     const port = await proxy.start();
     const url = new URL(`http://127.0.0.1:${port}/mcp`);
     const transport = new StreamableHTTPClientTransport(url);
-    client = new Client({ name: 'test-host', version: '1.0.0' }, { capabilities: {} });
+    client = new Client({ name: 'test-host', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
   }, 30_000);
 

@@ -1,6 +1,6 @@
 {
   "name": "@euno/agent-runtime",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Sandboxed runtime environment for AI agents with capability-based security",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,7 +18,7 @@
   "author": "",
   "license": "BUSL-1.1",
   "dependencies": {
-    "@euno/common": "^1.0.0",
+    "@euno/common": "^0.1.0",
     "axios": "^1.6.0",
     "jose": "^5.2.0"
   },

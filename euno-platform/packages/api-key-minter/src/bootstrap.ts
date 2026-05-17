@@ -37,7 +37,7 @@ import { createAnomalyDetectorFromEnv, RedisAnomalyDetector } from './redis-anom
 import { InMemoryMintAuditStore } from './mint-audit';
 import { PostgresMintAuditStore } from './postgres-mint-audit-store';
 import type { MintAuditPgPool } from './postgres-mint-audit-store';
-import { InMemoryMintRateLimiter, createPingRateLimiterFromEnv, createMintRateLimiterFromEnv, RedisBackedMintRateLimiter } from './mint-rate-limiter';
+import { createPingRateLimiterFromEnv, createMintRateLimiterFromEnv, RedisBackedMintRateLimiter } from './mint-rate-limiter';
 import { createMinterApp } from './app-factory';
 import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import type { TokenSigner } from '@euno/common';

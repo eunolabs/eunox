@@ -286,7 +286,7 @@ export class EnforcementEngine {
     this.killSwitchManager = options.killSwitchManager;
     this.evidenceSigner = options.evidenceSigner;
     this.auditPipeline = options.auditPipeline;
-    this.policyVersion = options.policyVersion || '1.0.0';
+    this.policyVersion = options.policyVersion || '0.1.0';
     if (options.signedDecisions !== undefined) {
       this.signedDecisions = new Set(options.signedDecisions);
     } else if (options.enableCryptographicAudit) {

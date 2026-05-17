@@ -209,8 +209,8 @@ test('passes when packages directory is empty', () => {
 
 test('error message names all three parts: from package, to package, and path', () => {
   const root = makeFixture([
-    { name: '@test/a', license: 'Apache-2.0', deps: { '@test/b': '1.0.0' } },
-    { name: '@test/b', license: 'Apache-2.0', deps: { '@test/c': '1.0.0' } },
+    { name: '@test/a', license: 'Apache-2.0', deps: { '@test/b': '0.1.0' } },
+    { name: '@test/b', license: 'Apache-2.0', deps: { '@test/c': '0.1.0' } },
     { name: '@test/c', license: 'BUSL-1.1' },
   ]);
   try {

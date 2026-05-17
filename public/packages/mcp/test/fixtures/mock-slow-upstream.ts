@@ -15,7 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 const server = new Server(
-  { name: 'mock-slow-upstream', version: '1.0.0' },
+  { name: 'mock-slow-upstream', version: '0.1.0' },
   { capabilities: { tools: {} } },
 );
 

@@ -1,6 +1,6 @@
 {
   "name": "@euno/common-infra",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Redis, Postgres, and KMS-backed infrastructure implementations for Euno agent governance (BSL 1.1)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

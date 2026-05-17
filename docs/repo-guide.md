@@ -5,7 +5,7 @@
 > document covers how the repo is laid out, how to build it, and how to test
 > changes.
 
-## Stage 2: General Tool Enforcement is complete — `@euno/mcp` 0.2.0
+## Stage 2: General Tool Enforcement is complete — `@euno/mcp` 0.1.0
 
 The entry point for individual developers is [`@euno/mcp`](../public/packages/mcp/README.md):
 a drop-in policy proxy for any [Model Context Protocol](https://spec.modelcontextprotocol.io/)
@@ -25,7 +25,7 @@ the upstream is called — if the constraint says `allowedOperations: [SELECT]`,
 the upstream is never contacted and the agent receives a structured denial.
 One YAML file. No code changes to your agent or server.
 
-`@euno/mcp` 0.2.0 ships the full `CapabilityCondition` matrix:
+`@euno/mcp` 0.1.0 ships the full `CapabilityCondition` matrix:
 `maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`, `allowedTables`,
 `allowedValues`, `argumentSchema`, `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`.
 The [`@euno/langchain`](../public/packages/langchain/README.md) companion package brings
@@ -42,7 +42,7 @@ euno follows a [staged execution plan](mvp.md).
 |-------|-------|--------|
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit log | ✅ Done |
-| 2 | `@euno/mcp` 0.2.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
+| 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
 | 3 | Hosted Tool Gateway, API-key façade, signed capability tokens | ⏳ Gate: see [docs/mvp.md §Gate to Stage 3](mvp.md#gate-to-stage-3--measurable) |
 | 4 | Capability Issuer + IdP integration (Entra ID, AWS Cognito, GCP Cloud Identity) | Planned |
 | 5 | Enterprise: DID federation, KMS, SOC2, multi-cloud | Planned |

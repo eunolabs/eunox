@@ -431,7 +431,7 @@ describe('AgentRuntime – issuanceHints / issuanceHintsProvider', () => {
     const manifest = {
       agentId: 'test-agent',
       name: 'Test',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'api://crm/**', actions: ['read'] as const }],
     };
     const consent = {

@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.3.0] — Unreleased (Stage 3: Remote-Enforcer Mode)
+## [0.1.0] — Unreleased (Stage 3: Remote-Enforcer Mode)
 
 ### Added
 
@@ -124,7 +124,7 @@ is retained for the Task-10 minter JWT loader.
 
 ---
 
-## [0.2.0] — 2026-05-09 (Stage 2: General Tool Enforcement)
+## [0.1.0] — 2026-05-09 (Stage 2: General Tool Enforcement)
 
 Full Stage 2 feature set. Expands the supported condition matrix to the complete
 `CapabilityCondition` discriminated union, adds new CLI subcommands, and ships a
@@ -135,7 +135,7 @@ reference policy library for common upstream MCP servers.
 Users on `@euno/mcp@0.1.x` whose policy file uses only Stage-1 conditions
 (`maxCalls`, `timeWindow`, `allowedOperations`, `allowedExtensions`,
 `allowedTables`, `argumentSchema`) will see **no behavioural change** after
-upgrading to 0.2.0. All existing policy files continue to load and enforce
+upgrading to 0.1.0. All existing policy files continue to load and enforce
 identically. The only user-visible change is that conditions which previously
 raised a load-time error ("deferred to Stage 2") are now accepted.
 

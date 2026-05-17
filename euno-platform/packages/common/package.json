@@ -1,6 +1,6 @@
 {
   "name": "@euno/common",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Common types, interfaces, and utilities for Euno agent governance",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

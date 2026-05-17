@@ -1,6 +1,6 @@
 {
   "name": "@euno/api-key-minter",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "API-key minter service for hosted gateway authentication (BSL)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

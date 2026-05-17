@@ -25,7 +25,7 @@ import type { CapabilityError } from '@euno/common';
 const STUB_MANIFEST = {
   agentId: 'agent-test',
   name: 'Test Agent',
-  version: '1.0.0',
+  version: '0.1.0',
   requiredCapabilities: [{ resource: 'api://test/**', actions: ['read'] }],
 };
 

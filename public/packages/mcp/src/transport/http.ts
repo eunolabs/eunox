@@ -63,7 +63,7 @@ import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Proxy name/version sent to the upstream during the MCP initialize handshake. */
 const PROXY_NAME = 'euno-mcp-proxy';
-const PROXY_VERSION = '1.0.0';
+const PROXY_VERSION = '0.1.0';
 
 /**
  * All-interfaces addresses that are disallowed unless

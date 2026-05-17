@@ -38,7 +38,7 @@ Policy:
 ```yaml
 agentId: email-agent
 name: Email Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "send_email"
     actions: [call]

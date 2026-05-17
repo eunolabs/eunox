@@ -14,7 +14,7 @@ const DEFAULT_POLICY = {
 const DEFAULT_MANIFEST = {
   agentId: 'agent-001',
   name: 'Test Agent',
-  version: '1.0.0',
+  version: '0.1.0',
   requiredCapabilities: [{ resource: 'db://prod/reports', actions: ['read'] }],
   optionalCapabilities: [],
 };
@@ -112,8 +112,8 @@ describe('buildIssuanceContext', () => {
   });
 
   it('different manifests produce different manifestHashes', () => {
-    const mA = { agentId: 'agent-A', name: 'A', version: '1.0.0', requiredCapabilities: [{ resource: 'api://svc', actions: ['read'] }], optionalCapabilities: [] };
-    const mB = { agentId: 'agent-B', name: 'B', version: '1.0.0', requiredCapabilities: [{ resource: 'api://svc', actions: ['write'] }], optionalCapabilities: [] };
+    const mA = { agentId: 'agent-A', name: 'A', version: '0.1.0', requiredCapabilities: [{ resource: 'api://svc', actions: ['read'] }], optionalCapabilities: [] };
+    const mB = { agentId: 'agent-B', name: 'B', version: '0.1.0', requiredCapabilities: [{ resource: 'api://svc', actions: ['write'] }], optionalCapabilities: [] };
 
     const ctxA = buildIssuanceContext({ policyHash: DEFAULT_POLICY_HASH, manifest: mA, subject: 's', audience: 'a' });
     const ctxB = buildIssuanceContext({ policyHash: DEFAULT_POLICY_HASH, manifest: mB, subject: 's', audience: 'a' });

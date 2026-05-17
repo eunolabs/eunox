@@ -26,7 +26,7 @@ backend by the string key it was registered under:
 ```yaml
 agentId: my-agent
 name: My Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://send_payment"
     actions: [call]
@@ -295,7 +295,7 @@ module.exports = function register(api) {
 ```yaml
 agentId: payments-agent
 name: Payments Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://initiate_payment"
     actions: [call]

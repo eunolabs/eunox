@@ -171,7 +171,7 @@ describe('PostureEmitter.buildRecord', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'a',
       name: 'A',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
       metadata: { owner: 'team-a', runtime: 'python:3.12' },
     };

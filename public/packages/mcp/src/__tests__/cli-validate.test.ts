@@ -76,7 +76,7 @@ function runValidate(policyFile: string): { exitCode: number; stdout: string; st
 const VALID_YAML = `
 agentId: test-agent-1
 name: Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://service/endpoint"
     actions: [read]
@@ -97,7 +97,7 @@ describe('euno-mcp validate — happy path', () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain('✓ Manifest is valid');
     expect(stdout).toContain('Agent: Test Agent (test-agent-1)');
-    expect(stdout).toContain('Version: 1.0.0');
+    expect(stdout).toContain('Version: 0.1.0');
     expect(stdout).toContain('Required capabilities: 1');
   });
 
@@ -139,7 +139,7 @@ describe('euno-mcp validate — structural errors', () => {
   it('exits 1 and prints ✗ for a missing required field (agentId)', () => {
     const yaml = `
 name: No Agent ID
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 `.trim();
     const filePath = writeTempFile('yaml', yaml);
@@ -153,7 +153,7 @@ requiredCapabilities: []
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 unknownField: forbidden
 `.trim();
@@ -168,7 +168,7 @@ unknownField: forbidden
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://foo"
     actions: [call]
@@ -193,7 +193,7 @@ describe('euno-mcp validate — Stage-2 recipientDomain condition (Task 3)', () 
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://send_email"
     actions: [call]
@@ -214,7 +214,7 @@ describe('euno-mcp validate — Stage-2 policy condition (Task 5)', () => {
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://governed_action"
     actions: [call]
@@ -233,7 +233,7 @@ requiredCapabilities:
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://governed_action"
     actions: [call]
@@ -259,7 +259,7 @@ describe('euno-mcp validate — Stage-2 custom condition (Task 6)', () => {
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://governed_action"
     actions: [call]
@@ -285,7 +285,7 @@ describe('euno-mcp validate — Stage-2 ipRange condition', () => {
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]
@@ -304,7 +304,7 @@ requiredCapabilities:
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]
@@ -329,7 +329,7 @@ describe('euno-mcp validate — semantic errors', () => {
     const yaml = `
 agentId: test-agent
 name: Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://foo"
     actions: [call]
@@ -384,7 +384,7 @@ describe('euno-mcp validate — error format parity with euno validate', () => {
     // Use a missing-required-field error as the representative case.
     const yaml = `
 name: No Agent ID
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 `.trim();
     const filePath = writeTempFile('yaml', yaml);

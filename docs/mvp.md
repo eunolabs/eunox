@@ -433,7 +433,7 @@ allowlist for a capability and is the natural carrier for the kind of
 "only these arg shapes" enforcement the MCP wedge needs.
 
 `ipRange`, `recipientDomain`, `redactFields`, `policy`, and `custom`
-are deferred to Stage 2. **Stage 2 (`@euno/mcp` 0.2.0) ships all five;**
+are deferred to Stage 2. **Stage 2 (`@euno/mcp` 0.1.0) ships all five;**
 see the Stage 2 status block below for per-task detail.
 
 **Session identity** (the prior plan punted on this). Define a
@@ -447,7 +447,7 @@ key shape — same components, different identity source.
 ### What is explicitly cut from Stage 1
 
 > **Stage 2 delta:** `ipRange`, `recipientDomain`, `redactFields`, `policy`,
-> and `custom` — all deferred below — are fully shipped in Stage 2 (0.2.0).
+> and `custom` — all deferred below — are fully shipped in Stage 2 (0.1.0).
 > `@euno/langchain` and the `policies/` reference library also land in Stage 2.
 > Everything else in this list remains Stage 3 or later.
 
@@ -573,7 +573,7 @@ path at any layer.
 > - [x] Task 12 — Stage 3 readiness script + signal collection update
 > - [x] Post-Stage-2 — VSCode build/debug configs (`.vscode/launch.json`, `tasks.json`, `settings.json`, `extensions.json`); CODEOWNERS and LICENSE updated to reflect `public/packages/common/` rename
 >
-> **All 12 Stage 2 tasks are complete. `@euno/mcp` 0.2.0 is ready to publish.**
+> **All 12 Stage 2 tasks are complete. `@euno/mcp` 0.1.0 is ready to publish.**
 
 **What changes.** Expand from the v0 condition subset to the full
 `CapabilityCondition` discriminated union exposed in policy config.

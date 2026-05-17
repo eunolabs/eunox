@@ -66,7 +66,7 @@ async function buildDeps(backendServiceUrl = 'http://localhost:65535'): Promise<
     port: 0,
     environment: 'test' as ServiceConfig['environment'],
     enableCryptographicAudit: false,
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   };
 
   const metricsRegistry = createMetricsRegistry({

@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-const product = { name: 'euno-tool-gateway', vendor: 'Euno', version: '1.0.0' };
+const product = { name: 'euno-tool-gateway', vendor: 'Euno', version: '0.1.0' };
 
 describe('auditLogEntryToOcsf', () => {
   it('maps an issuance allow → Authorization 3003 (assign privileges)', () => {
@@ -155,7 +155,7 @@ describe('signedEvidenceToOcsf', () => {
       argsHash: 'a-hash',
       nonce: 'n',
       ts: '2026-01-01T00:00:00Z',
-      policyVersion: '1.0.0',
+      policyVersion: '0.1.0',
       agentId: 'agent-1',
       resource: 'api://crm/contacts',
       action: 'read',

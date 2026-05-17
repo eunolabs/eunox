@@ -64,7 +64,7 @@ Here's the policy that blocks the attack:
 ```yaml
 agentId: my-db-agent
 name: My Database Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "tool://query_db"
     actions: [call]

@@ -24,7 +24,7 @@ missing or shaped differently is rejected by `euno validate`.
 ```yaml
 agentId: "sales-research-bot"          # stable, kebab-case, globally unique
 name: "Sales Research Bot"             # human-readable
-version: "1.0.0"                       # agent version (semver)
+version: "0.1.0"                       # agent version (semver)
 requiredCapabilities: []               # see § 2 — every entry is a CapabilityConstraint
 optionalCapabilities: []               # optional; same shape as requiredCapabilities
 metadata:

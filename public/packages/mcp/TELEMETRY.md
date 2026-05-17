@@ -79,7 +79,7 @@ One JSON event is emitted per CLI invocation.  Every field is documented below.
 ```json
 {
   "installId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "osFamily": "darwin",
   "nodeMajor": 20,
   "subcommand": "proxy",

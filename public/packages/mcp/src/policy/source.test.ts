@@ -56,7 +56,7 @@ function writeTempFile(ext: 'yaml' | 'json', content: string): string {
 const VALID_YAML = `
 agentId: test-agent-1
 name: Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://service/endpoint"
     actions: [read]
@@ -74,7 +74,7 @@ const VALID_JSON = JSON.stringify({
 const VALID_ALL_STAGE1_CONDITIONS_YAML = `
 agentId: full-agent
 name: Full Stage-1 Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "db://postgres/reports"
     actions: [execute]
@@ -105,7 +105,7 @@ describe('FilePolicySource — happy paths', () => {
     const manifest = await src.load();
     expect(manifest.agentId).toBe('test-agent-1');
     expect(manifest.name).toBe('Test Agent');
-    expect(manifest.version).toBe('1.0.0');
+    expect(manifest.version).toBe('0.1.0');
     expect(manifest.requiredCapabilities).toHaveLength(1);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(manifest.requiredCapabilities[0]!.resource).toBe('api://service/endpoint');
@@ -166,7 +166,7 @@ metadata:
     const content = `
 agentId: opt-agent
 name: Optional Caps Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -187,7 +187,7 @@ optionalCapabilities:
     const content = `
 agentId: schema-agent
 name: Schema Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://exec"
     actions: [execute]
@@ -220,7 +220,7 @@ describe('FilePolicySource — recipientDomain condition (Stage-2 Task 3)', () =
     const content = `
 agentId: recipient-agent
 name: Recipient Domain Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "messaging://send_email"
     actions: [call]
@@ -240,7 +240,7 @@ requiredCapabilities:
     const content = `
 agentId: mixed-agent
 name: Mixed Conditions Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "messaging://send_email"
     actions: [call]
@@ -263,7 +263,7 @@ requiredCapabilities:
     const content = `
 agentId: opt-recipient-agent
 name: Optional Recipient Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -291,7 +291,7 @@ optionalCapabilities:
     const content = `
 agentId: bad-recipient-agent
 name: Bad Recipient Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "messaging://send"
     actions: [call]
@@ -314,7 +314,7 @@ describe('FilePolicySource — unknown condition type', () => {
     const content = `
 agentId: bad-agent
 name: Bad Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -332,7 +332,7 @@ requiredCapabilities:
     const content = `
 agentId: deep-agent
 name: Deep Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -373,7 +373,7 @@ describe('FilePolicySource — Stage-2 ipRange condition', () => {
     const content = `
 agentId: ip-agent
 name: IP Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "mcp-tool://secure_tool"
     actions: [call]
@@ -393,7 +393,7 @@ requiredCapabilities:
     const content = `
 agentId: mixed-agent
 name: Mixed Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "query_db"
     actions: [call]
@@ -416,7 +416,7 @@ requiredCapabilities:
     const content = `
 agentId: opt-ip-agent
 name: Opt IP Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -440,7 +440,7 @@ describe('FilePolicySource — Stage-2 custom condition', () => {
     const content = `
 agentId: custom-agent
 name: Custom Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "echo"
     actions: [call]
@@ -465,7 +465,7 @@ describe('FilePolicySource — redactFields condition (Stage-2 Task 4)', () => {
     const content = `
 agentId: redact-agent
 name: Redact Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "get_user"
     actions: [call]
@@ -485,7 +485,7 @@ requiredCapabilities:
     const content = `
 agentId: mixed-redact-agent
 name: Mixed Redact Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "query_users"
     actions: [call]
@@ -508,7 +508,7 @@ requiredCapabilities:
     const content = `
 agentId: opt-redact-agent
 name: Opt Redact Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://core"
     actions: [read]
@@ -531,7 +531,7 @@ optionalCapabilities:
     const content = `
 agentId: full-stage2-agent
 name: Full Stage-2 Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "send_report"
     actions: [call]
@@ -561,7 +561,7 @@ describe('FilePolicySource — semantic errors', () => {
     const content = `
 agentId: semantic-agent
 name: Semantic Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -579,7 +579,7 @@ requiredCapabilities:
     const content = `
 agentId: empty-tw-agent
 name: Empty TW Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -595,7 +595,7 @@ requiredCapabilities:
     const content = `
 agentId: mc-agent
 name: MaxCalls Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -612,7 +612,7 @@ requiredCapabilities:
     const content = `
 agentId: mc2-agent
 name: MaxCalls2 Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -629,7 +629,7 @@ requiredCapabilities:
     const content = `
 agentId: ops-agent
 name: Ops Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "db://pg"
     actions: [execute]
@@ -650,7 +650,7 @@ describe('FilePolicySource — structural errors', () => {
   it('rejects a manifest missing the agentId field', async () => {
     const content = `
 name: No ID Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -664,7 +664,7 @@ requiredCapabilities:
     const content = `
 agentId: no-caps
 name: No Caps Agent
-version: 1.0.0
+version: 0.1.0
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
     await expect(src.load()).rejects.toThrow(ManifestValidationError);
@@ -675,7 +675,7 @@ version: 1.0.0
     const content = `
 agentId: empty-caps
 name: Empty Caps
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 `.trim();
     const src = new FilePolicySource({ filePath: writeTempFile('yaml', content) });
@@ -686,7 +686,7 @@ requiredCapabilities: []
     const content = `
 agentId: no-actions
 name: No Actions
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: []
@@ -699,7 +699,7 @@ requiredCapabilities:
     const content = `
 agentId: extra-field-agent
 name: Extra Field
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -714,7 +714,7 @@ unknownTopLevelField: should-be-rejected
     const content = `
 agentId: extra-cond-agent
 name: Extra Cond
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -732,7 +732,7 @@ requiredCapabilities:
     const content = `
 agentId: bad-date-agent
 name: Bad Date
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities:
   - resource: "api://svc"
     actions: [read]
@@ -812,7 +812,7 @@ describe('FilePolicySource — watch()', () => {
     );
 
     // Write an invalid manifest (missing requiredCapabilities)
-    const invalid = `agentId: bad\nname: Bad\nversion: 1.0.0\n`;
+    const invalid = `agentId: bad\nname: Bad\nversion: 0.1.0\n`;
     await new Promise((resolve) => setTimeout(resolve, 30));
     fs.writeFileSync(filePath, invalid, 'utf8');
 

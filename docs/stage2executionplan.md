@@ -1,7 +1,7 @@
 Stage 2 Execution Plan — @euno/mcp General Tool Enforcement
 
 > **Status (May 2026): All 12 tasks are COMPLETE.**
-> `@euno/mcp` 0.2.0 ships all Stage-2 condition types, CLI subcommands,
+> `@euno/mcp` 0.1.0 ships all Stage-2 condition types, CLI subcommands,
 > reference policies, the `@euno/langchain` companion package, and full
 > documentation coverage. See docs/mvp.md §"Stage 2 status" for the
 > authoritative per-task checklist.

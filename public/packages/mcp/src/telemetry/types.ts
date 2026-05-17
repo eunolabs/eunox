@@ -25,7 +25,7 @@ export type OsFamily = 'linux' | 'darwin' | 'win32' | 'other';
 export interface TelemetryEvent {
   /** Anonymous per-install UUID, generated once and persisted to ~/.euno/telemetry. */
   readonly installId: string;
-  /** Package version (e.g. "1.0.0"). */
+  /** Package version (e.g. "0.1.0"). */
   readonly version: string;
   /** Broad OS family. */
   readonly osFamily: OsFamily;

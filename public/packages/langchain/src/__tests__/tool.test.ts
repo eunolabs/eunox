@@ -27,7 +27,7 @@ function makeManifest(
   return {
     agentId: 'test-agent',
     name: 'Test Agent',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       {
         resource: toolName,
@@ -414,7 +414,7 @@ describe('wrapAsLangChainTool', () => {
       const manifestWithSchema: AgentCapabilityManifest = {
         agentId: 'test-agent',
         name: 'Test Agent',
-        version: '1.0.0',
+        version: '0.1.0',
         requiredCapabilities: [
           {
             resource: 'send_email',

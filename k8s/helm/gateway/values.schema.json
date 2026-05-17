@@ -179,7 +179,7 @@
         },
         "POLICY_VERSION": {
           "type": "string",
-          "description": "Version identifier for the active policy (string, default \"1.0.0\")."
+          "description": "Version identifier for the active policy (string, default \"0.1.0\")."
         },
         "ARGUMENT_SCHEMA_REQUIRED": {
           "type": "string",

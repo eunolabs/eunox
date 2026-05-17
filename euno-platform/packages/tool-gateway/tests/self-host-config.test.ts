@@ -69,7 +69,7 @@ describe('loadConfigFromEnv', () => {
 
     it('uses the default policy version when POLICY_VERSION is unset', () => {
       const config = loadConfigFromEnv(MINIMUM_VALID_ENV);
-      expect(config.policyVersion).toBe('1.0.0');
+      expect(config.policyVersion).toBe('0.1.0');
     });
 
     it('reads a custom policy version from POLICY_VERSION', () => {
@@ -282,7 +282,7 @@ describe('checkActionResolverHashParity', () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ version: '1.0.0' }),
+      json: async () => ({ version: '0.1.0' }),
     } as Response);
     await expect(
       checkActionResolverHashParity({ ...baseArgs, enforcement: 'warn' }),

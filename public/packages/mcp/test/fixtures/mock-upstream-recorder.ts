@@ -69,7 +69,7 @@ function recordCall(toolName: string, args: Record<string, unknown>): void {
 // ---------------------------------------------------------------------------
 
 const server = new Server(
-  { name: 'mock-upstream-recorder', version: '1.0.0' },
+  { name: 'mock-upstream-recorder', version: '0.1.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 

@@ -1,7 +1,7 @@
 # Stage-3 Gateway Enforcement Protocol
 
 > **Version:** 1 (current)
-> **Status:** Implemented — `tool-gateway@1.0.0`, `@euno/mcp` Stage-3
+> **Status:** Implemented — `tool-gateway@0.1.0`, `@euno/mcp` Stage-3
 > **RFC anchor:** `docs/stage-3-design.md` §6 "Enforcer Wire Protocol"
 > **Execution plan task:** `docs/stage3executionplan.md` §Task 9
 

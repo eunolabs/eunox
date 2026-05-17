@@ -1,6 +1,6 @@
 {
   "name": "@euno/integration-tests",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "End-to-end integration tests wiring the capability issuer, tool gateway, and agent runtime together",
   "scripts": {
@@ -12,11 +12,11 @@
     "perf:slo:emit": "ts-node -r tsconfig-paths/register --project tsconfig.perf.json perf/bin/emit-slo-json.ts"
   },
   "devDependencies": {
-    "@euno/agent-runtime": "^1.0.0",
-    "@euno/capability-issuer": "^1.0.0",
-    "@euno/common": "^1.0.0",
-    "@euno/partner-issuer-sim": "^1.0.0",
-    "@euno/tool-gateway": "^1.0.0",
+    "@euno/agent-runtime": "^0.1.0",
+    "@euno/capability-issuer": "^0.1.0",
+    "@euno/common": "^0.1.0",
+    "@euno/partner-issuer-sim": "^0.1.0",
+    "@euno/tool-gateway": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/autocannon": "^7.12.7",
     "@types/jest": "^29.5.14",

@@ -82,7 +82,7 @@ describe('loadCustomConditionModules', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'custom-test',
       name: 'Custom Test',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'echo',
@@ -106,7 +106,7 @@ describe('loadCustomConditionModules', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'custom-test',
       name: 'Custom Test',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'echo',

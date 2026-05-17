@@ -1451,7 +1451,7 @@ export const GatewayConfigSchema = z
 
 
     POLICY_VERSION: optionalString.describe(
-      'Version identifier for the active policy (string, default "1.0.0").',
+      'Version identifier for the active policy (string, default "0.1.0").',
     ),
     ARGUMENT_SCHEMA_REQUIRED: envBoolean({
       default: false,

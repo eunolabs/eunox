@@ -75,7 +75,7 @@ function singleToolManifest(
   return {
     agentId: 'test-agent',
     name: 'Test Agent',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [
       {
         resource: toolName,
@@ -464,7 +464,7 @@ describe('ConditionEnforcerPDP — kill switch', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'ga',
       name: 'GA',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
     };
     const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
@@ -511,7 +511,7 @@ describe('ConditionEnforcerPDP — no matching constraint', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'pa',
       name: 'Partial Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         // Only constrains 'query_db', not 'echo'.
         { resource: 'query_db', actions: ['call'], conditions: undefined },
@@ -528,7 +528,7 @@ describe('ConditionEnforcerPDP — no matching constraint', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'ea',
       name: 'Empty Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
     };
     const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });
@@ -541,7 +541,7 @@ describe('ConditionEnforcerPDP — no matching constraint', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'oa',
       name: 'Optional Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [],
       optionalCapabilities: [
         {
@@ -582,7 +582,7 @@ describe('ConditionEnforcerPDP — wildcard resource matching', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'wc',
       name: 'Wildcard Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           // mcp-tool://* matches any single tool name (single-segment wildcard).
@@ -618,7 +618,7 @@ describe('ConditionEnforcerPDP — wildcard resource matching', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'wc2',
       name: 'Wrong-Scheme Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'api://*', // different scheme — must NOT match plain tool names
@@ -641,7 +641,7 @@ describe('ConditionEnforcerPDP — wildcard resource matching', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'exact-scheme',
       name: 'Exact Scheme Agent',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'mcp-tool://echo',
@@ -683,7 +683,7 @@ describe('ConditionEnforcerPDP — policy source lifecycle', () => {
         return {
           agentId: 'lazy',
           name: 'Lazy',
-          version: '1.0.0',
+          version: '0.1.0',
           requiredCapabilities: [],
         };
       },
@@ -714,7 +714,7 @@ describe('ConditionEnforcerPDP — policy source lifecycle', () => {
     const initial: AgentCapabilityManifest = {
       agentId: 'live',
       name: 'Live',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [
         {
           resource: 'query_db',
@@ -1657,7 +1657,7 @@ describe('ConditionEnforcerPDP — redactFields condition', () => {
     const manifest: AgentCapabilityManifest = {
       agentId: 'no-cond-agent',
       name: 'No Conditions',
-      version: '1.0.0',
+      version: '0.1.0',
       requiredCapabilities: [{ resource: 'read_public', actions: ['call'] }],
     };
     const pdp = new ConditionEnforcerPDP({ policySource: staticPolicySource(manifest) });

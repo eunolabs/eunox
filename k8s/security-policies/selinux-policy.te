@@ -6,7 +6,7 @@
 # 2. semodule_package -o euno_restricted.pp -m euno_restricted.mod
 # 3. semodule -i euno_restricted.pp
 
-policy_module(euno_restricted, 1.0.0)
+policy_module(euno_restricted, 0.1.0)
 
 require {
     type container_t;

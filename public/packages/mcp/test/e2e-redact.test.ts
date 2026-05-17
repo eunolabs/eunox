@@ -75,7 +75,7 @@ const PROXY_CLI = path.resolve(__dirname, '..', 'src', 'cli.ts');
 const REDACT_POLICY_YAML = `
 name: e2e-redact-agent
 agentId: e2e-redact-agent-001
-version: "1.0.0"
+version: "0.1.0"
 requiredCapabilities:
   - resource: get_user
     actions:
@@ -89,7 +89,7 @@ requiredCapabilities:
 const REDACT_ABSENT_POLICY_YAML = `
 name: e2e-redact-absent-agent
 agentId: e2e-redact-absent-001
-version: "1.0.0"
+version: "0.1.0"
 requiredCapabilities:
   - resource: echo
     actions:
@@ -194,7 +194,7 @@ describe('E2E: redactFields strips sensitive fields from the upstream response (
       auditLogPath: path.join(tmpDir, 'audit.jsonl'),
       recorderFilePath: path.join(tmpDir, 'calls.jsonl'),
     });
-    client = new Client({ name: 'e2e-redact-host', version: '1.0.0' }, { capabilities: {} });
+    client = new Client({ name: 'e2e-redact-host', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
   }, 30_000);
 
@@ -293,7 +293,7 @@ describe('E2E: redactFields does not alter non-JSON text responses (Task 4)', ()
       auditLogPath: path.join(tmpDir, 'audit.jsonl'),
       recorderFilePath: path.join(tmpDir, 'calls.jsonl'),
     });
-    client = new Client({ name: 'e2e-non-json-host', version: '1.0.0' }, { capabilities: {} });
+    client = new Client({ name: 'e2e-non-json-host', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
   }, 30_000);
 

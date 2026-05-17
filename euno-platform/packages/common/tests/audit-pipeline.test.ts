@@ -20,7 +20,7 @@ function makeEvidence(i: number): AuditEvidence {
     action: 'read',
     capabilityId: `cap-${i}`,
     decision: 'allow',
-    policyVersion: '1.0.0',
+    policyVersion: '0.1.0',
   });
   // Force a deterministic id so tests can assert ordering by id.
   return { ...ev, id: `ev-${i}` };

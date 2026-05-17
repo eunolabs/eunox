@@ -34,7 +34,7 @@
 
 agentId: fetch-agent
 name: "Fetch Agent — Reference Policy (Public HTTPS Only / SSRF Guard)"
-version: 1.0.0
+version: 0.1.0
 metadata:
   description: >-
     Lexical SSRF guard: requires HTTPS and rejects URLs whose authority

@@ -272,7 +272,7 @@ describe('MinterClient.uploadPolicy()', () => {
   const minimalManifest = {
     name: 'test',
     agentId: 'agent-1',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [],
   };
 
@@ -337,7 +337,7 @@ describe('loadManifestFromFile()', () => {
   const validYaml = `
 name: test-agent
 agentId: agent-test
-version: "1.0.0"
+version: "0.1.0"
 requiredCapabilities:
   - resource: "/api"
     actions: ["read"]
@@ -346,7 +346,7 @@ requiredCapabilities:
   const validJson = JSON.stringify({
     name: 'test',
     agentId: 'agent-json',
-    version: '1.0.0',
+    version: '0.1.0',
     requiredCapabilities: [{ resource: '/api', actions: ['read'], conditions: [] }],
   });
 
@@ -715,7 +715,7 @@ describe('runUpgrade()', () => {
   const validYaml = `
 name: test-agent
 agentId: agent-test
-version: "1.0.0"
+version: "0.1.0"
 requiredCapabilities:
   - resource: "/api"
     actions: ["read"]

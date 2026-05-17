@@ -114,7 +114,7 @@ function httpGet(url: string): Promise<{ status: number; body: unknown }> {
 const MINIMAL_POLICY = `
 agentId: kill-test-agent
 name: Kill Test Agent
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 `.trim();
 
@@ -465,7 +465,7 @@ describe('ConditionEnforcerPDP — KillController interface', () => {
     const policyPath = writeTempPolicy(`
 agentId: iface-test
 name: Interface Test
-version: 1.0.0
+version: 0.1.0
 requiredCapabilities: []
 `.trim());
     const pdp = new ConditionEnforcerPDP({

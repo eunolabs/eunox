@@ -70,7 +70,7 @@ import { UpstreamTimeoutError, withTimeout } from './timeout';
 
 /** Unique id for the proxy's own server identity (shown to the upstream). */
 const PROXY_NAME = 'euno-mcp-proxy';
-const PROXY_VERSION = '1.0.0';
+const PROXY_VERSION = '0.1.0';
 
 /**
  * Options for {@link StdioProxy}.
