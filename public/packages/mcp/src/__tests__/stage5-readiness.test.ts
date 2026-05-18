@@ -177,6 +177,23 @@ describe('evaluateCriterion1', () => {
     expect(result.detail).toContain(String(C1_THRESHOLD_ENTERPRISE_INBOUND));
   });
 
+  it('detail uses singular "inquiry" when count is 1', () => {
+    const result = evaluateCriterion1(
+      makeStats({ confirmedEnterpriseInbound: 1 }),
+      'http://api.example.com',
+    );
+    expect(result.detail).toContain('inquiry');
+    expect(result.detail).not.toContain('inquiries');
+  });
+
+  it('detail uses plural "inquiries" when count is > 1', () => {
+    const result = evaluateCriterion1(
+      makeStats({ confirmedEnterpriseInbound: 3 }),
+      'http://api.example.com',
+    );
+    expect(result.detail).toContain('inquiries');
+  });
+
   it('detail string mentions EUNO_TELEMETRY_API when no API configured and stats null', () => {
     const result = evaluateCriterion1(null, '');
     expect(result.detail).toContain('EUNO_TELEMETRY_API');

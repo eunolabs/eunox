@@ -140,7 +140,8 @@ export function evaluateCriterion1(
     met: c1Met,
     label: 'C1 — Enterprise inbound',
     detail: stats
-      ? `${stats.confirmedEnterpriseInbound}/${C1_THRESHOLD_ENTERPRISE_INBOUND} confirmed enterprise inquiry/inquiries ` +
+      ? `${stats.confirmedEnterpriseInbound}/${C1_THRESHOLD_ENTERPRISE_INBOUND} confirmed enterprise ` +
+        `${stats.confirmedEnterpriseInbound === 1 ? 'inquiry' : 'inquiries'} ` +
         `(company with a security team mentioning compliance, on-prem, or CISO review).`
       : apiUrl
         ? 'Telemetry API unreachable — cannot evaluate automatically. ' +
@@ -216,10 +217,10 @@ export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Pr
       'Stage 4 is shipped. Stage 5 (Enterprise + Full Vision) may begin.\n',
     );
   } else if (status === 'not-ready') {
-    process.stdout.write(`NOT READY — ${notMetCount} criterion/criteria not met.\n`);
+    process.stdout.write(`NOT READY — ${notMetCount} ${notMetCount === 1 ? 'criterion' : 'criteria'} not met.\n`);
   } else {
     process.stdout.write(
-      `UNKNOWN — ${unknownCount} criterion/criteria require manual verification.\n`,
+      `UNKNOWN — ${unknownCount} ${unknownCount === 1 ? 'criterion' : 'criteria'} require${unknownCount === 1 ? 's' : ''} manual verification.\n`,
     );
   }
 
