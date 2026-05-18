@@ -581,83 +581,84 @@ describe('OidcStateStore', () => {
     store = new OidcStateStore(60); // 60-second TTL
   });
 
-  it('createState generates unique state and nonce', () => {
-    const a = store.createState({ agentId: 'a1' });
-    const b = store.createState({ agentId: 'a1' });
+  it('createState generates unique state and nonce', async () => {
+    const a = await store.createState({ agentId: 'a1' });
+    const b = await store.createState({ agentId: 'a1' });
     expect(a.state).not.toBe(b.state);
     expect(a.nonce).not.toBe(b.nonce);
     expect(a.state.length).toBeGreaterThan(16);
     expect(a.nonce.length).toBeGreaterThan(16);
   });
 
-  it('consumeState returns the entry on first call', () => {
-    const { state, nonce } = store.createState({ agentId: 'x' });
-    const entry = store.consumeState(state);
+  it('consumeState returns the entry on first call', async () => {
+    const { state, nonce } = await store.createState({ agentId: 'x' });
+    const entry = await store.consumeState(state);
     expect(entry).toBeDefined();
     expect(entry!.nonce).toBe(nonce);
     expect(entry!.agentId).toBe('x');
   });
 
-  it('consumeState is single-use (returns undefined on second call)', () => {
-    const { state } = store.createState({ agentId: 'x' });
-    store.consumeState(state);
-    expect(store.consumeState(state)).toBeUndefined();
+  it('consumeState is single-use (returns undefined on second call)', async () => {
+    const { state } = await store.createState({ agentId: 'x' });
+    await store.consumeState(state);
+    expect(await store.consumeState(state)).toBeUndefined();
   });
 
-  it('consumeState returns undefined for unknown state', () => {
-    expect(store.consumeState('nonexistent')).toBeUndefined();
+  it('consumeState returns undefined for unknown state', async () => {
+    expect(await store.consumeState('nonexistent')).toBeUndefined();
   });
 
-  it('isIdTokenHashUsed returns false for a new hash', () => {
-    expect(store.isIdTokenHashUsed('abcdef1234567890')).toBe(false);
+  it('isIdTokenHashUsed returns false for a new hash', async () => {
+    expect(await store.isIdTokenHashUsed('abcdef1234567890')).toBe(false);
   });
 
-  it('isIdTokenHashUsed returns true after markIdTokenHashUsed', () => {
-    store.markIdTokenHashUsed('my-token-hash');
-    expect(store.isIdTokenHashUsed('my-token-hash')).toBe(true);
+  it('isIdTokenHashUsed returns true after markIdTokenHashUsed', async () => {
+    const marked = await store.markIdTokenHashUsed('my-token-hash');
+    expect(marked).toBe(true); // freshly recorded
+    expect(await store.isIdTokenHashUsed('my-token-hash')).toBe(true);
   });
 
-  it('different hashes are tracked independently', () => {
-    store.markIdTokenHashUsed('hash-a');
-    expect(store.isIdTokenHashUsed('hash-a')).toBe(true);
-    expect(store.isIdTokenHashUsed('hash-b')).toBe(false);
+  it('different hashes are tracked independently', async () => {
+    await store.markIdTokenHashUsed('hash-a');
+    expect(await store.isIdTokenHashUsed('hash-a')).toBe(true);
+    expect(await store.isIdTokenHashUsed('hash-b')).toBe(false);
   });
 
-  it('expiry: isIdTokenHashUsed returns false after TTL passes', () => {
+  it('expiry: isIdTokenHashUsed returns false after TTL passes', async () => {
     const shortStore = new OidcStateStore(0.001); // ~1 ms TTL
-    shortStore.markIdTokenHashUsed('expiring-hash');
+    await shortStore.markIdTokenHashUsed('expiring-hash');
     return new Promise<void>((resolve) =>
-      setTimeout(() => {
-        expect(shortStore.isIdTokenHashUsed('expiring-hash')).toBe(false);
+      setTimeout(async () => {
+        expect(await shortStore.isIdTokenHashUsed('expiring-hash')).toBe(false);
         resolve();
       }, 5),
     );
   });
 
-  it('expiry: consumeState returns undefined after TTL passes', () => {
+  it('expiry: consumeState returns undefined after TTL passes', async () => {
     const shortStore = new OidcStateStore(0.001);
-    const { state } = shortStore.createState({});
+    const { state } = await shortStore.createState({});
     return new Promise<void>((resolve) =>
-      setTimeout(() => {
-        expect(shortStore.consumeState(state)).toBeUndefined();
+      setTimeout(async () => {
+        expect(await shortStore.consumeState(state)).toBeUndefined();
         resolve();
       }, 5),
     );
   });
 
-  it('pendingStateCount increments on create and decrements on consume', () => {
+  it('pendingStateCount increments on create and decrements on consume', async () => {
     expect(store.pendingStateCount).toBe(0);
-    const { state } = store.createState({});
+    const { state } = await store.createState({});
     expect(store.pendingStateCount).toBe(1);
-    store.consumeState(state);
+    await store.consumeState(state);
     expect(store.pendingStateCount).toBe(0);
   });
 
-  it('usedIdTokenHashCount increments on markIdTokenHashUsed', () => {
+  it('usedIdTokenHashCount increments on markIdTokenHashUsed', async () => {
     expect(store.usedIdTokenHashCount).toBe(0);
-    store.markIdTokenHashUsed('h1');
+    await store.markIdTokenHashUsed('h1');
     expect(store.usedIdTokenHashCount).toBe(1);
-    store.markIdTokenHashUsed('h2');
+    await store.markIdTokenHashUsed('h2');
     expect(store.usedIdTokenHashCount).toBe(2);
   });
 });

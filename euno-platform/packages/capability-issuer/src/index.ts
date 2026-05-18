@@ -53,7 +53,7 @@ import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import { PostgresRolePolicyStore } from './postgres-role-policy-store';
 import { createAdminRolePolicyRouter } from './routes/admin-role-policy';
 import { TenantIdpRegistry } from './tenant-idp-config';
-import { OidcStateStore } from './oidc-state-store';
+import { OidcStateStore, IOidcStateStore, createOidcStateStoreFromEnv } from './oidc-state-store';
 import {
   IssuerTelemetryCollector,
   createIssuerTelemetryFromEnv,
@@ -159,9 +159,20 @@ const tenantIdpRegistry = new TenantIdpRegistry(
 
 /**
  * OIDC state store — tracks nonce/state pairs for authorize→token flows and
- * prevents authorization-code replay (Stage-4 threat model requirement).
+ * prevents ID-token-hash replay (Stage-4 threat model requirement, CR-1 fix).
+ *
+ * Starts as in-memory at module load time (before `initializeServices()`
+ * runs). {@link initializeServices} upgrades the reference to a
+ * {@link RedisOidcStateStore} when `OIDC_STATE_REDIS_URL` or `REDIS_URL`
+ * is configured, ensuring fleet-wide replay prevention in multi-replica
+ * deployments. All route handlers access the store via {@link getOidcStateStore}
+ * so they always see the post-upgrade implementation.
  */
-const oidcStateStore = new OidcStateStore(env.OIDC_CODE_TTL_SECONDS);
+let _oidcStateStore: IOidcStateStore = new OidcStateStore(env.OIDC_CODE_TTL_SECONDS);
+
+function getOidcStateStore(): IOidcStateStore {
+  return _oidcStateStore;
+}
 
 // Initialize signer based on configuration
 async function createSigner(): Promise<TokenSigner> {
@@ -389,6 +400,13 @@ async function initializeServices() {
     // REDIS_URL is set — required for multi-replica or multi-region active/
     // active deployments (F-7). When ISSUANCE_RATE_LIMIT_ENABLED=false the
     // service runs without any per-subject rate limit.
+
+    // CR-1 (architecture-review-2026-05-stage4): upgrade the OIDC state store to
+    // Redis-backed when a Redis URL is configured. This must happen inside
+    // initializeServices() (async context) and before the first request is served
+    // so that fleet-wide replay prevention is active for all traffic.
+    _oidcStateStore = await createOidcStateStoreFromEnv(process.env, logger);
+
     let issuanceRateLimiter: IssuanceRateLimiter | undefined;
     if (env.ISSUANCE_RATE_LIMIT_ENABLED) {
       issuanceRateLimiter = await createIssuanceRateLimiterFromEnv(process.env, {
@@ -1330,7 +1348,7 @@ app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
  * request to the IdP. The `nonce` is validated when the code is exchanged via
  * POST /api/v1/oidc/token.
  */
-app.get('/api/v1/oidc/authorize', (req: Request, res: Response, next: NextFunction) => {
+app.get('/api/v1/oidc/authorize', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
     if (!agentId) {
@@ -1340,7 +1358,7 @@ app.get('/api/v1/oidc/authorize', (req: Request, res: Response, next: NextFuncti
     const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
     const redirectUri = typeof req.query.redirectUri === 'string' ? req.query.redirectUri : undefined;
 
-    const { state, nonce } = oidcStateStore.createState({ tenantId, agentId, redirectUri });
+    const { state, nonce } = await getOidcStateStore().createState({ tenantId, agentId, redirectUri });
 
     const baseUrl = env.ISSUER_PUBLIC_URL ? env.ISSUER_PUBLIC_URL.replace(/\/$/, '') : undefined;
 
@@ -1417,13 +1435,15 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
     }
 
     // --- ID-token replay prevention (threat model §5 "IdP-token replay") ----
-    // Hash the submitted idToken and mark it as used eagerly (fail-closed).
-    // Even if a later step (IdP validation, issuance) fails, the same token
-    // cannot be resubmitted. The caller must obtain a fresh token to retry.
-    // Tracking the token hash (not a caller-supplied field) prevents bypassing
-    // this check by submitting the same stolen idToken with a fresh value.
+    // Hash the submitted idToken and atomically mark it as used (fail-closed).
+    // markIdTokenHashUsed() returns true if this is the first use of this token
+    // within the TTL window, false if it was already seen (replay attempt).
+    // For the Redis-backed store the underlying SET NX EX is atomic across all
+    // replicas, so exactly one of N concurrent requests for the same token will
+    // proceed — the others are turned away here without a separate pre-check.
     const tokenHash = crypto.createHash('sha256').update(idToken).digest('hex');
-    if (oidcStateStore.isIdTokenHashUsed(tokenHash)) {
+    const isNewToken = await getOidcStateStore().markIdTokenHashUsed(tokenHash);
+    if (!isNewToken) {
       logger.warn('OIDC token replay attempt detected', { agentId, tenantId });
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
@@ -1431,8 +1451,6 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
         401,
       );
     }
-    // Eagerly mark the token hash before any remote call.
-    oidcStateStore.markIdTokenHashUsed(tokenHash);
 
     // --- Optional state binding (if flow was started via /authorize) ---------
     // When state is present, the stored nonce, agentId, and tenantId are all
@@ -1442,7 +1460,7 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
       typeof tenantId === 'string' && tenantId ? tenantId : undefined;
 
     if (typeof state === 'string' && state) {
-      const pending = oidcStateStore.consumeState(state);
+      const pending = await getOidcStateStore().consumeState(state);
       if (!pending) {
         throw new CapabilityError(
           ErrorCode.AUTHENTICATION_FAILED,
