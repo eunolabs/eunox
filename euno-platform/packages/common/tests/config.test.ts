@@ -166,6 +166,8 @@ describe('loadConfig (issuer)', () => {
     const baseProd = {
       NODE_ENV: 'production',
       AZURE_KEYVAULT_URL: 'https://vault.example/',
+      // DI-5: use an explicit issuer-specific key alias so the guard does not fire.
+      AZURE_KEYVAULT_KEY_NAME: 'euno-issuer-tenant-test',
       // Task 3: required in production when JWT auth is not configured.
       ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
     };
@@ -233,6 +235,8 @@ describe('loadConfig (issuer)', () => {
     const baseProdFull = {
       NODE_ENV: 'production',
       AZURE_KEYVAULT_URL: 'https://vault.example/',
+      // DI-5: use an explicit issuer-specific key alias so the guard does not fire.
+      AZURE_KEYVAULT_KEY_NAME: 'euno-issuer-tenant-test',
       // Use single-replica tier to avoid the REDIS_URL requirement.
       EUNO_DEPLOYMENT_TIER: 'single-replica',
       // Satisfies the Task 3 ISSUER_ADMIN_API_KEY production guard.
@@ -351,6 +355,8 @@ describe('loadConfig (issuer)', () => {
         {
           NODE_ENV: 'production',
           AZURE_KEYVAULT_URL: 'https://vault.example/',
+          // DI-5: use an explicit issuer-specific key alias so the guard does not fire.
+          AZURE_KEYVAULT_KEY_NAME: 'euno-issuer-tenant-test',
           EUNO_DEPLOYMENT_TIER: 'single-replica',
           ISSUER_ADMIN_JWKS_URI: 'https://idp.example.com/.well-known/jwks.json',
           ISSUER_ADMIN_JWT_AUDIENCE: 'https://api.example.com/issuer-admin',
@@ -382,6 +388,188 @@ describe('loadConfig (issuer)', () => {
       const err = result.errors.find((e) => e.field === 'ISSUER_ADMIN_JWT_ISSUER');
       expect(err).toBeDefined();
       expect(err!.message).toContain('ISSUER_ADMIN_JWT_ISSUER requires ISSUER_ADMIN_JWKS_URI');
+    });
+  });
+
+  // ── DI-5: KMS key alias separation guard (docs/stage-4-design.md §6) ────────
+  //
+  // In production the issuer must use a key alias distinct from the minter's
+  // well-known convention ('euno-minter-*') and from the shared generic default
+  // 'capability-signing-key'. The superRefine guard prevents silent key sharing
+  // that would void blast-radius separation.
+
+  describe('IssuerConfigSchema — DI-5 (KMS key alias separation)', () => {
+    // Minimal production config satisfying all other guards.
+    const baseProd = {
+      NODE_ENV: 'production',
+      AZURE_KEYVAULT_URL: 'https://vault.example/',
+      EUNO_DEPLOYMENT_TIER: 'single-replica',
+      ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+    };
+
+    it('rejects production azure-keyvault with the shared default "capability-signing-key"', () => {
+      const result = loadConfig(
+        { ...baseProd, AZURE_KEYVAULT_KEY_NAME: 'capability-signing-key' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'AZURE_KEYVAULT_KEY_NAME');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('capability-signing-key');
+      expect(err!.message).toContain('DI-5');
+    });
+
+    it('rejects production azure-keyvault when key name is absent (defaults to "capability-signing-key")', () => {
+      // AZURE_KEYVAULT_KEY_NAME absent → runtime default is "capability-signing-key"
+      const result = loadConfig(baseProd, 'issuer');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'AZURE_KEYVAULT_KEY_NAME');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('capability-signing-key');
+    });
+
+    it('rejects production azure-keyvault when key name matches the minter convention (euno-minter-*)', () => {
+      const result = loadConfig(
+        { ...baseProd, AZURE_KEYVAULT_KEY_NAME: 'euno-minter-tenant-acme' },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'AZURE_KEYVAULT_KEY_NAME');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('euno-minter');
+      expect(err!.message).toContain('blast-radius');
+    });
+
+    it('accepts production azure-keyvault with an explicit issuer-specific key alias', () => {
+      const result = loadConfig(
+        { ...baseProd, AZURE_KEYVAULT_KEY_NAME: 'euno-issuer-tenant-acme' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('accepts production azure-keyvault with any non-default, non-minter key name', () => {
+      const result = loadConfig(
+        { ...baseProd, AZURE_KEYVAULT_KEY_NAME: 'my-custom-issuer-signing-key' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects production aws-kms when key alias starts with "euno-minter"', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'aws-kms',
+          AWS_KMS_KEY_ID: 'euno-minter-tenant-acme',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'AWS_KMS_KEY_ID');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('euno-minter');
+    });
+
+    it('accepts production aws-kms with an issuer-specific key ARN', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'aws-kms',
+          AWS_KMS_KEY_ID: 'arn:aws:kms:us-east-1:123456789012:key/issuer-key',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('does not apply the DI-5 guard outside production (development)', () => {
+      // In development the default key name is acceptable (no KMS in dev typically).
+      const result = loadConfig(
+        { AZURE_KEYVAULT_URL: 'https://vault.example/', AZURE_KEYVAULT_KEY_NAME: 'capability-signing-key' },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('does not apply the DI-5 guard outside production (staging)', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'staging',
+          AZURE_KEYVAULT_URL: 'https://vault.example/',
+          AZURE_KEYVAULT_KEY_NAME: 'capability-signing-key',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    // ── GCP Cloud KMS cases ──────────────────────────────────────────────────
+
+    it('rejects production gcp-cloudkms when GCP_CRYPTOKEY_ID matches the shared default', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'capability-signing-key',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'GCP_CRYPTOKEY_ID');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('capability-signing-key');
+      expect(err!.message).toContain('DI-5');
+    });
+
+    it('rejects production gcp-cloudkms when GCP_CRYPTOKEY_ID starts with "euno-minter"', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'euno-minter-tenant-acme',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'GCP_CRYPTOKEY_ID');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('euno-minter');
+      expect(err!.message).toContain('blast-radius');
+    });
+
+    it('accepts production gcp-cloudkms with an issuer-specific crypto key ID', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'euno-issuer-tenant-acme',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
     });
   });
 });

@@ -1012,6 +1012,66 @@ export const IssuerConfigSchema = z
       }
     }
 
+    // ── DI-5: KMS key alias separation guard ─────────────────────────────────
+    // Docs (docs/stage-4-design.md §6) mandate distinct key aliases for the
+    // minter (`euno-minter-tenant-<tenantId>`) and the issuer
+    // (`euno-issuer-tenant-<tenantId>`). In production, error when the
+    // issuer is configured with a key name that matches the minter's
+    // well-known alias convention or the shared generic default
+    // ("capability-signing-key") used by both services when left unconfigured.
+    //
+    // Using the same signing key on both services voids the blast-radius
+    // separation described in docs/stage-4-design.md §6.2: a compromise of
+    // either service's workload identity would allow forging tokens for both.
+    if (cfg.NODE_ENV === 'production') {
+      const issuerKeyId = (() => {
+        switch (cfg.SIGNING_PROVIDER) {
+          case 'azure-keyvault':
+            // Runtime fallback (index.ts) uses 'capability-signing-key'
+            // when AZURE_KEYVAULT_KEY_NAME is absent; treat absence as that
+            // default for the purpose of this guard.
+            return cfg.AZURE_KEYVAULT_KEY_NAME ?? 'capability-signing-key';
+          case 'aws-kms':
+            return cfg.AWS_KMS_KEY_ID;
+          case 'gcp-cloudkms':
+            return cfg.GCP_CRYPTOKEY_ID;
+          default:
+            return undefined;
+        }
+      })();
+
+      const fieldForProvider =
+        cfg.SIGNING_PROVIDER === 'azure-keyvault'
+          ? 'AZURE_KEYVAULT_KEY_NAME'
+          : cfg.SIGNING_PROVIDER === 'aws-kms'
+            ? 'AWS_KMS_KEY_ID'
+            : 'GCP_CRYPTOKEY_ID';
+
+      if (issuerKeyId) {
+        const normalised = issuerKeyId.toLowerCase();
+        const matchesSharedDefault = normalised === 'capability-signing-key';
+        const matchesMinterConvention = normalised.startsWith('euno-minter');
+
+        if (matchesSharedDefault || matchesMinterConvention) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [fieldForProvider],
+            message:
+              matchesMinterConvention
+                ? `${fieldForProvider} value "${issuerKeyId}" matches the minter's key-alias convention ` +
+                  '(prefix "euno-minter"). The issuer and the API-key minter must use separate KMS ' +
+                  'key aliases to preserve blast-radius separation (docs/stage-4-design.md §6). ' +
+                  'Use the issuer convention "euno-issuer-tenant-<tenantId>" instead.'
+                : `${fieldForProvider} is the shared generic default "capability-signing-key". ` +
+                  'In production, set an explicit issuer-specific key alias (e.g. ' +
+                  '"euno-issuer-tenant-<tenantId>") so the issuer and the API-key minter ' +
+                  'cannot accidentally share the same KMS key ' +
+                  '(docs/stage-4-design.md §6, DI-5).',
+          });
+        }
+      }
+    }
+
   });
 
 export type IssuerConfig = z.infer<typeof IssuerConfigSchema>;
