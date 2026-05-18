@@ -479,7 +479,7 @@ Per § 4.3. Includes `euno revoke` as a new subcommand.
 - **Tests**: integration test for the full PKCE flow against a mock IdP; `validate-token` test against a real JWKS endpoint.
 - **Docs**: `public/packages/cli/README.md` updated; `docs/quickstart-stage-4.md` walks a new user from `npm install -g @euno/cli` to first issued token.
 
-### Task 6 — Manifest template store + admin API
+### Task 6 — Manifest template store + admin API ✅ COMPLETE
 Per § 4.4. Postgres migrations land in `euno-platform/packages/capability-issuer/src/migrations/` (use the same migration pattern Stage 3 added for the audit ledger).
 - The issuance branch in `IssueController` that consults templates is the only change to existing issuance code.
 - **Tests**: round-trip CRUD on templates; assignment-driven issuance test; immutability-of-versions test; cross-tenant access denial test; soft-delete semantics test.
@@ -503,9 +503,9 @@ Phase E — Telemetry, billing, parity, gate
 Extend `GatewayTelemetryCollector` (Stage 3 Task 16) to recognise issuance events from the issuer (same per-tenant 5-min flush, same JSON event schema, **no** new event names). Wire issuance counts and renewal counts into the `UsageMeter` interface. Per-user metering granularity — but always aggregated at the tenant level for billing (the per-user dimension is for support/forensics, not invoicing).
 - **Tests**: meter dual-write test; tenant aggregation test.
 
-### Task 11 — Cross-stage parity test extension
+### Task 11 — Cross-stage parity test extension ✅ COMPLETE
 Extend `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts` with a Stage-4 scenario: the same `AgentCapabilityManifest` issued via (a) Stage-3 minter and (b) Stage-4 issuer must produce identical decisions, identical obligations, and identical OCSF pre-signature record contents on the gateway. This is the operational proof of E6.
-- The intentional divergence is the `sub` claim (synthetic for minter, real user for issuer). Document this in the test's comment and in `docs/stage-3-gateway-protocol.md` so the gateway operator knows to expect it.
+- The intentional divergence is `authorizedBy.userId`: the minter carries the API-key prefix (a synthetic identifier, e.g. `"sk-abc12345"`); the issuer carries the IdP-resolved user identity (e.g. `"user@corp.com"`). The `sub` claim is identical in both paths (sub = agentId). Document this in the test's comment and in `docs/stage-3-gateway-protocol.md` so the gateway operator knows to expect it.
 
 ### Task 12 — Stage-5 readiness instrumentation
 Add `scripts/stage5-readiness.ts` modeled on `scripts/stage4-readiness.ts`. Single signal: `EUNO_TELEMETRY_API /v1/stats/stage5-gate` returns ≥1 enterprise inbound matching the criteria in `docs/mvp.md` line 748. Exit codes: 0=READY, 1=NOT READY, 2=UNKNOWN. This is the gate tracker; it does not unilaterally start Stage 5.

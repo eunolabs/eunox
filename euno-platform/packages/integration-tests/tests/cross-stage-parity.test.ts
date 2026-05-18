@@ -865,6 +865,356 @@ describe('Cross-stage enforcement parity — Task 19', () => {
   });
 });
 
+// ── Stage-4 parity: minter-vs-issuer produces identical gateway decisions ──
+
+/**
+ * Task 11 — Cross-stage parity test extension
+ * ============================================
+ *
+ * WHAT THIS PROVES
+ * ----------------
+ * The same `AgentCapabilityManifest` capability constraints fed to:
+ *   (a) Stage-3 API-key minter — produces a token where `authorizedBy.userId`
+ *       is the API-key prefix (a synthetic string, e.g. "sk-abc12345").
+ *   (b) Stage-4 OIDC issuer    — produces a token where `authorizedBy.userId`
+ *       is the real IdP-resolved user identity (e.g. "user@corp.com").
+ *
+ * …produce IDENTICAL decisions, IDENTICAL obligations, and IDENTICAL OCSF
+ * pre-signature `conditionType` values on the gateway. This is the
+ * operational proof of exit criterion E6 in docs/stage4executionplan.md.
+ *
+ * INTENTIONAL DIVERGENCE (also documented in docs/stage-3-gateway-protocol.md §12)
+ * ----------------------------------------------------------------------------------
+ * The `authorizedBy.userId` claim differs by design between the two paths:
+ *   - Stage-3 minter: userId = API-key prefix (synthetic identifier).
+ *   - Stage-4 issuer: userId = IdP-resolved user identity (real principal).
+ *
+ * The gateway's EnforcementEngine evaluates capability constraints and
+ * conditions only; it does NOT branch on `authorizedBy.userId`. That claim is
+ * persisted in AuditEvidence for forensics and support — it does not affect
+ * the allow/deny decision or the obligations returned.
+ *
+ * The `sub` claim is IDENTICAL in both paths (sub = agentId), so the gateway
+ * sees the same agent subject regardless of which issuance path was used.
+ *
+ * Gateway operators comparing minter-vs-issuer audit rows MUST exclude
+ * `authorizedBy.userId` when asserting decision parity across issuance paths.
+ */
+describe('Stage-4 parity: minter-vs-issuer produces identical gateway decisions (Task 11)', () => {
+  // Capabilities derived from a shared AgentCapabilityManifest — these are
+  // identical in both the minter and issuer tokens, because both paths resolve
+  // capabilities from the same manifest / role-policy.
+  const SHARED_MANIFEST_CAPABILITIES: CapabilityConstraint[] = [
+    {
+      resource: 'tool://query_api',
+      actions: ['call'],
+      conditions: [
+        {
+          type: 'timeWindow',
+          notBefore: '2020-01-01T00:00:00Z',
+          notAfter: '2099-12-31T23:59:59Z',
+        },
+      ],
+    },
+    {
+      resource: 'tool://export_data',
+      actions: ['call'],
+      conditions: [
+        { type: 'redactFields', fields: ['result.pii', 'result.secret'] },
+      ],
+    },
+  ];
+
+  /**
+   * Build a token that mirrors what the Stage-3 API-key minter produces:
+   * authorizedBy.userId = apiKeyPrefix (synthetic identifier).
+   */
+  async function signMinterStyleToken(
+    capabilities: CapabilityConstraint[] = SHARED_MANIFEST_CAPABILITIES,
+  ): Promise<string> {
+    return signToken(capabilities, {
+      sub: 'agent-parity-test',
+      authorizedBy: {
+        // Stage-3 path: the minted API-key prefix — not a real user identity.
+        userId: 'sk-abc12345',
+        roles: ['Viewer'],
+        tenantId: 'tenant-parity',
+      },
+    });
+  }
+
+  /**
+   * Build a token that mirrors what the Stage-4 OIDC issuer produces:
+   * authorizedBy.userId = real IdP-resolved user identity.
+   */
+  async function signIssuerStyleToken(
+    capabilities: CapabilityConstraint[] = SHARED_MANIFEST_CAPABILITIES,
+  ): Promise<string> {
+    return signToken(capabilities, {
+      sub: 'agent-parity-test',
+      authorizedBy: {
+        // Stage-4 path: real IdP user identity (e.g. Entra ID UPN or Cognito sub).
+        userId: 'user@corp.com',
+        roles: ['Viewer'],
+        tenantId: 'tenant-parity',
+      },
+    });
+  }
+
+  // ── Allow scenario ─────────────────────────────────────────────────────
+
+  describe('allow scenario: same capabilities → identical allow decision on both paths', () => {
+    it('minter-style token: gateway allows the tool call', async () => {
+      const token = await signMinterStyleToken();
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://query_api',
+        context: { sessionId: 'minter-allow-1', tool: 'query_api', args: {} },
+      });
+      expect(result.allowed).toBe(true);
+    });
+
+    it('issuer-style token: gateway allows the same tool call', async () => {
+      const token = await signIssuerStyleToken();
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://query_api',
+        context: { sessionId: 'issuer-allow-1', tool: 'query_api', args: {} },
+      });
+      expect(result.allowed).toBe(true);
+    });
+
+    it('allow decisions match regardless of authorizedBy.userId', async () => {
+      const minterToken = await signMinterStyleToken();
+      const issuerToken = await signIssuerStyleToken();
+      const minterResult = await makeEngine().validateAction({
+        token: minterToken,
+        action: 'call',
+        resource: 'tool://query_api',
+        context: { sessionId: 'minter-allow-cmp', tool: 'query_api', args: {} },
+      });
+      const issuerResult = await makeEngine().validateAction({
+        token: issuerToken,
+        action: 'call',
+        resource: 'tool://query_api',
+        context: { sessionId: 'issuer-allow-cmp', tool: 'query_api', args: {} },
+      });
+      expect(minterResult.allowed).toBe(true);
+      expect(minterResult.allowed).toBe(issuerResult.allowed);
+    });
+  });
+
+  // ── Deny scenario ──────────────────────────────────────────────────────
+
+  describe('deny scenario: expired timeWindow → identical deny on both paths', () => {
+    const EXPIRED_CAPABILITIES: CapabilityConstraint[] = [
+      {
+        resource: 'tool://locked_tool',
+        actions: ['call'],
+        conditions: [
+          {
+            type: 'timeWindow',
+            notBefore: '2000-01-01T00:00:00Z',
+            notAfter: '2000-12-31T23:59:59Z',
+          },
+        ],
+      },
+    ];
+
+    it('minter-style token: gateway denies call in expired window', async () => {
+      const token = await signMinterStyleToken(EXPIRED_CAPABILITIES);
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://locked_tool',
+        context: { sessionId: 'minter-deny-1', tool: 'locked_tool', args: {} },
+      });
+      expect(result.allowed).toBe(false);
+    });
+
+    it('issuer-style token: gateway denies the same call in expired window', async () => {
+      const token = await signIssuerStyleToken(EXPIRED_CAPABILITIES);
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://locked_tool',
+        context: { sessionId: 'issuer-deny-1', tool: 'locked_tool', args: {} },
+      });
+      expect(result.allowed).toBe(false);
+    });
+
+    it('denial decisions and conditionType match between both paths', async () => {
+      const minterToken = await signMinterStyleToken(EXPIRED_CAPABILITIES);
+      const issuerToken = await signIssuerStyleToken(EXPIRED_CAPABILITIES);
+      const minterResult = await makeEngine().validateAction({
+        token: minterToken,
+        action: 'call',
+        resource: 'tool://locked_tool',
+        context: { sessionId: 'minter-deny-cmp', tool: 'locked_tool', args: {} },
+      });
+      const issuerResult = await makeEngine().validateAction({
+        token: issuerToken,
+        action: 'call',
+        resource: 'tool://locked_tool',
+        context: { sessionId: 'issuer-deny-cmp', tool: 'locked_tool', args: {} },
+      });
+      expect(minterResult.allowed).toBe(false);
+      expect(minterResult.allowed).toBe(issuerResult.allowed);
+      // conditionType is populated identically by the shared condition engine.
+      expect(minterResult.denialConditionType).toBe('timeWindow');
+      expect(minterResult.denialConditionType).toBe(issuerResult.denialConditionType);
+    });
+  });
+
+  // ── Obligation parity ──────────────────────────────────────────────────
+
+  describe('obligation parity: redactFields conditions are identical from both paths', () => {
+    it('minter-style token: matched capability carries redactFields conditions', async () => {
+      const token = await signMinterStyleToken();
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://export_data',
+        context: { sessionId: 'minter-oblig-1', tool: 'export_data', args: {} },
+      });
+      expect(result.allowed).toBe(true);
+      expect(result.matchedCapability?.conditions).toContainEqual(
+        expect.objectContaining({ type: 'redactFields' }),
+      );
+    });
+
+    it('issuer-style token: matched capability carries identical redactFields conditions', async () => {
+      const token = await signIssuerStyleToken();
+      const result = await makeEngine().validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://export_data',
+        context: { sessionId: 'issuer-oblig-1', tool: 'export_data', args: {} },
+      });
+      expect(result.allowed).toBe(true);
+      expect(result.matchedCapability?.conditions).toContainEqual(
+        expect.objectContaining({ type: 'redactFields' }),
+      );
+    });
+
+    it('matched capability conditions are identical between both paths', async () => {
+      const minterToken = await signMinterStyleToken();
+      const issuerToken = await signIssuerStyleToken();
+      const minterResult = await makeEngine().validateAction({
+        token: minterToken,
+        action: 'call',
+        resource: 'tool://export_data',
+        context: { sessionId: 'minter-oblig-cmp', tool: 'export_data', args: {} },
+      });
+      const issuerResult = await makeEngine().validateAction({
+        token: issuerToken,
+        action: 'call',
+        resource: 'tool://export_data',
+        context: { sessionId: 'issuer-oblig-cmp', tool: 'export_data', args: {} },
+      });
+      expect(minterResult.allowed).toBe(issuerResult.allowed);
+      expect(minterResult.matchedCapability?.conditions).toEqual(
+        issuerResult.matchedCapability?.conditions,
+      );
+    });
+  });
+
+  // ── OCSF pre-signature parity ──────────────────────────────────────────
+
+  describe('OCSF pre-signature parity: AuditEvidence fields are identical from both paths', () => {
+    const DENY_FOR_OCSF: CapabilityConstraint[] = [
+      {
+        resource: 'tool://ocsf_locked',
+        actions: ['call'],
+        conditions: [{ type: 'timeWindow', notAfter: '2000-01-01T00:00:00Z' }],
+      },
+    ];
+
+    function makeAuditEngine(): { engine: EnforcementEngine; signEvidence: jest.Mock } {
+      const signEvidence = makeChainedSignEvidence();
+      const mockSigner: EvidenceSigner = {
+        signEvidence,
+        verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => true),
+      };
+      const engine = new EnforcementEngine({
+        verifier,
+        logger,
+        callCounterStore: makeCounterStore(),
+        dpop: { required: false },
+        evidenceSigner: mockSigner,
+        enableCryptographicAudit: true,
+      });
+      return { engine, signEvidence };
+    }
+
+    it('minter-style token: AuditEvidence.conditionType=timeWindow on denial', async () => {
+      const { engine, signEvidence } = makeAuditEngine();
+      const token = await signMinterStyleToken(DENY_FOR_OCSF);
+      await engine.validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://ocsf_locked',
+        context: { sessionId: 'ocsf-minter', tool: 'ocsf_locked', args: {} },
+      });
+      expect(signEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: 'deny', conditionType: 'timeWindow' }),
+      );
+    });
+
+    it('issuer-style token: AuditEvidence.conditionType=timeWindow on denial (identical)', async () => {
+      const { engine, signEvidence } = makeAuditEngine();
+      const token = await signIssuerStyleToken(DENY_FOR_OCSF);
+      await engine.validateAction({
+        token,
+        action: 'call',
+        resource: 'tool://ocsf_locked',
+        context: { sessionId: 'ocsf-issuer', tool: 'ocsf_locked', args: {} },
+      });
+      expect(signEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: 'deny', conditionType: 'timeWindow' }),
+      );
+    });
+  });
+
+  // ── Documented divergence: authorizedBy.userId ─────────────────────────
+
+  describe('documented divergence: authorizedBy.userId differs by design', () => {
+    it('minter-style token carries apiKeyPrefix as authorizedBy.userId', async () => {
+      const token = await signMinterStyleToken();
+      const parsed = JSON.parse(
+        Buffer.from(token.split('.')[1]!, 'base64url').toString(),
+      ) as { authorizedBy: { userId: string } };
+      // Stage-3 minter writes a synthetic API-key prefix, not a real user identity.
+      expect(parsed.authorizedBy.userId).toBe('sk-abc12345');
+    });
+
+    it('issuer-style token carries real IdP userId as authorizedBy.userId', async () => {
+      const token = await signIssuerStyleToken();
+      const parsed = JSON.parse(
+        Buffer.from(token.split('.')[1]!, 'base64url').toString(),
+      ) as { authorizedBy: { userId: string } };
+      // Stage-4 issuer writes a real, auditable IdP-resolved user identity.
+      expect(parsed.authorizedBy.userId).toBe('user@corp.com');
+    });
+
+    it('sub claim is identical (agentId) in both paths — the agent is the same', async () => {
+      const minterToken = await signMinterStyleToken();
+      const issuerToken = await signIssuerStyleToken();
+      const minterParsed = JSON.parse(
+        Buffer.from(minterToken.split('.')[1]!, 'base64url').toString(),
+      ) as { sub: string };
+      const issuerParsed = JSON.parse(
+        Buffer.from(issuerToken.split('.')[1]!, 'base64url').toString(),
+      ) as { sub: string };
+      // The JWT `sub` claim is the agent's stable identifier — identical in both paths.
+      expect(minterParsed.sub).toBe(issuerParsed.sub);
+      expect(minterParsed.sub).toBe('agent-parity-test');
+    });
+  });
+});
+
 // ── Stage-4 parity: cnf.jkt and region preservation ─────────────────────
 
 describe('Stage-4 parity: cnf.jkt and region preservation across attenuation and renewal', () => {

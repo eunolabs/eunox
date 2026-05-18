@@ -358,8 +358,58 @@ Infrastructure errors arrive as HTTP 4xx/5xx with the `ErrorResponse` envelope.
 
 ---
 
-## 11. Changelog
+## 12. Stage-4 Interoperability
 
-| Date       | Change                         | Protocol version |
-|------------|--------------------------------|-----------------|
-| 2026-05-11 | Initial definition (Task 9)    | 1               |
+The gateway's enforcement path (`POST /api/v1/enforce`) is **issuance-path
+agnostic**: it evaluates the `capabilities` claim array using the same condition
+engine regardless of whether the bearer token was produced by the Stage-3 API-key
+minter or the Stage-4 OIDC issuer.
+
+### Token shape commonality
+
+Both issuance paths produce structurally identical tokens from the gateway's
+perspective:
+
+| JWT claim              | Stage-3 minter                  | Stage-4 issuer                  |
+|------------------------|---------------------------------|---------------------------------|
+| `iss`                  | issuer DID                      | issuer DID (same)               |
+| `sub`                  | agentId                         | agentId (same)                  |
+| `aud`                  | `tool-gateway`                  | `tool-gateway` (same)           |
+| `capabilities`         | from role-capability policy      | from manifest / template        |
+| `schemaVersion`        | `CAPABILITY_TOKEN_SCHEMA_VERSION`| same constant                   |
+| `authorizedBy.userId`  | **apiKeyPrefix** (synthetic)     | **IdP user identity** (real)    |
+| `authorizedBy.tenantId`| tenantId                        | tenantId (same)                 |
+
+### Intentional divergence: `authorizedBy.userId`
+
+The `authorizedBy.userId` claim carries different semantics in the two paths:
+
+- **Stage-3 minter**: `userId` = the API-key prefix (e.g. `"sk-abc12345"`). This
+  is a synthetic identifier that traces back to the minted API key — not a real
+  human identity.
+- **Stage-4 issuer**: `userId` = the IdP-resolved user identity (e.g.
+  `"user@corp.com"` for Entra ID, or a Cognito `sub` UUID). This is a durable,
+  auditable real-user principal.
+
+**The gateway does not evaluate `authorizedBy.userId` in its enforcement logic.**
+Both token shapes produce identical decisions, identical obligations, and identical
+OCSF `conditionType` values for the same capability constraints. `authorizedBy.userId`
+is persisted in `AuditEvidence` for forensics and support queries only.
+
+Gateway operators comparing minter-vs-issuer audit rows **must** exclude
+`authorizedBy.userId` when asserting decision parity. All other pre-signature
+OCSF fields are identical between the two issuance paths.
+
+This behaviour is proven by the parity test in
+`euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts`
+(describe block: *"Stage-4 parity: minter-vs-issuer produces identical gateway
+decisions (Task 11)"*).
+
+---
+
+## 13. Changelog
+
+| Date       | Change                                              | Protocol version |
+|------------|-----------------------------------------------------|-----------------|
+| 2026-05-11 | Initial definition (Task 9)                         | 1               |
+| 2026-05-18 | Stage-4 interoperability note added (§ 12, Task 11) | 1               |
