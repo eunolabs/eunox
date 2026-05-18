@@ -86,9 +86,12 @@ E4. **Manifest templates are usable**: a tech lead can `POST` a template
     via the issuer admin API, assign it to ≥1 agent, and a user with
     the bound role gets a token whose embedded `AgentCapabilityManifest`
     matches the template. Round-trip is covered by an integration test
-    in `euno-platform/packages/integration-tests/`. The hosted UI
-    (under `web/`) exposes a list/create/assign view backed by that
-    same admin API.
+    in `euno-platform/packages/integration-tests/`. The admin UI is
+    served by the issuer's own Express process at `/admin/` (four
+    server-rendered pages: list, create, detail/version-history,
+    assignment) — it is **not** a separate deployment under `web/`.
+    All UI calls go through the `/api/v1/admin/templates` endpoints;
+    no UI-specific endpoints exist.
 
 E5. **Self-host parity**: `infra/docker-compose.yml` gains an `issuer`
     service in the `full` profile; `docs/self-host.md` is updated with

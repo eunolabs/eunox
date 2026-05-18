@@ -52,6 +52,53 @@ Wire Prometheus alerts on:
 - `euno_issuer_issuance_total{outcome="error"}` — sustained errors indicate KMS or IdP degradation.
 - p99 latency of `/api/v1/issue` > 2s — KMS or IdP degradation.
 
+## Multi-Replica Considerations
+
+When running more than one issuer replica (or multiple regions in an
+active/active topology), several state stores transition from per-pod
+in-memory maps to fleet-wide Redis-backed counters. The table below
+lists every store, its default backing, the minimum replica count at
+which Redis becomes **required**, and the relevant env var.
+
+| Store | Default backing | Redis-required at | Env var | Notes |
+|---|---|---|---|---|
+| **Issuance rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (or `ISSUANCE_RATE_LIMIT_KEY_PREFIX` for namespace isolation) | Without Redis each pod enforces the limit independently; effective budget is `ISSUANCE_RATE_LIMIT_MAX × replica-count`. `EUNO_DEPLOYMENT_TIER=multi-replica` with `NODE_ENV=production` **requires** `REDIS_URL` (schema-enforced). |
+| **Storage-grant rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (shared) or `STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX` | Same per-pod multiplication risk as the issuance limiter; enabled only when `STORAGE_GRANTS_ENABLED=true`. |
+| **DB-token rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (shared) or `DB_TOKEN_RATE_LIMIT_KEY_PREFIX` | Same per-pod multiplication risk; enabled only when `DB_TOKENS_ENABLED=true`. |
+| **OIDC state store** (nonce + ID-token-hash replay prevention) | In-memory per replica *(single-replica / dev only)* | ≥ 2 replicas | `OIDC_STATE_REDIS_URL` (preferred) or `REDIS_URL` (fallback) | **CR-1 resolved (2026-05-18):** `RedisOidcStateStore` is now the default when either Redis URL is configured. Without Redis, a replay attack can succeed by targeting a pod that has not seen the original exchange. The factory emits a structured `warn` when falling back to in-memory so misconfigured deployments are visible in logs. |
+| **Usage meter** (gateway-side) | In-memory per gateway replica | ≥ 2 gateway replicas | `USAGE_METER_REDIS_URL` or `REDIS_URL` on the gateway | The issuer itself does not hold a usage meter; metering is gateway-side. Under HA the gateway bootstraps a Redis-backed `UsageMeter` when a Redis URL is available, falling back to in-memory with a `warn`. |
+| **Issuer telemetry collector** | In-memory per replica; flushed on graceful shutdown | All replica counts | `EUNO_TELEMETRY=1` (opt-in); no Redis path | The `IssuerTelemetryCollector` aggregates counters in-process and ships them via the configured telemetry sink (HTTP/stdout) at shutdown. It is not fleet-wide; each replica reports independently. Aggregate fleet-level metrics require summing across replicas at the sink. |
+
+### Minimum viable multi-replica setup
+
+For a two-replica issuer with no optional features:
+
+```
+REDIS_URL=redis://redis:6379          # shared for rate limiter + OIDC state
+OIDC_STATE_REDIS_URL=redis://redis:6379   # explicit; overrides REDIS_URL for OIDC store
+EUNO_DEPLOYMENT_TIER=multi-replica    # enforces REDIS_URL at boot
+NODE_ENV=production
+```
+
+In this configuration:
+- The issuance rate limiter is fleet-wide.
+- OIDC replay prevention is fleet-wide (both the nonce/state and the
+  ID-token-hash maps are in Redis with per-key TTL).
+- Usage metering is gateway-side and requires its own `REDIS_URL`
+  on the gateway deployment.
+
+### Single-replica exception
+
+`EUNO_DEPLOYMENT_TIER=single-replica` (the default) suppresses the
+`REDIS_URL` requirement and leaves all stores in-memory. This is the
+intended configuration for development and for self-host operators
+who have accepted the single-point-of-failure trade-off. Setting
+`EUNO_DEPLOYMENT_TIER=single-replica` on a deployment that is actually
+running multiple pods is a misconfiguration that silently degrades
+rate-limit enforcement and replay prevention.
+
+---
+
 ## On-Call Playbook: IdP Outage
 
 The issuer is **fail-closed** on IdP validation failure: if `validateToken()` throws, the request is rejected with 401. Existing valid tokens continue to work (verification is stateless JWKS-based).
