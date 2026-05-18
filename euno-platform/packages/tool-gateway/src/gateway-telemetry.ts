@@ -342,7 +342,7 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
     const activeTenants = Array.from(this._tenantState.keys());
     for (const tenantId of activeTenants) {
       const state = this._tenantState.get(tenantId);
-      if (!state || (state.sessionIds.size === 0 && state.issuanceEvents === 0 && state.renewalEvents === 0)) continue;
+      if (!state || !this._hasActivity(state)) continue;
 
       const event: GatewayTelemetryEvent = {
         installId: `tenant:${tenantId}`,
@@ -401,6 +401,15 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
       this._tenantState.set(tenantId, state);
     }
     return state;
+  }
+
+  /**
+   * Returns `true` when a tenant has had at least one session, issuance, or
+   * renewal event in the current window and should therefore emit a telemetry
+   * event on flush.
+   */
+  private _hasActivity(state: PerTenantState): boolean {
+    return state.sessionIds.size > 0 || state.issuanceEvents > 0 || state.renewalEvents > 0;
   }
 
   /**
