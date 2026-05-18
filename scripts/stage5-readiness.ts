@@ -181,6 +181,10 @@ function pad(s: string, n: number): string {
   return s.padEnd(n, ' ');
 }
 
+function pluralizeCriterion(count: number): string {
+  return count === 1 ? 'criterion' : 'criteria';
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -217,10 +221,10 @@ export async function main(apiUrl = process.env['EUNO_TELEMETRY_API'] ?? ''): Pr
       'Stage 4 is shipped. Stage 5 (Enterprise + Full Vision) may begin.\n',
     );
   } else if (status === 'not-ready') {
-    process.stdout.write(`NOT READY — ${notMetCount} ${notMetCount === 1 ? 'criterion' : 'criteria'} not met.\n`);
+    process.stdout.write(`NOT READY — ${notMetCount} ${pluralizeCriterion(notMetCount)} not met.\n`);
   } else {
     process.stdout.write(
-      `UNKNOWN — ${unknownCount} ${unknownCount === 1 ? 'criterion' : 'criteria'} require${unknownCount === 1 ? 's' : ''} manual verification.\n`,
+      `UNKNOWN — ${unknownCount} ${pluralizeCriterion(unknownCount)} require${unknownCount === 1 ? 's' : ''} manual verification.\n`,
     );
   }
 
