@@ -75,7 +75,7 @@ test('passes when threat model contains no placeholder text', () => {
   }
 });
 
-test('fails when threat model still contains the _(add names placeholder', () => {
+test('fails when threat model still contains the _(add names placeholder)', () => {
   const root = makeFixture(
     '# Issuer Identity Threat Model\n\n**Authors:** _(add names at review)_\n**Reviewers:** _(add names at review)_\n',
   );
