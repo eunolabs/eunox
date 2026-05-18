@@ -188,6 +188,18 @@ export class RedisUsageMeter implements UsageMeter {
     });
   }
 
+  /**
+   * Compute the next billing-period start timestamp, ensuring it is strictly
+   * newer than the previous timestamp for an existing tenant entry.
+   */
+  private nextPeriodStart(previous?: string): string {
+    const nowMs = Date.now();
+    const previousMs = previous ? Date.parse(previous) : Number.NaN;
+    const nextMs =
+      Number.isFinite(previousMs) && previousMs >= nowMs ? previousMs + 1 : nowMs;
+    return new Date(nextMs).toISOString();
+  }
+
   // ── UsageMeter interface ──────────────────────────────────────────────────
 
   /** @inheritdoc */
@@ -283,10 +295,10 @@ export class RedisUsageMeter implements UsageMeter {
 
   /** @inheritdoc */
   resetPeriod(tenantId?: string): void {
-    const now = new Date().toISOString();
     if (tenantId !== undefined) {
       const entry = this.counters.get(tenantId);
       if (entry) {
+        const nextPeriodStart = this.nextPeriodStart(entry.periodStart);
         entry.enforcementEvents = 0;
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
@@ -295,10 +307,22 @@ export class RedisUsageMeter implements UsageMeter {
         entry.renewalEvents = 0;
         entry.issuancesByUser = {};
         entry.renewalsByUser = {};
-        entry.periodStart = now;
+        entry.periodStart = nextPeriodStart;
+        void this.persistReset([tenantId], nextPeriodStart);
+        return;
       }
-      void this.persistReset([tenantId], now);
     } else {
+      const nextPeriodStart = this.nextPeriodStart(
+        Array.from(this.counters.values()).reduce<string | undefined>(
+          (latest, entry) => {
+            if (!latest) return entry.periodStart;
+            return Date.parse(entry.periodStart) > Date.parse(latest)
+              ? entry.periodStart
+              : latest;
+          },
+          undefined,
+        ),
+      );
       const allTenantIds: string[] = [];
       for (const [tid, entry] of this.counters.entries()) {
         entry.enforcementEvents = 0;
@@ -309,11 +333,11 @@ export class RedisUsageMeter implements UsageMeter {
         entry.renewalEvents = 0;
         entry.issuancesByUser = {};
         entry.renewalsByUser = {};
-        entry.periodStart = now;
+        entry.periodStart = nextPeriodStart;
         allTenantIds.push(tid);
       }
       if (allTenantIds.length > 0) {
-        void this.persistReset(allTenantIds, now);
+        void this.persistReset(allTenantIds, nextPeriodStart);
       }
     }
   }

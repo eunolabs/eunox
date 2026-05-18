@@ -3,7 +3,6 @@ module.exports = {
   testEnvironment: 'node',
   globalSetup: './jest.globalSetup.js',
   testMatch: ['**/?(*.)+(spec|test).ts'],
-  forceExit: true,
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
