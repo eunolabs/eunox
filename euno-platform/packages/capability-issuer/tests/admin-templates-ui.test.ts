@@ -9,7 +9,12 @@
  *   - GET /admin/templates/new → 200 HTML containing create form
  *   - GET /admin/templates/:id → 200 HTML containing detail scaffold
  *   - GET /admin/templates/:id/assign → 200 HTML containing assignment form
- *   - ?token= query parameter: accepted as Bearer alternative, stripped from URL hint
+ *   - DI-2: ?token= query parameter NO LONGER accepted; session cookie flow tested
+ *   - DI-2: POST /admin/auth/session exchanges JWT for HttpOnly session cookie
+ *   - DI-2: DELETE /admin/auth/session clears session cookie
+ *   - DI-2: GET /admin/login serves login page without auth
+ *   - DI-2: Session cookie accepted as auth for page routes
+ *   - CI-4: Dynamic templateId values are safeJsonEmbed'd in script contexts
  *   - Page-level access control: unauthenticated requests to each page return 401
  */
 
@@ -17,8 +22,9 @@ import express from 'express';
 import request from 'supertest';
 import { createLogger } from '@euno/common';
 import type { ManifestTemplateStore } from '../src/manifest-template-store';
-import { createAdminUiRouter } from '../src/routes/admin-ui';
+import { createAdminUiRouter, SESSION_COOKIE_NAME } from '../src/routes/admin-ui';
 import type { CapabilityError } from '@euno/common';
+import type { IssuerAdminJwtVerifier } from '../src/routes/admin-templates';
 
 // ── Minimal stub template store ─────────────────────────────────────────────
 
@@ -124,7 +130,22 @@ class StubTemplateStore implements ManifestTemplateStore {
 
 const ADMIN_KEY = 'test-ui-admin-key';
 
-function buildUiTestApp(store: ManifestTemplateStore = new StubTemplateStore()) {
+/** Stub JWT verifier that accepts the single VALID_JWT constant as valid. */
+const VALID_JWT = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.stub-payload.stub-sig';
+
+const stubJwtVerifier = {
+  async verify(token: string) {
+    if (token === VALID_JWT) {
+      return { operatorId: 'op-test', tenantId: 'tenant-test', isPlatformAdmin: true };
+    }
+    throw new Error('Invalid token');
+  },
+} as unknown as IssuerAdminJwtVerifier;
+
+function buildUiTestApp(
+  store: ManifestTemplateStore = new StubTemplateStore(),
+  jwtVerifier?: IssuerAdminJwtVerifier,
+) {
   const app = express();
   app.use(express.json());
 
@@ -132,7 +153,10 @@ function buildUiTestApp(store: ManifestTemplateStore = new StubTemplateStore()) 
   const router = createAdminUiRouter({
     store,
     adminApiKey: ADMIN_KEY,
+    jwtVerifier,
     logger,
+    // Disable Secure attribute so tests run on HTTP without errors.
+    secureCookies: false,
   });
   app.use('/admin', router);
 
@@ -247,18 +271,33 @@ describe('Admin UI — list page', () => {
     expect(res.text).toContain('/api/v1/admin/templates');
   });
 
-  it('list page accepts token via ?token= query parameter', async () => {
-    // The page is served (200) when token is valid in the query string.
-    // Auth resolves the ?token= value as if it were a Bearer header — but
-    // without a JWT verifier configured, the X-Admin-Key path is the only
-    // active auth path. We pass X-Admin-Key here so the route is exercised;
-    // the ?token= stripping JS is in the rendered HTML.
+  it('list page does NOT reference localStorage or ?token= (DI-2)', async () => {
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .expect(200);
+    // DI-2: token must never be written to URL or localStorage
+    expect(res.text).not.toContain('localStorage.setItem');
+    expect(res.text).not.toContain('localStorage.getItem');
+    expect(res.text).not.toContain('?token=');
+    expect(res.text).not.toContain("qs.get('token')");
+  });
+
+  it('list page does NOT accept ?token= query parameter (DI-2 — removed)', async () => {
+    // Verify two things:
+    //   (a) A request carrying ONLY ?token=<jwt> (no cookie, no header, no X-Admin-Key)
+    //       is rejected with 401 — proving the query-param auth path is gone.
+    //   (b) When the request IS authenticated (via X-Admin-Key), the rendered HTML
+    //       still contains no legacy localStorage ?token= handling.
+    await request(app)
+      .get('/admin/templates?token=some-future-jwt')
+      .expect(401); // (a) ?token= alone must NOT authenticate
+
     const res = await request(app)
       .get('/admin/templates?token=some-future-jwt')
       .set('X-Admin-Key', ADMIN_KEY)
-      .expect(200);
-    // The rendered page contains the localStorage JS that strips ?token=.
-    expect(res.text).toContain('localStorage.setItem');
+      .expect(200); // (b) authenticated via X-Admin-Key — page still renders
+    expect(res.text).not.toContain('localStorage.setItem');
   });
 });
 
@@ -432,3 +471,220 @@ describe('Admin UI — page-level access control smoke (list → create → assi
     await request(app).get('/admin/templates/tmpl_ui_test_001/assign').expect(401);
   });
 });
+
+// ── DI-2: Session cookie exchange ─────────────────────────────────────────────
+
+describe('Admin UI — DI-2: GET /admin/login (no auth required)', () => {
+  let app: ReturnType<typeof buildUiTestApp>;
+  beforeEach(() => { app = buildUiTestApp(new StubTemplateStore(), stubJwtVerifier); });
+
+  it('returns 200 HTML without credentials', async () => {
+    const res = await request(app).get('/admin/login').expect(200);
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.text).toMatch(/<!DOCTYPE html/i);
+  });
+
+  it('contains a token input and sign-in button', async () => {
+    const res = await request(app).get('/admin/login').expect(200);
+    expect(res.text).toContain('id="login-token"');
+    expect(res.text).toContain('btn-login');
+  });
+
+  it('login page JS posts to /admin/auth/session (not a URL redirect)', async () => {
+    const res = await request(app).get('/admin/login').expect(200);
+    expect(res.text).toContain('/admin/auth/session');
+    // Must not reference ?token= in any form
+    expect(res.text).not.toContain('?token=');
+  });
+});
+
+describe('Admin UI — DI-2: POST /admin/auth/session', () => {
+  let app: ReturnType<typeof buildUiTestApp>;
+  beforeEach(() => { app = buildUiTestApp(new StubTemplateStore(), stubJwtVerifier); });
+
+  it('returns 200 and sets HttpOnly session cookie for valid JWT', async () => {
+    const res = await request(app)
+      .post('/admin/auth/session')
+      .send({ token: VALID_JWT })
+      .set('Content-Type', 'application/json')
+      .expect(200);
+    expect(res.body).toEqual({ ok: true });
+    // Set-Cookie header must be present
+    const setCookie = res.headers['set-cookie'] as string[] | string | undefined;
+    expect(setCookie).toBeDefined();
+    const cookieStr = Array.isArray(setCookie) ? setCookie.join('; ') : (setCookie ?? '');
+    expect(cookieStr).toContain(SESSION_COOKIE_NAME);
+    expect(cookieStr).toContain('HttpOnly');
+    expect(cookieStr).toContain('SameSite=Strict');
+    expect(cookieStr).toContain('Path=/admin');
+  });
+
+  it('returns 401 for an invalid JWT', async () => {
+    const res = await request(app)
+      .post('/admin/auth/session')
+      .send({ token: 'bad.token.value' })
+      .set('Content-Type', 'application/json')
+      .expect(401);
+    expect(res.body).toMatchObject({ error: { message: expect.stringContaining('Invalid') } });
+  });
+
+  it('returns 400 when token field is missing', async () => {
+    const res = await request(app)
+      .post('/admin/auth/session')
+      .send({})
+      .set('Content-Type', 'application/json')
+      .expect(400);
+    expect(res.body.error.message).toMatch(/token is required/i);
+  });
+
+  it('also accepts token via Authorization: Bearer header', async () => {
+    const res = await request(app)
+      .post('/admin/auth/session')
+      .send({})
+      .set('Content-Type', 'application/json')
+      .set('Authorization', `Bearer ${VALID_JWT}`)
+      .expect(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it('returns 501 when no jwtVerifier is configured', async () => {
+    const appNoJwt = buildUiTestApp(new StubTemplateStore()); // no verifier
+    const res = await request(appNoJwt)
+      .post('/admin/auth/session')
+      .send({ token: VALID_JWT })
+      .set('Content-Type', 'application/json')
+      .expect(501);
+    expect(res.body.error.message).toMatch(/not configured/i);
+  });
+});
+
+describe('Admin UI — DI-2: DELETE /admin/auth/session (logout)', () => {
+  let app: ReturnType<typeof buildUiTestApp>;
+  beforeEach(() => { app = buildUiTestApp(new StubTemplateStore(), stubJwtVerifier); });
+
+  it('returns 200 and clears the session cookie', async () => {
+    const res = await request(app)
+      .delete('/admin/auth/session')
+      .expect(200);
+    expect(res.body).toEqual({ ok: true });
+    const setCookie = res.headers['set-cookie'] as string[] | string | undefined;
+    expect(setCookie).toBeDefined();
+    const cookieStr = Array.isArray(setCookie) ? setCookie.join('; ') : (setCookie ?? '');
+    // Max-Age=0 clears the cookie
+    expect(cookieStr).toContain('Max-Age=0');
+    expect(cookieStr).toContain(SESSION_COOKIE_NAME);
+  });
+});
+
+describe('Admin UI — DI-2: session cookie auth for page routes', () => {
+  let app: ReturnType<typeof buildUiTestApp>;
+  beforeEach(() => { app = buildUiTestApp(new StubTemplateStore(), stubJwtVerifier); });
+
+  it('session cookie authenticates the list page', async () => {
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${encodeURIComponent(VALID_JWT)}`)
+      .expect(200);
+    expect(res.text).toMatch(/<!DOCTYPE html/i);
+  });
+
+  it('invalid session cookie falls through — returns 401 without X-Admin-Key', async () => {
+    await request(app)
+      .get('/admin/templates')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=bad.cookie.value`)
+      .expect(401);
+  });
+
+  it('page shell embeds session token server-side (not via localStorage)', async () => {
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${encodeURIComponent(VALID_JWT)}`)
+      .expect(200);
+    // Token must be embedded via server-side window.__eunoAdminToken assignment
+    expect(res.text).toContain('window.__eunoAdminToken');
+    // Must NOT use localStorage.setItem / localStorage.getItem
+    expect(res.text).not.toContain('localStorage.setItem');
+    expect(res.text).not.toContain('localStorage.getItem');
+  });
+
+  it('page shell does NOT expose the token in a ?token= query string', async () => {
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${encodeURIComponent(VALID_JWT)}`)
+      .expect(200);
+    expect(res.text).not.toContain('?token=');
+  });
+
+  it('401 page links to /admin/login (not to ?token= hint)', async () => {
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('Accept', 'text/html')
+      .expect(401);
+    expect(res.text).toContain('/admin/login');
+    expect(res.text).not.toContain('?token=');
+  });
+});
+
+// ── CI-4: HTML escaping of dynamic values ─────────────────────────────────────
+
+describe('Admin UI — CI-4: HTML escaping and safe JSON embedding', () => {
+  let app: ReturnType<typeof buildUiTestApp>;
+  beforeEach(() => { app = buildUiTestApp(new StubTemplateStore(), stubJwtVerifier); });
+
+  it('detail page embeds templateId via safeJsonEmbed, not bare JSON.stringify', async () => {
+    // A templateId containing </script> would break out of the script block if
+    // it were embedded with a bare JSON.stringify.  The safe embed replaces
+    // < and / so the string cannot close the tag.
+    const xssId = 'tmpl</script><script>alert(1)//';
+    const res = await request(app)
+      .get(`/admin/templates/${encodeURIComponent(xssId)}`)
+      .set('X-Admin-Key', ADMIN_KEY)
+      .expect(200);
+    // The dangerous sequence must NOT appear verbatim in the output
+    expect(res.text).not.toContain('</script><script>alert(1)');
+    // Both < and / are escaped: </script> → \u003c\u002fscript\u003e
+    expect(res.text).toContain('\\u003c\\u002fscript\\u003e');
+  });
+
+  it('assign page embeds templateId via safeJsonEmbed', async () => {
+    const xssId = 'tmpl</script><script>alert(2)//';
+    const res = await request(app)
+      .get(`/admin/templates/${encodeURIComponent(xssId)}/assign`)
+      .set('X-Admin-Key', ADMIN_KEY)
+      .expect(200);
+    expect(res.text).not.toContain('</script><script>alert(2)');
+    expect(res.text).toContain('\\u003c\\u002fscript\\u003e');
+  });
+
+  it('page title is HTML-escaped', async () => {
+    // pageShell always passes title through escHtml — smoke-test with a normal title
+    const res = await request(app)
+      .get('/admin/templates')
+      .set('X-Admin-Key', ADMIN_KEY)
+      .expect(200);
+    expect(res.text).toContain('<title>Templates — Euno Admin</title>');
+  });
+
+  it('server-embedded session token uses safeJsonEmbed (not bare concatenation)', async () => {
+    // Use a token that contains '&' so safeJsonEmbed produces \u0026 — which
+    // proves the output went through safeJsonEmbed rather than a bare string concat.
+    const tokenWithAmpersand = 'eyJhbGciOiJSUzI1NiJ9.with&ampersand.sig';
+    const app2 = buildUiTestApp(new StubTemplateStore(), {
+      async verify(t: string) {
+        if (t === tokenWithAmpersand) {
+          return { operatorId: 'op', tenantId: 'ten', isPlatformAdmin: true };
+        }
+        throw new Error('Invalid');
+      },
+    } as unknown as IssuerAdminJwtVerifier);
+    const res = await request(app2)
+      .get('/admin/templates')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=${encodeURIComponent(tokenWithAmpersand)}`)
+      .expect(200);
+    // The '&' in the token must have been escaped to \u0026 by safeJsonEmbed
+    expect(res.text).toContain('\\u0026');
+    // The raw '&' must NOT appear inside the window.__eunoAdminToken assignment
+    expect(res.text).not.toMatch(/window\.__eunoAdminToken\s*=\s*"[^"]*&[^"]*"/);
+  });
+});
+
