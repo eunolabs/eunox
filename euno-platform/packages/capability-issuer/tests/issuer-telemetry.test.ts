@@ -281,6 +281,7 @@ describe('IssuerTelemetryCollector', () => {
     const evt = fetchCapture.captured[0]!;
     expect(evt.issuanceEvents).toBe(10_001);
     expect(evt.distinctIssuingUsers).toBe(10_000);
+    expect(evt['distinctIssuingUsersCapped']).toBe(true);
   });
 
   it('caps distinctRenewingUsers at 10000 to prevent unbounded memory growth', async () => {
@@ -293,5 +294,30 @@ describe('IssuerTelemetryCollector', () => {
     const evt = fetchCapture.captured[0]!;
     expect(evt.renewalEvents).toBe(10_001);
     expect(evt.distinctRenewingUsers).toBe(10_000);
+    expect(evt['distinctRenewingUsersCapped']).toBe(true);
+  });
+
+  it('does not set distinctIssuingUsersCapped when below the cap', async () => {
+    const collector = new IssuerTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+    for (let i = 0; i < 5; i++) {
+      collector.recordIssuance('t1', `user${i}@corp.com`);
+    }
+    await collector.flush();
+
+    const evt = fetchCapture.captured[0]!;
+    expect(evt.distinctIssuingUsers).toBe(5);
+    expect(evt['distinctIssuingUsersCapped']).toBeUndefined();
+  });
+
+  it('does not set distinctRenewingUsersCapped when below the cap', async () => {
+    const collector = new IssuerTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+    for (let i = 0; i < 5; i++) {
+      collector.recordRenewal('t1', `user${i}@corp.com`);
+    }
+    await collector.flush();
+
+    const evt = fetchCapture.captured[0]!;
+    expect(evt.distinctRenewingUsers).toBe(5);
+    expect(evt['distinctRenewingUsersCapped']).toBeUndefined();
   });
 });

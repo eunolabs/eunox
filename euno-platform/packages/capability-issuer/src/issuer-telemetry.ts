@@ -91,6 +91,20 @@ interface IssuerTelemetryEvent {
   readonly renewalEvents: number;
   readonly distinctIssuingUsers: number;
   readonly distinctRenewingUsers: number;
+  /**
+   * Set to `true` when `distinctIssuingUsers` has hit the
+   * `MAX_DISTINCT_USERS_PER_TENANT` cap and therefore represents an
+   * approximate lower-bound rather than the exact cardinality.
+   * Dashboards should flag saturation when this field is present and `true`.
+   * (CI-1 fix)
+   */
+  readonly distinctIssuingUsersCapped?: boolean;
+  /**
+   * Set to `true` when `distinctRenewingUsers` has hit the
+   * `MAX_DISTINCT_USERS_PER_TENANT` cap.
+   * (CI-1 fix)
+   */
+  readonly distinctRenewingUsersCapped?: boolean;
   readonly timestamp: number;
 }
 
@@ -252,6 +266,12 @@ export class IssuerTelemetryCollector {
         renewalEvents: state.renewalEvents,
         distinctIssuingUsers: state.issuingUsers.size,
         distinctRenewingUsers: state.renewingUsers.size,
+        ...(state.issuingUsers.size >= MAX_DISTINCT_USERS_PER_TENANT
+          ? { distinctIssuingUsersCapped: true }
+          : {}),
+        ...(state.renewingUsers.size >= MAX_DISTINCT_USERS_PER_TENANT
+          ? { distinctRenewingUsersCapped: true }
+          : {}),
         timestamp: Date.now(),
       };
 

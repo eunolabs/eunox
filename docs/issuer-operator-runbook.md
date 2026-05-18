@@ -99,6 +99,33 @@ rate-limit enforcement and replay prevention.
 
 ---
 
+## Token Revocation
+
+OIDC-path capability tokens are revoked exclusively via the **gateway admin API**
+(`euno revoke` or `DELETE /admin/tokens/{jti}`). The capability issuer maintains
+**no separate revocation list**. This means:
+
+- The gateway is the single canonical revocation source for all tokens regardless
+  of how they were originally issued (API-key path or OIDC path).
+- Revoking a token via the gateway blocks enforcement at the gateway layer; the
+  issuer does not need to be notified and takes no additional action.
+- Verifiers that bypass the gateway and check the issuer JWKS directly will not
+  observe revocations; all enforcement must be routed through the gateway.
+
+This design is intentional: centralising revocation state in the gateway avoids
+distributed consensus and keeps the issuer stateless with respect to live tokens.
+
+To revoke a token:
+
+```sh
+euno revoke --jti <token-jti>
+# or
+curl -X DELETE https://<gateway>/admin/tokens/<token-jti> \
+  -H "X-Admin-Key: $EUNO_ADMIN_KEY"
+```
+
+---
+
 ## On-Call Playbook: IdP Outage
 
 The issuer is **fail-closed** on IdP validation failure: if `validateToken()` throws, the request is rejected with 401. Existing valid tokens continue to work (verification is stateless JWKS-based).

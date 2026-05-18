@@ -39,6 +39,8 @@ import type {
 } from '@euno/common';
 import express from 'express';
 import request from 'supertest';
+import { Writable } from 'stream';
+import * as winston from 'winston';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -1304,6 +1306,56 @@ describe('IssueController + templateStore integration', () => {
       { authToken: 'tok', agentId: 'agent-fault' },
     );
     expect(result.token).toBeTruthy();
+  });
+
+  it('stamps templateFallback=true in the audit log when findActiveAssignment rejects (DI-1)', async () => {
+    // Capture audit log entries via a real Winston stream transport.
+    const auditEntries: Record<string, unknown>[] = [];
+    const captureStream = new Writable({
+      write(chunk: Buffer, _enc, cb) {
+        try {
+          auditEntries.push(JSON.parse(chunk.toString()) as Record<string, unknown>);
+        } catch {
+          /* ignore non-JSON lines */
+        }
+        cb();
+      },
+    });
+    const captureTransport = new winston.transports.Stream({ stream: captureStream });
+
+    const faultyStore: ManifestTemplateStore = {
+      createTemplate: store.createTemplate.bind(store),
+      listTemplates: store.listTemplates.bind(store),
+      getTemplate: store.getTemplate.bind(store),
+      getTemplateVersion: store.getTemplateVersion.bind(store),
+      appendVersion: store.appendVersion.bind(store),
+      assignTemplate: store.assignTemplate.bind(store),
+      softDelete: store.softDelete.bind(store),
+      findActiveAssignment: async () => { throw new Error('DB unavailable'); },
+    };
+
+    const service = new CapabilityIssuerService(
+      new StubSigner(),
+      new StubIdentityProvider(ctx),
+      'did:web:example.com',
+      900,
+      integrationLogger,
+      { templateStore: faultyStore, auditTransports: [captureTransport] },
+    );
+
+    const result = await service.issueCapability({ authToken: 'tok', agentId: 'agent-fault-audit' });
+    expect(result.token).toBeTruthy();
+
+    // Allow the Winston stream transport one tick to flush.
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The issuance audit entry must carry templateFallback=true so operators
+    // can see in the SIEM that the template store was unavailable (DI-1 fix).
+    const issuanceEntry = auditEntries.find(
+      (e) => (e['metadata'] as Record<string, unknown>)?.['templateFallback'] === true,
+    );
+    expect(issuanceEntry).toBeDefined();
+    expect((issuanceEntry!['metadata'] as Record<string, unknown>)['templateFallback']).toBe(true);
   });
 
   it('validates requested capabilities against template manifest when assignment exists', async () => {
