@@ -505,7 +505,7 @@ Extend `GatewayTelemetryCollector` (Stage 3 Task 16) to recognise issuance event
 
 ### Task 11 — Cross-stage parity test extension ✅ COMPLETE
 Extend `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts` with a Stage-4 scenario: the same `AgentCapabilityManifest` issued via (a) Stage-3 minter and (b) Stage-4 issuer must produce identical decisions, identical obligations, and identical OCSF pre-signature record contents on the gateway. This is the operational proof of E6.
-- The intentional divergence is the `sub` claim (synthetic for minter, real user for issuer). Document this in the test's comment and in `docs/stage-3-gateway-protocol.md` so the gateway operator knows to expect it.
+- The intentional divergence is `authorizedBy.userId`: the minter carries the API-key prefix (a synthetic identifier, e.g. `"sk-abc12345"`); the issuer carries the IdP-resolved user identity (e.g. `"user@corp.com"`). The `sub` claim is identical in both paths (sub = agentId). Document this in the test's comment and in `docs/stage-3-gateway-protocol.md` so the gateway operator knows to expect it.
 
 ### Task 12 — Stage-5 readiness instrumentation
 Add `scripts/stage5-readiness.ts` modeled on `scripts/stage4-readiness.ts`. Single signal: `EUNO_TELEMETRY_API /v1/stats/stage5-gate` returns ≥1 enterprise inbound matching the criteria in `docs/mvp.md` line 748. Exit codes: 0=READY, 1=NOT READY, 2=UNKNOWN. This is the gate tracker; it does not unilaterally start Stage 5.

@@ -407,7 +407,7 @@ decisions (Task 11)"*).
 
 ---
 
-## 11. Changelog
+## 13. Changelog
 
 | Date       | Change                                              | Protocol version |
 |------------|-----------------------------------------------------|-----------------|
