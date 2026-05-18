@@ -117,6 +117,35 @@ See [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) for the
 step-by-step guide, the cryptographic story behind the `sk-...` key, and the
 explicit data-boundary analysis (what leaves your network in hosted mode).
 
+### Hosted issuer (Stage 4)
+
+Stage 4 adds the **Capability Issuer** — a token-issuance service that ties
+agent capabilities to real user identities through your existing identity
+provider (Entra ID, AWS Cognito, or GCP Cloud Identity). Instead of a shared
+API key, each agent token is bound to the user who requested it:
+
+```bash
+# Request a capability token via your IdP (PKCE flow)
+euno request \
+  --agent my-agent \
+  --idp-auth-url  https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize \
+  --idp-token-url https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token \
+  --idp-client-id <client-id>
+
+# Validate the issued token
+euno validate-token --agent-id my-agent
+```
+
+The resulting token carries the user's IdP identity (`authorizedBy.userId`),
+a role-to-capability mapping from the admin role-policy store, and optional
+capability manifest templates that a tech lead authors once and assigns to
+many agents.
+
+See [`docs/quickstart-stage-4.md`](./docs/quickstart-stage-4.md) for the
+full flow, [`docs/issuer-idp-setup.md`](./docs/issuer-idp-setup.md) for IdP
+configuration, and [`docs/self-host.md §11`](./docs/self-host.md) for
+self-hosting the issuer alongside the gateway.
+
 See [the website](./web/features.html) for worked demos of every
 condition type.
 
@@ -128,9 +157,9 @@ euno follows a [staged execution plan](./docs/mvp.md):
 |-------|-------|--------|
 | 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit | ✅ Done |
-| 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ **Current MVP** |
-| 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ⏳ In progress — see [docs/mvp.md §Stage 3](./docs/mvp.md#stage-3-the-gateway-as-managed-boundary) |
-| 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | Planned |
+| 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
+| 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ✅ Done |
+| 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | ✅ **Current** — see [docs/mvp.md §Stage 4](./docs/mvp.md#stage-4-capability-issuer--identity) |
 | 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | Planned |
 
 The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
