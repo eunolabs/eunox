@@ -90,6 +90,10 @@ import {
   EvidenceSigner,
   GENESIS_HASH,
   canonicalSha256,
+  IdentityProvider,
+  RoleCapabilityPolicy,
+  TokenSigner,
+  UserContext,
 } from '@euno/common';
 import { EnforcementEngine } from '../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
@@ -97,6 +101,7 @@ import {
   buildAttenuatedPayload,
   buildRenewedPayload,
 } from '../../capability-issuer/src/issuance/payload-builder';
+import { CapabilityIssuerService } from '../../capability-issuer/src/issuer-service';
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -1410,5 +1415,264 @@ describe('Stage-4 parity: cnf.jkt and region preservation across attenuation and
       });
       expect(renewed.region).toBe('eu-central-1');
     });
+  });
+});
+
+// ── CI-6: IssueController parity ─────────────────────────────────────────────
+//
+// The main parity suite above proves that condition/enforcement logic is
+// IdP-path-agnostic but signs tokens directly via `jose.SignJWT`, bypassing
+// the IssueController code path.
+//
+// This suite closes that gap by issuing tokens through the real
+// `CapabilityIssuerService.issueCapability()` and
+// `CapabilityIssuerService.issueCapabilityFromUserContext()` pipelines —
+// exercising IssueController.handle() and IssueController.handleFromUserContext()
+// respectively — and then asserting that the EnforcementEngine produces
+// identical decisions.
+
+describe('IssueController parity (CI-6): tokens from IssueController pipeline produce identical gateway decisions', () => {
+  // ── Custom test policy with tool:// resources ──────────────────────────────
+  // Uses `tool://` URIs to match the gateway's canonical form so the same
+  // token can be verified by both the local and hosted enforcement paths.
+  const CI6_POLICY: RoleCapabilityPolicy = {
+    default: {
+      CtrlUser: [
+        { resource: 'tool://allowed_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
+      ],
+      CtrlAdmin: [
+        { resource: 'tool://allowed_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
+        { resource: 'tool://admin_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
+      ],
+    },
+  };
+
+  // ── Minimal implementations of TokenSigner and IdentityProvider ────────────
+  // Both close over the module-level `privateKey`/`publicKeyPem` variables
+  // that are populated by the outer `beforeAll`, ensuring the gateway's
+  // `JWTTokenVerifier` (which uses `publicKeyPem`) can verify the tokens.
+
+  class Ci6Signer implements TokenSigner {
+    async sign(payload: CapabilityTokenPayload): Promise<string> {
+      return new jose.SignJWT(payload as unknown as Record<string, unknown>)
+        .setProtectedHeader({ alg: 'RS256' })
+        .sign(privateKey);
+    }
+    async getPublicKey(): Promise<string> {
+      return publicKeyPem;
+    }
+    async getKeyId(): Promise<string> {
+      return 'ci6-test-key';
+    }
+    getAlgorithm(): string {
+      return 'RS256';
+    }
+  }
+
+  class Ci6StubIdp implements IdentityProvider {
+    name = 'ci6-stub';
+    constructor(private context: UserContext) {}
+    async validateToken(_token: string): Promise<UserContext> {
+      return this.context;
+    }
+    async getUserRoles(): Promise<string[]> {
+      return this.context.roles;
+    }
+    async hasPermission(_userId: string, _permission: string): Promise<boolean> {
+      return false;
+    }
+  }
+
+  const CI6_ISSUER_DID = 'did:web:ci6-test.issuer';
+
+  // ── Helper: build a fresh service with the given roles ────────────────────
+  function buildSvc(roles: string[]): CapabilityIssuerService {
+    return new CapabilityIssuerService(
+      new Ci6Signer(),
+      new Ci6StubIdp({ userId: 'ci6-user', roles, tenantId: 'ci6-tenant' }),
+      CI6_ISSUER_DID,
+      900,
+      createLogger('ci6-test', 'test'),
+      { policy: CI6_POLICY },
+    );
+  }
+
+  // ── Helper: issue via direct path (IssueController.handle) ────────────────
+  async function issueDirectToken(
+    agentId: string,
+    roles: string[],
+    requestedCapabilities?: CapabilityConstraint[],
+  ): Promise<string> {
+    const response = await buildSvc(roles).issueCapability({
+      authToken: 'valid-auth-token',
+      agentId,
+      ...(requestedCapabilities ? { requestedCapabilities } : {}),
+    });
+    return response.token;
+  }
+
+  // ── Helper: issue via OIDC path (IssueController.handleFromUserContext) ────
+  async function issueOidcToken(
+    agentId: string,
+    roles: string[],
+    requestedCapabilities?: CapabilityConstraint[],
+  ): Promise<string> {
+    const response = await buildSvc(roles).issueCapabilityFromUserContext({
+      agentId,
+      userContext: { userId: 'ci6-user', roles, tenantId: 'ci6-tenant' },
+      ...(requestedCapabilities ? { requestedCapabilities } : {}),
+    });
+    return response.token;
+  }
+
+  // ── Tests ─────────────────────────────────────────────────────────────────
+
+  it('issueCapability (direct path): declared tool is allowed by gateway', async () => {
+    const token = await issueDirectToken('ctrl-agent', ['CtrlUser']);
+    const result = await makeEngine().validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://allowed_tool',
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it('issueCapability (direct path): undeclared tool is denied by gateway', async () => {
+    const token = await issueDirectToken('ctrl-agent', ['CtrlUser']);
+    const result = await makeEngine().validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://undeclared_tool',
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it('issueCapabilityFromUserContext (OIDC path): declared tool is allowed by gateway', async () => {
+    const token = await issueOidcToken('ctrl-agent', ['CtrlUser']);
+    const result = await makeEngine().validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://allowed_tool',
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it('issueCapabilityFromUserContext (OIDC path): undeclared tool is denied by gateway', async () => {
+    const token = await issueOidcToken('ctrl-agent', ['CtrlUser']);
+    const result = await makeEngine().validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://undeclared_tool',
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it('parity: direct path and OIDC path produce identical allowed=true for the same resource', async () => {
+    const engine = makeEngine();
+    const [directToken, oidcToken] = await Promise.all([
+      issueDirectToken('ctrl-agent', ['CtrlUser']),
+      issueOidcToken('ctrl-agent', ['CtrlUser']),
+    ]);
+    const [directResult, oidcResult] = await Promise.all([
+      engine.validateAction({ token: directToken, action: 'call', resource: 'tool://allowed_tool' }),
+      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://allowed_tool' }),
+    ]);
+    expect(directResult.allowed).toBe(oidcResult.allowed);
+    expect(directResult.allowed).toBe(true);
+  });
+
+  it('parity: direct path and OIDC path produce identical allowed=false for undeclared resource', async () => {
+    const engine = makeEngine();
+    const [directToken, oidcToken] = await Promise.all([
+      issueDirectToken('ctrl-agent', ['CtrlUser']),
+      issueOidcToken('ctrl-agent', ['CtrlUser']),
+    ]);
+    const [directResult, oidcResult] = await Promise.all([
+      engine.validateAction({ token: directToken, action: 'call', resource: 'tool://denied_tool' }),
+      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://denied_tool' }),
+    ]);
+    expect(directResult.allowed).toBe(oidcResult.allowed);
+    expect(directResult.allowed).toBe(false);
+  });
+
+  it('admin role: both paths allow admin_tool which is only in the CtrlAdmin policy', async () => {
+    const engine = makeEngine();
+    const [directToken, oidcToken] = await Promise.all([
+      issueDirectToken('ctrl-admin-agent', ['CtrlAdmin']),
+      issueOidcToken('ctrl-admin-agent', ['CtrlAdmin']),
+    ]);
+    const [directResult, oidcResult] = await Promise.all([
+      engine.validateAction({ token: directToken, action: 'call', resource: 'tool://admin_tool' }),
+      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://admin_tool' }),
+    ]);
+    expect(directResult.allowed).toBe(true);
+    expect(oidcResult.allowed).toBe(true);
+  });
+
+  it('CtrlUser role: both paths deny admin_tool which is not in CtrlUser policy', async () => {
+    const engine = makeEngine();
+    const [directToken, oidcToken] = await Promise.all([
+      issueDirectToken('ctrl-user-agent', ['CtrlUser']),
+      issueOidcToken('ctrl-user-agent', ['CtrlUser']),
+    ]);
+    const [directResult, oidcResult] = await Promise.all([
+      engine.validateAction({ token: directToken, action: 'call', resource: 'tool://admin_tool' }),
+      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://admin_tool' }),
+    ]);
+    expect(directResult.allowed).toBe(false);
+    expect(oidcResult.allowed).toBe(false);
+  });
+
+  it('issued token has correct iss, aud, and sub claims', async () => {
+    const token = await issueDirectToken('ctrl-claim-agent', ['CtrlUser']);
+    const [, payloadB64] = token.split('.');
+    const payload = JSON.parse(
+      Buffer.from(payloadB64!, 'base64url').toString('utf8'),
+    ) as {
+      iss: string;
+      aud: string;
+      sub: string;
+      authorizedBy: { userId: string };
+    };
+
+    expect(payload.iss).toBe(CI6_ISSUER_DID);
+    expect(payload.aud).toBe('tool-gateway');
+    expect(payload.sub).toBe('ctrl-claim-agent');
+    // IssueController populates authorizedBy from the IdP-resolved userContext.
+    expect(payload.authorizedBy.userId).toBe('ci6-user');
+  });
+
+  it('requestedCapabilities narrowing: token only contains requested subset', async () => {
+    // CtrlAdmin has both allowed_tool and admin_tool, but we only request allowed_tool.
+    const narrowCap: CapabilityConstraint[] = [
+      {
+        resource: 'tool://allowed_tool',
+        actions: ['call'] as unknown as import('@euno/common').Action[],
+      },
+    ];
+    const token = await issueDirectToken('ctrl-narrow-agent', ['CtrlAdmin'], narrowCap);
+    const [, payloadB64] = token.split('.');
+    const payload = JSON.parse(
+      Buffer.from(payloadB64!, 'base64url').toString('utf8'),
+    ) as { capabilities: Array<{ resource: string }> };
+
+    // Token carries only the requested subset.
+    expect(payload.capabilities.length).toBe(1);
+    expect(payload.capabilities[0]!.resource).toBe('tool://allowed_tool');
+
+    const engine = makeEngine();
+    // Gateway honours the narrowed scope.
+    const allowed = await engine.validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://allowed_tool',
+    });
+    const denied = await engine.validateAction({
+      token,
+      action: 'call',
+      resource: 'tool://admin_tool',
+    });
+    expect(allowed.allowed).toBe(true);
+    expect(denied.allowed).toBe(false);
   });
 });

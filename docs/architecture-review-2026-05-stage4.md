@@ -81,16 +81,24 @@ contains `_(add names`.
 **Files:** `public/packages/cli/tests/cli.test.ts:369-393, 895-942`,
 `euno-platform/packages/integration-tests/tests/`
 
+**Status: ✅ Fixed** — Added `euno-platform/packages/integration-tests/tests/cli-issuer.test.ts`
+(17 tests). The test file wires an in-process mock-IdP server (ES256) and a minimal issuer HTTP
+server backed by `CapabilityIssuerService` + `OidcStateStore`, exercises the full loopback
+exchange programmatically, and asserts:
+
+- Happy path: valid 3-part JWT issued, correct `sub`/`iss`/`aud`/`authorizedBy` claims.
+- Token file written at 0600 Unix permissions.
+- State binding: agentId bound to state enforced on submission.
+- Capabilities come from the IdP-resolved role.
+- Error paths: nonce mismatch, unknown/expired state, id_token replay (401), wrong signing key (401),
+  agentId mismatch (401), missing fields (400).
+- JWKS and discovery endpoints.
+
 The `euno request` CLI tests cover only input-validation errors. No file in
 `euno-platform/packages/integration-tests/tests/` exercises the full PKCE
 browser-redirect → loopback → code-exchange → issuer-POST → token-write path.
 Exit criterion E3 explicitly requires happy-path + error-path integration tests
 in `euno-platform/packages/integration-tests/`.
-
-**Recommendation:** Add `integration-tests/tests/cli-issuer.test.ts` that wires a
-mock-IdP server and the in-process issuer (as `e2e.test.ts` does), exercises the
-loopback exchange programmatically, and asserts the token is written at `0600`
-permissions. See `infra/mock-oidc/server.mjs` for a reusable mock pattern.
 
 ---
 
@@ -237,6 +245,12 @@ separate revocation list and document this in `docs/issuer-operator-runbook.md`.
 
 **File:** `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts:877-962`
 
+**Status: ✅ Fixed** — Added a new `"IssueController parity (CI-6)"` describe block at the end of
+`cross-stage-parity.test.ts` (10 tests). The block exercises `CapabilityIssuerService.issueCapability()`
+(IssueController.handle) and `CapabilityIssuerService.issueCapabilityFromUserContext()`
+(IssueController.handleFromUserContext) using the same signing key and verifier as the rest of the
+suite, then asserts identical `EnforcementEngine.validateAction()` outcomes across both code paths.
+
 The Task 11 parity test proves gateway enforcement is IdP-path-agnostic, but does
 not exercise the `IssueController` code path. This complements but does not
 substitute for the CR-3 integration test.
@@ -277,7 +291,7 @@ deferred.
 |---|---|---|---|
 | **P0** | CR-1 — Redis-backed `OidcStateStore` | None | ✅ Fixed |
 | **P0** | CR-2 — Threat model sign-off | Process action | ⬜ Pending |
-| **P0** | CR-3 — CLI↔issuer integration test | Issuer harness from `e2e.test.ts` | ⬜ Pending |
+| **P0** | CR-3 — CLI↔issuer integration test | Issuer harness from `e2e.test.ts` | ✅ Fixed |
 | **P1** | CR-4 — Quickstart PKCE docs fix | Docs only | ⬜ Pending |
 | **P1** | DI-2 — Admin UI token-in-URL → session cookie | Small auth refactor | ⬜ Pending |
 | **P1** | CI-4 — HTML-escape dynamic values in admin UI | `htmlEscape` utility | ⬜ Pending |
