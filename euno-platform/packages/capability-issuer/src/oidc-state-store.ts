@@ -69,6 +69,10 @@ export interface PendingOidcState {
  * Common interface for OIDC state/nonce and ID-token-hash replay prevention.
  * Implemented by both {@link OidcStateStore} (in-memory) and
  * {@link RedisOidcStateStore} (Redis-backed).
+ *
+ * All methods return `Promise<T>` so callers can `await` uniformly regardless
+ * of the backing implementation. The in-memory implementation resolves
+ * synchronously (no I/O), so there is no latency penalty in non-Redis deployments.
  */
 export interface IOidcStateStore {
   /**
@@ -79,19 +83,19 @@ export interface IOidcStateStore {
     tenantId?: string;
     agentId?: string;
     redirectUri?: string;
-  }): Promise<{ state: string; nonce: string }> | { state: string; nonce: string };
+  }): Promise<{ state: string; nonce: string }>;
 
   /**
    * Consume and return the pending state entry for `state`, or `undefined` if
    * the state is unknown or has expired. Each state may only be consumed once.
    */
-  consumeState(state: string): Promise<PendingOidcState | undefined> | PendingOidcState | undefined;
+  consumeState(state: string): Promise<PendingOidcState | undefined>;
 
   /**
    * Returns `true` if the ID-token hash has already been used within the
    * current TTL window, `false` otherwise. Does **not** mark the hash as used.
    */
-  isIdTokenHashUsed(hash: string): Promise<boolean> | boolean;
+  isIdTokenHashUsed(hash: string): Promise<boolean>;
 
   /**
    * Mark the ID-token hash as used. Subsequent calls to
@@ -100,7 +104,7 @@ export interface IOidcStateStore {
    *
    * Call this **before** any remote IdP call (fail-closed semantics).
    */
-  markIdTokenHashUsed(hash: string): Promise<void> | void;
+  markIdTokenHashUsed(hash: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,11 +144,11 @@ export class OidcStateStore implements IOidcStateStore {
    * Create a new pending state. Returns the generated `state` and `nonce`
    * values that should be included in the upstream IdP authorization URL.
    */
-  createState(opts: {
+  async createState(opts: {
     tenantId?: string;
     agentId?: string;
     redirectUri?: string;
-  } = {}): { state: string; nonce: string } {
+  } = {}): Promise<{ state: string; nonce: string }> {
     this.sweep();
     const state = crypto.randomBytes(32).toString('base64url');
     const nonce = crypto.randomBytes(32).toString('base64url');
@@ -164,7 +168,7 @@ export class OidcStateStore implements IOidcStateStore {
    * Consume and return the pending state entry for `state`, or `undefined` if
    * the state is unknown or has expired. Each state may only be consumed once.
    */
-  consumeState(state: string): PendingOidcState | undefined {
+  async consumeState(state: string): Promise<PendingOidcState | undefined> {
     const entry = this.pendingStates.get(state);
     if (!entry) return undefined;
     this.pendingStates.delete(state);
@@ -180,7 +184,7 @@ export class OidcStateStore implements IOidcStateStore {
    * Returns `true` if the ID-token hash has already been seen within the
    * current TTL window, `false` otherwise. **Does not** mark the hash as used.
    */
-  isIdTokenHashUsed(hash: string): boolean {
+  async isIdTokenHashUsed(hash: string): Promise<boolean> {
     const expiry = this.usedIdTokenHashes.get(hash);
     if (expiry === undefined) return false;
     if (expiry <= Date.now()) {
@@ -199,7 +203,7 @@ export class OidcStateStore implements IOidcStateStore {
    * if the IdP call or downstream issuance fails, the same token cannot be
    * resubmitted. The caller must obtain a fresh token to retry.
    */
-  markIdTokenHashUsed(hash: string): void {
+  async markIdTokenHashUsed(hash: string): Promise<void> {
     this.sweep();
     this.usedIdTokenHashes.set(hash, Date.now() + this.codeTtlSeconds * 1000);
   }
@@ -306,9 +310,9 @@ export class RedisOidcStateStore implements IOidcStateStore {
     options: { keyPrefix?: string } = {},
   ) {
     this.keyPrefix = options.keyPrefix ?? 'oidc:';
-    this.client.on('error', (err: unknown) => {
-      // Errors are logged by the bootstrap; no action needed here.
-      void err;
+    this.client.on('error', (_err: unknown) => {
+      // Errors are surfaced via the module-level 'error' listener registered
+      // in createOidcStateStoreFromEnv; no additional action needed here.
     });
   }
 

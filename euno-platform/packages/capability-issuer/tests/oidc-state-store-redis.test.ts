@@ -15,7 +15,6 @@ import {
   RedisOidcStateStoreClient,
   IOidcStateStore,
   createOidcStateStoreFromEnv,
-  PendingOidcState,
 } from '../src/oidc-state-store';
 
 // ---------------------------------------------------------------------------
@@ -250,11 +249,8 @@ describe('createOidcStateStoreFromEnv', () => {
 
   it('in-memory fallback store is functional (createState / consumeState)', async () => {
     const store = await createOidcStateStoreFromEnv({ NODE_ENV: 'development' });
-    const { state, nonce } = store.createState({ agentId: 'a1' }) as {
-      state: string;
-      nonce: string;
-    };
-    const entry = store.consumeState(state) as PendingOidcState | undefined;
+    const { state, nonce } = await store.createState({ agentId: 'a1' });
+    const entry = await store.consumeState(state);
     expect(entry).toBeDefined();
     expect(entry!.nonce).toBe(nonce);
   });
@@ -301,10 +297,7 @@ describe('createOidcStateStoreFromEnv', () => {
       logger,
     );
     // Functional check: the fallback store must be usable.
-    const result = store.createState({ agentId: 'fallback-test' }) as {
-      state: string;
-      nonce: string;
-    };
+    const result = await store.createState({ agentId: 'fallback-test' });
     expect(typeof result.state).toBe('string');
     expect(errorMock).toHaveBeenCalledWith(
       expect.stringContaining('ioredis'),
@@ -345,7 +338,7 @@ describe('createOidcStateStoreFromEnv', () => {
     })) as OidcStateStore;
     expect(store).toBeInstanceOf(OidcStateStore);
     // Verify the TTL is honoured: create a state and confirm count is 1.
-    store.createState({});
+    await store.createState({});
     expect(store.pendingStateCount).toBe(1);
   });
 });
