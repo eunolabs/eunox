@@ -199,9 +199,10 @@ async function resolveAuth(
  *
  * `JSON.stringify` alone is insufficient: a string like `</script>` in the
  * serialised output would break out of the script context.  We replace the
- * three characters that can cause premature script termination or HTML
- * injection with their Unicode escape sequences — these are valid inside
- * JSON string values and are transparently decoded by the JS engine.
+ * four characters that can cause premature script termination or HTML
+ * injection (`<`, `>`, `/`, `&`) with their Unicode escape sequences — these
+ * are valid inside JSON string values and are transparently decoded by the
+ * JS engine.
  *
  * CI-4 fix: all dynamic values embedded in script contexts MUST go through
  * this helper rather than a bare `JSON.stringify`.

@@ -99,7 +99,9 @@ The token is printed to stdout and saved to `~/.euno/tokens/my-agent.jwt`.
 
 | Error | Fix |
 |-------|-----|
-| `✗ No browser available` | Set `--token` and use the non-interactive path, or run in a desktop environment |
+| `✗ Could not start loopback server: …` | Port conflict or firewall; retry or use the non-interactive `--token` path |
+| `Authorization timed out after 2 minutes` | You did not complete the browser sign-in; run `euno request` again |
+| `✗ Authorization failed: …` | The IdP returned an error; check `idpAuthUrl`, `idpClientId`, and redirect URI registration |
 | `✗ No stored token found` | Run `euno request` first |
 | `✗ Token has expired` | Run `euno request --refresh --agent-id <id>` |
 | `✗ Signature verification FAILED` | Ensure `--iss` matches the token's issuer and `issuerUrl` JWKS is reachable |

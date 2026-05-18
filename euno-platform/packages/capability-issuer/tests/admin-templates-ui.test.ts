@@ -284,14 +284,19 @@ describe('Admin UI — list page', () => {
   });
 
   it('list page does NOT accept ?token= query parameter (DI-2 — removed)', async () => {
-    // The ?token= query param path has been removed as part of DI-2.
-    // The page should still render (auth is via X-Admin-Key header here)
-    // but the page HTML must not contain the old localStorage ?token= logic.
+    // Verify two things:
+    //   (a) A request carrying ONLY ?token=<jwt> (no cookie, no header, no X-Admin-Key)
+    //       is rejected with 401 — proving the query-param auth path is gone.
+    //   (b) When the request IS authenticated (via X-Admin-Key), the rendered HTML
+    //       still contains no legacy localStorage ?token= handling.
+    await request(app)
+      .get('/admin/templates?token=some-future-jwt')
+      .expect(401); // (a) ?token= alone must NOT authenticate
+
     const res = await request(app)
       .get('/admin/templates?token=some-future-jwt')
       .set('X-Admin-Key', ADMIN_KEY)
-      .expect(200);
-    // No localStorage usage
+      .expect(200); // (b) authenticated via X-Admin-Key — page still renders
     expect(res.text).not.toContain('localStorage.setItem');
   });
 });
