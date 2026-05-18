@@ -29,14 +29,21 @@ euno config set agentId my-agent
 
 Config is persisted to `~/.euno/config` (mode 0600).
 
-## 3. Request a Capability Token
+## 3. Request a Capability Token (PKCE browser flow — recommended)
 
-If you have an Azure AD / IdP token already:
+The primary path uses the browser-based PKCE flow. The CLI opens your default
+browser to your IdP's authorisation endpoint, receives the authorization code
+on a loopback callback, exchanges it with the issuer, and writes the capability
+token to disk. **No credentials ever appear in a URL or shell history.**
+
 ```bash
-euno request --agent-id my-agent --token $AZURE_AD_TOKEN
+euno request --agent-id my-agent
 ```
 
-The token is printed to stdout and saved to `~/.euno/tokens/my-agent.jwt`.
+The CLI will:
+1. Open your browser at your IdP's authorisation page.
+2. Complete the PKCE exchange automatically when you authenticate.
+3. Write the capability token to `~/.euno/tokens/my-agent.jwt` (mode 0600).
 
 ## 4. Verify the Token
 
@@ -69,11 +76,30 @@ Token revocation is an admin operation handled by the gateway (not the issuer). 
 euno revoke <jti> --admin-key $EUNO_ADMIN_API_KEY --gateway-url https://gateway.example.com
 ```
 
+## Non-interactive / CI use
+
+> **⚠ Security note:** The `--token` flag bypasses the PKCE browser flow and
+> **skips nonce binding and PKCE state tracking**, which are the primary
+> defences against authorization-code and token-replay attacks. Use this flag
+> **only** in non-interactive CI environments where a browser cannot be launched,
+> and ensure the token is injected via a secrets manager (not plain-text env
+> vars in logs).
+
+In a CI pipeline where you pre-obtain an IdP token through a machine-identity
+credential exchange (e.g. GitHub OIDC → `aws sts assume-role-with-web-identity`
+→ Cognito federation), pass the resulting token directly:
+
+```bash
+euno request --agent-id my-agent --token "$IDP_TOKEN"
+```
+
+The token is printed to stdout and saved to `~/.euno/tokens/my-agent.jwt`.
+
 ## Troubleshooting
 
 | Error | Fix |
 |-------|-----|
-| `✗ Azure AD bearer token is required` | Pass `--token $TOKEN` or set `AZURE_AD_TOKEN` |
+| `✗ No browser available` | Set `--token` and use the non-interactive path, or run in a desktop environment |
 | `✗ No stored token found` | Run `euno request` first |
 | `✗ Token has expired` | Run `euno request --refresh --agent-id <id>` |
 | `✗ Signature verification FAILED` | Ensure `--iss` matches the token's issuer and `issuerUrl` JWKS is reachable |

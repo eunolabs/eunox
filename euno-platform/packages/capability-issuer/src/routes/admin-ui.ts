@@ -1,34 +1,45 @@
 /**
  * Server-rendered admin UI for manifest templates — Task 7 of Stage 4.
  *
- * Serves four HTML pages under `/admin/` from the issuer's Express process.
- * All pages require the same authentication as the admin API (either an
- * operator JWT via `Authorization: Bearer <token>` or the `X-Admin-Key`
- * shared secret). If authentication fails the handler returns 401 so the
- * JavaScript layer or a browser redirect can surface the login prompt.
+ * Serves pages under `/admin/` from the issuer's Express process.
+ * All pages (except /admin/login) require the same authentication as the
+ * admin API (either an operator JWT or the `X-Admin-Key` shared secret).
  *
  * Pages:
- *   GET /admin/                           → redirect to /admin/templates
- *   GET /admin/templates                  → list templates
- *   GET /admin/templates/new              → create-template form
- *   GET /admin/templates/:id              → detail + version history
- *   GET /admin/templates/:id/assign       → assignment form + active assignments
+ *   GET  /admin/                           → redirect to /admin/templates
+ *   GET  /admin/login                      → login page (no auth required)
+ *   POST /admin/auth/session               → exchange JWT for session cookie
+ *   DELETE /admin/auth/session             → clear session cookie (logout)
+ *   GET  /admin/templates                  → list templates
+ *   GET  /admin/templates/new              → create-template form
+ *   GET  /admin/templates/:id              → detail + version history
+ *   GET  /admin/templates/:id/assign       → assignment form + active assignments
  *
  * Auth:
  *   The bearer token may be supplied in:
- *     1. `Authorization: Bearer <token>` header (preferred — used by browsers
- *        with localStorage-stored tokens).
- *     2. `?token=<token>` query parameter (initial redirect from IdP; the page
- *        reads this and stores it in localStorage, then strips it from the URL).
- *     3. `X-Admin-Key: <secret>` header (fallback shared-secret path).
+ *     1. `euno_admin_session` HttpOnly cookie — set via POST /admin/auth/session.
+ *        This is the preferred browser path and avoids writing tokens to URLs.
+ *     2. `Authorization: Bearer <token>` header — programmatic / curl access.
+ *     3. `X-Admin-Key: <secret>` header — shared-secret fallback.
+ *
+ *   The former `?token=` query-parameter path has been removed (DI-2) to
+ *   prevent tokens from appearing in proxy access logs and browser history.
+ *
+ * Session cookie exchange flow (replaces ?token= — DI-2 fix):
+ *   1. Caller POSTs { token: "<jwt>" } to POST /admin/auth/session.
+ *   2. Server validates the JWT and sets
+ *      Set-Cookie: euno_admin_session=<jwt>; HttpOnly; Secure; SameSite=Strict;
+ *                  Path=/admin; Max-Age=3600
+ *   3. Browser navigates to /admin/templates; cookie is sent automatically.
  *
  * All data calls go through the existing `/api/v1/admin/templates` API — there
  * are no UI-specific backend endpoints.  The server renders the page shell and
- * the client JavaScript fetches data from the admin API using the stored token.
+ * the client JavaScript fetches data from the admin API using the session token
+ * embedded server-side in the page (never written to the URL).
  */
 
 import * as crypto from 'crypto';
-import { Router, Request, Response, NextFunction } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import { CapabilityError, ErrorCode, createLogger } from '@euno/common';
 import type { ManifestTemplateStore } from '../manifest-template-store';
 import type { IssuerAdminJwtVerifier } from './admin-templates';
@@ -51,6 +62,15 @@ export interface AdminUiRouterOptions {
    * relative paths are used (works when UI and API are on the same origin).
    */
   publicBaseUrl?: string;
+  /**
+   * Max-Age for the `euno_admin_session` cookie in seconds. Defaults to 3600.
+   */
+  sessionMaxAgeSeconds?: number;
+  /**
+   * When false, the session cookie is issued without the `Secure` attribute
+   * (useful for HTTP-only test environments). Defaults to true.
+   */
+  secureCookies?: boolean;
 }
 
 // ── Auth helper ────────────────────────────────────────────────────────────
@@ -59,6 +79,8 @@ interface AuthResult {
   operatorId: string;
   tenantId: string;
   isPlatformAdmin: boolean;
+  /** The raw bearer token (JWT) that was verified, if one was used. */
+  rawToken?: string;
 }
 
 /**
@@ -89,36 +111,76 @@ function createXAdminKeyChecker(adminApiKey: string): ((provided: string) => boo
   };
 }
 
+/**
+ * Parse the `Cookie` request header into a name→value map.
+ * Handles URL-encoded values and ignores malformed pairs.
+ */
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const name = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (name) {
+      try {
+        out[name] = decodeURIComponent(value);
+      } catch {
+        out[name] = value;
+      }
+    }
+  }
+  return out;
+}
+
+/** Cookie name used for the server-side session. */
+export const SESSION_COOKIE_NAME = 'euno_admin_session';
+
 async function resolveAuth(
   req: Request,
   checkXAdminKey: ((provided: string) => boolean) | null,
   jwtVerifier?: IssuerAdminJwtVerifier,
 ): Promise<AuthResult | null> {
-  // 1. Try Bearer JWT (from Authorization header or ?token= query param).
-  const rawToken =
-    (() => {
-      const auth = req.headers['authorization'];
-      if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
-        return auth.slice('bearer '.length).trim();
-      }
-      return undefined;
-    })() ??
-    (typeof req.query.token === 'string' && req.query.token ? req.query.token : undefined);
-
-  if (rawToken && jwtVerifier) {
+  // 1. Try session cookie (HttpOnly; set via POST /admin/auth/session).
+  const cookies = parseCookies(req.headers['cookie']);
+  const cookieToken = cookies[SESSION_COOKIE_NAME];
+  if (cookieToken && jwtVerifier) {
     try {
-      const principal = await jwtVerifier.verify(rawToken);
+      const principal = await jwtVerifier.verify(cookieToken);
       return {
         operatorId: principal.operatorId,
         tenantId: principal.tenantId,
         isPlatformAdmin: principal.isPlatformAdmin,
+        rawToken: cookieToken,
+      };
+    } catch {
+      // Cookie token invalid/expired — fall through to other methods.
+    }
+  }
+
+  // 2. Try Bearer JWT from Authorization header.
+  const authHeader = req.headers['authorization'];
+  const headerToken =
+    typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')
+      ? authHeader.slice('bearer '.length).trim()
+      : undefined;
+
+  if (headerToken && jwtVerifier) {
+    try {
+      const principal = await jwtVerifier.verify(headerToken);
+      return {
+        operatorId: principal.operatorId,
+        tenantId: principal.tenantId,
+        isPlatformAdmin: principal.isPlatformAdmin,
+        rawToken: headerToken,
       };
     } catch {
       // Fall through to X-Admin-Key path.
     }
   }
 
-  // 2. Try X-Admin-Key shared secret (active only when adminApiKey was configured).
+  // 3. Try X-Admin-Key shared secret (active only when adminApiKey was configured).
   if (checkXAdminKey) {
     const provided = req.headers['x-admin-key'];
     if (typeof provided === 'string' && checkXAdminKey(provided)) {
@@ -131,7 +193,41 @@ async function resolveAuth(
 
 // ── HTML helpers ───────────────────────────────────────────────────────────
 
-function pageShell(title: string, body: string, scriptExtra = ''): string {
+/**
+ * Safely embed an arbitrary value as a JSON literal inside a `<script>` block.
+ *
+ * `JSON.stringify` alone is insufficient: a string like `</script>` in the
+ * serialised output would break out of the script context.  We replace the
+ * three characters that can cause premature script termination or HTML
+ * injection with their Unicode escape sequences — these are valid inside
+ * JSON string values and are transparently decoded by the JS engine.
+ *
+ * CI-4 fix: all dynamic values embedded in script contexts MUST go through
+ * this helper rather than a bare `JSON.stringify`.
+ */
+function safeJsonEmbed(val: unknown): string {
+  return JSON.stringify(val)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
+/**
+ * Render the full HTML page shell.
+ *
+ * @param title        Page `<title>` text (HTML-escaped automatically).
+ * @param body         Inner HTML for the main content area (caller's responsibility to escape).
+ * @param scriptExtra  Additional `<script>` blocks appended before `</body>`.
+ * @param sessionToken The operator's raw JWT, embedded server-side so the
+ *                     client-side JS can include it in API calls without
+ *                     ever writing it to the URL or localStorage.
+ */
+function pageShell(title: string, body: string, scriptExtra = '', sessionToken?: string): string {
+  // Embed the session token server-side.  We use safeJsonEmbed so that a
+  // malformed token string cannot break out of the script block (CI-4).
+  const tokenInit = sessionToken
+    ? `window.__eunoAdminToken = ${safeJsonEmbed(sessionToken)};`
+    : `window.__eunoAdminToken = '';`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -154,6 +250,7 @@ function pageShell(title: string, body: string, scriptExtra = ''): string {
 <nav class="navbar navbar-dark bg-dark px-4">
   <a class="navbar-brand fw-bold" href="/admin/templates">Euno · Templates</a>
   <span class="navbar-text text-muted small" id="nav-tenant"></span>
+  <a class="nav-link text-muted small ms-auto" href="#" id="btn-logout">Log out</a>
 </nav>
 <div class="container-fluid">
   <div class="row">
@@ -165,7 +262,7 @@ function pageShell(title: string, body: string, scriptExtra = ''): string {
     </nav>
     <main class="col-md-10 ms-sm-auto col-lg-10 px-md-4 py-4">
       <div id="auth-error" class="alert alert-warning d-none">
-        Not authenticated. <a href="#" id="auth-help">How to obtain a token</a>.
+        Not authenticated. <a href="/admin/login">Sign in</a>.
       </div>
       ${body}
     </main>
@@ -174,24 +271,16 @@ function pageShell(title: string, body: string, scriptExtra = ''): string {
 <script>
 // ── Token management ──────────────────────────────────────────────────────
 (function () {
-  var qs = new URLSearchParams(window.location.search);
-  var qToken = qs.get('token');
-  if (qToken) {
-    localStorage.setItem('euno_admin_token', qToken);
-    qs.delete('token');
-    var newUrl = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
-    history.replaceState({}, '', newUrl);
-  }
-  var token = localStorage.getItem('euno_admin_token') || '';
-  if (!token) {
+  // The session token is embedded server-side by the template renderer.
+  // It is never written to the URL or localStorage (DI-2 fix).
+  ${tokenInit}
+  if (!window.__eunoAdminToken) {
     document.getElementById('auth-error').classList.remove('d-none');
   }
-  // Expose token to page scripts
-  window.__eunoAdminToken = token;
   // Show tenant from JWT sub
-  if (token) {
+  if (window.__eunoAdminToken) {
     try {
-      var parts = token.split('.');
+      var parts = window.__eunoAdminToken.split('.');
       var p = JSON.parse(atob(parts[1].replace(/-/g,'+').replace(/_/g,'/')));
       if (p.tenantId || p.tid) {
         document.getElementById('nav-tenant').textContent = 'tenant: ' + (p.tenantId || p.tid);
@@ -199,8 +288,13 @@ function pageShell(title: string, body: string, scriptExtra = ''): string {
     } catch (_) {}
   }
   window.authHeaders = function() {
-    return token ? { 'Authorization': 'Bearer ' + token } : {};
+    return window.__eunoAdminToken ? { 'Authorization': 'Bearer ' + window.__eunoAdminToken } : {};
   };
+  document.getElementById('btn-logout').addEventListener('click', function(ev){
+    ev.preventDefault();
+    fetch('/admin/auth/session', { method: 'DELETE', credentials: 'same-origin' })
+      .finally(function(){ window.location.href = '/admin/login'; });
+  });
 })();
 </script>
 ${scriptExtra}
@@ -219,7 +313,7 @@ function escHtml(s: string): string {
 
 // ── Page: template list ────────────────────────────────────────────────────
 
-function renderListPage(): string {
+function renderListPage(sessionToken?: string): string {
   const body = `
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2 class="h4 mb-0">Manifest Templates</h2>
@@ -302,12 +396,12 @@ function renderListPage(): string {
 })();
 </script>`;
 
-  return pageShell('Templates', body, script);
+  return pageShell('Templates', body, script, sessionToken);
 }
 
 // ── Page: create template ──────────────────────────────────────────────────
 
-function renderCreatePage(): string {
+function renderCreatePage(sessionToken?: string): string {
   const MANIFEST_PLACEHOLDER = JSON.stringify(
     {
       agentId: 'my-agent',
@@ -386,12 +480,12 @@ document.getElementById('create-form').addEventListener('submit', function(ev){
 });
 </script>`;
 
-  return pageShell('New Template', body, script);
+  return pageShell('New Template', body, script, sessionToken);
 }
 
 // ── Page: template detail + version history ────────────────────────────────
 
-function renderDetailPage(templateId: string): string {
+function renderDetailPage(templateId: string, sessionToken?: string): string {
   const safeId = encodeURIComponent(templateId);
   const body = `
 <div id="detail-loading" class="text-muted">Loading…</div>
@@ -452,7 +546,7 @@ function renderDetailPage(templateId: string): string {
 
   const script = `<script>
 (function(){
-  var TID = ${JSON.stringify(templateId)};
+  var TID = ${safeJsonEmbed(templateId)};
   function fmt(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
   function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -530,12 +624,12 @@ function renderDetailPage(templateId: string): string {
 })();
 </script>`;
 
-  return pageShell('Template Detail', body, script);
+  return pageShell('Template Detail', body, script, sessionToken);
 }
 
 // ── Page: assignments ──────────────────────────────────────────────────────
 
-function renderAssignPage(templateId: string): string {
+function renderAssignPage(templateId: string, sessionToken?: string): string {
   const safeId = encodeURIComponent(templateId);
   const body = `
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -584,7 +678,7 @@ function renderAssignPage(templateId: string): string {
 
   const script = `<script>
 (function(){
-  var TID = ${JSON.stringify(templateId)};
+  var TID = ${safeJsonEmbed(templateId)};
   function fmt(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
   function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -653,31 +747,167 @@ function renderAssignPage(templateId: string): string {
 })();
 </script>`;
 
-  return pageShell('Template Assignments', body, script);
+  return pageShell('Template Assignments', body, script, sessionToken);
 }
 
 // ── Router factory ─────────────────────────────────────────────────────────
 
 export function createAdminUiRouter(opts: AdminUiRouterOptions): Router {
   const router = Router();
+  const sessionMaxAge = opts.sessionMaxAgeSeconds ?? 3600;
+  const secureCookies = opts.secureCookies !== false;
 
   // Pre-compute the X-Admin-Key checker once at router creation time.
   const checkXAdminKey = createXAdminKeyChecker(opts.adminApiKey);
 
-  // Auth guard: applies to all routes in this router.
+  // ── Session cookie helpers ─────────────────────────────────────────────
+
+  function setSessionCookie(res: Response, token: string): void {
+    const cookieParts = [
+      `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+      `Max-Age=${sessionMaxAge}`,
+      'Path=/admin',
+      'HttpOnly',
+      'SameSite=Strict',
+    ];
+    if (secureCookies) cookieParts.push('Secure');
+    res.setHeader('Set-Cookie', cookieParts.join('; '));
+  }
+
+  function clearSessionCookie(res: Response): void {
+    const cookieParts = [
+      `${SESSION_COOKIE_NAME}=`,
+      'Max-Age=0',
+      'Path=/admin',
+      'HttpOnly',
+      'SameSite=Strict',
+    ];
+    if (secureCookies) cookieParts.push('Secure');
+    res.setHeader('Set-Cookie', cookieParts.join('; '));
+  }
+
+  // ── Pre-auth routes (no auth guard) ────────────────────────────────────
+
+  // GET /admin/login — login page (no auth required)
+  router.get('/login', (_req: Request, res: Response) => {
+    const body = `
+<div class="row justify-content-center mt-5">
+  <div class="col-md-5">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">Sign in to Euno Admin</div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          Paste your operator JWT below. The token will be sent to the server
+          once and exchanged for a secure session cookie — it will never appear
+          in a URL.
+        </p>
+        <div class="mb-3">
+          <label for="login-token" class="form-label fw-semibold">Operator JWT</label>
+          <textarea class="form-control font-monospace" id="login-token" rows="5"
+            placeholder="eyJ..." spellcheck="false" autocomplete="off"></textarea>
+        </div>
+        <div id="login-error" class="alert alert-danger d-none"></div>
+        <button class="btn btn-primary" id="btn-login">Sign in</button>
+      </div>
+    </div>
+  </div>
+</div>`;
+    const script = `<script>
+document.getElementById('btn-login').addEventListener('click', function(){
+  var token = document.getElementById('login-token').value.trim();
+  var errEl = document.getElementById('login-error');
+  errEl.classList.add('d-none');
+  if (!token) { errEl.textContent = 'Token is required.'; errEl.classList.remove('d-none'); return; }
+  fetch('/admin/auth/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: token }),
+    credentials: 'same-origin',
+  }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
+  .then(function(res){
+    if (!res.ok) {
+      errEl.textContent = (res.data.error && res.data.error.message) ? res.data.error.message : 'Authentication failed.';
+      errEl.classList.remove('d-none');
+    } else {
+      window.location.href = '/admin/templates';
+    }
+  }).catch(function(e){ errEl.textContent = 'Request failed: ' + e; errEl.classList.remove('d-none'); });
+});
+</script>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(pageShell('Sign in', body, script));
+  });
+
+  // POST /admin/auth/session — exchange a JWT for a session cookie (DI-2 fix)
+  //
+  // Accepts JSON body { token: "<jwt>" } or Authorization: Bearer <jwt>.
+  // Does NOT go through authGuard — this IS the auth establishment endpoint.
+  //
+  // Security notes:
+  //  - Accepts only JSON bodies (Content-Type application/json) which prevents
+  //    cross-origin form submissions from triggering a session.
+  //  - SameSite=Strict on the resulting cookie prevents CSRF on all subsequent requests.
+  //  - The JWT is validated before the cookie is issued.
+  router.post('/auth/session', express.json({ limit: '32kb' }), (req: Request, res: Response, next: NextFunction): void => {
+    const rawToken: string | undefined =
+      (typeof req.body?.token === 'string' && req.body.token ? req.body.token : undefined) ??
+      (() => {
+        const auth = req.headers['authorization'];
+        return typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')
+          ? auth.slice('bearer '.length).trim()
+          : undefined;
+      })();
+
+    if (!rawToken) {
+      res.status(400).json({ error: { message: 'token is required (body.token or Authorization: Bearer)' } });
+      return;
+    }
+
+    if (!opts.jwtVerifier) {
+      // Without a JWT verifier the session cookie path is unavailable; fall
+      // back to informing the caller to use X-Admin-Key directly.
+      res.status(501).json({ error: { message: 'JWT session exchange not configured on this issuer' } });
+      return;
+    }
+
+    opts.jwtVerifier
+      .verify(rawToken)
+      .then(() => {
+        setSessionCookie(res, rawToken);
+        res.status(200).json({ ok: true });
+      })
+      .catch((err: unknown) => {
+        opts.logger.warn('Admin UI session exchange failed', { err: String(err) });
+        next(new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Invalid or expired token', 401));
+      });
+  });
+
+  // DELETE /admin/auth/session — clear the session cookie (logout)
+  router.delete('/auth/session', (_req: Request, res: Response) => {
+    clearSessionCookie(res);
+    res.status(200).json({ ok: true });
+  });
+
+  // ── Auth guard: applies to all remaining routes ─────────────────────────
+
   const authGuard = (req: Request, res: Response, next: NextFunction): void => {
     resolveAuth(req, checkXAdminKey, opts.jwtVerifier)
       .then((result) => {
         if (!result) {
-          // If it looks like a browser request, add a hint; otherwise plain 401.
+          // Clear a stale/invalid session cookie so the browser does not
+          // keep replaying it on every request.
+          clearSessionCookie(res);
+          // If it looks like a browser request, render a friendly 401 page;
+          // otherwise emit a plain JSON error.
           const wantHtml = (req.headers['accept'] || '').includes('text/html');
           if (wantHtml) {
             res.status(401).send(
               pageShell(
                 'Unauthorised',
                 '<div class="alert alert-warning">'
-                + 'Admin authentication required. Supply an <code>Authorization: Bearer &lt;token&gt;</code> '
-                + 'header or append <code>?token=&lt;token&gt;</code> to the URL.</div>',
+                + 'Admin authentication required. '
+                + '<a href="/admin/login">Sign in</a> or supply an '
+                + '<code>Authorization: Bearer &lt;token&gt;</code> header.</div>',
               ),
             );
           } else {
@@ -695,6 +925,8 @@ export function createAdminUiRouter(opts: AdminUiRouterOptions): Router {
 
   router.use(authGuard);
 
+  // ── Authenticated routes ────────────────────────────────────────────────
+
   // GET /admin/ → redirect to /admin/templates
   router.get('/', (_req: Request, res: Response) => {
     res.redirect(302, '/admin/templates');
@@ -702,27 +934,31 @@ export function createAdminUiRouter(opts: AdminUiRouterOptions): Router {
 
   // GET /admin/templates — list
   router.get('/templates', (_req: Request, res: Response) => {
+    const auth = res.locals['adminUiAuth'] as AuthResult | undefined;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderListPage());
+    res.send(renderListPage(auth?.rawToken));
   });
 
   // GET /admin/templates/new — create form
   router.get('/templates/new', (_req: Request, res: Response) => {
+    const auth = res.locals['adminUiAuth'] as AuthResult | undefined;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderCreatePage());
+    res.send(renderCreatePage(auth?.rawToken));
   });
 
   // GET /admin/templates/:id/assign — assignment page
   // Must be registered BEFORE /templates/:id to avoid `:id` capturing "new".
   router.get('/templates/:id/assign', (req: Request, res: Response) => {
+    const auth = res.locals['adminUiAuth'] as AuthResult | undefined;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderAssignPage(req.params['id'] ?? ''));
+    res.send(renderAssignPage(req.params['id'] ?? '', auth?.rawToken));
   });
 
   // GET /admin/templates/:id — detail + version history
   router.get('/templates/:id', (req: Request, res: Response) => {
+    const auth = res.locals['adminUiAuth'] as AuthResult | undefined;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderDetailPage(req.params['id'] ?? ''));
+    res.send(renderDetailPage(req.params['id'] ?? '', auth?.rawToken));
   });
 
   return router;
