@@ -629,7 +629,7 @@ describe('Admin UI — CI-4: HTML escaping and safe JSON embedding', () => {
   it('detail page embeds templateId via safeJsonEmbed, not bare JSON.stringify', async () => {
     // A templateId containing </script> would break out of the script block if
     // it were embedded with a bare JSON.stringify.  The safe embed replaces
-    // < with \u003c so the string is still valid JSON but cannot close the tag.
+    // < and / so the string cannot close the tag.
     const xssId = 'tmpl</script><script>alert(1)//';
     const res = await request(app)
       .get(`/admin/templates/${encodeURIComponent(xssId)}`)
@@ -637,8 +637,8 @@ describe('Admin UI — CI-4: HTML escaping and safe JSON embedding', () => {
       .expect(200);
     // The dangerous sequence must NOT appear verbatim in the output
     expect(res.text).not.toContain('</script><script>alert(1)');
-    // The escaped form must be present instead
-    expect(res.text).toContain('\\u003c/script\\u003e');
+    // Both < and / are escaped: </script> → \u003c\u002fscript\u003e
+    expect(res.text).toContain('\\u003c\\u002fscript\\u003e');
   });
 
   it('assign page embeds templateId via safeJsonEmbed', async () => {
@@ -648,7 +648,7 @@ describe('Admin UI — CI-4: HTML escaping and safe JSON embedding', () => {
       .set('X-Admin-Key', ADMIN_KEY)
       .expect(200);
     expect(res.text).not.toContain('</script><script>alert(2)');
-    expect(res.text).toContain('\\u003c/script\\u003e');
+    expect(res.text).toContain('\\u003c\\u002fscript\\u003e');
   });
 
   it('page title is HTML-escaped', async () => {

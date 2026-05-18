@@ -39,6 +39,7 @@
  */
 
 import * as crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import { CapabilityError, ErrorCode, createLogger } from '@euno/common';
 import type { ManifestTemplateStore } from '../manifest-template-store';
@@ -209,6 +210,7 @@ function safeJsonEmbed(val: unknown): string {
   return JSON.stringify(val)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
+    .replace(/\//g, '\\u002f')
     .replace(/&/g, '\\u0026');
 }
 
@@ -788,6 +790,16 @@ export function createAdminUiRouter(opts: AdminUiRouterOptions): Router {
 
   // ── Pre-auth routes (no auth guard) ────────────────────────────────────
 
+  // Rate limiter for the session exchange endpoint — 10 attempts per minute
+  // per IP to prevent brute-force JWT validation attacks.
+  const sessionExchangeRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: { message: 'Too many session exchange attempts — please wait before retrying.' } },
+  });
+
   // GET /admin/login — login page (no auth required)
   router.get('/login', (_req: Request, res: Response) => {
     const body = `
@@ -848,7 +860,7 @@ document.getElementById('btn-login').addEventListener('click', function(){
   //    cross-origin form submissions from triggering a session.
   //  - SameSite=Strict on the resulting cookie prevents CSRF on all subsequent requests.
   //  - The JWT is validated before the cookie is issued.
-  router.post('/auth/session', express.json({ limit: '32kb' }), (req: Request, res: Response, next: NextFunction): void => {
+  router.post('/auth/session', sessionExchangeRateLimit, express.json({ limit: '32kb' }), (req: Request, res: Response, next: NextFunction): void => {
     const rawToken: string | undefined =
       (typeof req.body?.token === 'string' && req.body.token ? req.body.token : undefined) ??
       (() => {
