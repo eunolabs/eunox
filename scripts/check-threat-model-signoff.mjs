@@ -38,14 +38,14 @@ for (let i = 0; i < argv.length; i++) {
   const arg = argv[i];
   if (arg === '--root') {
     if (i + 1 >= argv.length) {
-      process.stderr.write('ERROR --root requires a path argument\n');
+      process.stderr.write('ERROR: --root requires a path argument\n');
       process.exit(1);
     }
     workspaceRoot = resolve(argv[++i]);
   } else if (arg.startsWith('--root=')) {
     workspaceRoot = resolve(arg.slice('--root='.length));
   } else {
-    process.stderr.write(`ERROR unknown argument: ${arg}\n`);
+    process.stderr.write(`ERROR: unknown argument: ${arg}\n`);
     process.exit(1);
   }
 }

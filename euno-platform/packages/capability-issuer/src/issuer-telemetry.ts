@@ -93,15 +93,16 @@ interface IssuerTelemetryEvent {
   readonly distinctRenewingUsers: number;
   /**
    * Set to `true` when `distinctIssuingUsers` has hit the
-   * `MAX_DISTINCT_USERS_PER_TENANT` cap and therefore represents an
-   * approximate lower-bound rather than the exact cardinality.
+   * `MAX_DISTINCT_USERS_PER_TENANT` cap, indicating the true cardinality
+   * may be higher than the reported value.
    * Dashboards should flag saturation when this field is present and `true`.
    * (CI-1 fix)
    */
   readonly distinctIssuingUsersCapped?: boolean;
   /**
    * Set to `true` when `distinctRenewingUsers` has hit the
-   * `MAX_DISTINCT_USERS_PER_TENANT` cap.
+   * `MAX_DISTINCT_USERS_PER_TENANT` cap, indicating the true cardinality
+   * may be higher than the reported value.
    * (CI-1 fix)
    */
   readonly distinctRenewingUsersCapped?: boolean;
