@@ -817,12 +817,20 @@ describe('euno revoke', () => {
 
   it('calls the gateway revocation endpoint and exits 0 on success', async () => {
     const { spawn } = await import('child_process');
+    const captureFile = path.join(tmpDir, 'revoke-capture.json');
     const serverProcess = spawn(process.execPath, ['-e', `
       const http = require('http');
+      const fs = require('fs');
       const server = http.createServer((req, res) => {
         let body = '';
         req.on('data', d => body += d);
         req.on('end', () => {
+          fs.writeFileSync(${JSON.stringify(captureFile)}, JSON.stringify({
+            method: req.method,
+            url: req.url,
+            adminKey: req.headers['x-admin-api-key'] || '',
+            body: JSON.parse(body || '{}'),
+          }));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ message: 'Token test-jti-123 has been revoked', tokenId: 'test-jti-123' }));
         });
@@ -841,6 +849,16 @@ describe('euno revoke', () => {
       ]);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain('revoked');
+
+      // Verify the CLI called the correct gateway admin endpoint with the right headers/body.
+      const capture = JSON.parse(fs.readFileSync(captureFile, 'utf8')) as {
+        method: string; url: string; adminKey: string; body: Record<string, unknown>;
+      };
+      expect(capture.method).toBe('POST');
+      expect(capture.url).toBe('/admin/revoke');
+      expect(capture.adminKey).toBe('test-admin-key');
+      expect(capture.body.tokenId).toBe('test-jti-123');
+      expect(capture.body).not.toHaveProperty('jti');
     } finally {
       serverProcess.kill();
     }
