@@ -152,7 +152,7 @@
       "request": "launch",
       "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest",
       "runtimeArgs": [
-        "--testPathPattern",
+        "--testPathPatterns",
         "${relativeFile}",
         "--forceExit",
         "--runInBand"
@@ -239,6 +239,48 @@
       "presentation": {
         "group": "scripts",
         "order": 1
+      }
+    },
+    // -------------------------------------------------------------------------
+    // Stage 4 readiness script
+    // -------------------------------------------------------------------------
+    {
+      "name": "Stage 4 readiness check",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--require", "ts-node/register"],
+      "args": ["${workspaceFolder}/scripts/stage4-readiness.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceFolder}/tsconfig.json"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "scripts",
+        "order": 2
+      }
+    },
+    // -------------------------------------------------------------------------
+    // Stage 5 readiness script
+    // -------------------------------------------------------------------------
+    {
+      "name": "Stage 5 readiness check",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--require", "ts-node/register"],
+      "args": ["${workspaceFolder}/scripts/stage5-readiness.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceFolder}/tsconfig.json"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "scripts",
+        "order": 3
       }
     }
   ],

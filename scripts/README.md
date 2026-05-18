@@ -81,3 +81,44 @@ A typical Kubernetes `CronJob` runs the script once per day, mounts the
 public key as a read-only secret, and pipes the JSON report to whatever
 sink raises the alert (e.g. an Azure Monitor data collection rule). Any
 non-zero exit must page the on-call.
+
+---
+
+## `stage4-readiness.ts` — Stage 4 gate tracker
+
+Checks the two measurable conditions that must both be true before Stage 4
+work begins (see `docs/mvp.md §"Gate to Stage 4 — measurable"`):
+
+- **C1** — ≥1 paying team (confirmed via CRM / billing + a preliminary
+  telemetry signal from hosted-mode enforce events).
+- **C2** — ≥1 written security or compliance question (audit retention, SSO,
+  SOC2, GDPR, HIPAA, CISO review).
+
+```sh
+npx ts-node scripts/stage4-readiness.ts
+EUNO_TELEMETRY_API=https://... npx ts-node scripts/stage4-readiness.ts
+```
+
+Exit codes: `0` = READY, `1` = NOT READY, `2` = UNKNOWN.
+
+---
+
+## `stage5-readiness.ts` — Stage 5 gate tracker
+
+Checks the single measurable condition that must be true before Stage 5 work
+begins (see `docs/mvp.md §"Gate to Stage 5 — measurable"`):
+
+- **C1** — ≥1 confirmed enterprise inquiry from a company with a security
+  team that mentioned compliance, on-prem deployment, or a CISO review
+  requirement.  The `confirmedEnterpriseInbound` counter on the telemetry
+  backend (`/v1/stats/stage5-gate`) is a manual override set by an operator
+  after qualifying the inquiry.
+
+```sh
+npx ts-node scripts/stage5-readiness.ts
+EUNO_TELEMETRY_API=https://... npx ts-node scripts/stage5-readiness.ts
+```
+
+Exit codes: `0` = READY, `1` = NOT READY, `2` = UNKNOWN (includes the case
+where `confirmedEnterpriseInbound` is 0, which is indistinguishable from
+"not yet tracked").

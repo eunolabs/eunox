@@ -8,6 +8,40 @@ Command-line interface for the Euno capability-issuer and agent governance platf
 npm install -g @euno/cli
 ```
 
+## Stage 4: Hosted Issuer + Identity Provider
+
+With the Stage-4 hosted issuer, `euno request` and `euno validate-token`
+connect to a live token-issuance service that authenticates users through
+your identity provider (Entra ID, AWS Cognito, or GCP Cloud Identity) and
+issues JWT capability tokens bound to the requesting user's identity.
+
+### Quick setup
+
+```bash
+# Persist your issuer and IdP configuration
+euno config set issuerUrl        https://issuer.euno.example
+euno config set idpAuthUrl       https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize
+euno config set idpTokenUrl      https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
+euno config set idpClientId      <client-id>
+euno config set defaultAgentId   my-agent
+
+# Request a capability token (opens a browser for the PKCE flow)
+euno request --agent my-agent
+
+# Validate the stored token
+euno validate-token --agent-id my-agent
+
+# Renew an expiring token without re-authenticating
+euno request --refresh --agent-id my-agent
+```
+
+See [`docs/quickstart-stage-4.md`](../../../../docs/quickstart-stage-4.md)
+for the complete setup guide, and
+[`docs/issuer-idp-setup.md`](../../../../docs/issuer-idp-setup.md) for
+per-IdP configuration recipes.
+
+---
+
 ## Commands
 
 ### `euno init`
