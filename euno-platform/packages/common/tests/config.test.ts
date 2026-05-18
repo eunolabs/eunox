@@ -511,6 +511,66 @@ describe('loadConfig (issuer)', () => {
       );
       expect(result.ok).toBe(true);
     });
+
+    // ── GCP Cloud KMS cases ──────────────────────────────────────────────────
+
+    it('rejects production gcp-cloudkms when GCP_CRYPTOKEY_ID matches the shared default', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'capability-signing-key',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'GCP_CRYPTOKEY_ID');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('capability-signing-key');
+      expect(err!.message).toContain('DI-5');
+    });
+
+    it('rejects production gcp-cloudkms when GCP_CRYPTOKEY_ID starts with "euno-minter"', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'euno-minter-tenant-acme',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => e.field === 'GCP_CRYPTOKEY_ID');
+      expect(err).toBeDefined();
+      expect(err!.message).toContain('euno-minter');
+      expect(err!.message).toContain('blast-radius');
+    });
+
+    it('accepts production gcp-cloudkms with an issuer-specific crypto key ID', () => {
+      const result = loadConfig(
+        {
+          NODE_ENV: 'production',
+          SIGNING_PROVIDER: 'gcp-cloudkms',
+          GCP_PROJECT_ID: 'my-project',
+          GCP_KEYRING_ID: 'my-keyring',
+          GCP_CRYPTOKEY_ID: 'euno-issuer-tenant-acme',
+          EUNO_DEPLOYMENT_TIER: 'single-replica',
+          ISSUER_ADMIN_API_KEY: 'a-strong-production-admin-key-min32!!',
+        },
+        'issuer',
+      );
+      expect(result.ok).toBe(true);
+    });
   });
 });
 
