@@ -1,5 +1,5 @@
 /**
- * Shared helpers for persisting capability-token JWTs to the local file-system.
+ * Shared helpers for persisting capability-token JWTs to the local file system.
  *
  * Extracted from `src/index.ts` so the token-persistence code path can be
  * exercised directly in integration tests (see

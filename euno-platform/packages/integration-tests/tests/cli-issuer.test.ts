@@ -622,10 +622,12 @@ describe('CLI ↔ Issuer integration — PKCE loopback exchange (CR-3)', () => {
       expect(expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
 
       // Verify the token signature with the issuer's real public key so the
-      // test catches signing/algorithm regressions, not just token shape.
+      // test catches signing/algorithm/header regressions, not just token shape.
+      // requireKid: true is safe because JoseRsaSigner.sign() includes `kid`
+      // in the protected header, matching the production code path.
       const publicKeyPem = await h.signer.getPublicKey();
       const verifier = new JWTTokenVerifier(publicKeyPem, {
-        requireKid: false,
+        requireKid: true,
         algorithms: ['RS256'],
       });
       const payload = await verifier.verify(capabilityToken);
