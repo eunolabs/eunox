@@ -58,6 +58,19 @@ const DEFAULT_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
  */
 const CONCURRENCY_WINDOW_MS = 60_000;
 
+/**
+ * Hard cap on the number of distinct user IDs tracked per tenant per flush
+ * window for the `issuingUsers` / `renewingUsers` cardinality sets.
+ *
+ * Beyond this limit new user IDs are no longer added to the set (preventing
+ * unbounded memory growth for high-cardinality tenants or from malicious
+ * input), while the aggregate `issuanceEvents` / `renewalEvents` counters
+ * continue to increment normally. The emitted `distinctIssuingUsers` /
+ * `distinctRenewingUsers` values will be capped at this limit, which is
+ * documented as an approximate count for forensics use only.
+ */
+const MAX_DISTINCT_USERS_PER_TENANT = 10_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -270,12 +283,16 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
    *
    * Aggregated at the tenant level for billing; `userId` feeds the
    * forensics-only {@link GatewayTelemetryEvent.distinctIssuingUsers} count.
+   * The distinct-user set is capped at {@link MAX_DISTINCT_USERS_PER_TENANT}
+   * to prevent unbounded memory growth; aggregate counts are unaffected.
    */
   recordIssuance(tenantId: string, userId: string): void {
     if (this._disabled) return;
     const state = this._getOrCreateState(tenantId);
     state.issuanceEvents += 1;
-    state.issuingUsers.add(userId);
+    if (state.issuingUsers.size < MAX_DISTINCT_USERS_PER_TENANT) {
+      state.issuingUsers.add(userId);
+    }
   }
 
   /**
@@ -283,12 +300,16 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
    *
    * Aggregated at the tenant level for billing; `userId` feeds the
    * forensics-only {@link GatewayTelemetryEvent.distinctRenewingUsers} count.
+   * The distinct-user set is capped at {@link MAX_DISTINCT_USERS_PER_TENANT}
+   * to prevent unbounded memory growth; aggregate counts are unaffected.
    */
   recordRenewal(tenantId: string, userId: string): void {
     if (this._disabled) return;
     const state = this._getOrCreateState(tenantId);
     state.renewalEvents += 1;
-    state.renewingUsers.add(userId);
+    if (state.renewingUsers.size < MAX_DISTINCT_USERS_PER_TENANT) {
+      state.renewingUsers.add(userId);
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

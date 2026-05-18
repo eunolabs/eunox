@@ -97,6 +97,11 @@ export interface TenantUsageSnapshot {
    * **Forensics / support use only** — billing uses only the tenant-level
    * {@link issuanceEvents} aggregate. Absent when the implementation does
    * not track per-user breakdown.
+   *
+   * **This field is intentionally stripped from the `GET /admin/usage` API
+   * response** to prevent exposing user identifiers (PII) and unbounded payloads
+   * for high-cardinality tenants. Use the audit log endpoints for per-user
+   * forensics.
    */
   readonly issuancesByUser?: Readonly<Record<string, number>>;
   /**
@@ -105,6 +110,9 @@ export interface TenantUsageSnapshot {
    * **Forensics / support use only** — billing uses only the tenant-level
    * {@link renewalEvents} aggregate. Absent when the implementation does
    * not track per-user breakdown.
+   *
+   * **This field is intentionally stripped from the `GET /admin/usage` API
+   * response** — see {@link issuancesByUser} for the rationale.
    */
   readonly renewalsByUser?: Readonly<Record<string, number>>;
   /**

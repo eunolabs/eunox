@@ -270,4 +270,28 @@ describe('IssuerTelemetryCollector', () => {
     expect(evt.installId).toBe('tenant:my-company');
     expect(JSON.stringify(evt)).not.toContain('ceo@my-company.com');
   });
+
+  it('caps distinctIssuingUsers at 10000 to prevent unbounded memory growth', async () => {
+    const collector = new IssuerTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+    for (let i = 0; i < 10_001; i++) {
+      collector.recordIssuance('t1', `user${i}@corp.com`);
+    }
+    await collector.flush();
+
+    const evt = fetchCapture.captured[0]!;
+    expect(evt.issuanceEvents).toBe(10_001);
+    expect(evt.distinctIssuingUsers).toBe(10_000);
+  });
+
+  it('caps distinctRenewingUsers at 10000 to prevent unbounded memory growth', async () => {
+    const collector = new IssuerTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+    for (let i = 0; i < 10_001; i++) {
+      collector.recordRenewal('t1', `user${i}@corp.com`);
+    }
+    await collector.flush();
+
+    const evt = fetchCapture.captured[0]!;
+    expect(evt.renewalEvents).toBe(10_001);
+    expect(evt.distinctRenewingUsers).toBe(10_000);
+  });
 });

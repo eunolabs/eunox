@@ -854,7 +854,7 @@ unchanged from §2.
 |---|---|---|
 | **Capability issuer** | Managed (multi-tenant) | ✅ BYO single-tenant issuer |
 | **Entra ID / AWS Cognito IdP wiring** | Managed | ✅ — configure via env vars |
-| **Per-tenant IdP configuration** | Managed | ✅ — `TENANT_IDP_CONFIG_FILE` JSON |
+| **Per-tenant IdP configuration** | Managed | ✅ — `ISSUER_TENANT_IDP_CONFIG_FILE` JSON |
 | **Manifest template store** | Cloud Team+ | ✅ BYO Postgres (`ISSUER_DB_URL`) |
 | **Admin operator-JWT auth** | Managed JWKS | ✅ BYO JWKS endpoint |
 | **SSO via OIDC** | Cloud Team+ | ✅ (single IdP or per-tenant) |
@@ -877,26 +877,48 @@ going to production.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `IDENTITY_PROVIDER` | *(required)* | `azure-ad` \| `aws-cognito` \| `gcp-identity` |
-| `AZURE_TENANT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
+| `IDENTITY_PROVIDER` | `azure-ad` | `azure-ad` \| `aws-cognito` \| `gcp-identity` |
+| `AZURE_AD_TENANT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
 | `AZURE_AD_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
 | `AWS_COGNITO_USER_POOL_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` (or set `AWS_COGNITO_ISSUER`) |
 | `AWS_COGNITO_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` |
 | `GCP_IDENTITY_AUDIENCE` | — | Required when `IDENTITY_PROVIDER=gcp-identity` |
-| `TENANT_IDP_CONFIG_FILE` | — | Path to per-tenant IdP JSON (§11.3). Hot-reloaded on SIGHUP. |
+| `ISSUER_TENANT_IDP_CONFIG_FILE` | — | Path to per-tenant IdP JSON (§11.3). Hot-reloaded on SIGHUP. |
 
 #### 11.2.2 Token signing key
 
-Self-host operators choose between a KMS-backed key (recommended for
-production) and a file-based EC key (acceptable for single-tenant, see §11.5).
+The issuer signs capability tokens via a cloud KMS. Local file-based keys are
+**not supported** — a KMS key is required for all deployments.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ISSUER_SIGNING_KEY_FILE` | — | Path to PEM private key (EC P-256). Requires `0600` file permissions. |
-| `ISSUER_SIGNING_KEY_PEM` | — | Base64url-encoded PEM (alternative to file path). |
-| `ISSUER_KMS_PROVIDER` | — | `azure` \| `aws` \| `gcp` (see §11.6 for KMS setup). |
-| `ISSUER_KMS_KEY_ID` | — | KMS key alias or ARN (required when `ISSUER_KMS_PROVIDER` is set). |
-| `ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT` | `false` | Must be `true` when using a file-based key in production. Ensures the operator has read §11.5. |
+| `SIGNING_PROVIDER` | `azure-keyvault` | `azure-keyvault` \| `aws-kms` \| `gcp-cloudkms` |
+
+**Azure Key Vault** (`SIGNING_PROVIDER=azure-keyvault`):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AZURE_KEYVAULT_URL` | — | Required. E.g. `https://your-vault.vault.azure.net/` |
+| `AZURE_KEYVAULT_KEY_NAME` | `capability-signing-key` | Key name inside the vault. |
+| `AZURE_KEYVAULT_KEY_VERSION` | *(latest)* | Pin to a specific key version in production. |
+| `AZURE_CREDENTIAL_TYPE` | `default` | `default` \| `managed-identity` \| `client-secret` |
+
+**AWS KMS** (`SIGNING_PROVIDER=aws-kms`):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AWS_KMS_KEY_ID` | — | Required. KMS key ARN or ID. |
+| `AWS_KMS_REGION` | `us-east-1` | AWS region of the key. |
+
+**GCP Cloud KMS** (`SIGNING_PROVIDER=gcp-cloudkms`):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GCP_PROJECT_ID` | — | Required. GCP project containing the key ring. |
+| `GCP_KEYRING_ID` | — | Required. KMS key ring ID. |
+| `GCP_CRYPTOKEY_ID` | — | Required. KMS crypto key ID. |
+| `GCP_CRYPTOKEY_VERSION` | *(primary)* | Pin to a specific key version in production. |
+| `GCP_LOCATION_ID` | `us-central1` | KMS location. |
 
 #### 11.2.3 Manifest template store (Postgres)
 
@@ -926,48 +948,52 @@ protected by one of two auth mechanisms — configure exactly one:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ISSUANCE_RATE_LIMIT_MAX` | `100` | Max issuances per `ISSUANCE_RATE_LIMIT_WINDOW_MS` per `(tenantId, userId, agentId)` tuple. |
-| `ISSUANCE_RATE_LIMIT_WINDOW_MS` | `60000` | Rolling window (ms) for the per-user rate limiter. |
+| `ISSUANCE_RATE_LIMIT_ENABLED` | `true` | Set to `false` only in development. |
+| `ISSUANCE_RATE_LIMIT_MAX` | `60` | Max issuances per `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` per `(tenantId, userId, agentId)` tuple. |
+| `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` | `60` | Tumbling window (seconds) for the per-user rate limiter. |
 | `ISSUER_REGION` | — | Logical region tag stamped into issued tokens (`region` claim). |
-| `ISSUER_TOKEN_TTL_SECONDS` | `3600` | Default capability-token lifetime. Can be overridden per-request. |
-| `ISSUER_RENEWAL_MAX_TTL_SECONDS` | `86400` | Maximum lifetime for renewal requests. |
+| `DEFAULT_TOKEN_TTL` | `900` | Default capability-token lifetime (seconds). Can be overridden per-request. |
 | `EUNO_TELEMETRY` | *(unset)* | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNO_TELEMETRY_URL`). |
 
 ### 11.3 Per-tenant IdP configuration
 
 When you serve multiple tenants from a single issuer instance, each tenant can
-authenticate against its own IdP. The `TENANT_IDP_CONFIG_FILE` variable points
-to a JSON file that maps tenant IDs to IdP configurations.
+authenticate against its own IdP. The `ISSUER_TENANT_IDP_CONFIG_FILE` variable
+points to a JSON file that maps tenant IDs to IdP configurations.
 
 #### 11.3.1 File format
 
 ```json
 {
-  "tenants": [
-    {
-      "tenantId": "acme-corp",
+  "tenants": {
+    "acme-corp": {
       "provider": "azure-ad",
-      "tenantId_azure": "acme.onmicrosoft.com",
-      "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      "azureAD": {
+        "tenantId": "acme.onmicrosoft.com",
+        "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "clientSecret": "<optional-for-graph-access>"
+      }
     },
-    {
-      "tenantId": "beta-inc",
+    "beta-inc": {
       "provider": "aws-cognito",
-      "userPoolId": "us-east-1_XXXXXXXXX",
-      "clientId": "XXXXXXXXXXXXXXXXXXXXXXXXXX"
+      "awsCognito": {
+        "region": "us-east-1",
+        "userPoolId": "us-east-1_XXXXXXXXX",
+        "clientId": "XXXXXXXXXXXXXXXXXXXXXXXXXX"
+      }
     }
-  ]
+  }
 }
 ```
 
-Each entry maps a logical `tenantId` (the value that will appear in issued
-tokens) to a provider-specific configuration. The `provider` field must be one
-of `azure-ad`, `aws-cognito`, or `gcp-identity`.
+The top-level `tenants` object is keyed by logical `tenantId` values (the value
+that appears in issued tokens). Each entry must specify:
+- `provider`: one of `azure-ad`, `aws-cognito`, or `gcp-identity`
+- A provider-specific sub-object: `azureAD`, `awsCognito`, or `gcpIdentity`
 
-When a request arrives without a `tenantId` that matches any entry, the issuer
-falls back to the global `IDENTITY_PROVIDER` / `IDENTITY_PROVIDER`-specific
-variables. The file is hot-reloaded on `SIGHUP` — no restart required after
-adding a new tenant.
+When a request carries a `tenantId` not found in the file, the issuer falls back
+to the global `IDENTITY_PROVIDER` + provider-specific variables. The file is
+hot-reloaded on `SIGHUP` — no restart required after adding a new tenant.
 
 #### 11.3.2 Hot-reload
 
@@ -1029,51 +1055,45 @@ initial rollout; pin to a specific version for production stability).
 
 ### 11.5 Signing-key trade-offs for self-hosters
 
-The issuer supports two signing-key modes. The choice affects your blast radius
-if the key is compromised.
+The issuer delegates all token signing to a cloud KMS. Local file-based keys
+are **not supported** — all deployments require a KMS key. The choice of KMS
+provider affects your blast radius if the key-management plane is compromised.
 
-| Mode | Env var | Use case |
+| Mode | `SIGNING_PROVIDER` | Use case |
 |---|---|---|
-| **File-based EC P-256** | `ISSUER_SIGNING_KEY_FILE` | Single-tenant dev / small production |
-| **KMS-backed** | `ISSUER_KMS_PROVIDER` + `ISSUER_KMS_KEY_ID` | Multi-tenant or high-value production |
+| **Azure Key Vault** | `azure-keyvault` | Entra ID deployments; managed identity is the preferred credential |
+| **AWS KMS** | `aws-kms` | Cognito / AWS-native deployments; IAM role for credentials |
+| **GCP Cloud KMS** | `gcp-cloudkms` | GCP-native deployments; ADC or service-account key file |
 
 > **Full trade-off analysis:** See
 > [`docs/security/issuer-identity-threat-model.md §7`](./security/issuer-identity-threat-model.md)
 > for the complete security assessment of each mode, including blast radius,
-> backup requirements, and the explicit "not supported for multi-tenant"
-> constraint on file-based keys.
+> key rotation procedure, and recommendations for multi-region deployments.
 
-**File-based key — quick setup (single-tenant only):**
-
-```bash
-# Generate a P-256 EC key.
-openssl ecparam -genkey -name prime256v1 -noout \
-  | openssl pkcs8 -topk8 -nocrypt -out issuer-signing-key.pem
-chmod 0600 issuer-signing-key.pem
-
-# Back up the key BEFORE the issuer starts serving traffic.
-# Loss of this key means all in-flight tokens become unverifiable.
-cp issuer-signing-key.pem /secure-backup/issuer-signing-key.pem
-```
-
-Set in environment:
+**Quick setup — AWS KMS (single-tenant example):**
 
 ```env
-ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
-ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+SIGNING_PROVIDER=aws-kms
+AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-...
+AWS_KMS_REGION=us-east-1
+# IAM role attached to the ECS/EKS task provides credentials automatically.
 ```
 
-**Recovery procedure for key loss:**
+**Quick setup — Azure Key Vault (managed identity):**
 
-1. Generate a new key (same command as above).
-2. Update `ISSUER_SIGNING_KEY_FILE` and restart the issuer. The issuer
-   publishes the new public key at `GET /.well-known/jwks.json`
-   automatically within one startup cycle.
-3. All tokens signed by the old key are now invalid. Affected users must
-   re-authenticate via the OIDC flow or re-request tokens from the admin API.
-4. If you used a Postgres token store (`ISSUER_DB_URL`), call
-   `POST /api/v1/admin/revoke-all` with the old key ID to update the
-   revocation ledger before enabling the new key.
+```env
+SIGNING_PROVIDER=azure-keyvault
+AZURE_KEYVAULT_URL=https://your-vault.vault.azure.net/
+AZURE_KEYVAULT_KEY_NAME=capability-signing-key
+AZURE_CREDENTIAL_TYPE=managed-identity
+```
+
+**Recovery procedure for key loss or rotation:**
+
+1. Create a new key version (or a new key) in your KMS.
+2. Update `AWS_KMS_KEY_ID` / `AZURE_KEYVAULT_KEY_NAME` + `AZURE_KEYVAULT_KEY_VERSION` / `GCP_CRYPTOKEY_VERSION` and restart the issuer. The issuer publishes the new public key at `GET /.well-known/jwks.json` automatically within one startup cycle.
+3. All tokens signed by the old key become unverifiable if the old key version is disabled or deleted. Coordinate a key rotation window with your token TTL (`DEFAULT_TOKEN_TTL`) to minimise disruption.
+4. If using a Postgres token store (`ISSUER_DB_URL`), call `POST /api/v1/admin/revoke-all` with the old key ID to update the revocation ledger before decommissioning the key.
 
 ### 11.6 Admin operator-JWT setup
 
@@ -1122,9 +1142,10 @@ IDENTITY_PROVIDER=aws-cognito
 AWS_COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
 AWS_COGNITO_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
-# Signing key (single-tenant file-based key)
-ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
-ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+# Signing key (AWS KMS — matches the Cognito deployment)
+SIGNING_PROVIDER=aws-kms
+AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-...
+AWS_KMS_REGION=us-east-1
 
 # Admin auth (shared-secret for bootstrapping; replace with JWKS in production)
 ISSUER_ADMIN_API_KEY=<random-32+-char-string>
@@ -1151,15 +1172,14 @@ curl -X PUT https://issuer.internal:4000/api/v1/admin/role-policy \
 
 ```env
 IDENTITY_PROVIDER=azure-ad
-AZURE_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_AD_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 AZURE_AD_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-# Optional: validate the token audience (recommended)
-AZURE_AD_AUDIENCE=api://<client-id>
-
-# Signing key
-ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
-ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+# Signing key (Azure Key Vault — matches the Entra ID deployment)
+SIGNING_PROVIDER=azure-keyvault
+AZURE_KEYVAULT_URL=https://your-vault.vault.azure.net/
+AZURE_KEYVAULT_KEY_NAME=capability-signing-key
+AZURE_CREDENTIAL_TYPE=managed-identity
 
 # Admin auth via Entra app roles (see §11.6.1)
 ISSUER_ADMIN_JWKS_URI=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
@@ -1199,15 +1219,14 @@ services:
       IDENTITY_PROVIDER: aws-cognito
       AWS_COGNITO_USER_POOL_ID: "${AWS_COGNITO_USER_POOL_ID}"
       AWS_COGNITO_CLIENT_ID: "${AWS_COGNITO_CLIENT_ID}"
-      ISSUER_SIGNING_KEY_FILE: /run/secrets/issuer-signing-key.pem
-      ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT: "true"
+      SIGNING_PROVIDER: aws-kms
+      AWS_KMS_KEY_ID: "${AWS_KMS_KEY_ID}"
+      AWS_KMS_REGION: "${AWS_REGION:-us-east-1}"
       ISSUER_DB_URL: "postgres://euno:euno@db:5432/euno"
       ISSUER_DB_SCHEMA_INIT: "true"
       ISSUER_ADMIN_API_KEY: "${ISSUER_ADMIN_API_KEY}"
       NODE_ENV: production
       PORT: "4000"
-    secrets:
-      - issuer-signing-key
     ports:
       - "4000:4000"
 
@@ -1219,10 +1238,6 @@ services:
       PORT: "4100"
     ports:
       - "4100:4100"
-
-secrets:
-  issuer-signing-key:
-    file: ./secrets/issuer-signing-key.pem
 ```
 
 See `infra/docker-compose.yml` (smoke profile) for the full working example
@@ -1232,10 +1247,10 @@ including gateway wiring and the seed policy bind-mount.
 
 In addition to the items in §9, review the following before going to production:
 
-- [ ] **Signing key**: KMS-backed (`ISSUER_KMS_PROVIDER`) for multi-tenant deployments. File-based requires `ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true` and an offline backup.
+- [ ] **Signing key**: KMS-backed (`SIGNING_PROVIDER=azure-keyvault|aws-kms|gcp-cloudkms`) required for all deployments. Confirm the KMS key ARN/URL is pinned to a specific version in production.
 - [ ] **Admin auth**: `ISSUER_ADMIN_JWKS_URI` configured (not just `ISSUER_ADMIN_API_KEY`) for operator access.
 - [ ] **IdP hygiene**: CA pinning or JWKS cache validation enabled on the IdP connection (see `docs/issuer-idp-setup.md §8`).
-- [ ] **Tenant isolation**: If running multi-tenant, confirm `TENANT_IDP_CONFIG_FILE` maps each tenant to its own IdP entry. Shared IdP requires per-tenant role-policy enforcement.
+- [ ] **Tenant isolation**: If running multi-tenant, confirm `ISSUER_TENANT_IDP_CONFIG_FILE` maps each tenant to its own IdP entry. Shared IdP requires per-tenant role-policy enforcement.
 - [ ] **Template versioning**: Pin active template bindings to specific versions once stable. Avoid `version: null` in production.
 - [ ] **Role-policy audit**: Review the OCSF audit log after every `PUT /api/v1/admin/role-policy` call. The issuer logs `operatorId`, timestamp, and the full policy diff.
 - [ ] **SIGHUP tested**: Confirm hot-reload works for your IdP config and role policy (`kill -HUP <pid>`) before relying on it for zero-downtime updates.

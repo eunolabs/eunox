@@ -578,5 +578,32 @@ describe('GatewayTelemetryCollector — recordIssuance / recordRenewal (Task 10)
       expect(evt.installId).toBe('tenant:acme-corp');
       expect(JSON.stringify(evt)).not.toContain('cfo@acme-corp.com');
     });
+
+    it('caps distinctIssuingUsers at 10000 to prevent unbounded memory growth', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      // Record 10001 distinct users.
+      for (let i = 0; i < 10_001; i++) {
+        collector.recordIssuance('t1', `user${i}@corp.com`);
+      }
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      // Aggregate count is accurate (all 10001 issuances counted).
+      expect(evt.issuanceEvents).toBe(10_001);
+      // Distinct count is capped.
+      expect(evt.distinctIssuingUsers).toBe(10_000);
+    });
+
+    it('caps distinctRenewingUsers at 10000 to prevent unbounded memory growth', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      for (let i = 0; i < 10_001; i++) {
+        collector.recordRenewal('t1', `user${i}@corp.com`);
+      }
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.renewalEvents).toBe(10_001);
+      expect(evt.distinctRenewingUsers).toBe(10_000);
+    });
   });
 });
