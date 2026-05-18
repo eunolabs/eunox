@@ -1461,7 +1461,7 @@ describe('IssueController parity (CI-6): tokens from IssueController pipeline pr
   class Ci6Signer implements TokenSigner {
     async sign(payload: CapabilityTokenPayload): Promise<string> {
       return new jose.SignJWT(payload as unknown as Record<string, unknown>)
-        .setProtectedHeader({ alg: 'RS256' })
+        .setProtectedHeader({ alg: 'RS256', kid: 'ci6-test-key', typ: 'JWT' })
         .sign(privateKey);
     }
     async getPublicKey(): Promise<string> {

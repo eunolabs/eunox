@@ -12,6 +12,7 @@ import * as yaml from 'js-yaml';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import axios from 'axios';
+import { saveCapabilityToken, defaultTokenDir } from './token-utils';
 
 function readEunoConfig(): Record<string, string> {
   const configFile = path.join(os.homedir(), '.euno', 'config');
@@ -630,10 +631,8 @@ program
           }
         );
         const newToken: string = renewResponse.data.token;
-        const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
-        if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(tokenPath, newToken);
-        fs.chmodSync(tokenPath, 0o600);
+        const tokenDir = defaultTokenDir();
+        saveCapabilityToken(tokenDir, agentId, newToken);
         const parts = newToken.split('.');
         if (parts.length === 3) {
           try {
@@ -775,11 +774,8 @@ program
           timeout: 15000,
         });
         const capToken: string = issueResp.data.token;
-        const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
-        if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
-        const tokenPath = path.join(tokenDir, `${agentId}.jwt`);
-        fs.writeFileSync(tokenPath, capToken);
-        fs.chmodSync(tokenPath, 0o600);
+        const tokenDir = defaultTokenDir();
+        const tokenPath = saveCapabilityToken(tokenDir, agentId, capToken);
         const parts = capToken.split('.');
         if (parts.length === 3) {
           try {
@@ -890,12 +886,8 @@ program
       console.log(response.data.token);
 
       // Persist token to ~/.euno/tokens/<agentId>.jwt
-      const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
-      if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
       if (agentId) {
-        const tokenPath = path.join(tokenDir, `${agentId}.jwt`);
-        fs.writeFileSync(tokenPath, response.data.token);
-        fs.chmodSync(tokenPath, 0o600);
+        const tokenPath = saveCapabilityToken(defaultTokenDir(), agentId, response.data.token);
         console.log(`  Saved to: ${tokenPath}`);
       }
     } catch (error) {

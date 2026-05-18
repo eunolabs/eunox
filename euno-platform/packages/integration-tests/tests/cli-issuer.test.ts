@@ -60,6 +60,8 @@ import {
 } from '@euno/common';
 import { CapabilityIssuerService } from '../../capability-issuer/src/issuer-service';
 import { OidcStateStore } from '../../capability-issuer/src/oidc-state-store';
+import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
+import { saveCapabilityToken } from '../../../../public/packages/cli/src/token-utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -485,6 +487,8 @@ async function startIssuerServer(opts: {
 interface CliIssuerHarness {
   mockIdpCtx: MockIdpContext;
   mockIdpServer: RunningServer;
+  /** Issuer RS256 signer — exposed so tests can build a `JWTTokenVerifier`. */
+  signer: JoseRsaSigner;
   stateStore: OidcStateStore;
   service: CapabilityIssuerService;
   issuerServer: RunningServer;
@@ -516,7 +520,7 @@ async function buildHarness(): Promise<CliIssuerHarness> {
   // 4. Issuer HTTP server
   const issuerServer = await startIssuerServer({ service, stateStore, idp });
 
-  return { mockIdpCtx, mockIdpServer, stateStore, service, issuerServer };
+  return { mockIdpCtx, mockIdpServer, signer, stateStore, service, issuerServer };
 }
 
 async function teardownHarness(h: CliIssuerHarness): Promise<void> {
@@ -608,15 +612,24 @@ describe('CLI ↔ Issuer integration — PKCE loopback exchange (CR-3)', () => {
   // ── Happy-path scenarios ─────────────────────────────────────────────────
 
   describe('happy path', () => {
-    it('full PKCE flow produces a valid 3-part JWT', async () => {
+    it('full PKCE flow produces a cryptographically valid RS256-signed JWT', async () => {
       const { capabilityToken, expiresAt } = await runPkceFlow(
         h,
         'cli-agent-1',
       );
 
       expect(capabilityToken).toBeDefined();
-      expect(capabilityToken.split('.').length).toBe(3);
       expect(expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+      // Verify the token signature with the issuer's real public key so the
+      // test catches signing/algorithm regressions, not just token shape.
+      const publicKeyPem = await h.signer.getPublicKey();
+      const verifier = new JWTTokenVerifier(publicKeyPem, {
+        requireKid: false,
+        algorithms: ['RS256'],
+      });
+      const payload = await verifier.verify(capabilityToken);
+      expect(payload.sub).toBe('cli-agent-1');
     });
 
     it('token payload has correct sub (agentId), iss, aud, and authorizedBy.userId', async () => {
@@ -641,25 +654,26 @@ describe('CLI ↔ Issuer integration — PKCE loopback exchange (CR-3)', () => {
       expect(payload.authorizedBy.userId).toBe('alice@corp.example');
     });
 
-    it('token file written with chmod 0600 has correct Unix permissions', async () => {
+    it('token file written via saveCapabilityToken helper has 0600 Unix permissions', async () => {
       const { capabilityToken } = await runPkceFlow(h, 'cli-perms-test');
 
-      // Replicate the CLI's `~/.euno/tokens/<agentId>.jwt` pattern in a
-      // temp dir so the test is isolated and self-cleaning.
+      // Use the actual CLI token-persistence helper (saveCapabilityToken from
+      // public/packages/cli/src/token-utils.ts) — the same function the `euno
+      // request` command calls after receiving the capability token — and assert
+      // the resulting file mode without applying chmod inside the test.
       const tmpBase = path.join(
         os.tmpdir(),
         `euno-cli-it-${process.pid}-${Date.now()}`,
       );
       const tokenDir = path.join(tmpBase, 'tokens');
-      fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
-      const tokenPath = path.join(tokenDir, 'cli-perms-test.jwt');
 
-      fs.writeFileSync(tokenPath, capabilityToken);
-      fs.chmodSync(tokenPath, 0o600);
+      const tokenPath = saveCapabilityToken(tokenDir, 'cli-perms-test', capabilityToken);
 
       const stat = fs.statSync(tokenPath);
       // Mask to the lower 9 permission bits (rwxrwxrwx).
       expect(stat.mode & 0o777).toBe(0o600);
+      // Confirm the content written by the helper matches the original token.
+      expect(fs.readFileSync(tokenPath, 'utf8')).toBe(capabilityToken);
 
       // Cleanup
       fs.rmSync(tmpBase, { recursive: true, force: true });
