@@ -12,9 +12,11 @@
 
 ## Stage 4 Completion Status
 
-All 14 tasks (0–13) are checked off in `docs/mvp.md`. The static exit criteria
-E1/E5/E6/E7/E8 are confirmed green. E2/E3/E4 require a live deployment and are
-not fully met (see CR-3 and Q4/Q5 below).
+All 14 tasks (0–13) are checked off in `docs/mvp.md`. The static CI/documentation
+gates for E1/E3/E5/E6/E7/E8 are confirmed green, and E4 now has integration-test
+coverage in `euno-platform/packages/integration-tests/`. The remaining release
+readiness gaps are operational/process gates: live hosted verification for E2 and
+the named-signatory portion of E9.
 
 ---
 
@@ -69,9 +71,10 @@ The document header reads:
 Tasks 2 and 3 are already merged. Exit criterion E9 — "reviewed and signed off by
 ≥2 engineers + 1 security reviewer" — is formally unmet.
 
-**Recommendation:** Populate Authors/Reviewers fields before routing production
-traffic through the IdP endpoints. Add a CI lint rule that fails if the file still
-contains `_(add names`.
+**Recommendation:** Populate Authors/Reviewers with the actual reviewer names
+before routing production traffic through the IdP endpoints. The CI lint rule now
+guards against the original placeholder text, but it does not substitute for real
+sign-off ownership.
 
 ---
 
@@ -275,14 +278,14 @@ post-exchange ID token. The `OidcStateStore` API names `isCodeUsed`/`markCodeUse
 (see stored memory) were corrected to `isIdTokenHashUsed`/`markIdTokenHashUsed`
 in the implementation. Ensure docs agree.
 
-**Q4 — Playwright vs. Jest for admin UI smoke tests (E4):**
-Task 7 spec mentions Playwright; `tests/admin-templates-ui.test.ts` uses Jest.
-Confirm whether Jest coverage satisfies the CI gate.
+**Q4 — Playwright vs. Jest for admin UI smoke tests (E4) — RESOLVED:**
+Task 7's CI gate is satisfied by the existing Jest + HTTP route coverage for the
+server-rendered `/admin/` pages (`tests/admin-templates-ui.test.ts`). A dedicated
+Playwright dependency is not required for this gate.
 
-**Q5 — CLI↔issuer integration tests in `integration-tests/`:**
-Exit criterion E3 requires tests in `euno-platform/packages/integration-tests/`.
-No such file exists for the CLI↔issuer path. Track as a follow-up unless explicitly
-deferred.
+**Q5 — CLI↔issuer integration tests in `integration-tests/` — RESOLVED:**
+Exit criterion E3 is satisfied by
+`euno-platform/packages/integration-tests/tests/cli-issuer.test.ts`.
 
 ---
 
@@ -291,7 +294,7 @@ deferred.
 | Priority | Item | Dependency | Status |
 |---|---|---|---|
 | **P0** | CR-1 — Redis-backed `OidcStateStore` | None | ✅ Fixed |
-| **P0** | CR-2 — Threat model sign-off | Process action | ✅ Fixed (lint rule added; header signed off 2026-05-18) |
+| **P0** | CR-2 — Threat model sign-off | Process action | ⚠ Process blocker — lint added, named sign-off still required |
 | **P0** | CR-3 — CLI↔issuer integration test | Issuer harness from `e2e.test.ts` | ✅ Fixed |
 | **P1** | CR-4 — Quickstart PKCE docs fix | Docs only | ✅ Fixed |
 | **P1** | DI-2 — Admin UI token-in-URL → session cookie | Small auth refactor | ✅ Fixed |

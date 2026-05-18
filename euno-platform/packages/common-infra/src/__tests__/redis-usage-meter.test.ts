@@ -503,6 +503,33 @@ describe('RedisUsageMeter', () => {
       expect(new Date(after).getTime()).toBeGreaterThanOrEqual(new Date(before).getTime());
     });
 
+    it('advances in-memory and persisted periodStart on back-to-back resets without time moving', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      try {
+        meter.recordEnforcement('t1', 'allow');
+        await jest.runAllTimersAsync();
+        const before = meter.getUsage('t1').periodStart;
+
+        meter.resetPeriod('t1');
+        await jest.runAllTimersAsync();
+        const firstInMemory = meter.getUsage('t1').periodStart;
+        const firstPersisted = client.rawStore().get('test:usage:t1:ps');
+
+        meter.resetPeriod('t1');
+        await jest.runAllTimersAsync();
+        const secondInMemory = meter.getUsage('t1').periodStart;
+        const secondPersisted = client.rawStore().get('test:usage:t1:ps');
+
+        expect(new Date(firstInMemory).getTime()).toBeGreaterThan(new Date(before).getTime());
+        expect(new Date(secondInMemory).getTime()).toBeGreaterThan(new Date(firstInMemory).getTime());
+        expect(firstPersisted).toBe(firstInMemory);
+        expect(secondPersisted).toBe(secondInMemory);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('is a no-op for a non-existent tenant', () => {
       expect(() => meter.resetPeriod('nonexistent')).not.toThrow();
     });

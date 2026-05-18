@@ -252,6 +252,18 @@ export class InMemoryUsageMeter implements UsageMeter {
   private readonly counters = new Map<string, MutableTenantCounters>();
 
   /**
+   * Compute the next billing-period start timestamp, ensuring it never moves
+   * backwards (or stays identical) for an existing tenant entry.
+   */
+  private nextPeriodStart(previous?: string): string {
+    const nowMs = Date.now();
+    const previousMs = previous ? Date.parse(previous) : Number.NaN;
+    const nextMs =
+      Number.isFinite(previousMs) && previousMs >= nowMs ? previousMs + 1 : nowMs;
+    return new Date(nextMs).toISOString();
+  }
+
+  /**
    * Obtain or create the counter entry for `tenantId`.
    *
    * Creating on first access is safe because `tenantId` values come from
@@ -356,10 +368,10 @@ export class InMemoryUsageMeter implements UsageMeter {
 
   /** @inheritdoc */
   resetPeriod(tenantId?: string): void {
-    const now = new Date().toISOString();
     if (tenantId !== undefined) {
       const entry = this.counters.get(tenantId);
       if (entry) {
+        const nextPeriodStart = this.nextPeriodStart(entry.periodStart);
         entry.enforcementEvents = 0;
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
@@ -368,10 +380,21 @@ export class InMemoryUsageMeter implements UsageMeter {
         entry.renewalEvents = 0;
         entry.issuancesByUser = {};
         entry.renewalsByUser = {};
-        entry.periodStart = now;
+        entry.periodStart = nextPeriodStart;
       }
       // If the tenant has no entry yet, nothing to reset — a no-op is correct.
     } else {
+      const nextPeriodStart = this.nextPeriodStart(
+        Array.from(this.counters.values()).reduce<string | undefined>(
+          (latest, entry) => {
+            if (!latest) return entry.periodStart;
+            return Date.parse(entry.periodStart) > Date.parse(latest)
+              ? entry.periodStart
+              : latest;
+          },
+          undefined,
+        ),
+      );
       for (const entry of this.counters.values()) {
         entry.enforcementEvents = 0;
         entry.allowDecisions = 0;
@@ -381,7 +404,7 @@ export class InMemoryUsageMeter implements UsageMeter {
         entry.renewalEvents = 0;
         entry.issuancesByUser = {};
         entry.renewalsByUser = {};
-        entry.periodStart = now;
+        entry.periodStart = nextPeriodStart;
       }
     }
   }

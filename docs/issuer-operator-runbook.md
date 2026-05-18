@@ -99,6 +99,23 @@ rate-limit enforcement and replay prevention.
 
 ---
 
+## Tenant IdP Hot-Reload Semantics (SIGHUP)
+
+`TenantIdpRegistry.reload()` swaps the tenant-provider map synchronously.
+This means:
+
+- A request that has already resolved an IdP adapter continues to completion
+  on that adapter, even if a SIGHUP arrives mid-flight.
+- Requests that start after the reload observe the new provider map and a
+  freshly-cleared adapter cache.
+- No partial mix of old/new config is exposed within a single issuance
+  request; the hand-off boundary is the adapter lookup.
+
+Operationally, treat SIGHUP as **atomic for new requests** and
+**drain-safe for in-flight requests**.
+
+---
+
 ## Token Revocation
 
 OIDC-path capability tokens are revoked exclusively via the **gateway admin API**

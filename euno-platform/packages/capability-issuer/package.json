@@ -25,7 +25,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aws-sdk/client-kms": "^3.515.0",
+    "@aws-sdk/client-kms": "3.515.0",
     "@azure/identity": "^4.0.0",
     "@azure/keyvault-keys": "^4.8.0",
     "@euno/common": "^0.1.0",
@@ -39,15 +39,15 @@
     "express-rate-limit": "^7.5.1",
     "helmet": "^7.1.0",
     "jose": "^5.2.0",
-    "pg": "^8.20.0",
+    "pg": "^8.0.0",
     "winston": "^3.11.0",
     "winston-transport": "^4.7.0"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-s3": "^3.515.0",
-    "@aws-sdk/client-sts": "^3.515.0",
-    "@aws-sdk/rds-signer": "^3.515.0",
-    "@aws-sdk/s3-request-presigner": "^3.515.0",
+    "@aws-sdk/client-s3": "3.515.0",
+    "@aws-sdk/client-sts": "3.515.0",
+    "@aws-sdk/rds-signer": "3.515.0",
+    "@aws-sdk/s3-request-presigner": "3.515.0",
     "@azure/storage-blob": "^12.31.0",
     "@google-cloud/storage": "^7.19.0",
     "google-auth-library": "^10.6.2"

@@ -84,9 +84,10 @@ E3. **`euno request` and `euno validate-token` are no longer
 
 E4. **Manifest templates are usable**: a tech lead can `POST` a template
     via the issuer admin API, assign it to ≥1 agent, and a user with
-    the bound role gets a token whose embedded `AgentCapabilityManifest`
-    matches the template. Round-trip is covered by an integration test
-    in `euno-platform/packages/integration-tests/`. The admin UI is
+    the bound role gets a token whose effective capability set (top-level
+    `capabilities` claim and VC `credentialSubject.capabilities`) matches
+    the assigned template's `requiredCapabilities`. Round-trip is covered
+    by an integration test in `euno-platform/packages/integration-tests/`. The admin UI is
     served by the issuer's own Express process at `/admin/` (four
     server-rendered pages: list, create, detail/version-history,
     assignment) — it is **not** a separate deployment under `web/`.
@@ -156,9 +157,9 @@ on changed lines, not whole-package*):
 - Issuer (new code): ≥90% lines, ≥85% branches.
 - CLI (changed commands): ≥90% lines on the `request` and
   `validate-token` action handlers.
-- Hosted UI (manifest templates view): playwright/component test that
-  exercises list, create, assign, delete; no coverage % gate (UI), but
-  the test must be in CI.
+- Hosted UI (manifest templates view): Jest + route/integration coverage
+  that exercises list, create, assign, delete, and page-level access
+  control; no separate coverage % gate (UI), but the test must be in CI.
 
 The CI job order is unchanged from Stage 3: lint → typecheck → unit →
 integration → smoke (docker-compose `smoke` profile). Stage 4 PRs that
@@ -487,9 +488,9 @@ Per § 4.4. Postgres migrations land in `euno-platform/packages/capability-issue
 - The issuance branch in `IssueController` that consults templates is the only change to existing issuance code.
 - **Tests**: round-trip CRUD on templates; assignment-driven issuance test; immutability-of-versions test; cross-tenant access denial test; soft-delete semantics test.
 
-### Task 7 — Manifest templates UI under `web/admin/`
-Per § 4.4 closing paragraph and Task 0's UI decision. Server-rendered pages by default. Authenticated via the same IdP path as `euno request` (the page-load hits `/api/v1/admin/templates` with the user's bearer token).
-- **Tests**: playwright (or equivalent) smoke covering list → create → assign → list-assignments. Page-level access control test.
+### Task 7 — Manifest templates UI under issuer `/admin/`
+Per § 4.4 closing paragraph and Task 0's UI decision. Server-rendered pages by default, mounted by the issuer's Express process at `/admin/`. Authenticated via the same IdP path as `euno request` (the page-load hits `/api/v1/admin/templates` with the user's bearer token).
+- **Tests**: Jest + HTTP route coverage covering list → create → assign → list-assignments and page-level access control.
 
 Phase D — Self-host parity
 
@@ -629,6 +630,7 @@ All of the following are simultaneously true:
    query API — end-to-end, with no operator intervention.
 5. The hosted templates UI demonstrably round-trips a template through
    list → create → assign → issuance, with the resulting token's
-   embedded manifest matching the template byte-for-byte.
+   effective capability set matching the assigned template's
+   `requiredCapabilities`.
 6. `scripts/stage5-readiness.ts` (Task 12) reports the Stage-5 gate
    status (READY / NOT READY / UNKNOWN) without erroring.
