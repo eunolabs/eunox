@@ -93,7 +93,7 @@
     "@types/node": "^20.11.0",
     "@types/supertest": "^6.0.2",
     "express": "^4.18.2",
-    "jest": "^30.3.0",
+    "jest": "^30.4.2",
     "openapi-typescript": "^7.13.0",
     "supertest": "^6.3.4",
     "ts-jest": "^29.4.9",

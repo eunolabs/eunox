@@ -100,6 +100,30 @@ export interface GatewayTelemetryEvent {
   readonly peakConcurrentSessions: number;
   /** Always `'gateway'` — the server has no client-facing upstream command. */
   readonly upstreamServerName: 'gateway';
+  /**
+   * Total successful capability-token issuances in this reporting window.
+   * Aggregated at the tenant level; unique user count is available in
+   * {@link distinctIssuingUsers} for support / forensics (not billing).
+   */
+  readonly issuanceEvents: number;
+  /**
+   * Total successful capability-token renewals in this reporting window.
+   * Aggregated at the tenant level; unique user count is available in
+   * {@link distinctRenewingUsers} for support / forensics (not billing).
+   */
+  readonly renewalEvents: number;
+  /**
+   * Number of distinct user identities that issued at least one capability
+   * token during this window. Support / forensics dimension — not used for
+   * billing (billing uses {@link issuanceEvents}).
+   */
+  readonly distinctIssuingUsers: number;
+  /**
+   * Number of distinct user identities that renewed at least one capability
+   * token during this window. Support / forensics dimension — not used for
+   * billing (billing uses {@link renewalEvents}).
+   */
+  readonly distinctRenewingUsers: number;
   /** Unix epoch milliseconds at flush time. */
   readonly timestamp: number;
 }
@@ -126,6 +150,26 @@ export interface GatewayTelemetryHooks {
     allowed: boolean,
     conditionType?: string,
   ): void;
+
+  /**
+   * Record a successful capability-token issuance from the issuer.
+   *
+   * @param tenantId  Tenant identifier extracted from the issued JWT.
+   * @param userId    User identifier resolved from the upstream IdP token
+   *                  (e.g. `email` or `sub` claim). Used for per-user forensic
+   *                  dimension only; billing aggregates at the tenant level.
+   */
+  recordIssuance(tenantId: string, userId: string): void;
+
+  /**
+   * Record a successful capability-token renewal from the issuer.
+   *
+   * @param tenantId  Tenant identifier extracted from the renewed JWT.
+   * @param userId    User identifier from the `authorizedBy.userId` claim of
+   *                  the presented token. Used for per-user forensic dimension
+   *                  only; billing aggregates at the tenant level.
+   */
+  recordRenewal(tenantId: string, userId: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +191,14 @@ interface PerTenantState {
   sessionLastSeen: Map<string, number>;
   /** Running peak: max count of sessions within any 60-s window observed so far. */
   peakConcurrent: number;
+  /** Total successful issuances in the current window (billing aggregate). */
+  issuanceEvents: number;
+  /** Total successful renewals in the current window (billing aggregate). */
+  renewalEvents: number;
+  /** Distinct user IDs that issued at least one token (forensics dimension). */
+  issuingUsers: Set<string>;
+  /** Distinct user IDs that renewed at least one token (forensics dimension). */
+  renewingUsers: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +265,32 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
     this._updatePeakConcurrent(state, sessionId, nowMs);
   }
 
+  /**
+   * Record a successful capability-token issuance.
+   *
+   * Aggregated at the tenant level for billing; `userId` feeds the
+   * forensics-only {@link GatewayTelemetryEvent.distinctIssuingUsers} count.
+   */
+  recordIssuance(tenantId: string, userId: string): void {
+    if (this._disabled) return;
+    const state = this._getOrCreateState(tenantId);
+    state.issuanceEvents += 1;
+    state.issuingUsers.add(userId);
+  }
+
+  /**
+   * Record a successful capability-token renewal.
+   *
+   * Aggregated at the tenant level for billing; `userId` feeds the
+   * forensics-only {@link GatewayTelemetryEvent.distinctRenewingUsers} count.
+   */
+  recordRenewal(tenantId: string, userId: string): void {
+    if (this._disabled) return;
+    const state = this._getOrCreateState(tenantId);
+    state.renewalEvents += 1;
+    state.renewingUsers.add(userId);
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   /**
@@ -264,7 +342,7 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
     const activeTenants = Array.from(this._tenantState.keys());
     for (const tenantId of activeTenants) {
       const state = this._tenantState.get(tenantId);
-      if (!state || state.sessionIds.size === 0) continue;
+      if (!state || (state.sessionIds.size === 0 && state.issuanceEvents === 0 && state.renewalEvents === 0)) continue;
 
       const event: GatewayTelemetryEvent = {
         installId: `tenant:${tenantId}`,
@@ -277,6 +355,10 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
         denialsByConditionType: { ...state.denialsByConditionType },
         peakConcurrentSessions: state.peakConcurrent,
         upstreamServerName: 'gateway',
+        issuanceEvents: state.issuanceEvents,
+        renewalEvents: state.renewalEvents,
+        distinctIssuingUsers: state.issuingUsers.size,
+        distinctRenewingUsers: state.renewingUsers.size,
         timestamp: Date.now(),
       };
 
@@ -311,6 +393,10 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
         denialsByConditionType: {},
         sessionLastSeen: new Map(),
         peakConcurrent: 0,
+        issuanceEvents: 0,
+        renewalEvents: 0,
+        issuingUsers: new Set(),
+        renewingUsers: new Set(),
       };
       this._tenantState.set(tenantId, state);
     }

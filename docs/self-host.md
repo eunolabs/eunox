@@ -834,3 +834,410 @@ The short version:
 
 The policy YAML format is identical between local mode and the hosted gateway —
 no policy rewrite is required.
+
+---
+
+## 11. Stage 4 — hosted identity and manifest templates
+
+Stage 4 ships the **capability issuer** as a first-class component of the
+self-host bundle. The issuer handles token minting from real user identities
+(Entra ID / AWS Cognito), role-to-capability policy management, and
+manifest-template authoring. This section explains how to configure the issuer
+in a self-hosted deployment and how it differs from the managed cloud product.
+
+### 11.1 Updated feature matrix
+
+The following rows have changed since Stage 3. Rows not listed here are
+unchanged from §2.
+
+| Feature | Cloud (Managed) | Self-host (BSL) |
+|---|---|---|
+| **Capability issuer** | Managed (multi-tenant) | ✅ BYO single-tenant issuer |
+| **Entra ID / AWS Cognito IdP wiring** | Managed | ✅ — configure via env vars |
+| **Per-tenant IdP configuration** | Managed | ✅ — `TENANT_IDP_CONFIG_FILE` JSON |
+| **Manifest template store** | Cloud Team+ | ✅ BYO Postgres (`ISSUER_DB_URL`) |
+| **Admin operator-JWT auth** | Managed JWKS | ✅ BYO JWKS endpoint |
+| **SSO via OIDC** | Cloud Team+ | ✅ (single IdP or per-tenant) |
+| **API-key minter façade** (`sk-...` → JWT) | ✅ | ❌ — issue tokens directly |
+
+> **BYO-Issuer note:** Self-hosters now run the issuer alongside the gateway.
+> The managed minter façade (§2, "The key difference: no managed minter") is
+> still absent — self-hosters issue tokens directly via the OIDC token endpoint
+> or the `/api/v1/issue` API-key path, depending on their IdP setup.
+
+### 11.2 Issuer configuration reference
+
+The issuer is configured entirely via environment variables validated on startup
+by the same `loadConfigOrExit` mechanism used by the gateway. The full schema
+is in `public/packages/common/src/config/schema.ts` (`IssuerConfigSchema`).
+The table below covers the variables a self-host operator must review before
+going to production.
+
+#### 11.2.1 Identity provider (IdP)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `IDENTITY_PROVIDER` | *(required)* | `azure-ad` \| `aws-cognito` \| `gcp-identity` |
+| `AZURE_TENANT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
+| `AZURE_AD_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
+| `AWS_COGNITO_USER_POOL_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` (or set `AWS_COGNITO_ISSUER`) |
+| `AWS_COGNITO_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` |
+| `GCP_IDENTITY_AUDIENCE` | — | Required when `IDENTITY_PROVIDER=gcp-identity` |
+| `TENANT_IDP_CONFIG_FILE` | — | Path to per-tenant IdP JSON (§11.3). Hot-reloaded on SIGHUP. |
+
+#### 11.2.2 Token signing key
+
+Self-host operators choose between a KMS-backed key (recommended for
+production) and a file-based EC key (acceptable for single-tenant, see §11.5).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ISSUER_SIGNING_KEY_FILE` | — | Path to PEM private key (EC P-256). Requires `0600` file permissions. |
+| `ISSUER_SIGNING_KEY_PEM` | — | Base64url-encoded PEM (alternative to file path). |
+| `ISSUER_KMS_PROVIDER` | — | `azure` \| `aws` \| `gcp` (see §11.6 for KMS setup). |
+| `ISSUER_KMS_KEY_ID` | — | KMS key alias or ARN (required when `ISSUER_KMS_PROVIDER` is set). |
+| `ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT` | `false` | Must be `true` when using a file-based key in production. Ensures the operator has read §11.5. |
+
+#### 11.2.3 Manifest template store (Postgres)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ISSUER_DB_URL` | — | `postgres://…` DSN. When unset, template store is disabled (direct-manifest mode only). |
+| `ISSUER_DB_SCHEMA` | `public` | Postgres schema for template tables. Must be a valid SQL identifier. |
+| `ISSUER_DB_SCHEMA_INIT` | `false` | Set to `true` on first run to create tables automatically. |
+
+#### 11.2.4 Admin API authentication
+
+Operator endpoints (`PUT /api/v1/admin/role-policy`, `/api/v1/admin/templates/*`) are
+protected by one of two auth mechanisms — configure exactly one:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ISSUER_ADMIN_JWKS_URI` | — | URL of your operator JWKS endpoint. Preferred for production. |
+| `ISSUER_ADMIN_JWT_AUDIENCE` | — | Required when `ISSUER_ADMIN_JWKS_URI` is set. |
+| `ISSUER_ADMIN_JWT_ISSUER` | — | Optional issuer check on operator JWTs. |
+| `ISSUER_ADMIN_API_KEY` | — | Shared-secret fallback. Must be ≥ 32 chars and not equal to `dev-issuer-admin-key` in production. |
+
+> In production, `NODE_ENV=production` **requires** either
+> `ISSUER_ADMIN_JWKS_URI` or a strong `ISSUER_ADMIN_API_KEY`. The issuer
+> refuses to start if neither is set.
+
+#### 11.2.5 Rate limiting and other settings
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ISSUANCE_RATE_LIMIT_MAX` | `100` | Max issuances per `ISSUANCE_RATE_LIMIT_WINDOW_MS` per `(tenantId, userId, agentId)` tuple. |
+| `ISSUANCE_RATE_LIMIT_WINDOW_MS` | `60000` | Rolling window (ms) for the per-user rate limiter. |
+| `ISSUER_REGION` | — | Logical region tag stamped into issued tokens (`region` claim). |
+| `ISSUER_TOKEN_TTL_SECONDS` | `3600` | Default capability-token lifetime. Can be overridden per-request. |
+| `ISSUER_RENEWAL_MAX_TTL_SECONDS` | `86400` | Maximum lifetime for renewal requests. |
+| `EUNO_TELEMETRY` | *(unset)* | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNO_TELEMETRY_URL`). |
+
+### 11.3 Per-tenant IdP configuration
+
+When you serve multiple tenants from a single issuer instance, each tenant can
+authenticate against its own IdP. The `TENANT_IDP_CONFIG_FILE` variable points
+to a JSON file that maps tenant IDs to IdP configurations.
+
+#### 11.3.1 File format
+
+```json
+{
+  "tenants": [
+    {
+      "tenantId": "acme-corp",
+      "provider": "azure-ad",
+      "tenantId_azure": "acme.onmicrosoft.com",
+      "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    },
+    {
+      "tenantId": "beta-inc",
+      "provider": "aws-cognito",
+      "userPoolId": "us-east-1_XXXXXXXXX",
+      "clientId": "XXXXXXXXXXXXXXXXXXXXXXXXXX"
+    }
+  ]
+}
+```
+
+Each entry maps a logical `tenantId` (the value that will appear in issued
+tokens) to a provider-specific configuration. The `provider` field must be one
+of `azure-ad`, `aws-cognito`, or `gcp-identity`.
+
+When a request arrives without a `tenantId` that matches any entry, the issuer
+falls back to the global `IDENTITY_PROVIDER` / `IDENTITY_PROVIDER`-specific
+variables. The file is hot-reloaded on `SIGHUP` — no restart required after
+adding a new tenant.
+
+#### 11.3.2 Hot-reload
+
+```bash
+# After updating the JSON file:
+kill -HUP $(cat /var/run/euno-issuer.pid)
+# Issuer logs: "SIGHUP received: reloading tenant IdP config"
+```
+
+### 11.4 Manifest template seed data
+
+Manifest templates are stored in Postgres and managed via the admin API.
+On a fresh deployment, seed your initial templates using the admin API:
+
+```bash
+# Create a template (requires ISSUER_ADMIN_API_KEY or operator JWT)
+curl -X POST https://issuer.internal:4000/api/v1/admin/templates \
+  -H "Authorization: Bearer <operator-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "read-only-analyst",
+    "description": "Standard read-only analyst policy for all agents",
+    "ownerTenantId": "acme-corp",
+    "manifest": {
+      "schemaVersion": "1.0.0",
+      "capabilities": [
+        {
+          "action": "call",
+          "resource": "res://data/reports/**",
+          "conditions": [{ "type": "maxCallsPerDay", "limit": 200 }]
+        }
+      ]
+    },
+    "bindings": []
+  }'
+```
+
+The template store supports multiple versions per template (`POST /…/versions`).
+The issuer's hot path automatically resolves the latest active version for any
+`(tenantId, agentId, role)` tuple that has a binding.
+
+If you prefer to seed templates programmatically at startup, write a migration
+script that calls the admin API before the issuer starts serving traffic.
+
+#### 11.4.1 Template binding format
+
+```json
+{
+  "agentId": "agent-abc123",
+  "role": "analyst",
+  "ownerTenantId": "acme-corp",
+  "version": 1
+}
+```
+
+Bindings link a `(tenantId, agentId, role)` tuple to a specific template
+version. Use `version: null` to always follow the latest version (useful during
+initial rollout; pin to a specific version for production stability).
+
+### 11.5 Signing-key trade-offs for self-hosters
+
+The issuer supports two signing-key modes. The choice affects your blast radius
+if the key is compromised.
+
+| Mode | Env var | Use case |
+|---|---|---|
+| **File-based EC P-256** | `ISSUER_SIGNING_KEY_FILE` | Single-tenant dev / small production |
+| **KMS-backed** | `ISSUER_KMS_PROVIDER` + `ISSUER_KMS_KEY_ID` | Multi-tenant or high-value production |
+
+> **Full trade-off analysis:** See
+> [`docs/security/issuer-identity-threat-model.md §7`](./security/issuer-identity-threat-model.md)
+> for the complete security assessment of each mode, including blast radius,
+> backup requirements, and the explicit "not supported for multi-tenant"
+> constraint on file-based keys.
+
+**File-based key — quick setup (single-tenant only):**
+
+```bash
+# Generate a P-256 EC key.
+openssl ecparam -genkey -name prime256v1 -noout \
+  | openssl pkcs8 -topk8 -nocrypt -out issuer-signing-key.pem
+chmod 0600 issuer-signing-key.pem
+
+# Back up the key BEFORE the issuer starts serving traffic.
+# Loss of this key means all in-flight tokens become unverifiable.
+cp issuer-signing-key.pem /secure-backup/issuer-signing-key.pem
+```
+
+Set in environment:
+
+```env
+ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
+ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+```
+
+**Recovery procedure for key loss:**
+
+1. Generate a new key (same command as above).
+2. Update `ISSUER_SIGNING_KEY_FILE` and restart the issuer. The issuer
+   publishes the new public key at `GET /.well-known/jwks.json`
+   automatically within one startup cycle.
+3. All tokens signed by the old key are now invalid. Affected users must
+   re-authenticate via the OIDC flow or re-request tokens from the admin API.
+4. If you used a Postgres token store (`ISSUER_DB_URL`), call
+   `POST /api/v1/admin/revoke-all` with the old key ID to update the
+   revocation ledger before enabling the new key.
+
+### 11.6 Admin operator-JWT setup
+
+Operator JWTs authenticate admin API calls (`PUT /api/v1/admin/role-policy`,
+`/api/v1/admin/templates/*`, etc.). This is the recommended auth mechanism for
+production; the shared-secret `ISSUER_ADMIN_API_KEY` fallback is available for
+bootstrapping or non-production environments.
+
+#### 11.6.1 Entra ID (Azure AD) — operator app registration
+
+1. Create a separate **app registration** for the issuer admin (distinct from
+   the user-facing app in §2 of `docs/issuer-idp-setup.md`).
+2. Expose an **App Role** named `IssuerAdmin` with `allowedMemberTypes: Application`.
+3. Grant the operator tool's managed identity (or client credentials) the
+   `IssuerAdmin` role.
+4. Set:
+   ```env
+   ISSUER_ADMIN_JWKS_URI=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+   ISSUER_ADMIN_JWT_AUDIENCE=api://<app-id-of-admin-registration>
+   ISSUER_ADMIN_JWT_ISSUER=https://sts.windows.net/<tenant-id>/
+   ```
+
+#### 11.6.2 AWS Cognito — machine-to-machine credentials
+
+1. Create a Cognito User Pool App Client with `client_credentials` grant.
+2. Define a **resource server** scope (e.g. `issuer-admin/write`).
+3. Set:
+   ```env
+   ISSUER_ADMIN_JWKS_URI=https://cognito-idp.<region>.amazonaws.com/<user-pool-id>/.well-known/jwks.json
+   ISSUER_ADMIN_JWT_AUDIENCE=<app-client-id>
+   ISSUER_ADMIN_JWT_ISSUER=https://cognito-idp.<region>.amazonaws.com/<user-pool-id>
+   ```
+
+#### 11.6.3 Custom / self-hosted JWKS
+
+Any JWKS-compliant endpoint works. The issuer fetches the JWKS at startup and
+on a 5-minute background refresh. Operator JWTs are verified against the key
+set using the standard RS256 / ES256 algorithms.
+
+### 11.7 IdP wiring recipes
+
+#### 11.7.1 AWS Cognito (single-tenant, global IdP)
+
+```env
+IDENTITY_PROVIDER=aws-cognito
+AWS_COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+AWS_COGNITO_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
+
+# Signing key (single-tenant file-based key)
+ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
+ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+
+# Admin auth (shared-secret for bootstrapping; replace with JWKS in production)
+ISSUER_ADMIN_API_KEY=<random-32+-char-string>
+NODE_ENV=production
+```
+
+**Cognito group → role mapping** is configured via the role-policy admin API
+(`PUT /api/v1/admin/role-policy`). Set `ISSUER_ADMIN_API_KEY` to bootstrap,
+then push a policy:
+
+```bash
+curl -X PUT https://issuer.internal:4000/api/v1/admin/role-policy \
+  -H "X-Admin-Key: <ISSUER_ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "roles": {
+      "Administrators": ["admin", "read", "write"],
+      "Analysts": ["read"]
+    }
+  }'
+```
+
+#### 11.7.2 Entra ID (Azure AD) (single-tenant, global IdP)
+
+```env
+IDENTITY_PROVIDER=azure-ad
+AZURE_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_AD_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Optional: validate the token audience (recommended)
+AZURE_AD_AUDIENCE=api://<client-id>
+
+# Signing key
+ISSUER_SIGNING_KEY_FILE=/run/secrets/issuer-signing-key.pem
+ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true
+
+# Admin auth via Entra app roles (see §11.6.1)
+ISSUER_ADMIN_JWKS_URI=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+ISSUER_ADMIN_JWT_AUDIENCE=api://<admin-app-id>
+ISSUER_ADMIN_JWT_ISSUER=https://sts.windows.net/<tenant-id>/
+NODE_ENV=production
+```
+
+**Entra App Role → euno role mapping:**
+
+```bash
+# Push a role-policy that maps Entra App Roles to euno capability roles.
+curl -X PUT https://issuer.internal:4000/api/v1/admin/role-policy \
+  -H "Authorization: Bearer <operator-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "roles": {
+      "Agent.Write": ["write", "read"],
+      "Agent.Read": ["read"]
+    }
+  }'
+```
+
+### 11.8 Full Stage-4 docker-compose additions
+
+Add the following services to the base docker-compose from §4.4 / §5.3 to
+bring up the complete Stage-4 stack:
+
+```yaml
+services:
+  capability-issuer:
+    image: ghcr.io/euno/capability-issuer:stage4
+    depends_on:
+      - db
+      - mock-oidc      # Remove in production; use real IdP
+    environment:
+      IDENTITY_PROVIDER: aws-cognito
+      AWS_COGNITO_USER_POOL_ID: "${AWS_COGNITO_USER_POOL_ID}"
+      AWS_COGNITO_CLIENT_ID: "${AWS_COGNITO_CLIENT_ID}"
+      ISSUER_SIGNING_KEY_FILE: /run/secrets/issuer-signing-key.pem
+      ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT: "true"
+      ISSUER_DB_URL: "postgres://euno:euno@db:5432/euno"
+      ISSUER_DB_SCHEMA_INIT: "true"
+      ISSUER_ADMIN_API_KEY: "${ISSUER_ADMIN_API_KEY}"
+      NODE_ENV: production
+      PORT: "4000"
+    secrets:
+      - issuer-signing-key
+    ports:
+      - "4000:4000"
+
+  # Minimal OIDC mock for local development / smoke tests.
+  # Remove from production deployments and replace with a real IdP.
+  mock-oidc:
+    image: ghcr.io/euno/mock-oidc:stage4
+    environment:
+      PORT: "4100"
+    ports:
+      - "4100:4100"
+
+secrets:
+  issuer-signing-key:
+    file: ./secrets/issuer-signing-key.pem
+```
+
+See `infra/docker-compose.yml` (smoke profile) for the full working example
+including gateway wiring and the seed policy bind-mount.
+
+### 11.9 Stage-4 security checklist
+
+In addition to the items in §9, review the following before going to production:
+
+- [ ] **Signing key**: KMS-backed (`ISSUER_KMS_PROVIDER`) for multi-tenant deployments. File-based requires `ISSUER_ACCEPT_FILE_KEY_FOR_SINGLE_TENANT=true` and an offline backup.
+- [ ] **Admin auth**: `ISSUER_ADMIN_JWKS_URI` configured (not just `ISSUER_ADMIN_API_KEY`) for operator access.
+- [ ] **IdP hygiene**: CA pinning or JWKS cache validation enabled on the IdP connection (see `docs/issuer-idp-setup.md §8`).
+- [ ] **Tenant isolation**: If running multi-tenant, confirm `TENANT_IDP_CONFIG_FILE` maps each tenant to its own IdP entry. Shared IdP requires per-tenant role-policy enforcement.
+- [ ] **Template versioning**: Pin active template bindings to specific versions once stable. Avoid `version: null` in production.
+- [ ] **Role-policy audit**: Review the OCSF audit log after every `PUT /api/v1/admin/role-policy` call. The issuer logs `operatorId`, timestamp, and the full policy diff.
+- [ ] **SIGHUP tested**: Confirm hot-reload works for your IdP config and role policy (`kill -HUP <pid>`) before relying on it for zero-downtime updates.
+- [ ] **Full threat model**: `docs/security/issuer-identity-threat-model.md` reviewed and sign-off obtained from engineer + security.
+

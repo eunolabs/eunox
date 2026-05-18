@@ -54,6 +54,11 @@ import { PostgresRolePolicyStore } from './postgres-role-policy-store';
 import { createAdminRolePolicyRouter } from './routes/admin-role-policy';
 import { TenantIdpRegistry } from './tenant-idp-config';
 import { OidcStateStore } from './oidc-state-store';
+import {
+  IssuerTelemetryCollector,
+  createIssuerTelemetryFromEnv,
+  extractTelemetryClaimsFromToken,
+} from './issuer-telemetry';
 
 // Load environment variables
 dotenv.config();
@@ -845,6 +850,10 @@ for (const operation of ['issue', 'attenuate', 'renew'] as const) {
     issuanceCounter.inc({ operation, outcome }, 0);
   }
 }
+
+// Stage 4, Task 10: Issuer-side telemetry collector.
+// Opt-in via EUNO_TELEMETRY=1; disabled by default (DI-4).
+const issuerTelemetry: IssuerTelemetryCollector | null = createIssuerTelemetryFromEnv(process.env);
 // F-1 (addresses I-1): per-(tenant, user, agent) rate-limit denials. A spike
 // in `tenant=*,reason=exceeded` is the signal an account is being abused;
 // `reason=unavailable` indicates the limiter (Redis) cannot be consulted.
@@ -968,6 +977,13 @@ app.post('/api/v1/issue', async (req: Request, res: Response, next: NextFunction
     const response = await getIssuerService().issueCapability(issueRequest, enforcementCtx);
 
     issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
+
+    // Stage 4, Task 10: record issuance telemetry. Extract tenantId/userId
+    // from the signed response token (unverified — telemetry use only).
+    if (issuerTelemetry) {
+      const { tenantId, userId } = extractTelemetryClaimsFromToken(response.token);
+      issuerTelemetry.recordIssuance(tenantId, userId);
+    }
 
     // R-3: stamp the documented `euno.*` attributes on the request
     // span so the trace carries the same identifiers as the audit log.
@@ -1101,6 +1117,13 @@ app.post('/api/v1/renew', async (req: Request, res: Response, next: NextFunction
     );
 
     issuanceCounter.inc({ operation: 'renew', outcome: 'success' });
+
+    // Stage 4, Task 10: record renewal telemetry. Extract tenantId/userId
+    // from the signed response token (unverified — telemetry use only).
+    if (issuerTelemetry) {
+      const { tenantId, userId } = extractTelemetryClaimsFromToken(response.token);
+      issuerTelemetry.recordRenewal(tenantId, userId);
+    }
 
     // R-3: stamp `euno.*` attributes on the request span.
     setActiveSpanEunoAttributes({
@@ -1489,6 +1512,16 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
     );
 
     issuanceCounter.inc({ operation: 'issue', outcome: 'success' });
+
+    // Stage 4, Task 10: record OIDC-path issuance telemetry. Extract
+    // tenantId/userId from the signed response token (unverified — telemetry
+    // use only). Note: userContext.userId is already available here but
+    // using the response token is consistent with the direct-issue path.
+    if (issuerTelemetry) {
+      const { tenantId, userId } = extractTelemetryClaimsFromToken(response.token);
+      issuerTelemetry.recordIssuance(tenantId, userId);
+    }
+
     setActiveSpanEunoAttributes({
       [EUNO_ATTR.AGENT_ID]: agentId,
       [EUNO_ATTR.JTI]: response.tokenId,
@@ -1601,6 +1634,10 @@ if (require.main === module) {
               error: err instanceof Error ? err.message : String(err),
             });
           });
+        }
+        // Flush any pending telemetry before exit (Task 10).
+        if (issuerTelemetry) {
+          await issuerTelemetry.stop();
         }
         logger.info('Server closed');
         process.exit(0);
