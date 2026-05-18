@@ -1,5 +1,5 @@
 /**
- * Billing metering surface — Stage 3, Task 17
+ * Billing metering surface — Stage 3, Task 17; extended in Stage 4, Task 10
  * ---------------------------------------------------------------------------
  * Provides per-tenant usage counters that feed the billing/pricing surface
  * described in `docs/pricing-stage-3.md`. The in-process implementation is
@@ -20,6 +20,8 @@
  * | Allow decisions             | integer count   | Subset of enforcement events           |
  * | Deny decisions              | integer count   | Subset of enforcement events           |
  * | Kill-switch invocations     | integer count   | Global activate + per-session/agent    |
+ * | Issuance events             | integer count   | Successful `POST /api/v1/issue` calls  |
+ * | Renewal events              | integer count   | Successful `POST /api/v1/renew` calls  |
  * | Audit retention days        | configuration   | Surfaced alongside live counters       |
  *
  * ## Billing period
@@ -29,6 +31,15 @@
  * queries `GET /admin/usage` at month-end, exports the numbers, then calls
  * `POST /admin/usage/reset` to start the next period. Automated billing
  * integration can drive the same seam.
+ *
+ * ## Per-user metering
+ *
+ * `recordIssuance` and `recordRenewal` accept a `userId` parameter so that
+ * implementations can maintain a per-user breakdown for support and forensics.
+ * Billing always aggregates at the tenant level (`issuanceEvents`,
+ * `renewalEvents` in {@link TenantUsageSnapshot}). The optional
+ * `issuancesByUser` and `renewalsByUser` fields carry per-user counts for
+ * operational queries; they are not used for invoicing.
  */
 
 // ---------------------------------------------------------------------------
@@ -66,6 +77,45 @@ export interface TenantUsageSnapshot {
    */
   readonly killSwitchInvocations: number;
   /**
+   * Total successful capability-token issuances since {@link periodStart}.
+   * Counts every successful `POST /api/v1/issue` call attributed to this
+   * tenant. Used for billing and capacity planning.
+   */
+  readonly issuanceEvents: number;
+  /**
+   * Total successful capability-token renewals since {@link periodStart}.
+   * Counts every successful `POST /api/v1/renew` call attributed to this
+   * tenant. Used for billing and capacity planning.
+   */
+  readonly renewalEvents: number;
+  /**
+   * Per-user issuance breakdown since {@link periodStart}.
+   *
+   * Keys are user identifiers (e.g. `user@corp.com`) as supplied to
+   * {@link UsageMeter.recordIssuance}. Values are per-user issuance counts.
+   *
+   * **Forensics / support use only** — billing uses only the tenant-level
+   * {@link issuanceEvents} aggregate. Absent when the implementation does
+   * not track per-user breakdown.
+   *
+   * **This field is intentionally stripped from the `GET /admin/usage` API
+   * response** to prevent exposing user identifiers (PII) and unbounded payloads
+   * for high-cardinality tenants. Use the audit log endpoints for per-user
+   * forensics.
+   */
+  readonly issuancesByUser?: Readonly<Record<string, number>>;
+  /**
+   * Per-user renewal breakdown since {@link periodStart}.
+   *
+   * **Forensics / support use only** — billing uses only the tenant-level
+   * {@link renewalEvents} aggregate. Absent when the implementation does
+   * not track per-user breakdown.
+   *
+   * **This field is intentionally stripped from the `GET /admin/usage` API
+   * response** — see {@link issuancesByUser} for the rationale.
+   */
+  readonly renewalsByUser?: Readonly<Record<string, number>>;
+  /**
    * ISO-8601 UTC timestamp when the current period started (last
    * `resetPeriod()` call, or gateway start time when never reset).
    */
@@ -102,6 +152,29 @@ export interface UsageMeter {
    *   - `POST /admin/kill-switch/agent/:id/kill`
    */
   recordKillSwitchInvocation(tenantId: string): void;
+
+  /**
+   * Record a successful capability-token issuance for the given tenant and
+   * user.
+   *
+   * Called by the capability-issuer after a successful `POST /api/v1/issue`
+   * or `POST /api/v1/oidc/token` that produces a signed token. The `userId`
+   * is the identity resolved from the upstream IdP token (e.g. the `email`
+   * or `sub` claim). Implementations may store per-user breakdowns for
+   * support and forensics; billing aggregates at the tenant level only.
+   */
+  recordIssuance(tenantId: string, userId: string): void;
+
+  /**
+   * Record a successful capability-token renewal for the given tenant and
+   * user.
+   *
+   * Called by the capability-issuer after a successful `POST /api/v1/renew`.
+   * The `userId` is extracted from the `authorizedBy.userId` claim of the
+   * presented token. Implementations may store per-user breakdowns for
+   * support and forensics; billing aggregates at the tenant level only.
+   */
+  recordRenewal(tenantId: string, userId: string): void;
 
   /**
    * Return the current usage snapshot for a single tenant.
@@ -152,6 +225,12 @@ interface MutableTenantCounters {
   allowDecisions: number;
   denyDecisions: number;
   killSwitchInvocations: number;
+  issuanceEvents: number;
+  renewalEvents: number;
+  /** Per-user issuance counts (forensics; not used for billing). */
+  issuancesByUser: Record<string, number>;
+  /** Per-user renewal counts (forensics; not used for billing). */
+  renewalsByUser: Record<string, number>;
   periodStart: string; // ISO-8601
 }
 
@@ -187,6 +266,10 @@ export class InMemoryUsageMeter implements UsageMeter {
         allowDecisions: 0,
         denyDecisions: 0,
         killSwitchInvocations: 0,
+        issuanceEvents: 0,
+        renewalEvents: 0,
+        issuancesByUser: {},
+        renewalsByUser: {},
         periodStart: new Date().toISOString(),
       };
       this.counters.set(tenantId, entry);
@@ -211,6 +294,20 @@ export class InMemoryUsageMeter implements UsageMeter {
   }
 
   /** @inheritdoc */
+  recordIssuance(tenantId: string, userId: string): void {
+    const entry = this.getOrCreate(tenantId);
+    entry.issuanceEvents += 1;
+    entry.issuancesByUser[userId] = (entry.issuancesByUser[userId] ?? 0) + 1;
+  }
+
+  /** @inheritdoc */
+  recordRenewal(tenantId: string, userId: string): void {
+    const entry = this.getOrCreate(tenantId);
+    entry.renewalEvents += 1;
+    entry.renewalsByUser[userId] = (entry.renewalsByUser[userId] ?? 0) + 1;
+  }
+
+  /** @inheritdoc */
   getUsage(tenantId: string): TenantUsageSnapshot {
     const entry = this.counters.get(tenantId);
     if (!entry) {
@@ -222,17 +319,38 @@ export class InMemoryUsageMeter implements UsageMeter {
         allowDecisions: 0,
         denyDecisions: 0,
         killSwitchInvocations: 0,
+        issuanceEvents: 0,
+        renewalEvents: 0,
         periodStart: new Date().toISOString(),
       };
     }
-    return { tenantId, ...entry };
+    return {
+      tenantId,
+      enforcementEvents: entry.enforcementEvents,
+      allowDecisions: entry.allowDecisions,
+      denyDecisions: entry.denyDecisions,
+      killSwitchInvocations: entry.killSwitchInvocations,
+      issuanceEvents: entry.issuanceEvents,
+      renewalEvents: entry.renewalEvents,
+      issuancesByUser: { ...entry.issuancesByUser },
+      renewalsByUser: { ...entry.renewalsByUser },
+      periodStart: entry.periodStart,
+    };
   }
 
   /** @inheritdoc */
   getAllUsage(): TenantUsageSnapshot[] {
     return Array.from(this.counters.entries()).map(([tenantId, entry]) => ({
       tenantId,
-      ...entry,
+      enforcementEvents: entry.enforcementEvents,
+      allowDecisions: entry.allowDecisions,
+      denyDecisions: entry.denyDecisions,
+      killSwitchInvocations: entry.killSwitchInvocations,
+      issuanceEvents: entry.issuanceEvents,
+      renewalEvents: entry.renewalEvents,
+      issuancesByUser: { ...entry.issuancesByUser },
+      renewalsByUser: { ...entry.renewalsByUser },
+      periodStart: entry.periodStart,
     }));
   }
 
@@ -246,6 +364,10 @@ export class InMemoryUsageMeter implements UsageMeter {
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
         entry.killSwitchInvocations = 0;
+        entry.issuanceEvents = 0;
+        entry.renewalEvents = 0;
+        entry.issuancesByUser = {};
+        entry.renewalsByUser = {};
         entry.periodStart = now;
       }
       // If the tenant has no entry yet, nothing to reset — a no-op is correct.
@@ -255,6 +377,10 @@ export class InMemoryUsageMeter implements UsageMeter {
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
         entry.killSwitchInvocations = 0;
+        entry.issuanceEvents = 0;
+        entry.renewalEvents = 0;
+        entry.issuancesByUser = {};
+        entry.renewalsByUser = {};
         entry.periodStart = now;
       }
     }

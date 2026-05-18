@@ -330,6 +330,85 @@ describe('RedisUsageMeter', () => {
     });
   });
 
+  // ── recordIssuance (Task 10) ───────────────────────────────────────────────
+
+  describe('recordIssuance() (Task 10)', () => {
+    it('increments in-memory issuanceEvents', async () => {
+      meter.recordIssuance('t1', 'alice@corp.com');
+      meter.recordIssuance('t1', 'alice@corp.com');
+      await flushPromises();
+      expect(meter.getUsage('t1').issuanceEvents).toBe(2);
+    });
+
+    it('writes to Redis issuance key', async () => {
+      meter.recordIssuance('t1', 'alice@corp.com');
+      await flushPromises();
+      expect(client.rawStore().get('test:usage:t1:issuance')).toBe('1');
+    });
+
+    it('tracks per-user breakdown in-memory', async () => {
+      meter.recordIssuance('t1', 'alice@corp.com');
+      meter.recordIssuance('t1', 'alice@corp.com');
+      meter.recordIssuance('t1', 'bob@corp.com');
+      await flushPromises();
+      const snap = meter.getUsage('t1');
+      expect(snap.issuancesByUser?.['alice@corp.com']).toBe(2);
+      expect(snap.issuancesByUser?.['bob@corp.com']).toBe(1);
+    });
+
+    it('does not affect enforcement counters', async () => {
+      meter.recordIssuance('t1', 'alice@corp.com');
+      await flushPromises();
+      const snap = meter.getUsage('t1');
+      expect(snap.enforcementEvents).toBe(0);
+      expect(snap.allowDecisions).toBe(0);
+    });
+
+    it('resets issuanceEvents on resetPeriod()', async () => {
+      meter.recordIssuance('t1', 'alice@corp.com');
+      await flushPromises();
+      meter.resetPeriod('t1');
+      await flushPromises();
+      const snap = meter.getUsage('t1');
+      expect(snap.issuanceEvents).toBe(0);
+      expect(snap.issuancesByUser).toEqual({});
+    });
+  });
+
+  // ── recordRenewal (Task 10) ────────────────────────────────────────────────
+
+  describe('recordRenewal() (Task 10)', () => {
+    it('increments in-memory renewalEvents', async () => {
+      meter.recordRenewal('t1', 'alice@corp.com');
+      await flushPromises();
+      expect(meter.getUsage('t1').renewalEvents).toBe(1);
+    });
+
+    it('writes to Redis renewal key', async () => {
+      meter.recordRenewal('t1', 'alice@corp.com');
+      await flushPromises();
+      expect(client.rawStore().get('test:usage:t1:renewal')).toBe('1');
+    });
+
+    it('tracks per-user breakdown in-memory', async () => {
+      meter.recordRenewal('t1', 'alice@corp.com');
+      meter.recordRenewal('t1', 'bob@corp.com');
+      meter.recordRenewal('t1', 'bob@corp.com');
+      await flushPromises();
+      const snap = meter.getUsage('t1');
+      expect(snap.renewalsByUser?.['alice@corp.com']).toBe(1);
+      expect(snap.renewalsByUser?.['bob@corp.com']).toBe(2);
+    });
+
+    it('does not affect enforcement or issuance counters', async () => {
+      meter.recordRenewal('t1', 'alice@corp.com');
+      await flushPromises();
+      const snap = meter.getUsage('t1');
+      expect(snap.enforcementEvents).toBe(0);
+      expect(snap.issuanceEvents).toBe(0);
+    });
+  });
+
   // ── getAllUsage ────────────────────────────────────────────────────────────
 
   describe('getAllUsage()', () => {
@@ -375,13 +454,19 @@ describe('RedisUsageMeter', () => {
 
     it('deletes Redis counter keys on global reset', async () => {
       meter.recordEnforcement('t1', 'allow');
+      meter.recordIssuance('t1', 'alice@corp.com');
+      meter.recordRenewal('t1', 'alice@corp.com');
       await flushPromises();
       expect(client.rawStore().has('test:usage:t1:enforcement')).toBe(true);
+      expect(client.rawStore().has('test:usage:t1:issuance')).toBe(true);
+      expect(client.rawStore().has('test:usage:t1:renewal')).toBe(true);
 
       meter.resetPeriod();
       await flushPromises();
 
       expect(client.rawStore().has('test:usage:t1:enforcement')).toBe(false);
+      expect(client.rawStore().has('test:usage:t1:issuance')).toBe(false);
+      expect(client.rawStore().has('test:usage:t1:renewal')).toBe(false);
     });
 
     it('applies TTL to the new :ps key written during reset', async () => {
@@ -434,6 +519,8 @@ describe('RedisUsageMeter', () => {
       await client.set(`${prefix}t1:allow`, '7');
       await client.set(`${prefix}t1:deny`, '3');
       await client.set(`${prefix}t1:kill`, '1');
+      await client.set(`${prefix}t1:issuance`, '5');
+      await client.set(`${prefix}t1:renewal`, '2');
       await client.set(`${prefix}t1:ps`, '2026-01-01T00:00:00.000Z');
 
       await meter.loadFromRedis();
@@ -443,6 +530,8 @@ describe('RedisUsageMeter', () => {
       expect(snap.allowDecisions).toBe(7);
       expect(snap.denyDecisions).toBe(3);
       expect(snap.killSwitchInvocations).toBe(1);
+      expect(snap.issuanceEvents).toBe(5);
+      expect(snap.renewalEvents).toBe(2);
       expect(snap.periodStart).toBe('2026-01-01T00:00:00.000Z');
     });
 

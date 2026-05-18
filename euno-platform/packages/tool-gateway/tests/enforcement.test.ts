@@ -1665,6 +1665,8 @@ describe('EnforcementEngine', () => {
       const throwingMeter = {
         recordEnforcement: () => { throw new Error('Billing system unavailable'); },
         recordKillSwitchInvocation: jest.fn(),
+        recordIssuance: jest.fn(),
+        recordRenewal: jest.fn(),
         getUsage: jest.fn(),
         getAllUsage: jest.fn(),
         resetPeriod: jest.fn(),
@@ -1694,6 +1696,8 @@ describe('EnforcementEngine', () => {
       const silentMeter = {
         recordEnforcement: jest.fn(),
         recordKillSwitchInvocation: jest.fn(),
+        recordIssuance: jest.fn(),
+        recordRenewal: jest.fn(),
         getUsage: jest.fn(),
         getAllUsage: jest.fn(),
         resetPeriod: jest.fn(),

@@ -28,11 +28,18 @@
  *       "allowDecisions": 40,
  *       "denyDecisions": 2,
  *       "killSwitchInvocations": 1,
+ *       "issuanceEvents": 5,
+ *       "renewalEvents": 2,
  *       "periodStart": "<ISO-8601>"
  *     }
  *   ]
  * }
  * ```
+ *
+ * Per-user breakdowns (`issuancesByUser`, `renewalsByUser`) are intentionally
+ * omitted from this response — they contain user identifiers (often email
+ * addresses) and can be arbitrarily large. Consult the audit log endpoints
+ * for per-user forensics.
  *
  * When `tenantId` is supplied the `"tenants"` array always contains exactly
  * one entry — a zero-count snapshot is returned for tenants that have had no
@@ -63,7 +70,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { UsageMeter } from '@euno/common';
+import { TenantUsageSnapshot, UsageMeter } from '@euno/common';
 
 export interface UsageRouterOptions {
   usageMeter: UsageMeter;
@@ -76,6 +83,27 @@ export interface UsageRouterOptions {
    * configured (e.g. self-host with operator-managed storage).
    */
   auditRetentionDays?: number;
+}
+
+/**
+ * Strips per-user breakdown fields from a {@link TenantUsageSnapshot} before
+ * sending it over the wire.
+ *
+ * `issuancesByUser` and `renewalsByUser` contain user identifiers (often
+ * email addresses). They are kept in-process for support and forensics but
+ * **must not** appear in the default billing-API response:
+ *   - They constitute PII under most privacy regulations.
+ *   - For high-cardinality tenants the maps can be arbitrarily large.
+ *
+ * Callers that need per-user breakdown for a specific support case should
+ * query the audit log directly via the audit endpoints.
+ */
+function toPublicSnapshot(
+  snap: TenantUsageSnapshot,
+): Omit<TenantUsageSnapshot, 'issuancesByUser' | 'renewalsByUser'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { issuancesByUser: _iu, renewalsByUser: _ru, ...rest } = snap;
+  return rest;
 }
 
 /**
@@ -109,11 +137,11 @@ export function mountUsageRoutes(router: Router, opts: UsageRouterOptions): void
       // Only include tenants that exist in the store; a zero snapshot for an
       // unknown tenant is still a valid response for targeted queries — the
       // operator may be checking a tenant that has had no activity this period.
-      tenants = [snap];
+      tenants = [toPublicSnapshot(snap)];
     } else {
       tenants = usageMeter.getAllUsage().slice().sort(
         (a, b) => a.tenantId.localeCompare(b.tenantId),
-      );
+      ).map(toPublicSnapshot);
     }
 
     res.json({

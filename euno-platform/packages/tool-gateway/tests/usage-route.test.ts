@@ -244,3 +244,62 @@ describe('POST /usage/reset', () => {
     expect(new Date(res.body.resetAt).toISOString()).toBe(res.body.resetAt);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 10 — issuance/renewal counters in API response; PII stripping
+// ---------------------------------------------------------------------------
+
+describe('GET /usage — issuance and renewal counters (Task 10)', () => {
+  it('includes issuanceEvents and renewalEvents in the tenant snapshot', async () => {
+    const meter = new InMemoryUsageMeter();
+    meter.recordIssuance('t1', 'alice@corp.com');
+    meter.recordIssuance('t1', 'bob@corp.com');
+    meter.recordRenewal('t1', 'alice@corp.com');
+
+    const app = buildApp(meter);
+    const res = await request(app).get('/usage');
+
+    expect(res.status).toBe(200);
+    const t1 = res.body.tenants.find((t: { tenantId: string }) => t.tenantId === 't1');
+    expect(t1.issuanceEvents).toBe(2);
+    expect(t1.renewalEvents).toBe(1);
+  });
+
+  it('does NOT expose issuancesByUser in the API response (PII stripping)', async () => {
+    const meter = new InMemoryUsageMeter();
+    meter.recordIssuance('t1', 'alice@corp.com');
+
+    const app = buildApp(meter);
+    const res = await request(app).get('/usage');
+
+    const t1 = res.body.tenants.find((t: { tenantId: string }) => t.tenantId === 't1');
+    expect(t1).not.toHaveProperty('issuancesByUser');
+  });
+
+  it('does NOT expose renewalsByUser in the API response (PII stripping)', async () => {
+    const meter = new InMemoryUsageMeter();
+    meter.recordRenewal('t1', 'alice@corp.com');
+
+    const app = buildApp(meter);
+    const res = await request(app).get('/usage');
+
+    const t1 = res.body.tenants.find((t: { tenantId: string }) => t.tenantId === 't1');
+    expect(t1).not.toHaveProperty('renewalsByUser');
+  });
+
+  it('does NOT expose per-user fields for the ?tenantId= targeted query either', async () => {
+    const meter = new InMemoryUsageMeter();
+    meter.recordIssuance('acme', 'alice@corp.com');
+    meter.recordRenewal('acme', 'bob@corp.com');
+
+    const app = buildApp(meter);
+    const res = await request(app).get('/usage?tenantId=acme');
+
+    expect(res.status).toBe(200);
+    const snap = res.body.tenants[0];
+    expect(snap.issuanceEvents).toBe(1);
+    expect(snap.renewalEvents).toBe(1);
+    expect(snap).not.toHaveProperty('issuancesByUser');
+    expect(snap).not.toHaveProperty('renewalsByUser');
+  });
+});

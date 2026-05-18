@@ -138,6 +138,12 @@ interface MutableCounters {
   allowDecisions: number;
   denyDecisions: number;
   killSwitchInvocations: number;
+  issuanceEvents: number;
+  renewalEvents: number;
+  /** Per-user issuance counts (forensics; in-memory only, not persisted to Redis). */
+  issuancesByUser: Record<string, number>;
+  /** Per-user renewal counts (forensics; in-memory only, not persisted to Redis). */
+  renewalsByUser: Record<string, number>;
   periodStart: string;
 }
 
@@ -211,6 +217,26 @@ export class RedisUsageMeter implements UsageMeter {
   }
 
   /** @inheritdoc */
+  recordIssuance(tenantId: string, userId: string): void {
+    const entry = this.getOrCreate(tenantId);
+    entry.issuanceEvents += 1;
+    entry.issuancesByUser[userId] = (entry.issuancesByUser[userId] ?? 0) + 1;
+
+    void this.persistIncr(tenantId, 'issuance');
+    void this.ensureTenantRegistered(tenantId, entry.periodStart);
+  }
+
+  /** @inheritdoc */
+  recordRenewal(tenantId: string, userId: string): void {
+    const entry = this.getOrCreate(tenantId);
+    entry.renewalEvents += 1;
+    entry.renewalsByUser[userId] = (entry.renewalsByUser[userId] ?? 0) + 1;
+
+    void this.persistIncr(tenantId, 'renewal');
+    void this.ensureTenantRegistered(tenantId, entry.periodStart);
+  }
+
+  /** @inheritdoc */
   getUsage(tenantId: string): TenantUsageSnapshot {
     const entry = this.counters.get(tenantId);
     if (!entry) {
@@ -220,17 +246,38 @@ export class RedisUsageMeter implements UsageMeter {
         allowDecisions: 0,
         denyDecisions: 0,
         killSwitchInvocations: 0,
+        issuanceEvents: 0,
+        renewalEvents: 0,
         periodStart: new Date().toISOString(),
       };
     }
-    return { tenantId, ...entry };
+    return {
+      tenantId,
+      enforcementEvents: entry.enforcementEvents,
+      allowDecisions: entry.allowDecisions,
+      denyDecisions: entry.denyDecisions,
+      killSwitchInvocations: entry.killSwitchInvocations,
+      issuanceEvents: entry.issuanceEvents,
+      renewalEvents: entry.renewalEvents,
+      issuancesByUser: { ...entry.issuancesByUser },
+      renewalsByUser: { ...entry.renewalsByUser },
+      periodStart: entry.periodStart,
+    };
   }
 
   /** @inheritdoc */
   getAllUsage(): TenantUsageSnapshot[] {
     return Array.from(this.counters.entries()).map(([tenantId, entry]) => ({
       tenantId,
-      ...entry,
+      enforcementEvents: entry.enforcementEvents,
+      allowDecisions: entry.allowDecisions,
+      denyDecisions: entry.denyDecisions,
+      killSwitchInvocations: entry.killSwitchInvocations,
+      issuanceEvents: entry.issuanceEvents,
+      renewalEvents: entry.renewalEvents,
+      issuancesByUser: { ...entry.issuancesByUser },
+      renewalsByUser: { ...entry.renewalsByUser },
+      periodStart: entry.periodStart,
     }));
   }
 
@@ -244,6 +291,10 @@ export class RedisUsageMeter implements UsageMeter {
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
         entry.killSwitchInvocations = 0;
+        entry.issuanceEvents = 0;
+        entry.renewalEvents = 0;
+        entry.issuancesByUser = {};
+        entry.renewalsByUser = {};
         entry.periodStart = now;
       }
       void this.persistReset([tenantId], now);
@@ -254,6 +305,10 @@ export class RedisUsageMeter implements UsageMeter {
         entry.allowDecisions = 0;
         entry.denyDecisions = 0;
         entry.killSwitchInvocations = 0;
+        entry.issuanceEvents = 0;
+        entry.renewalEvents = 0;
+        entry.issuancesByUser = {};
+        entry.renewalsByUser = {};
         entry.periodStart = now;
         allTenantIds.push(tid);
       }
@@ -297,7 +352,7 @@ export class RedisUsageMeter implements UsageMeter {
     }
 
     // Build all keys for a single bulk MGET across all tenants.
-    const METRICS = ['enforcement', 'allow', 'deny', 'kill', 'ps'] as const;
+    const METRICS = ['enforcement', 'allow', 'deny', 'kill', 'issuance', 'renewal', 'ps'] as const;
     const keys: string[] = [];
     for (const tid of tenantIds) {
       for (const m of METRICS) {
@@ -317,7 +372,7 @@ export class RedisUsageMeter implements UsageMeter {
       return;
     }
 
-    const metricsPerTenant = METRICS.length; // 5
+    const metricsPerTenant = METRICS.length; // 7
     for (let i = 0; i < tenantIds.length; i++) {
       const tid = tenantIds[i];
       if (!tid) continue;
@@ -326,21 +381,28 @@ export class RedisUsageMeter implements UsageMeter {
       const allow = parseIntOrZero(values[base + 1]);
       const deny = parseIntOrZero(values[base + 2]);
       const kill = parseIntOrZero(values[base + 3]);
+      const issuance = parseIntOrZero(values[base + 4]);
+      const renewal = parseIntOrZero(values[base + 5]);
       // Check the raw Redis value before applying the fallback so that the
       // "only populate if there's any data" guard below can distinguish a
       // completely expired tenant (all Redis keys gone) from one that has
       // only a period-start record remaining.
-      const rawPs = values[base + 4];
+      const rawPs = values[base + 6];
       const ps = rawPs ?? new Date().toISOString();
 
       // Only populate if there's any data — skip tenants whose keys have
       // all expired (rawPs would be null in that case along with zero counters).
-      if (enforcement > 0 || allow > 0 || deny > 0 || kill > 0 || rawPs !== null) {
+      if (enforcement > 0 || allow > 0 || deny > 0 || kill > 0 || issuance > 0 || renewal > 0 || rawPs !== null) {
         this.counters.set(tid, {
           enforcementEvents: enforcement,
           allowDecisions: allow,
           denyDecisions: deny,
           killSwitchInvocations: kill,
+          issuanceEvents: issuance,
+          renewalEvents: renewal,
+          // Per-user breakdowns are not persisted to Redis; they reset on startup.
+          issuancesByUser: {},
+          renewalsByUser: {},
           periodStart: ps,
         });
       }
@@ -377,6 +439,10 @@ export class RedisUsageMeter implements UsageMeter {
         allowDecisions: 0,
         denyDecisions: 0,
         killSwitchInvocations: 0,
+        issuanceEvents: 0,
+        renewalEvents: 0,
+        issuancesByUser: {},
+        renewalsByUser: {},
         periodStart: new Date().toISOString(),
       };
       this.counters.set(tenantId, entry);
@@ -442,7 +508,7 @@ export class RedisUsageMeter implements UsageMeter {
    * given tenants (called by `resetPeriod`).
    */
   private async persistReset(tenantIds: string[], newPeriodStart: string): Promise<void> {
-    const COUNTER_METRICS = ['enforcement', 'allow', 'deny', 'kill'] as const;
+    const COUNTER_METRICS = ['enforcement', 'allow', 'deny', 'kill', 'issuance', 'renewal'] as const;
     try {
       const keysToDelete: string[] = [];
       for (const tid of tenantIds) {

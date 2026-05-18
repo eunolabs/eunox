@@ -395,3 +395,215 @@ describe('createGatewayTelemetryFromEnv', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// GatewayTelemetryCollector — issuance / renewal (Task 10)
+// ---------------------------------------------------------------------------
+
+describe('GatewayTelemetryCollector — recordIssuance / recordRenewal (Task 10)', () => {
+  let fetchCapture: ReturnType<typeof makeFetchCapture>;
+
+  beforeEach(() => {
+    fetchCapture = makeFetchCapture();
+  });
+
+  afterEach(() => {
+    fetchCapture.restore();
+  });
+
+  // ── Dual-write test: enforcement + issuance on the same tenant ────────────
+
+  describe('meter dual-write', () => {
+    it('flush() includes both enforcement decisions and issuance events for the same tenant', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+
+      // Enforcement side.
+      collector.recordDecision('acme', 'sess-1', true);
+      collector.recordDecision('acme', 'sess-2', false, 'maxCalls');
+
+      // Issuance side.
+      collector.recordIssuance('acme', 'alice@acme.com');
+      collector.recordIssuance('acme', 'bob@acme.com');
+      collector.recordRenewal('acme', 'alice@acme.com');
+
+      await collector.flush();
+
+      expect(fetchCapture.captured).toHaveLength(1);
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      // Enforcement dimension.
+      expect(evt.sessionsStarted).toBe(2);
+      expect(evt.denialsByConditionType).toEqual({ maxCalls: 1 });
+      // Issuance dimension.
+      expect(evt.issuanceEvents).toBe(2);
+      expect(evt.renewalEvents).toBe(1);
+    });
+
+    it('enforcement events do not increment issuanceEvents', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordDecision('t1', 's1', true);
+      collector.recordDecision('t1', 's2', true);
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.issuanceEvents).toBe(0);
+      expect(evt.renewalEvents).toBe(0);
+    });
+
+    it('issuance events do not increment sessionsStarted', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordIssuance('t1', 'alice@corp.com');
+      collector.recordIssuance('t1', 'bob@corp.com');
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.sessionsStarted).toBe(0);
+      expect(evt.issuanceEvents).toBe(2);
+    });
+
+    it('flush() emits an event when only issuance events are present (no sessions)', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordIssuance('t1', 'alice@corp.com');
+      await collector.flush();
+
+      expect(fetchCapture.captured).toHaveLength(1);
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.issuanceEvents).toBe(1);
+      expect(evt.sessionsStarted).toBe(0);
+    });
+  });
+
+  // ── Tenant aggregation test ────────────────────────────────────────────────
+
+  describe('tenant aggregation', () => {
+    it('issuances from multiple users aggregate into a single tenant total', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+
+      // Five distinct users, 3 issuances each.
+      const users = ['alice', 'bob', 'carol', 'dave', 'eve'];
+      for (const user of users) {
+        collector.recordIssuance('acme', `${user}@acme.com`);
+        collector.recordIssuance('acme', `${user}@acme.com`);
+        collector.recordIssuance('acme', `${user}@acme.com`);
+      }
+
+      await collector.flush();
+
+      expect(fetchCapture.captured).toHaveLength(1);
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      // Billing aggregate: 5 users × 3 = 15 issuanceEvents.
+      expect(evt.issuanceEvents).toBe(15);
+      // Forensic cardinality: 5 distinct issuing users.
+      expect(evt.distinctIssuingUsers).toBe(5);
+      // No user identifiers should appear in the emitted event payload.
+      expect(JSON.stringify(evt)).not.toContain('@acme.com');
+    });
+
+    it('issuances for different tenants produce independent events', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+
+      collector.recordIssuance('tenant-a', 'user-a@a.com');
+      collector.recordIssuance('tenant-a', 'user-a@a.com'); // 2 for tenant-a
+      collector.recordIssuance('tenant-b', 'user-b@b.com'); // 1 for tenant-b
+
+      await collector.flush();
+
+      expect(fetchCapture.captured).toHaveLength(2);
+      const evtA = fetchCapture.captured.find((e) => e.installId === 'tenant:tenant-a');
+      const evtB = fetchCapture.captured.find((e) => e.installId === 'tenant:tenant-b');
+      expect(evtA?.issuanceEvents).toBe(2);
+      expect(evtB?.issuanceEvents).toBe(1);
+    });
+
+    it('distinctIssuingUsers reflects unique user count, not issuance count', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+
+      // Same user issues 10 times.
+      for (let i = 0; i < 10; i++) {
+        collector.recordIssuance('t1', 'power-user@corp.com');
+      }
+      // Different user issues once.
+      collector.recordIssuance('t1', 'occasional-user@corp.com');
+
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.issuanceEvents).toBe(11);
+      expect(evt.distinctIssuingUsers).toBe(2); // Only 2 unique users
+    });
+
+    it('distinctRenewingUsers reflects unique user count, not renewal count', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+
+      collector.recordRenewal('t1', 'alice@corp.com');
+      collector.recordRenewal('t1', 'alice@corp.com');
+      collector.recordRenewal('t1', 'alice@corp.com');
+      collector.recordRenewal('t1', 'bob@corp.com');
+
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.renewalEvents).toBe(4);
+      expect(evt.distinctRenewingUsers).toBe(2);
+    });
+
+    it('flush() resets issuance state so the next window starts fresh', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordIssuance('t1', 'alice@corp.com');
+      await collector.flush();
+      expect(fetchCapture.captured).toHaveLength(1);
+
+      // Second flush — no new issuances, so no event.
+      await collector.flush();
+      expect(fetchCapture.captured).toHaveLength(1); // unchanged
+    });
+
+    it('disabled collector never calls fetch for issuance events', async () => {
+      const collector = new GatewayTelemetryCollector({
+        endpointUrl: 'http://telemetry.test/v1',
+        disabled: true,
+      });
+      collector.recordIssuance('t1', 'alice@corp.com');
+      collector.recordRenewal('t1', 'alice@corp.com');
+      await collector.flush();
+
+      expect(fetchCapture.captured).toHaveLength(0);
+    });
+
+    it('installId uses tenant prefix (no user identifiers exposed)', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordIssuance('acme-corp', 'cfo@acme-corp.com');
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.installId).toBe('tenant:acme-corp');
+      expect(JSON.stringify(evt)).not.toContain('cfo@acme-corp.com');
+    });
+
+    it('caps distinctIssuingUsers at 10000 to prevent unbounded memory growth', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      // Record 10001 distinct users.
+      for (let i = 0; i < 10_001; i++) {
+        collector.recordIssuance('t1', `user${i}@corp.com`);
+      }
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      // Aggregate count is accurate (all 10001 issuances counted).
+      expect(evt.issuanceEvents).toBe(10_001);
+      // Distinct count is capped.
+      expect(evt.distinctIssuingUsers).toBe(10_000);
+    });
+
+    it('caps distinctRenewingUsers at 10000 to prevent unbounded memory growth', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      for (let i = 0; i < 10_001; i++) {
+        collector.recordRenewal('t1', `user${i}@corp.com`);
+      }
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.renewalEvents).toBe(10_001);
+      expect(evt.distinctRenewingUsers).toBe(10_000);
+    });
+  });
+});
