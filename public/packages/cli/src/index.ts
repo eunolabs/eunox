@@ -731,7 +731,7 @@ program
       let code: string;
       let returnedState: string;
       try {
-        const result = await loopback.waitForCode()();
+        const result = await loopback.waitForCode();
         code = result.code;
         returnedState = result.state;
       } catch (err) {

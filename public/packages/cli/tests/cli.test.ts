@@ -817,14 +817,9 @@ describe('euno revoke', () => {
 
   it('calls the gateway revocation endpoint and exits 0 on success', async () => {
     const { spawn } = await import('child_process');
-    let capturedPath = '';
-    let capturedKey = '';
-    let capturedBody = '';
     const serverProcess = spawn(process.execPath, ['-e', `
       const http = require('http');
       const server = http.createServer((req, res) => {
-        capturedPath = req.url;
-        capturedKey = req.headers['x-admin-api-key'] || '';
         let body = '';
         req.on('data', d => body += d);
         req.on('end', () => {

@@ -85,7 +85,7 @@ euno schema-version validate-token <token> --against-jwks <url>
   "idpAuthUrl": "https://login.microsoftonline.com/.../authorize",
   "idpTokenUrl": "https://login.microsoftonline.com/.../token",
   "idpClientId": "...",
-  "defaultAgentId": "my-agent"
+  "agentId": "my-agent"
 }
 ```
 
