@@ -26,6 +26,9 @@ jobs:
       - name: Check license boundary
         run: npm run lint:license-boundary
 
+      - name: Check threat model sign-off
+        run: npm run lint:threat-model-signoff
+
       - name: Lint scripts tests
         run: npm run test:scripts
 

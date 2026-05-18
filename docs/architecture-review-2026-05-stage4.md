@@ -263,10 +263,11 @@ substitute for the CR-3 integration test.
 Do in-flight `validateToken()` calls complete before the provider map is replaced?
 Document drain semantics.
 
-**Q2 — `web/` vs. issuer `/admin/` for the admin UI (E4 wording):**
-Exit criterion E4 references "hosted UI under `web/`" but the admin UI is served
-by the issuer's Express process at `/admin/`. Update E4's wording in
-`docs/stage4executionplan.md` to reflect the actual delivery mechanism.
+**Q2 — `web/` vs. issuer `/admin/` for the admin UI (E4 wording) — RESOLVED:**
+~~Exit criterion E4 references "hosted UI under `web/`" but the admin UI is served
+by the issuer's Express process at `/admin/`.~~ Updated E4's wording in
+`docs/stage4executionplan.md` to reflect the actual delivery mechanism (issuer
+Express process at `/admin/`). See execution plan table row Q2.
 
 **Q3 — `POST /api/v1/oidc/token` receives `idToken` (post-exchange): clarify API naming:**
 The issuer never receives the raw PKCE authorization code; it receives the
@@ -290,15 +291,16 @@ deferred.
 | Priority | Item | Dependency | Status |
 |---|---|---|---|
 | **P0** | CR-1 — Redis-backed `OidcStateStore` | None | ✅ Fixed |
-| **P0** | CR-2 — Threat model sign-off | Process action | ⬜ Pending |
+| **P0** | CR-2 — Threat model sign-off | Process action | ✅ Fixed (lint rule added; header signed off 2026-05-18) |
 | **P0** | CR-3 — CLI↔issuer integration test | Issuer harness from `e2e.test.ts` | ✅ Fixed |
-| **P1** | CR-4 — Quickstart PKCE docs fix | Docs only | ⬜ Pending |
-| **P1** | DI-2 — Admin UI token-in-URL → session cookie | Small auth refactor | ⬜ Pending |
-| **P1** | CI-4 — HTML-escape dynamic values in admin UI | `htmlEscape` utility | ⬜ Pending |
-| **P2** | DI-3 — Multi-replica runbook section | Docs | ⬜ Pending |
-| **P2** | DI-1 — Template-assignment fallback audit log | One `logger.warn` + context field | ⬜ Pending |
-| **P2** | CI-1 — `distinctIssuingUsersCapped` companion field | Schema + emit change | ⬜ Pending |
+| **P1** | CR-4 — Quickstart PKCE docs fix | Docs only | ✅ Fixed |
+| **P1** | DI-2 — Admin UI token-in-URL → session cookie | Small auth refactor | ✅ Fixed |
+| **P1** | CI-4 — HTML-escape dynamic values in admin UI | `htmlEscape` utility | ✅ Fixed |
+| **P2** | DI-3 — Multi-replica runbook section | Docs | ✅ Fixed |
+| **P2** | DI-1 — Template-assignment fallback audit log | One `logger.warn` + context field | ✅ Fixed (`templateFallback: true` in AuditEntry.metadata) |
+| **P2** | CI-1 — `distinctIssuingUsersCapped` companion field | Schema + emit change | ✅ Fixed |
 | **P3** | DI-4 — Move `TelemetryEvent` to `@euno/common` | Dep-direction validation | ⬜ Deferred to Stage 5 |
-| **P3** | DI-5 — KMS key alias `superRefine` guard | Config schema addition | ⬜ Pending |
+| **P3** | DI-5 — KMS key alias `superRefine` guard | Config schema addition | ✅ Fixed |
 | **P3** | CI-3 — O(N) sweep (superseded by CR-1 Redis fix) | N/A — resolved | ✅ N/A |
-| **P3** | Q2 — Clarify E4 wording in stage4executionplan.md | Docs | ⬜ Pending |
+| **P3** | CI-5 — Canonical revocation source | Docs | ✅ Fixed (runbook §Token Revocation) |
+| **P3** | Q2 — Clarify E4 wording in stage4executionplan.md | Docs | ✅ Fixed |

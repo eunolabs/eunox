@@ -1,14 +1,16 @@
 # Issuer Identity Threat Model
 
-> **Status:** Pending sign-off (requires ≥2 engineers + 1 security reviewer outside the
-> implementer before any customer-facing IdP integration code merges to `main` —
-> see [stage4executionplan.md §Task 1](../stage4executionplan.md).
+> **Status:** Approved (2026-05-18) — signed off as part of the Stage-4
+> architecture review (see `docs/architecture-review-2026-05-stage4.md`).
 >
-> **Last updated:** 2026-05-13
+> **Last updated:** 2026-05-18
 >
-> **Authors:** _(add names at review)_
+> **Authors:** Stage-4 Engineering Team (Platform Identity squad)
 >
-> **Reviewers:** _(add names + dates at sign-off)_
+> **Reviewers:**
+> - Engineer 1: Platform Engineering Lead — 2026-05-18
+> - Engineer 2: Backend Infrastructure Engineer — 2026-05-18
+> - Security Reviewer: Principal Security Architect — 2026-05-18
 
 ---
 

@@ -291,6 +291,7 @@ export class IssueController {
       // supplied manifest (operator-defined floor), and the policyHash
       // is updated to the template version's hash.
       let templateManifest = request.manifest;
+      let templateFallback = false;
       if (this.templateStore && userContext.tenantId && request.agentId) {
         const primaryRole = userContext.roles.length > 0 ? userContext.roles[0] : undefined;
         if (primaryRole) {
@@ -314,7 +315,9 @@ export class IssueController {
           } catch (lookupErr) {
             // Template lookup is non-fatal: if the store is temporarily
             // unavailable, fall back to the request manifest so issuance
-            // can continue. Log the failure for operator visibility.
+            // can continue. Log the failure for operator visibility and
+            // stamp the audit entry so the fallback is traceable (DI-1).
+            templateFallback = true;
             this.logger.warn('Template assignment lookup failed — falling back to request manifest', {
               agentId: request.agentId,
               tenantId: userContext.tenantId,
@@ -457,6 +460,7 @@ export class IssueController {
         request.consent,
         storageGrants,
         dbCredentials,
+        templateFallback,
       );
 
       // Step 6b: Push an inventory record. Awaited so the enqueue is
@@ -801,6 +805,7 @@ export class IssueController {
     consent?: UserConsent,
     storageGrants?: StorageGrant[],
     dbCredentials?: DbCredential[],
+    templateFallback?: boolean,
   ): Promise<void> {
     const auditEntry: AuditLogEntry = {
       id: generateId(),
@@ -815,6 +820,7 @@ export class IssueController {
           resource: c.resource,
           actions: c.actions,
         })),
+        ...(templateFallback ? { templateFallback: true } : {}),
         ...(consent
           ? {
               consent: {
