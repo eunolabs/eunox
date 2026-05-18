@@ -6,9 +6,112 @@
 
 import { Command } from 'commander';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import * as http from 'http';
+import * as crypto from 'crypto';
 import axios from 'axios';
+
+function readEunoConfig(): Record<string, string> {
+  const configFile = path.join(os.homedir(), '.euno', 'config');
+  if (fs.existsSync(configFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(configFile, 'utf8')) as Record<string, string>;
+    } catch {
+      process.stderr.write(`Warning: ~/.euno/config contains invalid JSON and will be ignored.\n`);
+    }
+  }
+  return {};
+}
+
+const CONFIG_ALLOWED_KEYS = ['issuerUrl', 'gatewayUrl', 'idpAuthUrl', 'idpTokenUrl', 'idpClientId', 'agentId', 'region'];
+
+// ── PKCE helpers ─────────────────────────────────────────────────────────────
+
+/** Generate a PKCE code verifier: 32 random bytes as base64url (43 chars). */
+function generateCodeVerifier(): string {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+/** Derive the PKCE code challenge: BASE64URL(SHA-256(verifier)). */
+function generateCodeChallenge(verifier: string): string {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
+/** Open the user's default browser (best-effort; non-fatal on failure). */
+function openBrowser(url: string): void {
+  const { exec } = require('child_process') as typeof import('child_process');
+  const cmd =
+    process.platform === 'win32' ? `start "" "${url}"` :
+    process.platform === 'darwin' ? `open "${url}"` :
+    `xdg-open "${url}"`;
+  exec(cmd, () => { /* ignore errors; user can open manually */ });
+}
+
+/**
+ * Start a temporary loopback HTTP server on a random port.
+ * Returns the port immediately; `waitForCode()` resolves with `{code, state}`
+ * when the IdP redirects back, or rejects on timeout/error.
+ */
+async function startLoopbackServer(timeoutMs = 120000): Promise<{
+  port: number;
+  redirectUri: string;
+  waitForCode: () => Promise<{ code: string; state: string }>;
+}> {
+  return new Promise((resolve, reject) => {
+    let resolveFn!: (v: { code: string; state: string }) => void;
+    let rejectFn!: (e: Error) => void;
+    const codePromise = new Promise<{ code: string; state: string }>((res, rej) => {
+      resolveFn = res;
+      rejectFn = rej;
+    });
+
+    const server = http.createServer((req, res) => {
+      const addr = server.address() as { port: number };
+      const url = new URL(req.url ?? '/', `http://127.0.0.1:${addr.port}`);
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end('<html><body><h1>Authorization failed</h1><p>Return to the terminal.</p></body></html>');
+        server.close(() => rejectFn(new Error(`IdP returned error: ${error}`)));
+        return;
+      }
+      if (code && state) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><body><h1>Authorization complete!</h1><p>You may close this tab.</p></body></html>');
+        server.close(() => resolveFn({ code, state }));
+      } else {
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end('<html><body><h1>Missing parameters</h1></body></html>');
+      }
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as { port: number };
+      const port = addr.port;
+      const timer = setTimeout(() => {
+        server.close(() =>
+          rejectFn(
+            new Error('Authorization timed out after 2 minutes. Run euno request again to retry.'),
+          ),
+        );
+      }, timeoutMs);
+      server.on('close', () => clearTimeout(timer));
+      resolve({
+        port,
+        redirectUri: `http://127.0.0.1:${port}/callback`,
+        waitForCode: () => codePromise,
+      });
+    });
+
+    server.on('error', (err) => reject(err));
+  });
+}
+
 import {
   dumpEnvTemplate,
   EUNO_SERVICE_NAMES,
@@ -477,16 +580,232 @@ program
 program
   .command('request')
   .description('Request a capability token from the issuer')
-  .option('-i, --issuer <url>', 'Issuer URL', process.env.EUNO_ISSUER_URL || 'http://localhost:3001')
+  .option('-i, --issuer <url>', 'Issuer URL (legacy; prefer --issuer-url or euno config set issuerUrl)')
   .option('-a, --agent <id>', 'Agent ID (required)', '')
   .option('-t, --token <token>', 'Azure AD bearer token (or set AZURE_AD_TOKEN env var)', process.env.AZURE_AD_TOKEN || '')
   .option('-m, --manifest <file>', 'Capability manifest file')
   .option('-r, --resources <resources...>', 'Resource URIs (e.g., api://service/endpoint)')
   .option('--actions <actions...>', 'Actions (e.g., read write)')
+  .option('--issuer-url <url>', 'Issuer URL (overrides config and EUNO_ISSUER_URL)')
+  .option('--agent-id <id>', 'Agent ID (alias for --agent)')
+  .option('--idp-auth-url <url>', 'IdP authorization URL for PKCE flow')
+  .option('--idp-token-url <url>', 'IdP token endpoint URL for PKCE flow')
+  .option('--idp-client-id <id>', 'IdP client ID for PKCE flow')
+  .option('--scope <scope>', 'OAuth scope(s) for PKCE flow', 'openid profile email')
+  .option('--tenant-id <id>', 'Tenant ID (forwarded to issuer for per-tenant IdP selection)')
+  .option('--refresh', 'Refresh an existing token (reads from ~/.euno/tokens/<agent-id>.jwt, calls /renew)')
   .action(async (options) => {
-    // Also accept token from env var directly (options default already handles this,
-    // but guard here in case both paths yield an empty string)
+    const eunoConfig = readEunoConfig();
+    // Config-file issuerUrl takes precedence over the legacy env-var / localhost default.
+    const issuerUrl: string =
+      options.issuerUrl ||
+      eunoConfig.issuerUrl ||
+      options.issuer ||
+      process.env.EUNO_ISSUER_URL ||
+      'http://localhost:3001';
+
+    // Agent ID: explicit flag → config file fallback
+    const agentId: string = options.agentId || options.agent || eunoConfig.agentId || '';
+
+    if (options.refresh) {
+      if (!agentId) {
+        console.error('✗ --agent-id (or --agent) is required with --refresh');
+        process.exit(1);
+      }
+      const tokenPath = path.join(os.homedir(), '.euno', 'tokens', `${agentId}.jwt`);
+      if (!fs.existsSync(tokenPath)) {
+        console.error(`✗ No stored token found at ${tokenPath}`);
+        console.error('  Run euno request --agent-id <id> first to obtain a token');
+        process.exit(1);
+      }
+      const storedToken = fs.readFileSync(tokenPath, 'utf8').trim();
+      console.log(`Renewing token for agent ${agentId}...`);
+      try {
+        const renewResponse = await axios.post(
+          `${issuerUrl}/api/v1/renew`,
+          {},
+          {
+            headers: { 'Authorization': `Bearer ${storedToken}`, 'Content-Type': 'application/json' },
+            timeout: 10000,
+          }
+        );
+        const newToken: string = renewResponse.data.token;
+        const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
+        if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(tokenPath, newToken);
+        fs.chmodSync(tokenPath, 0o600);
+        const parts = newToken.split('.');
+        if (parts.length === 3) {
+          try {
+            const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+            console.log(`\n✓ Token renewed and saved to ${tokenPath}`);
+            console.log(`  Token ID: ${payload.jti ?? '(none)'}`);
+            console.log(`  Expires: ${payload.exp ? new Date(payload.exp * 1000).toISOString() : '(none)'}`);
+          } catch {
+            console.log(`\n✓ Token renewed and saved to ${tokenPath}`);
+          }
+        }
+        return;
+      } catch (error) {
+        if (axios.isAxiosError(error)) {
+          console.error('\n✗ Renewal failed:');
+          console.error(`  Status: ${error.response?.status ?? 'N/A'}`);
+          console.error(`  Message: ${error.response?.data?.message ?? error.message}`);
+        } else {
+          console.error(`✗ Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        process.exit(1);
+      }
+    }
+
+    // ── PKCE flow ──────────────────────────────────────────────────────────────
+    // Triggered when --idp-auth-url is provided (or set in config).
+    const idpAuthUrl: string = options.idpAuthUrl || eunoConfig.idpAuthUrl || '';
+    const idpTokenUrl: string = options.idpTokenUrl || eunoConfig.idpTokenUrl || '';
+    const idpClientId: string = options.idpClientId || eunoConfig.idpClientId || '';
+    const tenantId: string = options.tenantId || eunoConfig.region || '';
+    // Bearer token for the legacy path (read regardless so it's in scope below).
     const token: string = options.token;
+
+    if (idpAuthUrl) {
+      if (!idpTokenUrl) {
+        console.error('✗ --idp-token-url is required when --idp-auth-url is provided');
+        console.error('  Example: euno config set idpTokenUrl https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token');
+        process.exit(1);
+      }
+      if (!idpClientId) {
+        console.error('✗ --idp-client-id is required when --idp-auth-url is provided');
+        console.error('  Example: euno config set idpClientId <your-azure-app-client-id>');
+        process.exit(1);
+      }
+      if (!agentId) {
+        console.error('✗ --agent-id is required for the PKCE flow');
+        process.exit(1);
+      }
+
+      // Step 1 — obtain state + nonce from the issuer
+      let state: string;
+      let nonce: string;
+      try {
+        const authorizeUrl = new URL(`${issuerUrl}/api/v1/oidc/authorize`);
+        authorizeUrl.searchParams.set('agentId', agentId);
+        if (tenantId) authorizeUrl.searchParams.set('tenantId', tenantId);
+        const authResp = await axios.get(authorizeUrl.toString(), { timeout: 10000 });
+        state = authResp.data.state as string;
+        nonce = authResp.data.nonce as string;
+      } catch (err) {
+        console.error('✗ Failed to obtain OIDC state from issuer:');
+        console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+
+      // Step 2 — start loopback server and open the browser
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = generateCodeChallenge(codeVerifier);
+
+      let loopback: Awaited<ReturnType<typeof startLoopbackServer>>;
+      try {
+        loopback = await startLoopbackServer();
+      } catch (err) {
+        console.error(`✗ Could not start loopback server: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+
+      const scope: string = options.scope;
+      const authParams = new URLSearchParams({
+        client_id: idpClientId,
+        response_type: 'code',
+        redirect_uri: loopback.redirectUri,
+        scope,
+        state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+      });
+      const browserUrl = `${idpAuthUrl}?${authParams.toString()}`;
+      console.log(`\nStarting PKCE authorization for agent "${agentId}"...`);
+      console.log(`  Opening browser. If it does not open, visit:\n  ${browserUrl}\n`);
+      openBrowser(browserUrl);
+
+      // Step 3 — wait for the authorization code
+      let code: string;
+      let returnedState: string;
+      try {
+        const result = await loopback.waitForCode();
+        code = result.code;
+        returnedState = result.state;
+      } catch (err) {
+        console.error(`✗ Authorization failed: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+      if (returnedState !== state) {
+        console.error('✗ State mismatch — possible CSRF. Aborting.');
+        process.exit(1);
+      }
+
+      // Step 4 — exchange code with IdP for id_token
+      let idToken: string;
+      try {
+        const tokenResp = await axios.post(
+          idpTokenUrl,
+          new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: loopback.redirectUri,
+            client_id: idpClientId,
+            code_verifier: codeVerifier,
+            scope,
+          }).toString(),
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 },
+        );
+        idToken = tokenResp.data.id_token as string;
+        if (!idToken) throw new Error('IdP did not return an id_token');
+      } catch (err) {
+        console.error('✗ Failed to exchange authorization code with IdP:');
+        console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+
+      // Step 5 — submit id_token to the issuer's /oidc/token endpoint
+      try {
+        const body: Record<string, unknown> = { idToken, nonce, state, agentId };
+        if (tenantId) body.tenantId = tenantId;
+        const issueResp = await axios.post(`${issuerUrl}/api/v1/oidc/token`, body, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 15000,
+        });
+        const capToken: string = issueResp.data.token;
+        const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
+        if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
+        const tokenPath = path.join(tokenDir, `${agentId}.jwt`);
+        fs.writeFileSync(tokenPath, capToken);
+        fs.chmodSync(tokenPath, 0o600);
+        const parts = capToken.split('.');
+        if (parts.length === 3) {
+          try {
+            const pl = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+            console.log('\n✓ Capability token issued and saved:');
+            console.log(`  Token ID: ${pl.jti ?? '(none)'}`);
+            console.log(`  Expires: ${pl.exp ? new Date(pl.exp * 1000).toISOString() : '(none)'}`);
+            console.log(`  Saved to: ${tokenPath}`);
+          } catch {
+            console.log(`\n✓ Capability token saved to ${tokenPath}`);
+          }
+        }
+      } catch (err) {
+        if (axios.isAxiosError(err)) {
+          console.error('\n✗ Issuer rejected the ID token:');
+          console.error(`  Status: ${err.response?.status ?? 'N/A'}`);
+          console.error(`  Message: ${err.response?.data?.message ?? err.message}`);
+        } else {
+          console.error(`✗ Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        process.exit(1);
+      }
+      return;
+    }
+
+    // ── Legacy bearer-token path ──────────────────────────────────────────────
     if (!token) {
       console.error('✗ Azure AD bearer token is required');
       console.error('  Use --token <token> or set the AZURE_AD_TOKEN environment variable');
@@ -494,13 +813,13 @@ program
       process.exit(1);
     }
 
-    if (!options.agent) {
+    if (!agentId) {
       console.error('✗ Agent ID is required (use --agent)');
       process.exit(1);
     }
 
-    console.log(`Requesting capability from ${options.issuer}...`);
-    console.log(`  Agent ID: ${options.agent}`);
+    console.log(`Requesting capability from ${issuerUrl}...`);
+    console.log(`  Agent ID: ${agentId}`);
 
     try {
       let requestedCapabilities: Array<{resource: string; actions: string[]}> = [];
@@ -549,9 +868,9 @@ program
       }
 
       const response = await axios.post(
-        `${options.issuer}/api/v1/issue`,
+        `${issuerUrl}/api/v1/issue`,
         {
-          agentId: options.agent,
+          agentId: agentId,
           requestedCapabilities,
         },
         {
@@ -569,6 +888,16 @@ program
       console.log(`  Capabilities: ${response.data.capabilities.length}`);
       console.log('\nToken (save this):');
       console.log(response.data.token);
+
+      // Persist token to ~/.euno/tokens/<agentId>.jwt
+      const tokenDir = path.join(os.homedir(), '.euno', 'tokens');
+      if (!fs.existsSync(tokenDir)) fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 });
+      if (agentId) {
+        const tokenPath = path.join(tokenDir, `${agentId}.jwt`);
+        fs.writeFileSync(tokenPath, response.data.token);
+        fs.chmodSync(tokenPath, 0o600);
+        console.log(`  Saved to: ${tokenPath}`);
+      }
     } catch (error) {
       if (axios.isAxiosError(error)) {
         console.error('\n✗ Request failed:');
@@ -600,6 +929,7 @@ configCmd
   .command('show', { isDefault: true })
   .description('Show current CLI configuration')
   .action(() => {
+    const eunoConfig = readEunoConfig();
     console.log('Euno CLI Configuration:');
     console.log(`  Default issuer: http://localhost:3001`);
     console.log(`  Default gateway: http://localhost:3002`);
@@ -607,6 +937,39 @@ configCmd
     console.log('Environment variables:');
     console.log(`  EUNO_ISSUER_URL: ${process.env.EUNO_ISSUER_URL || '(not set)'}`);
     console.log(`  EUNO_GATEWAY_URL: ${process.env.EUNO_GATEWAY_URL || '(not set)'}`);
+    const configKeys = Object.keys(eunoConfig);
+    if (configKeys.length > 0) {
+      console.log('');
+      console.log('Config file (~/.euno/config):');
+      for (const k of configKeys) {
+        console.log(`  ${k}: ${eunoConfig[k]}`);
+      }
+    }
+  });
+
+configCmd
+  .command('set <key> <value>')
+  .description('Persist a configuration value to ~/.euno/config')
+  .action((key: string, value: string) => {
+    if (!CONFIG_ALLOWED_KEYS.includes(key)) {
+      console.error(`✗ Unknown config key "${key}". Allowed keys: ${CONFIG_ALLOWED_KEYS.join(', ')}`);
+      process.exit(1);
+    }
+    const configDir = path.join(os.homedir(), '.euno');
+    const configFile = path.join(configDir, 'config');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    }
+    let config: Record<string, string> = {};
+    if (fs.existsSync(configFile)) {
+      try {
+        config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      } catch { /* ignore parse errors, start fresh */ }
+    }
+    config[key] = value;
+    fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+    fs.chmodSync(configFile, 0o600);
+    console.log(`✓ Set ${key} = ${value}`);
   });
 
 configCmd
@@ -826,6 +1189,161 @@ versionCmd
       }
     } catch (error) {
       console.error(`✗ Failed to decode token: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('validate-token')
+  .description('Verify a capability token signature, expiry, aud, and iss')
+  .argument('[token]', 'JWT capability token to verify (or use --agent-id to load from file)')
+  .option('--issuer-url <url>', 'Issuer URL for resolving JWKS (overrides config and EUNO_ISSUER_URL)')
+  .option('--jwks-url <url>', 'Fetch JWKS from this URL directly (overrides issuer-url resolution)')
+  .option('--agent-id <id>', 'Load stored token from ~/.euno/tokens/<agent-id>.jwt')
+  .option('--iss <iss>', 'Expected issuer claim (optional, skips check if not provided)')
+  .option('--aud <aud>', 'Expected audience claim (optional, skips check if not provided)')
+  .action(async (tokenArg: string | undefined, options: { issuerUrl?: string; jwksUrl?: string; agentId?: string; iss?: string; aud?: string }) => {
+    let token = tokenArg;
+    if (!token && options.agentId) {
+      const tokenPath = path.join(os.homedir(), '.euno', 'tokens', `${options.agentId}.jwt`);
+      if (!fs.existsSync(tokenPath)) {
+        console.error(`✗ No stored token found at ${tokenPath}`);
+        process.exit(1);
+      }
+      token = fs.readFileSync(tokenPath, 'utf8').trim();
+    }
+    if (!token) {
+      console.error('✗ Provide a token as argument or use --agent-id to load from file');
+      process.exit(1);
+    }
+
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      console.error('✗ Not a valid JWT (expected 3 parts)');
+      process.exit(1);
+    }
+    const payloadPart = parts[1];
+    if (!payloadPart) {
+      console.error('✗ Not a valid JWT (empty payload segment)');
+      process.exit(1);
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+    } catch {
+      console.error('✗ Failed to decode token payload');
+      process.exit(1);
+    }
+
+    // Check expiry
+    const exp = payload.exp;
+    if (typeof exp === 'number') {
+      if (exp < Math.floor(Date.now() / 1000)) {
+        const expiredAt = new Date(exp * 1000).toISOString();
+        console.error(`✗ Token has expired (expired at ${expiredAt})`);
+        process.exit(1);
+      }
+    } else {
+      console.error('✗ Token is missing exp claim');
+      process.exit(1);
+    }
+
+    const eunoConfig = readEunoConfig();
+    const issuerUrl = options.issuerUrl || eunoConfig.issuerUrl || process.env.EUNO_ISSUER_URL || 'http://localhost:3001';
+    const jwksUrl = options.jwksUrl || `${issuerUrl}/.well-known/jwks.json`;
+
+    try {
+      const { createRemoteJWKSet, jwtVerify } = await import('jose');
+      const JWKS = createRemoteJWKSet(new URL(jwksUrl));
+      // Always enforce issuer (self-consistency: use the token's own iss unless
+      // the caller overrides with --iss) and audience (default: tool-gateway,
+      // which is the expected aud for all Euno capability tokens).
+      const verifyOpts: Record<string, unknown> = {
+        audience: options.aud ?? 'tool-gateway',
+      };
+      const expectedIss = options.iss ?? (typeof payload.iss === 'string' && payload.iss ? payload.iss : undefined);
+      if (expectedIss) verifyOpts.issuer = expectedIss;
+      await jwtVerify(token, JWKS, verifyOpts);
+      console.log('✓ Token is VALID');
+      console.log(`  Issuer:  ${payload.iss ?? '(none)'}`);
+      console.log(`  Subject: ${payload.sub ?? '(none)'}`);
+      console.log(`  Agent:   ${payload.agentId ?? '(none)'}`);
+      console.log(`  Token ID (jti): ${payload.jti ?? '(none)'}`);
+      console.log(`  Expires: ${new Date((exp as number) * 1000).toISOString()}`);
+      if (payload.cnf && typeof payload.cnf === 'object') {
+        const cnf = payload.cnf as Record<string, unknown>;
+        if (cnf.jkt) console.log(`  DPoP (cnf.jkt): ${cnf.jkt}`);
+      }
+      if (payload.region) console.log(`  Region:  ${payload.region}`);
+      if (Array.isArray(payload.capabilities)) {
+        console.log(`  Capabilities: ${(payload.capabilities as unknown[]).length}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('expired')) {
+          console.error(`✗ Token has expired: ${error.message}`);
+        } else if (error.message.includes('signature')) {
+          console.error(`✗ Signature verification FAILED: ${error.message}`);
+        } else {
+          console.error(`✗ Verification failed: ${error.message}`);
+        }
+      } else {
+        console.error(`✗ Verification failed: ${String(error)}`);
+      }
+      process.exit(1);
+    }
+  });
+
+program
+  .command('revoke')
+  .description('Revoke a capability token by its JTI via the gateway admin API')
+  .argument('<jti>', 'Token JTI (jwt ID) to revoke')
+  .option('--gateway-url <url>', 'Gateway URL (overrides config and EUNO_GATEWAY_URL)')
+  .option('--admin-key <key>', 'Gateway admin API key (X-Admin-Api-Key header); or set EUNO_ADMIN_API_KEY')
+  .option('--expires-at <ts>', 'Optional Unix-seconds expiry for the revocation record (default: now + 24h)')
+  .action(async (jti: string, options: { gatewayUrl?: string; adminKey?: string; expiresAt?: string }) => {
+    const eunoConfig = readEunoConfig();
+    const gatewayUrl =
+      options.gatewayUrl ||
+      eunoConfig.gatewayUrl ||
+      process.env.EUNO_GATEWAY_URL ||
+      'http://localhost:3002';
+
+    const adminKey = options.adminKey || process.env.EUNO_ADMIN_API_KEY || '';
+    if (!adminKey) {
+      console.error('✗ An admin API key is required (--admin-key or EUNO_ADMIN_API_KEY)');
+      process.exit(1);
+    }
+
+    const body: Record<string, unknown> = { tokenId: jti };
+    if (options.expiresAt) {
+      const ts = Number(options.expiresAt);
+      if (!Number.isFinite(ts)) {
+        console.error('✗ --expires-at must be a finite Unix timestamp (seconds)');
+        process.exit(1);
+      }
+      body.expiresAt = ts;
+    }
+
+    try {
+      await axios.post(
+        `${gatewayUrl}/admin/revoke`,
+        body,
+        {
+          headers: { 'x-admin-api-key': adminKey, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        }
+      );
+      console.log(`✓ Token ${jti} revoked successfully`);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        console.error('\n✗ Revocation failed:');
+        console.error(`  Status: ${error.response?.status ?? 'N/A'}`);
+        console.error(`  Message: ${error.response?.data?.message ?? error.response?.data?.error?.message ?? error.message}`);
+      } else {
+        console.error(`✗ Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+      }
       process.exit(1);
     }
   });

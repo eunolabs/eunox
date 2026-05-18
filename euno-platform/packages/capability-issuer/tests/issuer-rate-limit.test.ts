@@ -379,4 +379,42 @@ describe('CapabilityIssuerService — F-1 issuance rate limit', () => {
     expect(call!.userId).toBe('user-1');
     expect(call!.agentId).toBe('agent-1');
   });
+
+  it('attenuate returns Retry-After header on rate-limit denial', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 1;
+    const { service } = await makeService({ limiter });
+    const issued = await service.issueCapability(issueRequest());
+    // First attenuation uses a fresh jti-keyed slot — allowed once.
+    await service.attenuateCapability(issued.token, [
+      { resource: 'api://example.com/x', actions: ['read'] },
+    ]);
+    // Second attenuation with same parent exhausts that slot → 429 + Retry-After.
+    try {
+      await service.attenuateCapability(issued.token, [
+        { resource: 'api://example.com/x', actions: ['read'] },
+      ]);
+      throw new Error('expected 429');
+    } catch (err) {
+      expect((err as CapabilityError).statusCode).toBe(429);
+      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBe('7');
+    }
+  });
+
+  it('renew returns Retry-After header on rate-limit denial', async () => {
+    const limiter = new RecordingLimiter();
+    limiter.defaultAllowCount = 1;
+    const { service } = await makeService({ limiter });
+    const issued = await service.issueCapability(issueRequest());
+    // First renewal — allowed.
+    await service.renewCapability(issued.token);
+    // Second renewal with same token → 429 + Retry-After.
+    try {
+      await service.renewCapability(issued.token);
+      throw new Error('expected 429');
+    } catch (err) {
+      expect((err as CapabilityError).statusCode).toBe(429);
+      expect((err as CapabilityError).responseHeaders?.['Retry-After']).toBe('7');
+    }
+  });
 });

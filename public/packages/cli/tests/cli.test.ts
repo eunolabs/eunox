@@ -632,3 +632,330 @@ describe('euno schema-version', () => {
     }, 30000);
   });
 });
+
+describe('euno config set', () => {
+  it('writes a known key to ~/.euno/config', () => {
+    const home = tmpDir;
+    const r = runCli(['config', 'set', 'issuerUrl', 'http://issuer.test'], {
+      env: { ...process.env, HOME: home },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('issuerUrl');
+    const configPath = path.join(home, '.euno', 'config');
+    expect(fs.existsSync(configPath)).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.issuerUrl).toBe('http://issuer.test');
+  });
+
+  it('rejects an unknown key with exit code 1', () => {
+    const r = runCli(['config', 'set', 'unknownKey', 'value'], {
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('Unknown config key');
+  });
+});
+
+describe('euno validate-token', () => {
+  it('prints help text', () => {
+    const r = runCli(['validate-token', '--help']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('validate-token');
+  });
+
+  it('exits 1 for a non-JWT argument', () => {
+    const r = runCli(['validate-token', 'not-a-jwt']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('valid JWT');
+  });
+
+  it('exits 1 for an expired token (no JWKS server needed — expiry check is local)', () => {
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+    const payload = Buffer.from(
+      JSON.stringify({ schemaVersion: '1.0', iss: 'did:web:test.com', sub: 'agent-1', exp: 1 })
+    ).toString('base64url');
+    const token = `${header}.${payload}.fakesig`;
+    const r = runCli(['validate-token', token]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/expir/i);
+  });
+
+  it('exits 1 when no stored token file for --agent-id', () => {
+    const r = runCli(['validate-token', '--agent-id', 'nonexistent-agent'], {
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('No stored token');
+  });
+
+  it('validates token signature and claims against a mock JWKS server', async () => {
+    const jose = await import('jose');
+    const { privateKey, publicKey } = await jose.generateKeyPair('RS256');
+    const publicJwk = await jose.exportJWK(publicKey);
+    const kid = 'validate-test-key';
+    publicJwk.kid = kid;
+    publicJwk.use = 'sig';
+
+    const { spawn } = await import('child_process');
+    const jwks = JSON.stringify({ keys: [publicJwk] });
+    const serverProcess = spawn(process.execPath, ['-e', `
+      const http = require('http');
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(${JSON.stringify(jwks)});
+      });
+      server.listen(0, '127.0.0.1', () => {
+        process.send(server.address().port);
+      });
+    `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const port = await new Promise<number>((resolve) => {
+      serverProcess.once('message', (msg) => resolve(msg as number));
+    });
+
+    try {
+      const signedToken = await new jose.SignJWT({
+        schemaVersion: '1.0',
+        iss: 'did:web:test.com',
+        aud: 'tool-gateway',
+        sub: 'agent-1',
+        agentId: 'agent-1',
+        jti: 'test-jti-1',
+        exp: Math.floor(Date.now() / 1000) + 900,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid })
+        .sign(privateKey);
+
+      const r = runCli([
+        'validate-token', signedToken,
+        '--jwks-url', `http://127.0.0.1:${port}/.well-known/jwks.json`,
+        '--iss', 'did:web:test.com',
+      ]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('✓ Token is VALID');
+    } finally {
+      serverProcess.kill();
+    }
+  }, 30000);
+});
+
+describe('euno request --refresh', () => {
+  it('exits 1 when --agent-id is missing with --refresh', () => {
+    const r = runCli(['request', '--refresh'], {
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--agent-id');
+  });
+
+  it('exits 1 when no stored token file exists for --refresh', () => {
+    const r = runCli(['request', '--refresh', '--agent-id', 'nonexistent-agent'], {
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('No stored token');
+  });
+
+  it('successfully renews token using stored credentials', async () => {
+    // Create a stored token file
+    const tokenDir = path.join(tmpDir, '.euno', 'tokens');
+    fs.mkdirSync(tokenDir, { recursive: true });
+    const storedToken = 'stored.token.value';
+    fs.writeFileSync(path.join(tokenDir, 'my-agent.jwt'), storedToken);
+
+    // Spawn a mock renew server
+    const { spawn } = await import('child_process');
+    const renewedToken = [
+      Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ jti: 'new-jti', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'),
+      'fakesig',
+    ].join('.');
+    const serverProcess = spawn(process.execPath, ['-e', `
+      const http = require('http');
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', d => body += d);
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ token: ${JSON.stringify(renewedToken)} }));
+        });
+      });
+      server.listen(0, '127.0.0.1', () => process.send(server.address().port));
+    `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const port = await new Promise<number>((resolve) => {
+      serverProcess.once('message', (msg) => resolve(msg as number));
+    });
+
+    try {
+      const r = runCli([
+        'request', '--refresh', '--agent-id', 'my-agent',
+        '--issuer-url', `http://127.0.0.1:${port}`,
+      ], {
+        env: { ...process.env, HOME: tmpDir },
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('✓ Token renewed');
+    } finally {
+      serverProcess.kill();
+    }
+  }, 30000);
+});
+
+describe('euno revoke', () => {
+  it('shows help text', () => {
+    const r = runCli(['revoke', '--help']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('revoke');
+  });
+
+  it('exits 1 when no admin key is provided', () => {
+    const r = runCli(['revoke', 'some-jti'], {
+      env: { ...process.env, HOME: tmpDir, EUNO_ADMIN_API_KEY: '' },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('admin API key');
+  });
+
+  it('calls the gateway revocation endpoint and exits 0 on success', async () => {
+    const { spawn } = await import('child_process');
+    const captureFile = path.join(tmpDir, 'revoke-capture.json');
+    const serverProcess = spawn(process.execPath, ['-e', `
+      const http = require('http');
+      const fs = require('fs');
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', d => body += d);
+        req.on('end', () => {
+          fs.writeFileSync(${JSON.stringify(captureFile)}, JSON.stringify({
+            method: req.method,
+            url: req.url,
+            adminKey: req.headers['x-admin-api-key'] || '',
+            body: JSON.parse(body || '{}'),
+          }));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: 'Token test-jti-123 has been revoked', tokenId: 'test-jti-123' }));
+        });
+      });
+      server.listen(0, '127.0.0.1', () => process.send(server.address().port));
+    `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const port = await new Promise<number>((resolve) => {
+      serverProcess.once('message', (msg) => resolve(msg as number));
+    });
+
+    try {
+      const r = runCli([
+        'revoke', 'test-jti-123',
+        '--admin-key', 'test-admin-key',
+        '--gateway-url', `http://127.0.0.1:${port}`,
+      ]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('revoked');
+
+      // Verify the CLI called the correct gateway admin endpoint with the right headers/body.
+      const capture = JSON.parse(fs.readFileSync(captureFile, 'utf8')) as {
+        method: string; url: string; adminKey: string; body: Record<string, unknown>;
+      };
+      expect(capture.method).toBe('POST');
+      expect(capture.url).toBe('/admin/revoke');
+      expect(capture.adminKey).toBe('test-admin-key');
+      expect(capture.body.tokenId).toBe('test-jti-123');
+      expect(capture.body).not.toHaveProperty('jti');
+    } finally {
+      serverProcess.kill();
+    }
+  }, 30000);
+
+  it('exits 1 on server error', async () => {
+    const { spawn } = await import('child_process');
+    const serverProcess = spawn(process.execPath, ['-e', `
+      const http = require('http');
+      const server = http.createServer((req, res) => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Internal Server Error' } }));
+      });
+      server.listen(0, '127.0.0.1', () => process.send(server.address().port));
+    `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const port = await new Promise<number>((resolve) => {
+      serverProcess.once('message', (msg) => resolve(msg as number));
+    });
+
+    try {
+      const r = runCli([
+        'revoke', 'test-jti-error',
+        '--admin-key', 'test-admin-key',
+        '--gateway-url', `http://127.0.0.1:${port}`,
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('Revocation failed');
+    } finally {
+      serverProcess.kill();
+    }
+  }, 30000);
+});
+
+describe('euno request PKCE validation', () => {
+  it('exits 1 when --idp-auth-url is set but --idp-token-url is missing', () => {
+    const r = runCli([
+      'request', '--agent-id', 'test-agent',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-client-id', 'my-client',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('idp-token-url');
+  });
+
+  it('exits 1 when --idp-auth-url is set but --idp-client-id is missing', () => {
+    const r = runCli([
+      'request', '--agent-id', 'test-agent',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-token-url', 'https://login.test/token',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('idp-client-id');
+  });
+
+  it('exits 1 when --idp-auth-url is set but --agent-id is missing', () => {
+    const r = runCli([
+      'request',
+      '--idp-auth-url', 'https://login.test/authorize',
+      '--idp-token-url', 'https://login.test/token',
+      '--idp-client-id', 'my-client',
+    ], { env: { ...process.env, HOME: tmpDir, AZURE_AD_TOKEN: '' } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('agent-id');
+  });
+});
+
+describe('euno config show reads persisted config', () => {
+  it('displays values written by config set', () => {
+    const home = path.join(tmpDir, 'show-test');
+    fs.mkdirSync(home, { recursive: true });
+
+    runCli(['config', 'set', 'issuerUrl', 'https://my-issuer.test'], {
+      env: { ...process.env, HOME: home },
+    });
+
+    const r = runCli(['config'], { env: { ...process.env, HOME: home } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('https://my-issuer.test');
+  });
+});
+
+describe('euno request uses agentId from config', () => {
+  it('falls back to config agentId for --refresh', () => {
+    const home = path.join(tmpDir, 'agent-config-test');
+    fs.mkdirSync(home, { recursive: true });
+
+    // Write agentId to config but no token file — should fail with
+    // "No stored token" rather than "--agent-id is required"
+    runCli(['config', 'set', 'agentId', 'config-agent'], {
+      env: { ...process.env, HOME: home },
+    });
+
+    const r = runCli(['request', '--refresh'], {
+      env: { ...process.env, HOME: home },
+    });
+    expect(r.status).toBe(1);
+    // Should reach the "no stored token" step, not the "agent-id required" step.
+    expect(r.stderr).toContain('No stored token');
+  });
+});
