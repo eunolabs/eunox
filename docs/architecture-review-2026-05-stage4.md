@@ -47,7 +47,7 @@ silently voids it under HA.
   `initializeServices()` and exposes it through a `getOidcStateStore()` getter.
 - `IssuerConfigSchema` already enforces `REDIS_URL` in production non-single-replica
   deployments; no schema change was required.
-- 18 new unit tests added in `tests/oidc-state-store-redis.test.ts` covering the
+- 24 new unit tests added in `tests/oidc-state-store-redis.test.ts` covering the
   factory fallback, warn behaviour, and the Redis implementation via a mock client.
 
 ---

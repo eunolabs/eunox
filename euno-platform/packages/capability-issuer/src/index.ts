@@ -1435,15 +1435,15 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
     }
 
     // --- ID-token replay prevention (threat model §5 "IdP-token replay") ----
-    // Hash the submitted idToken and mark it as used eagerly (fail-closed).
-    // Even if a later step (IdP validation, issuance) fails, the same token
-    // cannot be resubmitted. The caller must obtain a fresh token to retry.
-    // Tracking the token hash (not a caller-supplied field) prevents bypassing
-    // this check by submitting the same stolen idToken with a fresh value.
-    // CR-1: getOidcStateStore() returns the Redis-backed store when Redis is
-    // configured, so replay prevention is fleet-wide across all issuer replicas.
+    // Hash the submitted idToken and atomically mark it as used (fail-closed).
+    // markIdTokenHashUsed() returns true if this is the first use of this token
+    // within the TTL window, false if it was already seen (replay attempt).
+    // For the Redis-backed store the underlying SET NX EX is atomic across all
+    // replicas, so exactly one of N concurrent requests for the same token will
+    // proceed — the others are turned away here without a separate pre-check.
     const tokenHash = crypto.createHash('sha256').update(idToken).digest('hex');
-    if (await getOidcStateStore().isIdTokenHashUsed(tokenHash)) {
+    const isNewToken = await getOidcStateStore().markIdTokenHashUsed(tokenHash);
+    if (!isNewToken) {
       logger.warn('OIDC token replay attempt detected', { agentId, tenantId });
       throw new CapabilityError(
         ErrorCode.AUTHENTICATION_FAILED,
@@ -1451,8 +1451,6 @@ app.post('/api/v1/oidc/token', async (req: Request, res: Response, next: NextFun
         401,
       );
     }
-    // Eagerly mark the token hash before any remote call.
-    await getOidcStateStore().markIdTokenHashUsed(tokenHash);
 
     // --- Optional state binding (if flow was started via /authorize) ---------
     // When state is present, the stored nonce, agentId, and tenantId are all

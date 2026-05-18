@@ -159,8 +159,9 @@ describe('RedisOidcStateStore', () => {
     expect(await store.isIdTokenHashUsed('unknown-hash')).toBe(false);
   });
 
-  it('isIdTokenHashUsed returns true after markIdTokenHashUsed', async () => {
-    await store.markIdTokenHashUsed('test-hash-abc');
+  it('isIdTokenHashUsed returns true after markIdTokenHashUsed (which returns true on first call)', async () => {
+    const marked = await store.markIdTokenHashUsed('test-hash-abc');
+    expect(marked).toBe(true);
     expect(await store.isIdTokenHashUsed('test-hash-abc')).toBe(true);
   });
 
@@ -178,12 +179,14 @@ describe('RedisOidcStateStore', () => {
 
   // ── NX semantics: concurrent replay prevention ────────────────────────────
 
-  it('markIdTokenHashUsed uses SET NX EX so a concurrent second call is a no-op', async () => {
-    // Mark hash; subsequent mark should be rejected by NX (key already exists).
-    await store.markIdTokenHashUsed('concurrent-hash');
-    // Calling markIdTokenHashUsed again must not throw and must not update the key.
-    await expect(store.markIdTokenHashUsed('concurrent-hash')).resolves.toBeUndefined();
-    // Key must still be present (first mark is authoritative).
+  it('markIdTokenHashUsed returns true on first call and false on duplicate (NX semantics)', async () => {
+    // First call: hash is new → SET NX succeeds → returns true (proceed with issuance).
+    const first = await store.markIdTokenHashUsed('concurrent-hash');
+    expect(first).toBe(true);
+    // Second call (simulates a concurrent replay): SET NX fails → returns false.
+    const second = await store.markIdTokenHashUsed('concurrent-hash');
+    expect(second).toBe(false);
+    // Key is still present (first mark is authoritative).
     expect(await store.isIdTokenHashUsed('concurrent-hash')).toBe(true);
   });
 
@@ -255,7 +258,7 @@ describe('createOidcStateStoreFromEnv', () => {
     expect(entry!.nonce).toBe(nonce);
   });
 
-  it('returns RedisOidcStateStore when OIDC_STATE_REDIS_URL is set (mocked ioredis)', async () => {
+  it('falls back to in-memory store (with error log) when OIDC_STATE_REDIS_URL is set but ioredis is not installed', async () => {
     // ioredis is not installed in the test environment; this test validates the
     // factory's Redis-path selection logic by confirming the factory correctly
     // tries to require ioredis and, when it fails in development, falls back
@@ -271,23 +274,24 @@ describe('createOidcStateStoreFromEnv', () => {
     expect(typeof store.consumeState).toBe('function');
     expect(typeof store.isIdTokenHashUsed).toBe('function');
     expect(typeof store.markIdTokenHashUsed).toBe('function');
-    // In development, a missing ioredis logs an error rather than throwing.
+    // Error message must name the actual variable that was set.
     expect(errorMock).toHaveBeenCalledWith(
-      expect.stringContaining('ioredis'),
-      expect.any(Object),
+      expect.stringContaining('OIDC_STATE_REDIS_URL'),
+      expect.objectContaining({ redisUrlVar: 'OIDC_STATE_REDIS_URL' }),
     );
   });
 
-  it('returns RedisOidcStateStore when REDIS_URL is set (OIDC_STATE_REDIS_URL absent)', async () => {
+  it('falls back to in-memory store (with error log) when REDIS_URL is set but ioredis is not installed (OIDC_STATE_REDIS_URL absent)', async () => {
     // Same as above: ioredis not installed → development fallback with error log.
     const store = await createOidcStateStoreFromEnv(
       { REDIS_URL: 'redis://localhost:6379', NODE_ENV: 'development' },
       logger,
     );
     expect(typeof store.createState).toBe('function');
+    // Error message must name the actual variable that was set.
     expect(errorMock).toHaveBeenCalledWith(
-      expect.stringContaining('ioredis'),
-      expect.any(Object),
+      expect.stringContaining('REDIS_URL'),
+      expect.objectContaining({ redisUrlVar: 'REDIS_URL' }),
     );
   });
 
@@ -305,7 +309,7 @@ describe('createOidcStateStoreFromEnv', () => {
     );
   });
 
-  it('throws when ioredis is missing in production', async () => {
+  it('throws (with REDIS_URL variable name) when ioredis is missing in production', async () => {
     jest.resetModules();
     jest.mock(
       'ioredis',
@@ -325,7 +329,7 @@ describe('createOidcStateStoreFromEnv', () => {
         },
         logger,
       ),
-    ).rejects.toThrow(/ioredis/);
+    ).rejects.toThrow(/REDIS_URL.*ioredis/);
 
     jest.unmock('ioredis');
     jest.resetModules();

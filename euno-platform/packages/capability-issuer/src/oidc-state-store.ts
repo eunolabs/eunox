@@ -98,13 +98,24 @@ export interface IOidcStateStore {
   isIdTokenHashUsed(hash: string): Promise<boolean>;
 
   /**
-   * Mark the ID-token hash as used. Subsequent calls to
-   * {@link isIdTokenHashUsed} with the same hash will return `true` until
-   * the TTL expires.
+   * Atomically mark the ID-token hash as used and return whether this call
+   * won the race.
    *
-   * Call this **before** any remote IdP call (fail-closed semantics).
+   * - Returns **`true`** if the hash was freshly recorded (this is the first
+   *   submission of this token within the TTL window). Callers should proceed
+   *   with the OIDC exchange.
+   * - Returns **`false`** if the hash was already present (replay attempt).
+   *   Callers must reject the request with a 401.
+   *
+   * For the Redis-backed store the underlying `SET NX EX` is atomic across all
+   * replicas, so exactly one of N concurrent requests for the same token will
+   * receive `true`; the rest receive `false` and are turned away.
+   *
+   * Call this **before** any remote IdP call (fail-closed semantics): even if
+   * the IdP call or downstream issuance fails, the same token cannot be
+   * resubmitted. The caller must obtain a fresh token to retry.
    */
-  markIdTokenHashUsed(hash: string): Promise<void>;
+  markIdTokenHashUsed(hash: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,17 +206,21 @@ export class OidcStateStore implements IOidcStateStore {
   }
 
   /**
-   * Mark the ID-token hash as used. Subsequent calls to
-   * {@link isIdTokenHashUsed} with the same hash will return `true` until
-   * the TTL expires.
+   * Atomically mark the ID-token hash as used.
    *
-   * Call this **before** any remote IdP call — fail-closed semantics: even
-   * if the IdP call or downstream issuance fails, the same token cannot be
-   * resubmitted. The caller must obtain a fresh token to retry.
+   * Returns `true` if the hash was freshly recorded (proceed with issuance),
+   * or `false` if already present within the TTL window (replay — reject the
+   * request). The in-memory implementation is safe in the single-threaded
+   * Node.js event loop.
    */
-  async markIdTokenHashUsed(hash: string): Promise<void> {
+  async markIdTokenHashUsed(hash: string): Promise<boolean> {
     this.sweep();
+    const expiry = this.usedIdTokenHashes.get(hash);
+    if (expiry !== undefined && expiry > Date.now()) {
+      return false; // already used within the TTL window
+    }
     this.usedIdTokenHashes.set(hash, Date.now() + this.codeTtlSeconds * 1000);
+    return true; // freshly recorded
   }
 
   // -------------------------------------------------------------------------
@@ -367,18 +382,20 @@ export class RedisOidcStateStore implements IOidcStateStore {
     return count > 0;
   }
 
-  async markIdTokenHashUsed(hash: string): Promise<void> {
-    // SET NX EX: only set when the key does NOT already exist. This makes the
-    // "mark + check" operation atomic under concurrency: if two requests for
-    // the same token race, exactly one gets 'OK' and the other sees null,
-    // correctly triggering the replay-prevention 401.
-    await this.client.set(
+  async markIdTokenHashUsed(hash: string): Promise<boolean> {
+    // SET NX EX: only set when the key does NOT already exist. The return value
+    // is the source of truth for atomicity — 'OK' means this call won the race
+    // (freshly recorded) and null means the key already existed (replay).
+    // Using the return value directly eliminates the separate isIdTokenHashUsed
+    // pre-check and the TOCTOU window it would introduce between two replicas.
+    const result = await this.client.set(
       `${this.keyPrefix}hash:${hash}`,
       '1',
       'EX',
       Math.ceil(this.codeTtlSeconds),
       'NX',
     );
+    return result === 'OK'; // true = freshly recorded; false = already used (replay)
   }
 
   /** Gracefully close the Redis connection. */
@@ -421,6 +438,8 @@ export async function createOidcStateStoreFromEnv(
   logger?: Logger,
 ): Promise<IOidcStateStore> {
   const ttlSeconds = parsePositiveInt(env.OIDC_CODE_TTL_SECONDS, 600);
+  // Track which variable supplied the URL so error messages are actionable.
+  const redisUrlVar = env.OIDC_STATE_REDIS_URL ? 'OIDC_STATE_REDIS_URL' : 'REDIS_URL';
   const redisUrl = env.OIDC_STATE_REDIS_URL || env.REDIS_URL;
 
   if (!redisUrl) {
@@ -441,7 +460,7 @@ export async function createOidcStateStoreFromEnv(
       (env.EUNO_DEPLOYMENT_TIER !== undefined && env.EUNO_DEPLOYMENT_TIER !== 'single-replica');
     if (isProduction) {
       throw new Error(
-        'REDIS_URL is set but the "ioredis" package is not installed. ' +
+        `${redisUrlVar} is set but the "ioredis" package is not installed. ` +
           'Install it (npm install ioredis) to enable fleet-wide OIDC replay prevention. ' +
           'Refusing to fall back to the in-memory store in a production / multi-replica deployment: ' +
           'replay prevention would be per-pod rather than fleet-wide. ' +
@@ -449,10 +468,10 @@ export async function createOidcStateStoreFromEnv(
       );
     }
     logger?.error(
-      'REDIS_URL is set but the "ioredis" package is not installed. ' +
+      `${redisUrlVar} is set but the "ioredis" package is not installed. ` +
         'Falling back to in-memory OIDC state store; replay prevention WILL NOT be ' +
         'shared across issuer replicas. Install "ioredis" for production use.',
-      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { redisUrlVar, error: error instanceof Error ? error.message : 'Unknown error' },
     );
     return new OidcStateStore(ttlSeconds);
   }
@@ -474,6 +493,7 @@ export async function createOidcStateStoreFromEnv(
   });
 
   logger?.info('Using Redis-backed OIDC state store (fleet-wide replay prevention)', {
+    configuredVia: redisUrlVar,
     keyPrefix: 'oidc:',
     ttlSeconds,
   });

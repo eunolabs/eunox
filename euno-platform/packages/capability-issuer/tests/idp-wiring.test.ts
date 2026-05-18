@@ -613,7 +613,8 @@ describe('OidcStateStore', () => {
   });
 
   it('isIdTokenHashUsed returns true after markIdTokenHashUsed', async () => {
-    await store.markIdTokenHashUsed('my-token-hash');
+    const marked = await store.markIdTokenHashUsed('my-token-hash');
+    expect(marked).toBe(true); // freshly recorded
     expect(await store.isIdTokenHashUsed('my-token-hash')).toBe(true);
   });
 
