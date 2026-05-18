@@ -42,6 +42,17 @@ const REQUEST_MANIFEST: AgentCapabilityManifest = {
   ],
 };
 
+const FALLBACK_AGENT_ID = 'agent-without-template';
+
+const FALLBACK_REQUEST_MANIFEST: AgentCapabilityManifest = {
+  agentId: FALLBACK_AGENT_ID,
+  name: 'Fallback request manifest',
+  version: '1.0.0',
+  requiredCapabilities: [
+    { resource: 'api://crm/customers', actions: ['read', 'write'] },
+  ],
+};
+
 const TEMPLATE_MANIFEST: AgentCapabilityManifest = {
   agentId: AGENT_ID,
   name: 'Template manifest',
@@ -530,8 +541,8 @@ describe('manifest template round-trip integration (E4)', () => {
       server.baseUrl,
       '/api/v1/issue',
       {
-        agentId: 'agent-without-template',
-        manifest: REQUEST_MANIFEST,
+        agentId: FALLBACK_AGENT_ID,
+        manifest: FALLBACK_REQUEST_MANIFEST,
       },
       { authorization: 'Bearer admin-token' },
     );
@@ -540,9 +551,9 @@ describe('manifest template round-trip integration (E4)', () => {
       token: string;
       capabilities: CapabilityConstraint[];
     };
-    expect(issued.capabilities).toEqual(REQUEST_MANIFEST.requiredCapabilities);
+    expect(issued.capabilities).toEqual(FALLBACK_REQUEST_MANIFEST.requiredCapabilities);
 
     const payload = decodePayload(issued.token);
-    expect(payload.capabilities).toEqual(REQUEST_MANIFEST.requiredCapabilities);
+    expect(payload.capabilities).toEqual(FALLBACK_REQUEST_MANIFEST.requiredCapabilities);
   });
 });

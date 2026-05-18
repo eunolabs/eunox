@@ -176,6 +176,26 @@ describe('InMemoryUsageMeter', () => {
       expect(new Date(after).getTime()).toBeGreaterThanOrEqual(new Date(before).getTime());
     });
 
+    it('advances periodStart on back-to-back resets without time moving', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      try {
+        meter.recordEnforcement('t1', 'allow');
+        const before = meter.getUsage('t1').periodStart;
+
+        meter.resetPeriod('t1');
+        const first = meter.getUsage('t1').periodStart;
+
+        meter.resetPeriod('t1');
+        const second = meter.getUsage('t1').periodStart;
+
+        expect(new Date(first).getTime()).toBeGreaterThan(new Date(before).getTime());
+        expect(new Date(second).getTime()).toBeGreaterThan(new Date(first).getTime());
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('preserves tenant entry in getAllUsage after reset', () => {
       meter.recordEnforcement('t1', 'allow');
       meter.resetPeriod('t1');
