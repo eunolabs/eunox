@@ -865,7 +865,7 @@ describe('CLI ↔ Issuer integration — PKCE loopback exchange (CR-3)', () => {
       );
       expect(second.status).toBe(401);
       const body = (await second.json()) as { error: { message: string } };
-      expect(body.error.message.toLowerCase()).toMatch(/replay|already been used/);
+      expect(body.error.message.toLowerCase()).toContain('already been used');
     });
 
     it('invalid id_token (wrong signing key) → 401', async () => {

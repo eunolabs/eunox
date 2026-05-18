@@ -1432,17 +1432,23 @@ describe('Stage-4 parity: cnf.jkt and region preservation across attenuation and
 // identical decisions.
 
 describe('IssueController parity (CI-6): tokens from IssueController pipeline produce identical gateway decisions', () => {
+  // ── Helper type ────────────────────────────────────────────────────────────
+  // `Action` is a branded string type; 'call' is valid but the compiler needs
+  // a cast since the literal doesn't appear in the union definition directly.
+  type AnyAction = import('@euno/common').Action;
+  const asActions = (vals: string[]): AnyAction[] => vals as unknown as AnyAction[];
+
   // ── Custom test policy with tool:// resources ──────────────────────────────
   // Uses `tool://` URIs to match the gateway's canonical form so the same
   // token can be verified by both the local and hosted enforcement paths.
   const CI6_POLICY: RoleCapabilityPolicy = {
     default: {
       CtrlUser: [
-        { resource: 'tool://allowed_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
+        { resource: 'tool://allowed_tool', actions: asActions(['call']) },
       ],
       CtrlAdmin: [
-        { resource: 'tool://allowed_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
-        { resource: 'tool://admin_tool', actions: ['call'] as unknown as import('@euno/common').Action[] },
+        { resource: 'tool://allowed_tool', actions: asActions(['call']) },
+        { resource: 'tool://admin_tool', actions: asActions(['call']) },
       ],
     },
   };
@@ -1575,7 +1581,7 @@ describe('IssueController parity (CI-6): tokens from IssueController pipeline pr
     ]);
     const [directResult, oidcResult] = await Promise.all([
       engine.validateAction({ token: directToken, action: 'call', resource: 'tool://allowed_tool' }),
-      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://allowed_tool' }),
+      engine.validateAction({ token: oidcToken, action: 'call', resource: 'tool://allowed_tool' }),
     ]);
     expect(directResult.allowed).toBe(oidcResult.allowed);
     expect(directResult.allowed).toBe(true);
@@ -1589,7 +1595,7 @@ describe('IssueController parity (CI-6): tokens from IssueController pipeline pr
     ]);
     const [directResult, oidcResult] = await Promise.all([
       engine.validateAction({ token: directToken, action: 'call', resource: 'tool://denied_tool' }),
-      engine.validateAction({ token: oidcToken,   action: 'call', resource: 'tool://denied_tool' }),
+      engine.validateAction({ token: oidcToken, action: 'call', resource: 'tool://denied_tool' }),
     ]);
     expect(directResult.allowed).toBe(oidcResult.allowed);
     expect(directResult.allowed).toBe(false);
@@ -1647,7 +1653,7 @@ describe('IssueController parity (CI-6): tokens from IssueController pipeline pr
     const narrowCap: CapabilityConstraint[] = [
       {
         resource: 'tool://allowed_tool',
-        actions: ['call'] as unknown as import('@euno/common').Action[],
+        actions: asActions(['call']),
       },
     ];
     const token = await issueDirectToken('ctrl-narrow-agent', ['CtrlAdmin'], narrowCap);
