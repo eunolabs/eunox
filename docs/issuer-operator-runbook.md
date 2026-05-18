@@ -102,7 +102,7 @@ rate-limit enforcement and replay prevention.
 ## Token Revocation
 
 OIDC-path capability tokens are revoked exclusively via the **gateway admin API**
-(`euno revoke` or `DELETE /admin/tokens/{jti}`). The capability issuer maintains
+(`euno revoke <jti>` or `POST /admin/revoke`). The capability issuer maintains
 **no separate revocation list**. This means:
 
 - The gateway is the single canonical revocation source for all tokens regardless
@@ -118,10 +118,12 @@ distributed consensus and keeps the issuer stateless with respect to live tokens
 To revoke a token:
 
 ```sh
-euno revoke --jti <token-jti>
+euno revoke <token-jti>
 # or
-curl -X DELETE https://<gateway>/admin/tokens/<token-jti> \
-  -H "X-Admin-Key: $EUNO_ADMIN_KEY"
+curl -X POST https://<gateway>/admin/revoke \
+  -H "X-Admin-Api-Key: $EUNO_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "<token-jti>"}'
 ```
 
 ---

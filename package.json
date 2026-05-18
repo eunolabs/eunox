@@ -13,7 +13,7 @@
     "lint": "npm run lint:license-boundary && npm run lint:threat-model-signoff && npm run lint --workspaces",
     "lint:license-boundary": "node scripts/check-license-boundary.mjs",
     "lint:threat-model-signoff": "node scripts/check-threat-model-signoff.mjs",
-    "test:scripts": "node --test scripts/__tests__/check-license-boundary.test.mjs",
+    "test:scripts": "node --test scripts/__tests__/check-license-boundary.test.mjs scripts/__tests__/check-threat-model-signoff.test.mjs",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
     "verify-evidence": "node scripts/verify-evidence.js",
     "lint:action-resolver": "node scripts/check-action-resolver-parity.mjs",

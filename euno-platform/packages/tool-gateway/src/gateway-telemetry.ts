@@ -137,6 +137,19 @@ export interface GatewayTelemetryEvent {
    * billing (billing uses {@link renewalEvents}).
    */
   readonly distinctRenewingUsers: number;
+  /**
+   * Set to `true` when `distinctIssuingUsers` has hit the internal cap,
+   * indicating the true cardinality may be higher than the reported value.
+   * Dashboards should flag saturation when this field is present and `true`.
+   * (CI-1 fix — mirrors `IssuerTelemetryEvent.distinctIssuingUsersCapped`)
+   */
+  readonly distinctIssuingUsersCapped?: boolean;
+  /**
+   * Set to `true` when `distinctRenewingUsers` has hit the internal cap,
+   * indicating the true cardinality may be higher than the reported value.
+   * (CI-1 fix — mirrors `IssuerTelemetryEvent.distinctRenewingUsersCapped`)
+   */
+  readonly distinctRenewingUsersCapped?: boolean;
   /** Unix epoch milliseconds at flush time. */
   readonly timestamp: number;
 }
@@ -380,6 +393,12 @@ export class GatewayTelemetryCollector implements GatewayTelemetryHooks {
         renewalEvents: state.renewalEvents,
         distinctIssuingUsers: state.issuingUsers.size,
         distinctRenewingUsers: state.renewingUsers.size,
+        ...(state.issuingUsers.size >= MAX_DISTINCT_USERS_PER_TENANT
+          ? { distinctIssuingUsersCapped: true }
+          : {}),
+        ...(state.renewingUsers.size >= MAX_DISTINCT_USERS_PER_TENANT
+          ? { distinctRenewingUsersCapped: true }
+          : {}),
         timestamp: Date.now(),
       };
 

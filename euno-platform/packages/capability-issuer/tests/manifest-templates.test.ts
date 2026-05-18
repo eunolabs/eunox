@@ -1346,14 +1346,17 @@ describe('IssueController + templateStore integration', () => {
     const result = await service.issueCapability({ authToken: 'tok', agentId: 'agent-fault-audit' });
     expect(result.token).toBeTruthy();
 
-    // Allow the Winston stream transport one tick to flush.
-    await new Promise((r) => setTimeout(r, 20));
-
-    // The issuance audit entry must carry templateFallback=true so operators
-    // can see in the SIEM that the template store was unavailable (DI-1 fix).
-    const issuanceEntry = auditEntries.find(
-      (e) => (e['metadata'] as Record<string, unknown>)?.['templateFallback'] === true,
-    );
+    // Poll (up to 500 ms) for the Winston stream transport to flush the audit
+    // entry. This is more reliable than a fixed sleep on a busy CI worker.
+    const deadline = Date.now() + 500;
+    let issuanceEntry: Record<string, unknown> | undefined;
+    while (Date.now() < deadline) {
+      issuanceEntry = auditEntries.find(
+        (e) => (e['metadata'] as Record<string, unknown>)?.['templateFallback'] === true,
+      );
+      if (issuanceEntry) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
     expect(issuanceEntry).toBeDefined();
     expect((issuanceEntry!['metadata'] as Record<string, unknown>)['templateFallback']).toBe(true);
   });

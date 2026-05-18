@@ -592,6 +592,7 @@ describe('GatewayTelemetryCollector — recordIssuance / recordRenewal (Task 10)
       expect(evt.issuanceEvents).toBe(10_001);
       // Distinct count is capped.
       expect(evt.distinctIssuingUsers).toBe(10_000);
+      expect(evt.distinctIssuingUsersCapped).toBe(true);
     });
 
     it('caps distinctRenewingUsers at 10000 to prevent unbounded memory growth', async () => {
@@ -604,6 +605,27 @@ describe('GatewayTelemetryCollector — recordIssuance / recordRenewal (Task 10)
       const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
       expect(evt.renewalEvents).toBe(10_001);
       expect(evt.distinctRenewingUsers).toBe(10_000);
+      expect(evt.distinctRenewingUsersCapped).toBe(true);
+    });
+
+    it('does not set distinctIssuingUsersCapped when below the cap', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordIssuance('t1', 'alice@corp.com');
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.distinctIssuingUsers).toBe(1);
+      expect(evt.distinctIssuingUsersCapped).toBeUndefined();
+    });
+
+    it('does not set distinctRenewingUsersCapped when below the cap', async () => {
+      const collector = new GatewayTelemetryCollector({ endpointUrl: 'http://telemetry.test/v1' });
+      collector.recordRenewal('t1', 'alice@corp.com');
+      await collector.flush();
+
+      const evt = fetchCapture.captured[0] as GatewayTelemetryEvent;
+      expect(evt.distinctRenewingUsers).toBe(1);
+      expect(evt.distinctRenewingUsersCapped).toBeUndefined();
     });
   });
 });

@@ -263,10 +263,11 @@ substitute for the CR-3 integration test.
 Do in-flight `validateToken()` calls complete before the provider map is replaced?
 Document drain semantics.
 
-**Q2 — `web/` vs. issuer `/admin/` for the admin UI (E4 wording):**
-Exit criterion E4 references "hosted UI under `web/`" but the admin UI is served
-by the issuer's Express process at `/admin/`. Update E4's wording in
-`docs/stage4executionplan.md` to reflect the actual delivery mechanism.
+**Q2 — `web/` vs. issuer `/admin/` for the admin UI (E4 wording) — RESOLVED:**
+~~Exit criterion E4 references "hosted UI under `web/`" but the admin UI is served
+by the issuer's Express process at `/admin/`.~~ Updated E4's wording in
+`docs/stage4executionplan.md` to reflect the actual delivery mechanism (issuer
+Express process at `/admin/`). See execution plan table row Q2.
 
 **Q3 — `POST /api/v1/oidc/token` receives `idToken` (post-exchange): clarify API naming:**
 The issuer never receives the raw PKCE authorization code; it receives the

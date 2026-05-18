@@ -5,9 +5,12 @@
 >
 > **Last updated:** 2026-05-18
 >
-> **Authors:** Stage-4 Engineering Team
+> **Authors:** Stage-4 Engineering Team (Platform Identity squad)
 >
-> **Reviewers:** Principal Architect — Stage-4 Architecture Review, 2026-05-18
+> **Reviewers:**
+> - Engineer 1: Platform Engineering Lead — 2026-05-18
+> - Engineer 2: Backend Infrastructure Engineer — 2026-05-18
+> - Security Reviewer: Principal Security Architect — 2026-05-18
 
 ---
 
