@@ -1048,8 +1048,9 @@ export const IssuerConfigSchema = z
             : 'GCP_CRYPTOKEY_ID';
 
       if (issuerKeyId) {
-        const matchesSharedDefault = issuerKeyId === 'capability-signing-key';
-        const matchesMinterConvention = issuerKeyId.startsWith('euno-minter');
+        const normalised = issuerKeyId.toLowerCase();
+        const matchesSharedDefault = normalised === 'capability-signing-key';
+        const matchesMinterConvention = normalised.startsWith('euno-minter');
 
         if (matchesSharedDefault || matchesMinterConvention) {
           ctx.addIssue({
