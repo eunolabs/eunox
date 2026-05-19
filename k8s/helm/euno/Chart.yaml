@@ -3,7 +3,8 @@ name: euno
 description: |
   Umbrella Helm chart for the full Euno platform — Stage 5 on-prem deployment.
 
-  Installs the following sub-charts (one per service):
+  Renders Kubernetes Deployment, Service, and ConfigMap (+ Secret) resources
+  for the following services directly from templates in this chart:
     - tool-gateway
     - capability-issuer
     - api-key-minter
@@ -13,7 +14,8 @@ description: |
 
   External dependencies (Postgres, Redis) are NOT included by default.
   Operators are expected to provision their own Postgres and Redis instances
-  and supply the relevant connection strings via the service sub-chart values.
+  and supply the relevant connection strings via the service values (e.g.
+  gateway.env.REDIS_URL, issuer.env.ISSUER_DB_URL).
   To evaluate the full stack locally, enable the optional bitnami sub-charts:
 
     helm install euno ./k8s/helm/euno \
@@ -45,7 +47,7 @@ dependencies:
   # NOT recommended for production — provision an operator-managed Postgres
   # with TLS mode=require and dedicated per-service credentials.
   - name: postgresql
-    version: ">=12.0.0"
+    version: "12.12.10"
     repository: https://charts.bitnami.com/bitnami
     condition: postgresql.enabled
 
@@ -55,6 +57,6 @@ dependencies:
   # NOT recommended for production — provision an operator-managed Redis with
   # TLS and a strong password.
   - name: redis
-    version: ">=17.0.0"
+    version: "18.19.4"
     repository: https://charts.bitnami.com/bitnami
     condition: redis.enabled

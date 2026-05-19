@@ -13,8 +13,14 @@
 #   # Download only (no retag, no push):
 #   sh scripts/pull-air-gap-images.sh --pull-only
 #
-#   # Verify that all images are already present locally (no pull):
+#   # Verify that all images are present locally and their pulled digest matches
+#   # the pinned @sha256: value in the image list (no network pull):
 #   sh scripts/pull-air-gap-images.sh --verify-only
+#
+#   # Pull all images and rewrite the @sha256: pins in k8s/air-gap-images.txt
+#   # to the current resolved digests (run after each release and commit the
+#   # updated file):
+#   sh scripts/pull-air-gap-images.sh --update-digests
 #
 #   # Save all images to a tar archive for offline transport:
 #   sh scripts/pull-air-gap-images.sh --save-tar air-gap-bundle.tar
@@ -46,14 +52,16 @@ PRIVATE_REGISTRY="${PRIVATE_REGISTRY:-}"
 
 PULL_ONLY=false
 VERIFY_ONLY=false
+UPDATE_DIGESTS=false
 SAVE_TAR=""
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --pull-only)    PULL_ONLY=true; shift ;;
-    --verify-only)  VERIFY_ONLY=true; shift ;;
+    --pull-only)       PULL_ONLY=true; shift ;;
+    --verify-only)     VERIFY_ONLY=true; shift ;;
+    --update-digests)  UPDATE_DIGESTS=true; shift ;;
     --save-tar)
       SAVE_TAR="${2:?'--save-tar requires a path argument'}"; shift 2 ;;
     *)
@@ -85,8 +93,10 @@ ok()   { printf "[PASS] %s\n" "$1"; PASS=$((PASS + 1)); }
 fail() { printf "[FAIL] %s\n" "$1" >&2; FAIL=$((FAIL + 1)); }
 
 # Strip comment lines and blank lines from the image list.
+# Uses POSIX character classes ('[[:space:]]') for portability across
+# BusyBox grep, BSD grep, and GNU grep.
 images() {
-  grep -v '^\s*#' "$IMAGE_LIST_FILE" | grep -v '^\s*$'
+  grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$IMAGE_LIST_FILE"
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -99,18 +109,68 @@ fi
 printf "\n"
 
 while IFS= read -r image; do
-  # Each line is: <ref>@<digest>  (or just <ref> without a digest pin)
-  # Strip the digest part to get the pull reference; keep the full string
-  # for digest verification.
-  pull_ref="$image"
+  # Each line may be: <ref>:<tag>@sha256:<digest>  or just  <ref>:<tag>
+  # We strip the digest suffix to obtain the pull reference, but keep
+  # the digest for verification in --verify-only mode.
+  pinned_digest=""
+  case "$image" in
+    *@sha256:*)
+      pinned_digest=$(printf '%s' "$image" | sed 's/.*@sha256:/sha256:/')
+      pull_ref=$(printf '%s' "$image" | sed 's/@sha256:.*//')
+      ;;
+    *)
+      pull_ref="$image"
+      ;;
+  esac
 
   if $VERIFY_ONLY; then
-    # Check if the image is already present locally.
-    if docker image inspect "$pull_ref" >/dev/null 2>&1; then
-      ok "Present locally: $pull_ref"
-    else
-      fail "Not found locally: $pull_ref"
+    # 1. Check local presence.
+    if ! docker image inspect "${pull_ref}" >/dev/null 2>&1; then
+      fail "Not found locally: ${pull_ref}"
+      continue
     fi
+
+    # 2. If a digest is pinned, verify it matches what is stored locally.
+    if [ -n "$pinned_digest" ]; then
+      local_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${pull_ref}" 2>/dev/null \
+        | sed 's/.*@//' || true)
+      if [ -z "$local_digest" ]; then
+        # Image present by tag but no RepoDigest (e.g. locally built image).
+        ok "Present locally (no RepoDigest to compare): ${pull_ref}"
+      elif [ "$local_digest" = "$pinned_digest" ]; then
+        ok "Present locally, digest matches: ${pull_ref}"
+      else
+        fail "Digest mismatch for ${pull_ref}: pinned=${pinned_digest} local=${local_digest}"
+      fi
+    else
+      ok "Present locally: ${pull_ref}"
+    fi
+    continue
+  fi
+
+  if $UPDATE_DIGESTS; then
+    # Pull the image, resolve its current digest, and rewrite the pin in the
+    # image list file.
+    if ! docker pull "${pull_ref}" >/dev/null 2>&1; then
+      fail "Failed to pull for digest update: ${pull_ref}"
+      continue
+    fi
+    new_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${pull_ref}" 2>/dev/null \
+      | sed 's/.*@//' || true)
+    if [ -z "$new_digest" ]; then
+      fail "Could not resolve digest for ${pull_ref} (locally built images have no RepoDigest)"
+      continue
+    fi
+    # Replace the existing pin (or add a new one) for this image in the file.
+    # sed -i is not portable between GNU and BSD sed; use a temp file.
+    tmp_file=$(mktemp)
+    # Escape the pull_ref for sed (dots become literal dots, slashes escaped).
+    escaped_ref=$(printf '%s' "${pull_ref}" | sed 's/[.[\*^$]/\\&/g; s|/|\\/|g')
+    sed "s|${escaped_ref}@sha256:[a-f0-9]*|${pull_ref}@${new_digest}|;
+         s|^${escaped_ref}$|${pull_ref}@${new_digest}|" \
+      "$IMAGE_LIST_FILE" > "$tmp_file"
+    mv "$tmp_file" "$IMAGE_LIST_FILE"
+    ok "Updated digest for ${pull_ref}: ${new_digest}"
     continue
   fi
 

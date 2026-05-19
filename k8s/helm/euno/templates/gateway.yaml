@@ -47,6 +47,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "euno.fullname" . }}-gateway-config
+            {{- if .Values.gateway.secretEnv }}
+            - secretRef:
+                name: {{ include "euno.fullname" . }}-gateway-secret
+            {{- end }}
           resources: {}
 ---
 apiVersion: v1
@@ -82,3 +86,18 @@ data:
   {{- range $key, $val := .Values.gateway.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+{{- if .Values.gateway.secretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "euno.fullname" . }}-gateway-secret
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+type: Opaque
+stringData:
+  {{- range $key, $val := .Values.gateway.secretEnv }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

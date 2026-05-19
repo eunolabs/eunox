@@ -9,7 +9,8 @@
 #   # Download and retag for a private registry:
 #   PRIVATE_REGISTRY=registry.internal scripts/pull-air-gap-images.sh
 #
-#   # Verify digests only (no retag):
+#   # Verify that all images are present locally and their digest matches
+#   # the pin below (no network pull):
 #   scripts/pull-air-gap-images.sh --verify-only
 #
 # Updating digests
@@ -19,10 +20,10 @@
 #   scripts/pull-air-gap-images.sh --update-digests
 #
 # This pulls each image, resolves its current digest, and rewrites the
-# digest column in this file.  Commit the updated file in the same PR as
-# the version bump.
+# @sha256: pin for each entry in this file.  Commit the updated file in
+# the same PR as the version bump.
 #
-# Format: <image>@<digest>
+# Format: <image>:<tag>@sha256:<digest>
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Euno platform services ───────────────────────────────────────────────────

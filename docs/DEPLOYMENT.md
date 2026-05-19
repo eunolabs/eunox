@@ -731,7 +731,7 @@ PRIVATE_REGISTRY=registry.internal:5000 sh scripts/pull-air-gap-images.sh
 # Pull only (no retag/push):
 sh scripts/pull-air-gap-images.sh --pull-only
 
-# Verify local presence (no pull):
+# Verify that all images are present locally and their digest matches the pin:
 sh scripts/pull-air-gap-images.sh --verify-only
 
 # Save to a tar archive for offline transport:
@@ -740,10 +740,16 @@ sh scripts/pull-air-gap-images.sh --save-tar air-gap-bundle.tar
 docker load -i air-gap-bundle.tar
 ```
 
-**Updating digest pins:** after each release, re-run the script with
-`--update-digests` (or manually `docker pull` each image, then copy the
-`sha256:` digest from `docker inspect`) and commit the updated
-`k8s/air-gap-images.txt`.
+**Updating digest pins:** after each release, run `--update-digests` to pull
+each image, resolve its current `RepoDigest`, and rewrite the `@sha256:` pins
+in `k8s/air-gap-images.txt`.  Commit the updated file in the same PR as the
+version bump:
+
+```bash
+sh scripts/pull-air-gap-images.sh --update-digests
+git add k8s/air-gap-images.txt
+git commit -m "chore: update air-gap image digest pins for v<X.Y.Z>"
+```
 
 ### Restricted-network checklist
 

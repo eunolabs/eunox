@@ -1,8 +1,13 @@
 # Euno umbrella chart — top-level values
 # ---------------------------------------------------------------------------
-# Each service is configured through its own sub-section.  Only the keys
-# documented in each service's k8s/helm/<service>/values.schema.json are
-# accepted; additional keys are rejected by the schema validation.
+# Each service is configured through two separate maps:
+#
+#   <service>.env        — non-sensitive configuration, stored in a ConfigMap.
+#   <service>.secretEnv  — sensitive values (credentials, keys, tokens).
+#                          Stored in a Kubernetes Secret.  In production,
+#                          populate this via Helm secrets (e.g. helm-secrets,
+#                          Vault, or --set-string from a CI secret store) or
+#                          supply existingSecret instead.
 #
 # Minimal production override example:
 #
@@ -11,12 +16,13 @@
 #       NODE_ENV: production
 #       EUNO_DEPLOYMENT_TIER: multi-replica
 #       GATEWAY_AUDIENCE: my-org
-#       REDIS_URL: "rediss://redis.internal:6380"
 #       AUDIT_LEDGER_BACKEND: per-replica-postgres
+#       ADMIN_HOST: "127.0.0.1"
+#     secretEnv:
+#       REDIS_URL: "rediss://euno:secret@redis.internal:6380"
 #       AUDIT_LEDGER_PG_URL: "postgres://euno_audit:secret@db.internal:5432/euno"
 #       AUDIT_LEDGER_HMAC_SECRET: "<64-hex-chars>"
 #       ADMIN_API_KEY: "<strong-admin-key>"
-#       ADMIN_HOST: "127.0.0.1"
 #
 #   issuer:
 #     env:
@@ -26,10 +32,11 @@
 #       AZURE_AD_CLIENT_ID: "<client>"
 #       SIGNING_PROVIDER: azure-keyvault
 #       AZURE_KEYVAULT_URL: "https://your-vault.vault.azure.net/"
-#       ISSUER_DB_URL: "postgres://euno:secret@db.internal:5432/euno"
 #       ISSUER_DB_SCHEMA_INIT: "true"
-#       ISSUER_SCIM_BEARER_TOKEN: "<scim-token>"
 #       EUNO_DEPLOYMENT_TIER: multi-replica
+#     secretEnv:
+#       ISSUER_DB_URL: "postgres://euno:secret@db.internal:5432/euno"
+#       ISSUER_SCIM_BEARER_TOKEN: "<scim-token>"
 #
 # See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the full
 # production installation guide.
@@ -45,11 +52,20 @@ gateway:
     type: ClusterIP
     port: 3002
     adminPort: 3003
+  # Non-sensitive configuration — stored in a ConfigMap.
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
     GATEWAY_AUDIENCE: tool-gateway
     ADMIN_HOST: "127.0.0.1"
+  # Sensitive values — stored in a Kubernetes Secret.
+  # Override these at install time via --set gateway.secretEnv.KEY=value or
+  # via a Helm secrets plugin / external secret manager.
+  secretEnv: {}
+  #   REDIS_URL: ""
+  #   AUDIT_LEDGER_PG_URL: ""
+  #   AUDIT_LEDGER_HMAC_SECRET: ""
+  #   ADMIN_API_KEY: ""
 
 # ── capability-issuer ─────────────────────────────────────────────────────────
 issuer:
@@ -64,6 +80,9 @@ issuer:
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
+  secretEnv: {}
+  #   ISSUER_DB_URL: ""
+  #   ISSUER_SCIM_BEARER_TOKEN: ""
 
 # ── api-key-minter ─────────────────────────────────────────────────────────
 minter:
@@ -77,6 +96,11 @@ minter:
     port: 3004
   env:
     NODE_ENV: production
+  secretEnv: {}
+  #   MINTER_ADMIN_API_KEY: ""
+  #   MINTER_PEPPER_HEX: ""
+  #   MINTER_AUDIT_DB_URL: ""
+  #   MINTER_API_KEY_DB_URL: ""
 
 # ── db-token-service ─────────────────────────────────────────────────────────
 dbTokenService:
@@ -91,6 +115,9 @@ dbTokenService:
   env:
     NODE_ENV: production
     DB_TOKENS_ENABLED: "false"
+  secretEnv: {}
+  #   AWS_SECRET_ACCESS_KEY: ""
+  #   AWS_SESSION_TOKEN: ""
 
 # ── storage-grant-service ─────────────────────────────────────────────────────
 storageGrantService:
@@ -105,10 +132,14 @@ storageGrantService:
   env:
     NODE_ENV: production
     STORAGE_GRANTS_ENABLED: "false"
+  secretEnv: {}
+  #   AWS_SECRET_ACCESS_KEY: ""
+  #   AWS_SESSION_TOKEN: ""
 
 # ── posture-emitter ──────────────────────────────────────────────────────────
 postureEmitter:
-  # Single-writer SQLite drainer — do NOT scale to more than 1 replica.
+  # WARNING: must be 1 — SQLite durable queue is single-writer.
+  # The chart will fail to render if replicaCount != 1.
   replicaCount: 1
   image:
     repository: ghcr.io/edgeobs/euno/posture-emitter
@@ -124,6 +155,10 @@ postureEmitter:
     POSTURE_EMITTER_ENABLED: "false"
     POSTURE_EMITTER_PLUGINS: "stdout"
     POSTURE_DURABLE_QUEUE_PATH: "/data/posture.db"
+  secretEnv: {}
+  #   AZURE_SUBSCRIPTION_ID: ""    # required for defender-cspm plugin
+  #   AWS_SECRET_ACCESS_KEY: ""    # required for security-hub plugin
+  #   GCP_SCC_SOURCE_NAME: ""      # required for scc plugin
 
 # ── Optional Postgres (bitnami — evaluation only; disabled by default) ───────
 postgresql:

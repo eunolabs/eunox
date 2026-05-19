@@ -31,19 +31,23 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: http
             initialDelaySeconds: 10
             periodSeconds: 5
           envFrom:
             - configMapRef:
                 name: {{ include "euno.fullname" . }}-db-token-service-config
+            {{- if .Values.dbTokenService.secretEnv }}
+            - secretRef:
+                name: {{ include "euno.fullname" . }}-db-token-service-secret
+            {{- end }}
           resources: {}
 ---
 apiVersion: v1
@@ -75,3 +79,18 @@ data:
   {{- range $key, $val := .Values.dbTokenService.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+{{- if .Values.dbTokenService.secretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "euno.fullname" . }}-db-token-service-secret
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-token-service
+type: Opaque
+stringData:
+  {{- range $key, $val := .Values.dbTokenService.secretEnv }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

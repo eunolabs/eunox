@@ -213,33 +213,33 @@ if [ -n "$DB_TOKEN_SERVICE_URL" ]; then
   check_status "DB Token Service: GET /health → 200" "200" \
     "${DB_TOKEN_SERVICE_URL}/health"
 
-  # When a capability token is available, attempt a /token exchange.
+  # When a capability token is available, attempt a /db-tokens exchange.
   # With DB_TOKENS_ENABLED=false the expected response is 503 (service
   # disabled), which confirms the request reached the service and was
   # rejected gracefully rather than timing out.
   if [ -n "${CAP_TOKEN:-}" ]; then
     DB_TOKEN_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
-      -X POST "${DB_TOKEN_SERVICE_URL}/api/v1/token" \
+      -X POST "${DB_TOKEN_SERVICE_URL}/api/v1/db-tokens" \
       -H "Authorization: Bearer ${CAP_TOKEN}" \
       -H "Content-Type: application/json" \
-      -d '{"dbInstanceId":"smoke-db","durationSeconds":300}' \
+      -d '{"agentId":"smoke-agent"}' \
       || true)
 
     case "$DB_TOKEN_STATUS" in
       200|201)
-        printf "[PASS] DB Token Service: /token exchange → %s (tokens enabled)\n" "$DB_TOKEN_STATUS"
+        printf "[PASS] DB Token Service: /db-tokens exchange → %s (tokens enabled)\n" "$DB_TOKEN_STATUS"
         PASS=$((PASS + 1))
         ;;
       503)
-        printf "[PASS] DB Token Service: /token exchange → 503 (tokens disabled — expected in smoke)\n"
+        printf "[PASS] DB Token Service: /db-tokens exchange → 503 (tokens disabled — expected in smoke)\n"
         PASS=$((PASS + 1))
         ;;
       401|403)
-        printf "[PASS] DB Token Service: /token exchange → %s (auth enforced)\n" "$DB_TOKEN_STATUS"
+        printf "[PASS] DB Token Service: /db-tokens exchange → %s (auth enforced)\n" "$DB_TOKEN_STATUS"
         PASS=$((PASS + 1))
         ;;
       *)
-        printf "[FAIL] DB Token Service: /token exchange → unexpected %s\n" "$DB_TOKEN_STATUS"
+        printf "[FAIL] DB Token Service: /db-tokens exchange → unexpected %s\n" "$DB_TOKEN_STATUS"
         FAIL=$((FAIL + 1))
         ;;
     esac
@@ -257,27 +257,27 @@ if [ -n "$STORAGE_GRANT_SERVICE_URL" ]; then
 
   if [ -n "${CAP_TOKEN:-}" ]; then
     SG_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
-      -X POST "${STORAGE_GRANT_SERVICE_URL}/api/v1/grant" \
+      -X POST "${STORAGE_GRANT_SERVICE_URL}/api/v1/storage-grants" \
       -H "Authorization: Bearer ${CAP_TOKEN}" \
       -H "Content-Type: application/json" \
-      -d '{"bucket":"smoke-bucket","prefix":"smoke/","durationSeconds":300}' \
+      -d '{"agentId":"smoke-agent"}' \
       || true)
 
     case "$SG_STATUS" in
       200|201)
-        printf "[PASS] Storage Grant Service: /grant → %s (grants enabled)\n" "$SG_STATUS"
+        printf "[PASS] Storage Grant Service: /storage-grants → %s (grants enabled)\n" "$SG_STATUS"
         PASS=$((PASS + 1))
         ;;
       503)
-        printf "[PASS] Storage Grant Service: /grant → 503 (grants disabled — expected in smoke)\n"
+        printf "[PASS] Storage Grant Service: /storage-grants → 503 (grants disabled — expected in smoke)\n"
         PASS=$((PASS + 1))
         ;;
       401|403)
-        printf "[PASS] Storage Grant Service: /grant → %s (auth enforced)\n" "$SG_STATUS"
+        printf "[PASS] Storage Grant Service: /storage-grants → %s (auth enforced)\n" "$SG_STATUS"
         PASS=$((PASS + 1))
         ;;
       *)
-        printf "[FAIL] Storage Grant Service: /grant → unexpected %s\n" "$SG_STATUS"
+        printf "[FAIL] Storage Grant Service: /storage-grants → unexpected %s\n" "$SG_STATUS"
         FAIL=$((FAIL + 1))
         ;;
     esac

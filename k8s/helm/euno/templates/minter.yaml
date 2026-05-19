@@ -44,6 +44,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "euno.fullname" . }}-minter-config
+            {{- if .Values.minter.secretEnv }}
+            - secretRef:
+                name: {{ include "euno.fullname" . }}-minter-secret
+            {{- end }}
           resources: {}
 ---
 apiVersion: v1
@@ -75,3 +79,18 @@ data:
   {{- range $key, $val := .Values.minter.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+{{- if .Values.minter.secretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "euno.fullname" . }}-minter-secret
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minter
+type: Opaque
+stringData:
+  {{- range $key, $val := .Values.minter.secretEnv }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

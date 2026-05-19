@@ -31,19 +31,23 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health/live
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /health/ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
           envFrom:
             - configMapRef:
                 name: {{ include "euno.fullname" . }}-issuer-config
+            {{- if .Values.issuer.secretEnv }}
+            - secretRef:
+                name: {{ include "euno.fullname" . }}-issuer-secret
+            {{- end }}
           resources: {}
 ---
 apiVersion: v1
@@ -75,3 +79,18 @@ data:
   {{- range $key, $val := .Values.issuer.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+{{- if .Values.issuer.secretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "euno.fullname" . }}-issuer-secret
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
+type: Opaque
+stringData:
+  {{- range $key, $val := .Values.issuer.secretEnv }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}
