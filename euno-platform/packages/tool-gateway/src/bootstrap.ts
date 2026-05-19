@@ -631,6 +631,98 @@ export async function checkActionResolverHashParity({
 }
 
 /**
+ * Partner discovery document shape — only the fields the auto-bootstrap
+ * shortcut reads.  Extra fields are safely ignored.
+ */
+interface PartnerDiscoveryDoc {
+  issuer?: unknown;
+  endpoints?: {
+    jwks?: unknown;
+  };
+}
+
+/**
+ * Auto-bootstrap a partner DID from a `/.well-known/capability-issuer`
+ * discovery document.
+ *
+ * When `PARTNER_ISSUER_DISCOVERY_URL` is set, the gateway fetches the
+ * partner's discovery document at startup, extracts the partner DID from
+ * `body.issuer` and the JWKS URI from `body.endpoints.jwks`, and seeds the
+ * partner into `registry` as an immediately-active entry (no two-eyes
+ * approval required — identical to the `TRUSTED_PARTNER_DIDS` shortcut it
+ * replaces).
+ *
+ * The operation is non-fatal: a network error or a malformed discovery
+ * document logs a warning but does **not** prevent the gateway from starting.
+ * The partner will simply not be trusted until the gateway is restarted with
+ * a reachable discovery URL.
+ */
+export async function bootstrapPartnerFromDiscoveryUrl(
+  discoveryUrl: string,
+  registry: InMemoryPartnerDidRegistry | RedisPartnerDidRegistry,
+  logger: Logger,
+): Promise<void> {
+  logger.info(
+    'Fetching partner discovery document for auto-bootstrap',
+    { discoveryUrl },
+  );
+
+  let body: PartnerDiscoveryDoc;
+  try {
+    const resp = await fetch(discoveryUrl, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) {
+      logger.warn(
+        'Partner discovery document fetch returned non-OK status; auto-bootstrap skipped',
+        { discoveryUrl, status: resp.status },
+      );
+      return;
+    }
+    body = (await resp.json()) as PartnerDiscoveryDoc;
+  } catch (err) {
+    logger.warn(
+      'Failed to fetch partner discovery document for auto-bootstrap; ' +
+      'the partner will not be trusted until the gateway restarts with a reachable URL',
+      { discoveryUrl, error: err instanceof Error ? err.message : String(err) },
+    );
+    return;
+  }
+
+  const partnerDid = typeof body.issuer === 'string' ? body.issuer : undefined;
+  const jwksUri = typeof body.endpoints?.jwks === 'string' ? body.endpoints.jwks : undefined;
+
+  if (!partnerDid) {
+    logger.warn(
+      'Partner discovery document is missing required `issuer` field; auto-bootstrap skipped',
+      { discoveryUrl },
+    );
+    return;
+  }
+
+  if (!jwksUri) {
+    logger.warn(
+      'Partner discovery document is missing `endpoints.jwks` field; auto-bootstrap skipped',
+      { discoveryUrl, partnerDid },
+    );
+    return;
+  }
+
+  // Seed the registry directly as active — no two-eyes approval required for
+  // this startup shortcut (same trust level as TRUSTED_PARTNER_DIDS).
+  // Both InMemoryPartnerDidRegistry.seed() (sync) and
+  // RedisPartnerDidRegistry.seed() (async) are handled safely by awaiting
+  // the return value — Promise.resolve(void) resolves immediately.
+  await Promise.resolve(registry.seed([partnerDid]));
+
+  logger.info(
+    'Partner DID auto-registered from discovery document',
+    { discoveryUrl, partnerDid, jwksUri },
+  );
+}
+
+/**
  * Parse the `TRUST_PROXY` env var into the value Express's
  * `app.set('trust proxy', …)` accepts. Mirrors the Express docs:
  *
@@ -823,6 +915,20 @@ export async function initializeServices(
       labelNames: ['did', 'from', 'to'],
       registers: [metricsRegistry],
     });
+  }
+
+  // ── Step 5b: Partner discovery auto-bootstrap (Task 9 / § 4.7) ───────────
+  // When PARTNER_ISSUER_DISCOVERY_URL is set, fetch the partner's
+  // /.well-known/capability-issuer document and seed the partner DID
+  // directly — this is a startup convenience equivalent to adding a single
+  // DID to TRUSTED_PARTNER_DIDS, but driven by a discovery document rather
+  // than an operator-typed DID string.
+  if (validated.PARTNER_ISSUER_DISCOVERY_URL && partnerRegistry) {
+    await bootstrapPartnerFromDiscoveryUrl(
+      validated.PARTNER_ISSUER_DISCOVERY_URL,
+      partnerRegistry,
+      logger,
+    );
   }
 
   // ── Step 6: Prometheus gauges (reference stores via closures) ─────────────
