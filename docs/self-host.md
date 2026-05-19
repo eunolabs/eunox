@@ -1663,6 +1663,7 @@ full HA topology diagram.
 ### 12.6 DB Token Service
 
 > **Reference:** `euno-platform/packages/db-token-service/`; Stage-5 Task 7.
+> **Status:** GA (v1.0.0)
 
 The `db-token-service` exchanges a capability token for short-lived scoped
 database IAM credentials. Credential TTL is bounded by the capability token
@@ -1671,39 +1672,80 @@ TTL and cannot outlive the capability that authorized it.
 #### 12.6.1 Configuration
 
 ```env
+# Service identity
+PORT=5050
+ISSUER_DID=did:web:capability-issuer.example.com
+ISSUER_JWKS_URI=https://capability-issuer.example.com/.well-known/jwks.json
+GATEWAY_AUDIENCE=tool-gateway
+
+# DB credential minting
 DB_TOKENS_ENABLED=true
 DB_TOKEN_MAX_TTL_SECONDS=900        # max credential TTL; must be <= capability token TTL
-DB_TOKEN_ALLOW_LIST_FILE=/app/config/db-instances.json
+DB_INSTANCES_FILE=/app/config/db-instances.json
+DB_USERNAME_POLICY_FILE=/app/config/db-usernames.json
+
+# Cloud IAM (set one block for your provider)
+# AWS RDS IAM
 AWS_DB_TOKEN_ROLE_ARN=arn:aws:iam::123456789012:role/euno-db-token-role
+# Azure SQL AAD — set AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET or use workload identity
 ```
 
-**`db-instances.json` format:**
+**`db-instances.json` format (operator allow-list):**
+
+```json
+[
+  {
+    "id": "salesserver",
+    "provider": "azure-sql",
+    "host": "salesserver.database.windows.net",
+    "port": 1433,
+    "databases": ["salesdb"]
+  }
+]
+```
+
+**`db-usernames.json` format (role → DB username policy):**
 
 ```json
 {
-  "allowedInstances": [
-    { "id": "prod-postgres-1", "region": "us-east-1", "engine": "postgres" }
-  ]
+  "default": {},
+  "dbUsernamesByRole": {
+    "DataAnalyst": "euno_readonly",
+    "DBAdmin": "euno_readwrite"
+  }
 }
 ```
 
 #### 12.6.2 Token exchange
 
 ```bash
-curl -X POST https://db-token-service.internal:5050/exchange \
+curl -X POST https://db-token-service.internal:5050/api/v1/db-tokens \
   -H "Authorization: Bearer <capability-token>" \
   -H "Content-Type: application/json" \
-  -d '{ "instanceId": "prod-postgres-1", "databaseUser": "app_user" }'
+  -d '{ "agentId": "my-agent" }'
 
 # Response:
 # {
-#   "username": "app_user_rds_iam",
-#   "password": "<short-lived-IAM-token>",
-#   "expiresAt": "2026-05-19T06:00:00Z",
-#   "engine": "postgres",
-#   "host": "prod-postgres-1.cluster-abc.us-east-1.rds.amazonaws.com"
+#   "credentials": [
+#     {
+#       "provider": "azure-sql",
+#       "instanceId": "salesserver",
+#       "database": "salesdb",
+#       "username": "euno_readonly",
+#       "token": "<short-lived-AAD-access-token>",
+#       "expiresAt": "2026-05-19T06:15:00Z"
+#     }
+#   ]
 # }
 ```
+
+#### 12.6.3 Operational endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness — always returns `{ status: "healthy" }` |
+| `GET /health/ready` | Readiness — 503 when `DB_TOKENS_ENABLED=false` or no minters configured |
+| `GET /.well-known/db-token-service` | Service metadata (issuerDid, audience, endpoints) |
 
 > **Blast radius note:** A stolen DB credential grants access only to the
 > exact DB instance and user listed in the capability constraint. The credential
@@ -1716,6 +1758,7 @@ curl -X POST https://db-token-service.internal:5050/exchange \
 ### 12.7 Storage Grant Service
 
 > **Reference:** `euno-platform/packages/storage-grant-service/`; Stage-5 Task 7.
+> **Status:** GA (v1.0.0)
 
 The `storage-grant-service` exchanges a capability token for short-lived
 presigned URLs (AWS S3 / GCP Cloud Storage) or SAS tokens (Azure Blob).
@@ -1725,25 +1768,52 @@ constraint.
 #### 12.7.1 Configuration
 
 ```env
+# Service identity
+PORT=5051
+ISSUER_DID=did:web:capability-issuer.example.com
+ISSUER_JWKS_URI=https://capability-issuer.example.com/.well-known/jwks.json
+GATEWAY_AUDIENCE=tool-gateway
+
+# Storage grant minting
 STORAGE_GRANTS_ENABLED=true
 STORAGE_GRANT_MAX_TTL_SECONDS=900
+
+# Cloud IAM (set one block for your provider)
+# AWS S3
 AWS_STORAGE_GRANT_ROLE_ARN=arn:aws:iam::123456789012:role/euno-storage-grant-role
+# Azure Blob — use workload identity or AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+# GCP Cloud Storage — use Workload Identity Federation or GOOGLE_APPLICATION_CREDENTIALS
 ```
 
 #### 12.7.2 Grant exchange
 
 ```bash
-curl -X POST https://storage-grant-service.internal:5051/grant \
+curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
   -H "Authorization: Bearer <capability-token>" \
   -H "Content-Type: application/json" \
-  -d '{ "bucket": "my-data-bucket", "key": "data/report.csv", "operation": "GetObject" }'
+  -d '{ "agentId": "my-agent" }'
 
 # Response:
 # {
-#   "presignedUrl": "https://my-data-bucket.s3.amazonaws.com/data/report.csv?...",
-#   "expiresAt": "2026-05-19T06:00:00Z"
+#   "grants": [
+#     {
+#       "provider": "azure-blob",
+#       "resource": "storage://azure/datasets/reports",
+#       "url": "https://datasets.blob.core.windows.net/reports/data.csv?sv=...&sig=...",
+#       "sasToken": "<user-delegation-SAS-token>",
+#       "expiresAt": "2026-05-19T06:15:00Z"
+#     }
+#   ]
 # }
 ```
+
+#### 12.7.3 Operational endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness — always returns `{ status: "healthy" }` |
+| `GET /health/ready` | Readiness — 503 when `STORAGE_GRANTS_ENABLED=false` or no minters configured |
+| `GET /.well-known/storage-grant-service` | Service metadata (issuerDid, audience, endpoints) |
 
 ---
 

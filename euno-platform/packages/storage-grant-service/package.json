@@ -1,6 +1,6 @@
 {
   "name": "@euno/storage-grant-service",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Standalone storage-grant microservice \u2014 mints short-lived cloud storage credentials from a verified capability JWT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
