@@ -639,3 +639,160 @@ The recommended HA topology is a **dedicated queue-drainer sidecar**:
 See `euno-platform/packages/capability-issuer/src/issuance/posture.ts` for the
 `DurablePostureEmitter` implementation and the JSDoc single-writer constraint
 warning.
+
+
+---
+
+## Stage-5 on-prem deployment
+
+> **See also:** `docs/self-host.md` §12 "Stage 5 — Enterprise Deployment" for
+> the full self-hosting reference including service topology, compliance
+> checklists, and the minimum viable air-gapped setup.
+
+### Helm chart installation
+
+The `k8s/helm/euno/` directory contains the umbrella Helm chart for a full
+Stage-5 on-prem deployment.  Per-service charts are available under
+`k8s/helm/<service>/`; per-service `values.schema.json` files document all
+recognised environment variables.
+
+**Services covered by the umbrella chart:**
+
+| Service | Helm component key | Default port |
+|---|---|---|
+| `tool-gateway` | `gateway` | 3002 (HTTP), 3003 (admin) |
+| `capability-issuer` | `issuer` | 3001 |
+| `api-key-minter` | `minter` | 3004 |
+| `db-token-service` | `dbTokenService` | 5050 |
+| `storage-grant-service` | `storageGrantService` | 5051 |
+| `posture-emitter` | `postureEmitter` | — (no HTTP port; drainer only) |
+
+External dependencies (Postgres, Redis) are **not** bundled by default.
+Provision your own operator-managed Postgres and Redis instances, then supply
+the connection strings via the service values (e.g.
+`gateway.env.REDIS_URL`, `gateway.env.AUDIT_LEDGER_PG_URL`,
+`issuer.env.ISSUER_DB_URL`).
+
+For quick local evaluation you may enable the bundled bitnami sub-charts:
+
+```bash
+helm install euno ./k8s/helm/euno \
+  --set postgresql.enabled=true \
+  --set redis.enabled=true \
+  -f k8s/helm/euno/values.yaml
+```
+
+**This is not recommended for production** — see
+`k8s/helm/euno/values.yaml` for the full comment.
+
+#### Minimal production install
+
+```bash
+# Add shared secrets via Helm secrets or a secret manager; never commit
+# them in values.yaml.
+
+helm install euno ./k8s/helm/euno \
+  --set gateway.env.NODE_ENV=production \
+  --set gateway.env.EUNO_DEPLOYMENT_TIER=multi-replica \
+  --set gateway.env.GATEWAY_AUDIENCE=my-org \
+  --set gateway.env.REDIS_URL="rediss://redis.internal:6380" \
+  --set gateway.env.AUDIT_LEDGER_BACKEND=per-replica-postgres \
+  --set gateway.env.AUDIT_LEDGER_PG_URL="postgres://euno_audit:s3cr3t@db.internal:5432/euno" \
+  --set gateway.env.AUDIT_LEDGER_HMAC_SECRET="<64-hex-chars>" \
+  --set gateway.env.ADMIN_API_KEY="<strong-admin-key>" \
+  --set gateway.env.ADMIN_HOST="127.0.0.1" \
+  --set issuer.env.NODE_ENV=production \
+  --set issuer.env.IDENTITY_PROVIDER=azure-ad \
+  --set issuer.env.AZURE_AD_TENANT_ID="<tenant>" \
+  --set issuer.env.AZURE_AD_CLIENT_ID="<client>" \
+  --set issuer.env.SIGNING_PROVIDER=azure-keyvault \
+  --set issuer.env.AZURE_KEYVAULT_URL="https://your-vault.vault.azure.net/" \
+  --set issuer.env.ISSUER_DB_URL="postgres://euno:s3cr3t@db.internal:5432/euno" \
+  --set issuer.env.ISSUER_DB_SCHEMA_INIT="true" \
+  --set issuer.env.EUNO_DEPLOYMENT_TIER=multi-replica
+```
+
+Regenerate values schemas after a schema change:
+
+```bash
+npm run gen:helm-schema
+```
+
+### Air-gap image bundle
+
+`k8s/air-gap-images.txt` lists all container images required for a full Stage-5
+deployment, with SHA-256 digest pins.  Use `scripts/pull-air-gap-images.sh` to
+download and retag them for a private registry:
+
+```bash
+# Pull and push to your private registry:
+PRIVATE_REGISTRY=registry.internal:5000 sh scripts/pull-air-gap-images.sh
+
+# Pull only (no retag/push):
+sh scripts/pull-air-gap-images.sh --pull-only
+
+# Verify that all images are present locally and their digest matches the pin:
+sh scripts/pull-air-gap-images.sh --verify-only
+
+# Save to a tar archive for offline transport:
+sh scripts/pull-air-gap-images.sh --save-tar air-gap-bundle.tar
+# Then on the air-gapped host:
+docker load -i air-gap-bundle.tar
+```
+
+**Updating digest pins:** after each release, run `--update-digests` to pull
+each image, resolve its current `RepoDigest`, and rewrite the `@sha256:` pins
+in `k8s/air-gap-images.txt`.  Commit the updated file in the same PR as the
+version bump:
+
+```bash
+sh scripts/pull-air-gap-images.sh --update-digests
+git add k8s/air-gap-images.txt
+git commit -m "chore: update air-gap image digest pins for v<X.Y.Z>"
+```
+
+### Restricted-network checklist
+
+Before running in a network with restricted egress, confirm each of the
+following endpoints is either reachable, proxied, or replaced with an on-prem
+equivalent:
+
+| Endpoint | Required for | Air-gap replacement |
+|---|---|---|
+| KMS endpoint (Azure KV / AWS KMS / GCP KMS) | Token signing | BYO HSM with PKCS#11 adapter |
+| Postgres | Audit ledger, SCIM tables, issuer state | On-prem Postgres (no egress required) |
+| Redis | Revocation, kill-switch, circuit-breaker state | On-prem Redis (no egress required) |
+| `https://ion.msidentity.com/api/v1.0/identifiers` | `did:ion` DID resolution | Self-hosted ION node (`ION_RESOLVER_URL=http://ion-sidecar:3000/identifiers`) |
+| IdP (Entra ID / Cognito / Okta) | User authentication | On-prem OIDC provider |
+| SCIM source | Group push | On-prem LDAP-to-SCIM bridge |
+| S3 Object-Lock bucket | Cross-chain anchor | MinIO with Object-Lock enabled |
+| `EUNO_TELEMETRY_API` | Telemetry (opt-in only) | Set `EUNO_TELEMETRY=0` to disable |
+
+**mTLS between services:** for production clusters, enable mTLS between all
+Euno service pods using your service mesh (Istio, Linkerd, or cert-manager
+SPIFFE).  The reference network policies in `k8s/network-policies.yaml` restrict
+pod-to-pod traffic at the NetworkPolicy layer; mTLS provides an additional
+cryptographic layer for zero-trust environments.
+
+**`DID_WEB_ALLOW_HTTP_FOR_HOSTS`:** in fully disconnected deployments without a
+public TLS certificate for `did:web` documents, set this allowlist to the
+in-cluster hostname serving the DID document.  Do **not** set it for any
+external partner DID host.
+
+### posture-emitter: single-writer constraint
+
+The `posture-emitter` service uses a SQLite file (`POSTURE_DURABLE_QUEUE_PATH`)
+as its durable delivery queue.  SQLite is a single-writer database; running
+more than one replica of this service against the same volume will corrupt the
+queue.
+
+- In Kubernetes: the umbrella chart sets `replicas: 1` and annotates the
+  Deployment with `euno.io/single-writer: "true"`.  Do not override this.
+- In Docker Compose: the `posture-emitter` service is defined once in
+  `infra/docker-compose.yml` and uses a named volume (`posture-data`).
+
+To scale posture throughput, increase `POSTURE_DURABLE_BATCH_SIZE` and
+decrease `POSTURE_DURABLE_POLL_INTERVAL_MS` rather than adding replicas.
+
+See `docs/self-host.md` §13 "Stage 5 — Posture Emitter Reference" for
+the full configuration reference.

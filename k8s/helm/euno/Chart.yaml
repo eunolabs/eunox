@@ -1,0 +1,62 @@
+apiVersion: v2
+name: euno
+description: |
+  Umbrella Helm chart for the full Euno platform — Stage 5 on-prem deployment.
+
+  Renders Kubernetes Deployment, Service, and ConfigMap (+ Secret) resources
+  for the following services directly from templates in this chart:
+    - tool-gateway
+    - capability-issuer
+    - api-key-minter
+    - db-token-service
+    - storage-grant-service
+    - posture-emitter
+
+  External dependencies (Postgres, Redis) are NOT included by default.
+  Operators are expected to provision their own Postgres and Redis instances
+  and supply the relevant connection strings via the service values (e.g.
+  gateway.env.REDIS_URL, issuer.env.ISSUER_DB_URL).
+  To evaluate the full stack locally, enable the optional bitnami sub-charts:
+
+    helm install euno ./k8s/helm/euno \
+      --set postgresql.enabled=true \
+      --set redis.enabled=true \
+      -f k8s/helm/euno/values.yaml
+
+  See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the production
+  installation guide, air-gap checklist, and network-policy templates.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - euno
+  - tool-gateway
+  - capability-issuer
+  - mcp
+  - enterprise
+home: https://github.com/edgeobs/euno-platform
+sources:
+  - https://github.com/edgeobs/euno-platform
+maintainers:
+  - name: Euno Platform Team
+
+dependencies:
+  # ── Optional Postgres (bitnami) ────────────────────────────────────────────
+  # Disabled by default; supply your own AUDIT_LEDGER_PG_URL / ISSUER_DB_URL.
+  # Enable with --set postgresql.enabled=true for quick local evaluation only.
+  # NOT recommended for production — provision an operator-managed Postgres
+  # with TLS mode=require and dedicated per-service credentials.
+  - name: postgresql
+    version: "12.12.10"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+
+  # ── Optional Redis (bitnami) ───────────────────────────────────────────────
+  # Disabled by default; supply your own REDIS_URL.
+  # Enable with --set redis.enabled=true for quick local evaluation only.
+  # NOT recommended for production — provision an operator-managed Redis with
+  # TLS and a strong password.
+  - name: redis
+    version: "18.19.4"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

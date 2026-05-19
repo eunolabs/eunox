@@ -92,6 +92,8 @@ volumes:
     driver: local
   redis-data:
     driver: local
+  posture-data:
+    driver: local
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Services
@@ -355,6 +357,29 @@ services:
       retries: 5
       start_period: 15s
 
+  # ── Posture Emitter ──────────────────────────────────────────────────────
+  # Single-writer SQLite drainer for the AI posture inventory feed.
+  # IMPORTANT: Do NOT scale this service to more than 1 replica — the durable
+  # queue uses a SQLite file on a named volume that must have a single writer.
+  # Active when --profile full or --profile smoke is passed.
+  # See docs/self-host.md §12.11 and §13 for configuration reference.
+  posture-emitter:
+    build:
+      context: ..
+      dockerfile: euno-platform/packages/posture-emitter/Dockerfile
+    image: euno/posture-emitter:local
+    container_name: euno-posture-emitter
+    profiles: ["full", "smoke"]
+    restart: unless-stopped
+    volumes:
+      - posture-data:/data
+    environment:
+      NODE_ENV:                     ${NODE_ENV:-development}
+      POSTURE_EMITTER_ENABLED:      ${POSTURE_EMITTER_ENABLED:-false}
+      POSTURE_EMITTER_PLUGINS:      ${POSTURE_EMITTER_PLUGINS:-stdout}
+      POSTURE_DURABLE_QUEUE_PATH:   /data/posture.db
+      POSTURE_DURABLE_POLL_INTERVAL_MS: ${POSTURE_DURABLE_POLL_INTERVAL_MS:-5000}
+
   # ── Smoke test ─────────────────────────────────────────────────────────────
   # Lightweight container that exercises core gateway endpoints after the full
   # stack is healthy.  Exits 0 on success, 1 on failure.  Use with:
@@ -368,11 +393,17 @@ services:
         condition: service_healthy
       mock-oidc:
         condition: service_healthy
+      db-token-service:
+        condition: service_healthy
+      storage-grant-service:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "/smoke-test.sh"]
     volumes:
       - ./smoke-test.sh:/smoke-test.sh:ro
     environment:
-      GATEWAY_URL:     "http://gateway-full:${GATEWAY_PORT:-3002}"
-      ISSUER_URL:      "http://capability-issuer:${ISSUER_PORT:-3001}"
-      ISSUER_JWKS_URL: "http://capability-issuer:${ISSUER_PORT:-3001}/.well-known/jwks.json"
-      MOCK_OIDC_URL:   "http://mock-oidc:3003"
+      GATEWAY_URL:              "http://gateway-full:${GATEWAY_PORT:-3002}"
+      ISSUER_URL:               "http://capability-issuer:${ISSUER_PORT:-3001}"
+      ISSUER_JWKS_URL:          "http://capability-issuer:${ISSUER_PORT:-3001}/.well-known/jwks.json"
+      MOCK_OIDC_URL:            "http://mock-oidc:3003"
+      DB_TOKEN_SERVICE_URL:     "http://db-token-service:${DB_TOKEN_SERVICE_PORT:-5050}"
+      STORAGE_GRANT_SERVICE_URL: "http://storage-grant-service:${STORAGE_GRANT_SERVICE_PORT:-5051}"

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "api-key-minter Helm values",
+  "description": "Configuration schema for the `api-key-minter` service. Generated from packages/common/src/config/schema.ts — do not edit by hand. Regenerate with `npm run gen:helm-schema` from the repository root.",
+  "type": "object",
+  "properties": {
+    "env": {
+      "type": "object",
+      "description": "Environment variables injected into the service container. Keys map 1-to-1 to the environment variables consumed by the service.",
+      "properties": {
+        "NODE_ENV": {
+          "type": "string",
+          "description": "Deployment environment. Used by logging and CORS to pick safe defaults."
+        },
+        "MINTER_PORT": {
+          "type": "string",
+          "description": "TCP port the api-key-minter HTTP server binds to. Default: 3004."
+        },
+        "MINTER_ISSUER_DID": {
+          "type": "string",
+          "description": "DID of the minter's capability issuer. Embedded in minted tokens as the `iss` claim. Default: did:web:minter.euno.local."
+        },
+        "MINTER_GATEWAY_AUDIENCE": {
+          "type": "string",
+          "description": "Expected `aud` claim on incoming capability tokens that authorize minting. Default: tool-gateway."
+        },
+        "MINTER_TOKEN_TTL_SECONDS": {
+          "type": "string",
+          "description": "Default TTL (seconds) for minted API key tokens. Default: 3600."
+        },
+        "MINTER_ADMIN_API_KEY": {
+          "type": "string",
+          "description": "Static admin API key for /admin/* routes. Required in production. Must be at least 32 characters."
+        },
+        "MINTER_ADMIN_JWKS_URI": {
+          "type": "string",
+          "description": "JWKS endpoint for operator JWT verification on admin routes. When set alongside MINTER_ADMIN_JWT_AUDIENCE, operator JWTs are accepted in addition to the static admin key."
+        },
+        "MINTER_ADMIN_JWT_AUDIENCE": {
+          "type": "string",
+          "description": "Expected `aud` claim in admin JWTs. Required alongside MINTER_ADMIN_JWKS_URI."
+        },
+        "MINTER_ADMIN_JWT_ISSUER": {
+          "type": "string",
+          "description": "Expected `iss` claim in admin JWTs. Optional additional check; requires MINTER_ADMIN_JWKS_URI and MINTER_ADMIN_JWT_AUDIENCE to be set."
+        },
+        "MINTER_PEPPER_HEX": {
+          "type": "string",
+          "description": "64-character hex string (32 bytes / 256-bit pepper) used to hash API keys at rest. Required in production. Rotate via key-rotation API."
+        },
+        "MINTER_PEPPER_VERSION": {
+          "type": "string",
+          "description": "Symbolic version label for MINTER_PEPPER_HEX (e.g. \"v1\", \"v2\"). Default: v1."
+        },
+        "MINTER_RATE_LIMIT_MAX": {
+          "type": "string",
+          "description": "Maximum minting requests per window per subject. Default: 10."
+        },
+        "MINTER_RATE_LIMIT_WINDOW_SECONDS": {
+          "type": "string",
+          "description": "Rate-limit window in seconds. Default: 60."
+        },
+        "MINTER_KMS_PROVIDER": {
+          "type": "string",
+          "enum": ["aws", "azure", "gcp"],
+          "description": "KMS provider for HSM-backed API key signing. When set, MINTER_PRIVATE_KEY_PEM / MINTER_PUBLIC_KEY_PEM are ignored. Recommended for production."
+        },
+        "MINTER_PRIVATE_KEY_PEM": {
+          "type": "string",
+          "description": "PEM-encoded private key for software signing. Required alongside MINTER_PUBLIC_KEY_PEM when MINTER_KMS_PROVIDER is unset. In production prefer MINTER_KMS_PROVIDER for HSM-backed non-exportable keys."
+        },
+        "MINTER_PUBLIC_KEY_PEM": {
+          "type": "string",
+          "description": "PEM-encoded public key matching MINTER_PRIVATE_KEY_PEM. Required alongside MINTER_PRIVATE_KEY_PEM."
+        },
+        "MINTER_SIGNING_ALGORITHM": {
+          "type": "string",
+          "description": "JWS algorithm for minted tokens. Default: ES256. Must match the key type supplied via PEM or KMS."
+        },
+        "MINTER_AUDIT_DB_URL": {
+          "type": "string",
+          "description": "Postgres connection URL for the append-only mint audit store. When set, mint events are durably persisted. Required in production."
+        },
+        "MINTER_AUDIT_SCHEMA_INIT": {
+          "type": "string",
+          "description": "Set to \"true\" to run DDL migrations for the mint audit table at startup. Safe to leave true across restarts."
+        },
+        "MINTER_API_KEY_DB_URL": {
+          "type": "string",
+          "description": "Postgres connection URL for the API key store. When set, minted API keys survive restarts. Required in production."
+        },
+        "MINTER_API_KEY_SCHEMA_INIT": {
+          "type": "string",
+          "description": "Set to \"true\" to run DDL migrations for the API key table at startup."
+        },
+        "MINTER_AUDIT_POOL_SIZE": {
+          "type": "string",
+          "description": "Postgres connection pool size for the audit store. Default: 5."
+        },
+        "MINTER_API_KEY_POOL_SIZE": {
+          "type": "string",
+          "description": "Postgres connection pool size for the API key store. Default: 5."
+        },
+        "MINTER_PG_CONNECTION_TIMEOUT_MS": {
+          "type": "string",
+          "description": "Postgres connection timeout in milliseconds. Default: 5000."
+        }
+      },
+      "required": [
+        "MINTER_ADMIN_API_KEY",
+        "MINTER_PEPPER_HEX"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "env"
+  ]
+}

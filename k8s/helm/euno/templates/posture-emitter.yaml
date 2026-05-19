@@ -1,0 +1,102 @@
+{{/*
+posture-emitter Deployment
+
+SINGLE-WRITER CONSTRAINT: The SQLite durable queue is NOT safe for concurrent
+writers.  This chart enforces replicaCount=1 at render time.  Do not override
+postureEmitter.replicaCount to any value other than 1.
+*/}}
+{{- if ne (int .Values.postureEmitter.replicaCount) 1 }}
+  {{- fail (printf "posture-emitter replicaCount must be exactly 1 (SQLite single-writer constraint); got %d" (int .Values.postureEmitter.replicaCount)) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+  annotations:
+    euno.io/single-writer: "true"
+spec:
+  # IMPORTANT: must be 1 — SQLite durable queue is single-writer.
+  replicas: {{ .Values.postureEmitter.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: euno-posture-emitter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: euno-posture-emitter
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: posture-emitter
+    spec:
+      containers:
+        - name: posture-emitter
+          image: "{{ .Values.postureEmitter.image.repository }}:{{ .Values.postureEmitter.image.tag }}"
+          imagePullPolicy: {{ .Values.postureEmitter.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "euno.fullname" . }}-posture-emitter-config
+            {{- if .Values.postureEmitter.secretEnv }}
+            - secretRef:
+                name: {{ include "euno.fullname" . }}-posture-emitter-secret
+            {{- end }}
+          {{- if .Values.postureEmitter.persistence.enabled }}
+          volumeMounts:
+            - name: posture-data
+              mountPath: {{ .Values.postureEmitter.persistence.mountPath }}
+          {{- end }}
+          resources: {}
+      {{- if .Values.postureEmitter.persistence.enabled }}
+      volumes:
+        - name: posture-data
+          persistentVolumeClaim:
+            claimName: {{ include "euno.fullname" . }}-posture-data
+      {{- end }}
+---
+{{- if .Values.postureEmitter.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-data
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postureEmitter.persistence.size }}
+  {{- if .Values.postureEmitter.persistence.storageClass }}
+  storageClassName: {{ .Values.postureEmitter.persistence.storageClass }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter-config
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+data:
+  {{- range $key, $val := .Values.postureEmitter.env }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- if .Values.postureEmitter.secretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter-secret
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+type: Opaque
+stringData:
+  {{- range $key, $val := .Values.postureEmitter.secretEnv }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

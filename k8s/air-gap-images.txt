@@ -1,0 +1,52 @@
+# Euno Platform — Air-gap image list
+# ─────────────────────────────────────────────────────────────────────────────
+# All container images required for a full Stage-5 on-prem deployment.
+# Images are listed with their expected SHA-256 digest so operators can verify
+# integrity before importing into a private registry.
+#
+# Usage
+# -----
+#   # Download and retag for a private registry:
+#   PRIVATE_REGISTRY=registry.internal scripts/pull-air-gap-images.sh
+#
+#   # Verify that all images are present locally and their digest matches
+#   # the pin below (no network pull):
+#   scripts/pull-air-gap-images.sh --verify-only
+#
+# Updating digests
+# ----------------
+# After each release, regenerate this file by running:
+#
+#   scripts/pull-air-gap-images.sh --update-digests
+#
+# This pulls each image, resolves its current digest, and rewrites the
+# @sha256: pin for each entry in this file.  Commit the updated file in
+# the same PR as the version bump.
+#
+# Format: <image>:<tag>@sha256:<digest>
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Euno platform services ───────────────────────────────────────────────────
+ghcr.io/edgeobs/euno/tool-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
+ghcr.io/edgeobs/euno/capability-issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
+ghcr.io/edgeobs/euno/api-key-minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
+ghcr.io/edgeobs/euno/db-token-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
+ghcr.io/edgeobs/euno/storage-grant-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
+ghcr.io/edgeobs/euno/posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
+
+# ── Partner issuer simulator (optional — reference deployment only) ──────────
+ghcr.io/edgeobs/euno/partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
+
+# ── Base images used at build time (needed only for air-gapped builds) ───────
+# node:20-alpine is the base for all Euno service images.
+# alpine/curl is used by the smoke-test container.
+# Digests below are examples; pin to the exact digest used in the Dockerfiles.
+node:20-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
+alpine/curl:latest@sha256:0000000000000000000000000000000000000000000000000000000000000011
+
+# ── Optional dependencies (bitnami — disabled by default in Helm chart) ──────
+# Include these only when using the bundled bitnami Postgres/Redis sub-charts
+# (helm install ... --set postgresql.enabled=true --set redis.enabled=true).
+# In production, provision your own Postgres and Redis and omit these images.
+bitnami/postgresql:16@sha256:0000000000000000000000000000000000000000000000000000000000000020
+bitnami/redis:7@sha256:0000000000000000000000000000000000000000000000000000000000000021

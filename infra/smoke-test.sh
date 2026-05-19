@@ -13,13 +13,19 @@
 #   1 — one or more checks failed
 #
 # Environment variables
-#   GATEWAY_URL     — base URL of the gateway (default: http://localhost:3002)
-#   ISSUER_URL      — base URL of the capability issuer (default: http://localhost:3001)
-#   ISSUER_JWKS_URL — JWKS endpoint used to verify the issuer is healthy
-#                     (default: http://localhost:3001/.well-known/jwks.json)
-#   MOCK_OIDC_URL   — base URL of the mock OIDC server, present only in the
-#                     smoke Docker Compose profile; when set the issuance
-#                     round-trip section is executed (default: unset → skipped)
+#   GATEWAY_URL          — base URL of the gateway (default: http://localhost:3002)
+#   ISSUER_URL           — base URL of the capability issuer (default: http://localhost:3001)
+#   ISSUER_JWKS_URL      — JWKS endpoint used to verify the issuer is healthy
+#                          (default: http://localhost:3001/.well-known/jwks.json)
+#   MOCK_OIDC_URL        — base URL of the mock OIDC server, present only in the
+#                          smoke Docker Compose profile; when set the issuance
+#                          round-trip section is executed (default: unset → skipped)
+#   DB_TOKEN_SERVICE_URL — base URL of the db-token-service; when set the DB
+#                          credential exchange round-trip section is executed
+#                          (default: unset → skipped)
+#   STORAGE_GRANT_SERVICE_URL — base URL of the storage-grant-service; when set
+#                          the storage grant round-trip section is executed
+#                          (default: unset → skipped)
 
 set -u
 
@@ -27,6 +33,8 @@ GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 ISSUER_URL="${ISSUER_URL:-http://localhost:3001}"
 ISSUER_JWKS_URL="${ISSUER_JWKS_URL:-http://localhost:3001/.well-known/jwks.json}"
 MOCK_OIDC_URL="${MOCK_OIDC_URL:-}"
+DB_TOKEN_SERVICE_URL="${DB_TOKEN_SERVICE_URL:-}"
+STORAGE_GRANT_SERVICE_URL="${STORAGE_GRANT_SERVICE_URL:-}"
 
 PASS=0
 FAIL=0
@@ -81,6 +89,12 @@ printf "Gateway: %s\n" "$GATEWAY_URL"
 printf "Issuer JWKS: %s\n" "$ISSUER_JWKS_URL"
 if [ -n "$MOCK_OIDC_URL" ]; then
   printf "Mock OIDC: %s\n" "$MOCK_OIDC_URL"
+fi
+if [ -n "$DB_TOKEN_SERVICE_URL" ]; then
+  printf "DB Token Service: %s\n" "$DB_TOKEN_SERVICE_URL"
+fi
+if [ -n "$STORAGE_GRANT_SERVICE_URL" ]; then
+  printf "Storage Grant Service: %s\n" "$STORAGE_GRANT_SERVICE_URL"
 fi
 printf "\n"
 
@@ -185,6 +199,88 @@ if [ -n "$MOCK_OIDC_URL" ]; then
         -H "X-Euno-Protocol-Version: 1" \
         -d '{"sessionId":"smoke-issuance","toolName":"smoke-tool","arguments":{}}'
     fi
+  fi
+fi
+
+# ── DB credential exchange (Stage 5, smoke profile + DB_TOKEN_SERVICE_URL) ────
+# Requires DB_TOKEN_SERVICE_URL to be set and a capability token from the
+# issuance round-trip above.  When DB_TOKENS_ENABLED=false (default) the
+# service returns 503; we verify reachability and the health endpoint instead.
+if [ -n "$DB_TOKEN_SERVICE_URL" ]; then
+  printf "\n-- DB Token Service (Stage 5) --\n"
+
+  # Health check is always available regardless of DB_TOKENS_ENABLED.
+  check_status "DB Token Service: GET /health → 200" "200" \
+    "${DB_TOKEN_SERVICE_URL}/health"
+
+  # When a capability token is available, attempt a /db-tokens exchange.
+  # With DB_TOKENS_ENABLED=false the expected response is 503 (service
+  # disabled), which confirms the request reached the service and was
+  # rejected gracefully rather than timing out.
+  if [ -n "${CAP_TOKEN:-}" ]; then
+    DB_TOKEN_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
+      -X POST "${DB_TOKEN_SERVICE_URL}/api/v1/db-tokens" \
+      -H "Authorization: Bearer ${CAP_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"agentId":"smoke-agent"}' \
+      || true)
+
+    case "$DB_TOKEN_STATUS" in
+      200|201)
+        printf "[PASS] DB Token Service: /db-tokens exchange → %s (tokens enabled)\n" "$DB_TOKEN_STATUS"
+        PASS=$((PASS + 1))
+        ;;
+      503)
+        printf "[PASS] DB Token Service: /db-tokens exchange → 503 (tokens disabled — expected in smoke)\n"
+        PASS=$((PASS + 1))
+        ;;
+      401|403)
+        printf "[PASS] DB Token Service: /db-tokens exchange → %s (auth enforced)\n" "$DB_TOKEN_STATUS"
+        PASS=$((PASS + 1))
+        ;;
+      *)
+        printf "[FAIL] DB Token Service: /db-tokens exchange → unexpected %s\n" "$DB_TOKEN_STATUS"
+        FAIL=$((FAIL + 1))
+        ;;
+    esac
+  fi
+fi
+
+# ── Storage grant round-trip (Stage 5, smoke profile + STORAGE_GRANT_SERVICE_URL)
+# Requires STORAGE_GRANT_SERVICE_URL to be set.  With STORAGE_GRANTS_ENABLED=false
+# (default) the service returns 503; we verify reachability and health endpoint.
+if [ -n "$STORAGE_GRANT_SERVICE_URL" ]; then
+  printf "\n-- Storage Grant Service (Stage 5) --\n"
+
+  check_status "Storage Grant Service: GET /health → 200" "200" \
+    "${STORAGE_GRANT_SERVICE_URL}/health"
+
+  if [ -n "${CAP_TOKEN:-}" ]; then
+    SG_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
+      -X POST "${STORAGE_GRANT_SERVICE_URL}/api/v1/storage-grants" \
+      -H "Authorization: Bearer ${CAP_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"agentId":"smoke-agent"}' \
+      || true)
+
+    case "$SG_STATUS" in
+      200|201)
+        printf "[PASS] Storage Grant Service: /storage-grants → %s (grants enabled)\n" "$SG_STATUS"
+        PASS=$((PASS + 1))
+        ;;
+      503)
+        printf "[PASS] Storage Grant Service: /storage-grants → 503 (grants disabled — expected in smoke)\n"
+        PASS=$((PASS + 1))
+        ;;
+      401|403)
+        printf "[PASS] Storage Grant Service: /storage-grants → %s (auth enforced)\n" "$SG_STATUS"
+        PASS=$((PASS + 1))
+        ;;
+      *)
+        printf "[FAIL] Storage Grant Service: /storage-grants → unexpected %s\n" "$SG_STATUS"
+        FAIL=$((FAIL + 1))
+        ;;
+    esac
   fi
 fi
 
