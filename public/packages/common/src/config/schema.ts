@@ -363,8 +363,35 @@ export const IssuerConfigSchema = z
 
     // DID identity ----------------------------------------------------------
     ION_RESOLVER_URL: optionalString.describe(
-      'did:ion resolver URL. Defaults to the public Microsoft resolver. Override for self-hosted ION.',
+      'did:ion resolver URL. Defaults to the public Microsoft resolver ' +
+      '(https://ion.msidentity.com/api/v1.0/identifiers). Override for self-hosted ION nodes ' +
+      'or air-gapped deployments running a private ION sidecar.',
     ),
+    ION_CB_FAILURE_THRESHOLD: envPositiveInt({
+      default: 3,
+      min: 1,
+      description:
+        'Number of did:ion resolver failures within ION_CB_WINDOW_SECONDS that open the ION ' +
+        'circuit breaker. Once open, resolveDidIon() calls fast-fail with a CapabilityError ' +
+        'until the cooldown (ION_CB_COOLDOWN_SECONDS) elapses. ' +
+        'Default 3. Lower values trip the circuit faster but may cause more false positives ' +
+        'on transient network glitches.',
+    }),
+    ION_CB_WINDOW_SECONDS: envPositiveInt({
+      default: 30,
+      min: 1,
+      description:
+        'Sliding window (seconds) for ION circuit-breaker failure counting. Failures older ' +
+        'than this window do not count toward ION_CB_FAILURE_THRESHOLD. Default 30 s.',
+    }),
+    ION_CB_COOLDOWN_SECONDS: envPositiveInt({
+      default: 60,
+      min: 1,
+      description:
+        'Time (seconds) the ION circuit breaker stays open before allowing a single probe ' +
+        'request. If the probe succeeds the circuit closes; if it fails the cooldown restarts. ' +
+        'Default 60 s.',
+    }),
 
     // Token issuance --------------------------------------------------------
     ISSUER_DID: optionalString.describe(

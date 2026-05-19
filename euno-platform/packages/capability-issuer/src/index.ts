@@ -40,6 +40,7 @@ import {
   createIssuanceRateLimiterFromEnv,
   createOcsfTransportFromEnv,
   createOcsfWinstonTransport,
+  RedisCircuitBreaker,
 } from '@euno/common';
 import { CapabilityIssuerService, IssuerEnforcementContext } from './issuer-service';
 import { defaultSigningRegistry, defaultIdentityRegistry } from './default-registries';
@@ -48,7 +49,7 @@ import { DbTokenService } from './db-token';
 import { HttpSideCredentialBroker, SideCredentialBroker } from './side-credential-broker';
 import { loadCosignersFromEnv, loadTransparencyLogsFromEnv } from './issuance-proofs-wiring';
 import { DurablePostureEmitter } from '@euno/posture-emitter';
-import { parseDidWebHttpAllowList } from './did-resolver';
+import { parseDidWebHttpAllowList, resolveDidIon } from './did-resolver';
 import { createAdminJwtVerifierFromEnv } from './admin-jwt-verifier';
 import { PostgresRolePolicyStore } from './postgres-role-policy-store';
 import { createAdminRolePolicyRouter } from './routes/admin-role-policy';
@@ -146,6 +147,31 @@ const config: ServiceConfig = {
 
 // Create logger
 const logger = createLogger(config.name, config.environment);
+
+/**
+ * Circuit breaker for did:ion resolver calls.
+ *
+ * Wraps all `resolveDidIon()` invocations so that a sustained ION resolver
+ * outage does not block every did:ion-based authentication attempt with a
+ * full network timeout.  Configured from `ION_CB_*` env vars; defaults to
+ * 3 failures within 30 s opening the circuit for 60 s.
+ *
+ * The breaker is created at module load time so it survives across request
+ * contexts and accumulates failure history correctly.
+ */
+const ionCircuitBreaker = new RedisCircuitBreaker({
+  failureThreshold: env.ION_CB_FAILURE_THRESHOLD,
+  windowMs: env.ION_CB_WINDOW_SECONDS * 1000,
+  cooldownMs: env.ION_CB_COOLDOWN_SECONDS * 1000,
+  onStateChange: (from, to) => {
+    logger.warn(`ION circuit breaker state change: ${from} → ${to}`, {
+      service: 'capability-issuer',
+      event: 'ion_circuit_breaker_state_change',
+      from,
+      to,
+    });
+  },
+});
 
 /**
  * Per-tenant IdP registry. Loaded once at startup from
@@ -261,6 +287,7 @@ async function createIdentityProvider(): Promise<IdentityProvider> {
         // resolution call sites never read process.env directly.
         didWebHttpAllowList: parseDidWebHttpAllowList(env.DID_WEB_ALLOW_HTTP_FOR_HOSTS),
         ionResolverUrl: env.ION_RESOLVER_URL,
+        ionCircuitBreaker,
       });
 
     default:
@@ -944,6 +971,36 @@ app.get('/health/ready', (_req: Request, res: Response) => {
     return;
   }
   res.status(503).json({ status: 'not_ready', service: 'capability-issuer' });
+});
+
+/**
+ * did:ion resolver health check.
+ *
+ * GET /healthz/did-ion
+ *
+ * Returns `{ status: "ok" }` when the ION circuit breaker is closed and a
+ * probe resolution of a well-known ION DID succeeds. Returns
+ * `{ status: "degraded" }` when the circuit breaker is open (fast-fail path)
+ * or when the probe resolution fails. Always returns HTTP 200 so liveness
+ * probes that include this endpoint continue to pass during transient ION
+ * outages — the `status` field is the machine-readable signal for alerting.
+ *
+ * The probe DID (`did:ion:EiAnKD8-jfdd0MDcZUjAbRgaThBrMxPTFOxcnfJhI7iCCg`)
+ * is a known, stable ION document published by the ION project itself and is
+ * suitable as a liveness canary for any public ION resolver instance.
+ */
+const ION_HEALTH_PROBE_DID = 'did:ion:EiAnKD8-jfdd0MDcZUjAbRgaThBrMxPTFOxcnfJhI7iCCg';
+app.get('/healthz/did-ion', async (_req: Request, res: Response) => {
+  if (ionCircuitBreaker.getState() === 'open') {
+    res.json({ status: 'degraded', reason: 'circuit_open' });
+    return;
+  }
+  try {
+    await resolveDidIon(ION_HEALTH_PROBE_DID, env.ION_RESOLVER_URL, ionCircuitBreaker);
+    res.json({ status: 'ok' });
+  } catch {
+    res.json({ status: 'degraded', reason: 'probe_failed' });
+  }
 });
 
 /**
@@ -1748,7 +1805,7 @@ if (require.main === module) {
   });
 }
 
-export { app, initializeServices, issuerService };
+export { app, initializeServices, issuerService, ionCircuitBreaker };
 
 // Re-export the standalone micro-service classes so downstream packages
 // (db-token-service, storage-grant-service) can import from the main
