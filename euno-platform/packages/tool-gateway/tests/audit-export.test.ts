@@ -18,7 +18,11 @@
  * 14. invalid since → 400.
  * 15. pageSize capped at MAX_PAGE_SIZE (1000).
  * 16. invalid pageSize → 400.
- * 17. since/until ignored on cursor pages.
+ * 17. since/until ignored on cursor pages — cursor preserves original bounds.
+ * 18. cursor round-trips with fromTs/toTs (new fields).
+ * 19. cursor preserves time bounds across pages.
+ * 20. verificationUri is null when no auditSigningKeysUri configured.
+ * 21. verificationUri uses auditSigningKeysUri when provided.
  */
 
 import request from 'supertest';
@@ -218,6 +222,22 @@ describe('cursor helpers', () => {
     }
   });
 
+  it('18. encodeCursor / decodeCursor round-trips fromTs and toTs', () => {
+    const payload = {
+      lastRowId: '7',
+      expiresAt: Date.now() + 60_000,
+      fromTs: '2025-01-01T00:00:00.000Z',
+      toTs: '2025-06-01T00:00:00.000Z',
+    };
+    const encoded = encodeCursor(payload);
+    const result = decodeCursor(encoded);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payload.fromTs).toBe('2025-01-01T00:00:00.000Z');
+      expect(result.payload.toTs).toBe('2025-06-01T00:00:00.000Z');
+    }
+  });
+
   it('decodeCursor returns ok=false for a malformed string', () => {
     const result = decodeCursor('not-valid-base64-json!!!');
     expect(result.ok).toBe(false);
@@ -236,6 +256,14 @@ describe('cursor helpers', () => {
   it('decodeCursor returns ok=false for missing fields', () => {
     const malformed = Buffer.from(JSON.stringify({ foo: 'bar' })).toString('base64');
     const result = decodeCursor(malformed);
+    expect(result.ok).toBe(false);
+  });
+
+  it('decodeCursor returns ok=false when fromTs is a non-string', () => {
+    const badPayload = Buffer.from(
+      JSON.stringify({ lastRowId: '1', expiresAt: Date.now() + 60_000, fromTs: 12345 }),
+    ).toString('base64');
+    const result = decodeCursor(badPayload);
     expect(result.ok).toBe(false);
   });
 });
@@ -281,7 +309,8 @@ describe('GET /api/v1/audit/export — authentication', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.records)).toBe(true);
     expect(typeof res.body.hasMore).toBe('boolean');
-    expect(res.body.verificationUri).toBe('/.well-known/jwks.json');
+    // verificationUri is null when no auditSigningPublicKeyPem is in deps
+    expect(res.body.verificationUri).toBeNull();
   });
 
   it('4. returns 200 in dev mode (no admin key configured)', async () => {
@@ -545,7 +574,7 @@ describe('GET /api/v1/audit/export — pageSize', () => {
 // ── Route: verificationUri ────────────────────────────────────────────────────
 
 describe('GET /api/v1/audit/export — response shape', () => {
-  it('response always includes verificationUri = /.well-known/jwks.json', async () => {
+  it('20. verificationUri is null when no auditSigningPublicKeyPem is configured', async () => {
     const backend = makeMockBackend([]);
     const deps = await buildDeps({ ledgerBackend: backend, adminApiKey: ADMIN_KEY });
     const app = createApp(deps);
@@ -555,7 +584,27 @@ describe('GET /api/v1/audit/export — response shape', () => {
       .set('X-Admin-Api-Key', ADMIN_KEY);
 
     expect(res.status).toBe(200);
-    expect(res.body.verificationUri).toBe('/.well-known/jwks.json');
+    expect(res.body.verificationUri).toBeNull();
+  });
+
+  it('21. verificationUri uses auditSigningKeysUri when provided directly to router', async () => {
+    const ev = makeSignedEvidence();
+    const mockStore = makeMockBackend([makeLedgerEntry(ev, 1)]);
+    const logger = createLogger('test');
+    const router = createAuditExportRouter({
+      queryStore: mockStore,
+      logger,
+      auditSigningKeysUri: '/api/v1/audit/signing-keys',
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(router);
+
+    const res = await request(app).get('/api/v1/audit/export');
+
+    expect(res.status).toBe(200);
+    expect(res.body.verificationUri).toBe('/api/v1/audit/signing-keys');
   });
 
   it('cursor is null on last page', async () => {
@@ -594,6 +643,53 @@ describe('GET /api/v1/audit/export — response shape', () => {
   });
 });
 
+// ── Route: cursor preserves time bounds ───────────────────────────────────────
+
+describe('GET /api/v1/audit/export — cursor time-bound preservation', () => {
+  it('19. cursor preserves since/until bounds across pages', async () => {
+    // Records spanning two time periods.
+    const tsEarly = new Date('2024-01-10T00:00:00Z').toISOString();
+    const tsLate = new Date('2025-01-10T00:00:00Z').toISOString();
+    const earlyEvs = [1, 2].map((i) =>
+      makeSignedEvidence({ capabilityId: `jti-early-${i}`, ts: tsEarly }),
+    );
+    const lateEvs = [3, 4].map((i) =>
+      makeSignedEvidence({ capabilityId: `jti-late-${i}`, ts: tsLate }),
+    );
+    const allEvs = [...earlyEvs, ...lateEvs];
+    const backend = makeMockBackend(allEvs.map((ev, i) => makeLedgerEntry(ev, i + 1)));
+    const deps = await buildDeps({ ledgerBackend: backend, adminApiKey: ADMIN_KEY });
+    const app = createApp(deps);
+
+    // Page 1: only fetch the "late" records (since=2025-01-01), pageSize=1
+    const page1 = await request(app)
+      .get('/api/v1/audit/export?since=2025-01-01T00:00:00Z&pageSize=1')
+      .set('X-Admin-Api-Key', ADMIN_KEY);
+
+    expect(page1.status).toBe(200);
+    expect(page1.body.records).toHaveLength(1);
+    expect(page1.body.records[0].ts).toBe(tsLate);
+    expect(page1.body.hasMore).toBe(true);
+    expect(typeof page1.body.cursor).toBe('string');
+
+    // Page 2: use cursor, providing no since/until — cursor should preserve the bound
+    const page2 = await request(app)
+      .get(`/api/v1/audit/export?cursor=${encodeURIComponent(page1.body.cursor)}`)
+      .set('X-Admin-Api-Key', ADMIN_KEY);
+
+    expect(page2.status).toBe(200);
+    // Page 2 should only return the second "late" record, not any "early" ones
+    expect(page2.body.records).toHaveLength(1);
+    expect(page2.body.records[0].ts).toBe(tsLate);
+    // Verify the cursor preserved the fromTs
+    const decoded = decodeCursor(page1.body.cursor);
+    expect(decoded.ok).toBe(true);
+    if (decoded.ok) {
+      expect(decoded.payload.fromTs).toBe(new Date('2025-01-01T00:00:00Z').toISOString());
+    }
+  });
+});
+
 // ── Router directly (unit) ────────────────────────────────────────────────────
 
 describe('createAuditExportRouter unit', () => {
@@ -611,6 +707,7 @@ describe('createAuditExportRouter unit', () => {
 
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.records)).toBe(true);
-    expect(res.body.verificationUri).toBe('/.well-known/jwks.json');
+    // verificationUri is null when auditSigningKeysUri is not set
+    expect(res.body.verificationUri).toBeNull();
   });
 });

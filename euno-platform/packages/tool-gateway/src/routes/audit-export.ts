@@ -102,6 +102,20 @@ interface ExportCursorPayload {
   lastRowId: string;
   /** Unix timestamp (ms) after which this cursor must be rejected. */
   expiresAt: number;
+  /**
+   * ISO-8601 lower bound preserved from the original `?since=` query
+   * parameter.  Passed to `queryEntries` on every continuation page so the
+   * time window stays consistent across pages.  Absent when no lower bound
+   * was specified on the first page.
+   */
+  fromTs?: string;
+  /**
+   * ISO-8601 upper bound preserved from the original `?until=` query
+   * parameter.  Passed to `queryEntries` on every continuation page so the
+   * time window stays consistent across pages.  Absent when no upper bound
+   * was specified on the first page.
+   */
+  toTs?: string;
 }
 
 // ── Options ───────────────────────────────────────────────────────────────────
@@ -112,6 +126,14 @@ export interface AuditExportRouterOptions {
   /** Raw admin API key (from `GATEWAY_ADMIN_API_KEY`).  When absent the route is open (dev/test). */
   adminApiKey?: string;
   logger: Logger;
+  /**
+   * Path of the gateway's evidence-signing JWKS endpoint, used as the
+   * `verificationUri` in export responses.  Set when the active signer is a
+   * software signer (e.g. `/api/v1/audit/signing-keys`).  When absent
+   * `verificationUri` is `null` in the response — operators should retrieve
+   * the public key from the KMS control plane.
+   */
+  auditSigningKeysUri?: string;
 }
 
 // ── Cursor helpers ────────────────────────────────────────────────────────────
@@ -146,6 +168,15 @@ export function decodeCursor(
     typeof (parsed as Record<string, unknown>).lastRowId !== 'string' ||
     typeof (parsed as Record<string, unknown>).expiresAt !== 'number'
   ) {
+    return { ok: false, reason: 'cursor has unexpected structure' };
+  }
+
+  const p = parsed as Record<string, unknown>;
+  // Validate the optional time-bound fields when present.
+  if (p['fromTs'] !== undefined && typeof p['fromTs'] !== 'string') {
+    return { ok: false, reason: 'cursor has unexpected structure' };
+  }
+  if (p['toTs'] !== undefined && typeof p['toTs'] !== 'string') {
     return { ok: false, reason: 'cursor has unexpected structure' };
   }
 
@@ -186,6 +217,7 @@ function parseISODateParam(
  */
 export function createAuditExportRouter(opts: AuditExportRouterOptions): Router {
   const { queryStore, adminApiKey, logger } = opts;
+  const verificationUri = opts.auditSigningKeysUri ?? null;
   const router = Router();
 
   router.get('/api/v1/audit/export', async (req: Request, res: Response, next: NextFunction) => {
@@ -256,6 +288,8 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
         : undefined;
 
       let innerCursor: string | undefined;
+      let cursorFromTs: string | undefined;
+      let cursorToTs: string | undefined;
 
       if (rawCursor !== undefined) {
         const decoded = decodeCursor(rawCursor);
@@ -266,9 +300,17 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
           return;
         }
         innerCursor = decoded.payload.lastRowId;
+        // Restore the original time bounds that were encoded in the cursor so
+        // subsequent pages stay within the window the caller requested on the
+        // first page.
+        cursorFromTs = decoded.payload.fromTs;
+        cursorToTs = decoded.payload.toTs;
       }
 
-      // since / until (only honoured on the first page — no cursor)
+      // since / until — only parsed from query params on the first page
+      // (no cursor). Subsequent pages inherit the bounds from the cursor so
+      // the time window is consistent across pages regardless of what query
+      // params the client sends.
       const rawSince = typeof q['since'] === 'string' && q['since'].length > 0
         ? q['since']
         : undefined;
@@ -280,8 +322,7 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
       let toTs: string | undefined;
 
       if (rawCursor === undefined) {
-        // Only apply time-range filters on the first page; subsequent pages
-        // continue from where the cursor left off (range already applied).
+        // First page: parse time bounds from query parameters.
         if (rawSince !== undefined) {
           const result = parseISODateParam(rawSince, 'since');
           if (!result.ok) {
@@ -306,6 +347,11 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
           });
           return;
         }
+      } else {
+        // Continuation page: restore the time bounds from the cursor, ignoring
+        // any `since`/`until` query params the client may have provided.
+        fromTs = cursorFromTs;
+        toTs = cursorToTs;
       }
 
       // ── Scope filtering ────────────────────────────────────────────────
@@ -321,7 +367,7 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
           cursor: null,
           hasMore: false,
           records: [],
-          verificationUri: '/.well-known/jwks.json',
+          verificationUri,
         });
         return;
       }
@@ -339,7 +385,8 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
         },
       );
 
-      // Build next cursor when there are more records.
+      // Build next cursor when there are more records.  Encode the original
+      // time bounds so continuation pages stay within the caller's window.
       const records: SignedAuditEvidence[] = page.entries.map((e) => e.signedEvidence);
       const hasMore = page.nextCursor !== undefined && page.nextCursor !== null;
 
@@ -348,6 +395,8 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
         nextCursor = encodeCursor({
           lastRowId: page.nextCursor,
           expiresAt: Date.now() + CURSOR_TTL_MS,
+          ...(fromTs !== undefined ? { fromTs } : {}),
+          ...(toTs !== undefined ? { toTs } : {}),
         });
       }
 
@@ -365,7 +414,7 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
         cursor: nextCursor,
         hasMore,
         records,
-        verificationUri: '/.well-known/jwks.json',
+        verificationUri,
       });
     } catch (err) {
       next(err);

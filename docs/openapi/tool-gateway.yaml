@@ -363,6 +363,51 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /api/v1/audit/signing-keys:
+    get:
+      tags: [audit]
+      summary: Evidence-signing JWKS
+      description: |
+        Returns the gateway's evidence-signing public key as a JWK Set.
+        Compliance consumers can use this to verify `SignedAuditEvidence`
+        records returned by `GET /api/v1/audit/export` offline.
+
+        This endpoint is only available when the gateway is configured with
+        a **software signer** (`ENABLE_CRYPTOGRAPHIC_AUDIT=true`,
+        `AUDIT_SIGNING_KMS_PROVIDER` not set).  KMS-backed deployments must
+        retrieve the public key from the KMS control plane directly.
+
+        The JWK Set is stable for the lifetime of the signing key (no
+        rotation at runtime); clients may cache for up to 1 hour.
+      responses:
+        '200':
+          description: JWK Set containing the evidence-signing public key.
+          headers:
+            Cache-Control:
+              description: Cache lifetime hint (`public, max-age=3600`).
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      required: [kty, kid, alg, use]
+                      properties:
+                        kty:   { type: string, description: 'Key type (e.g. RSA, EC)' }
+                        kid:   { type: string, description: 'Key ID — matches SignedAuditEvidence.keyId' }
+                        alg:   { type: string, description: 'Signing algorithm (e.g. RS256)' }
+                        use:   { type: string, description: 'Key use — always "sig"' }
+        '503':
+          description: Signing key not yet available (rare transient state at startup).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/v1/audit/export:
     get:
       tags: [audit]
@@ -399,16 +444,21 @@ paths:
         24 hours after issue; presenting an expired cursor returns 400.
 
         `since` and `until` are only applied on the first page (when no
-        `cursor` is provided); subsequent pages inherit the range from
-        the cursor position.
+        `cursor` is provided); subsequent pages inherit the original time
+        bounds from the cursor so the window stays consistent across pages.
 
         ### Offline verification
 
         Each record includes a `signature` over the canonical evidence
-        fields signed with the gateway's signing key. Verify against the
-        JWKS at `/.well-known/jwks.json` (see `verificationUri` in the
-        response). See `docs/security/soc2-mapping.md` §4 for the full
-        offline verification procedure.
+        fields signed with the gateway's evidence-signing key.  When the
+        gateway uses a software signer, the public key is served as a JWK
+        Set at `GET /api/v1/audit/signing-keys` — this path is returned in
+        the `verificationUri` field of the response.  When using a
+        KMS-backed signer, `verificationUri` is `null` and the public key
+        must be retrieved from the KMS control plane.
+
+        See `docs/security/soc2-mapping.md` §4 for the full offline
+        verification procedure.
       security: [{ adminApiKey: [] }]
       parameters:
         - name: scope
@@ -522,7 +572,7 @@ components:
         conditionType: { type: string, description: 'Condition type that caused a deny (when present)' }
         denialCode: { type: string, description: 'Machine-readable denial code (when decision=deny)' }
         signature:  { type: string, description: 'Base64-encoded digital signature of the canonical evidence' }
-        keyId:      { type: string, description: 'Key ID used for signing (matches a key in /.well-known/jwks.json)' }
+        keyId:      { type: string, description: 'Key ID used for signing (matches a key in the JWKS served at /api/v1/audit/signing-keys for software signers)' }
         algorithm:  { type: string, description: 'Signing algorithm (e.g. RS256)' }
         previousHash: { type: string, description: 'SHA-256 hex digest of the previous record in the chain' }
         seq:        { type: integer, description: 'Monotonically increasing sequence number (1-based)' }
@@ -546,11 +596,15 @@ components:
           description: Page of signed audit evidence records.
         verificationUri:
           type: string
+          nullable: true
           description: |
-            URI of the gateway JWKS endpoint for offline signature
-            verification. Always `/.well-known/jwks.json` (informational
-            only — use the JWKS URI you control, not this value).
-          example: /.well-known/jwks.json
+            URI of the gateway's evidence-signing JWKS endpoint.  When the
+            gateway is configured with a software signer, this is
+            `/api/v1/audit/signing-keys` — a JWK Set containing the public
+            key needed for offline signature verification.  `null` when the
+            gateway uses a KMS-backed signer; in that case retrieve the
+            public key from the KMS control plane.
+          example: /api/v1/audit/signing-keys
 
     Error:
       type: object

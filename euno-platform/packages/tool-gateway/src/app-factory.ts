@@ -30,6 +30,7 @@ import { resolveDID } from '@euno/capability-issuer/adapters';
 import { createAdminRouter } from './admin-api';
 import { createAuditRouter } from './routes/audit';
 import { createAuditExportRouter } from './routes/audit-export';
+import { createAuditSigningKeysRouter } from './routes/audit-signing-keys';
 import { createChainProofRouter } from './routes/chain-proof';
 import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
@@ -192,10 +193,30 @@ export function createApp(deps: GatewayDependencies): Express {
   // query store is configured (same requirement as GET /api/v1/audit/records).
   // Protected by X-Admin-API-Key (same timing-safe check as chain-proof).
   if (auditQueryStore) {
+    // The verification URI points to the gateway's own JWKS endpoint when the
+    // evidence-signing public key is available locally (software signer).
+    const auditSigningKeysUri = deps.auditSigningPublicKeyPem
+      ? '/api/v1/audit/signing-keys'
+      : null;
     app.use(
       createAuditExportRouter({
         queryStore: auditQueryStore,
         adminApiKey: deps.adminApiKey,
+        logger,
+        auditSigningKeysUri: auditSigningKeysUri ?? undefined,
+      }),
+    );
+  }
+
+  // Evidence-signing JWKS endpoint (Task 6) — only mounted when the gateway is
+  // running a software signer and the public key PEM is available locally.
+  // Enables offline verification of exported `SignedAuditEvidence` records.
+  if (deps.auditSigningPublicKeyPem) {
+    app.use(
+      createAuditSigningKeysRouter({
+        publicKeyPem: deps.auditSigningPublicKeyPem,
+        keyId: deps.auditSigningKeyId ?? 'software-key',
+        algorithm: deps.auditSigningAlgorithm ?? 'RS256',
         logger,
       }),
     );
