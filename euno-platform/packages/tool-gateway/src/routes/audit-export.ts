@@ -157,6 +157,28 @@ export function decodeCursor(
   return { ok: true, payload };
 }
 
+// ── ISO-8601 date param helper ────────────────────────────────────────────────
+
+/**
+ * Parse an ISO-8601 date string query parameter.
+ *
+ * Returns `{ ok: true, isoString }` on success, or `{ ok: false, message }`
+ * when the value is not a valid date.
+ */
+function parseISODateParam(
+  raw: string,
+  paramName: string,
+): { ok: true; isoString: string } | { ok: false; message: string } {
+  const ms = Date.parse(raw);
+  if (isNaN(ms)) {
+    return {
+      ok: false,
+      message: `\`${paramName}\` must be a valid ISO-8601 date/time string`,
+    };
+  }
+  return { ok: true, isoString: new Date(ms).toISOString() };
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -261,31 +283,21 @@ export function createAuditExportRouter(opts: AuditExportRouterOptions): Router 
         // Only apply time-range filters on the first page; subsequent pages
         // continue from where the cursor left off (range already applied).
         if (rawSince !== undefined) {
-          const ms = Date.parse(rawSince);
-          if (isNaN(ms)) {
-            res.status(400).json({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: '`since` must be a valid ISO-8601 date/time string',
-              },
-            });
+          const result = parseISODateParam(rawSince, 'since');
+          if (!result.ok) {
+            res.status(400).json({ error: { code: 'INVALID_REQUEST', message: result.message } });
             return;
           }
-          fromTs = new Date(ms).toISOString();
+          fromTs = result.isoString;
         }
 
         if (rawUntil !== undefined) {
-          const ms = Date.parse(rawUntil);
-          if (isNaN(ms)) {
-            res.status(400).json({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: '`until` must be a valid ISO-8601 date/time string',
-              },
-            });
+          const result = parseISODateParam(rawUntil, 'until');
+          if (!result.ok) {
+            res.status(400).json({ error: { code: 'INVALID_REQUEST', message: result.message } });
             return;
           }
-          toTs = new Date(ms).toISOString();
+          toTs = result.isoString;
         }
 
         if (fromTs !== undefined && toTs !== undefined && fromTs > toTs) {
