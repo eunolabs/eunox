@@ -158,17 +158,6 @@ const logger = createLogger(config.name, config.environment);
  *
  * The breaker is created at module load time so it survives across request
  * contexts and accumulates failure history correctly.
- */
-/**
- * Circuit breaker for did:ion resolver calls.
- *
- * Wraps all `resolveDidIon()` invocations so that a sustained ION resolver
- * outage does not block every did:ion-based authentication attempt with a
- * full network timeout.  Configured from `ION_CB_*` env vars; defaults to
- * 3 failures within 30 s opening the circuit for 60 s.
- *
- * The breaker is created at module load time so it survives across request
- * contexts and accumulates failure history correctly.
  *
  * `RedisCircuitBreaker` is the project's general-purpose circuit-breaker
  * class (originally designed for Redis call protection).  All circuit state
@@ -1006,12 +995,17 @@ app.get('/health/ready', (_req: Request, res: Response) => {
  */
 const ION_HEALTH_PROBE_DID = 'did:ion:EiAnKD8-jfdd0MDcZUjAbRgaThBrMxPTFOxcnfJhI7iCCg';
 app.get('/healthz/did-ion', async (_req: Request, res: Response) => {
+  // Report the circuit state first.  If already open, return degraded
+  // immediately without making any network call.
   if (ionCircuitBreaker.getState() === 'open') {
     res.json({ status: 'degraded', reason: 'circuit_open' });
     return;
   }
+  // Run the probe WITHOUT the shared circuit breaker so Kubernetes polling
+  // this endpoint does not accumulate failure counts and risk opening the
+  // circuit spuriously.  We only *report* breaker state via getState() above.
   try {
-    await resolveDidIon(ION_HEALTH_PROBE_DID, env.ION_RESOLVER_URL, ionCircuitBreaker);
+    await resolveDidIon(ION_HEALTH_PROBE_DID, env.ION_RESOLVER_URL);
     res.json({ status: 'ok' });
   } catch {
     res.json({ status: 'degraded', reason: 'probe_failed' });

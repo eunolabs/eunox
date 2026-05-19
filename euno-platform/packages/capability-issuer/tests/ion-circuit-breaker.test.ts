@@ -16,8 +16,7 @@
  */
 
 import request from 'supertest';
-import { ErrorCode } from '@euno/common';
-import { RedisCircuitBreaker } from '@euno/common-infra';
+import { ErrorCode, RedisCircuitBreaker } from '@euno/common';
 import { resolveDidIon } from '../src/did-resolver';
 import { app } from '../src/index';
 
@@ -200,8 +199,103 @@ describe('GET /healthz/did-ion — health endpoint', () => {
 });
 
 // ---------------------------------------------------------------------------
-// §3 — resolveDidIon with open circuit returns CapabilityError (not unhandled rejection)
+// §4 — Non-fault errors (404, ID mismatch) do NOT trip the circuit breaker
 // ---------------------------------------------------------------------------
+
+describe('resolveDidIon — non-fault errors do not trip the circuit breaker', () => {
+  const testDid = 'did:ion:EiClkZMDxPKqC9c-umQfTkR8vvZ9JPhl_xLDI9Nfk38w5w';
+  let originalFetch: typeof global.fetch;
+  let cb: RedisCircuitBreaker;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    cb = new RedisCircuitBreaker({
+      failureThreshold: 3,
+      windowMs: 1_000,
+      cooldownMs: 60_000,
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  // Case 1: 404 (DID not found) should NOT open the circuit even after many calls
+  it('404 responses (DID not found) do not count toward the failure threshold', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+    } as unknown as Response);
+
+    // Call 3x (= failureThreshold), should throw INVALID_TOKEN each time
+    for (let i = 0; i < 3; i++) {
+      await expect(resolveDidIon(testDid, undefined, cb)).rejects.toMatchObject({
+        code: ErrorCode.INVALID_TOKEN,
+        statusCode: 404,
+      });
+    }
+    // Circuit must remain closed despite 3 calls
+    expect(cb.getState()).toBe('closed');
+  });
+
+  // Case 2: ID mismatch (INVALID_TOKEN) should NOT open the circuit
+  it('DID document ID mismatch does not count toward the failure threshold', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        didDocument: {
+          '@context': ['https://www.w3.org/ns/did/v1'],
+          id: 'did:ion:different-did',
+          verificationMethod: [],
+        },
+      }),
+    } as unknown as Response);
+
+    for (let i = 0; i < 3; i++) {
+      await expect(resolveDidIon(testDid, undefined, cb)).rejects.toMatchObject({
+        code: ErrorCode.INVALID_TOKEN,
+        message: expect.stringContaining('ID mismatch'),
+      });
+    }
+    expect(cb.getState()).toBe('closed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §5 — Health endpoint probe does NOT trip the shared circuit breaker
+// ---------------------------------------------------------------------------
+
+describe('GET /healthz/did-ion — probe does not affect shared circuit breaker state', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  // K8s polling the health endpoint with a failing resolver should not open the
+  // shared ionCircuitBreaker and cause all did:ion auth to fast-fail.
+  it('repeated probe failures do not cause the probe to return circuit_open', async () => {
+    const networkError = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), {
+      code: 'ECONNREFUSED',
+    });
+    global.fetch = jest.fn().mockRejectedValue(networkError);
+
+    // Hit the endpoint 5 times (more than the default failureThreshold of 3)
+    for (let i = 0; i < 5; i++) {
+      const response = await request(app).get('/healthz/did-ion');
+      expect(response.status).toBe(200);
+      // Each call should be probe_failed, never circuit_open (because the probe
+      // does not run through the shared circuit breaker).
+      expect(response.body).toEqual({ status: 'degraded', reason: 'probe_failed' });
+    }
+  });
+});
+
 
 describe('resolveDidIon — open circuit does not produce unhandled rejection', () => {
   let originalFetch: typeof global.fetch;

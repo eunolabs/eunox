@@ -547,10 +547,30 @@ export async function resolveDidIon(
   const resolverUrl = `${resolverBase}/${encodeURIComponent(did)}`;
 
   /**
+   * Internal result type for `doFetch`.  Using a tagged result instead of
+   * always throwing lets us distinguish *availability* failures (which should
+   * count toward the circuit-breaker threshold) from *semantic* failures (DID
+   * not found, ID mismatch) that indicate a bad request or a content issue —
+   * not that the resolver itself is down.
+   *
+   *   - `{ ok: true; document }` — resolved successfully.
+   *   - `{ ok: false; error }` — non-fault error (INVALID_TOKEN); re-thrown by
+   *     the caller *after* `execute()` so the circuit breaker does not record it.
+   */
+  type IonFetchOutcome =
+    | { ok: true; document: DIDDocument }
+    | { ok: false; error: CapabilityError };
+
+  /**
    * Core fetch logic — extracted so it can be wrapped by the circuit breaker
    * when one is provided, or called directly when not.
+   *
+   * Network errors and resolver-level errors (5xx, malformed responses)
+   * propagate as thrown exceptions so the circuit breaker records them.
+   * Semantic, non-fault errors (404 — DID not registered; ID mismatch)
+   * are returned as `{ ok: false }` so they do NOT count toward the threshold.
    */
-  const doFetch = async (): Promise<DIDDocument> => {
+  const doFetch = async (): Promise<IonFetchOutcome> => {
     let response: Response;
     try {
       response = await fetch(resolverUrl, {
@@ -601,11 +621,16 @@ export async function resolveDidIon(
 
     if (response.status === 404) {
       // Per the DID resolution spec, 404 means the DID is not registered.
-      throw new CapabilityError(
-        ErrorCode.INVALID_TOKEN,
-        `did:ion identifier not found: ${did}`,
-        404
-      );
+      // Return (don't throw) so the circuit breaker does not record this as
+      // an availability failure — the resolver is working correctly here.
+      return {
+        ok: false,
+        error: new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `did:ion identifier not found: ${did}`,
+          404
+        ),
+      };
     }
 
     if (!response.ok) {
@@ -643,24 +668,35 @@ export async function resolveDidIon(
     }
 
     if (didDocument.id !== did) {
-      throw new CapabilityError(
-        ErrorCode.INVALID_TOKEN,
-        `DID document ID mismatch: expected ${did}, got ${didDocument.id}`,
-        400
-      );
+      // ID mismatch is a content-level error (not a resolver availability
+      // problem), so return rather than throw.
+      return {
+        ok: false,
+        error: new CapabilityError(
+          ErrorCode.INVALID_TOKEN,
+          `DID document ID mismatch: expected ${did}, got ${didDocument.id}`,
+          400
+        ),
+      };
     }
 
-    return didDocument;
+    return { ok: true, document: didDocument };
   };
 
   if (!circuitBreaker) {
-    return doFetch();
+    const outcome = await doFetch();
+    if (!outcome.ok) throw outcome.error;
+    return outcome.document;
   }
 
   // Circuit-breaker path: fast-fail when the circuit is open and convert
   // CircuitOpenError into a CapabilityError so callers always see typed errors.
+  // Non-fault outcomes (INVALID_TOKEN) are re-thrown *after* execute() so they
+  // are never recorded as breaker failures.
   try {
-    return await circuitBreaker.execute(doFetch);
+    const outcome = await circuitBreaker.execute(doFetch);
+    if (!outcome.ok) throw outcome.error;
+    return outcome.document;
   } catch (error) {
     if (error instanceof CircuitOpenError) {
       throw new CapabilityError(
