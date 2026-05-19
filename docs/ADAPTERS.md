@@ -331,6 +331,151 @@ and configure it the same way as any built-in provider.
 
 ---
 
+## Partner Federation
+
+Partner federation lets a remote organization issue capability tokens from
+their own W3C DID-backed signing key. The euno gateway accepts and
+cryptographically verifies those tokens without sharing key material.
+
+This is a **Stage 5 GA feature** (Task 3). The integration test harness lives
+in `euno-platform/packages/partner-issuer-sim/`. See also
+`docs/self-host.md` §12.2 "Partner DID federation" for the operator
+self-host runbook.
+
+### Trust model
+
+Euno partner federation is **declarative, not transitive**:
+
+1. The gateway operator opts a partner DID into trust via the admin API's
+   two-eyes approval workflow (`POST /admin/partner-dids/proposals` →
+   `POST /admin/partner-dids/proposals/:id/approve`).  A second operator
+   must approve — the proposer cannot approve their own entry.
+2. When the gateway receives a token whose `iss` claim is a partner DID, the
+   `PartnerIssuerResolver` resolves the DID document via `did:web`, `did:ion`,
+   or `did:key`, extracts the verification method matching the JWT `kid`, and
+   verifies the signature.  No partner key material is ever stored locally.
+3. A per-DID `RedisCircuitBreaker` wraps the DID-document resolution step.
+   Pin-mismatch and key-validation errors do **not** count as circuit failures
+   (they indicate data problems, not network outages) — an attacker with a
+   malformed DID document cannot force the circuit open against a reachable
+   partner.
+
+### DID registration workflow
+
+```bash
+DID="did:web:partner.example.com"
+
+# Step 1 — First-eye submits a proposal
+curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"did":"'"$DID"'","proposer":"alice@corp","note":"Acme Corp onboarding"}'
+
+# Step 2 — Second-eye approves (different admin key / operator identity)
+curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals/prop_xxx/approve \
+  -H "X-Admin-Api-Key: <SECOND_ADMIN_API_KEY>" \
+  -H "X-Admin-Operator: bob@corp"
+
+# Step 3 — Verify the DID is active
+curl https://gateway.internal:3003/admin/partner-dids \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>"
+```
+
+### Pin attestation (production)
+
+Pin attestation binds the JCS-SHA-256 fingerprint of the partner's DID
+document to the approval event via an HMAC-SHA-256 (keyed by
+`PARTNER_DID_PIN_SECRET`).  If the Redis store is tampered with (pin swapped)
+or `PARTNER_DID_PIN_SECRET` is rotated, the gateway **fails closed** — the
+entry must be re-approved to generate a fresh attestation.
+
+```env
+# Required for pin attestation — minimum 32 characters
+PARTNER_DID_PIN_SECRET=<at-least-32-char-random-secret>
+# Enforce that every registration must include a pin (production hardening)
+PARTNER_DID_REQUIRE_PIN=true
+```
+
+When `PARTNER_DID_AUTO_FETCH_PIN=true` the gateway automatically fetches the
+live DID document at approval time and stores its SHA-256 fingerprint — no
+out-of-band pin distribution required.
+
+### Circuit-breaker tuning
+
+| Variable | Default | Description |
+|---|---|---|
+| `PARTNER_DID_CB_FAILURE_THRESHOLD` | `3` | DID-resolution failures within the window that open the circuit. |
+| `PARTNER_DID_CB_WINDOW_SECONDS` | `30` | Sliding window (seconds) for failure counting. |
+| `PARTNER_DID_CB_COOLDOWN_SECONDS` | `60` | Cooldown (seconds) before the circuit enters half-open and allows a single probe. |
+| `PARTNER_DID_CACHE_TTL_SECONDS` | `300` | Positive-resolution DID cache TTL (seconds). |
+| `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` | `30` | Negative-resolution (NXDID) cache TTL (seconds). |
+
+Tune aggressively for production: a flapping partner should open the circuit
+quickly so its latency tail does not bleed into unrelated cross-org requests
+sharing the same gateway worker pool.
+
+### Prometheus metrics
+
+```
+# Current circuit-breaker state per partner DID.
+# Value is 1 when {did, state} is the active combination, 0 otherwise.
+euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="closed"} 1
+euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="open"} 0
+euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="half-open"} 0
+
+# Total circuit-breaker state transitions per DID.
+euno_gateway_partner_did_circuit_transitions_total{did="...",from="closed",to="open"}
+```
+
+**Recommended alert:**
+
+```yaml
+- alert: PartnerDIDCircuitOpen
+  expr: euno_partner_did_circuit_breaker_state{state="open"} == 1
+  for: 2m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Partner DID circuit breaker open"
+    description: "DID {{ $labels.did }} is unreachable; all tokens from this partner are being denied."
+```
+
+### Revocation (off-boarding a partner)
+
+```bash
+# Mark the DID as revoked — single-operator, no second-eye required
+# (incident response is intentionally fast)
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner.example.com/revoke \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"revokedBy":"alice@corp","reason":"partner off-boarded 2026-05-19"}'
+```
+
+The `PartnerIssuerResolver` checks `registry.trusts(did)` on every `getKey`
+call, so revocation takes effect within one positive-cache TTL
+(`PARTNER_DID_CACHE_TTL_SECONDS`, default 5 minutes).  Tokens already in
+flight that have passed verification will complete normally; new tokens are
+denied immediately after the cache expires.
+
+### Discovery-URL auto-bootstrap (dev / staging)
+
+When `PARTNER_ISSUER_DISCOVERY_URL` is set, the gateway fetches the partner's
+`/.well-known/capability-issuer` document at startup, extracts the `issuer`
+DID, and seeds it directly (bypassing two-eyes approval).  This is equivalent
+to `TRUSTED_PARTNER_DIDS` but driven by a discovery document rather than a
+hard-coded DID string.
+
+```env
+PARTNER_ISSUER_DISCOVERY_URL=https://partner-staging.example.com/.well-known/capability-issuer
+```
+
+> **Production restriction:** `PARTNER_DID_REGISTRY_REQUIRED` defaults to
+> `true` in production (`NODE_ENV=production`), which blocks the discovery
+> shortcut.  Set `PARTNER_DID_REGISTRY_REQUIRED=false` only in staging or
+> during initial rollout.
+
+---
+
 ## References
 
 - [W3C Decentralized Identifiers (DIDs)](https://www.w3.org/TR/did-core/)

@@ -1,6 +1,6 @@
 {
   "name": "@euno/partner-issuer-sim",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Cross-organization trust simulation harness \u2014 minimal partner issuer used by the integration tests in packages/integration-tests. Not published to any registry.",
   "main": "dist/index.js",
