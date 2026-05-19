@@ -965,6 +965,34 @@ export async function initializeServices(
       labelNames: ['did', 'from', 'to'],
       registers: [metricsRegistry],
     });
+
+    // Per-DID circuit-breaker state gauge (Task 3 § 4.2).
+    // Emits one sample per (DID, state) combination with value 1 when that
+    // state is current, 0 otherwise.  Follows the Prometheus convention for
+    // enum gauges so PromQL like:
+    //   euno_partner_did_circuit_breaker_state{state="open"} == 1
+    // selects all open circuits without requiring numeric-state knowledge.
+    //
+    // Only DIDs that have been resolved at least once appear; lazily-created
+    // circuit breakers start in "closed" state and only appear after the first
+    // `getKey` call triggers breaker construction.
+    const _partnerResolverRef = partnerResolver; // capture for collect()
+    new Gauge({
+      name: 'euno_partner_did_circuit_breaker_state',
+      help: 'Current per-DID circuit-breaker state for partner DID document resolution. ' +
+        'Value is 1 when the {did, state} combination is active, 0 otherwise. ' +
+        'Alert on state="open" to detect flapping partner DID endpoints.',
+      labelNames: ['did', 'state'],
+      registers: [metricsRegistry],
+      collect() {
+        const states = _partnerResolverRef.getCircuitBreakerStates();
+        for (const [did, currentState] of states) {
+          for (const s of ['closed', 'open', 'half-open'] as const) {
+            this.set({ did, state: s }, currentState === s ? 1 : 0);
+          }
+        }
+      },
+    });
   }
 
   // ── Step 5b: Partner discovery auto-bootstrap (Task 9 / § 4.7) ───────────

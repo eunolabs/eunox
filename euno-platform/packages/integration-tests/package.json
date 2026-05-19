@@ -15,7 +15,7 @@
     "@euno/agent-runtime": "^0.1.0",
     "@euno/capability-issuer": "^0.1.0",
     "@euno/common": "^0.1.0",
-    "@euno/partner-issuer-sim": "^0.1.0",
+    "@euno/partner-issuer-sim": "^1.0.0",
     "@euno/tool-gateway": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/autocannon": "^7.12.7",
