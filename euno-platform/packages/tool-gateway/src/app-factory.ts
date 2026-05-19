@@ -29,6 +29,7 @@ import { resolveDID } from '@euno/capability-issuer/adapters';
 
 import { createAdminRouter } from './admin-api';
 import { createAuditRouter } from './routes/audit';
+import { createAuditExportRouter } from './routes/audit-export';
 import { createChainProofRouter } from './routes/chain-proof';
 import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
@@ -181,6 +182,19 @@ export function createApp(deps: GatewayDependencies): Express {
     app.use(
       createChainProofRouter({
         commitmentStore: deps.crossChainCommitmentStore,
+        adminApiKey: deps.adminApiKey,
+        logger,
+      }),
+    );
+  }
+
+  // SOC2 audit-trail export endpoint (Task 6, Stage 5) — only mounted when a
+  // query store is configured (same requirement as GET /api/v1/audit/records).
+  // Protected by X-Admin-API-Key (same timing-safe check as chain-proof).
+  if (auditQueryStore) {
+    app.use(
+      createAuditExportRouter({
+        queryStore: auditQueryStore,
         adminApiKey: deps.adminApiKey,
         logger,
       }),
