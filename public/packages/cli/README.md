@@ -42,6 +42,72 @@ per-IdP configuration recipes.
 
 ---
 
+## Stage 5: Enterprise Features
+
+Stage 5 promotes four previously quarantined packages to GA and adds
+partner DID federation, cross-chain audit anchoring, SOC 2 export, and
+SCIM 2.0 provisioning.
+
+### Partner DID federation
+
+Trust tokens issued by a partner organisation whose identity is anchored
+in a W3C DID (`did:web` or `did:ion`).
+
+```bash
+# Validate a partner-issued capability token
+euno validate-token eyJ... \
+  --iss did:web:partner.example.com \
+  --jwks-url https://partner.example.com/.well-known/jwks.json \
+  --aud tool-gateway
+
+# Validate against a did:ion DID (resolved automatically via ION_RESOLVER_URL)
+euno validate-token eyJ... \
+  --iss did:ion:EiA...
+```
+
+### SOC 2 audit export
+
+Export a cursor-paginated, cryptographically signed OCSF evidence bundle
+from the gateway audit ledger, suitable for submission to an auditor.
+
+```bash
+# Export all CC7 (Logical and Physical Access) records
+euno audit export \
+  --gateway-url https://gateway.euno.example \
+  --admin-key $EUNO_ADMIN_API_KEY \
+  --scope soc2-cc7 \
+  --out ./audit-soc2-cc7.jsonl
+
+# Export all records (CC6 + CC7)
+euno audit export \
+  --gateway-url https://gateway.euno.example \
+  --admin-key $EUNO_ADMIN_API_KEY \
+  --scope all \
+  --from 2026-01-01 --to 2026-03-31 \
+  --out ./audit-q1-2026.jsonl
+
+# Verify the cryptographic signatures in an exported bundle
+euno verify-bundle ./audit-soc2-cc7.jsonl \
+  --jwks-url https://issuer.euno.example/.well-known/jwks.json
+```
+
+### Service discovery
+
+Inspect the Stage-5 discovery document to confirm which enterprise
+features your issuer has enabled.
+
+```bash
+euno discover --issuer-url https://issuer.euno.example
+```
+
+The document reports `partnerFederation`, `scim`, `auditExport`, and
+`capabilities` fields (schema version 1.0.0).
+
+See [`docs/self-host.md §12`](../../../../docs/self-host.md) for the
+complete Stage-5 operator guide.
+
+---
+
 ## Commands
 
 ### `euno init`
