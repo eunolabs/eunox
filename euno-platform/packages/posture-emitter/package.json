@@ -1,6 +1,6 @@
 {
   "name": "@euno/posture-emitter",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "AI Posture Management inventory feed (Defender CSPM / Security Hub / SCC) for Euno agent governance",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
