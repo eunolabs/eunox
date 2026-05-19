@@ -162,6 +162,25 @@ export interface GatewayDependencies {
    */
   auditQueryStore?: import('@euno/common').AuditQueryStore;
   /**
+   * SPKI PEM of the evidence-signing public key.  Present when the active
+   * signer is a software signer (`AUDIT_SIGNING_KMS_PROVIDER` is not set).
+   * Used by the `GET /api/v1/audit/signing-keys` JWKS endpoint so compliance
+   * consumers can verify exported `SignedAuditEvidence` records offline.
+   *
+   * KMS-backed signers do not populate this field.
+   */
+  auditSigningPublicKeyPem?: string;
+  /**
+   * Key ID recorded in every signed evidence record.  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).
+   */
+  auditSigningKeyId?: string;
+  /**
+   * Signing algorithm (JWS name, e.g. `RS256`).  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).
+   */
+  auditSigningAlgorithm?: string;
+  /**
    * Azure Confidential Ledger client for the ACL ledger backend.
    *
    * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
@@ -1208,6 +1227,9 @@ export async function initializeServices(
     crossChainCommitmentStore,
     auditLedgerBackend,
     auditQueryStore,
+    auditSigningPublicKeyPem,
+    auditSigningKeyId,
+    auditSigningAlgorithm,
   } = await buildAuditModule({
     validated,
     env,
@@ -1351,6 +1373,9 @@ export async function initializeServices(
     ...(crossChainCommitmentStore ? { crossChainCommitmentStore } : {}),
     ...(auditLedgerBackend ? { auditLedgerBackend } : {}),
     ...(auditQueryStore ? { auditQueryStore } : {}),
+    ...(auditSigningPublicKeyPem ? { auditSigningPublicKeyPem } : {}),
+    ...(auditSigningKeyId ? { auditSigningKeyId } : {}),
+    ...(auditSigningAlgorithm ? { auditSigningAlgorithm } : {}),
     adminApiKey,
     adminTenantId,
     killSwitchFailOpenOnWrite: env.KILL_SWITCH_FAIL_OPEN_ON_WRITE === 'true',

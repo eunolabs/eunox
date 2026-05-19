@@ -27,6 +27,8 @@ tags:
     description: Authenticated reverse-proxy passthrough
   - name: admin
     description: Operational endpoints (protected by API key)
+  - name: audit
+    description: SOC2 compliance audit-trail export (protected by admin API key)
   - name: ops
     description: Health and operational endpoints
 
@@ -361,6 +363,154 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /api/v1/audit/signing-keys:
+    get:
+      tags: [audit]
+      summary: Evidence-signing JWKS
+      description: |
+        Returns the gateway's evidence-signing public key as a JWK Set.
+        Compliance consumers can use this to verify `SignedAuditEvidence`
+        records returned by `GET /api/v1/audit/export` offline.
+
+        This endpoint is only available when the gateway is configured with
+        a **software signer** (`ENABLE_CRYPTOGRAPHIC_AUDIT=true`,
+        `AUDIT_SIGNING_KMS_PROVIDER` not set).  KMS-backed deployments must
+        retrieve the public key from the KMS control plane directly.
+
+        The JWK Set is stable for the lifetime of the signing key (no
+        rotation at runtime); clients may cache for up to 1 hour.
+      responses:
+        '200':
+          description: JWK Set containing the evidence-signing public key.
+          headers:
+            Cache-Control:
+              description: Cache lifetime hint (`public, max-age=3600`).
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      required: [kty, kid, alg, use]
+                      properties:
+                        kty:   { type: string, description: 'Key type (e.g. RSA, EC)' }
+                        kid:   { type: string, description: 'Key ID — matches SignedAuditEvidence.keyId' }
+                        alg:   { type: string, description: 'Signing algorithm (e.g. RS256)' }
+                        use:   { type: string, description: 'Key use — always "sig"' }
+        '503':
+          description: Signing key not yet available (rare transient state at startup).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/audit/export:
+    get:
+      tags: [audit]
+      summary: Export SOC2 audit-trail records
+      description: |
+        Returns pages of `SignedAuditEvidence` records from the gateway's
+        audit ledger, suitable for SOC2 compliance review and offline
+        cryptographic verification.
+
+        ### Compliance scope filter
+
+        The `scope` parameter maps to OCSF `class_uid` values and SOC2
+        Trust Service Criteria:
+
+        | `scope`      | OCSF class      | `class_uid` | SOC2 criteria              |
+        |--------------|-----------------|-------------|----------------------------|
+        | `soc2-cc6`   | Authorization   | 3003        | CC6 — Logical Access       |
+        | `soc2-cc7`   | API Activity    | 6003        | CC7 — System Operations    |
+        | `all`        | Both            | 3003 + 6003 | All criteria               |
+
+        Gateway enforcement decisions are always API Activity events
+        (class_uid 6003 / CC7). Authorization events (class_uid 3003 / CC6)
+        originate in the capability issuer's audit trail and are not stored
+        in the gateway ledger; `scope=soc2-cc6` correctly returns an empty
+        records array from this endpoint.
+
+        See `docs/security/soc2-mapping.md` for the full OCSF-to-SOC2
+        mapping and offline verification procedure.
+
+        ### Cursor-based pagination
+
+        The `cursor` value from a previous response can be passed to
+        continue from where the previous page left off. Cursors expire
+        24 hours after issue; presenting an expired cursor returns 400.
+
+        `since` and `until` are only applied on the first page (when no
+        `cursor` is provided); subsequent pages inherit the original time
+        bounds from the cursor so the window stays consistent across pages.
+
+        ### Offline verification
+
+        Each record includes a `signature` over the canonical evidence
+        fields signed with the gateway's evidence-signing key.  When the
+        gateway uses a software signer, the public key is served as a JWK
+        Set at `GET /api/v1/audit/signing-keys` — this path is returned in
+        the `verificationUri` field of the response.  When using a
+        KMS-backed signer, `verificationUri` is `null` and the public key
+        must be retrieved from the KMS control plane.
+
+        See `docs/security/soc2-mapping.md` §4 for the full offline
+        verification procedure.
+      security: [{ adminApiKey: [] }]
+      parameters:
+        - name: scope
+          in: query
+          description: Compliance scope filter (maps to OCSF class_uid).
+          schema:
+            type: string
+            enum: [soc2-cc6, soc2-cc7, all]
+            default: all
+        - name: cursor
+          in: query
+          description: |
+            Opaque continuation cursor from the previous response. Expires
+            24 hours after issue; omit on the first page.
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          description: Maximum records per page (1–1000, default 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: since
+          in: query
+          description: |
+            Include records at or after this ISO 8601 timestamp.
+            Only applied on the first page (no `cursor`).
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          description: |
+            Include records before this ISO 8601 timestamp.
+            Only applied on the first page (no `cursor`).
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Paginated audit-trail records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditExportPage'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Export endpoint not available (no audit ledger configured)
+
 components:
   securitySchemes:
     bearerAuth:
@@ -402,6 +552,59 @@ components:
         reason: { type: string }
         capabilityId: { type: string }
         evaluatedAt: { type: string, format: date-time }
+
+    SignedAuditEvidence:
+      type: object
+      description: |
+        A cryptographically-signed audit evidence record produced by the
+        gateway's evidence signer. Each record is bound into a tamper-evident
+        hash chain via `previousHash` and `seq`.
+      required: [id, ts, agentId, resource, action, capabilityId, decision, signature, keyId, algorithm, previousHash, seq]
+      properties:
+        id:         { type: string, description: 'Unique evidence record ID (UUID)' }
+        ts:         { type: string, format: date-time, description: 'ISO-8601 timestamp of the event' }
+        agentId:    { type: string, description: 'AI agent that performed the action' }
+        resource:   { type: string, description: 'Resource being accessed' }
+        action:     { type: string, description: 'Action performed (read, write, execute, ...)' }
+        capabilityId: { type: string, description: 'Capability token JTI' }
+        decision:   { type: string, enum: [allow, deny], description: 'Enforcement outcome' }
+        tenantId:   { type: string, description: 'Tenant identifier from the capability token (when present)' }
+        conditionType: { type: string, description: 'Condition type that caused a deny (when present)' }
+        denialCode: { type: string, description: 'Machine-readable denial code (when decision=deny)' }
+        signature:  { type: string, description: 'Base64-encoded digital signature of the canonical evidence' }
+        keyId:      { type: string, description: 'Key ID used for signing (matches a key in the JWKS served at /api/v1/audit/signing-keys for software signers)' }
+        algorithm:  { type: string, description: 'Signing algorithm (e.g. RS256)' }
+        previousHash: { type: string, description: 'SHA-256 hex digest of the previous record in the chain' }
+        seq:        { type: integer, description: 'Monotonically increasing sequence number (1-based)' }
+
+    AuditExportPage:
+      type: object
+      required: [cursor, hasMore, records, verificationUri]
+      properties:
+        cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque continuation cursor for the next page, or `null` when
+            this is the last page. Expires 24 hours after issue.
+        hasMore:
+          type: boolean
+          description: Whether additional pages are available after this one.
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/SignedAuditEvidence' }
+          description: Page of signed audit evidence records.
+        verificationUri:
+          type: string
+          nullable: true
+          description: |
+            URI of the gateway's evidence-signing JWKS endpoint.  When the
+            gateway is configured with a software signer, this is
+            `/api/v1/audit/signing-keys` — a JWK Set containing the public
+            key needed for offline signature verification.  `null` when the
+            gateway uses a KMS-backed signer; in that case retrieve the
+            public key from the KMS control plane.
+          example: /api/v1/audit/signing-keys
 
     Error:
       type: object

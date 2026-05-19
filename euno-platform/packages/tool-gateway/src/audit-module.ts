@@ -191,6 +191,29 @@ export interface AuditModuleResult {
    * material — it is a lighter-weight read path.
    */
   auditQueryStore?: AuditQueryStore;
+  /**
+   * SPKI PEM of the evidence-signing public key. Present when the active
+   * signer is a software signer (`AUDIT_SIGNING_KMS_PROVIDER` is not set).
+   * Used by the `GET /api/v1/audit/signing-keys` JWKS endpoint so compliance
+   * consumers can verify exported records offline without configuring a
+   * separate key-distribution channel.
+   *
+   * KMS-backed signers do not populate this field because the public key
+   * must be fetched asynchronously from the KMS.
+   */
+  auditSigningPublicKeyPem?: string;
+  /**
+   * Key ID recorded in every signed evidence record.  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).  Embedded as the
+   * `kid` field in the JWKS so consumers can locate the matching key.
+   */
+  auditSigningKeyId?: string;
+  /**
+   * Signing algorithm (JWS name, e.g. `RS256`).  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).  Embedded as the
+   * `alg` field in the JWKS.
+   */
+  auditSigningAlgorithm?: string;
 }
 
 /**
@@ -248,6 +271,9 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
   let auditBatchSigner: AuditBatchSigner | undefined;
   let auditLedgerBackend: LedgerBackend | undefined;
   let auditQueryStore: AuditQueryStore | undefined;
+  let auditSigningPublicKeyPem: string | undefined;
+  let auditSigningKeyId: string | undefined;
+  let auditSigningAlgorithm: string | undefined;
 
   try {
     // Select the evidence signer: KMS-backed (AUDIT_SIGNING_KMS_PROVIDER) takes
@@ -285,6 +311,17 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           }
           return sw;
         })();
+
+    // Capture the evidence-signing public key PEM when available locally
+    // (software signers). KMS-backed signers do not expose the public key
+    // synchronously — operators should retrieve it from the KMS control plane.
+    auditSigningPublicKeyPem = activeSigner.getCryptoSigner().getPublicKeyPem?.();
+    if (auditSigningPublicKeyPem) {
+      // Capture keyId and algorithm to embed in the JWKS served at
+      // GET /api/v1/audit/signing-keys.
+      auditSigningKeyId = await activeSigner.getCryptoSigner().getKeyId();
+      auditSigningAlgorithm = activeSigner.getCryptoSigner().getAlgorithm();
+    }
 
     const ledgerBackendName = dynConfig.AUDIT_LEDGER_BACKEND;
 
@@ -759,5 +796,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     crossChainCommitmentStore,
     auditLedgerBackend,
     auditQueryStore,
+    auditSigningPublicKeyPem,
+    auditSigningKeyId,
+    auditSigningAlgorithm,
   };
 }

@@ -32,6 +32,14 @@ export interface CryptoSigner {
   verifyDigest?(digest: Buffer, signature: Buffer, keyId: string, algorithm: string): Promise<boolean>;
   getKeyId(): Promise<string>;
   getAlgorithm(): string;
+  /**
+   * Return the public key in SPKI PEM format, if available locally.
+   *
+   * Optional — software signers implement this; KMS-backed signers may leave
+   * it `undefined` because the public key must be fetched from the KMS
+   * asynchronously. Callers MUST check for `undefined` before use.
+   */
+  getPublicKeyPem?(): string;
 }
 
 /**
@@ -765,6 +773,9 @@ export function createSoftwareEvidenceSigner(config: SoftwareEvidenceSignerConfi
     },
     getAlgorithm(): string {
       return canonicalAlgorithm;
+    },
+    getPublicKeyPem(): string {
+      return publicKey.export({ type: 'spki', format: 'pem' }) as string;
     },
   };
 
