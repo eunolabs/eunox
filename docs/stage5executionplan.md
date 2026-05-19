@@ -159,7 +159,7 @@ in-depth scenario).
 exposes `/scim/v2/Users` and `/scim/v2/Groups` endpoints (authenticated
 via the existing `ISSUER_ADMIN_JWKS_URI` operator-JWT path). A user pushed
 via SCIM is queryable via the issuer admin API and its SCIM-provisioned
-group membership is honoured by the role-to-capability policy. Integration
+group membership is honored by the role-to-capability policy. Integration
 test covers push → issuance → capability reflects group membership.
 
 **E9.** **`/.well-known/capability-issuer` is a stable, documented contract**:
