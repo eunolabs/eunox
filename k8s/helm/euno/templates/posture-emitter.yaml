@@ -1,0 +1,80 @@
+{{/*
+posture-emitter Deployment
+NOTE: Do NOT scale this deployment beyond 1 replica.  The durable queue
+uses a SQLite file on a PersistentVolumeClaim; concurrent writers will
+corrupt the queue.  To scale posture throughput, increase POSTURE_DURABLE_BATCH_SIZE
+and POSTURE_DURABLE_POLL_INTERVAL_MS instead.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+  annotations:
+    euno.io/single-writer: "true"
+spec:
+  # IMPORTANT: must be 1 — SQLite durable queue is single-writer.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: euno-posture-emitter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: euno-posture-emitter
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: posture-emitter
+    spec:
+      containers:
+        - name: posture-emitter
+          image: "{{ .Values.postureEmitter.image.repository }}:{{ .Values.postureEmitter.image.tag }}"
+          imagePullPolicy: {{ .Values.postureEmitter.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "euno.fullname" . }}-posture-emitter-config
+          {{- if .Values.postureEmitter.persistence.enabled }}
+          volumeMounts:
+            - name: posture-data
+              mountPath: {{ .Values.postureEmitter.persistence.mountPath }}
+          {{- end }}
+          resources: {}
+      {{- if .Values.postureEmitter.persistence.enabled }}
+      volumes:
+        - name: posture-data
+          persistentVolumeClaim:
+            claimName: {{ include "euno.fullname" . }}-posture-emitter-data
+      {{- end }}
+---
+{{- if .Values.postureEmitter.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter-data
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.postureEmitter.persistence.storageClass }}
+  storageClassName: {{ .Values.postureEmitter.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.postureEmitter.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter-config
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+data:
+  {{- range $key, $val := .Values.postureEmitter.env }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}

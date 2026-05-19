@@ -1,0 +1,141 @@
+# Euno umbrella chart — top-level values
+# ---------------------------------------------------------------------------
+# Each service is configured through its own sub-section.  Only the keys
+# documented in each service's k8s/helm/<service>/values.schema.json are
+# accepted; additional keys are rejected by the schema validation.
+#
+# Minimal production override example:
+#
+#   gateway:
+#     env:
+#       NODE_ENV: production
+#       EUNO_DEPLOYMENT_TIER: multi-replica
+#       GATEWAY_AUDIENCE: my-org
+#       REDIS_URL: "rediss://redis.internal:6380"
+#       AUDIT_LEDGER_BACKEND: per-replica-postgres
+#       AUDIT_LEDGER_PG_URL: "postgres://euno_audit:secret@db.internal:5432/euno"
+#       AUDIT_LEDGER_HMAC_SECRET: "<64-hex-chars>"
+#       ADMIN_API_KEY: "<strong-admin-key>"
+#       ADMIN_HOST: "127.0.0.1"
+#
+#   issuer:
+#     env:
+#       NODE_ENV: production
+#       IDENTITY_PROVIDER: azure-ad
+#       AZURE_AD_TENANT_ID: "<tenant>"
+#       AZURE_AD_CLIENT_ID: "<client>"
+#       SIGNING_PROVIDER: azure-keyvault
+#       AZURE_KEYVAULT_URL: "https://your-vault.vault.azure.net/"
+#       ISSUER_DB_URL: "postgres://euno:secret@db.internal:5432/euno"
+#       ISSUER_DB_SCHEMA_INIT: "true"
+#       ISSUER_SCIM_BEARER_TOKEN: "<scim-token>"
+#       EUNO_DEPLOYMENT_TIER: multi-replica
+#
+# See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the full
+# production installation guide.
+
+# ── tool-gateway ─────────────────────────────────────────────────────────────
+gateway:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/tool-gateway
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3002
+    adminPort: 3003
+  env:
+    NODE_ENV: production
+    EUNO_DEPLOYMENT_TIER: multi-replica
+    GATEWAY_AUDIENCE: tool-gateway
+    ADMIN_HOST: "127.0.0.1"
+
+# ── capability-issuer ─────────────────────────────────────────────────────────
+issuer:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/capability-issuer
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3001
+  env:
+    NODE_ENV: production
+    EUNO_DEPLOYMENT_TIER: multi-replica
+
+# ── api-key-minter ─────────────────────────────────────────────────────────
+minter:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/api-key-minter
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3004
+  env:
+    NODE_ENV: production
+
+# ── db-token-service ─────────────────────────────────────────────────────────
+dbTokenService:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/db-token-service
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5050
+  env:
+    NODE_ENV: production
+    DB_TOKENS_ENABLED: "false"
+
+# ── storage-grant-service ─────────────────────────────────────────────────────
+storageGrantService:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/storage-grant-service
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5051
+  env:
+    NODE_ENV: production
+    STORAGE_GRANTS_ENABLED: "false"
+
+# ── posture-emitter ──────────────────────────────────────────────────────────
+postureEmitter:
+  # Single-writer SQLite drainer — do NOT scale to more than 1 replica.
+  replicaCount: 1
+  image:
+    repository: ghcr.io/edgeobs/euno/posture-emitter
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+    mountPath: /data
+  env:
+    NODE_ENV: production
+    POSTURE_EMITTER_ENABLED: "false"
+    POSTURE_EMITTER_PLUGINS: "stdout"
+    POSTURE_DURABLE_QUEUE_PATH: "/data/posture.db"
+
+# ── Optional Postgres (bitnami — evaluation only; disabled by default) ───────
+postgresql:
+  enabled: false
+  auth:
+    database: euno
+    username: euno
+    # password: changeme  # override in production; do not commit passwords
+
+# ── Optional Redis (bitnami — evaluation only; disabled by default) ──────────
+redis:
+  enabled: false
+  auth:
+    enabled: true
+    # password: changeme  # override in production; do not commit passwords
