@@ -540,21 +540,35 @@ async function initializeServices() {
     // optionally run DDL migrations at startup (ISSUER_DB_SCHEMA_INIT=true).
     // The store is injected into CapabilityIssuerService so the issuance
     // hot path can look up template assignments.
+    //
+    // The same Pool instance is also reused by the SCIM store below (Task 10).
     let templateStore: import('./manifest-template-store').ManifestTemplateStore | undefined;
+    // Pool is shared between the template store, admin router, and SCIM store to
+    // avoid creating duplicate connection pools against the same database URL.
+    let sharedDbPool: import('pg').Pool | undefined;
+    let sharedDbSchema: string | undefined;
     if (env.ISSUER_DB_URL) {
       const { Pool } = await import('pg');
       const dbSchema = env.ISSUER_DB_SCHEMA ?? 'euno_issuer';
       const pool = new Pool({ connectionString: env.ISSUER_DB_URL });
-      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
-      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
-      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
+      sharedDbPool = pool;
+      sharedDbSchema = dbSchema;
 
-      if (env.ISSUER_DB_SCHEMA_INIT) {
+      // Run DDL migrations once whenever ISSUER_DB_URL is set and either
+      // ISSUER_DB_SCHEMA_INIT is explicitly true or SCIM provisioning is
+      // enabled (which requires the SCIM tables).  The migration runner is
+      // idempotent so running it multiple times is safe.
+      const needsMigration = env.ISSUER_DB_SCHEMA_INIT || !!env.ISSUER_SCIM_BEARER_TOKEN;
+      if (needsMigration) {
         const { IssuerMigrationRunner } = await import('./migrations');
         const migrationRunner = new IssuerMigrationRunner(pool, dbSchema);
         await migrationRunner.migrate();
         logger.info('Issuer DB schema migration complete', { schema: dbSchema });
       }
+
+      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
+      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
+      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
 
       // Mount the admin templates router into the pre-registered forwarding router.
       // Using adminTemplatesForwarder (registered before the error handler) ensures
@@ -596,6 +610,59 @@ async function initializeServices() {
         });
         adminUiForwarder.use('/', uiRouter);
         logger.info('Admin UI router mounted at /admin');
+      }
+    }
+
+    // Task 10 (Stage 5): SCIM 2.0 provisioning.
+    // When ISSUER_SCIM_BEARER_TOKEN is set, mount the SCIM v2 endpoints and
+    // wire the SCIM store into the issuance pipeline for group-based role
+    // enrichment. Requires ISSUER_DB_URL (reuses the shared Postgres pool so
+    // no second pool is created; DDL migration is handled above).
+    let scimStore: import('./scim-store').IScimStore | undefined;
+    let scimGroupRoleMap: Record<string, string> | undefined;
+    if (env.ISSUER_SCIM_BEARER_TOKEN) {
+      if (!env.ISSUER_DB_URL) {
+        logger.warn(
+          'ISSUER_SCIM_BEARER_TOKEN is set but ISSUER_DB_URL is not. ' +
+            'SCIM provisioning requires a Postgres database. SCIM endpoints are DISABLED.',
+        );
+      } else {
+        // sharedDbPool / sharedDbSchema are set earlier in the same if (env.ISSUER_DB_URL) block.
+        // This inner else only runs when env.ISSUER_DB_URL is truthy, so both are non-null.
+        if (!sharedDbPool || !sharedDbSchema) {
+          // Defensive guard — should never happen given the control flow above.
+          throw new Error('SCIM initialisation: shared DB pool is unexpectedly undefined despite ISSUER_DB_URL being set');
+        }
+        const scimPool = sharedDbPool;
+        const dbSchema = sharedDbSchema;
+
+        const { PostgresScimStore } = await import('./scim-store');
+        scimStore = new PostgresScimStore(scimPool, dbSchema);
+        logger.info('SCIM store initialised (Postgres)', { schema: dbSchema });
+
+        // Parse SCIM group → role mapping from env var (JSON string).
+        if (env.ISSUER_SCIM_GROUP_ROLE_MAP) {
+          try {
+            scimGroupRoleMap = JSON.parse(env.ISSUER_SCIM_GROUP_ROLE_MAP) as Record<string, string>;
+            logger.info('SCIM group → role map loaded', {
+              groupCount: Object.keys(scimGroupRoleMap).length,
+            });
+          } catch (parseErr) {
+            logger.error('Failed to parse ISSUER_SCIM_GROUP_ROLE_MAP — SCIM role enrichment disabled', {
+              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+            });
+          }
+        }
+
+        // Mount the SCIM v2 router into the pre-registered forwarding router.
+        const { createScimRouter } = await import('./routes/scim');
+        const scimRouter = createScimRouter({
+          store: scimStore,
+          bearerToken: env.ISSUER_SCIM_BEARER_TOKEN,
+          logger,
+        });
+        scimForwarder.use('/', scimRouter);
+        logger.info('SCIM router mounted at /scim/v2');
       }
     }
 
@@ -753,6 +820,9 @@ async function initializeServices() {
         },
         // Task 6: inject manifest template store when configured.
         ...(templateStore ? { templateStore } : {}),
+        // Task 10: inject SCIM store + group→role map when configured.
+        ...(scimStore ? { scimStore } : {}),
+        ...(scimGroupRoleMap ? { scimGroupRoleMap } : {}),
       }
     );
 
@@ -1699,6 +1769,12 @@ app.use('/api/v1/admin/templates', adminTemplatesForwarder);
 // Serves server-rendered HTML pages at /admin/*.
 const adminUiForwarder = express.Router({ mergeParams: true });
 app.use('/admin', adminUiForwarder);
+
+// SCIM 2.0 forwarding router (Task 10 — Stage 5).
+// Populated lazily when both ISSUER_SCIM_BEARER_TOKEN and ISSUER_DB_URL are set.
+// Until then, requests to /scim/v2/* return 404 via the catch-all handler.
+const scimForwarder = express.Router({ mergeParams: true });
+app.use('/scim/v2', scimForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {

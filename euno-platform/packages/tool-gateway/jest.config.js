@@ -15,6 +15,7 @@ module.exports = {
           '@euno/common-core': ['../../../public/packages/common/src'],
           '@euno/common-infra': ['../common-infra/src'],
           '@euno/capability-issuer/adapters': ['../capability-issuer/src/exports'],
+          '@euno/posture-emitter': ['../posture-emitter/src'],
         },
       },
     }],
@@ -32,5 +33,6 @@ module.exports = {
     '^@euno/common-core$': '<rootDir>/../../../public/packages/common/src',
     '^@euno/common-infra$': '<rootDir>/../common-infra/src',
     '^@euno/capability-issuer/adapters$': '<rootDir>/../capability-issuer/src/exports',
+    '^@euno/posture-emitter$': '<rootDir>/../posture-emitter/src',
   },
 };

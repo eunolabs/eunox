@@ -860,6 +860,32 @@ export const IssuerConfigSchema = z
         'running migrations with a dedicated role before deploying.',
     }),
 
+    // SCIM 2.0 provisioning (Task 10 — Stage 5) --------------------------------
+    // Enables push-based group membership from an enterprise IdP (Okta,
+    // Entra ID, Ping Identity). When ISSUER_SCIM_BEARER_TOKEN is set the
+    // SCIM v2 endpoints are mounted at /scim/v2/ and validated using
+    // constant-time Bearer token comparison. SCIM group → role mapping is
+    // configured via ISSUER_SCIM_GROUP_ROLE_MAP. Requires ISSUER_DB_URL.
+    ISSUER_SCIM_BEARER_TOKEN: optionalString.describe(
+      'Static bearer token presented by the enterprise IdP (Okta, Entra ID, Ping Identity) ' +
+      'when pushing SCIM provisioning events to the issuer. ' +
+      'Validated with constant-time comparison on every SCIM request. ' +
+      'When unset, the /scim/v2/ endpoints are not mounted. ' +
+      'Must be ≥32 characters in production. Treat as a long-lived secret: store in a ' +
+      'secret manager and rotate at least annually or immediately on exposure. ' +
+      'Requires ISSUER_DB_URL.',
+    ),
+    ISSUER_SCIM_GROUP_ROLE_MAP: optionalString.describe(
+      'JSON object mapping SCIM group display names to issuer role keys. ' +
+      'Example: \'{"SalesTeam":"sales","EngineeringTeam":"engineer"}\'. ' +
+      'When a provisioned user belongs to a mapped group, the corresponding role ' +
+      'is merged into the user\'s role set at issuance time (SCIM roles take ' +
+      'precedence on conflict with IdP-provided roles). ' +
+      'Groups not present in this map are ignored at issuance time. ' +
+      'Mapping an admin-tier role (e.g. "operator") requires an explicit operator-JWT ' +
+      'review before the mapping is applied — see docs/issuer-idp-setup.md §"SCIM provisioning".',
+    ),
+
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.

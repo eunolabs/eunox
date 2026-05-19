@@ -307,7 +307,144 @@ token.  The issuer rejects any token whose `nonce` claim does not match.
 
 ---
 
-## 8. Security checklist
+## 8. SCIM 2.0 provisioning
+
+The issuer supports push-based group provisioning from enterprise IdPs
+(Okta, Microsoft Entra ID, Ping Identity) via the **SCIM 2.0** protocol.
+When enabled, the issuer acts as a SCIM service provider: the enterprise
+IdP pushes user and group lifecycle events to `/scim/v2/` and the issuer
+stores them in its Postgres database.
+
+At issuance time, the user's current SCIM group memberships are looked up
+and the mapped roles are **added** to the IdP-provided role set (union).
+SCIM group memberships are the authoritative source for *group-derived*
+roles; IdP token claims remain the primary authentication signal and
+continue to contribute their own roles.  SCIM enrichment never removes
+roles that were already granted by the IdP.
+
+If the SCIM lookup fails (e.g. database outage), the issuer falls back to
+IdP-only roles (fail-open) and logs a warning.
+
+### 8.1 Prerequisites
+
+- `ISSUER_DB_URL` must be set (SCIM data is stored in the same Postgres
+  database as the manifest template store).
+- The SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`) are
+  created automatically on first startup when `ISSUER_SCIM_BEARER_TOKEN`
+  is set and `ISSUER_DB_URL` is configured — you do **not** need to set
+  `ISSUER_DB_SCHEMA_INIT=true` separately (though setting it is harmless
+  and ensures all tables are always in sync).
+
+### 8.2 Environment variables
+
+| Variable | Description |
+|---|---|
+| `ISSUER_SCIM_BEARER_TOKEN` | **Required.** Static bearer token the IdP sends on every SCIM request. Validated with constant-time comparison. ≥32 characters; rotate immediately on exposure. |
+| `ISSUER_SCIM_GROUP_ROLE_MAP` | **Optional.** JSON object mapping SCIM group `displayName` → issuer role key. Example: `{"SalesTeam":"sales","EngineeringTeam":"engineer"}`. Unmapped groups are ignored at issuance time. |
+
+```bash
+ISSUER_DB_URL=postgres://issuer:secret@db:5432/issuer_db
+ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-random-secret>
+ISSUER_SCIM_GROUP_ROLE_MAP='{"SalesTeam":"sales","EngineeringTeam":"engineer"}'
+```
+
+### 8.3 SCIM endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST`   | `/scim/v2/Users`       | Provision a new user |
+| `GET`    | `/scim/v2/Users`       | List users (supports `?filter=`, `?count=`, `?startIndex=`) |
+| `GET`    | `/scim/v2/Users/:id`   | Get user by SCIM ID |
+| `PUT`    | `/scim/v2/Users/:id`   | Replace user (preserves `active` when omitted per RFC 7644) |
+| `PATCH`  | `/scim/v2/Users/:id`   | Partial update / deprovision (`active=false`); supports `add`, `replace`, `remove` operations |
+| `DELETE` | `/scim/v2/Users/:id`   | Soft-delete user and remove all group memberships |
+| `POST`   | `/scim/v2/Groups`      | Provision a new group |
+| `GET`    | `/scim/v2/Groups`      | List groups (supports `?filter=`, `?count=`, `?startIndex=`) |
+| `GET`    | `/scim/v2/Groups/:id`  | Get group by SCIM ID |
+| `PUT`    | `/scim/v2/Groups/:id`  | Replace group (replaces full membership set atomically) |
+| `PATCH`  | `/scim/v2/Groups/:id`  | Membership delta: `add` appends members; `replace` on `members` replaces the full set (RFC 7644 §3.5.2.3); `remove` removes specified members |
+| `DELETE` | `/scim/v2/Groups/:id`  | Delete group and remove all memberships |
+
+All endpoints require `Authorization: Bearer <ISSUER_SCIM_BEARER_TOKEN>`.
+Unauthenticated requests receive `401 Unauthorized` with
+`WWW-Authenticate: Bearer realm="SCIM"`.
+
+### 8.4 User identity mapping
+
+The SCIM user lookup at issuance time uses two identifiers from the IdP token:
+
+1. **externalId** — matched against the IdP `sub` claim (`userContext.userId`).
+2. **userName** — matched against `userContext.email` (the user's email /
+   UPN from the IdP token), falling back to `userContext.userId`.
+
+For SCIM enrichment to work reliably in production, the IdP MUST push the
+user's `sub` claim as the SCIM `externalId` field.  If neither the externalId
+nor the email/userName match any active SCIM user, enrichment is silently
+skipped and only IdP-provided roles are used.
+
+**Okta:** Enable **Push User to App** and map the Okta `externalId`
+attribute to the SCIM `externalId` field in the provisioning configuration.
+
+**Entra ID:** The default User attribute mappings include `objectId →
+externalId` — leave this mapping active.
+
+### 8.5 Configuring Okta
+
+1. In Okta Admin: **Applications → {your app} → Provisioning → Integration**
+   - Enable **SCIM provisioning**.
+   - SCIM connector base URL: `https://<issuer-host>/scim/v2`
+   - Unique identifier field for users: `userName`
+   - Authentication mode: **HTTP Header**
+   - Authorization: `Bearer <ISSUER_SCIM_BEARER_TOKEN>`
+
+2. Under **To App**, enable:
+   - Create Users
+   - Update User Attributes
+   - Deactivate Users
+   - Sync Password (optional)
+
+3. Assign the groups whose memberships should drive issuer roles to the
+   application and ensure `ISSUER_SCIM_GROUP_ROLE_MAP` maps their display
+   names to the appropriate role keys.
+
+### 8.6 Configuring Microsoft Entra ID
+
+1. In Entra ID Admin Centre: **Enterprise applications → {your app} →
+   Provisioning**
+   - Provisioning Mode: **Automatic**
+   - Tenant URL: `https://<issuer-host>/scim/v2`
+   - Secret Token: `<ISSUER_SCIM_BEARER_TOKEN>`
+   - Click **Test Connection** to verify.
+
+2. Under **Mappings**, ensure the default User and Group attribute mappings
+   are active.  The issuer expects `userName` (typically `userPrincipalName`)
+   and `displayName` on groups.  The default `objectId → externalId` user
+   mapping should remain active so the issuance hot-path can match users by
+   their Entra ID `sub` claim.
+
+3. Under **Settings → Scope**, choose *Sync only assigned users and groups*
+   and assign only the groups relevant to capability issuance.
+
+### 8.7 Filter support
+
+The issuer supports the following SCIM filter operators:
+- `eq` — exact equality (e.g. `userName eq "alice@example.com"`)
+- `co` — contains (e.g. `displayName co "Sales"`)
+
+Filters on unsupported attributes return an empty result set.
+
+### 8.8 Multi-tenancy
+
+When the issuer is configured for per-tenant IdPs
+(`ISSUER_TENANT_IDP_CONFIG_FILE`), SCIM provisioning is global by default
+(a single bearer token covers all tenants).  To achieve per-tenant SCIM
+isolation, deploy separate issuer instances per tenant (recommended) or
+use a reverse proxy that rewrites the Authorization header and routes to
+tenant-scoped pools.
+
+---
+
+## 9. Security checklist
 
 Before deploying to production:
 
@@ -324,6 +461,11 @@ Before deploying to production:
   require MFA / compliant device (Entra ID only).
 - [ ] The `ISSUER_TENANT_IDP_CONFIG_FILE` (if used) is read-only to the
   issuer process and write-protected at the host level.
+- [ ] `ISSUER_SCIM_BEARER_TOKEN` (if SCIM is enabled) is at least 32 characters,
+  stored in a secret manager, and rotated at least annually.
+- [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` is reviewed by an operator before deployment —
+  mapping a group to an admin-tier role (e.g. `operator`) grants elevated
+  capabilities to all members of that group.
 
 ---
 
