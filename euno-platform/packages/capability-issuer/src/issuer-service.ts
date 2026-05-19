@@ -252,6 +252,23 @@ export interface CapabilityIssuerServiceOptions {
    * (backward-compatible default).
    */
   templateStore?: import('./manifest-template-store').ManifestTemplateStore;
+  /**
+   * Optional SCIM 2.0 store (Task 10 — Stage 5).
+   *
+   * When set, the issuance hot path queries SCIM group memberships for
+   * the authenticated user and merges the group-mapped roles into the
+   * IdP-provided role set (SCIM-authoritative authorization model).
+   * On lookup failure the pipeline falls through to IdP-only roles
+   * (fail-open).
+   */
+  scimStore?: import('./scim-store').IScimStore;
+  /**
+   * Optional SCIM group → role mapping (Task 10 — Stage 5).
+   *
+   * Plain object mapping SCIM group `displayName` to an issuer role key.
+   * Used together with `scimStore`. Loaded from `ISSUER_SCIM_GROUP_ROLE_MAP`.
+   */
+  scimGroupRoleMap?: Record<string, string>;
 }
 
 /**
@@ -359,6 +376,8 @@ export class CapabilityIssuerService {
       auditLogger,
       logger,
       ...(options.templateStore ? { templateStore: options.templateStore } : {}),
+      ...(options.scimStore ? { scimStore: options.scimStore } : {}),
+      ...(options.scimGroupRoleMap ? { scimGroupRoleMap: options.scimGroupRoleMap } : {}),
     });
 
     this.attenuateCtrl = new AttenuateController(this.pipeline, { defaultTtl: defaultTTL });

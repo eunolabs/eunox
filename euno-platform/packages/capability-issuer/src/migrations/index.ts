@@ -115,6 +115,79 @@ CREATE INDEX IF NOT EXISTS idx_template_assignments_template
 `.trim();
 }
 
+// ── SCIM DDL ───────────────────────────────────────────────────────────────
+
+/**
+ * Generate the DDL for the SCIM 2.0 provisioning tables (Task 10 — Stage 5).
+ *
+ * Three tables are created under the same schema as the manifest template
+ * tables:
+ *   - `scim_users`         — one row per provisioned SCIM user
+ *   - `scim_groups`        — one row per provisioned SCIM group
+ *   - `scim_group_members` — membership join table
+ *
+ * Soft-delete is implemented via `deleted_at` on `scim_users`.
+ * Hard-delete is intentionally not supported to preserve the audit trail.
+ *
+ * @param schema Postgres schema name (default `euno_issuer`).
+ */
+export function buildScimDdl(schema: string): string {
+  return `
+-- SCIM 2.0 provisioned users.
+CREATE TABLE IF NOT EXISTS ${schema}.scim_users (
+  id           TEXT        NOT NULL,
+  external_id  TEXT,
+  user_name    TEXT        NOT NULL,
+  display_name TEXT,
+  active       BOOLEAN     NOT NULL DEFAULT TRUE,
+  tenant_id    TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at   TIMESTAMPTZ,
+  PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scim_users_username_tenant
+  ON ${schema}.scim_users (user_name, tenant_id)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_scim_users_external_id
+  ON ${schema}.scim_users (external_id, tenant_id)
+  WHERE deleted_at IS NULL AND external_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_scim_users_tenant
+  ON ${schema}.scim_users (tenant_id)
+  WHERE deleted_at IS NULL;
+
+-- SCIM 2.0 provisioned groups.
+CREATE TABLE IF NOT EXISTS ${schema}.scim_groups (
+  id           TEXT        NOT NULL,
+  display_name TEXT        NOT NULL,
+  tenant_id    TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scim_groups_name_tenant
+  ON ${schema}.scim_groups (display_name, tenant_id);
+
+CREATE INDEX IF NOT EXISTS idx_scim_groups_tenant
+  ON ${schema}.scim_groups (tenant_id);
+
+-- Group membership join table.
+CREATE TABLE IF NOT EXISTS ${schema}.scim_group_members (
+  group_id  TEXT        NOT NULL REFERENCES ${schema}.scim_groups (id),
+  user_id   TEXT        NOT NULL REFERENCES ${schema}.scim_users (id),
+  added_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scim_group_members_user
+  ON ${schema}.scim_group_members (user_id);
+`.trim();
+}
+
 // ── IssuerMigrationRunner ──────────────────────────────────────────────────
 
 export class IssuerMigrationRunner {
@@ -130,12 +203,14 @@ export class IssuerMigrationRunner {
    * Create all issuer tables and indexes if they do not yet exist.
    *
    * Idempotent — safe to call at every process start.
+   * Runs DDL for both the manifest template store and the SCIM 2.0
+   * provisioning tables.
    */
   async migrate(): Promise<void> {
-    const ddl = buildIssuerDdl(this.schema);
+    const allDdl = buildIssuerDdl(this.schema) + '\n' + buildScimDdl(this.schema);
     // Split on semicolons and execute each statement individually.
     // This matches the pattern used in `PostgresApiKeyStore.ensureSchema()`.
-    const statements = ddl
+    const statements = allDdl
       .split(';')
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
