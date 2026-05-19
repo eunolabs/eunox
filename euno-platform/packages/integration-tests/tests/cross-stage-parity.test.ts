@@ -70,6 +70,9 @@
  *   Downstream consumers strip the prefix when comparing across modes.
  */
 
+import * as http from 'http';
+import { AddressInfo } from 'net';
+import * as crypto from 'crypto';
 import * as jose from 'jose';
 import {
   CapabilityConstraint,
@@ -94,9 +97,14 @@ import {
   RoleCapabilityPolicy,
   TokenSigner,
   UserContext,
+  AgentCapabilityManifest,
 } from '@euno/common';
+import type { ToolTransportInvokeRequest, TransportCredentials, ToolTransportResponse } from '@euno/common';
 import { EnforcementEngine } from '../../tool-gateway/src/enforcement';
 import { JWTTokenVerifier } from '../../tool-gateway/src/verifier';
+import { PartnerIssuerResolver } from '../../tool-gateway/src/partner-issuer-resolver';
+import { parseDidWebHttpAllowList } from '@euno/capability-issuer/adapters';
+import { createAgtGuard, InProcessToolTransport } from '../../agent-runtime/src/index';
 import {
   buildAttenuatedPayload,
   buildRenewedPayload,
@@ -1680,5 +1688,458 @@ describe('IssueController parity (CI-6): tokens from IssueController pipeline pr
     });
     expect(allowed.allowed).toBe(true);
     expect(denied.allowed).toBe(false);
+  });
+});
+
+// ── Stage-5 parity: partner-issued token (Task 12 — Scenario 1) ──────────────
+//
+// WHAT THIS PROVES
+// ----------------
+// A partner-issued token (EdDSA, iss = partner DID resolved over HTTP) and a
+// local-issued token (RS256, iss = 'did:web:test.issuer') that carry identical
+// `capabilities` arrays produce IDENTICAL gateway decisions from a single
+// EnforcementEngine instance.
+//
+// The gateway's enforcement path is entirely issuer-agnostic: after the token
+// signature is verified (by whichever trust anchor owns the issuer DID), the
+// engine evaluates only the `capabilities` array and any `conditions`. The
+// `iss` claim is never consulted for allow/deny logic.
+//
+// SETUP
+// -----
+// - An EdDSA key pair is generated in-process.
+// - A loopback HTTP server serves the partner DID document so the
+//   PartnerIssuerResolver can resolve the public key at verification time.
+// - A JWTTokenVerifier is configured with the local RS256 public key (for
+//   local-issued tokens) AND a PartnerIssuerResolver (for partner-issued
+//   tokens). The same EnforcementEngine is used for both token types.
+
+describe('Stage-5 parity: partner-issued token produces identical gateway decision (Task 12 — Scenario 1)', () => {
+  let s1Server: http.Server;
+  let s1PartnerDid: string;
+  let s1PartnerPrivateKey: jose.KeyLike;
+  let s1Engine: EnforcementEngine;
+
+  beforeAll(async () => {
+    // 1. Generate EdDSA key pair for the partner issuer.
+    const { publicKey: pubKey, privateKey: privKey } = crypto.generateKeyPairSync('ed25519');
+    const publicJwk = pubKey.export({ format: 'jwk' }) as jose.JWK;
+    publicJwk.alg = 'EdDSA';
+    publicJwk.use = 'sig';
+    s1PartnerPrivateKey = await jose.importPKCS8(
+      privKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+      'EdDSA',
+    ) as jose.KeyLike;
+
+    // 2. Start an in-memory HTTP server to serve the partner DID document.
+    //    The `did` variable is written in the listen callback (after the port
+    //    is known) and read only when the first test request arrives, so the
+    //    closure captures the correct value.
+    let did = '';
+    const requestListener: http.RequestListener = (_req, res) => {
+      const vmId = `${did}#key-1`;
+      const doc = {
+        '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
+        id: did,
+        verificationMethod: [
+          { id: vmId, type: 'JsonWebKey2020', controller: did, publicKeyJwk: publicJwk },
+        ],
+        authentication: [vmId],
+        assertionMethod: [vmId],
+      };
+      res.writeHead(200, { 'Content-Type': 'application/did+json' });
+      res.end(JSON.stringify(doc));
+    };
+
+    const port = await new Promise<number>((resolve, reject) => {
+      s1Server = http.createServer(requestListener);
+      s1Server.listen(0, '127.0.0.1', () => {
+        const addr = s1Server.address();
+        if (!addr || typeof addr === 'string') { reject(new Error('No address')); return; }
+        resolve((addr as AddressInfo).port);
+      });
+    });
+
+    s1PartnerDid = `did:web:127.0.0.1%3A${port}`;
+    did = s1PartnerDid; // write AFTER the port is known so the closure is consistent
+
+    // 3. Build a PartnerIssuerResolver that trusts s1PartnerDid.
+    const httpAllowList = parseDidWebHttpAllowList(`127.0.0.1:${port}`);
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [s1PartnerDid],
+      httpAllowList,
+    });
+
+    // 4. Build a JWTTokenVerifier that handles BOTH local RS256 tokens (via the
+    //    module-level publicKeyPem) AND partner EdDSA tokens (via the resolver).
+    const s1Verifier = new JWTTokenVerifier(publicKeyPem, {
+      requireKid: false,
+      partnerResolver: resolver,
+    });
+
+    // 5. Build the engine using the partner-capable verifier.
+    s1Engine = new EnforcementEngine({
+      verifier: s1Verifier,
+      logger,
+      callCounterStore: makeCounterStore(),
+      dpop: { required: false },
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      s1Server.close((err) => (err ? reject(err) : resolve()));
+    });
+  });
+
+  /** Sign a token with the partner's EdDSA key. */
+  async function signPartnerToken(
+    capabilities: CapabilityConstraint[],
+    extra: Partial<CapabilityTokenPayload> = {},
+  ): Promise<string> {
+    const payload: CapabilityTokenPayload = {
+      iss: s1PartnerDid,
+      sub: 'partner-parity-agent',
+      aud: 'tool-gateway',
+      iat: getCurrentTimestamp(),
+      exp: getExpirationTimestamp(900),
+      jti: `jti-partner-${Date.now()}-${Math.random()}`,
+      schemaVersion: CAPABILITY_TOKEN_SCHEMA_VERSION,
+      capabilities,
+      ...extra,
+    };
+    return new jose.SignJWT(payload as unknown as Record<string, unknown>)
+      .setProtectedHeader({ alg: 'EdDSA', kid: `${s1PartnerDid}#key-1` })
+      .sign(s1PartnerPrivateKey);
+  }
+
+  // ── Assertion S1-1: allow parity ────────────────────────────────────────────
+  it('allow parity: partner-issued token → gateway allows the same tool as local-issued token', async () => {
+    const capabilities: CapabilityConstraint[] = [
+      { resource: 'tool://partner_allow_tool', actions: ['call'] },
+    ];
+    const [localToken, partnerToken] = await Promise.all([
+      signToken(capabilities),
+      signPartnerToken(capabilities),
+    ]);
+
+    const [localResult, partnerResult] = await Promise.all([
+      s1Engine.validateAction({
+        token: localToken,
+        action: 'call',
+        resource: 'tool://partner_allow_tool',
+        context: { sessionId: 's1-allow-local', tool: 'partner_allow_tool', args: {} },
+      }),
+      s1Engine.validateAction({
+        token: partnerToken,
+        action: 'call',
+        resource: 'tool://partner_allow_tool',
+        context: { sessionId: 's1-allow-partner', tool: 'partner_allow_tool', args: {} },
+      }),
+    ]);
+
+    expect(localResult.allowed).toBe(true);
+    expect(partnerResult.allowed).toBe(true);
+  });
+
+  // ── Assertion S1-2: deny parity (expired timeWindow) ───────────────────────
+  it('deny parity: partner-issued token with expired timeWindow → gateway denies same as local-issued token', async () => {
+    const capabilities: CapabilityConstraint[] = [
+      {
+        resource: 'tool://partner_expired_tool',
+        actions: ['call'],
+        conditions: [
+          { type: 'timeWindow', notBefore: '2000-01-01T00:00:00Z', notAfter: '2000-12-31T23:59:59Z' },
+        ],
+      },
+    ];
+    const [localToken, partnerToken] = await Promise.all([
+      signToken(capabilities),
+      signPartnerToken(capabilities),
+    ]);
+
+    const [localResult, partnerResult] = await Promise.all([
+      s1Engine.validateAction({
+        token: localToken,
+        action: 'call',
+        resource: 'tool://partner_expired_tool',
+        context: { sessionId: 's1-deny-local', tool: 'partner_expired_tool', args: {} },
+      }),
+      s1Engine.validateAction({
+        token: partnerToken,
+        action: 'call',
+        resource: 'tool://partner_expired_tool',
+        context: { sessionId: 's1-deny-partner', tool: 'partner_expired_tool', args: {} },
+      }),
+    ]);
+
+    expect(localResult.allowed).toBe(false);
+    expect(partnerResult.allowed).toBe(false);
+  });
+
+  // ── Assertion S1-3: iss claim does not affect allow decision ────────────────
+  it('allow decisions match: iss claim (local vs partner DID) does not affect the gateway allow decision', async () => {
+    const capabilities: CapabilityConstraint[] = [
+      { resource: 'tool://parity_cmp_tool', actions: ['call'] },
+    ];
+    const [localToken, partnerToken] = await Promise.all([
+      signToken(capabilities),
+      signPartnerToken(capabilities),
+    ]);
+
+    const [localResult, partnerResult] = await Promise.all([
+      s1Engine.validateAction({
+        token: localToken,
+        action: 'call',
+        resource: 'tool://parity_cmp_tool',
+        context: { sessionId: 's1-cmp-local', tool: 'parity_cmp_tool', args: {} },
+      }),
+      s1Engine.validateAction({
+        token: partnerToken,
+        action: 'call',
+        resource: 'tool://parity_cmp_tool',
+        context: { sessionId: 's1-cmp-partner', tool: 'parity_cmp_tool', args: {} },
+      }),
+    ]);
+
+    // The decision must be the same regardless of which issuer signed the token.
+    expect(localResult.allowed).toBe(partnerResult.allowed);
+    expect(localResult.allowed).toBe(true);
+  });
+
+  // ── Assertion S1-4: deny conditionType matches (OCSF pre-signature parity) ──
+  it('deny conditionType matches: timeWindow denial from partner-issued token equals local-issued token (OCSF parity)', async () => {
+    const capabilities: CapabilityConstraint[] = [
+      {
+        resource: 'tool://partner_time_locked',
+        actions: ['call'],
+        conditions: [
+          { type: 'timeWindow', notAfter: '2000-01-01T00:00:00Z' },
+        ],
+      },
+    ];
+    const [localToken, partnerToken] = await Promise.all([
+      signToken(capabilities),
+      signPartnerToken(capabilities),
+    ]);
+
+    const [localResult, partnerResult] = await Promise.all([
+      s1Engine.validateAction({
+        token: localToken,
+        action: 'call',
+        resource: 'tool://partner_time_locked',
+        context: { sessionId: 's1-ocsf-local', tool: 'partner_time_locked', args: {} },
+      }),
+      s1Engine.validateAction({
+        token: partnerToken,
+        action: 'call',
+        resource: 'tool://partner_time_locked',
+        context: { sessionId: 's1-ocsf-partner', tool: 'partner_time_locked', args: {} },
+      }),
+    ]);
+
+    // Both must deny with the same conditionType — this is the OCSF pre-signature
+    // parity invariant: the audit record's conditionType field is identical
+    // regardless of which issuer (local or partner) signed the token.
+    expect(localResult.allowed).toBe(false);
+    expect(partnerResult.allowed).toBe(false);
+    expect(localResult.denialConditionType).toBe('timeWindow');
+    expect(partnerResult.denialConditionType).toBe('timeWindow');
+    expect(localResult.denialConditionType).toBe(partnerResult.denialConditionType);
+  });
+});
+
+// ── Stage-5 parity: AGT guard+gateway single audit entry invariant ────────────
+// (Task 12 — Scenario 2)
+//
+// WHAT THIS PROVES
+// ----------------
+// When an agent call passes the AGT in-process guard but is denied by the outer
+// gateway, exactly ONE audit entry is created — the gateway's denial record.
+// The guard's allow decision is NOT a gateway audit event; it is purely a
+// pre-screen at the in-process layer.
+//
+// Conversely, when the guard itself blocks the call (tool not in manifest), the
+// transport is never invoked and ZERO audit entries are created, because the
+// gateway enforcement engine is not reached.
+//
+// SETUP
+// -----
+// A real EnforcementEngine is wired with a `signEvidence` spy so audit entries
+// can be counted. An InProcessToolTransport delegates its handler to the engine,
+// simulating the full guard → gateway flow in-process with no HTTP dependencies.
+
+describe('Stage-5 parity: AGT guard+gateway single audit entry invariant (Task 12 — Scenario 2)', () => {
+  // Re-use the module-level `verifier` (RS256, requireKid=false) and
+  // `privateKey` / `publicKeyPem` set in the outer beforeAll.
+
+  /** Build an engine wired with a fresh signEvidence spy and signing both allow and deny. */
+  function makeAuditEngine(): { engine: EnforcementEngine; signEvidence: jest.Mock<Promise<SignedAuditEvidence>, [AuditEvidence]> } {
+    const signEvidence = makeChainedSignEvidence();
+    const mockSigner: EvidenceSigner = {
+      signEvidence,
+      verifyEvidence: jest.fn<Promise<boolean>, [SignedAuditEvidence]>(async () => true),
+    };
+    const engine = new EnforcementEngine({
+      verifier,
+      logger,
+      callCounterStore: makeCounterStore(),
+      dpop: { required: false },
+      evidenceSigner: mockSigner,
+      // Sign both allow and deny so every gateway decision produces an audit entry.
+      signedDecisions: ['allow', 'deny'],
+    });
+    return { engine, signEvidence };
+  }
+
+  /**
+   * Build a transport handler that delegates to a real EnforcementEngine.
+   * The handler converts the engine's EnforcementResult to a ToolTransportResponse,
+   * mirroring the behaviour of the gateway's `/api/v1/tools/invoke` route.
+   */
+  function makeGatewayHandler(
+    engine: EnforcementEngine,
+  ): (req: ToolTransportInvokeRequest, creds: TransportCredentials) => Promise<ToolTransportResponse> {
+    return async (req, creds) => {
+      try {
+        const result = await engine.validateAction({
+          token: creds.capabilityToken,
+          action: 'call',
+          resource: `tool://${req.tool}`,
+          context: { sessionId: 'audit-parity-session', tool: req.tool, args: req.args },
+        });
+        if (result.allowed) {
+          return { success: true, statusCode: 200, data: { result: 'ok' } };
+        }
+        return { success: false, statusCode: 403, error: 'Gateway denied', errorCode: 'CAPABILITY_DENIED' };
+      } catch {
+        return { success: false, statusCode: 401, error: 'Token rejected', errorCode: 'INVALID_TOKEN' };
+      }
+    };
+  }
+
+  /** Minimal manifest for the guard tests. */
+  function makeGuardManifest(): AgentCapabilityManifest {
+    return {
+      agentId: 'parity-guard-agent',
+      name: 'Parity Guard Test Agent',
+      version: '1.0.0',
+      requiredCapabilities: [
+        // Plain tool name (no 'tool://' prefix) — the guard matches on this
+        // directly against request.tool while the engine normalises to tool://
+        { resource: 'guard_tool', actions: ['call'] },
+      ],
+    };
+  }
+
+  // ── Assertion S2-1: guard allow + gateway deny → exactly one audit entry ────
+  it('guard allow + gateway deny: signEvidence called exactly once (the gateway denial, not the guard allow)', async () => {
+    const { engine, signEvidence } = makeAuditEngine();
+    const transport = new InProcessToolTransport(makeGatewayHandler(engine));
+
+    const guard = createAgtGuard(
+      {
+        // Token carries the tool capability but an expired timeWindow → gateway will deny.
+        tokenSupplier: () =>
+          signToken(
+            [{ resource: 'tool://guard_tool', actions: ['call'], conditions: [{ type: 'timeWindow', notAfter: '2000-01-01T00:00:00Z' }] }],
+            { authorizedBy: { userId: 'parity-user', roles: ['test'], tenantId: 'parity-tenant' } },
+          ),
+        policy: makeGuardManifest(),
+      },
+      transport,
+    );
+
+    await guard.invokeTool({ tool: 'guard_tool', args: {} });
+
+    // Guard passed (tool is in manifest); gateway denied (expired condition).
+    // The guard's allow does NOT produce an audit entry — only the gateway's
+    // denial does. signEvidence must have been called exactly once.
+    expect(signEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Assertion S2-2: the single audit entry has decision='deny' ───────────────
+  it('the sole audit entry records decision=deny (gateway denial, not the guard allow)', async () => {
+    const { engine, signEvidence } = makeAuditEngine();
+    const transport = new InProcessToolTransport(makeGatewayHandler(engine));
+
+    const guard = createAgtGuard(
+      {
+        tokenSupplier: () =>
+          signToken(
+            [{ resource: 'tool://guard_tool', actions: ['call'], conditions: [{ type: 'timeWindow', notAfter: '2000-01-01T00:00:00Z' }] }],
+            { authorizedBy: { userId: 'parity-user', roles: ['test'], tenantId: 'parity-tenant' } },
+          ),
+        policy: makeGuardManifest(),
+      },
+      transport,
+    );
+
+    const result = await guard.invokeTool({ tool: 'guard_tool', args: {} });
+
+    // Guard itself allowed (guardResult='allow'); gateway denied (success=false).
+    expect(result.guardResult).toBe('allow');
+    expect(result.success).toBe(false);
+
+    // The single audit entry must record decision='deny', not 'allow' — the
+    // guard's pass-through is invisible to the audit chain.
+    expect(signEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'deny' }),
+    );
+    // No spurious 'allow' audit entry from the guard layer.
+    const calls = signEvidence.mock.calls.map((c) => c[0].decision);
+    expect(calls).not.toContain('allow');
+  });
+
+  // ── Assertion S2-3: guard deny → zero audit entries ─────────────────────────
+  it('guard deny (out-of-scope tool): signEvidence not called — guard blocks before the gateway is reached', async () => {
+    const { engine, signEvidence } = makeAuditEngine();
+    const transport = new InProcessToolTransport(makeGatewayHandler(engine));
+
+    const guard = createAgtGuard(
+      {
+        tokenSupplier: () => signToken([]),
+        policy: makeGuardManifest(),
+      },
+      transport,
+    );
+
+    // 'unlisted_tool' is NOT in the manifest → guard blocks, transport never invoked.
+    const result = await guard.invokeTool({ tool: 'unlisted_tool', args: {} });
+
+    expect(result.guardResult).toBe('deny');
+    // The gateway engine was never reached, so no audit entry was created.
+    expect(signEvidence).not.toHaveBeenCalled();
+  });
+
+  // ── Assertion S2-4: guard allow + gateway allow → exactly one audit entry ───
+  it('guard allow + gateway allow: exactly one audit entry (guard layer does not double-count)', async () => {
+    const { engine, signEvidence } = makeAuditEngine();
+    const transport = new InProcessToolTransport(makeGatewayHandler(engine));
+
+    const guard = createAgtGuard(
+      {
+        // Token has valid capabilities and no conditions → gateway will allow.
+        tokenSupplier: () =>
+          signToken(
+            [{ resource: 'tool://guard_tool', actions: ['call'] }],
+            { authorizedBy: { userId: 'parity-user', roles: ['test'], tenantId: 'parity-tenant' } },
+          ),
+        policy: makeGuardManifest(),
+      },
+      transport,
+    );
+
+    const result = await guard.invokeTool({ tool: 'guard_tool', args: {} });
+
+    expect(result.guardResult).toBe('allow');
+    expect(result.success).toBe(true);
+
+    // Guard allowed + gateway allowed → exactly one audit entry (the allow).
+    // The guard layer must not inject a second entry.
+    expect(signEvidence).toHaveBeenCalledTimes(1);
+    expect(signEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'allow' }),
+    );
   });
 });

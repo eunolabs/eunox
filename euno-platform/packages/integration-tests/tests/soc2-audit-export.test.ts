@@ -77,6 +77,8 @@ async function buildDeps(opts: {
   ledgerBackend: InMemoryLedgerBackend;
   evidenceSigner: LedgerAuditEvidenceSigner;
   adminApiKey?: string;
+  /** SPKI PEM for the signing key — populates verificationUri in export responses. */
+  auditSigningPublicKeyPem?: string;
 }): Promise<GatewayDependencies> {
   const logger = createLogger('soc2-export-integration');
   const killSwitchManager = new DefaultKillSwitchManager(logger);
@@ -128,6 +130,9 @@ async function buildDeps(opts: {
     auditLedgerBackend: opts.ledgerBackend,
     evidenceSigner: opts.evidenceSigner,
     adminApiKey: opts.adminApiKey,
+    // Wire the public key PEM so the export endpoint populates verificationUri
+    // with the gateway's own JWKS path (/api/v1/audit/signing-keys).
+    ...(opts.auditSigningPublicKeyPem ? { auditSigningPublicKeyPem: opts.auditSigningPublicKeyPem } : {}),
   };
 
   return deps;
@@ -172,7 +177,7 @@ describe('SOC2 audit-trail export — integration', () => {
   });
 
   it('1. export endpoint returns all signed records with correct shape', async () => {
-    const deps = await buildDeps({ ledgerBackend: backend, evidenceSigner: signer, adminApiKey: ADMIN_KEY });
+    const deps = await buildDeps({ ledgerBackend: backend, evidenceSigner: signer, adminApiKey: ADMIN_KEY, auditSigningPublicKeyPem: publicKeyPem });
     const app = createApp(deps);
 
     const res = await request(app)
@@ -184,7 +189,7 @@ describe('SOC2 audit-trail export — integration', () => {
     expect(res.body.records).toHaveLength(3);
     expect(res.body.cursor).toBeNull();
     expect(res.body.hasMore).toBe(false);
-    expect(res.body.verificationUri).toBe('/.well-known/jwks.json');
+    expect(res.body.verificationUri).toBe('/api/v1/audit/signing-keys');
   });
 
   it('2. exported records can be verified offline using the signer public key', async () => {
