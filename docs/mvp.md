@@ -787,6 +787,23 @@ quarantined back in Stage 0 (`partner-issuer-sim`,
 `db-token-service`, `storage-grant-service`, the cross-chain
 anchor). That is the moment to un-quarantine, polish, and ship.
 
+> **Stage 5 — status block (current)**
+>
+> - [x] Task 0 — Stage-5 threat model gate: `docs/security/enterprise-federation-threat-model.md` produced; seven threat questions answered (partner DID compromise, DID spoofing, SCIM bearer token exposure, SCIM privilege escalation, SOC2 export endpoint exposure, DB credential blast radius, in-process guard bypass); signed off by 2 engineers + 1 security reviewer
+> - [x] Task 1 — `did:ion` productionization: `RedisCircuitBreaker` wrapping `resolveDidIon()`; `/healthz/did-ion` probe; per-DID `euno_partner_did_circuit_breaker_state` Prometheus metric; `ION_RESOLVER_URL` for self-hosted ION sidecar
+> - [x] Task 2 — Partner-DID registry: two-eyes approval workflow (`POST /admin/partner-dids/proposals` → approve); `PARTNER_DID_REGISTRY_REQUIRED=true` production default; `PARTNER_DID_REQUIRE_PIN` pin-attestation; `PARTNER_ISSUER_DISCOVERY_URL` auto-bootstrap shortcut
+> - [x] Task 3 — Partner DID federation: `partner-issuer-resolver.ts`; per-DID circuit breaker; `TRUSTED_PARTNER_DIDS` env-var bypass blocked in production by default; `partner-issuer-sim` simulator promoted to `1.0.0`
+> - [x] Task 4 — `db-token-service` un-quarantined and promoted to stable: `POST /exchange` exchanges capability token for short-lived scoped DB credentials; `DB_TOKENS_ENABLED`, `DB_TOKEN_MAX_TTL_SECONDS`, `DB_TOKEN_ALLOW_LIST_FILE`; blast-radius analysis in threat model
+> - [x] Task 5 — Cross-chain audit anchor GA: `AUDIT_LEDGER_BACKEND=per-replica-postgres`; `CrossChainAnchor` + `SignedCrossChainCommitment` to S3 Object-Lock; `AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS`; `GET /api/v1/audit/chain-proof` endpoint; HMAC rotation runbook
+> - [x] Task 6 — SOC2 audit-trail export: `GET /api/v1/audit/export` paginated OCSF evidence bundle; cursor-based pagination; `scope=soc2-cc6|soc2-cc7|all`; evidence JWT verifiable against issuer JWKS; `posture-emitter` promoted to `1.0.0`; `storage-grant-service` promoted to `1.0.0`
+> - [x] Task 7 — `storage-grant-service` un-quarantined: `POST /grant` exchanges capability token for presigned URL or SAS token; `STORAGE_GRANTS_ENABLED`, `STORAGE_GRANT_MAX_TTL_SECONDS`, `AWS_STORAGE_GRANT_ROLE_ARN`
+> - [x] Task 8 — AGT in-process guard: `createAgtGuard()` in `agent-runtime/src/agt-guard.ts`; `AgtGuard.invokeTool()` checks resource == toolName in policy manifest; `tokenSupplier` contract; `onGatewayDeny` callback; `docs/agent-sdk.md` §"AGT in-process guard" + Set-D diagrams; 63 tests in `agt-guard.test.ts` + `runtime.test.ts`
+> - [x] Task 9 — Discovery endpoint v1.0.0: `/.well-known/capability-issuer` returns `schemaVersion: "1.0.0"` with Stage-5 fields (`partnerFederation`, `scim`, `auditExport`, `capabilities`); ETag (SHA-256 of body); `Cache-Control: public, max-age=300`; `304 Not Modified` on `If-None-Match` match; `PARTNER_ISSUER_DISCOVERY_URL` gateway auto-bootstrap; `docs/openapi/capability-issuer-discovery.yaml`; 10 issuer tests + 7 gateway tests
+> - [x] Task 10 — SCIM 2.0 provisioning: `scim-store.ts` (`IScimStore` + `PostgresScimStore`); `routes/scim.ts` (12 endpoints, Bearer auth, `?filter=` support); `buildScimDdl` migration; `IssueController` SCIM role enrichment (fail-open); `ISSUER_SCIM_BEARER_TOKEN` + `ISSUER_SCIM_GROUP_ROLE_MAP` env vars; 32 tests in `tests/scim.test.ts`
+> - [x] Task 11 — On-prem deployment bundle: `k8s/helm/` per-service values schemas; `k8s/network-policies.yaml`; `k8s/pod-security-standards.yaml`; air-gapped setup documented; docker-compose `full` profile extended with Stage-5 services; `npm run gen:helm-schema` regenerates schemas from `config/schema.ts`
+> - [x] Task 12 — Stage-5 readiness instrumentation: `scripts/stage5-readiness.ts` added; single C1 signal (`confirmedEnterpriseInbound ≥ 1`) from `EUNO_TELEMETRY_API /v1/stats/stage5-gate`; exit codes 0=READY / 1=NOT READY / 2=UNKNOWN; 41 unit tests
+> - [x] Task 13 — Stage-5 consolidated self-host documentation: `docs/self-host.md` §12 "Stage 5 — Enterprise Deployment" added (service topology, partner DID federation, SCIM, cross-chain anchor, SOC2 export, DB token service, storage grant service, AGT guard, discovery v1.0.0, Helm + air-gap bundle, docker-compose additions, did:ion productionization, compliance checklists × 3, Stage-5 security checklist); `scripts/check-stage5-docs.mjs` doc-validation lint script; 13 tests in `scripts/__tests__/check-stage5-docs.test.mjs`; §2 feature matrix updated to reflect Stage-5 features as available
+
 ---
 
 ## Telemetry & gate instrumentation
