@@ -1,22 +1,22 @@
 /**
  * Unit tests for the AGT in-process guard types in `@euno/common-core`.
  *
- * These tests verify:
- *  1. The three exported types (`AgtGuardDenyReason`, `AgtGuardResult`,
- *     `AgtGuardOptions`) are present and structurally correct at runtime.
- *  2. All valid `AgtGuardDenyReason` values are the expected set.
- *  3. All valid `AgtGuardResult` values are the expected set.
- *  4. `AgtGuardOptions` satisfies its structural contract (required fields,
+ * These tests verify the compile-time type contracts and the runtime behaviour
+ * of *values constructed using those types*:
+ *  1. All valid `AgtGuardDenyReason` string literals are the expected set.
+ *  2. All valid `AgtGuardResult` string literals are the expected set.
+ *  3. `AgtGuardOptions` satisfies its structural contract (required fields,
  *     optional callbacks) so downstream consumers can build conforming
  *     objects without importing the BSL implementation.
- *  5. The `onDeny` callback receives the correct `AgtGuardDenyReason` type.
- *  6. The `onGatewayDeny` callback receives the correct `gatewayErrorCode`
- *     type.
+ *  4. The `onDeny` callback receives the correct `AgtGuardDenyReason` value.
+ *  5. The `onGatewayDeny` callback receives the correct `gatewayErrorCode`
+ *     value.
  *
- * Note: these tests exercise the *type contracts* by constructing values that
- * the TypeScript compiler has already validated.  The runtime assertions are a
- * belt-and-suspenders check for published package consumers who may depend on
- * the compiled JS shapes.
+ * Note: TypeScript types are erased at runtime; these tests operate on
+ * *values* (strings, objects, functions) whose shapes the TypeScript compiler
+ * has already validated at build time.  The Jest assertions confirm the
+ * runtime behaviour of objects and functions built in conformance with those
+ * types — not the existence of the types themselves.
  */
 
 import type {

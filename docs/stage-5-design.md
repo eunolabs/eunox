@@ -113,8 +113,14 @@ during Stage 5 polish must add a NOTICE entry per §7.8 of
 The SCIM group-to-role mapping is configured via a single JSON env var:
 
 ```
-ISSUER_SCIM_GROUP_ROLE_MAP='{"engineering":"developer","security-ops":"operator"}'
+ISSUER_SCIM_GROUP_ROLE_MAP='{"engineering":"developer","product":"reader"}'
 ```
+
+> **Note:** Mapping a SCIM group to the `operator` role (e.g.
+> `"security-ops":"operator"`) is rejected at boot unless
+> `ISSUER_SCIM_ALLOW_OPERATOR_ROLE_MAPPING=true` is also set — see §2.3.
+> The example above intentionally omits an `operator` mapping to avoid
+> operators copy-pasting an invalid default configuration.
 
 The key is the SCIM group `displayName` (case-sensitive); the value is a role key
 present in the issuer's `RoleCapabilityPolicy` (i.e. a key in
@@ -374,8 +380,9 @@ Each reviewer should verify:
 - [ ] **§5 (Seam additions):** Exactly three new types confirmed; all are Apache-2.0;
   gap-escalation procedure is documented; CI dependency gate is referenced.
 - [ ] **Threat model gate:** `docs/security/enterprise-federation-threat-model.md`
-  (Task 1) must be approved before Tasks 3, 6, or 10 merge. This RFC does not substitute
-  for the threat model.
+  (Task 1 — placeholder exists; full document to be completed in Task 1) must be
+  approved before Tasks 3, 6, or 10 merge. This RFC does not substitute for the
+  threat model.
 - [ ] **`@euno/common-core` tests green:** `npm test` in `public/packages/common`
   passes with the three new type tests.
 

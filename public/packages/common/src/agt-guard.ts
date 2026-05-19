@@ -15,7 +15,7 @@
  * boundary.  An operator MUST NOT rely on the in-process guard as a security
  * boundary; see the enterprise threat model addendum
  * (`docs/security/enterprise-federation-threat-model.md` §"In-process guard
- * bypass").
+ * bypass" — to be added in Task 1).
  *
  * Stage 5 decision cross-reference: `docs/stage-5-design.md` §5.
  * MVP anchor: `docs/mvp.md` §"Stage 5: Enterprise + Full Vision" — AGT-style
