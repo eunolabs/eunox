@@ -522,16 +522,22 @@ async function initializeServices() {
       const pool = new Pool({ connectionString: env.ISSUER_DB_URL });
       sharedDbPool = pool;
       sharedDbSchema = dbSchema;
-      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
-      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
-      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
 
-      if (env.ISSUER_DB_SCHEMA_INIT) {
+      // Run DDL migrations once whenever ISSUER_DB_URL is set and either
+      // ISSUER_DB_SCHEMA_INIT is explicitly true or SCIM provisioning is
+      // enabled (which requires the SCIM tables).  The migration runner is
+      // idempotent so running it multiple times is safe.
+      const needsMigration = env.ISSUER_DB_SCHEMA_INIT || !!env.ISSUER_SCIM_BEARER_TOKEN;
+      if (needsMigration) {
         const { IssuerMigrationRunner } = await import('./migrations');
         const migrationRunner = new IssuerMigrationRunner(pool, dbSchema);
         await migrationRunner.migrate();
         logger.info('Issuer DB schema migration complete', { schema: dbSchema });
       }
+
+      const { PostgresManifestTemplateStore } = await import('./manifest-template-store');
+      templateStore = new PostgresManifestTemplateStore(pool, dbSchema);
+      logger.info('Manifest template store initialised (Postgres)', { schema: dbSchema });
 
       // Mount the admin templates router into the pre-registered forwarding router.
       // Using adminTemplatesForwarder (registered before the error handler) ensures
@@ -580,7 +586,7 @@ async function initializeServices() {
     // When ISSUER_SCIM_BEARER_TOKEN is set, mount the SCIM v2 endpoints and
     // wire the SCIM store into the issuance pipeline for group-based role
     // enrichment. Requires ISSUER_DB_URL (reuses the shared Postgres pool so
-    // no second pool is created).
+    // no second pool is created; DDL migration is handled above).
     let scimStore: import('./scim-store').IScimStore | undefined;
     let scimGroupRoleMap: Record<string, string> | undefined;
     if (env.ISSUER_SCIM_BEARER_TOKEN) {
@@ -590,34 +596,10 @@ async function initializeServices() {
             'SCIM provisioning requires a Postgres database. SCIM endpoints are DISABLED.',
         );
       } else {
-        // Reuse the pool created above; if ISSUER_DB_URL is set but the template
-        // store branch has not run yet (shouldn't happen — both check ISSUER_DB_URL),
-        // create a new pool as a safety fallback.
-        const dbSchema = sharedDbSchema ?? (env.ISSUER_DB_SCHEMA ?? 'euno_issuer');
-        let scimPool: import('pg').Pool;
-        if (sharedDbPool) {
-          scimPool = sharedDbPool;
-        } else {
-          const { Pool: PgPool } = await import('pg');
-          scimPool = new PgPool({ connectionString: env.ISSUER_DB_URL });
-        }
-
-        // If schema-init is enabled, the migration was already run above.
-        // If SCIM is enabled WITHOUT schema-init (upgrade path), run the SCIM
-        // DDL migration here so SCIM tables exist even when the templateStore
-        // branch skipped the migration.
-        if (!env.ISSUER_DB_SCHEMA_INIT) {
-          try {
-            const { IssuerMigrationRunner } = await import('./migrations');
-            const migrationRunner = new IssuerMigrationRunner(scimPool, dbSchema);
-            await migrationRunner.migrate();
-            logger.info('Issuer DB schema migration complete (SCIM path)', { schema: dbSchema });
-          } catch (migErr) {
-            logger.error('SCIM DDL migration failed — SCIM endpoints may error if tables are missing', {
-              error: migErr instanceof Error ? migErr.message : String(migErr),
-            });
-          }
-        }
+        // sharedDbPool is guaranteed non-null here because env.ISSUER_DB_URL is set
+        // and the templateStore block above runs first.
+        const scimPool = sharedDbPool!;
+        const dbSchema = sharedDbSchema!;
 
         const { PostgresScimStore } = await import('./scim-store');
         scimStore = new PostgresScimStore(scimPool, dbSchema);

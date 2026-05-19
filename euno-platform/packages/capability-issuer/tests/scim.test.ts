@@ -13,7 +13,7 @@
  *   - Issuance integration: SCIM roles merged at handleFromUserContext (3 tests)
  *   - Issuance integration: SCIM failure is fail-open (1 test)
  *
- * 34 tests total (≥ 25 spec requirement).
+ * 32 tests total (≥ 25 spec requirement).
  *
  * The tests use an in-memory IScimStore implementation so no real Postgres
  * server is required. The HTTP-layer tests use supertest with a live Express

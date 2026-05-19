@@ -543,6 +543,18 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
         }
       }
 
+      // Apply displayName rename or membership replace — fetch current group once
+      // for the displayName fallback to avoid an extra round-trip in the common case.
+      let currentGroup: Awaited<ReturnType<typeof store.getGroup>> | undefined;
+      const needCurrentGroup = replaceAllMembers !== undefined && !newDisplayName;
+      if (needCurrentGroup) {
+        currentGroup = await store.getGroup(req.params['id']!, opts.tenantId);
+        if (!currentGroup) {
+          res.status(404).json(scimError(404, `Group ${req.params['id']} not found`));
+          return;
+        }
+      }
+
       // Apply displayName rename if present.
       if (newDisplayName) {
         await store.replaceGroup(
@@ -554,10 +566,10 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
       let group;
       if (replaceAllMembers !== undefined) {
         // Replace the full membership set atomically.
+        const displayName = newDisplayName ?? currentGroup?.displayName ?? '';
         group = await store.replaceGroup(
           req.params['id']!,
-          // Preserve display name (fetch happens inside replaceGroup).
-          { displayName: newDisplayName ?? (await store.getGroup(req.params['id']!, opts.tenantId))?.displayName ?? '', tenantId: opts.tenantId },
+          { displayName, tenantId: opts.tenantId },
           replaceAllMembers,
         );
         logger.info('SCIM: group membership replaced', {
