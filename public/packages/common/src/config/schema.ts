@@ -1511,10 +1511,11 @@ export const GatewayConfigSchema = z
       default: 60000,
       min: 5000,
       description:
-        'How often (ms) the CrossChainAnchor queries all replica tips and emits a ' +
-        'SignedCrossChainCommitment. Active when ' +
-        'AUDIT_LEDGER_BACKEND=per-replica-postgres and ENABLE_CROSS_CHAIN_ANCHOR=true ' +
-        '(or when a custom crossChainAnchor is injected via InjectableBootstrapDeps). ' +
+        'How often (ms) the auto-started CrossChainAnchor queries all replica tips and emits a ' +
+        'SignedCrossChainCommitment. Only active when ' +
+        'AUDIT_LEDGER_BACKEND=per-replica-postgres and ENABLE_CROSS_CHAIN_ANCHOR=true. ' +
+        'When a custom crossChainAnchor is injected via InjectableBootstrapDeps its interval ' +
+        'is set at construction time by the caller — this env var is not applied to injected anchors. ' +
         'Default 60000 (1 minute). Minimum 5000 ms. ' +
         'Lower values provide more frequent cross-replica tamper-evidence checkpoints ' +
         'at the cost of additional Postgres queries. ' +

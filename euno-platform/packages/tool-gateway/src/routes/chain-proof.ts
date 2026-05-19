@@ -139,10 +139,18 @@ export function createChainProofRouter(opts: ChainProofRouterOptions): Router {
       if (adminApiKey) {
         const rawHeader = req.headers['x-admin-api-key'];
         const providedKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-        const isValid =
-          typeof providedKey === 'string' &&
-          providedKey.length === adminApiKey.length &&
-          crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminApiKey));
+        // Encode both values as UTF-8 before comparing so that a same
+        // character-length but multi-byte Unicode header does not cause
+        // timingSafeEqual to throw a RangeError (it requires equal-length
+        // buffers).  If byte lengths differ the keys cannot match, so we
+        // short-circuit to false without invoking timingSafeEqual.
+        const isValid = (() => {
+          if (typeof providedKey !== 'string') return false;
+          const a = Buffer.from(providedKey, 'utf8');
+          const b = Buffer.from(adminApiKey, 'utf8');
+          if (a.byteLength !== b.byteLength) return false;
+          return crypto.timingSafeEqual(a, b);
+        })();
 
         if (!isValid) {
           logger.warn('Unauthorized chain-proof access attempt', {

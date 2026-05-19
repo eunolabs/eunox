@@ -16,7 +16,24 @@
  * 12. Route: chainHead is null when store is empty.
  * 13. Route: chainHead updates after each commitment.
  * 14. audit-module: auto-starts anchor and populates store when ENABLE_CROSS_CHAIN_ANCHOR=true.
+ * 15. Route: timingSafeEqual handles multi-byte Unicode header without throwing.
+ * 16. buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true creates store and starts anchor.
  */
+
+// Top-level mock for pg Pool — allows buildAuditModule tests to exercise
+// the per-replica-postgres branch without a real database connection.
+// Jest hoists this call before any imports, so require('pg') inside
+// buildAuditModule's function body returns the mock instead of the real driver.
+jest.mock('pg', () => ({
+  Pool: jest.fn(() => ({
+    connect: jest.fn().mockResolvedValue({
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    }),
+    end: jest.fn().mockResolvedValue(undefined),
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+  })),
+}));
 
 import request from 'supertest';
 import express from 'express';
@@ -43,6 +60,7 @@ import {
   CrossChainCommitmentStore,
   createChainProofRouter,
 } from '../src/routes/chain-proof';
+import { buildAuditModule } from '../src/audit-module';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -427,5 +445,156 @@ describe('CrossChainAnchor onCommitment wiring (unit)', () => {
 
     // Anchor object is unused; suppress lint warning.
     void anchor;
+  });
+});
+
+
+
+// ── timingSafeEqual multi-byte buffer test ────────────────────────────────────
+
+describe('chain-proof route: timingSafeEqual safety', () => {
+  test('15. rejects same-char-count but different-byte-count key with 401, not RangeError', () => {
+    // HTTP headers are ASCII-only, so we bypass the HTTP layer and invoke the
+    // Express route handler directly via a synthetic req/res.  This exercises
+    // the buffer byte-length guard that was added to the timingSafeEqual call.
+    //
+    // The concern: Buffer.from('\u00e9'.repeat(N)) has 2×N bytes while
+    // Buffer.from('a'.repeat(N)) has N bytes — if the code compared .length
+    // (character count) before calling timingSafeEqual it would crash with
+    // RangeError because timingSafeEqual requires equal-length buffers.
+
+    const ADMIN_KEY = 'ascii-admin-key'; // 15 ASCII bytes
+
+    let capturedStatus = 0;
+    const mockReq = {
+      headers: {
+        // '\u00e9' (é) is 2 UTF-8 bytes — 15 of these = 30 bytes vs 15 bytes
+        'x-admin-api-key': '\u00e9'.repeat(15),
+      },
+      ip: '127.0.0.1',
+      path: '/api/v1/audit/chain-proof',
+      query: {},
+    } as unknown as import('express').Request;
+
+    const mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as import('express').Response;
+
+    const mockNext = jest.fn();
+
+    const store = new CrossChainCommitmentStore();
+    const router = createChainProofRouter({
+      commitmentStore: store,
+      adminApiKey: ADMIN_KEY,
+      logger: createLogger('test'),
+    }) as import('express').Router & {
+      stack: Array<{ route?: { stack: Array<{ handle: (req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => void }> } }>;
+    };
+
+    const layer = router.stack.find((l) => l.route?.stack?.[0]?.handle != null);
+    const handler = layer?.route?.stack?.[0]?.handle;
+    expect(handler).toBeDefined();
+
+    // Must not throw — previously timingSafeEqual would throw RangeError.
+    expect(() => handler!(mockReq, mockRes, mockNext)).not.toThrow();
+    const statusCall = (mockRes.status as jest.Mock).mock.calls[0];
+    capturedStatus = statusCall?.[0] ?? 0;
+    expect(capturedStatus).toBe(401);
+    expect(mockNext).not.toHaveBeenCalled();
+  });
+});
+
+// ── buildAuditModule ENABLE_CROSS_CHAIN_ANCHOR focused test ──────────────────
+
+describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
+  test('17. creates crossChainCommitmentStore and calls start() on the anchor', async () => {
+    // Spy on CrossChainAnchor.prototype.start to verify it is called without
+    // letting a real timer fire (and without needing getReplicaTips to succeed).
+    const startSpy = jest.spyOn(CrossChainAnchor.prototype, 'start').mockImplementation(() => {
+      // no-op: prevents setInterval from being created
+    });
+
+    // Static RSA private key — avoids key-generation round-trip in every run.
+    const TEST_RSA_PRIVATE_KEY_PEM = [
+      '-----BEGIN PRIVATE KEY-----',
+      'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRbcqcm4RSzpZE',
+      'LhFkcBG1JCwd08CEuijtZEv/etyIAv5lQtFui+Tn5JUaCqFYCyog6ISPDLAXWU+q',
+      '5rtgZ9T/6glKuVjt6HESV8uyTYhLgjXqurreF1NIzoYY99Bf/ErT183tbXeDUevS',
+      'A76zzg5lDIVYXtuJrk8nPCe/lvCSejTG4E9lTU44uiTXGDeiv9tf2jDKHKriwKkW',
+      'AQvfxObXMNWGHg6LR85QTc6QhBdx7+7HrJX7+5rDsRj+pCxeCOmAxVbJyNJIE+wu',
+      'GaLEjJ3g+1lp7mReC3WrcbDWXwlw1N7TG1/uvCz5/4fnra5pqyAfL8jA3CaHZW08',
+      'o9PiAfnbAgMBAAECggEAFKAkgnCWDvkoxl5dmMfs4wAl16HJe1Q8a2rJp+AgzejV',
+      'dBQgHZRusIAysLZS6r3untXgvbnCxxT4ym1zTs7Qc+6ZRxqhemB4mkLka2iOojLt',
+      '+wQPw7boLiUdpLCPl5rHHA4j29QmL/RFmgwY7GnBkI2ljdfU6CKA1w4zjvsqfy4/',
+      'cTFoQjqTTdiQXcVrKpi8de8cpLvq4b3EE+20wjT3bZkrhyxFBrKNBsX8rYcXedCm',
+      'GXNtSQ/6B6LxCR9Rg9Ob4YLsuPKS8/xoBrNbHX1/y2qRcEvrqU8blanYc038xayB',
+      'rLdODP+WUd31tTmSSBeLfEdPLG7PZE1INgZ1TvKi0QKBgQDHzNVWfSdG9cwlKyZi',
+      'Df/Z/8zqBsB+vUN7X3nhvjFa+320ywHrabvj3Vp51nHhEScOQMe9MdClxwNZlqd5',
+      '1Fgh3CGU9v0mfDXeO4CpPDwSWCCPKQNlL8F5fOGTrRmYjPnmWoYgNCXNs5euJKd5',
+      'Q6J7R/Ei/nMy1gxqbxboxoc2ywKBgQC6Vc3FMn1N1fsk7nzn2tj5sgd3rFCS8Xng',
+      '5HqYeN13QBHlo42bBLsP1nlMJ/5meny+XzNI+VJtTnh4xcNYoa+Aqw7J7c5qDTAD',
+      '3UBDCHTBU6kj3HiNDtxNIB+jPwbV4f9tRXOVxX6w3rhSfhLp3wxu9G09ssjp6YY9',
+      'THShedTXMQKBgB9nfbzbbRoFNnI9JwpQgv+D6nR6XTVOkFXK+wBVgbJ4Rxjss7+J',
+      '3gOB3l+6KiojJQ1jd0Gwm8gC0O769BX9H2ErFYgxjjbHXTwyBBYVpqeHfI6j9qmn',
+      '6PQsgdRRZ+2HcxwW7HARYkPDz7qKflxcGiTgePF0Jy09YbQ1A9fQpJ4jAoGAVEuc',
+      '2ykMJro2824wc3M91TgEyM7bZJ55VJQIIhILnncNoaVr2kU5muCb3yf4nsOqyzSm',
+      'Ls0bzPdC6OAOj3oVu0+nURKT3sY4gocFG04oA42lZuPGZYnjf8CYj3Fj1j53Hyfc',
+      'MlU2Cy22lRsT01lkdo19HfxTh/5tDC4aVTKYZwECgYEAjtyulM8jacJ/FpJjUGjw',
+      '5MtavO+lyrD1kxQVhzT93Oan8tMQKfBksXHlUah7Q2Oi0KV34eRKcHdNzksE4cE+',
+      'KZQp59vlDT9PCE87yvOu6dVxznU2m/U36egVbZ6MDAEMDO49QBGT0LuSfUWsdU18',
+      '2t71DZdT4IU46NRr4GY/NAU=',
+      '-----END PRIVATE KEY-----',
+    ].join('\n');
+
+    const logger = createLogger('build-audit-module-test');
+    const metricsRegistry = createMetricsRegistry({
+      serviceName: `build-audit-module-test-${Date.now()}`,
+      collectDefaults: false,
+    });
+
+    const validated = {
+      ENABLE_CRYPTOGRAPHIC_AUDIT: true,
+      AUDIT_LEDGER_BACKEND: 'per-replica-postgres',
+      AUDIT_LEDGER_PG_URL: 'postgresql://mock:mock@localhost:5432/mock',
+      AUDIT_LEDGER_HMAC_SECRET: 'test-hmac-secret-at-least-32-bytes-long!!',
+      ENABLE_CROSS_CHAIN_ANCHOR: true,
+      AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS: 60000,
+      AUDIT_PIPELINE_ENABLED: false,
+      AUDIT_PIPELINE_MAX_SIZE: 1000,
+      AUDIT_PIPELINE_WORKERS: 1,
+      AUDIT_PIPELINE_MAX_BATCH: 100,
+      AUDIT_PIPELINE_MAX_AGE_MS: 5000,
+      AUDIT_PIPELINE_DRAIN_TIMEOUT_MS: 5000,
+      NODE_ENV: 'test',
+    } as unknown as import('@euno/common').GatewayConfig;
+
+    const result = await buildAuditModule({
+      validated,
+      env: { EVIDENCE_SIGNING_KEY_PEM: TEST_RSA_PRIVATE_KEY_PEM },
+      logger,
+      config: {
+        name: 'tool-gateway',
+        port: 0,
+        environment: 'test' as ServiceConfig['environment'],
+        enableCryptographicAudit: true,
+        policyVersion: '0.1.0',
+      },
+      metricsRegistry,
+      replicaId: 'test-replica',
+    });
+
+    // Key assertions: anchor and store are both present.
+    expect(result.crossChainAnchor).toBeDefined();
+    expect(result.crossChainCommitmentStore).toBeDefined();
+    expect(result.crossChainCommitmentStore).toBeInstanceOf(CrossChainCommitmentStore);
+
+    // start() must have been called — this is the core of what the reviewer asked for.
+    expect(startSpy).toHaveBeenCalledTimes(1);
+
+    startSpy.mockRestore();
+    if (result.ledgerPgPool) {
+      await result.ledgerPgPool.end();
+    }
   });
 });
