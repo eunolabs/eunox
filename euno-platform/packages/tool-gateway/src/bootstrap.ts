@@ -53,6 +53,7 @@ import {
 import { buildDpopModule } from './dpop-module';
 import { buildRevocationModule } from './revocation-module';
 import { buildAuditModule } from './audit-module';
+import { CrossChainCommitmentStore } from './routes/chain-proof';
 import {
   GatewayTelemetryCollector,
   createGatewayTelemetryFromEnv,
@@ -123,11 +124,18 @@ export interface GatewayDependencies {
   ledgerPgPool?: import('@euno/common').PgPool;
   /**
    * Cross-chain anchor for the per-replica ledger backend.  Present when
-   * `AUDIT_LEDGER_BACKEND=per-replica-postgres` and
-   * `AUDIT_LEDGER_S3_BUCKET` is configured.  The entrypoint is responsible
-   * for calling `crossChainAnchor.stop()` during graceful shutdown.
+   * `AUDIT_LEDGER_BACKEND=per-replica-postgres` and either
+   * `ENABLE_CROSS_CHAIN_ANCHOR=true` or an anchor was injected via
+   * `InjectableBootstrapDeps`.  The entrypoint is responsible for calling
+   * `crossChainAnchor.stop()` during graceful shutdown.
    */
   crossChainAnchor?: CrossChainAnchor;
+  /**
+   * In-memory ring buffer of `SignedCrossChainCommitment` records emitted by
+   * the cross-chain anchor.  Present when `crossChainAnchor` is set.
+   * Served by `GET /api/v1/audit/chain-proof` (admin-key authenticated).
+   */
+  crossChainCommitmentStore?: CrossChainCommitmentStore;
   /**
    * The ledger backend exposed by the audit module. Present when
    * `AUDIT_LEDGER_BACKEND` is set to a queryable backend (`postgres`,
@@ -1142,6 +1150,7 @@ export async function initializeServices(
     auditPipelineDrainTimeoutMs,
     ledgerPgPool,
     crossChainAnchor,
+    crossChainCommitmentStore,
     auditLedgerBackend,
     auditQueryStore,
   } = await buildAuditModule({
@@ -1283,6 +1292,7 @@ export async function initializeServices(
     dpopReplayStore,
     ...(ledgerPgPool ? { ledgerPgPool } : {}),
     ...(crossChainAnchor ? { crossChainAnchor } : {}),
+    ...(crossChainCommitmentStore ? { crossChainCommitmentStore } : {}),
     ...(auditLedgerBackend ? { auditLedgerBackend } : {}),
     ...(auditQueryStore ? { auditQueryStore } : {}),
     adminApiKey,

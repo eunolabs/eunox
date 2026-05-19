@@ -32,6 +32,7 @@ import {
   createOcsfWinstonTransport,
   createSoftwareEvidenceSignerFromEnv,
   CrossChainAnchor,
+  CrossChainAnchorOptions,
   EvidenceSigner,
   GatewayConfig,
   Gauge,
@@ -48,7 +49,9 @@ import {
   signedEvidenceToOcsf,
   SignedAuditEvidence,
   SignedBatchCommitment,
+  SignedCrossChainCommitment,
 } from '@euno/common';
+import { CrossChainCommitmentStore } from './routes/chain-proof';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -141,10 +144,17 @@ export interface AuditModuleResult {
   ledgerPgPool?: import('@euno/common').PgPool;
   /**
    * Cross-chain anchor. Present when injected via `crossChainAnchorOverride`
-   * for per-replica-postgres mode.
+   * or auto-created when `ENABLE_CROSS_CHAIN_ANCHOR=true` with
+   * `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
    * Caller MUST call `crossChainAnchor.stop()` on graceful shutdown.
    */
   crossChainAnchor?: CrossChainAnchor;
+  /**
+   * In-memory ring buffer of `SignedCrossChainCommitment` records emitted by
+   * the cross-chain anchor.  Present when `crossChainAnchor` is set.
+   * Served by the `GET /api/v1/audit/chain-proof` endpoint.
+   */
+  crossChainCommitmentStore?: CrossChainCommitmentStore;
   /**
    * The ledger backend used by the evidence signer. Present when a ledger
    * backend is configured (`AUDIT_LEDGER_BACKEND` is set and not `'none'`).
@@ -214,11 +224,13 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     AUDIT_LEDGER_ACL_ENDPOINT?: string;
     AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number;
     AUDIT_ANCHOR_URL?: string;
+    ENABLE_CROSS_CHAIN_ANCHOR?: boolean;
   };
   const dynConfig = validated as typeof validated & DynamicConfig;
   let evidenceSigner: EvidenceSigner | undefined;
   let ledgerPgPool: import('@euno/common').PgPool | undefined;
   let crossChainAnchor: CrossChainAnchor | undefined;
+  let crossChainCommitmentStore: CrossChainCommitmentStore | undefined;
   let auditBatchSigner: AuditBatchSigner | undefined;
   let auditLedgerBackend: LedgerBackend | undefined;
   let auditQueryStore: AuditQueryStore | undefined;
@@ -411,15 +423,68 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           );
         }
 
+        const crossChainIntervalMs = dynConfig.AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
+        const enableCrossChain = dynConfig.ENABLE_CROSS_CHAIN_ANCHOR ?? false;
+
         if (crossChainAnchorOverride) {
+          // Externally-injected anchor takes precedence over auto-start.
+          // The caller is responsible for calling start() before passing it in
+          // and for wiring any onCommitment callbacks.
           crossChainAnchor = crossChainAnchorOverride;
+        } else if (enableCrossChain) {
+          // Task 5 (Stage 5): auto-start when ENABLE_CROSS_CHAIN_ANCHOR=true.
+          // Re-use the same cryptoSigner as the per-record evidence signer so
+          // operators only need one key pair for both individual records and
+          // cross-chain commitments.
+
+          // Create the in-memory commitment store before constructing the anchor
+          // so we can pass onCommitment as a constructor option (clean, no
+          // post-construction monkey-patching of private fields).
+          crossChainCommitmentStore = new CrossChainCommitmentStore();
+          const store = crossChainCommitmentStore;
+
+          // Track the last-commitment timestamp for the anchor lag gauge.
+          // Declared here so the gauge's collect() closure can read it.
+          let lastCommitmentTs = 0;
+
+          const anchorOpts: CrossChainAnchorOptions = {
+            intervalMs: crossChainIntervalMs,
+            coordinatorId: replicaId,
+            cryptoSigner: activeSigner.getCryptoSigner(),
+            onError: (err: Error) =>
+              logger.error('CrossChainAnchor error', { error: err.message }),
+            onCommitment: (c: SignedCrossChainCommitment) => {
+              store.add(c);
+              lastCommitmentTs = Date.now();
+            },
+          };
+          crossChainAnchor = new CrossChainAnchor(perReplicaBackend, anchorOpts);
+          crossChainAnchor.start();
+          logger.info('CrossChainAnchor auto-started (ENABLE_CROSS_CHAIN_ANCHOR=true)', {
+            intervalMs: crossChainIntervalMs,
+            coordinatorId: replicaId,
+          });
+
+          // Anchor lag gauge — updated lazily via collect() so no timer is needed.
+          new Gauge({
+            name: 'euno_cross_chain_anchor_lag_seconds',
+            help:
+              'Seconds elapsed since the last successful CrossChainAnchor commitment. ' +
+              'Alert when this value exceeds 2 × AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS / 1000. ' +
+              'A sustained high value indicates the Postgres replica-tips query is failing. ' +
+              'Zero until the first commitment is emitted.',
+            registers: [metricsRegistry],
+            collect() {
+              this.set(lastCommitmentTs === 0 ? 0 : (Date.now() - lastCommitmentTs) / 1000);
+            },
+          });
         }
 
-        const crossChainIntervalMs = dynConfig.AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS ?? 60000;
         logger.info('Audit ledger backend: per-replica-postgres', {
           table: table ?? 'euno_audit_ledger_v2',
           replicaId,
           crossChainEnabled: crossChainAnchor !== undefined,
+          crossChainAutoStarted: enableCrossChain && !crossChainAnchorOverride,
           crossChainIntervalMs,
         });
       } else {
@@ -667,6 +732,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     auditPipelineDrainTimeoutMs: validated.AUDIT_PIPELINE_DRAIN_TIMEOUT_MS,
     ledgerPgPool,
     crossChainAnchor,
+    crossChainCommitmentStore,
     auditLedgerBackend,
     auditQueryStore,
   };

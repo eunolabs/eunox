@@ -1496,16 +1496,28 @@ export const GatewayConfigSchema = z
     ),
 
     // Per-replica backend config (only used when AUDIT_LEDGER_BACKEND=per-replica-postgres).
+    ENABLE_CROSS_CHAIN_ANCHOR: envBoolean({
+      default: false,
+      description:
+        'When true, the gateway automatically starts a CrossChainAnchor on startup when ' +
+        'AUDIT_LEDGER_BACKEND=per-replica-postgres. The anchor periodically snapshots all ' +
+        'known replica chain tips into a signed CrossChainCommitment that provides a ' +
+        'tamper-evident external witness across all replicas. Default false. ' +
+        'Commitments are stored in-memory and served via GET /api/v1/audit/chain-proof ' +
+        '(admin-key authenticated). Set AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS to control ' +
+        'commitment frequency.',
+    }),
     AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS: envPositiveInt({
       default: 60000,
       min: 5000,
       description:
         'How often (ms) the CrossChainAnchor queries all replica tips and emits a ' +
-        'SignedCrossChainCommitment to S3 Object-Lock. Only active when ' +
-        'AUDIT_LEDGER_BACKEND=per-replica-postgres and AUDIT_LEDGER_S3_BUCKET is set. ' +
+        'SignedCrossChainCommitment. Active when ' +
+        'AUDIT_LEDGER_BACKEND=per-replica-postgres and ENABLE_CROSS_CHAIN_ANCHOR=true ' +
+        '(or when a custom crossChainAnchor is injected via InjectableBootstrapDeps). ' +
         'Default 60000 (1 minute). Minimum 5000 ms. ' +
         'Lower values provide more frequent cross-replica tamper-evidence checkpoints ' +
-        'at the cost of additional Postgres queries and S3 PUT requests. ' +
+        'at the cost of additional Postgres queries. ' +
         'Set to a large value (e.g. 3600000) in high-write deployments to control costs.',
     }),
 

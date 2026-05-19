@@ -29,6 +29,7 @@ import { resolveDID } from '@euno/capability-issuer/adapters';
 
 import { createAdminRouter } from './admin-api';
 import { createAuditRouter } from './routes/audit';
+import { createChainProofRouter } from './routes/chain-proof';
 import { createHealthRouter } from './routes/health';
 import { createProxyRouter } from './routes/proxy';
 import { createValidateRouter } from './routes/validate';
@@ -167,6 +168,20 @@ export function createApp(deps: GatewayDependencies): Express {
       createAuditRouter({
         queryStore: auditQueryStore,
         verifier: deps.verifier,
+        logger,
+      }),
+    );
+  }
+
+  // Chain-proof endpoint (Task 5, Stage 5) — only mounted when the cross-chain
+  // anchor is configured (ENABLE_CROSS_CHAIN_ANCHOR=true with
+  // AUDIT_LEDGER_BACKEND=per-replica-postgres, or an anchor injected via
+  // InjectableBootstrapDeps). When absent, callers receive 404.
+  if (deps.crossChainCommitmentStore) {
+    app.use(
+      createChainProofRouter({
+        commitmentStore: deps.crossChainCommitmentStore,
+        adminApiKey: deps.adminApiKey,
         logger,
       }),
     );
