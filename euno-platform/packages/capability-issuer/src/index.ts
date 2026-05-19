@@ -568,6 +568,52 @@ async function initializeServices() {
       }
     }
 
+    // Task 10 (Stage 5): SCIM 2.0 provisioning.
+    // When ISSUER_SCIM_BEARER_TOKEN is set, mount the SCIM v2 endpoints and
+    // wire the SCIM store into the issuance pipeline for group-based role
+    // enrichment. Requires ISSUER_DB_URL (shares the same Postgres pool).
+    let scimStore: import('./scim-store').IScimStore | undefined;
+    let scimGroupRoleMap: Record<string, string> | undefined;
+    if (env.ISSUER_SCIM_BEARER_TOKEN) {
+      if (!env.ISSUER_DB_URL) {
+        logger.warn(
+          'ISSUER_SCIM_BEARER_TOKEN is set but ISSUER_DB_URL is not. ' +
+            'SCIM provisioning requires a Postgres database. SCIM endpoints are DISABLED.',
+        );
+      } else {
+        const dbSchema = env.ISSUER_DB_SCHEMA ?? 'euno_issuer';
+        const { Pool: PgPool } = await import('pg');
+        const scimPool = new PgPool({ connectionString: env.ISSUER_DB_URL });
+        const { PostgresScimStore } = await import('./scim-store');
+        scimStore = new PostgresScimStore(scimPool, dbSchema);
+        logger.info('SCIM store initialised (Postgres)', { schema: dbSchema });
+
+        // Parse SCIM group → role mapping from env var (JSON string).
+        if (env.ISSUER_SCIM_GROUP_ROLE_MAP) {
+          try {
+            scimGroupRoleMap = JSON.parse(env.ISSUER_SCIM_GROUP_ROLE_MAP) as Record<string, string>;
+            logger.info('SCIM group → role map loaded', {
+              groupCount: Object.keys(scimGroupRoleMap).length,
+            });
+          } catch (parseErr) {
+            logger.error('Failed to parse ISSUER_SCIM_GROUP_ROLE_MAP — SCIM role enrichment disabled', {
+              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+            });
+          }
+        }
+
+        // Mount the SCIM v2 router into the pre-registered forwarding router.
+        const { createScimRouter } = await import('./routes/scim');
+        const scimRouter = createScimRouter({
+          store: scimStore,
+          bearerToken: env.ISSUER_SCIM_BEARER_TOKEN,
+          logger,
+        });
+        scimForwarder.use('/', scimRouter);
+        logger.info('SCIM router mounted at /scim/v2');
+      }
+    }
+
     // Prometheus counter for side-credential broker errors in best-effort mode.
     const sideCredentialErrorCounter = new Counter({
       name: 'euno_issuer_side_credential_errors_total',
@@ -722,6 +768,9 @@ async function initializeServices() {
         },
         // Task 6: inject manifest template store when configured.
         ...(templateStore ? { templateStore } : {}),
+        // Task 10: inject SCIM store + group→role map when configured.
+        ...(scimStore ? { scimStore } : {}),
+        ...(scimGroupRoleMap ? { scimGroupRoleMap } : {}),
       }
     );
 
@@ -1566,6 +1615,12 @@ app.use('/api/v1/admin/templates', adminTemplatesForwarder);
 // Serves server-rendered HTML pages at /admin/*.
 const adminUiForwarder = express.Router({ mergeParams: true });
 app.use('/admin', adminUiForwarder);
+
+// SCIM 2.0 forwarding router (Task 10 — Stage 5).
+// Populated lazily when both ISSUER_SCIM_BEARER_TOKEN and ISSUER_DB_URL are set.
+// Until then, requests to /scim/v2/* return 404 via the catch-all handler.
+const scimForwarder = express.Router({ mergeParams: true });
+app.use('/scim/v2', scimForwarder);
 
 // Error handling middleware
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {

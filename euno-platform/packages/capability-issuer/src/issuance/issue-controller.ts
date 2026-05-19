@@ -52,6 +52,7 @@ import {
   validateConsent,
 } from './index';
 import type { ManifestTemplateStore } from '../manifest-template-store';
+import type { IScimStore } from '../scim-store';
 
 /**
  * Per-request enforcement context supplied by the HTTP layer.
@@ -169,6 +170,38 @@ export interface IssueControllerOptions {
    * the per-deployment role-capability policy (backward-compatible default).
    */
   templateStore?: ManifestTemplateStore;
+  /**
+   * Optional SCIM store (Task 10 — Stage 5).
+   *
+   * When set, {@link handleFromUserContext} queries the SCIM user record
+   * for the caller's group memberships and merges the mapped roles into
+   * the IdP-provided role set. SCIM roles take precedence on conflict:
+   * the merged set is the union of IdP roles + SCIM-derived roles with
+   * duplicates removed (SCIM groups are the authoritative authorization
+   * model; IdP claims are the primary authentication signal).
+   *
+   * When unset (the default) the issuance pipeline uses only IdP-provided
+   * roles — backward-compatible behavior unchanged.
+   *
+   * On SCIM lookup failure the pipeline logs a warning and falls through
+   * to IdP-only roles (fail-open for SCIM, which is an enrichment layer,
+   * not the primary auth mechanism).
+   */
+  scimStore?: IScimStore;
+  /**
+   * Optional SCIM group → role mapping (Task 10 — Stage 5).
+   *
+   * A plain object mapping SCIM group `displayName` to an issuer role key.
+   * Example: `{ "SalesTeam": "sales", "EngineeringTeam": "engineer" }`.
+   *
+   * Only groups present in this map are merged into the role set;
+   * unmapped groups are silently ignored. Required when `scimStore` is set
+   * and role enrichment is desired — an empty map effectively disables
+   * role merging.
+   *
+   * Loaded from `ISSUER_SCIM_GROUP_ROLE_MAP` (JSON env var or file).
+   */
+  scimGroupRoleMap?: Record<string, string>;
 }
 
 /**
@@ -191,6 +224,8 @@ export class IssueController {
   private readonly auditLogger: Logger;
   private readonly logger: Logger;
   private readonly templateStore: ManifestTemplateStore | undefined;
+  private readonly scimStore: IScimStore | undefined;
+  private readonly scimGroupRoleMap: Record<string, string>;
 
   constructor(pipeline: MintingPipeline, opts: IssueControllerOptions) {
     this.pipeline = pipeline;
@@ -206,6 +241,8 @@ export class IssueController {
     this.auditLogger = opts.auditLogger;
     this.logger = opts.logger;
     this.templateStore = opts.templateStore;
+    this.scimStore = opts.scimStore;
+    this.scimGroupRoleMap = opts.scimGroupRoleMap ?? {};
   }
 
   // ── Hot-reload ────────────────────────────────────────────────────────────
@@ -551,6 +588,66 @@ export class IssueController {
         activePolicy,
         userContext.tenantId,
       );
+
+      // Step 2a: SCIM group role enrichment (Task 10 — Stage 5).
+      // When a SCIM store is configured, query the caller's group memberships
+      // and merge the mapped roles into the IdP-provided role set.
+      // SCIM groups are the authoritative authorization model; IdP claims are
+      // the primary authentication signal — roles from both sources are unioned
+      // and SCIM-derived roles appear last (highest precedence for deduplication
+      // in case the policy treats role order as significant).
+      // On any SCIM lookup failure we log a warning and continue with the
+      // IdP-only role set (fail-open: SCIM is an enrichment layer, not the
+      // primary auth mechanism).
+      if (this.scimStore && userContext.userId) {
+        try {
+          const scimUser = await this.scimStore.findUserByExternalIdOrUserName(
+            userContext.userId,
+            userContext.userId,
+            userContext.tenantId,
+          );
+          if (scimUser) {
+            const groupNames = await this.scimStore.getGroupNamesForUser(
+              scimUser.id,
+              userContext.tenantId,
+            );
+            const scimRoles: string[] = [];
+            for (const groupName of groupNames) {
+              const mappedRole = this.scimGroupRoleMap[groupName];
+              if (mappedRole) {
+                scimRoles.push(mappedRole);
+              }
+            }
+            if (scimRoles.length > 0) {
+              // Merge: IdP roles first, then SCIM roles (SCIM takes precedence
+              // on conflict because later roles override earlier ones when the
+              // policy uses order-sensitive role matching).
+              // Deduplicate preserving order: IdP roles that don't appear in
+              // SCIM come first; SCIM roles (authoritative) come last.
+              const allRoles = [
+                ...userContext.roles.filter((r) => !scimRoles.includes(r)),
+                ...scimRoles,
+              ];
+              // Re-compute capabilities from the merged role set.
+              capabilities = mapRolesToCapabilitiesForPolicy(
+                allRoles,
+                activePolicy,
+                userContext.tenantId,
+              );
+              this.logger.info('SCIM role enrichment applied', {
+                userId: userContext.userId,
+                scimRoles,
+                totalRoles: allRoles.length,
+              });
+            }
+          }
+        } catch (scimErr) {
+          this.logger.warn('SCIM role lookup failed — using IdP-only roles', {
+            userId: userContext.userId,
+            error: scimErr instanceof Error ? scimErr.message : String(scimErr),
+          });
+        }
+      }
 
       // Step 3: If specific capabilities were requested, validate them.
       if (request.requestedCapabilities) {
