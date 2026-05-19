@@ -445,6 +445,14 @@ The probe DID is the well-known ION document
 the DIF ION project). It is suitable as a canary for both the public Microsoft
 resolver and any private ION sidecar that anchors on the same Bitcoin Mainnet.
 
+> **Air-gapped / test networks:** On deployments where this DID is not
+> anchored (private test networks, early-stage ION sidecars, or fully
+> air-gapped environments), the probe will always return `degraded`. In
+> these cases treat the health endpoint as informational only — the circuit
+> breaker still protects against resolver failures at request time, and the
+> `circuit_open` reason will appear in the degraded response once enough
+> failures have accumulated.
+
 ### 9.5 Security notes
 
 - `did:web` DIDs are fetched over HTTPS by default. HTTP is only allowed for

@@ -159,6 +159,21 @@ const logger = createLogger(config.name, config.environment);
  * The breaker is created at module load time so it survives across request
  * contexts and accumulates failure history correctly.
  */
+/**
+ * Circuit breaker for did:ion resolver calls.
+ *
+ * Wraps all `resolveDidIon()` invocations so that a sustained ION resolver
+ * outage does not block every did:ion-based authentication attempt with a
+ * full network timeout.  Configured from `ION_CB_*` env vars; defaults to
+ * 3 failures within 30 s opening the circuit for 60 s.
+ *
+ * The breaker is created at module load time so it survives across request
+ * contexts and accumulates failure history correctly.
+ *
+ * `RedisCircuitBreaker` is the project's general-purpose circuit-breaker
+ * class (originally designed for Redis call protection).  All circuit state
+ * is held in-process memory — no Redis connection is required here.
+ */
 const ionCircuitBreaker = new RedisCircuitBreaker({
   failureThreshold: env.ION_CB_FAILURE_THRESHOLD,
   windowMs: env.ION_CB_WINDOW_SECONDS * 1000,
