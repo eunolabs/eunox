@@ -92,6 +92,41 @@ describe('bootstrapPartnerFromDiscoveryUrl (Task 9 gateway auto-bootstrap)', () 
     expect(entry!.status).toBe('active');
   });
 
+  it('seeds the DID even when endpoints.jwks is absent (field is informational only)', async () => {
+    const docWithoutJwks = { schemaVersion: '1.0.0', issuer: PARTNER_DID };
+    const { url, close } = await startFakeDiscoveryServer(docWithoutJwks);
+    const registry = new InMemoryPartnerDidRegistry();
+
+    await bootstrapPartnerFromDiscoveryUrl(url, registry, logger);
+    await close();
+
+    // Should succeed — jwks is optional
+    expect(await registry.trusts(PARTNER_DID)).toBe(true);
+  });
+
+  it('throws when registryRequired=true (production hardening)', async () => {
+    const { url, close } = await startFakeDiscoveryServer(VALID_DISCOVERY);
+    const registry = new InMemoryPartnerDidRegistry();
+
+    await expect(
+      bootstrapPartnerFromDiscoveryUrl(url, registry, logger, { registryRequired: true }),
+    ).rejects.toThrow(/PARTNER_ISSUER_DISCOVERY_URL.*partner-DID registry is required/);
+    await close();
+
+    // Registry must remain empty — the seeding was blocked.
+    expect(await registry.list()).toHaveLength(0);
+  });
+
+  it('proceeds normally when registryRequired=false (explicit opt-out)', async () => {
+    const { url, close } = await startFakeDiscoveryServer(VALID_DISCOVERY);
+    const registry = new InMemoryPartnerDidRegistry();
+
+    await bootstrapPartnerFromDiscoveryUrl(url, registry, logger, { registryRequired: false });
+    await close();
+
+    expect(await registry.trusts(PARTNER_DID)).toBe(true);
+  });
+
   it('does not throw when the discovery URL is unreachable (non-fatal)', async () => {
     const registry = new InMemoryPartnerDidRegistry();
     // Use a port that is unlikely to be listening — connect will fail.
@@ -122,20 +157,6 @@ describe('bootstrapPartnerFromDiscoveryUrl (Task 9 gateway auto-bootstrap)', () 
     const { url, close } = await startFakeDiscoveryServer({
       // issuer intentionally absent
       endpoints: { jwks: JWKS_URI },
-    });
-    const registry = new InMemoryPartnerDidRegistry();
-
-    await bootstrapPartnerFromDiscoveryUrl(url, registry, logger);
-    await close();
-
-    expect(await registry.list()).toHaveLength(0);
-  });
-
-  it('skips registration when discovery document is missing `endpoints.jwks`', async () => {
-    const { url, close } = await startFakeDiscoveryServer({
-      issuer: PARTNER_DID,
-      // endpoints.jwks intentionally absent
-      endpoints: { didDocument: '/.well-known/did.json' },
     });
     const registry = new InMemoryPartnerDidRegistry();
 

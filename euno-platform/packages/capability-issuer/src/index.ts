@@ -1276,9 +1276,10 @@ function buildDiscoveryBody(): Record<string, unknown> {
 
     // ── Stage-5 enterprise extension fields ──────────────────────────────
     // Partner federation: DID-backed cross-org trust (Task 3 / § 4.2).
+    // registrationEndpoint is the gateway admin-API path for submitting a
+    // new partner-DID proposal (two-eyes approval required).
     partnerFederation: {
-      registrationEndpoint: '/api/v1/admin/partners',
-      discoveryParam: '?partnerDid=',
+      registrationEndpoint: '/admin/partner-dids/proposals',
     },
     // SCIM 2.0 user / group provisioning base URI (Task 10 / § 4.8).
     scim: {
@@ -1310,7 +1311,7 @@ function buildDiscoveryBody(): Record<string, unknown> {
   return body;
 }
 
-app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
+app.get('/.well-known/capability-issuer', (req: Request, res: Response) => {
   const body = buildDiscoveryBody();
   const bodyJson = JSON.stringify(body);
 
@@ -1322,10 +1323,18 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
   const etag = `"${crypto.createHash('sha256').update(bodyJson).digest('hex')}"`;
 
   // Cache-Control: max-age=300 — discovery documents are stable for 5 minutes.
-  // The ETag provides conditional-GET support for clients that want to detect
-  // changes faster (e.g. a gateway that polls on a tighter schedule).
   res.setHeader('Cache-Control', 'public, max-age=300');
   res.setHeader('ETag', etag);
+
+  // Conditional GET: honour If-None-Match to return 304 Not Modified when the
+  // client already holds a fresh copy. This avoids resending the full body on
+  // every poll — particularly useful for gateways that periodically check the
+  // discovery document for actionResolverHash drift.
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
+
   res.setHeader('Content-Type', 'application/json');
   res.send(bodyJson);
 });

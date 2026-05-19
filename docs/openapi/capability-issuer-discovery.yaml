@@ -16,9 +16,10 @@ info:
     ## Caching
 
     The response carries `Cache-Control: public, max-age=300` and an `ETag`
-    header (quoted SHA-256 hex of the response body).  Clients SHOULD respect
-    the ETag for conditional GET requests and MUST NOT cache the document
-    for longer than the `max-age` value.
+    header (quoted SHA-256 hex of the response body).  The server handles
+    `If-None-Match` conditional requests — when the supplied ETag matches the
+    current document, the server returns `304 Not Modified` with no body.
+    Clients MUST NOT cache the document for longer than the `max-age` value.
 
     The ETag changes whenever any field in the document changes — for example
     when the `actionResolverHash` is updated after a config reload, or when the
@@ -30,10 +31,14 @@ info:
     The tool-gateway supports a `PARTNER_ISSUER_DISCOVERY_URL` configuration
     variable.  When set, the gateway fetches this discovery document at startup
     and automatically seeds the partner's issuer DID (from the `issuer` field)
-    and JWKS URI (from `endpoints.jwks`) into the partner-DID registry,
-    equivalent to adding a single entry to `TRUSTED_PARTNER_DIDS`.  This allows
-    a partner operator to publish a standard discovery document and have any
-    consuming gateway trust it without manual DID string configuration.
+    into the partner-DID registry — equivalent to adding a single entry to
+    `TRUSTED_PARTNER_DIDS`.  The `endpoints.jwks` field, if present, is logged
+    for diagnostics; partner keys are resolved independently via DID-document
+    resolution and the JWKS URI is **not** persisted in the registry.
+
+    This shortcut bypasses the two-eyes approval workflow and is blocked by
+    default in production (`PARTNER_DID_REGISTRY_REQUIRED` defaults to `true`).
+    Set `PARTNER_DID_REGISTRY_REQUIRED=false` to opt out.
 
   version: "1.0.0"
   license:
@@ -60,13 +65,15 @@ paths:
 
         **Clients that use this endpoint for partner federation SHOULD:**
         1. Cache the document for the duration of `max-age` in `Cache-Control`.
-        2. Use `ETag` / `If-None-Match` for conditional refresh.
+        2. Use `ETag` / `If-None-Match` for conditional GET — the server returns
+           `304 Not Modified` when the document has not changed.
         3. Re-verify the `actionResolverHash` after a gateway restart to detect
            vocabulary drift between the issuer and the consuming gateway.
 
         **Automation and partner issuers SHOULD:**
-        - Read `partnerFederation.registrationEndpoint` to discover where to
-          POST a `{ partnerDid, jwksUri }` registration request.
+        - Read `partnerFederation.registrationEndpoint` to discover the gateway
+          admin-API path for submitting a partner-DID proposal (two-eyes approval
+          required; this path is relative to the gateway admin port).
         - Read `auditExport.endpoint` to discover the SOC2 evidence export URL.
         - Check the `capabilities` array before calling optional endpoints
           (e.g. SCIM or cross-chain proof) to avoid unnecessary 404s against
@@ -106,8 +113,7 @@ paths:
                   didDocument: "/.well-known/did.json"
                 actionResolverHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                 partnerFederation:
-                  registrationEndpoint: "/api/v1/admin/partners"
-                  discoveryParam: "?partnerDid="
+                  registrationEndpoint: "/admin/partner-dids/proposals"
                 scim:
                   baseUri: "/scim/v2"
                 auditExport:
@@ -119,6 +125,10 @@ paths:
                   - "cross-chain-anchor"
                   - "db-token-service"
                   - "storage-grant-service"
+        '304':
+          description: >
+            Not Modified — returned when the `If-None-Match` request header
+            matches the current ETag.  No response body is sent.
 
 components:
   schemas:
@@ -215,23 +225,20 @@ components:
           type: object
           description: >
             Partner federation configuration (Stage-5 / Task 3).
-            Describes where partner issuers can register their DID.
-          required: [registrationEndpoint, discoveryParam]
+            Describes where partner issuers can register their DID with the
+            gateway's two-eyes approval workflow.  The path is relative to the
+            gateway admin port (not the capability-issuer port).
+          required: [registrationEndpoint]
           properties:
             registrationEndpoint:
               type: string
               description: >
-                Admin API path for partner DID registration.
-                POST `{ partnerDid, jwksUri }` with `X-Admin-API-Key` to
-                initiate the two-eyes registration workflow.
-              example: "/api/v1/admin/partners"
-            discoveryParam:
-              type: string
-              description: >
-                Query-parameter prefix for a partner-discovery lookup.
-                Append the encoded partner DID to perform a registration
-                pre-flight check.
-              example: "?partnerDid="
+                Gateway admin-API path for submitting a new partner-DID
+                proposal.  POST `{ did, proposer }` (with `X-Admin-Operator`
+                header) to create a `proposed` entry; a second operator must
+                then call the approve endpoint to activate it.
+                This path is served on the gateway admin port.
+              example: "/admin/partner-dids/proposals"
         scim:
           type: object
           description: >

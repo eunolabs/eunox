@@ -647,21 +647,50 @@ interface PartnerDiscoveryDoc {
  *
  * When `PARTNER_ISSUER_DISCOVERY_URL` is set, the gateway fetches the
  * partner's discovery document at startup, extracts the partner DID from
- * `body.issuer` and the JWKS URI from `body.endpoints.jwks`, and seeds the
- * partner into `registry` as an immediately-active entry (no two-eyes
- * approval required — identical to the `TRUSTED_PARTNER_DIDS` shortcut it
- * replaces).
+ * `body.issuer`, and seeds the partner into `registry` as an
+ * immediately-active entry — no two-eyes approval required (identical trust
+ * level to the `TRUSTED_PARTNER_DIDS` shortcut this replaces).
  *
- * The operation is non-fatal: a network error or a malformed discovery
- * document logs a warning but does **not** prevent the gateway from starting.
- * The partner will simply not be trusted until the gateway is restarted with
- * a reachable discovery URL.
+ * `body.endpoints.jwks` is logged but **not** persisted; the partner-issuer
+ * resolver derives keys independently via DID-document resolution.
+ *
+ * **Production hardening:** when `opts.registryRequired` is `true` (the
+ * production default, mirroring `PARTNER_DID_REGISTRY_REQUIRED` semantics)
+ * the function throws a startup error so the gateway fails closed rather than
+ * silently bypassing the two-eyes workflow.
+ *
+ * The network fetch is non-fatal — a timeout or non-2xx response logs a
+ * warning but does **not** prevent the gateway from starting. The partner will
+ * simply not be trusted until the gateway is restarted with a reachable URL.
  */
 export async function bootstrapPartnerFromDiscoveryUrl(
   discoveryUrl: string,
   registry: InMemoryPartnerDidRegistry | RedisPartnerDidRegistry,
   logger: Logger,
+  opts: {
+    /**
+     * When true, the function throws a startup error instead of seeding.
+     * Should be set to `PARTNER_DID_REGISTRY_REQUIRED !== false` in
+     * production (same logic as `createPartnerDidRegistryFromEnv`).
+     */
+    registryRequired?: boolean;
+  } = {},
 ): Promise<void> {
+  // Production hardening: mirror the TRUSTED_PARTNER_DIDS guard in
+  // createPartnerDidRegistryFromEnv. If the partner-DID registry is required
+  // (the default in production), seeding via a discovery URL must also be
+  // explicitly opted out of — otherwise a single config-map change could add
+  // an untrusted issuer without any operator review.
+  if (opts.registryRequired) {
+    throw new Error(
+      'PARTNER_ISSUER_DISCOVERY_URL is set but the partner-DID registry is required ' +
+      '(PARTNER_DID_REGISTRY_REQUIRED is true, which is the production default). ' +
+      'This startup shortcut bypasses the two-eyes approval workflow — every trusted ' +
+      'partner DID must be explicitly proposed and approved via the admin API. ' +
+      'Set PARTNER_DID_REGISTRY_REQUIRED=false to opt out (production only, temporary).',
+    );
+  }
+
   logger.info(
     'Fetching partner discovery document for auto-bootstrap',
     { discoveryUrl },
@@ -691,7 +720,6 @@ export async function bootstrapPartnerFromDiscoveryUrl(
   }
 
   const partnerDid = typeof body.issuer === 'string' ? body.issuer : undefined;
-  const jwksUri = typeof body.endpoints?.jwks === 'string' ? body.endpoints.jwks : undefined;
 
   if (!partnerDid) {
     logger.warn(
@@ -701,12 +729,15 @@ export async function bootstrapPartnerFromDiscoveryUrl(
     return;
   }
 
+  // endpoints.jwks is informational only — the partner-issuer resolver
+  // derives keys via DID-document resolution, not from this cached URI.
+  const jwksUri = typeof body.endpoints?.jwks === 'string' ? body.endpoints.jwks : undefined;
   if (!jwksUri) {
-    logger.warn(
-      'Partner discovery document is missing `endpoints.jwks` field; auto-bootstrap skipped',
+    logger.info(
+      'Partner discovery document has no `endpoints.jwks` field; ' +
+      'the partner resolver will derive keys from the DID document',
       { discoveryUrl, partnerDid },
     );
-    return;
   }
 
   // Seed the registry directly as active — no two-eyes approval required for
@@ -717,7 +748,7 @@ export async function bootstrapPartnerFromDiscoveryUrl(
 
   logger.info(
     'Partner DID auto-registered from discovery document',
-    { discoveryUrl, partnerDid, jwksUri },
+    { discoveryUrl, partnerDid, ...(jwksUri ? { jwksUri } : {}) },
   );
 }
 
@@ -922,11 +953,20 @@ export async function initializeServices(
   // directly — this is a startup convenience equivalent to adding a single
   // DID to TRUSTED_PARTNER_DIDS, but driven by a discovery document rather
   // than an operator-typed DID string.
+  //
+  // In production the same PARTNER_DID_REGISTRY_REQUIRED guard that blocks
+  // TRUSTED_PARTNER_DIDS also blocks this shortcut (default=true in prod;
+  // set PARTNER_DID_REGISTRY_REQUIRED=false to opt out).
   if (validated.PARTNER_ISSUER_DISCOVERY_URL && partnerRegistry) {
+    const isProduction = validated.NODE_ENV === 'production';
+    const registryRequired = isProduction
+      ? env.PARTNER_DID_REGISTRY_REQUIRED !== 'false'   // production: default TRUE (opt-out)
+      : env.PARTNER_DID_REGISTRY_REQUIRED === 'true';   // non-prod: default false (opt-in)
     await bootstrapPartnerFromDiscoveryUrl(
       validated.PARTNER_ISSUER_DISCOVERY_URL,
       partnerRegistry,
       logger,
+      { registryRequired },
     );
   }
 

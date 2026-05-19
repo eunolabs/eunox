@@ -8,7 +8,9 @@
  *   3. Cache-Control: public, max-age=300 is set
  *   4. ETag header is present and in the expected quoted-SHA-256 format
  *   5. ETag is stable across repeated requests (deterministic)
- *   6. ETag changes when the response body changes (determinism / body-coupling)
+ *   6. ETag derives from the response body
+ *   7. If-None-Match matching ETag → 304 Not Modified (no body)
+ *   8. If-None-Match mismatch → 200 with full body
  */
 
 import crypto from 'crypto';
@@ -23,12 +25,14 @@ jest.mock('@microsoft/microsoft-graph-client');
 describe('GET /.well-known/capability-issuer — discovery v1.0.0 (Task 9)', () => {
   let body: Record<string, unknown>;
   let headers: Record<string, string>;
+  let currentEtag: string;
 
   beforeAll(async () => {
     const response = await request(app).get('/.well-known/capability-issuer');
     expect(response.status).toBe(200);
     body = response.body as Record<string, unknown>;
     headers = response.headers as Record<string, string>;
+    currentEtag = headers['etag'] as string;
   });
 
   // ── Test 1: schemaVersion field ────────────────────────────────────────────
@@ -37,12 +41,13 @@ describe('GET /.well-known/capability-issuer — discovery v1.0.0 (Task 9)', () 
   });
 
   // ── Test 2: Stage-5 fields ─────────────────────────────────────────────────
-  it('includes partnerFederation with registrationEndpoint and discoveryParam', () => {
+  it('includes partnerFederation with registrationEndpoint pointing to the gateway admin path', () => {
     expect(body).toHaveProperty('partnerFederation');
     const pf = body.partnerFederation as Record<string, unknown>;
     expect(typeof pf.registrationEndpoint).toBe('string');
-    expect((pf.registrationEndpoint as string).length).toBeGreaterThan(0);
-    expect(typeof pf.discoveryParam).toBe('string');
+    expect(pf.registrationEndpoint).toBe('/admin/partner-dids/proposals');
+    // discoveryParam was removed — it pointed to a non-existent endpoint.
+    expect(pf).not.toHaveProperty('discoveryParam');
   });
 
   it('includes scim.baseUri', () => {
@@ -99,6 +104,27 @@ describe('GET /.well-known/capability-issuer — discovery v1.0.0 (Task 9)', () 
     const bodyText = JSON.stringify(response.body);
     const expectedEtag = `"${crypto.createHash('sha256').update(bodyText).digest('hex')}"`;
     expect(response.headers['etag']).toBe(expectedEtag);
+  });
+
+  // ── Test 7: If-None-Match matching → 304 ──────────────────────────────────
+  it('returns 304 Not Modified when If-None-Match matches the current ETag', async () => {
+    const response = await request(app)
+      .get('/.well-known/capability-issuer')
+      .set('If-None-Match', currentEtag);
+
+    expect(response.status).toBe(304);
+    // 304 must have no body (Content-Type absent or body empty)
+    expect(response.text).toBeFalsy();
+  });
+
+  // ── Test 8: If-None-Match mismatch → 200 ─────────────────────────────────
+  it('returns 200 with full body when If-None-Match does not match', async () => {
+    const response = await request(app)
+      .get('/.well-known/capability-issuer')
+      .set('If-None-Match', '"0000000000000000000000000000000000000000000000000000000000000000"');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('schemaVersion', '1.0.0');
   });
 
   // ── Back-compat: existing fields must still be present ────────────────────
