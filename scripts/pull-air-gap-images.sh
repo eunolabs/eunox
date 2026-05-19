@@ -165,7 +165,7 @@ while IFS= read -r image; do
     # sed -i is not portable between GNU and BSD sed; use a temp file.
     tmp_file=$(mktemp)
     # Escape the pull_ref for sed (dots become literal dots, slashes escaped).
-    escaped_ref=$(printf '%s' "${pull_ref}" | sed 's/[.[\*^$]/\\&/g; s|/|\\/|g')
+    escaped_ref=$(printf '%s' "${pull_ref}" | sed 's/[].[\\*^$]/\\&/g; s|/|\\/|g')
     sed "s|${escaped_ref}@sha256:[a-f0-9]*|${pull_ref}@${new_digest}|;
          s|^${escaped_ref}$|${pull_ref}@${new_digest}|" \
       "$IMAGE_LIST_FILE" > "$tmp_file"
