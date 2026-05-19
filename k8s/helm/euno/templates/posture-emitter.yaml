@@ -16,7 +16,7 @@ metadata:
     euno.io/single-writer: "true"
 spec:
   # IMPORTANT: must be 1 — SQLite durable queue is single-writer.
-  replicas: 1
+  replicas: {{ .Values.postureEmitter.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: euno-posture-emitter

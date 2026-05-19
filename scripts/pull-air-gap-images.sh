@@ -161,7 +161,7 @@ EOF
 if [ -n "$SAVE_TAR" ] && [ -n "$IMAGES_PULLED" ]; then
   printf "\n-- Saving tar archive --\n"
   # shellcheck disable=SC2086
-  if docker save $IMAGES_PULLED -o "$SAVE_TAR" 2>&1; then
+  if docker save $IMAGES_PULLED -o "$SAVE_TAR" >/dev/null 2>&1; then
     ok "Saved: $SAVE_TAR"
   else
     fail "Failed to save tar: $SAVE_TAR"
