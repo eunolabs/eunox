@@ -164,6 +164,24 @@ test('fails when a required sub-section is absent (§12.4 cross-chain)', () => {
   }
 });
 
+test('fails when sub-sections appear out of order (§12.5 before §12.4)', () => {
+  const root = makeTmpRoot();
+  try {
+    // Swap §12.4 and §12.5 so ordering is violated
+    const valid = makeValidDoc();
+    const doc = valid
+      .replace('### 12.4 Cross-chain audit anchor', '### 12.4 SWAP_PLACEHOLDER')
+      .replace('### 12.5 SOC2 audit-trail export', '### 12.4 Cross-chain audit anchor')
+      .replace('### 12.4 SWAP_PLACEHOLDER', '### 12.5 SOC2 audit-trail export');
+    writeFileSync(join(root, 'docs', 'self-host.md'), doc);
+    const result = runScript(root);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stderr, /[Oo]ut of order/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('fails when §12.13.1 SOC2 controls checklist is absent', () => {
   const root = makeTmpRoot();
   try {

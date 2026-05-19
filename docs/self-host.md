@@ -1531,7 +1531,7 @@ escalation" for the full treatment.
 ### 12.4 Cross-chain audit anchor
 
 > **Reference:** `docs/issuer-operator-runbook.md` §"Cross-chain anchor";
-> `docs/security/ledger-hmac-rotation.md`; Stage-5 Task 5.
+> `docs/runbooks/ledger-hmac-rotation.md`; Stage-5 Task 5.
 
 The cross-chain anchor binds per-replica audit chains together with a periodic
 Merkle commitment stored in S3 Object-Lock (or Azure Confidential Ledger). An
@@ -1587,7 +1587,7 @@ curl -s "https://gateway.internal:3002/api/v1/audit/chain-proof" \
 
 Verify `chainHead` against the S3 Object-Lock anchors to detect DB-level
 tampering between checkpoints. For HMAC rotation procedure see
-`docs/security/ledger-hmac-rotation.md`.
+`docs/runbooks/ledger-hmac-rotation.md`.
 
 ---
 
@@ -2055,7 +2055,7 @@ Use when preparing a SOC2 Type II audit package.
       No `UPDATE` or `DELETE` — the append-only model is the tamper-evidence
       guarantee.
 - [ ] `AUDIT_LEDGER_HMAC_SECRET` sourced from secret manager at runtime.
-      Rotation procedure documented (`docs/security/ledger-hmac-rotation.md`).
+      Rotation procedure documented (`docs/runbooks/ledger-hmac-rotation.md`).
 - [ ] Partner DID registrations require two-eyes approval
       (`PARTNER_DID_REGISTRY_REQUIRED=true`, the production default).
 - [ ] `PARTNER_DID_REQUIRE_PIN=true` set for all production partner onboardings.

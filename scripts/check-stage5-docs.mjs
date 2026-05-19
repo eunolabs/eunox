@@ -7,7 +7,8 @@
  *   1. docs/self-host.md exists.
  *   2. The file contains the required top-level section heading
  *      "## 12. Stage 5 — Enterprise Deployment".
- *   3. The following required sub-sections are present (ordered set):
+ *   3. The following required sub-sections are present AND appear in the
+ *      correct ascending order (§12.1 before §12.2, §12.2 before §12.3, …):
  *      §12.1  Updated service topology
  *      §12.2  Partner DID federation
  *      §12.3  SCIM 2.0 provisioning
@@ -104,7 +105,7 @@ requireText(
   '§12 top-level heading "## 12. Stage 5 — Enterprise Deployment"',
 );
 
-// 2. Required sub-sections
+// 2. Required sub-sections — present AND in ascending order
 const requiredSubsections = [
   ['### 12.1 Updated service topology',               '§12.1 Updated service topology'],
   ['### 12.2 Partner DID federation',                 '§12.2 Partner DID federation'],
@@ -122,8 +123,21 @@ const requiredSubsections = [
   ['### 12.14 Stage-5 security checklist',            '§12.14 Stage-5 security checklist'],
 ];
 
+let lastPos = -1;
 for (const [needle, description] of requiredSubsections) {
-  requireText(needle, description);
+  const pos = content.indexOf(needle);
+  if (pos === -1) {
+    failures.push(`Missing: ${description} (looked for: ${JSON.stringify(needle)})`);
+    // Reset lastPos so subsequent ordering errors are not cascaded from a missing section
+    lastPos = -1;
+  } else if (lastPos !== -1 && pos <= lastPos) {
+    failures.push(
+      `Out of order: ${description} appears before the previous required sub-section ` +
+      `(position ${pos} is not after ${lastPos})`,
+    );
+  } else {
+    lastPos = pos;
+  }
 }
 
 // 3. Three compliance checklist sub-headings inside §12.13
