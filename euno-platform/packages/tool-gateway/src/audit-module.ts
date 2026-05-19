@@ -118,6 +118,19 @@ export interface AuditModuleInput {
   crossChainAnchorOverride?: CrossChainAnchor;
   /** F-6 OCSF transport; used by the pipeline's `onSigned` sink and the audit logger. */
   ocsfTransport?: OcsfAuditTransport;
+  /**
+   * Optional posture-emitter sink (Task 4 / § 4.4). When supplied, the
+   * pipeline's `onSigned` callback forwards every `SignedAuditEvidence`
+   * to this function immediately after OCSF emission — still on the
+   * pipeline worker thread, not the enforcement critical path.
+   *
+   * Wired by `bootstrap.ts` from the `DurablePostureEmitter` and
+   * `PostureEmitterPlugin` when `POSTURE_EMITTER_ENABLED=true`.
+   * Errors thrown by this sink are swallowed by the pipeline's existing
+   * `onSigned` try/catch guard to preserve the best-effort posture
+   * contract.
+   */
+  postureSink?: (signed: SignedAuditEvidence) => void;
 }
 
 export interface AuditModuleResult {
@@ -187,6 +200,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     ledgerAclClient: injectedAclClient,
     crossChainAnchorOverride,
     ocsfTransport,
+    postureSink,
   } = input;
 
   const signedDecisions = validated.EVIDENCE_SIGNED_DECISIONS as
@@ -608,6 +622,16 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         }
         if (ocsfTransport) {
           void ocsfTransport.send(signedEvidenceToOcsf(signed, ocsfProduct));
+        }
+        // Posture-emitter sink (Task 4 / § 4.4): forward signed enforcement
+        // events to the DurablePostureEmitter so posture surfaces are updated
+        // asynchronously. Errors are swallowed — posture is best-effort.
+        if (postureSink) {
+          try {
+            postureSink(signed);
+          } catch {
+            // postureSink must not destabilise the pipeline worker.
+          }
         }
       },
       onSignError: (err: unknown) => {

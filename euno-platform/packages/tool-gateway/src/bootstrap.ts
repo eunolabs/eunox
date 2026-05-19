@@ -57,6 +57,8 @@ import {
   GatewayTelemetryCollector,
   createGatewayTelemetryFromEnv,
 } from './gateway-telemetry';
+import { PostureEmitterPlugin } from './posture-emitter-plugin';
+import { DurablePostureEmitter } from '@euno/posture-emitter';
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -331,6 +333,16 @@ export interface GatewayDependencies {
    * Plumbed from `ENFORCE_SOURCE_IP_MODE` env var.
    */
   sourceIpMode?: 'gateway' | 'client';
+  /**
+   * Durable posture emitter (Task 4 / § 4.4).
+   *
+   * Present when `POSTURE_EMITTER_ENABLED=true`. The entrypoint calls
+   * `stop()` on graceful shutdown so the in-flight SQLite WAL queue is
+   * flushed before the process exits.
+   *
+   * `undefined` means posture emission is disabled (the default).
+   */
+  durablePostureEmitter?: import('@euno/posture-emitter').DurablePostureEmitter;
 }
 
 /**
@@ -1136,6 +1148,21 @@ export async function initializeServices(
   }
 
   // ── Step 11: Audit module (evidence signer + pipeline) ───────────────────
+
+  // ── Step 11a: Durable posture emitter (Task 4 / § 4.4) ───────────────────
+  // Build BEFORE buildAuditModule so the PostureEmitterPlugin shim can be
+  // passed as postureSink into the pipeline's onSigned callback.
+  // `fromEnv` returns a disabled no-op emitter when POSTURE_EMITTER_ENABLED
+  // is not 'true', so this block is safe to run unconditionally.
+  const durablePostureEmitter = DurablePostureEmitter.fromEnv(env, logger);
+  const posturePlugin = durablePostureEmitter.isEnabled()
+    ? new PostureEmitterPlugin({ emitter: durablePostureEmitter, logger })
+    : undefined;
+  if (durablePostureEmitter.isEnabled()) {
+    durablePostureEmitter.start();
+    logger.info('Durable posture emitter started (POSTURE_EMITTER_ENABLED=true)');
+  }
+
   const {
     evidenceSigner,
     auditPipeline,
@@ -1154,6 +1181,7 @@ export async function initializeServices(
     ledgerAclClient: injectDeps.ledgerAclClient,
     crossChainAnchorOverride: injectDeps.crossChainAnchor,
     ocsfTransport,
+    postureSink: posturePlugin ? (signed) => posturePlugin.onSigned(signed) : undefined,
   });
 
   // ── Step 12: Gateway quota engine (F-1b) ──────────────────────────────────
@@ -1310,6 +1338,7 @@ export async function initializeServices(
     ...(auditRetentionDays !== undefined ? { auditRetentionDays } : {}),
     gatewayTelemetry,
     sourceIpMode: validated.ENFORCE_SOURCE_IP_MODE,
+    ...(durablePostureEmitter.isEnabled() ? { durablePostureEmitter } : {}),
   };
 
   logger.info('Tool Gateway services initialized successfully');
