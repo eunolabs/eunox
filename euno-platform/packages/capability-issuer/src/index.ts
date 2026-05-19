@@ -1239,8 +1239,22 @@ app.get('/.well-known/did.json', async (_req: Request, res: Response, next: Next
  * - Link to public key and DID document
  * - actionResolverHash: canonical SHA-256 of the loaded ActionResolver config
  */
-app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
+/**
+ * Build the canonical discovery document body.
+ *
+ * This is computed once per request so that the ETag reflects the current
+ * runtime state (e.g. after an actionResolverHash update). The shape is
+ * stable under the schemaVersion 1.0.0 contract: fields present in 1.0.0
+ * will not be removed before 2.0.0.
+ */
+function buildDiscoveryBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {
+    // ── Stability contract: schemaVersion 1.0.0 ──────────────────────────
+    // Fields in this document are stable from version 1.0.0. New fields
+    // may be added in minor versions (additive). Removal or rename of any
+    // existing field requires a major version bump to 2.0.0.
+    schemaVersion: '1.0.0',
+
     issuer: config.issuerDid,
     schemaVersions: {
       current: CAPABILITY_TOKEN_SCHEMA_VERSION,
@@ -1259,17 +1273,70 @@ app.get('/.well-known/capability-issuer', (_req: Request, res: Response) => {
     // action vocabularies and tokens minted by this issuer may not be
     // enforced correctly at the gateway.
     actionResolverHash,
+
+    // ── Stage-5 enterprise extension fields ──────────────────────────────
+    // Partner federation: DID-backed cross-org trust (Task 3 / § 4.2).
+    // registrationEndpoint is the gateway admin-API path for submitting a
+    // new partner-DID proposal (two-eyes approval required).
+    partnerFederation: {
+      registrationEndpoint: '/admin/partner-dids/proposals',
+    },
+    // SCIM 2.0 user / group provisioning base URI (Task 10 / § 4.8).
+    scim: {
+      baseUri: '/scim/v2',
+    },
+    // SOC2 audit-trail export + cross-chain proof endpoints (Tasks 5+6 / § 4.3–4.4).
+    auditExport: {
+      endpoint: '/api/v1/audit/export',
+      chainProof: '/api/v1/audit/chain-proof',
+    },
+    // Advertised capability set — allows partner gateways and automation
+    // tooling to check feature availability without trial-and-error.
+    capabilities: [
+      'partner-federation',
+      'scim-provisioning',
+      'cross-chain-anchor',
+      'db-token-service',
+      'storage-grant-service',
+    ],
   };
+
   // F-7: surface the region tag so a multi-region active/active
-  // deployment can be inspected from the outside (e.g. an operator
-  // diagnosing why a token validated against region A's JWKS but the
-  // VC payload is stamped `region: "B"`). Omitted entirely when the
-  // operator has not configured a region — back-compat with single
-  // region deployments.
+  // deployment can be inspected from the outside. Omitted when not
+  // configured (back-compat with single-region deployments).
   if (issuerRegion) {
     body.region = issuerRegion;
   }
-  res.json(body);
+
+  return body;
+}
+
+app.get('/.well-known/capability-issuer', (req: Request, res: Response) => {
+  const body = buildDiscoveryBody();
+  const bodyJson = JSON.stringify(body);
+
+  // ETag: SHA-256 of the serialised body in quoted hex format (RFC 7232 §2.3).
+  // Changes whenever any field in the document changes (e.g. actionResolverHash
+  // after a reload, or signing-key thumbprint in a future version). Clients
+  // that cache the document MUST treat a changed ETag as a cache miss and
+  // re-fetch.
+  const etag = `"${crypto.createHash('sha256').update(bodyJson).digest('hex')}"`;
+
+  // Cache-Control: max-age=300 — discovery documents are stable for 5 minutes.
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.setHeader('ETag', etag);
+
+  // Conditional GET: honour If-None-Match to return 304 Not Modified when the
+  // client already holds a fresh copy. This avoids resending the full body on
+  // every poll — particularly useful for gateways that periodically check the
+  // discovery document for actionResolverHash drift.
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
+
+  res.setHeader('Content-Type', 'application/json');
+  res.send(bodyJson);
 });
 
 /**

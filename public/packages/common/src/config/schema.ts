@@ -1742,6 +1742,20 @@ export const GatewayConfigSchema = z
         'Default 60 s.',
     }),
 
+    // Partner issuer discovery auto-bootstrap (Task 9 / § 4.7) ---------------
+    PARTNER_ISSUER_DISCOVERY_URL: optionalString.describe(
+      'Optional URL of a partner issuer\'s /.well-known/capability-issuer discovery document. ' +
+      'When set, the gateway fetches this document at startup, extracts the partner\'s issuer DID ' +
+      'from the top-level `issuer` field, and seeds that DID into the PartnerDidRegistry as an ' +
+      'immediately-active entry (no two-eyes approval required — equivalent to TRUSTED_PARTNER_DIDS ' +
+      'for a single partner that publishes a standard discovery document). ' +
+      'The `endpoints.jwks` field is logged for diagnostics but not persisted; partner keys are ' +
+      'resolved independently via DID-document resolution by the partner-issuer resolver. ' +
+      'Production hardening: in production (NODE_ENV=production) this shortcut is blocked by ' +
+      'default (same as TRUSTED_PARTNER_DIDS) because PARTNER_DID_REGISTRY_REQUIRED defaults to ' +
+      'true. Set PARTNER_DID_REGISTRY_REQUIRED=false to explicitly opt out.',
+    ),
+
     // Distributed coordination (Redis) --------------------------------------
     REDIS_URL: optionalString.describe(
       'Optional shared Redis URL. When set, revocation, kill-switch, and maxCalls counter state propagate across gateway replicas. Required for multi-instance deployments. ' +

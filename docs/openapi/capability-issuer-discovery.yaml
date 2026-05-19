@@ -1,0 +1,299 @@
+openapi: 3.0.3
+info:
+  title: Euno Capability Issuer — Discovery Document v1.0.0
+  description: |
+    The `/.well-known/capability-issuer` discovery endpoint is the authoritative
+    integration point for security teams, partner issuers, and automation tooling.
+
+    ## Stability contract
+
+    Fields published under `schemaVersion: "1.0.0"` will **not** be removed or
+    renamed before `schemaVersion: "2.0.0"`.  New fields may be added in minor
+    updates (additive changes only).  Any removal, rename, or type change
+    constitutes a major-version bump and will be communicated via the CHANGELOG
+    before the old field is dropped.
+
+    ## Caching
+
+    The response carries `Cache-Control: public, max-age=300` and an `ETag`
+    header (quoted SHA-256 hex of the response body).  The server handles
+    `If-None-Match` conditional requests — when the supplied ETag matches the
+    current document, the server returns `304 Not Modified` with no body.
+    Clients MUST NOT cache the document for longer than the `max-age` value.
+
+    The ETag changes whenever any field in the document changes — for example
+    when the `actionResolverHash` is updated after a config reload, or when the
+    issuer's signing key is rotated and a key thumbprint field is added in a
+    future revision.
+
+    ## Gateway auto-bootstrap shortcut
+
+    The tool-gateway supports a `PARTNER_ISSUER_DISCOVERY_URL` configuration
+    variable.  When set, the gateway fetches this discovery document at startup
+    and automatically seeds the partner's issuer DID (from the `issuer` field)
+    into the partner-DID registry — equivalent to adding a single entry to
+    `TRUSTED_PARTNER_DIDS`.  The `endpoints.jwks` field, if present, is logged
+    for diagnostics; partner keys are resolved independently via DID-document
+    resolution and the JWKS URI is **not** persisted in the registry.
+
+    This shortcut bypasses the two-eyes approval workflow and is blocked by
+    default in production (`PARTNER_DID_REGISTRY_REQUIRED` defaults to `true`).
+    Set `PARTNER_DID_REGISTRY_REQUIRED=false` to opt out.
+
+  version: "1.0.0"
+  license:
+    name: BSL
+servers:
+  - url: http://localhost:3001
+    description: Local development
+  - url: https://issuer.example.com
+    description: Production (replace with your domain)
+
+tags:
+  - name: discovery
+    description: Capability-issuer discovery document
+
+paths:
+  /.well-known/capability-issuer:
+    get:
+      tags: [discovery]
+      operationId: getCapabilityIssuerDiscovery
+      summary: Capability-issuer discovery document v1.0.0
+      description: |
+        Returns metadata about this capability issuer instance.  The document
+        is stable under the `schemaVersion: "1.0.0"` contract.
+
+        **Clients that use this endpoint for partner federation SHOULD:**
+        1. Cache the document for the duration of `max-age` in `Cache-Control`.
+        2. Use `ETag` / `If-None-Match` for conditional GET — the server returns
+           `304 Not Modified` when the document has not changed.
+        3. Re-verify the `actionResolverHash` after a gateway restart to detect
+           vocabulary drift between the issuer and the consuming gateway.
+
+        **Automation and partner issuers SHOULD:**
+        - Read `partnerFederation.registrationEndpoint` to discover the gateway
+          admin-API path for submitting a partner-DID proposal (two-eyes approval
+          required; this path is relative to the gateway admin port).
+        - Read `auditExport.endpoint` to discover the SOC2 evidence export URL.
+        - Check the `capabilities` array before calling optional endpoints
+          (e.g. SCIM or cross-chain proof) to avoid unnecessary 404s against
+          deployments that have not enabled those features.
+
+      responses:
+        '200':
+          description: Discovery document
+          headers:
+            Cache-Control:
+              description: >
+                `public, max-age=300` — clients SHOULD cache for 5 minutes.
+              schema:
+                type: string
+                example: public, max-age=300
+            ETag:
+              description: >
+                Quoted SHA-256 hex of the serialised response body.
+                Changes whenever any field in the document changes.
+              schema:
+                type: string
+                example: '"a3b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityIssuerDiscovery'
+              example:
+                schemaVersion: "1.0.0"
+                issuer: "did:web:issuer.example.com"
+                schemaVersions:
+                  current: "1.0"
+                  supported: ["1.0"]
+                signingAlgorithms: ["ES256"]
+                endpoints:
+                  jwks: "/.well-known/jwks.json"
+                  publicKey: "/api/v1/public-key (deprecated — use jwks)"
+                  didDocument: "/.well-known/did.json"
+                actionResolverHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                partnerFederation:
+                  registrationEndpoint: "/admin/partner-dids/proposals"
+                scim:
+                  baseUri: "/scim/v2"
+                auditExport:
+                  endpoint: "/api/v1/audit/export"
+                  chainProof: "/api/v1/audit/chain-proof"
+                capabilities:
+                  - "partner-federation"
+                  - "scim-provisioning"
+                  - "cross-chain-anchor"
+                  - "db-token-service"
+                  - "storage-grant-service"
+        '304':
+          description: >
+            Not Modified — returned when the `If-None-Match` request header
+            matches the current ETag.  No response body is sent.
+
+components:
+  schemas:
+    CapabilityIssuerDiscovery:
+      type: object
+      required:
+        - schemaVersion
+        - issuer
+        - schemaVersions
+        - signingAlgorithms
+        - endpoints
+        - actionResolverHash
+        - partnerFederation
+        - scim
+        - auditExport
+        - capabilities
+      properties:
+        schemaVersion:
+          type: string
+          description: >
+            Version of this discovery document schema.
+            The `1.0.0` contract guarantees all required fields are stable
+            until `2.0.0`.
+          example: "1.0.0"
+        issuer:
+          type: string
+          description: >
+            The issuer's W3C DID.  Appears as the `iss` claim in all
+            capability tokens minted by this instance.
+          example: "did:web:issuer.example.com"
+        schemaVersions:
+          type: object
+          description: Capability-token schema versions supported by this issuer.
+          required: [current, supported]
+          properties:
+            current:
+              type: string
+              description: The schema version used when minting new tokens.
+              example: "1.0"
+            supported:
+              type: array
+              items:
+                type: string
+              description: >
+                All schema versions the issuer can mint and the gateway can
+                verify.  A gateway SHOULD reject tokens whose schema version
+                is absent from this list.
+              example: ["1.0"]
+        signingAlgorithms:
+          type: array
+          items:
+            type: string
+          description: >
+            JWS algorithms this issuer uses to sign tokens.
+            Consuming gateways MUST only accept algorithms in this list.
+          example: ["ES256"]
+        endpoints:
+          type: object
+          description: Well-known URL paths published by this issuer.
+          required: [jwks, publicKey, didDocument]
+          properties:
+            jwks:
+              type: string
+              description: >
+                Path to the JSON Web Key Set for verifying token signatures.
+                Gateways SHOULD use this URL to warm their JWKS cache.
+              example: "/.well-known/jwks.json"
+            publicKey:
+              type: string
+              description: >
+                Deprecated — use `jwks` instead.  Preserved for back-compat.
+              example: "/api/v1/public-key (deprecated — use jwks)"
+            didDocument:
+              type: string
+              description: Path to the issuer's DID document.
+              example: "/.well-known/did.json"
+        actionResolverHash:
+          type: string
+          description: >
+            Canonical SHA-256 (hex) of the operator-supplied `ActionResolver`
+            configuration.  The gateway computes the same hash from its own
+            config file and compares on startup.  A mismatch means the two
+            services use different action vocabularies — tokens that appear
+            valid to the issuer may be rejected by the gateway.
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        region:
+          type: string
+          description: >
+            Optional deployment region tag.  Present only when
+            `ISSUER_REGION` or `EUNO_DEPLOYMENT_REGION` is configured.
+            Omitted in single-region deployments.
+          example: "us-east-1"
+        partnerFederation:
+          type: object
+          description: >
+            Partner federation configuration (Stage-5 / Task 3).
+            Describes where partner issuers can register their DID with the
+            gateway's two-eyes approval workflow.  The path is relative to the
+            gateway admin port (not the capability-issuer port).
+          required: [registrationEndpoint]
+          properties:
+            registrationEndpoint:
+              type: string
+              description: >
+                Gateway admin-API path for submitting a new partner-DID
+                proposal.  POST `{ did, proposer }` (with `X-Admin-Operator`
+                header) to create a `proposed` entry; a second operator must
+                then call the approve endpoint to activate it.
+                This path is served on the gateway admin port.
+              example: "/admin/partner-dids/proposals"
+        scim:
+          type: object
+          description: >
+            SCIM 2.0 provisioning base URI (Stage-5 / Task 10).
+            Enterprise IdPs (Okta, Entra ID, Ping Identity) should point
+            their SCIM outbound provisioning connector at this base URI.
+          required: [baseUri]
+          properties:
+            baseUri:
+              type: string
+              description: >
+                SCIM 2.0 resource base path.  Append `/Users`, `/Groups`,
+                etc. to form the full endpoint URLs.
+              example: "/scim/v2"
+        auditExport:
+          type: object
+          description: >
+            Audit-trail export endpoints (Stage-5 / Tasks 5+6).
+            Used by compliance teams and auditors to retrieve SOC2 evidence
+            bundles and cross-chain anchor proofs.
+          required: [endpoint, chainProof]
+          properties:
+            endpoint:
+              type: string
+              description: >
+                Paginated, authenticated SOC2 OCSF evidence export endpoint.
+                Requires `X-Admin-API-Key` header.  Supports `?scope=soc2-cc6`
+                and `?scope=soc2-cc7` filters.
+              example: "/api/v1/audit/export"
+            chainProof:
+              type: string
+              description: >
+                Cross-chain Merkle anchor proof endpoint.
+                Returns `SignedCrossChainCommitment[]` for a time range.
+                Requires `X-Admin-API-Key` header.
+              example: "/api/v1/audit/chain-proof"
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: >
+            Advertised capability set of this issuer instance.
+            Clients and partner gateways can check this array to determine
+            which optional features are available before attempting calls.
+
+            | Capability | Feature |
+            |---|---|
+            | `partner-federation` | Cross-org DID trust (Task 3) |
+            | `scim-provisioning` | SCIM 2.0 user/group push (Task 10) |
+            | `cross-chain-anchor` | Immutable Merkle audit chain (Task 5) |
+            | `db-token-service` | Short-lived DB credential exchange (Task 7) |
+            | `storage-grant-service` | Short-lived storage grant exchange (Task 7) |
+          example:
+            - "partner-federation"
+            - "scim-provisioning"
+            - "cross-chain-anchor"
+            - "db-token-service"
+            - "storage-grant-service"
