@@ -711,10 +711,9 @@ export async function bootstrapPartnerFromDiscoveryUrl(
 
   // Seed the registry directly as active — no two-eyes approval required for
   // this startup shortcut (same trust level as TRUSTED_PARTNER_DIDS).
-  // Both InMemoryPartnerDidRegistry.seed() (sync) and
-  // RedisPartnerDidRegistry.seed() (async) are handled safely by awaiting
-  // the return value — Promise.resolve(void) resolves immediately.
-  await Promise.resolve(registry.seed([partnerDid]));
+  // await handles both InMemoryPartnerDidRegistry.seed() (sync → void) and
+  // RedisPartnerDidRegistry.seed() (async → Promise<void>) transparently.
+  await registry.seed([partnerDid]);
 
   logger.info(
     'Partner DID auto-registered from discovery document',

@@ -15,7 +15,7 @@ info:
 
     ## Caching
 
-    The response carries `Cache-Control: public, max-age=300` and a `ETag`
+    The response carries `Cache-Control: public, max-age=300` and an `ETag`
     header (quoted SHA-256 hex of the response body).  Clients SHOULD respect
     the ETag for conditional GET requests and MUST NOT cache the document
     for longer than the `max-age` value.
