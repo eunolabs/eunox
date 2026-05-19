@@ -57,7 +57,7 @@ const argv = process.argv.slice(2);
 let workspaceRoot = repoRoot;
 
 for (let i = 0; i < argv.length; i++) {
-  if ((argv[i] === '--root' || argv[i] === '--root') && argv[i + 1]) {
+  if (argv[i] === '--root' && argv[i + 1]) {
     workspaceRoot = resolve(argv[i + 1]);
     i++;
   } else if (argv[i].startsWith('--root=')) {
