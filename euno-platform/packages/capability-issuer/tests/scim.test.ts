@@ -13,7 +13,7 @@
  *   - Issuance integration: SCIM roles merged at handleFromUserContext (3 tests)
  *   - Issuance integration: SCIM failure is fail-open (1 test)
  *
- * 28 tests total (≥ 25 spec requirement).
+ * 34 tests total (≥ 25 spec requirement).
  *
  * The tests use an in-memory IScimStore implementation so no real Postgres
  * server is required. The HTTP-layer tests use supertest with a live Express
@@ -77,6 +77,7 @@ class InMemoryScimStore implements IScimStore {
   async getUser(id: string, tenantId?: string): Promise<ScimUser | undefined> {
     const u = this.users.get(id);
     if (!u) return undefined;
+    if (u.deletedAt) return undefined;
     if (tenantId !== undefined && u.tenantId !== tenantId) return undefined;
     return u;
   }
@@ -397,9 +398,9 @@ describe('InMemoryScimStore — Users', () => {
     const g = await store.createGroup({ displayName: 'Engineers' });
     await store.patchGroupMembers(g.id, [u.id]);
     await store.deleteUser(u.id);
-    const deleted = await store.getUser(u.id);
-    expect(deleted?.active).toBe(false);
-    expect(deleted?.deletedAt).toBeDefined();
+    // After soft-delete, getUser returns undefined (consistent with the Postgres impl).
+    expect(await store.getUser(u.id)).toBeUndefined();
+    // Membership is also removed.
     const groups = await store.getGroupNamesForUser(u.id);
     expect(groups).toHaveLength(0);
   });
@@ -551,8 +552,44 @@ describe('SCIM router — Users endpoints', () => {
       .delete(`/scim/v2/Users/${u.id}`)
       .set(authHeaders);
     expect(res.status).toBe(204);
-    const fetched = await store.getUser(u.id);
-    expect(fetched?.active).toBe(false);
+    // After soft-delete, getUser returns undefined (deleted users are excluded).
+    expect(await store.getUser(u.id)).toBeUndefined();
+    // GET by id also returns 404 after deletion.
+    const getRes = await request(app).get(`/scim/v2/Users/${u.id}`).set(authHeaders);
+    expect(getRes.status).toBe(404);
+  });
+
+  it('PUT /scim/v2/Users/:id preserves active when omitted', async () => {
+    const u = await store.createUser({ userName: 'lena@example.com', active: false });
+    const res = await request(app)
+      .put(`/scim/v2/Users/${u.id}`)
+      .set(authHeaders)
+      .send({
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: 'lena@example.com',
+        displayName: 'Lena Updated',
+        // intentionally omit 'active'
+      });
+    expect(res.status).toBe(200);
+    // active must remain false — not silently reactivated.
+    expect(res.body.active).toBe(false);
+    expect(res.body.displayName).toBe('Lena Updated');
+  });
+
+  it('PATCH /scim/v2/Users/:id handles remove operation (clears externalId)', async () => {
+    const u = await store.createUser({ userName: 'mike@example.com', externalId: 'ext-001', active: true });
+    const res = await request(app)
+      .patch(`/scim/v2/Users/${u.id}`)
+      .set(authHeaders)
+      .send({
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [
+          { op: 'remove', path: 'externalId' },
+        ],
+      });
+    expect(res.status).toBe(200);
+    // externalId should be cleared (null / undefined).
+    expect(res.body.externalId ?? null).toBeNull();
   });
 });
 
@@ -603,6 +640,28 @@ describe('SCIM router — Groups endpoints', () => {
     expect(names).toContain('PatchTeam');
   });
 
+  it('PATCH /scim/v2/Groups/:id replace members replaces full set (RFC 7644 §3.5.2.3)', async () => {
+    const u1 = await store.createUser({ userName: 'old@example.com', active: true });
+    const u2 = await store.createUser({ userName: 'new@example.com', active: true });
+    const g = await store.createGroup({ displayName: 'ReplaceTeam' });
+    // Seed u1 as existing member.
+    await store.patchGroupMembers(g.id, [u1.id]);
+
+    // Replace with u2 only — u1 must be removed.
+    const res = await request(app)
+      .patch(`/scim/v2/Groups/${g.id}`)
+      .set(authHeaders)
+      .send({
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [
+          { op: 'replace', path: 'members', value: [{ value: u2.id }] },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(await store.getGroupNamesForUser(u1.id)).not.toContain('ReplaceTeam');
+    expect(await store.getGroupNamesForUser(u2.id)).toContain('ReplaceTeam');
+  });
+
   it('DELETE /scim/v2/Groups/:id returns 204', async () => {
     const g = await store.createGroup({ displayName: 'Deletable' });
     const res = await request(app)
@@ -623,15 +682,16 @@ describe('Issuance integration — SCIM role enrichment', () => {
     },
   };
 
-  it('merges SCIM-group roles into IdP roles before capability assignment', async () => {
+  it('merges SCIM-group roles into IdP roles before capability assignment (externalId lookup)', async () => {
     const scimStore = new InMemoryScimStore();
-    const user = await scimStore.createUser({ userName: 'user-123', active: true });
+    // Push the sub claim as externalId (the recommended path).
+    const user = await scimStore.createUser({ userName: 'user-123@example.com', externalId: 'user-123', active: true });
     const group = await scimStore.createGroup({ displayName: 'SalesTeam' });
     await scimStore.patchGroupMembers(group.id, [user.id]);
 
     const service = new CapabilityIssuerService(
       new MockSigner() as unknown as import('@euno/common').TokenSigner,
-      new MockIdp({ userId: 'user-123', roles: ['reader'] }) as unknown as import('@euno/common').IdentityProvider,
+      new MockIdp({ userId: 'user-123', email: 'user-123@example.com', roles: ['reader'] }) as unknown as import('@euno/common').IdentityProvider,
       'did:web:test.example.com',
       900,
       logger,
@@ -644,7 +704,7 @@ describe('Issuance integration — SCIM role enrichment', () => {
 
     const response = await service.issueCapabilityFromUserContext({
       agentId: 'agent-1',
-      userContext: { userId: 'user-123', roles: ['reader'] },
+      userContext: { userId: 'user-123', email: 'user-123@example.com', roles: ['reader'] },
     });
 
     // The token should include the 'sales' capability from the SCIM group.
@@ -652,15 +712,45 @@ describe('Issuance integration — SCIM role enrichment', () => {
     expect(hasSalesCap).toBe(true);
   });
 
+  it('falls back to email as userName when externalId does not match', async () => {
+    const scimStore = new InMemoryScimStore();
+    // User pushed with userName=email, no externalId set.
+    const user = await scimStore.createUser({ userName: 'alice@example.com', active: true });
+    const group = await scimStore.createGroup({ displayName: 'SalesTeam' });
+    await scimStore.patchGroupMembers(group.id, [user.id]);
+
+    const service = new CapabilityIssuerService(
+      new MockSigner() as unknown as import('@euno/common').TokenSigner,
+      new MockIdp({ userId: 'oidc-sub-opaque-id', email: 'alice@example.com', roles: [] }) as unknown as import('@euno/common').IdentityProvider,
+      'did:web:test.example.com',
+      900,
+      logger,
+      {
+        policy,
+        scimStore,
+        scimGroupRoleMap: { SalesTeam: 'sales' },
+      },
+    );
+
+    const response = await service.issueCapabilityFromUserContext({
+      agentId: 'agent-email',
+      userContext: { userId: 'oidc-sub-opaque-id', email: 'alice@example.com', roles: [] },
+    });
+
+    // Should match via email → userName fallback.
+    const hasSalesCap = response.capabilities.some((c) => c.resource === 'api://crm');
+    expect(hasSalesCap).toBe(true);
+  });
+
   it('removes SCIM-group role when user removed from group', async () => {
     const scimStore = new InMemoryScimStore();
-    const user = await scimStore.createUser({ userName: 'user-456', active: true });
+    const user = await scimStore.createUser({ userName: 'user-456@example.com', externalId: 'user-456', active: true });
     const group = await scimStore.createGroup({ displayName: 'SalesTeam' });
     // User not in any group initially.
 
     const service = new CapabilityIssuerService(
       new MockSigner() as unknown as import('@euno/common').TokenSigner,
-      new MockIdp({ userId: 'user-456', roles: [] }) as unknown as import('@euno/common').IdentityProvider,
+      new MockIdp({ userId: 'user-456', email: 'user-456@example.com', roles: [] }) as unknown as import('@euno/common').IdentityProvider,
       'did:web:test.example.com',
       900,
       logger,
@@ -673,7 +763,7 @@ describe('Issuance integration — SCIM role enrichment', () => {
 
     const response = await service.issueCapabilityFromUserContext({
       agentId: 'agent-2',
-      userContext: { userId: 'user-456', roles: [] },
+      userContext: { userId: 'user-456', email: 'user-456@example.com', roles: [] },
     });
 
     // No sales capability — user is not in SalesTeam.
@@ -684,7 +774,7 @@ describe('Issuance integration — SCIM role enrichment', () => {
     await scimStore.patchGroupMembers(group.id, [user.id]);
     const response2 = await service.issueCapabilityFromUserContext({
       agentId: 'agent-2',
-      userContext: { userId: 'user-456', roles: [] },
+      userContext: { userId: 'user-456', email: 'user-456@example.com', roles: [] },
     });
     const hasSalesCap2 = response2.capabilities.some((c) => c.resource === 'api://crm');
     expect(hasSalesCap2).toBe(true);

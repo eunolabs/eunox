@@ -231,7 +231,7 @@ export class PostgresScimStore implements IScimStore {
       tenantClause = ' AND tenant_id = $2';
     }
     const result = await this.pool.query(
-      `SELECT * FROM ${this.s}.scim_users WHERE id = $1${tenantClause}`,
+      `SELECT * FROM ${this.s}.scim_users WHERE id = $1${tenantClause} AND deleted_at IS NULL`,
       params,
     );
     if (result.rows.length === 0) return undefined;

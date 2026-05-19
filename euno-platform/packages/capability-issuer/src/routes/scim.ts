@@ -253,13 +253,29 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
         res.status(400).json(scimError(400, '"userName" is required'));
         return;
       }
+      // RFC 7644 PUT is a full replacement of the resource.
+      // `active` MUST be present in the body; if omitted we fetch the current
+      // value and preserve it to prevent silent reactivation of deprovisioned
+      // users when some IdPs issue attribute-only PUTs without `active`.
+      let activeValue: boolean;
+      if (typeof body['active'] === 'boolean') {
+        activeValue = body['active'];
+      } else {
+        // active not supplied — fetch current value (preserve on omission).
+        const current = await store.getUser(req.params['id']!, opts.tenantId);
+        if (!current) {
+          res.status(404).json(scimError(404, `User ${req.params['id']} not found`));
+          return;
+        }
+        activeValue = current.active;
+      }
       const user = await store.replaceUser(
         req.params['id']!,
         {
           externalId: body['externalId'] as string | undefined,
           userName,
           displayName: body['displayName'] as string | undefined,
-          active: body['active'] !== false,
+          active: activeValue,
           tenantId: opts.tenantId,
         },
         opts.tenantId,
@@ -290,7 +306,7 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
       let patch: Record<string, unknown> = {};
 
       if (operations) {
-        // Process SCIM PatchOp Operations.
+        // Process SCIM PatchOp Operations (RFC 7644 §3.5.2).
         for (const op of operations) {
           const opLower = op.op?.toLowerCase();
           if (opLower === 'replace' || opLower === 'add') {
@@ -301,6 +317,13 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
               // Value is an object map of attribute → value.
               Object.assign(patch, op.value);
             }
+          } else if (opLower === 'remove') {
+            if (op.path) {
+              // Clear the named attribute. Setting to undefined lets patchUser
+              // skip the field; null is used to explicitly clear nullable attrs.
+              patch[op.path] = null;
+            }
+            // remove with no path and no value is a no-op on Users.
           }
         }
       } else {
@@ -485,11 +508,22 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
       const addMembers: string[] = [];
       const removeMembers: string[] = [];
       let newDisplayName: string | undefined;
+      // When a `replace` operation targets `members` with no filter, the full
+      // membership set must be replaced atomically (RFC 7644 §3.5.2.3).
+      // We track whether any such full-replace operation was seen.
+      let replaceAllMembers: string[] | undefined;
 
       if (operations) {
         for (const op of operations) {
           const opLower = op.op?.toLowerCase();
-          if ((opLower === 'add' || opLower === 'replace') && op.path === 'members') {
+          if (opLower === 'replace' && op.path === 'members') {
+            // Full membership replacement — overrides any addMembers collected
+            // earlier in the same PatchOp batch.
+            const vals = Array.isArray(op.value)
+              ? (op.value as Array<{ value: string }>).map((v) => v.value)
+              : [];
+            replaceAllMembers = vals.filter(Boolean);
+          } else if (opLower === 'add' && op.path === 'members') {
             const vals = Array.isArray(op.value)
               ? (op.value as Array<{ value: string }>).map((v) => v.value)
               : [];
@@ -517,18 +551,32 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
         );
       }
 
-      const group = await store.patchGroupMembers(
-        req.params['id']!,
-        addMembers,
-        removeMembers,
-        opts.tenantId,
-      );
-
-      logger.info('SCIM: group membership patched', {
-        groupId: group.id,
-        added: addMembers.length,
-        removed: removeMembers.length,
-      });
+      let group;
+      if (replaceAllMembers !== undefined) {
+        // Replace the full membership set atomically.
+        group = await store.replaceGroup(
+          req.params['id']!,
+          // Preserve display name (fetch happens inside replaceGroup).
+          { displayName: newDisplayName ?? (await store.getGroup(req.params['id']!, opts.tenantId))?.displayName ?? '', tenantId: opts.tenantId },
+          replaceAllMembers,
+        );
+        logger.info('SCIM: group membership replaced', {
+          groupId: group.id,
+          memberCount: replaceAllMembers.length,
+        });
+      } else {
+        group = await store.patchGroupMembers(
+          req.params['id']!,
+          addMembers,
+          removeMembers,
+          opts.tenantId,
+        );
+        logger.info('SCIM: group membership patched', {
+          groupId: group.id,
+          added: addMembers.length,
+          removed: removeMembers.length,
+        });
+      }
       res.status(200).json(scimGroupBody(group, baseUrl(req)));
     } catch (err) {
       const scimStatus = (err as { scimStatus?: number }).scimStatus;

@@ -591,19 +591,27 @@ export class IssueController {
 
       // Step 2a: SCIM group role enrichment (Task 10 — Stage 5).
       // When a SCIM store is configured, query the caller's group memberships
-      // and merge the mapped roles into the IdP-provided role set.
-      // SCIM groups are the authoritative authorization model; IdP claims are
-      // the primary authentication signal — roles from both sources are unioned
-      // and SCIM-derived roles appear last (highest precedence for deduplication
-      // in case the policy treats role order as significant).
+      // and merge the mapped roles into the IdP-provided role set (union).
+      // SCIM groups augment the IdP role set: SCIM-derived roles are appended
+      // after IdP roles; they never remove IdP-provided roles. IdP claims
+      // remain the primary authentication signal; SCIM groups provide the
+      // authoritative group-membership view for role enrichment only.
+      //
+      // User lookup strategy: try externalId=sub first, then email/UPN as
+      // userName fallback. The IdP MUST push its `sub` claim as the SCIM
+      // externalId for the primary lookup to succeed (see docs/issuer-idp-setup.md
+      // §8.4/§8.5 for Okta and Entra ID setup). When neither externalId nor
+      // email is mapped, SCIM enrichment is silently skipped.
+      //
       // On any SCIM lookup failure we log a warning and continue with the
-      // IdP-only role set (fail-open: SCIM is an enrichment layer, not the
-      // primary auth mechanism).
+      // IdP-only role set (fail-open: SCIM enrichment is not the primary auth).
       if (this.scimStore && userContext.userId) {
         try {
+          // Prefer the IdP sub/userId as externalId; fall back to email as userName.
+          const lookupUserName = userContext.email ?? userContext.userId;
           const scimUser = await this.scimStore.findUserByExternalIdOrUserName(
             userContext.userId,
-            userContext.userId,
+            lookupUserName,
             userContext.tenantId,
           );
           if (scimUser) {
@@ -619,14 +627,10 @@ export class IssueController {
               }
             }
             if (scimRoles.length > 0) {
-              // Merge: IdP roles first, then SCIM roles (SCIM takes precedence
-              // on conflict because later roles override earlier ones when the
-              // policy uses order-sensitive role matching).
-              // Deduplicate preserving order: IdP roles that don't appear in
-              // SCIM come first; SCIM roles (authoritative) come last.
+              // Union: append SCIM-derived roles that are not already present.
               const allRoles = [
-                ...userContext.roles.filter((r) => !scimRoles.includes(r)),
-                ...scimRoles,
+                ...userContext.roles,
+                ...scimRoles.filter((r) => !userContext.roles.includes(r)),
               ];
               // Re-compute capabilities from the merged role set.
               capabilities = mapRolesToCapabilitiesForPolicy(
