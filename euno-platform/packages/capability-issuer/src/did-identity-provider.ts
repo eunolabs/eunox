@@ -14,6 +14,7 @@ import {
   UserContext,
   CapabilityError,
   ErrorCode,
+  RedisCircuitBreaker,
 } from '@euno/common';
 import * as jose from 'jose';
 import {
@@ -51,6 +52,13 @@ export interface DIDIdentityAdapterConfig extends IdentityAdapterConfig {
    * Source from `cfg.ION_RESOLVER_URL` at boot.
    */
   ionResolverUrl?: string;
+  /**
+   * Optional circuit breaker for did:ion resolution.  When set, all
+   * `resolveDidIon()` calls are wrapped by the breaker.  Construct from
+   * `ION_CB_*` config values at boot and pass here so the adapter never reads
+   * `process.env` at request time.
+   */
+  ionCircuitBreaker?: RedisCircuitBreaker;
 }
 
 /** Cached DID Document entry */
@@ -88,6 +96,7 @@ export class DIDIdentityProvider extends IdentityAdapter {
     this.resolverOpts = {
       httpAllowList: config.didWebHttpAllowList,
       ionResolverUrl: config.ionResolverUrl,
+      ionCircuitBreaker: config.ionCircuitBreaker,
     };
   }
 

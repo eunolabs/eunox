@@ -2165,3 +2165,70 @@ routing production traffic through a Stage-5 deployment:
       is <= capability token TTL.
 - [ ] **Full Stage-5 threat model reviewed.**
       `docs/security/enterprise-federation-threat-model.md` sign-off obtained.
+
+---
+
+## 13. Stage 5 — Posture Emitter Reference
+
+The **durable posture emitter** feeds AI-posture inventory records to cloud
+security management surfaces (Azure Defender CSPM, AWS Security Hub,
+GCP Security Command Center) for every signed enforcement event.  It uses a
+local SQLite WAL queue to guarantee delivery across pod restarts.
+
+### 13.1 How it works
+
+Every time the gateway signs an audit-evidence record (via the async audit
+pipeline) the `PostureEmitterPlugin` shim converts the `SignedAuditEvidence`
+into an `AgentInventoryRecord` and writes it to the durable queue.  A
+background delivery worker fans out the record to each configured plugin,
+retrying with exponential back-off until all plugins acknowledge.
+
+Posture emission is **best-effort** — a failed enqueue is logged at `warn`
+level and never affects the enforcement decision.
+
+### 13.2 Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTURE_EMITTER_ENABLED` | `false` | Set `true` to activate. |
+| `POSTURE_EMITTER_PLUGINS` | `stdout` | Comma-separated plugin list: `stdout`, `defender-cspm`, `security-hub`, `scc`. |
+| `POSTURE_DURABLE_QUEUE_PATH` | `:memory:` (error in production) | Path to the SQLite WAL queue on a persistent volume, e.g. `/var/lib/euno/posture-queue.db`. **Required in production.** |
+| `POSTURE_DURABLE_POLL_INTERVAL_MS` | `1000` | Worker poll interval. |
+| `POSTURE_DURABLE_MAX_ATTEMPTS` | `10` | Max delivery attempts before dead-lettering. |
+| `POSTURE_DURABLE_BATCH_SIZE` | `50` | Events per poll tick. |
+| `AZURE_SUBSCRIPTION_ID` | — | Required when `defender-cspm` is in `POSTURE_EMITTER_PLUGINS`. |
+| `AWS_ACCOUNT_ID`, `AWS_REGION`, `SECURITY_HUB_PRODUCT_ARN` | — | Required for `security-hub`. |
+| `GCP_SCC_SOURCE_NAME`, `GCP_PROJECT_ID` | — | Required for `scc`. |
+
+### 13.3 Field mapping (enforcement events)
+
+At enforcement time the gateway has the signed audit record but not the full
+capability manifest.  The posture records produced from enforcement events
+carry the following values:
+
+| `AgentInventoryRecord` field | Source |
+|---|---|
+| `agentId` | `SignedAuditEvidence.agentId` |
+| `owningTeam` | `SignedAuditEvidence.tenantId` (falls back to `'unknown'`) |
+| `capabilityManifestHash` | `SignedAuditEvidence.capabilityId` (token JTI — proxy) |
+| `runtime` | `'unknown'` — not available in enforcement evidence |
+| `region` | `'unknown'` — not available in enforcement evidence |
+| `firstSeen`, `lastSeen` | `SignedAuditEvidence.ts` |
+
+For accurate `runtime`, `region`, and the real `capabilityManifestHash`,
+correlate enforcement records (keyed by `agentId`) with issuance records
+produced by the capability issuer's own `PostureEmitter`.
+
+### 13.4 Production deployment checklist
+
+- [ ] Set `POSTURE_EMITTER_ENABLED=true` and `POSTURE_EMITTER_PLUGINS` to
+  at least one production target.
+- [ ] Mount a persistent volume at `/var/lib/euno/` and set
+  `POSTURE_DURABLE_QUEUE_PATH=/var/lib/euno/posture-queue.db` so events
+  survive pod restarts.
+- [ ] Set `AUDIT_PIPELINE_ENABLED=true` — the posture sink runs inside the
+  audit pipeline's `onSigned` callback.  Without an active pipeline the sink
+  is never called.
+- [ ] Confirm the gateway's Prometheus scrape includes
+  `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.
+

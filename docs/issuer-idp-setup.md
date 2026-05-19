@@ -466,3 +466,141 @@ Before deploying to production:
 - [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` is reviewed by an operator before deployment —
   mapping a group to an admin-tier role (e.g. `operator`) grants elevated
   capabilities to all members of that group.
+
+---
+
+## 9. DID-based partner issuers (Stage 5)
+
+> **Status:** Stage 5 — production stable. Use this section when configuring
+> the issuer to authenticate agents whose identity tokens are signed by a
+> DID-backed key rather than a centralized IdP.
+
+### 9.1 Provider configuration
+
+Set `IDENTITY_PROVIDER=did` to enable the DID-based identity provider. The
+issuer resolves the JWT issuer field to a DID Document and validates the
+signature against the verification method found in that document. Supported
+DID methods: `did:web`, `did:ion`, `did:key`.
+
+```bash
+IDENTITY_PROVIDER=did
+```
+
+### 9.2 `did:ion` resolver
+
+`did:ion` identifiers are resolved via a Sidetree REST API. The default
+resolver is the public Microsoft ION node at
+`https://ion.msidentity.com/api/v1.0/identifiers`.
+
+```bash
+# Override the default ION resolver (optional)
+ION_RESOLVER_URL=https://ion.msidentity.com/api/v1.0/identifiers
+```
+
+#### 9.2.1 Air-gapped and private ION node
+
+For deployments without outbound access to the Microsoft-hosted resolver,
+two alternatives are supported:
+
+**Option A — Azure ION private node (recommended for Entra ID environments)**
+
+1. Deploy the Azure ION service into your subscription following the
+   [Azure ION deployment guide](https://github.com/decentralized-identity/ion/blob/master/doc/azure-deployment.md).
+2. Set `ION_RESOLVER_URL` to the private node's resolver endpoint:
+   ```bash
+   ION_RESOLVER_URL=https://ion.internal.example.com/api/v1.0/identifiers
+   ```
+3. Ensure the issuer process has network access to this endpoint. No
+   additional TLS configuration is required — the standard system trust
+   store is used.
+
+**Option B — open-source ION sidecar (recommended for Kubernetes / air-gap)**
+
+1. Build and deploy the open-source ION sidecar
+   ([github.com/decentralized-identity/ion](https://github.com/decentralized-identity/ion))
+   as a pod sidecar or a separate service in your cluster.
+2. Expose the resolver via a ClusterIP service at a stable in-cluster URL,
+   for example `http://ion-sidecar.euno.svc.cluster.local:3000`.
+3. Set the issuer env var:
+   ```bash
+   ION_RESOLVER_URL=http://ion-sidecar.euno.svc.cluster.local:3000/api/v1.0/identifiers
+   ```
+4. For non-`did:web` DIDs no HTTP allow-list is needed. For `did:web` DIDs
+   served internally over plain HTTP, add the host to
+   `DID_WEB_ALLOW_HTTP_FOR_HOSTS` (comma-separated, e.g.
+   `partner-sim.local:4001,did-registry.internal`).
+
+### 9.3 ION circuit breaker (Stage 5)
+
+The issuer wraps every `did:ion` resolution call in a circuit breaker that
+opens after repeated failures, preventing a sustained resolver outage from
+blocking all DID-based authentication attempts with full network timeouts.
+
+| Env var | Default | Description |
+|---|---|---|
+| `ION_CB_FAILURE_THRESHOLD` | `3` | Number of failures within the window to open the circuit. |
+| `ION_CB_WINDOW_SECONDS` | `30` | Sliding window (seconds) for failure counting. |
+| `ION_CB_COOLDOWN_SECONDS` | `60` | Seconds the circuit stays open before a probe is allowed. |
+
+**Behaviour when circuit is open:**
+
+`resolveDidIon()` immediately throws a `CapabilityError` with
+`ErrorCode.AUTHENTICATION_FAILED` and HTTP 502. The error message includes
+`circuit breaker is open` so it is distinguishable in logs and alerting.
+
+**Tuning recommendations:**
+
+- Production: keep the defaults (3 / 30 / 60). The window is short enough
+  to catch a real outage (three failures in 30 s) without tripping on a
+  single transient timeout.
+- High-sensitivity environments: lower `ION_CB_FAILURE_THRESHOLD` to `2`
+  and raise `ION_CB_COOLDOWN_SECONDS` to `120` to fail faster and recover
+  more cautiously.
+- High-traffic environments: raise `ION_CB_FAILURE_THRESHOLD` to `5` to
+  tolerate transient glitches without opening the circuit.
+
+### 9.4 `did:ion` health check
+
+The issuer exposes a dedicated health check endpoint for the ION resolver:
+
+```
+GET /healthz/did-ion
+```
+
+**Response (always HTTP 200):**
+
+```json
+{ "status": "ok" }
+```
+or
+```json
+{ "status": "degraded", "reason": "circuit_open" }
+{ "status": "degraded", "reason": "probe_failed" }
+```
+
+The endpoint always returns HTTP 200 so Kubernetes liveness probes that
+include it continue to pass during transient ION outages — use the `status`
+field in an alerting rule rather than the HTTP status code.
+
+The probe DID is the well-known ION document
+`did:ion:EiAnKD8-jfdd0MDcZUjAbRgaThBrMxPTFOxcnfJhI7iCCg` (published by
+the DIF ION project). It is suitable as a canary for both the public Microsoft
+resolver and any private ION sidecar that anchors on the same Bitcoin Mainnet.
+
+> **Air-gapped / test networks:** On deployments where this DID is not
+> anchored (private test networks, early-stage ION sidecars, or fully
+> air-gapped environments), the probe will always return `degraded`. In
+> these cases treat the health endpoint as informational only — the circuit
+> breaker still protects against resolver failures at request time, and the
+> `circuit_open` reason will appear in the degraded response once enough
+> failures have accumulated.
+
+### 9.5 Security notes
+
+- `did:web` DIDs are fetched over HTTPS by default. HTTP is only allowed for
+  hosts explicitly listed in `DID_WEB_ALLOW_HTTP_FOR_HOSTS` (intended for
+  local CI/CD environments only — never use in production).
+- `did:ion` resolution relies on the ION resolver's TLS certificate. For
+  private nodes, use a certificate from a CA in the system trust store.
+- `did:key` is stateless and requires no network call. It is always available
+  regardless of ION resolver connectivity.

@@ -57,6 +57,7 @@ export async function startServer(): Promise<void> {
     crossChainAnchor,
     gatewayTelemetry = null,
     auditQueryStore,
+    durablePostureEmitter,
   } = deps;
 
   const server = app.listen(config.port, () => {
@@ -270,6 +271,15 @@ export async function startServer(): Promise<void> {
       // reporting window's events are not silently lost.
       if (gatewayTelemetry) {
         await closeWithTimeout('gateway telemetry', () => gatewayTelemetry.stop());
+      }
+
+      // Phase 5.7: stop the durable posture emitter — flushes any events
+      // that are still in the SQLite WAL queue before the process exits.
+      // Stopping after the telemetry collector and before the DB pool so
+      // any pending emitObserved calls triggered by in-flight pipeline
+      // records can complete.
+      if (durablePostureEmitter) {
+        await closeWithTimeout('durable posture emitter', () => durablePostureEmitter.stop());
       }
 
       // Phase 6: close the ledger Postgres pool LAST — after the pipeline
