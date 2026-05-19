@@ -292,6 +292,69 @@ services:
       retries: 10
       start_period: 5s
 
+  # ── DB Token Service ──────────────────────────────────────────────────────
+  # Mints short-lived database IAM credentials from verified capability JWTs.
+  # Active when --profile full or --profile smoke is passed.
+  # See docs/self-host.md §12.6 for configuration reference.
+  db-token-service:
+    build:
+      context: ..
+      dockerfile: euno-platform/packages/db-token-service/Dockerfile
+    image: euno/db-token-service:local
+    container_name: euno-db-token-service
+    profiles: ["full", "smoke"]
+    restart: unless-stopped
+    depends_on:
+      capability-issuer:
+        condition: service_healthy
+    environment:
+      NODE_ENV:        ${NODE_ENV:-development}
+      PORT:            ${DB_TOKEN_SERVICE_PORT:-5050}
+      ISSUER_DID:      ${ISSUER_DID:-did:web:capability-issuer%3A3001}
+      ISSUER_JWKS_URI: "http://capability-issuer:${ISSUER_PORT:-3001}/.well-known/jwks.json"
+      AUDIENCE:        ${GATEWAY_AUDIENCE:-tool-gateway}
+      DB_TOKENS_ENABLED: ${DB_TOKENS_ENABLED:-false}
+    ports:
+      - "${DB_TOKEN_SERVICE_EXPOSE_PORT:-5050}:${DB_TOKEN_SERVICE_PORT:-5050}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${DB_TOKEN_SERVICE_PORT:-5050}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # ── Storage Grant Service ──────────────────────────────────────────────────
+  # Mints short-lived cloud storage credentials (presigned URLs / SAS tokens)
+  # from verified capability JWTs.
+  # Active when --profile full or --profile smoke is passed.
+  # See docs/self-host.md §12.7 for configuration reference.
+  storage-grant-service:
+    build:
+      context: ..
+      dockerfile: euno-platform/packages/storage-grant-service/Dockerfile
+    image: euno/storage-grant-service:local
+    container_name: euno-storage-grant-service
+    profiles: ["full", "smoke"]
+    restart: unless-stopped
+    depends_on:
+      capability-issuer:
+        condition: service_healthy
+    environment:
+      NODE_ENV:              ${NODE_ENV:-development}
+      PORT:                  ${STORAGE_GRANT_SERVICE_PORT:-5051}
+      ISSUER_DID:            ${ISSUER_DID:-did:web:capability-issuer%3A3001}
+      ISSUER_JWKS_URI:       "http://capability-issuer:${ISSUER_PORT:-3001}/.well-known/jwks.json"
+      AUDIENCE:              ${GATEWAY_AUDIENCE:-tool-gateway}
+      STORAGE_GRANTS_ENABLED: ${STORAGE_GRANTS_ENABLED:-false}
+    ports:
+      - "${STORAGE_GRANT_SERVICE_EXPOSE_PORT:-5051}:${STORAGE_GRANT_SERVICE_PORT:-5051}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${STORAGE_GRANT_SERVICE_PORT:-5051}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
   # ── Smoke test ─────────────────────────────────────────────────────────────
   # Lightweight container that exercises core gateway endpoints after the full
   # stack is healthy.  Exits 0 on success, 1 on failure.  Use with:
