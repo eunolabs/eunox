@@ -453,7 +453,7 @@ describe('CrossChainAnchor onCommitment wiring (unit)', () => {
 // ── timingSafeEqual multi-byte buffer test ────────────────────────────────────
 
 describe('chain-proof route: timingSafeEqual safety', () => {
-  test('15. rejects same-char-count but different-byte-count key with 401, not RangeError', () => {
+  test('15. rejects multi-byte Unicode key with 401, not RangeError', () => {
     // HTTP headers are ASCII-only, so we bypass the HTTP layer and invoke the
     // Express route handler directly via a synthetic req/res.  This exercises
     // the buffer byte-length guard that was added to the timingSafeEqual call.
@@ -591,6 +591,12 @@ describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
 
     // start() must have been called — this is the core of what the reviewer asked for.
     expect(startSpy).toHaveBeenCalledTimes(1);
+
+    // Verify the anchor was constructed with AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS
+    // from the validated config (60000 ms in this test fixture).  intervalMs is a
+    // private field so we reach it via a typed cast rather than exposing it publicly.
+    const anchorInterval = (result.crossChainAnchor as unknown as { intervalMs: number }).intervalMs;
+    expect(anchorInterval).toBe(60000);
 
     startSpy.mockRestore();
     if (result.ledgerPgPool) {
