@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /**
- * CI lint: verify that the issuer identity threat model has been signed off.
+ * CI lint: verify that threat model documents have been signed off.
  *
- * Fails if the threat model file still contains the placeholder text
- * `_(add names` which indicates that the Authors / Reviewers fields have
- * not been populated (see docs/security/issuer-identity-threat-model.md
- * and architecture-review-2026-05-stage4.md CR-2).
+ * Checks two threat model files:
+ *
+ * 1. docs/security/issuer-identity-threat-model.md (Stage 4, CR-2)
+ *    Fails if the file still contains `_(add names` placeholder text.
+ *
+ * 2. docs/security/enterprise-federation-threat-model.md (Stage 5, Task 1)
+ *    Fails if the file still contains `_(name)_` or `_(date)_` placeholder
+ *    text in the sign-off table, or if it still contains the "Status:
+ *    Placeholder" notice from the original stub.
  *
  * Usage (from the repo root):
  *
@@ -16,7 +21,7 @@
  *                   Used by unit tests to point at synthetic fixtures.
  *
  * Exit codes:
- *   0 -- threat model is signed off
+ *   0 -- all threat models are signed off
  *   1 -- placeholder text found or file missing
  */
 
@@ -51,34 +56,55 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // ---------------------------------------------------------------------------
-// Check
+// Check helpers
 // ---------------------------------------------------------------------------
 
-const THREAT_MODEL_PATH = resolve(
-  workspaceRoot,
-  'docs/security/issuer-identity-threat-model.md',
-);
+/**
+ * Check a single threat model file for placeholder text.
+ *
+ * @param {string} filePath   Absolute path to the file.
+ * @param {string[]} placeholders  Substrings whose presence indicates the
+ *   document has not been signed off.
+ * @param {string} guidance   Human-readable guidance appended to the error.
+ * @returns {number} Number of errors found (0 or 1).
+ */
+function checkFile(filePath, placeholders, guidance) {
+  if (!existsSync(filePath)) {
+    process.stderr.write(`ERROR threat model file not found: ${filePath}\n`);
+    return 1;
+  }
+  const content = readFileSync(filePath, 'utf8');
+  for (const placeholder of placeholders) {
+    if (content.includes(placeholder)) {
+      process.stderr.write(
+        `ERROR ${filePath} still contains the sign-off placeholder ` +
+          `"${placeholder}". ${guidance}\n`,
+      );
+      return 1;
+    }
+  }
+  return 0;
+}
 
-const PLACEHOLDER = '_(add names';
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
 
 let errors = 0;
 
-if (!existsSync(THREAT_MODEL_PATH)) {
-  process.stderr.write(
-    `ERROR threat model file not found: ${THREAT_MODEL_PATH}\n`,
-  );
-  errors++;
-} else {
-  const content = readFileSync(THREAT_MODEL_PATH, 'utf8');
-  if (content.includes(PLACEHOLDER)) {
-    process.stderr.write(
-      `ERROR ${THREAT_MODEL_PATH} still contains the sign-off placeholder ` +
-        `"${PLACEHOLDER}". Populate the Authors and Reviewers fields before ` +
-        `merging (see architecture-review-2026-05-stage4.md CR-2).\n`,
-    );
-    errors++;
-  }
-}
+// Stage-4 issuer identity threat model (architecture-review-2026-05-stage4.md CR-2)
+errors += checkFile(
+  resolve(workspaceRoot, 'docs/security/issuer-identity-threat-model.md'),
+  ['_(add names'],
+  'Populate the Authors and Reviewers fields before merging (see architecture-review-2026-05-stage4.md CR-2).',
+);
+
+// Stage-5 enterprise federation threat model (stage5executionplan.md Task 1)
+errors += checkFile(
+  resolve(workspaceRoot, 'docs/security/enterprise-federation-threat-model.md'),
+  ['_(name)_', '_(date)_', 'Status: Placeholder'],
+  'Complete the sign-off table and remove the placeholder status notice before merging (see stage5executionplan.md §5 Task 1).',
+);
 
 if (errors === 0) {
   process.stdout.write('OK threat model sign-off check passed\n');
