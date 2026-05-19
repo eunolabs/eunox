@@ -169,16 +169,18 @@ test('fails when enterprise threat model contains _(date)_ placeholder in sign-o
 });
 
 test('fails when enterprise threat model still contains the "Status: Placeholder" stub notice', () => {
+  // Fixture has no _(name)_ or _(date)_ so the Status: Placeholder check is
+  // the first placeholder matched — exercising that specific code path.
   const root = makeFixture(
     ISSUER_SIGNED_OFF,
     '# Enterprise Federation Threat Model\n\n> **Status: Placeholder — to be completed in Task 1.**\n\n' +
-      '| _(name)_ | Engineer | _(date)_ | |\n',
+      '| Engineer 1 | Engineer | 2026-05-19 | approved |\n',
   );
   try {
     const { exitCode, stderr } = run(root);
     assert.equal(exitCode, 1, 'should exit 1 when Status: Placeholder is present');
-    // The script stops at the first placeholder match, so we check generically
     assert.match(stderr, /still contains the sign-off placeholder/);
+    assert.match(stderr, /Status: Placeholder/);
     assert.match(stderr, /enterprise-federation-threat-model/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -205,9 +207,10 @@ test('reports errors from both files when both have issues', () => {
   try {
     const { exitCode, stderr } = run(root);
     assert.equal(exitCode, 1, 'should exit 1 when both have placeholders');
-    // The script reports the first error found (issuer identity) since errors
-    // accumulate in order — confirm the exit code is non-zero.
+    // Both checkFile() calls run independently — stderr must contain error
+    // lines for both files.
     assert.match(stderr, /issuer-identity-threat-model/);
+    assert.match(stderr, /enterprise-federation-threat-model/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

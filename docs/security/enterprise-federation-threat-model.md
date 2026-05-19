@@ -90,8 +90,11 @@ The blast radius is bounded to:
   compromised key, the gateway's positive key cache (default 5 minutes,
   tunable via `PARTNER_DID_CACHE_TTL_SECONDS`) means existing cached keys
   remain valid for up to one cache TTL after the DID document is updated.
-  Operators should reduce `PARTNER_DID_CACHE_TTL_SECONDS` to 0 during an
-  active incident to force immediate re-resolution.
+  During an active incident, call `POST /admin/partner-dids/:did/refresh`
+  (with `X-Admin-Api-Key` and `X-Admin-Operator` headers) to flush the
+  positive key cache for the compromised partner immediately.
+  `PARTNER_DID_CACHE_TTL_SECONDS` accepts only positive integers and cannot
+  be set to 0 to force immediate re-resolution.
 - **Tenancy containment:** the blast radius is limited to partner-issued
   tokens. Platform-issued tokens (from the platform's own capability issuer)
   are not affected. Other registered partners are not affected.
@@ -116,7 +119,7 @@ The blast radius is bounded to:
 
 1. **Immediate:** an on-call operator calls the gateway admin API:
    ```
-   POST /api/v1/admin/partners/<did>/revoke
+   DELETE /admin/partner-dids/:did
    X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
    X-Admin-Operator: <operator-identity>
    ```
@@ -180,7 +183,7 @@ all production partner registrations** (see §2.4 below).
 
 **Step 1: proposal.** An operator submits a partner DID proposal via:
 ```
-POST /api/v1/admin/partners
+POST /admin/partner-dids/proposals
 X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
 X-Admin-Operator: <proposer-identity>
 Body: { "did": "did:web:partner.example.com", ... }
@@ -194,7 +197,7 @@ in the `PartnerDidEntry`.
 the proposer — enforced by `approver !== entry.proposer`; the
 `TwoEyesViolationError` is thrown and logged if violated) approves the entry:
 ```
-POST /api/v1/admin/partners/<did>/approve
+POST /admin/partner-dids/proposals/:did/approve
 X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
 X-Admin-Operator: <approver-identity>   ← must differ from proposer
 ```
@@ -560,7 +563,7 @@ timing-safe constant-time comparison (`crypto.timingSafeEqual`) already
 used by all other admin routes in `admin-api.ts`. The authorization
 requirements are:
 
-- **Header:** `X-Admin-API-Key: <GATEWAY_ADMIN_API_KEY>`
+- **Header:** `X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>`
 - **NOT** a user capability token — capability tokens are for agent
   authorization, not admin operations.
 - **NOT** a SCIM bearer token — the SCIM token only authorizes SCIM
