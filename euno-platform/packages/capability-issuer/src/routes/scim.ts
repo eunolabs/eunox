@@ -566,7 +566,10 @@ export function createScimRouter(opts: ScimRouterOptions): Router {
       let group;
       if (replaceAllMembers !== undefined) {
         // Replace the full membership set atomically.
-        const displayName = newDisplayName ?? currentGroup?.displayName ?? '';
+        // currentGroup is always defined here: when newDisplayName is absent
+        // (needCurrentGroup=true), we fetched and 404-checked it above;
+        // when newDisplayName is present, we use it directly.
+        const displayName = newDisplayName ?? currentGroup!.displayName;
         group = await store.replaceGroup(
           req.params['id']!,
           { displayName, tenantId: opts.tenantId },

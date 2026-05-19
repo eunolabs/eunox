@@ -596,10 +596,14 @@ async function initializeServices() {
             'SCIM provisioning requires a Postgres database. SCIM endpoints are DISABLED.',
         );
       } else {
-        // sharedDbPool is guaranteed non-null here because env.ISSUER_DB_URL is set
-        // and the templateStore block above runs first.
-        const scimPool = sharedDbPool!;
-        const dbSchema = sharedDbSchema!;
+        // sharedDbPool / sharedDbSchema are set earlier in the same if (env.ISSUER_DB_URL) block.
+        // This inner else only runs when env.ISSUER_DB_URL is truthy, so both are non-null.
+        if (!sharedDbPool || !sharedDbSchema) {
+          // Defensive guard — should never happen given the control flow above.
+          throw new Error('SCIM initialisation: shared DB pool is unexpectedly undefined despite ISSUER_DB_URL being set');
+        }
+        const scimPool = sharedDbPool;
+        const dbSchema = sharedDbSchema;
 
         const { PostgresScimStore } = await import('./scim-store');
         scimStore = new PostgresScimStore(scimPool, dbSchema);
