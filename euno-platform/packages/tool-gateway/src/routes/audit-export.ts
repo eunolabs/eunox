@@ -217,7 +217,7 @@ function parseISODateParam(
  */
 export function createAuditExportRouter(opts: AuditExportRouterOptions): Router {
   const { queryStore, adminApiKey, logger } = opts;
-  const verificationUri = opts.auditSigningKeysUri ?? null;
+  const verificationUri: string | null = opts.auditSigningKeysUri ?? null;
   const router = Router();
 
   router.get('/api/v1/audit/export', async (req: Request, res: Response, next: NextFunction) => {

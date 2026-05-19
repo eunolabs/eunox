@@ -36,7 +36,6 @@
  */
 
 import { Router, Request, Response } from 'express';
-import * as jose from 'jose';
 import crypto from 'crypto';
 import { createLogger } from '@euno/common';
 
@@ -71,39 +70,24 @@ export interface AuditSigningKeysRouterOptions {
 /**
  * Build the `GET /api/v1/audit/signing-keys` JWKS router.
  *
- * The JWK Set is computed once at construction time (the signing key does not
- * change at runtime) so every request is served from memory.
+ * The JWK Set is computed synchronously at construction time using Node's
+ * built-in `KeyObject.export({ format: 'jwk' })` (available since Node 15).
+ * Every request is served from the cached in-memory object — the signing key
+ * does not change at runtime.
  */
 export function createAuditSigningKeysRouter(opts: AuditSigningKeysRouterOptions): Router {
   const { publicKeyPem, keyId, algorithm, logger } = opts;
 
-  // Build the JWK once — the key does not rotate at runtime.
-  let cachedJwkSet: { keys: object[] };
+  let cachedJwkSet: { keys: object[] } | null = null;
 
   try {
     const keyObject = crypto.createPublicKey(publicKeyPem);
-    // Export as JWK.  `jose.exportJWK` is sync for key objects when called
-    // via the synchronous `crypto.KeyObject` path; we resolve the promise
-    // immediately in the constructor-like IIFE below.
-    const buildJwkSet = async () => {
-      const jwk = await jose.exportJWK(keyObject as unknown as jose.KeyLike);
-      // Augment with `kid` and `alg` so consumers can locate the right key.
-      return { keys: [{ ...jwk, kid: keyId, alg: algorithm, use: 'sig' }] };
-    };
-    // Kick off the async build and cache the result. Since key construction is
-    // CPU-only (no I/O), the promise will resolve before the first request in
-    // any realistic deployment. The route handler awaits it on the first call.
-    cachedJwkSet = null as unknown as { keys: object[] };
-    buildJwkSet().then((jwks) => {
-      cachedJwkSet = jwks;
-      logger.info('Audit signing-keys JWKS built', { keyId, algorithm, numKeys: 1 });
-    }, (err) => {
-      logger.error('Failed to build audit signing-keys JWKS', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    // Node 15+ exports a JWK synchronously; no I/O involved.
+    const jwk = keyObject.export({ format: 'jwk' }) as Record<string, unknown>;
+    cachedJwkSet = { keys: [{ ...jwk, kid: keyId, alg: algorithm, use: 'sig' }] };
+    logger.info('Audit signing-keys JWKS built', { keyId, algorithm, numKeys: 1 });
   } catch (err) {
-    logger.error('Failed to load audit signing public key', {
+    logger.error('Failed to build audit signing-keys JWKS', {
       error: err instanceof Error ? err.message : String(err),
     });
     // If the PEM is invalid, mount a route that returns 503.
@@ -115,17 +99,13 @@ export function createAuditSigningKeysRouter(opts: AuditSigningKeysRouterOptions
   }
 
   const router = Router();
+  const jwkSetSnapshot = cachedJwkSet;
 
-  router.get('/api/v1/audit/signing-keys', async (_req: Request, res: Response) => {
-    if (!cachedJwkSet) {
-      // JWK set is still being built (extremely unlikely in practice).
-      res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Signing keys not yet available' } });
-      return;
-    }
+  router.get('/api/v1/audit/signing-keys', (_req: Request, res: Response) => {
     res
       .setHeader('Cache-Control', 'public, max-age=3600')
       .setHeader('Content-Type', 'application/json')
-      .json(cachedJwkSet);
+      .json(jwkSetSnapshot);
   });
 
   return router;

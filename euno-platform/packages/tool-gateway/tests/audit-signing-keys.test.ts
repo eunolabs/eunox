@@ -91,9 +91,6 @@ describe('GET /api/v1/audit/signing-keys', () => {
     const app = express();
     app.use(router);
 
-    // Wait a tick for the async JWK build to complete.
-    await new Promise((r) => setTimeout(r, 50));
-
     const res = await request(app).get('/api/v1/audit/signing-keys');
 
     expect(res.status).toBe(200);
@@ -113,8 +110,6 @@ describe('GET /api/v1/audit/signing-keys', () => {
     });
     const app = express();
     app.use(router);
-
-    await new Promise((r) => setTimeout(r, 50));
 
     const res = await request(app).get('/api/v1/audit/signing-keys');
 
@@ -147,8 +142,6 @@ describe('GET /api/v1/audit/signing-keys', () => {
     const app = express();
     app.use(router);
 
-    await new Promise((r) => setTimeout(r, 50));
-
     const res = await request(app).get('/api/v1/audit/signing-keys');
 
     expect(res.status).toBe(200);
@@ -163,9 +156,6 @@ describe('GET /api/v1/audit/signing-keys', () => {
       auditSigningAlgorithm: 'RS256',
     });
     const app = createApp(deps);
-
-    // Wait for async JWK build to complete.
-    await new Promise((r) => setTimeout(r, 100));
 
     const res = await request(app).get('/api/v1/audit/signing-keys');
 
