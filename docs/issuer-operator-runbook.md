@@ -145,6 +145,128 @@ curl -X POST https://<gateway>/admin/revoke \
 
 ---
 
+## Cross-Chain Anchor (per-replica-postgres backend)
+
+When `AUDIT_LEDGER_BACKEND=per-replica-postgres`, each gateway replica maintains its own independent hash chain. A **cross-chain commitment** periodically snapshots all replica chain tips into a single tamper-evident `SignedCrossChainCommitment` that can be verified externally without database access.
+
+### Enabling the anchor
+
+Set the following environment variables on every gateway replica:
+
+```
+AUDIT_LEDGER_BACKEND=per-replica-postgres
+ENABLE_CROSS_CHAIN_ANCHOR=true
+AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS=60000    # optional, default 60 s
+```
+
+The gateway auto-starts a `CrossChainAnchor` on boot. The anchor:
+
+1. Every `AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS` milliseconds, queries `euno_audit_ledger_v2` for every known replica's latest `(replicaId, seq, tipHash)`.
+2. Sorts tips alphabetically by `replicaId` (deterministic leaf ordering).
+3. Computes a balanced binary Merkle root over `canonicalSha256(tip)` for each tip.
+4. Signs the `CrossChainCommitment` with the same KMS key used for per-record evidence (`AUDIT_SIGNING_KMS_PROVIDER`).
+5. Emits a `SignedCrossChainCommitment` to the in-memory ring buffer and to the `euno_cross_chain_anchor_lag_seconds` Prometheus gauge.
+
+Commitments are stored in-process in a bounded ring buffer (≤ 10 000 entries ≈ 7 days at the default 60 s interval).
+
+### Querying the chain-proof endpoint
+
+```sh
+curl -H "X-Admin-Api-Key: $GATEWAY_ADMIN_API_KEY" \
+  "https://<gateway>/api/v1/audit/chain-proof?since=2026-01-01T00:00:00Z&until=2026-01-02T00:00:00Z"
+```
+
+**Response shape:**
+
+```json
+{
+  "commits": [ /* SignedCrossChainCommitment[] */ ],
+  "chainHead": "<hex-encoded SHA-256 of latest commitment in store>"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `commits` | Commitments within the `since`/`until` window. Empty array when none match. |
+| `chainHead` | `canonicalSha256` of the most recent commitment across all time (not filtered). Use this to detect gaps between successive calls. `null` if no commitment has been emitted yet. |
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `since` | ISO 8601 string | Inclusive lower bound on `commitment.ts`. |
+| `until` | ISO 8601 string | Inclusive upper bound on `commitment.ts`. |
+
+Both bounds are optional. Omit both to retrieve all in-memory commitments.
+
+### Offline verification
+
+Any `SignedCrossChainCommitment` can be verified offline:
+
+```sh
+# 1. Fetch the gateway JWKS
+curl https://<gateway>/.well-known/jwks.json > jwks.json
+
+# 2. Verify the commitment (pseudo-code; adapt to your tooling)
+node -e "
+const commit = require('./commit.json');
+const canonical = require('@euno/common').canonicalSha256(
+  Object.fromEntries(
+    Object.entries(commit).filter(([k]) =>
+      !['signature', 'keyId', 'algorithm'].includes(k)
+    )
+  )
+);
+console.log('canonical SHA-256:', canonical);
+console.log('verify signature against digest using', commit.algorithm, 'with key', commit.keyId);
+"
+```
+
+The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSON(commitment))` where the canonical form includes all `CrossChainCommitment` fields **excluding** `signature`, `keyId`, and `algorithm`. The signing key matches the gateway's evidence signing key (same `keyId`).
+
+### Prometheus metric
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `euno_cross_chain_anchor_lag_seconds` | Gauge | Seconds since the last successful commitment. Zero until first commitment. Alert when this exceeds `2 × AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS / 1000`. |
+
+**Alert rule example (Prometheus):**
+
+```yaml
+- alert: CrossChainAnchorLag
+  expr: euno_cross_chain_anchor_lag_seconds > 120
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Cross-chain anchor is behind on {{ $labels.instance }}"
+    description: >
+      The CrossChainAnchor has not emitted a commitment for
+      {{ $value | humanizeDuration }}. This may indicate a Postgres query
+      failure. Check the gateway error logs for 'CrossChainAnchor error'.
+```
+
+### Security model
+
+- **Authentication**: `GET /api/v1/audit/chain-proof` requires `X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>` (timing-safe comparison). The route is absent (404) when `ENABLE_CROSS_CHAIN_ANCHOR=false`.
+- **Signing key**: Commitments are signed by the same KMS key as per-record evidence. An attacker who obtains the HMAC secret (`AUDIT_LEDGER_HMAC_SECRET`) can forge **HMAC metadata** on individual rows but cannot forge the commitment **signature** (which requires the KMS private key). See `docs/security/minter-threat-model.md` and `docs/runbooks/ledger-hmac-rotation.md` for HMAC key rotation procedures.
+- **S3 anchoring**: The bootstrap does not wire an S3 client by default. To publish commitments to S3 Object-Lock, construct `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` in a custom entrypoint. See `CrossChainAnchorOptions.s3` in `euno-platform/packages/common-infra/src/ledger-signer.ts`.
+
+### Azure Confidential Ledger (ACL) backend
+
+As an alternative to `per-replica-postgres`, set:
+
+```
+AUDIT_LEDGER_BACKEND=acl
+AUDIT_LEDGER_ACL_ENDPOINT=https://<name>.confidential-ledger.azure.com
+```
+
+The ACL backend uses `DefaultAzureCredential` for authentication (workload identity, managed identity, or `AZURE_*` env vars). It provides TEE-backed immutability with a single-replica hash chain (no cross-replica locking). The ACL backend does not require `CrossChainAnchor` because the Azure Confidential Ledger service provides its own external tamper evidence.
+
+**Prerequisites**: `@azure/confidential-ledger` and `@azure/identity` must be installed in the deployment image.
+
+---
+
 ## On-Call Playbook: IdP Outage
 
 The issuer is **fail-closed** on IdP validation failure: if `validateToken()` throws, the request is rejected with 401. Existing valid tokens continue to work (verification is stateless JWKS-based).
