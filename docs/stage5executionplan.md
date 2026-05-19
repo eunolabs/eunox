@@ -118,11 +118,12 @@ reference. Integration test coverage in
 round-trip including a circuit-breaker open/close cycle.
 
 **E3.** **SOC2 audit-trail export is live**: a `GET /api/v1/audit/export`
-endpoint (new, authenticated with the admin operator-JWT pattern from Stage
-4) returns a paginated OCSF evidence bundle that a compliance team can hand
-to an auditor. The `DurablePostureEmitter` from `posture-emitter` is wired
-into the gateway's issuance audit pipeline. Every signed evidence record is
-verifiable offline with the issuer's public JWKS.
+endpoint (new, authenticated via `X-Admin-API-Key: <GATEWAY_ADMIN_API_KEY>`
+using the same timing-safe check already used by the gateway's existing admin
+routes in `admin-api.ts`) returns a paginated OCSF evidence bundle that a
+compliance team can hand to an auditor. The `DurablePostureEmitter` from
+`posture-emitter` is wired into the gateway's issuance audit pipeline. Every
+signed evidence record is verifiable offline with the issuer's public JWKS.
 
 **E4.** **Cross-chain audit anchor is documented and demonstrably active**:
 `AUDIT_LEDGER_BACKEND=per-replica-postgres` + `ENABLE_CROSS_CHAIN_ANCHOR=true`
@@ -156,11 +157,12 @@ to block a tool call that the outer gateway would have allowed (defense-
 in-depth scenario).
 
 **E8.** **SCIM 2.0 provisioning endpoint is live**: the capability issuer
-exposes `/scim/v2/Users` and `/scim/v2/Groups` endpoints (authenticated
-via the existing `ISSUER_ADMIN_JWKS_URI` operator-JWT path). A user pushed
-via SCIM is queryable via the issuer admin API and its SCIM-provisioned
-group membership is honored by the role-to-capability policy. Integration
-test covers push → issuance → capability reflects group membership.
+exposes `/scim/v2/Users` and `/scim/v2/Groups` endpoints (authenticated via
+the static `ISSUER_SCIM_BEARER_TOKEN` secret, separate from the admin
+operator-JWT). A user pushed via SCIM is queryable via the issuer admin API
+and its SCIM-provisioned group membership is honored by the role-to-capability
+policy. Integration test covers push → issuance → capability reflects group
+membership.
 
 **E9.** **`/.well-known/capability-issuer` is a stable, documented contract**:
 the discovery document is versioned (`schemaVersion: "1.0.0"`), covers all
@@ -173,11 +175,11 @@ Stage 4 §E8 continue to be true). No net-new types appear outside
 `@euno/common-core`. CI dependency-direction gate (Stage 0 Substage 0.4)
 is green on every Stage-5 PR.
 
-**E11.** **`did:ion` resolution is productionized**: `DID_ION_RESOLVER_URL`
-is a documented env var with a default pointing to the hosted ION resolver.
-A fallback health-check and circuit breaker are in place (reuse
-`RedisCircuitBreaker` from `@euno/common`). Docs include how to run a
-private ION node for air-gapped deployments.
+**E11.** **`did:ion` resolution is productionized**: `ION_RESOLVER_URL`
+is a documented env var (already present in `IssuerConfigSchema`) with a
+default pointing to the hosted ION resolver. A fallback health-check and
+circuit breaker are in place (reuse `RedisCircuitBreaker` from `@euno/common`).
+Docs include how to run a private ION node for air-gapped deployments.
 
 **E12.** **Enterprise threat model addendum is reviewed and signed off**
 (`docs/security/enterprise-federation-threat-model.md`), covering all
@@ -282,14 +284,20 @@ Stage-5 work is:
    - Expose per-DID circuit-breaker state as Prometheus gauge
      (`euno_partner_did_circuit_breaker_state{did="…", state="open|closed|half-open"}`)
      via the gateway's existing `/metrics` endpoint.
-   - Add `PARTNER_DID_CACHE_TTL_MS` and `PARTNER_DID_NEGATIVE_CACHE_TTL_MS`
-     env vars to `GatewayConfigSchema` (currently hard-coded defaults).
-   - Add `PARTNER_DID_CIRCUIT_BREAKER_FAILURE_THRESHOLD` and
-     `PARTNER_DID_CIRCUIT_BREAKER_RESET_TIMEOUT_MS` env vars.
+   - Add `PARTNER_DID_CACHE_TTL_SECONDS` and
+     `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` env vars to
+     `GatewayConfigSchema` (currently hard-coded defaults; these names are
+     already defined in the schema — make them tunable at boot if not yet
+     wired through to `PartnerIssuerResolver`).
+   - Add `PARTNER_DID_CB_FAILURE_THRESHOLD` and
+     `PARTNER_DID_CB_COOLDOWN_SECONDS` env vars (both already in
+     `GatewayConfigSchema`; confirm they are forwarded to the
+     per-DID `RedisCircuitBreaker` constructor).
 3. **`/.well-known/capability-issuer` auto-bootstrap** (see § 4.7): a
    partner operator can supply a `PARTNER_ISSUER_DISCOVERY_URL` env var;
    the gateway fetches the discovery document at startup, extracts the
-   partner's `did` and `jwks` fields, and auto-registers the partner in
+   partner's `issuer` (DID) from the top-level `issuer` field and the JWKS
+   URI from `endpoints.jwks`, and auto-registers the partner in
    `PartnerDidRegistry`.
 4. **Operator documentation**: `docs/ADAPTERS.md` §"Partner Federation" and
    the new `docs/self-host.md` §"Stage 5 partner trust" covering: DID
@@ -321,13 +329,17 @@ Stage-5 work:
    automatically in `bootstrap.ts` — the current behavior is unchanged
    (wired only when `crossChainAnchorOverride` is supplied).
 2. **Chain-proof endpoint**: `GET /api/v1/audit/chain-proof?since=<ISO>&until=<ISO>`
-   returns a JSON object `{ commits: SignedBatchCommitment[], chainHead: string }`.
-   The `SignedBatchCommitment` type already exists in `@euno/common`.
-   Authentication: same admin operator-JWT as `GET /api/v1/audit/records`.
-3. **Azure Confidential Ledger toggle**: add `AUDIT_LEDGER_BACKEND=azure-confidential`
-   as a documented value (the `AzureConfidentialLedgerBackend` already exists
-   in `audit-module.ts` but is not in `GatewayConfigSchema`). Document the
-   Azure managed identity / service principal auth requirements.
+   returns a JSON object `{ commits: SignedCrossChainCommitment[], chainHead: string }`.
+   The `SignedCrossChainCommitment` type already exists in `@euno/common`
+   (`public/packages/common/src/wire.ts`) and is emitted by
+   `CrossChainAnchorOptions.onCommitment`. Authentication:
+   `X-Admin-API-Key: <GATEWAY_ADMIN_API_KEY>` (the same timing-safe check
+   used by the gateway's existing admin routes).
+3. **Azure Confidential Ledger toggle**: document the existing
+   `AUDIT_LEDGER_BACKEND=acl` value (the `AzureConfidentialLedgerBackend`
+   already exists in `audit-module.ts`; `acl` is the established config
+   value in `GatewayConfigSchema`). Document the Azure managed identity /
+   service principal auth requirements and the `ACL_ENDPOINT` config var.
 4. **Operator docs**: `docs/issuer-operator-runbook.md` §"Cross-chain anchor"
    covering: what the anchor does, how to verify integrity offline, key
    rotation procedure (a HMAC secret already in `docs/security/ledger-hmac-rotation.md`),
@@ -335,7 +347,7 @@ Stage-5 work:
 5. **Tests**:
    - Unit: `AuditModule` with `ENABLE_CROSS_CHAIN_ANCHOR=true` starts anchor
      and stops it on teardown.
-   - Unit: `GET /api/v1/audit/chain-proof` returns `SignedBatchCommitment[]`
+   - Unit: `GET /api/v1/audit/chain-proof` returns `SignedCrossChainCommitment[]`
      matching inserted records.
    - Integration: full gateway round-trip with anchor enabled; call
      `GET /api/v1/audit/chain-proof`; verify the chain head is monotonically
@@ -357,7 +369,10 @@ Stage-5 work:
    `AgentInventoryRecord` shape consumed by the emitter. The shim lives in
    `tool-gateway/src/posture-emitter-plugin.ts`.
 3. **OCSF export endpoint**: `GET /api/v1/audit/export` (paginated, cursor-
-   based, authenticated via admin operator-JWT). Returns:
+   based, authenticated via `X-Admin-API-Key: <GATEWAY_ADMIN_API_KEY>` —
+   the same timing-safe check used by the gateway's existing admin routes
+   in `admin-api.ts`; this is a **new route** in the gateway, not a reuse
+   of the issuer's admin auth). Returns:
    ```json
    {
      "cursor": "...",
@@ -423,26 +438,36 @@ Stage-5 work:
      tokenSupplier: () => string | Promise<string>;
      /** Policy to evaluate in-process (AgentCapabilityManifest). */
      policy: AgentCapabilityManifest;
-     /** Called when the guard blocks a tool call (for logging). */
+     /** Called when the guard itself blocks a tool call (guard-layer deny). */
      onDeny?: (toolName: string, reason: string) => void;
+     /**
+      * Called when the guard allowed a tool call but the outer gateway
+      * subsequently denied it. This is distinct from `onDeny` because the
+      * guard is a soft guard: gateway denials are the hard enforcement path
+      * and must be tracked separately for observability.
+      */
+     onGatewayDeny?: (toolName: string, gatewayErrorCode: string) => void;
    }
    ```
    `AgtGuard` wraps an `InProcessProxyHandler` and checks tool calls
    against the manifest's `requiredCapabilities` before forwarding them
    to the outer gateway. It is a soft guard only — it does **not** replace
    the gateway verifier. If the guard allows but the outer gateway denies,
-   the denial is logged by the gateway as usual.
+   `onGatewayDeny` is invoked and the denial is logged by the gateway as
+   usual.
 
 2. **Types land in `@euno/common-core`** (`public/packages/common/src/`):
    `AgtGuardOptions`, `AgtGuardResult` (`allow | deny`), `AgtGuardDenyReason`.
+   The `onGatewayDeny` callback type (`(toolName: string, gatewayErrorCode: string) => void`)
+   is inlined in `AgtGuardOptions`; no additional exported type is needed.
    These are Apache-2.0; the implementation in `agent-runtime` is BSL.
 
 3. **Tests** in `euno-platform/packages/agent-runtime/tests/agt-guard.test.ts`:
    - Guard allows a tool call in scope → forwarded to transport.
    - Guard denies a tool call out of scope → `onDeny` called, transport
      not invoked.
-   - Guard allows but gateway denies → gateway deny event is audited,
-     guard allow event is separately recorded via `onDeny(…, 'gateway_denied')`.
+   - Guard allows but gateway denies → `onGatewayDeny` called (not
+     `onDeny`); gateway audit entry is the sole denial record.
    - Integration test: the full Set-D2 flow (guard → gateway → API).
 
 4. **Documentation**: `docs/agent-sdk.md` §"AGT in-process guard" with
@@ -452,14 +477,20 @@ Stage-5 work:
 ### 4.7 `/.well-known/capability-issuer` discovery v1.0.0 (Task 9)
 
 The endpoint already exists at
-`euno-platform/packages/capability-issuer/src/index.ts:1242`. It returns:
+`euno-platform/packages/capability-issuer/src/index.ts:1242`. It currently
+returns:
 
 ```json
 {
-  "issuer": "…",
-  "jwks": "/.well-known/jwks.json",
-  "didDocument": "/.well-known/did.json",
-  …
+  "issuer": "<issuerDid>",
+  "schemaVersions": { "current": "…", "supported": ["…"] },
+  "signingAlgorithms": ["…"],
+  "endpoints": {
+    "jwks": "/.well-known/jwks.json",
+    "publicKey": "/api/v1/public-key (deprecated — use jwks)",
+    "didDocument": "/.well-known/did.json"
+  },
+  "actionResolverHash": "…"
 }
 ```
 
@@ -489,11 +520,12 @@ Stage-5 work:
    fields present in `1.0.0` will not be removed before `2.0.0`.
 3. **Gateway auto-bootstrap shortcut** (referenced in § 4.2): when
    `PARTNER_ISSUER_DISCOVERY_URL` is set, the gateway fetches the discovery
-   document and uses `partnerFederation.registrationEndpoint` to
-   auto-register the partner.
+   document and reads `body.issuer` (the partner DID) and
+   `body.endpoints.jwks` to auto-register the partner via
+   `partnerFederation.registrationEndpoint`.
 4. **OpenAPI spec**: add the endpoint to `docs/openapi/` (new YAML file
    `docs/openapi/capability-issuer-discovery.yaml`) with the full schema.
-5. **Tests**: GET `/. well-known/capability-issuer` returns `schemaVersion`
+5. **Tests**: `GET /.well-known/capability-issuer` returns `schemaVersion`
    field; caching headers are correct; `ETag` changes when JWKS rotates.
 
 ### 4.8 SCIM 2.0 provisioning (Task 10)
@@ -584,17 +616,18 @@ It calls an external resolver but has no circuit breaker or health check.
 
 Stage-5 work:
 
-1. Add `DID_ION_CIRCUIT_BREAKER_FAILURE_THRESHOLD` and
-   `DID_ION_CIRCUIT_BREAKER_RESET_TIMEOUT_MS` to `IssuerConfigSchema`.
+1. Add `ION_CB_FAILURE_THRESHOLD` and `ION_CB_COOLDOWN_SECONDS` to
+   `IssuerConfigSchema` (following the `PARTNER_DID_CB_*` naming pattern
+   used by `GatewayConfigSchema`).
    Wire a `RedisCircuitBreaker` (reuse from `@euno/common`) around
    `resolveDidIon()`.
 2. Add `GET /healthz/did-ion` health check to the capability issuer:
    resolves `did:ion:EiAnKD8-jfdd0MDcZUjAbRgaThBrMxPTFOxcnfJhI7iCCg`
    (a known ION document); returns `{ status: "ok" | "degraded" }`.
-3. Add `DID_ION_RESOLVER_URL` to `IssuerConfigSchema` with default
-   `https://discover.did.msidentity.com/1.0/identifiers/`. Document how
-   to run a private Azure ION node or the open-source ION sidecar for
-   air-gapped deployments.
+3. Document the existing `ION_RESOLVER_URL` env var (already in
+   `IssuerConfigSchema`, default `https://ion.msidentity.com/api/v1.0/identifiers`)
+   in `docs/issuer-idp-setup.md`. Add a note on how to configure a private
+   Azure ION node or the open-source ION sidecar for air-gapped deployments.
 4. Update `docs/issuer-idp-setup.md` §"DID-based partner issuers" with
    the `did:ion` configuration recipe.
 5. Tests: circuit breaker opens after N failures; health check returns
