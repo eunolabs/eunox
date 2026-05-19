@@ -163,41 +163,31 @@ describe('partner-federation: circuit-breaker trip', () => {
   let didServer: http.Server;
   let partnerDid: string;
   let partnerPrivateKey: jose.KeyLike;
-  let verifier: JWTTokenVerifier;
-  let resolver: PartnerIssuerResolver;
-  let httpResponseCode = 200;
   let didDocToReturn: Record<string, unknown>;
+  let serverPort: number;
+  let sharedSpki: string;
+  // Controlled from within each test to avoid shared state.
+  let serverResponseCode = 200;
 
   beforeAll(async () => {
+    sharedSpki = await localSpki();
+
     const app = express();
     app.get('/.well-known/did.json', (_req, res) => {
-      if (httpResponseCode !== 200) {
-        res.status(httpResponseCode).end();
+      if (serverResponseCode !== 200) {
+        res.status(serverResponseCode).end();
         return;
       }
       res.type('application/did+json').json(didDocToReturn);
     });
     const { server, port } = await listenOnEphemeralPort(app);
     didServer = server;
+    serverPort = port;
     partnerDid = `did:web:127.0.0.1%3A${port}`;
 
     const keys = await makePartnerKeys(partnerDid);
     partnerPrivateKey = keys.privateKey;
     didDocToReturn = keys.didDoc;
-
-    const httpAllowList = parseDidWebHttpAllowList(`127.0.0.1:${port}`);
-    const spki = await localSpki();
-    resolver = new PartnerIssuerResolver({
-      trustedIssuerDids: [partnerDid],
-      httpAllowList,
-      negativeCacheTtlMs: 0,
-      circuitBreaker: { failureThreshold: 3, windowMs: 10_000, cooldownMs: 60_000 },
-    });
-    verifier = new JWTTokenVerifier(spki, {
-      requireKid: false,
-      algorithms: ['RS256'],
-      partnerResolver: resolver,
-    });
   });
 
   afterAll(async () => {
@@ -205,13 +195,26 @@ describe('partner-federation: circuit-breaker trip', () => {
   });
 
   afterEach(() => {
-    // Reset server to healthy after each test.
-    httpResponseCode = 200;
+    // Always restore healthy state so leaks between tests are obvious.
+    serverResponseCode = 200;
   });
 
-  it('denies tokens when the DID endpoint returns 503 (failure 1–3)', async () => {
-    httpResponseCode = 503;
-    // Three failures should all fail with INVALID_TOKEN (not circuit-open yet after each one).
+  /** Build a fresh resolver+verifier so each test starts with clean state. */
+  function makeVerifier(threshold: number): JWTTokenVerifier {
+    const httpAllowList = parseDidWebHttpAllowList(`127.0.0.1:${serverPort}`);
+    const resolver = new PartnerIssuerResolver({
+      trustedIssuerDids: [partnerDid],
+      httpAllowList,
+      negativeCacheTtlMs: 0,
+      circuitBreaker: { failureThreshold: threshold, windowMs: 10_000, cooldownMs: 60_000 },
+    });
+    return new JWTTokenVerifier(sharedSpki, { requireKid: false, algorithms: ['RS256'], partnerResolver: resolver });
+  }
+
+  it('denies tokens when the DID endpoint returns 503 — each denial is INVALID_TOKEN (circuit still closed)', async () => {
+    // Use a high threshold so the circuit does not open during this test.
+    const verifier = makeVerifier(10);
+    serverResponseCode = 503;
     for (let i = 0; i < 3; i++) {
       const token = await mintJWT(partnerPrivateKey, partnerDid);
       await expect(verifier.verify(token)).rejects.toMatchObject({
@@ -220,9 +223,18 @@ describe('partner-federation: circuit-breaker trip', () => {
     }
   });
 
-  it('fast-fails with circuit-open message on subsequent calls after threshold is reached', async () => {
-    // Circuit should be open now (3 failures recorded above).
-    httpResponseCode = 200; // DID endpoint is healthy now but circuit is open
+  it('fast-fails with circuit-open message once threshold is reached — self-contained', async () => {
+    // This test trips its own fresh circuit independently.
+    const verifier = makeVerifier(3);
+    serverResponseCode = 503;
+    // Three failures open the circuit.
+    for (let i = 0; i < 3; i++) {
+      const token = await mintJWT(partnerPrivateKey, partnerDid);
+      await expect(verifier.verify(token)).rejects.toMatchObject({ code: ErrorCode.INVALID_TOKEN });
+    }
+
+    // DID endpoint is now healthy but the circuit is open → fast-fail.
+    serverResponseCode = 200;
     const token = await mintJWT(partnerPrivateKey, partnerDid);
     const err = await verifier.verify(token).catch((e) => e);
     expect(err).toMatchObject({ code: ErrorCode.INVALID_TOKEN });

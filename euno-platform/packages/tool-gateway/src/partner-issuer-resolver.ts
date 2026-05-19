@@ -261,8 +261,9 @@ export class PartnerIssuerResolver {
   }
 
   /**
-   * Return a snapshot of the current circuit-breaker state for every DID that
-   * has had at least one `getKey` call since this resolver was constructed.
+   * Return a new Map snapshot of the current circuit-breaker state for every
+   * DID that has had at least one `getKey` call since this resolver was
+   * constructed.
    *
    * The map is keyed by DID string and the value is one of `'closed'`,
    * `'open'`, or `'half-open'`.  DIDs that are trusted but have never been
@@ -270,8 +271,8 @@ export class PartnerIssuerResolver {
    * exist yet (created lazily) so their state is implicitly `'closed'`.
    *
    * Intended for Prometheus gauge collection on the `/metrics` scrape path;
-   * the result is a plain object snapshot so the gauge `collect()` function
-   * does not hold a reference into internal state.
+   * the result is a new Map snapshot so the gauge `collect()` function does
+   * not hold a reference into internal state.
    */
   getCircuitBreakerStates(): ReadonlyMap<string, CircuitState> {
     const snapshot = new Map<string, CircuitState>();

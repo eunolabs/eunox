@@ -348,7 +348,7 @@ Euno partner federation is **declarative, not transitive**:
 
 1. The gateway operator opts a partner DID into trust via the admin API's
    two-eyes approval workflow (`POST /admin/partner-dids/proposals` →
-   `POST /admin/partner-dids/proposals/:id/approve`).  A second operator
+   `POST /admin/partner-dids/proposals/:did/approve`).  A second operator
    must approve — the proposer cannot approve their own entry.
 2. When the gateway receives a token whose `iss` claim is a partner DID, the
    `PartnerIssuerResolver` resolves the DID document via `did:web`, `did:ion`,
@@ -364,15 +364,20 @@ Euno partner federation is **declarative, not transitive**:
 
 ```bash
 DID="did:web:partner.example.com"
+ENCODED_DID="did%3Aweb%3Apartner.example.com"
 
 # Step 1 — First-eye submits a proposal
+# The operator identity is taken from the X-Admin-Operator header,
+# not from the request body.
 curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
   -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "X-Admin-Operator: alice@corp" \
   -H "Content-Type: application/json" \
-  -d '{"did":"'"$DID"'","proposer":"alice@corp","note":"Acme Corp onboarding"}'
+  -d '{"did":"'"$DID"'","notes":"Acme Corp onboarding"}'
 
 # Step 2 — Second-eye approves (different admin key / operator identity)
-curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals/prop_xxx/approve \
+# The :did path segment must be URL-encoded.
+curl -X POST "https://gateway.internal:3003/admin/partner-dids/proposals/${ENCODED_DID}/approve" \
   -H "X-Admin-Api-Key: <SECOND_ADMIN_API_KEY>" \
   -H "X-Admin-Operator: bob@corp"
 
@@ -444,11 +449,14 @@ euno_gateway_partner_did_circuit_transitions_total{did="...",from="closed",to="o
 
 ```bash
 # Mark the DID as revoked — single-operator, no second-eye required
-# (incident response is intentionally fast)
-curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner.example.com/revoke \
+# (incident response is intentionally fast).
+# The :did path segment must be URL-encoded.
+ENCODED_DID="did%3Aweb%3Apartner.example.com"
+curl -X DELETE "https://gateway.internal:3003/admin/partner-dids/${ENCODED_DID}" \
   -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "X-Admin-Operator: alice@corp" \
   -H "Content-Type: application/json" \
-  -d '{"revokedBy":"alice@corp","reason":"partner off-boarded 2026-05-19"}'
+  -d '{"reason":"partner off-boarded 2026-05-19"}'
 ```
 
 The `PartnerIssuerResolver` checks `registry.trusts(did)` on every `getKey`
