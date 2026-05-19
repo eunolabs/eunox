@@ -16,7 +16,7 @@
  *     Hard-delete is not supported — the audit trail must be preserved.
  *   - Idempotency: PUT/PATCH are idempotent.
  *   - Filter: only `eq` and `co` (contains) operators are supported for
- *     the SCIM `?filter=` query parameter; this covers >99 % of real IdP
+ *     the SCIM `?filter=` query parameter; this covers > 99 % of real IdP
  *     traffic (Okta / Entra ID only emit `userName eq` and `displayName eq`
  *     filters in practice).
  *
