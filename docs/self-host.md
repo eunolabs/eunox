@@ -3,18 +3,25 @@
 > **Target audience:** Platform engineers and security teams running euno
 > infrastructure on their own cloud or on-premises.
 >
-> **Status:** Stage 3 documentation. Self-hosting is available under the
+> **Status:** Stage 5 (Enterprise) documentation. Self-hosting is available under the
 > [BSL 1.1](../LICENSE) license (non-competing use; the gateway source converts to
 > Apache-2.0 four years after each release). Review the license before deploying
 > in a competing product.
 >
 > **Related documents:**
-> - [`docs/stage-3-design.md`](./stage-3-design.md) — authoritative architecture decisions
+> - [`docs/stage-3-design.md`](./stage-3-design.md) — authoritative Stage 3 architecture decisions
+> - [`docs/stage-4-design.md`](./stage-4-design.md) — Stage 4 hosted-identity architecture
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — build and configuration reference
 > - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — system context and component map
 > - [`docs/capability-model.md`](./capability-model.md) — enforcement invariants
 > - [`docs/security/minter-threat-model.md`](./security/minter-threat-model.md) — minter threat model
+> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — Stage 5 enterprise threat model
 > - [`docs/migrating-from-local.md`](./migrating-from-local.md) — upgrading from `@euno/mcp` local mode
+> - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP wiring recipes (including SCIM §8)
+> - [`docs/ADAPTERS.md`](./ADAPTERS.md) — identity and signing adapter reference
+> - [`docs/agent-sdk.md`](./agent-sdk.md) — AGT in-process guard SDK reference
+> - [`docs/issuer-operator-runbook.md`](./issuer-operator-runbook.md) — operator runbook
+> - [`docs/openapi/capability-issuer-discovery.yaml`](./openapi/capability-issuer-discovery.yaml) — discovery endpoint OpenAPI spec
 
 ---
 
@@ -58,10 +65,17 @@ below maps every Cloud feature to its self-host equivalent.
 | Kill-switch admin API | ✅ | ✅ |
 | **API-key minter façade** (`sk-...` → JWT) | ✅ | ❌ — issue tokens directly via capability-issuer |
 | SSO via OIDC | Cloud Team + | ❌ — bring your own IdP integration |
-| Evidence export (signed OCSF) | Cloud Enterprise | ❌ — Stage 5 |
+| Evidence export (signed OCSF) | Cloud Enterprise | ✅ — `GET /api/v1/audit/export` (§12.5) |
 | On-prem signing key (BYO HSM) | Cloud Enterprise | ✅ |
-| SOC2 attestation docs | Cloud Enterprise | ❌ — self-managed |
-| Cross-chain audit anchor | Stage 5 | ❌ — Stage 5 |
+| SOC2 attestation docs | Cloud Enterprise | ✅ — see §12.13 compliance checklists |
+| Cross-chain audit anchor | Cloud Enterprise | ✅ — `AUDIT_LEDGER_BACKEND=per-replica-postgres` (§12.4) |
+| Partner DID federation | Cloud Enterprise | ✅ — two-eyes DID registry (§12.2) |
+| SCIM 2.0 provisioning | Cloud Enterprise | ✅ — `/scim/v2/` endpoints (§12.3) |
+| DB credential issuance | Cloud Enterprise | ✅ — db-token-service (§12.6) |
+| Storage-grant issuance | Cloud Enterprise | ✅ — storage-grant-service (§12.7) |
+| AGT in-process guard | Cloud Enterprise | ✅ — `createAgtGuard()` (§12.8) |
+| Discovery endpoint v1.0.0 | Cloud Enterprise | ✅ — `/.well-known/capability-issuer` (§12.9) |
+| Helm chart + air-gap bundle | Cloud Enterprise | ✅ — `k8s/helm/` (§12.10) |
 
 ### The key difference: no managed minter
 
@@ -1259,14 +1273,909 @@ In addition to the items in §9, review the following before going to production
 
 ---
 
-## 12. Stage 5 — Posture Emitter
+## 12. Stage 5 — Enterprise Deployment
+
+Stage 5 graduates euno from an enterprise-IdP-integrated issuance platform
+(Stage 4) to a **compliance-signed, fully air-gappable enterprise deployment**
+targeting the CISO and external auditor as primary buyers. Four previously
+quarantined packages are promoted to stable (`1.0.0`), six capabilities are
+added to existing packages, and all Stage-5 features ship in both the hosted
+product and the self-host bundle at parity.
+
+> **Key documents for this section**
+> - [`docs/stage5executionplan.md`](./stage5executionplan.md) — full Stage-5 execution plan (Tasks 0–13)
+> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — approved threat model (BLOCKING gate for Tasks 3, 6, 10)
+> - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) §8 — SCIM 2.0 provisioning (Okta, Entra ID, Ping Identity)
+> - [`docs/ADAPTERS.md`](./ADAPTERS.md) §"Partner Federation" — DID adapter reference
+> - [`docs/agent-sdk.md`](./agent-sdk.md) §"AGT in-process guard" — defense-in-depth SDK guide
+> - [`docs/openapi/capability-issuer-discovery.yaml`](./openapi/capability-issuer-discovery.yaml) — discovery v1.0.0 contract
+> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — Stage-5 on-prem deployment and Helm guide
+
+### 12.1 Updated service topology
+
+The Stage-5 self-host stack adds four services to the Stage-4 base:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Your infrastructure (self-hosted — Stage 5 full stack)                      │
+│                                                                              │
+│  ┌────────────────┐ sign ┌─────────────────────────────────────────────┐     │
+│  │  Capability    │────► │  KMS / signing key                          │     │
+│  │  Issuer :3001  │      │  (Azure KV, AWS KMS, GCP KMS)               │     │
+│  │                │      └─────────────────────────────────────────────┘     │
+│  │  OIDC / SCIM   │                                                          │
+│  │  /scim/v2/*    │ ◄──  Okta / Entra ID / Ping Identity (SCIM push)         │
+│  │  /.well-known/ │                                                          │
+│  │  capability-   │      ┌─────────────────────────────────────────────┐     │
+│  │  issuer        │      │  Partner Issuer (remote org)                │     │
+│  └───────┬────────┘      │  did:web / did:ion                          │     │
+│          │ JWT            │  issues tokens from partner signing key     │     │
+│          │                └──────────────────┬──────────────────────────┘    │
+│          ▼                                   │ partner JWT                   │
+│  ┌───────────────────┐                       │                               │
+│  │  @euno/mcp        │── JWT ──────────────► │                               │
+│  │  (agent proxy)    │                       ▼                               │
+│  │  + AgtGuard       │             ┌─────────────────────────────────────┐   │
+│  │  (in-process)     │             │  Tool Gateway :3002                 │   │
+│  └───────────────────┘             │                                     │   │
+│                                    │  POST /api/v1/enforce               │   │
+│                                    │  GET  /api/v1/audit/records         │   │
+│                                    │  GET  /api/v1/audit/export  (new)   │   │
+│                                    │  GET  /api/v1/audit/chain-proof(new)│   │
+│                                    │  POST /admin/partner-dids/proposals │   │
+│                                    │  POST /admin/kill-switch/...        │   │
+│                                    └──────────────┬──────────────────────┘   │
+│                                                   │  R/W                     │
+│           ┌───────────────────────────────────────┤                          │
+│           │                                       │                          │
+│  ┌────────▼──────┐    ┌───────────┐    ┌──────────▼──────┐                  │
+│  │   Redis       │    │  Postgres │    │  Posture         │                  │
+│  │  (>= 6.2)     │    │  (>= 14)  │    │  Emitter         │                  │
+│  │  revocation   │    │  audit    │    │  (OCSF export    │                  │
+│  │  kill-switch  │    │  ledger   │    │   durable queue) │                  │
+│  │  partner-DID  │    │  scim     │    └──────────────────┘                  │
+│  │  circuit-brk  │    │  tables   │                                          │
+│  └───────────────┘    └───────────┘                                          │
+│                                                                              │
+│  ┌────────────────────┐   ┌──────────────────────┐                           │
+│  │  db-token-service  │   │ storage-grant-service │                          │
+│  │  :5050             │   │ :5051                 │                          │
+│  │  POST /exchange    │   │ POST /grant           │                          │
+│  │  (CAP token ->     │   │ (CAP token ->         │                          │
+│  │   DB credentials)  │   │  presigned URL/SAS)   │                          │
+│  └────────────────────┘   └──────────────────────┘                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Updated service list
+
+| Service | Package | Stage | Purpose |
+|---|---|---|---|
+| **Capability Issuer** | `capability-issuer` | 4+ | Issues JWT capability tokens; Stage-5 adds SCIM endpoints, OIDC discovery v1.0.0 |
+| **Tool Gateway** | `tool-gateway` | 3+ | Enforces capability tokens; Stage-5 adds partner-DID verification, audit-export endpoint, chain-proof endpoint |
+| **DB Token Service** | `db-token-service` | **5** | Exchanges a capability token for short-lived scoped database credentials |
+| **Storage Grant Service** | `storage-grant-service` | **5** | Exchanges a capability token for short-lived presigned URLs or SAS tokens |
+| **Posture Emitter** | `posture-emitter` | **5** | Durable WAL-queue that fans OCSF evidence records to compliance sinks |
+| **Partner Issuer Sim** | `partner-issuer-sim` | **5** | Reference simulator for partner-org DID-backed issuers (integration harness) |
+| **Redis** | BYO (>= 6.2) | 3+ | Revocation, kill-switch, call-counter, partner-DID circuit-breaker |
+| **Postgres** | BYO (>= 14) | 3+ | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`) |
+| **KMS** | BYO | 3+ | Signs capability tokens (issuer) and audit evidence (gateway) |
+
+---
+
+### 12.2 Partner DID federation
+
+> **Threat model gate:** `docs/security/enterprise-federation-threat-model.md`
+> must be approved before any partner-federation code or configuration merges
+> to production. See §1 and §2 of that document for partner-DID-compromise and
+> DID-document-spoofing mitigations.
+>
+> **Reference:** `docs/ADAPTERS.md` §"Partner Federation"; Stage-5 Task 3.
+
+Partner federation lets a remote organization issue capability tokens from
+their own W3C DID-backed signing key. The euno gateway accepts and
+cryptographically verifies those tokens without sharing key material.
+
+#### 12.2.1 How it works
+
+1. The partner operator registers their DID with your gateway via the admin
+   API's two-eyes approval workflow.
+2. When the gateway receives a token whose `iss` claim is a DID, it resolves
+   the DID document (via `did:web`, `did:ion`, or `did:key`), extracts the
+   public key, and verifies the JWT signature.
+3. A per-DID `RedisCircuitBreaker` protects against slow or unreachable partner
+   DID resolvers — the circuit opens after N failures and forces a cached
+   decision until the cooldown elapses.
+
+#### 12.2.2 Gateway configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `PARTNER_DID_REGISTRY_REQUIRED` | `true` in production | When `true`, `TRUSTED_PARTNER_DIDS` is a startup error — use the two-eyes registry. |
+| `TRUSTED_PARTNER_DIDS` | — | Comma-separated DID allowlist (dev / bootstrap only; blocked in production). |
+| `PARTNER_DID_CACHE_TTL_SECONDS` | `300` | Positive-resolution DID cache TTL (seconds). |
+| `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` | `30` | Negative-resolution (NXDID) cache TTL (seconds). |
+| `PARTNER_DID_REQUIRE_PIN` | `false` | When `true`, every partner DID registration must include a pin attestation. |
+| `PARTNER_DID_CB_FAILURE_THRESHOLD` | `5` | Failures within `PARTNER_DID_CB_WINDOW_SECONDS` that open the circuit breaker. |
+| `PARTNER_DID_CB_WINDOW_SECONDS` | `60` | Sliding window (seconds) for circuit-breaker failure counting. |
+| `PARTNER_DID_CB_COOLDOWN_SECONDS` | `120` | Cooldown (seconds) before the circuit breaker enters half-open. |
+| `PARTNER_ISSUER_DISCOVERY_URL` | — | URL of a partner `/.well-known/capability-issuer` document. When set, auto-seeds the partner DID at startup (bypasses two-eyes — dev/staging only). |
+
+#### 12.2.3 Registering a partner DID (production workflow)
+
+```bash
+DID="did:web:partner.example.com"
+
+# Step 1 — First-eye submits a proposal
+curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"did":"'"$DID"'","note":"Partner Acme Corp onboarding"}'
+# Returns: { "proposalId": "prop_xxx", "status": "pending" }
+
+# Step 2 — Second-eye approves (different admin credential)
+curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals/prop_xxx/approve \
+  -H "X-Admin-Api-Key: <SECOND_ADMIN_API_KEY>"
+# Returns: { "did": "did:web:partner.example.com", "status": "active" }
+```
+
+For pin attestation (recommended in production):
+
+```bash
+curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:web:partner.example.com",
+    "pinAttestation": "<base64-sha256-of-did-document-public-key>",
+    "note": "Pinned attestation verified out-of-band 2026-05-19"
+  }'
+```
+
+#### 12.2.4 DID resolver configuration for air-gapped deployments
+
+| Variable | Default | Description |
+|---|---|---|
+| `ION_RESOLVER_URL` | `https://ion.msidentity.com/api/v1.0/identifiers` | Override for a self-hosted ION node or open-source ION sidecar. |
+| `DID_WEB_ALLOW_HTTP_FOR_HOSTS` | — | Hostnames where `did:web` may resolve over plain HTTP (development only). |
+
+For fully air-gapped deployments run the open-source
+[ION](https://github.com/decentralized-identity/ion) sidecar and set
+`ION_RESOLVER_URL=http://ion-sidecar:3000/identifiers`.
+
+See `docs/issuer-idp-setup.md` §"DID-based partner issuers" for the full
+`did:ion` configuration recipe.
+
+#### 12.2.5 Prometheus circuit-breaker metrics
+
+```
+euno_partner_did_circuit_breaker_state{did="...",state="open|closed|half-open"} 1
+```
+
+Alert on `euno_partner_did_circuit_breaker_state{state="open"} == 1` to
+detect a partner resolver outage within minutes.
+
+---
+
+### 12.3 SCIM 2.0 provisioning
+
+> **Threat model gate:** `docs/security/enterprise-federation-threat-model.md`
+> §§3–4 ("SCIM bearer token exposure" and "SCIM privilege escalation") must be
+> reviewed before enabling SCIM in production.
+>
+> **Reference:** `docs/issuer-idp-setup.md` §8; Stage-5 Task 10.
+
+SCIM 2.0 provisioning lets enterprise identity teams push users and group
+memberships directly from **Okta**, **Microsoft Entra ID**, or **Ping
+Identity** to the capability issuer, eliminating manual role assignment.
+
+#### 12.3.1 How it works
+
+When `ISSUER_SCIM_BEARER_TOKEN` is set, the issuer mounts SCIM v2 endpoints
+at `/scim/v2/`. The enterprise IdP pushes user and group lifecycle events
+(CREATE / UPDATE / DELETE) to these endpoints. At issuance time
+`IssueController` queries the SCIM tables for the authenticating user's group
+memberships and merges them with the IdP-provided roles. SCIM groups are the
+authoritative authorization model and take precedence on conflict.
+
+If the SCIM DB lookup fails (database outage), the issuer falls back to
+IdP-only roles (fail-open for service continuity — see §12.13.3 for
+hardening options).
+
+#### 12.3.2 Configuration
+
+```env
+# Required — minimum 32 characters; rotate immediately on exposure
+ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-random-secret>
+
+# Optional — JSON mapping SCIM group displayName -> issuer role key
+ISSUER_SCIM_GROUP_ROLE_MAP='{"SalesTeam":"sales","EngineeringTeam":"engineer"}'
+
+# Required — SCIM data stored in Postgres alongside existing issuer tables
+ISSUER_DB_URL=postgres://euno:euno@db:5432/euno
+ISSUER_DB_SCHEMA_INIT=true   # creates SCIM tables on first run
+```
+
+#### 12.3.3 SCIM endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/scim/v2/Users` | Provision a new user |
+| `GET` | `/scim/v2/Users` | List users (`?filter=`, `?count=`, `?startIndex=`) |
+| `GET` | `/scim/v2/Users/:id` | Get user by SCIM ID |
+| `PUT` | `/scim/v2/Users/:id` | Replace user (idempotent) |
+| `PATCH` | `/scim/v2/Users/:id` | Update attributes or active status |
+| `DELETE` | `/scim/v2/Users/:id` | Deprovision user (soft-delete) |
+| `POST` | `/scim/v2/Groups` | Provision a new group |
+| `GET` | `/scim/v2/Groups` | List groups |
+| `GET` | `/scim/v2/Groups/:id` | Get group by SCIM ID |
+| `PUT` | `/scim/v2/Groups/:id` | Replace group (full membership; idempotent) |
+| `PATCH` | `/scim/v2/Groups/:id` | Update membership delta |
+| `DELETE` | `/scim/v2/Groups/:id` | Remove group |
+
+All endpoints require `Authorization: Bearer <ISSUER_SCIM_BEARER_TOKEN>`.
+Wrong token returns `401 WWW-Authenticate: Bearer realm="SCIM"`.
+
+For IdP setup recipes (Okta, Entra ID, Ping Identity SCIM configuration
+walkthroughs), see `docs/issuer-idp-setup.md` §8.
+
+#### 12.3.4 Privilege escalation guard
+
+The `ISSUER_SCIM_GROUP_ROLE_MAP` must not map any SCIM group to the `operator`
+role without a recorded two-engineer sign-off. See
+`docs/security/enterprise-federation-threat-model.md` §"SCIM privilege
+escalation" for the full treatment.
+
+---
+
+### 12.4 Cross-chain audit anchor
+
+> **Reference:** `docs/issuer-operator-runbook.md` §"Cross-chain anchor";
+> `docs/runbooks/ledger-hmac-rotation.md`; Stage-5 Task 5.
+
+The cross-chain anchor binds per-replica audit chains together with a periodic
+Merkle commitment stored in S3 Object-Lock (or Azure Confidential Ledger). An
+attacker who forges signed evidence records (requires KMS key compromise)
+cannot conceal the tampering once the S3 commitment is checked against the
+live chain.
+
+#### 12.4.1 Configuration
+
+```env
+# Enable per-replica audit chains
+AUDIT_LEDGER_BACKEND=per-replica-postgres
+AUDIT_LEDGER_PG_URL=postgres://euno_audit:secret@db:5432/euno
+AUDIT_LEDGER_HMAC_SECRET=<64-hex-chars from openssl rand -hex 32>
+AUDIT_LEDGER_RUN_MIGRATIONS=true       # single-replica / dev only
+
+# Cross-chain commitment interval (default 60 000 ms = 1 minute)
+AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS=60000
+
+# S3 Object-Lock bucket for external Merkle anchoring
+AUDIT_LEDGER_S3_BUCKET=my-audit-anchor-bucket
+AUDIT_LEDGER_S3_PREFIX=audit-anchor/
+AUDIT_LEDGER_ANCHOR_INTERVAL=1000      # rows between S3 anchor writes
+```
+
+#### 12.4.2 Azure Confidential Ledger alternative
+
+```env
+AUDIT_LEDGER_BACKEND=acl
+AUDIT_LEDGER_ACL_ENDPOINT=https://<name>.confidentialledger.azure.com
+# Auth via DefaultAzureCredential (workload identity, managed identity,
+# or AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET).
+```
+
+> **Dependency note:** The gateway dynamically requires
+> `@azure-rest/confidential-ledger` and `@azure/identity` when
+> `AUDIT_LEDGER_BACKEND=acl`. Both must be present in your deployment image.
+
+#### 12.4.3 Verifying chain integrity offline
+
+```bash
+# Fetch chain-proof records for a time window
+curl -s "https://gateway.internal:3002/api/v1/audit/chain-proof" \
+  "?since=2026-05-01T00:00:00Z&until=2026-06-01T00:00:00Z" \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
+
+# Response:
+# {
+#   "commits": [ /* SignedCrossChainCommitment[] */ ],
+#   "chainHead": "<latest-commitment-hash>"
+# }
+```
+
+Verify `chainHead` against the S3 Object-Lock anchors to detect DB-level
+tampering between checkpoints. For HMAC rotation procedure see
+`docs/runbooks/ledger-hmac-rotation.md`.
+
+---
+
+### 12.5 SOC2 audit-trail export
+
+> **Threat model gate:** `docs/security/enterprise-federation-threat-model.md`
+> §"SOC2 export endpoint exposure" must be reviewed before enabling the export
+> endpoint.
+>
+> **Reference:** `docs/security/soc2-mapping.md`; Stage-5 Task 6.
+
+The `GET /api/v1/audit/export` endpoint returns a paginated, cursor-based OCSF
+evidence bundle that a compliance team can hand directly to an auditor. Every
+record is signed with the gateway's KMS key; offline verification uses the
+issuer's published JWKS.
+
+#### 12.5.1 Export endpoint
+
+```bash
+# First page — logical access controls
+curl -s "https://gateway.internal:3002/api/v1/audit/export?scope=soc2-cc6" \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
+
+# Response:
+# {
+#   "cursor": "<opaque-base64>",   -- expires after 24 h
+#   "records": [ /* SignedAuditEvidence[] */ ],
+#   "verificationUri": "/.well-known/jwks.json"
+# }
+
+# Subsequent page
+curl -s "https://gateway.internal:3002/api/v1/audit/export?cursor=<cursor>" \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
+```
+
+| Parameter | Values | Description |
+|---|---|---|
+| `scope` | `soc2-cc6`, `soc2-cc7`, `all` | `cc6` = logical access controls; `cc7` = system operations. |
+| `cursor` | opaque string | Pagination cursor from previous response. Expires 24 h after issue. |
+| `pageSize` | 1–1000 | Max records per page (default 100). |
+
+#### 12.5.2 Offline evidence verification
+
+```bash
+# Verify an evidenceJwt field against the issuer JWKS
+node -e "
+  const { createRemoteJWKSet, jwtVerify } = require('jose');
+  const jwks = createRemoteJWKSet(
+    new URL('https://issuer.internal:3001/.well-known/jwks.json'));
+  jwtVerify(process.env.EVIDENCE_JWT, jwks)
+    .then(r => console.log('VALID', r.payload))
+    .catch(e => { console.error('INVALID', e.message); process.exit(1); });
+"
+```
+
+See `docs/security/soc2-mapping.md` for the full OCSF `class_uid` to SOC2
+control mapping and the auditor-facing export procedure.
+
+#### 12.5.3 Posture emitter wiring
+
+```env
+POSTURE_EMITTER_ENABLED=true
+POSTURE_EMITTER_PLUGINS=durable         # SQLite WAL queue
+POSTURE_DURABLE_QUEUE_PATH=/var/lib/euno/posture.db  # persistent volume path
+```
+
+For HA (multi-replica) deployments use a Redis-stream queue drainer. See
+`docs/DEPLOYMENT.md` §"Posture-emitter queue topology for HA issuers" for the
+full HA topology diagram.
+
+---
+
+### 12.6 DB Token Service
+
+> **Reference:** `euno-platform/packages/db-token-service/`; Stage-5 Task 7.
+
+The `db-token-service` exchanges a capability token for short-lived scoped
+database IAM credentials. Credential TTL is bounded by the capability token
+TTL and cannot outlive the capability that authorized it.
+
+#### 12.6.1 Configuration
+
+```env
+DB_TOKENS_ENABLED=true
+DB_TOKEN_MAX_TTL_SECONDS=900        # max credential TTL; must be <= capability token TTL
+DB_TOKEN_ALLOW_LIST_FILE=/app/config/db-instances.json
+AWS_DB_TOKEN_ROLE_ARN=arn:aws:iam::123456789012:role/euno-db-token-role
+```
+
+**`db-instances.json` format:**
+
+```json
+{
+  "allowedInstances": [
+    { "id": "prod-postgres-1", "region": "us-east-1", "engine": "postgres" }
+  ]
+}
+```
+
+#### 12.6.2 Token exchange
+
+```bash
+curl -X POST https://db-token-service.internal:5050/exchange \
+  -H "Authorization: Bearer <capability-token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "instanceId": "prod-postgres-1", "databaseUser": "app_user" }'
+
+# Response:
+# {
+#   "username": "app_user_rds_iam",
+#   "password": "<short-lived-IAM-token>",
+#   "expiresAt": "2026-05-19T06:00:00Z",
+#   "engine": "postgres",
+#   "host": "prod-postgres-1.cluster-abc.us-east-1.rds.amazonaws.com"
+# }
+```
+
+> **Blast radius note:** A stolen DB credential grants access only to the
+> exact DB instance and user listed in the capability constraint. The credential
+> expires at or before the capability token TTL. All DB access is logged at
+> the database layer. See `docs/security/enterprise-federation-threat-model.md`
+> §"DB credential blast radius" for the full analysis.
+
+---
+
+### 12.7 Storage Grant Service
+
+> **Reference:** `euno-platform/packages/storage-grant-service/`; Stage-5 Task 7.
+
+The `storage-grant-service` exchanges a capability token for short-lived
+presigned URLs (AWS S3 / GCP Cloud Storage) or SAS tokens (Azure Blob).
+The grant is scoped to the exact bucket or container declared in the capability
+constraint.
+
+#### 12.7.1 Configuration
+
+```env
+STORAGE_GRANTS_ENABLED=true
+STORAGE_GRANT_MAX_TTL_SECONDS=900
+AWS_STORAGE_GRANT_ROLE_ARN=arn:aws:iam::123456789012:role/euno-storage-grant-role
+```
+
+#### 12.7.2 Grant exchange
+
+```bash
+curl -X POST https://storage-grant-service.internal:5051/grant \
+  -H "Authorization: Bearer <capability-token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "bucket": "my-data-bucket", "key": "data/report.csv", "operation": "GetObject" }'
+
+# Response:
+# {
+#   "presignedUrl": "https://my-data-bucket.s3.amazonaws.com/data/report.csv?...",
+#   "expiresAt": "2026-05-19T06:00:00Z"
+# }
+```
+
+---
+
+### 12.8 AGT in-process guard
+
+> **Reference:** `docs/agent-sdk.md` §"AGT in-process guard";
+> `docs/diagrams.md` Set D; Stage-5 Task 8.
+
+The AGT guard (`createAgtGuard()` from `@euno/agent-runtime`) is an in-process
+capability pre-screen that sits between the agent logic and the outer gateway.
+It implements the **defense-in-depth Set-D architecture**. The guard is a soft
+layer only — the outer gateway remains the sole hard enforcement boundary.
+
+> **Security caveat:** The in-process guard can be bypassed by an attacker
+> who controls the agent process. It is defense-in-depth, not a security
+> boundary. See `docs/agent-sdk.md` §"Why two guards?" and
+> `docs/security/enterprise-federation-threat-model.md`
+> §"In-process guard bypass".
+
+#### 12.8.1 Quick-start wiring
+
+```typescript
+import { createAgtGuard, type AgtGuardOptions } from '@euno/agent-runtime';
+
+const guard = createAgtGuard({
+  tokenSupplier: () => fetchCapabilityToken(),  // called before each tool invoke
+  policy: agentCapabilityManifest,
+
+  onDeny(toolName, reason) {
+    logger.warn('AGT guard blocked', { toolName, reason });
+  },
+
+  onGatewayDeny(toolName, gatewayErrorCode) {
+    // Guard allowed; outer gateway denied.  The gateway audit log is the record.
+    logger.warn('Gateway denied after guard allow', { toolName, gatewayErrorCode });
+  },
+} satisfies AgtGuardOptions);
+
+// Use guard.invokeTool() instead of calling the tool directly.
+const response = await guard.invokeTool('read_file', { path: '/tmp/output.txt' });
+```
+
+See `docs/agent-sdk.md` §"AGT in-process guard" for the full API reference,
+response shape, and token-supplier contract.
+
+---
+
+### 12.9 Discovery endpoint v1.0.0
+
+> **Reference:** `docs/openapi/capability-issuer-discovery.yaml`;
+> Stage-5 Task 9.
+
+The `/.well-known/capability-issuer` endpoint is promoted to a **stable,
+versioned contract** (`schemaVersion: "1.0.0"`). Fields published under
+`1.0.0` will not be removed or renamed before `2.0.0`.
+
+#### 12.9.1 Response shape
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "issuer": "did:web:issuer.example.com",
+  "signingAlgorithms": ["ES256"],
+  "endpoints": {
+    "jwks": "/.well-known/jwks.json",
+    "didDocument": "/.well-known/did.json"
+  },
+  "partnerFederation": {
+    "registrationEndpoint": "/admin/partner-dids/proposals"
+  },
+  "scim": { "baseUri": "/scim/v2" },
+  "auditExport": {
+    "endpoint": "/api/v1/audit/export",
+    "chainProof": "/api/v1/audit/chain-proof"
+  },
+  "capabilities": [
+    "partner-federation",
+    "scim-provisioning",
+    "cross-chain-anchor",
+    "db-token-service",
+    "storage-grant-service"
+  ],
+  "actionResolverHash": "<sha256-hex>"
+}
+```
+
+Responses include `Cache-Control: public, max-age=300` and an `ETag` header
+(quoted SHA-256 hex of the body). Send `If-None-Match` on subsequent requests;
+the server returns `304 Not Modified` when the document has not changed.
+
+#### 12.9.2 Gateway auto-bootstrap
+
+```env
+PARTNER_ISSUER_DISCOVERY_URL=https://partner.example.com/.well-known/capability-issuer
+# Bypasses two-eyes approval; blocked in production by default.
+# Set PARTNER_DID_REGISTRY_REQUIRED=false to allow (dev/staging only).
+```
+
+The gateway reads `body.issuer` (the partner DID) from the document and
+auto-registers it. Partner keys are resolved independently via DID-document
+resolution.
+
+---
+
+### 12.10 On-prem deployment bundle (Helm + air-gap)
+
+> **Reference:** `docs/DEPLOYMENT.md` §"Stage-5 on-prem deployment";
+> Stage-5 Task 11.
+
+The `k8s/helm/` directory contains per-service Helm chart values schemas for
+`tool-gateway`, `capability-issuer`, `db-token-service`, `storage-grant-service`,
+and `agent-runtime`. Postgres and Redis are expected to be operator-provisioned.
+
+#### 12.10.1 Minimal namespace install
+
+```bash
+# Gateway
+helm install euno-gateway ./k8s/helm/gateway \
+  --set env.NODE_ENV=production \
+  --set env.GATEWAY_AUDIENCE=my-org \
+  --set env.REDIS_URL="rediss://redis.internal:6380" \
+  --set env.AUDIT_LEDGER_BACKEND=per-replica-postgres \
+  --set env.AUDIT_LEDGER_PG_URL="postgres://euno_audit:secret@db.internal:5432/euno" \
+  --set env.AUDIT_LEDGER_HMAC_SECRET="<64-hex-chars>" \
+  --set env.GATEWAY_ADMIN_API_KEY="<admin-key>" \
+  --set env.EUNO_DEPLOYMENT_TIER=multi-replica
+
+# Issuer
+helm install euno-issuer ./k8s/helm/issuer \
+  --set env.NODE_ENV=production \
+  --set env.IDENTITY_PROVIDER=azure-ad \
+  --set env.AZURE_AD_TENANT_ID="<tenant>" \
+  --set env.AZURE_AD_CLIENT_ID="<client>" \
+  --set env.SIGNING_PROVIDER=azure-keyvault \
+  --set env.AZURE_KEYVAULT_URL="https://your-vault.vault.azure.net/" \
+  --set env.ISSUER_DB_URL="postgres://euno:secret@db.internal:5432/euno" \
+  --set env.ISSUER_DB_SCHEMA_INIT=true \
+  --set env.ISSUER_SCIM_BEARER_TOKEN="<scim-token>" \
+  --set env.EUNO_DEPLOYMENT_TIER=multi-replica
+```
+
+Values schemas are auto-generated from `public/packages/common/src/config/schema.ts`.
+Regenerate with `npm run gen:helm-schema` from the repository root.
+
+#### 12.10.2 Minimum viable air-gapped setup
+
+A fully air-gapped deployment requires the following egress endpoints to be
+reachable from within the cluster, proxied, or replaced with on-prem
+equivalents:
+
+| Endpoint | Required for | Air-gap replacement |
+|---|---|---|
+| KMS endpoint (Azure KV / AWS KMS / GCP KMS) | Token signing | BYO HSM with PKCS#11 adapter |
+| Postgres | Audit ledger, SCIM tables, issuer state | On-prem Postgres (no egress) |
+| Redis | Revocation, kill-switch, circuit-breaker | On-prem Redis (no egress) |
+| `https://ion.msidentity.com/api/v1.0/identifiers` | `did:ion` DID resolution | Self-hosted ION node (`ION_RESOLVER_URL=http://ion-sidecar:3000/identifiers`) |
+| IdP (Entra ID / Cognito) | User authentication | On-prem OIDC provider |
+| SCIM source (Okta / Entra ID) | Group push | On-prem LDAP-to-SCIM bridge |
+| S3 Object-Lock bucket | Cross-chain anchor | MinIO with Object-Lock in the cluster |
+| `EUNO_TELEMETRY_API` | Telemetry (opt-in only) | Set `EUNO_TELEMETRY=0` to disable |
+
+> For completely disconnected deployments, use `did:key` or `did:web` with
+> `DID_WEB_ALLOW_HTTP_FOR_HOSTS` pointing at an in-cluster DID host.
+> `did:ion` requires the ION sidecar; all other DID methods work fully offline.
+
+**Minimum viable air-gapped env block:**
+
+```env
+# Shared
+NODE_ENV=production
+EUNO_DEPLOYMENT_TIER=single-replica
+EUNO_TELEMETRY=0
+
+# Issuer
+IDENTITY_PROVIDER=azure-ad
+AZURE_AD_TENANT_ID=<tenant>
+AZURE_AD_CLIENT_ID=<client>
+SIGNING_PROVIDER=azure-keyvault
+AZURE_KEYVAULT_URL=https://your-vault.vault.azure.net/
+ISSUER_DB_URL=postgres://euno:secret@localhost:5432/euno
+ISSUER_DB_SCHEMA_INIT=true
+ISSUER_ADMIN_API_KEY=<admin-key>
+ION_RESOLVER_URL=http://localhost:3000/identifiers   # local ION sidecar
+
+# Gateway
+GATEWAY_AUDIENCE=my-org
+ISSUER_JWKS_URL=http://localhost:3001/.well-known/jwks.json
+AUDIT_LEDGER_BACKEND=postgres
+AUDIT_LEDGER_PG_URL=postgres://euno:secret@localhost:5432/euno
+AUDIT_LEDGER_HMAC_SECRET=<64-hex-chars>
+AUDIT_LEDGER_RUN_MIGRATIONS=true
+GATEWAY_ADMIN_API_KEY=<gateway-admin-key>
+ADMIN_HOST=127.0.0.1
+```
+
+#### 12.10.3 Network policies
+
+`k8s/network-policies.yaml` restricts ingress/egress at the Kubernetes
+NetworkPolicy layer. Apply it before routing production traffic.
+`k8s/network-policies-dev-overlay.yaml` opens broad egress for development
+(label `euno.dev/dev-only: 'true'`). **Do not apply the dev overlay in
+production clusters.**
+
+---
+
+### 12.11 Stage-5 docker-compose additions (`full` profile)
+
+Add the following services to the Stage-4 base docker-compose (§11.8) to
+bring up the complete Stage-5 stack. See `infra/docker-compose.yml` (`full`
+profile) for the full working example.
+
+```yaml
+services:
+  db-token-service:
+    image: ghcr.io/euno/db-token-service:1.0.0
+    depends_on: [capability-issuer, db]
+    environment:
+      DB_TOKENS_ENABLED: "true"
+      DB_TOKEN_MAX_TTL_SECONDS: "900"
+      DB_TOKEN_ALLOW_LIST_FILE: "/app/config/db-instances.json"
+      AWS_DB_TOKEN_ROLE_ARN: "${AWS_DB_TOKEN_ROLE_ARN}"
+      NODE_ENV: production
+      PORT: "5050"
+    ports: ["5050:5050"]
+    profiles: ["full"]
+
+  storage-grant-service:
+    image: ghcr.io/euno/storage-grant-service:1.0.0
+    depends_on: [capability-issuer]
+    environment:
+      STORAGE_GRANTS_ENABLED: "true"
+      STORAGE_GRANT_MAX_TTL_SECONDS: "900"
+      AWS_STORAGE_GRANT_ROLE_ARN: "${AWS_STORAGE_GRANT_ROLE_ARN}"
+      NODE_ENV: production
+      PORT: "5051"
+    ports: ["5051:5051"]
+    profiles: ["full"]
+
+  posture-emitter-drainer:
+    # Single-writer SQLite drainer — do NOT scale to more than 1 replica.
+    image: ghcr.io/euno/posture-emitter:1.0.0
+    depends_on: [redis]
+    environment:
+      POSTURE_EMITTER_ENABLED: "true"
+      POSTURE_EMITTER_PLUGINS: "durable"
+      POSTURE_DURABLE_QUEUE_PATH: "/data/posture.db"
+      NODE_ENV: production
+    volumes:
+      - posture-data:/data
+    profiles: ["full"]
+
+  partner-issuer-sim:
+    # Reference simulator for partner-org DID-backed issuers.
+    image: ghcr.io/euno/partner-issuer-sim:1.0.0
+    environment:
+      PORT: "4200"
+      PARTNER_ISSUER_DID: "did:web:localhost:4200"
+    ports: ["4200:4200"]
+    profiles: ["full"]
+
+volumes:
+  posture-data:
+```
+
+---
+
+### 12.12 `did:ion` productionization
+
+> **Reference:** `docs/issuer-idp-setup.md` §"DID-based partner issuers";
+> Stage-5 Task 2.
+
+The `resolveDidIon()` function is wrapped with a `RedisCircuitBreaker`. A
+`/healthz/did-ion` endpoint resolves a known ION document and returns
+`{ "status": "ok" | "degraded" }`. Wire this into your readiness probe to
+detect ION resolver outages before they affect partner-token issuance.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ION_RESOLVER_URL` | `https://ion.msidentity.com/api/v1.0/identifiers` | Public or self-hosted resolver URL. |
+
+For air-gapped deployments, point `ION_RESOLVER_URL` at a local ION sidecar:
+
+```bash
+# Run the open-source ION sidecar alongside your issuer
+docker run -p 3000:3000 ghcr.io/decentralized-identity/ion:latest
+```
+
+---
+
+### 12.13 Compliance checklists
+
+#### 12.13.1 SOC2 controls checklist
+
+Use when preparing a SOC2 Type II audit package.
+
+**CC6 — Logical and Physical Access Controls**
+
+- [ ] `ISSUER_SCIM_BEARER_TOKEN` is stored in a secret manager (not a `.env`
+      file). Rotation cadence documented and <= 90 days.
+- [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` reviewed and signed off by two engineers
+      before any group is mapped to `operator` or `admin`.
+- [ ] `ISSUER_ADMIN_JWKS_URI` configured (not just `ISSUER_ADMIN_API_KEY`) so
+      operator access uses short-lived JWTs.
+- [ ] Admin port (`ADMIN_PORT`) bound to `127.0.0.1` or an in-cluster-only
+      interface. Confirm it is excluded from public-facing load-balancer rules.
+- [ ] `AUDIT_LEDGER_BACKEND` set to `postgres`, `per-replica-postgres`, or
+      `acl` (not `none` or `in-memory`) in production.
+- [ ] Postgres service account has `INSERT` + `SELECT` on the audit table only.
+      No `UPDATE` or `DELETE` — the append-only model is the tamper-evidence
+      guarantee.
+- [ ] `AUDIT_LEDGER_HMAC_SECRET` sourced from secret manager at runtime.
+      Rotation procedure documented (`docs/runbooks/ledger-hmac-rotation.md`).
+- [ ] Partner DID registrations require two-eyes approval
+      (`PARTNER_DID_REGISTRY_REQUIRED=true`, the production default).
+- [ ] `PARTNER_DID_REQUIRE_PIN=true` set for all production partner onboardings.
+
+**CC7 — System Operations**
+
+- [ ] `GET /api/v1/audit/export?scope=soc2-cc6` end-to-end tested. Export
+      cursor expires after 24 h; export job completes within the window.
+- [ ] `GET /api/v1/audit/chain-proof` returns valid commits. Chain-head
+      monotonicity verified after each test run.
+- [ ] Posture emitter queue depth monitored. Alert threshold set.
+- [ ] Cross-chain anchor interval (`AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS`)
+      documented relative to RPO.
+- [ ] S3 Object-Lock bucket confirmed enabled (or ACL alternative active).
+- [ ] `AUDIT_LEDGER_RETENTION_DAYS` set to match contractual retention tier
+      (minimum 365 for SOC2 Type II).
+
+Items from Stage-4 §11.9 (signing-key, admin-auth, IdP hygiene, tenant
+isolation, template versioning, role-policy audit, SIGHUP, threat-model
+sign-off) also apply.
+
+#### 12.13.2 DID federation checklist
+
+Use for each new partner DID onboarding.
+
+- [ ] **Threat model reviewed.** `docs/security/enterprise-federation-threat-model.md`
+      §§1–2 reviewed with the security team before the first partner DID is
+      registered in production.
+- [ ] **Two-eyes approval completed.** `POST /admin/partner-dids/proposals`
+      submitted by first-eye, approved by a different admin. Proposal ID and
+      approval timestamp recorded.
+- [ ] **Pin attestation captured.** `pinAttestation` included in the proposal.
+      The base64-SHA-256 of the partner's public key verified out-of-band
+      (phone call or signed email) before approval.
+- [ ] **Circuit-breaker tuning reviewed.** `PARTNER_DID_CB_FAILURE_THRESHOLD`,
+      `PARTNER_DID_CB_WINDOW_SECONDS`, `PARTNER_DID_CB_COOLDOWN_SECONDS` match
+      the partner's SLA for DID document availability.
+- [ ] **Prometheus alert wired.**
+      `euno_partner_did_circuit_breaker_state{state="open"} == 1` fires a P2
+      alert within 5 minutes of circuit opening.
+- [ ] **Revocation procedure documented.** Removing the partner DID from the
+      registry forces re-evaluation on every subsequent request. Runbook tested
+      in staging.
+- [ ] **Blast radius documented.** All sessions with `iss = <partner DID>` are
+      within blast radius of a partner-key compromise. Session count reviewed
+      and accepted.
+- [ ] **`did:ion` health check enabled** (if partner uses `did:ion`).
+      `/healthz/did-ion` wired into readiness probe and monitoring.
+
+#### 12.13.3 SCIM provisioning checklist
+
+Use before enabling SCIM in production.
+
+- [ ] **Threat model reviewed.** `docs/security/enterprise-federation-threat-model.md`
+      §§3–4 reviewed with the security team.
+- [ ] **`ISSUER_SCIM_BEARER_TOKEN`** is >= 32 characters, sourced from a secret
+      manager, and has a rotation cadence <= 90 days.
+- [ ] **`ISSUER_SCIM_GROUP_ROLE_MAP`** reviewed by two engineers. No SCIM group
+      maps to `operator` without explicit sign-off in a change ticket.
+- [ ] **Postgres migration verified.** `scim_users`, `scim_groups`,
+      `scim_group_members` tables created (`ISSUER_DB_SCHEMA_INIT=true` on
+      first start).
+- [ ] **SCIM push tested end-to-end** (IdP -> issuer -> issuance):
+  1. Push a test user with a known group.
+  2. Authenticate as that user via the OIDC token endpoint.
+  3. Confirm the issued capability token reflects the expected SCIM-derived
+     capabilities.
+- [ ] **Removal tested.** Remove user from SCIM group; confirm next issuance
+      for that user reflects the reduced capability set.
+- [ ] **Fail-open behavior acknowledged.** If the SCIM DB lookup fails, the
+      issuer falls back to IdP-only roles. For fail-closed behavior, ensure
+      Postgres is highly available and consider setting
+      `ISSUER_SCIM_CACHE_TTL_SECONDS=0` (deny on SCIM outage).
+- [ ] **IdP SCIM configuration verified** (see `docs/issuer-idp-setup.md` §8):
+  - Base URL: `https://issuer.example.com/scim/v2`
+  - Authentication: HTTP Header `Authorization: Bearer <ISSUER_SCIM_BEARER_TOKEN>`
+  - Supported operations: Users, Groups, Push Groups
+
+---
+
+### 12.14 Stage-5 security checklist
+
+In addition to §9 (Stage-3) and §11.9 (Stage-4), review the following before
+routing production traffic through a Stage-5 deployment:
+
+- [ ] **Enterprise threat model approved.** `docs/security/enterprise-federation-threat-model.md`
+      signed off by >= 2 engineers + 1 security reviewer before partner
+      federation or SCIM is deployed to production.
+- [ ] **Partner DID registry enabled.** `PARTNER_DID_REGISTRY_REQUIRED=true`
+      (production default). `TRUSTED_PARTNER_DIDS` env-var bypass is not used.
+- [ ] **SCIM bearer token in secret manager.** `ISSUER_SCIM_BEARER_TOKEN` not
+      in a `.env` file or committed to version control.
+- [ ] **SOC2 export not publicly reachable.** `GET /api/v1/audit/export`
+      requires `X-Admin-Api-Key`. Admin port (3003) excluded from public
+      load-balancer ingress rules.
+- [ ] **In-process guard is soft.** Security posture does not rely on
+      `createAgtGuard()` as a security boundary. Outer gateway is the sole hard
+      enforcement point.
+- [ ] **Air-gap egress checklist completed.** For air-gapped deployments,
+      every egress endpoint in §12.10.2 is reachable via a controlled proxy or
+      replaced with an on-prem equivalent.
+- [ ] **Cross-chain anchor lag alert wired.** Alert fires when time since the
+      last `SignedCrossChainCommitment` exceeds
+      `AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS * 3`.
+- [ ] **DB credential blast radius documented.** If `db-token-service` is
+      deployed, the minimum-privilege DB role is provisioned and credential TTL
+      is <= capability token TTL.
+- [ ] **Full Stage-5 threat model reviewed.**
+      `docs/security/enterprise-federation-threat-model.md` sign-off obtained.
+
+---
+
+## 13. Stage 5 — Posture Emitter Reference
 
 The **durable posture emitter** feeds AI-posture inventory records to cloud
 security management surfaces (Azure Defender CSPM, AWS Security Hub,
 GCP Security Command Center) for every signed enforcement event.  It uses a
 local SQLite WAL queue to guarantee delivery across pod restarts.
 
-### 12.1 How it works
+### 13.1 How it works
 
 Every time the gateway signs an audit-evidence record (via the async audit
 pipeline) the `PostureEmitterPlugin` shim converts the `SignedAuditEvidence`
@@ -1277,7 +2186,7 @@ retrying with exponential back-off until all plugins acknowledge.
 Posture emission is **best-effort** — a failed enqueue is logged at `warn`
 level and never affects the enforcement decision.
 
-### 12.2 Environment variables
+### 13.2 Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
@@ -1291,7 +2200,7 @@ level and never affects the enforcement decision.
 | `AWS_ACCOUNT_ID`, `AWS_REGION`, `SECURITY_HUB_PRODUCT_ARN` | — | Required for `security-hub`. |
 | `GCP_SCC_SOURCE_NAME`, `GCP_PROJECT_ID` | — | Required for `scc`. |
 
-### 12.3 Field mapping (enforcement events)
+### 13.3 Field mapping (enforcement events)
 
 At enforcement time the gateway has the signed audit record but not the full
 capability manifest.  The posture records produced from enforcement events
@@ -1310,7 +2219,7 @@ For accurate `runtime`, `region`, and the real `capabilityManifestHash`,
 correlate enforcement records (keyed by `agentId`) with issuance records
 produced by the capability issuer's own `PostureEmitter`.
 
-### 12.4 Production deployment checklist
+### 13.4 Production deployment checklist
 
 - [ ] Set `POSTURE_EMITTER_ENABLED=true` and `POSTURE_EMITTER_PLUGINS` to
   at least one production target.
@@ -1322,3 +2231,4 @@ produced by the capability issuer's own `PostureEmitter`.
   is never called.
 - [ ] Confirm the gateway's Prometheus scrape includes
   `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.
+
