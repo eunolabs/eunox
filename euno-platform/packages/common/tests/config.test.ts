@@ -1463,3 +1463,70 @@ describe('GatewayConfigSchema — Task 13 (HOSTED_MODE audience enforcement)', (
     expect(result.ok).toBe(true);
   });
 });
+
+describe('IssuerConfigSchema — SECRET_STORE cross-field validation', () => {
+  const base = { AZURE_KEYVAULT_URL: 'https://vault.example/' };
+
+  it('accepts SECRET_STORE_PROVIDER=env without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ ...base, SECRET_STORE_PROVIDER: 'env' }, 'issuer');
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ ...base, SECRET_STORE_PROVIDER: 'azure-keyvault' }, 'issuer');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'SECRET_STORE_AZURE_VAULT_URL',
+          message: expect.stringMatching(/SECRET_STORE_AZURE_VAULT_URL.*azure-keyvault/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=azure-keyvault with SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig(
+      {
+        ...base,
+        SECRET_STORE_PROVIDER: 'azure-keyvault',
+        SECRET_STORE_AZURE_VAULT_URL: 'https://my-secrets-vault.vault.azure.net/',
+      },
+      'issuer',
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('GatewayConfigSchema — SECRET_STORE cross-field validation', () => {
+  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ SECRET_STORE_PROVIDER: 'azure-keyvault' }, 'gateway');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'SECRET_STORE_AZURE_VAULT_URL',
+          message: expect.stringMatching(/SECRET_STORE_AZURE_VAULT_URL.*azure-keyvault/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=azure-keyvault with SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig(
+      {
+        SECRET_STORE_PROVIDER: 'azure-keyvault',
+        SECRET_STORE_AZURE_VAULT_URL: 'https://my-secrets-vault.vault.azure.net/',
+      },
+      'gateway',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ SECRET_STORE_PROVIDER: 'aws-secretsmanager' }, 'gateway');
+    expect(result.ok).toBe(true);
+  });
+});

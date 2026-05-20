@@ -30,10 +30,10 @@
  * ## Cloud SDK dependencies
  *
  * The cloud provider SDKs are **not** hard dependencies of `@euno/common-core`.
- * They are dynamically `require()`d at construction time.  Callers are
- * responsible for installing whichever SDK their deployment uses.  A clear
- * `Error` is thrown if the SDK is absent when the corresponding provider is
- * selected.
+ * They are dynamically `require()`d lazily on the first `getSecret()` call
+ * (inside `buildClient()`), not at construction time.  Callers are responsible
+ * for installing whichever SDK their deployment uses.  A clear `Error` is
+ * thrown if the SDK is absent when the first secret fetch is attempted.
  *
  * ## Usage
  *
@@ -42,7 +42,8 @@
  *
  * const store = createSecretStoreFromEnv(process.env);
  * const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');
- * // Falls back to process.env when the value is absent from the remote store.
+ * // Non-env stores return undefined for missing secrets; fall back explicitly:
+ * // const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET') ?? process.env['AUDIT_LEDGER_HMAC_SECRET'];
  * ```
  */
 

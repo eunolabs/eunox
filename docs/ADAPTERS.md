@@ -487,15 +487,17 @@ PARTNER_ISSUER_DISCOVERY_URL=https://partner-staging.example.com/.well-known/cap
 ## Secrets abstraction layer (`SecretStore`)
 
 Services can read sensitive runtime values (e.g. `AUDIT_LEDGER_HMAC_SECRET`,
-`GATEWAY_ADMIN_API_KEY`) from a cloud-native secret manager instead of, or in
-addition to, environment variables.  The `SecretStore` interface is exported
-from `@euno/common-core`:
+`GATEWAY_ADMIN_API_KEY`) from a cloud-native secret manager instead of
+environment variables.  The `SecretStore` interface is exported from
+`@euno/common-core`:
 
 ```typescript
 import { createSecretStoreFromEnv, SecretStore } from '@euno/common-core';
 
 const store: SecretStore = createSecretStoreFromEnv(process.env);
 const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');
+// Non-env stores return undefined for missing secrets — fall back explicitly if needed:
+// const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET') ?? process.env['AUDIT_LEDGER_HMAC_SECRET'];
 ```
 
 ### Interface
@@ -520,8 +522,10 @@ interface SecretStore {
 | `gcp-secretmanager`     | `GcpSecretManagerSecretStore`    | `@google-cloud/secret-manager`                   |
 
 Cloud SDKs are **not** hard dependencies of `@euno/common-core`; they are
-dynamically `require()`d at construction time.  Install whichever SDK your
-deployment uses.
+dynamically `require()`d lazily on the first `getSecret()` call (inside
+`buildClient()`), not at construction time.  Install whichever SDK your
+deployment uses; a clear error is thrown if the SDK is absent when the first
+secret fetch is attempted.
 
 ### Selection via environment variables
 
