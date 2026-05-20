@@ -39,7 +39,7 @@ production deployments:
 | Secret name (recommended) | Euno environment variable | Description |
 |---|---|---|
 | `euno/prod/audit-ledger-hmac-secret` | `AUDIT_LEDGER_HMAC_SECRET` | 64-hex-char HMAC key for audit ledger integrity |
-| `euno/prod/gateway-admin-api-key` | `ADMIN_API_KEY` | Gateway admin API key (≥ 32 chars) |
+| `euno/prod/gateway-admin-api-key` | `ADMIN_API_KEY` | Gateway admin API key (≥ 32 chars; referred to as `GATEWAY_ADMIN_API_KEY` in the multi-cloud plan) |
 | `euno/prod/partner-did-pin-secret` | `PARTNER_DID_PIN_SECRET` | Secret for partner DID pin derivation (Stage 5) |
 | `euno/prod/redis-url` | `REDIS_URL` | Redis connection string (incl. password) |
 | `euno/prod/audit-ledger-pg-url` | `AUDIT_LEDGER_PG_URL` | PostgreSQL connection string for the audit ledger |

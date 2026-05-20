@@ -282,7 +282,7 @@ test('fails when deploy-eks.md is missing the denial_reason histogram query', ()
       makeValidDeployEks().replace('denial_reason', 'denial-reason'));
     const result = run(base);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /denial-reason histogram/);
+    assert.match(result.stderr, /denial_reason histogram/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

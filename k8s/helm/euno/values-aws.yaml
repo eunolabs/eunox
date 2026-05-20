@@ -152,7 +152,7 @@ postureEmitter:
   persistence:
     enabled: true
     size: 1Gi
-    storageClass: gp3   # EKS gp3 EBS volumes (preferred over gp2)
+    storageClass: gp3   # EBS gp3: better IOPS/throughput than gp2 at lower cost
     mountPath: /data
 
   env:

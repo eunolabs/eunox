@@ -117,7 +117,7 @@ requireText(eksGuide, 'OCSF',
 requireText(eksGuide, 'CloudWatch Insights',
   'deploy-eks.md: CloudWatch Insights query templates');
 requireText(eksGuide, 'denial_reason',
-  'deploy-eks.md: denial-reason histogram query');
+  'deploy-eks.md: denial_reason histogram query');
 
 // ---------------------------------------------------------------------------
 // Check 2 — docs/secrets-aws.md
