@@ -340,6 +340,10 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
       const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
       const objectStoreProvider = dynConfig.AUDIT_LEDGER_OBJECT_STORE_PROVIDER;
+      // Reuse the existing legacy prefix knobs for the generic object-store
+      // path. Azure (and any future provider without a dedicated prefix env)
+      // falls back to whichever legacy prefix is configured so operators can
+      // still segregate anchors by environment/cluster.
       const objectStoresPrefix =
         objectStoreProvider === 'gcs'
           ? env['AUDIT_LEDGER_GCS_PREFIX']

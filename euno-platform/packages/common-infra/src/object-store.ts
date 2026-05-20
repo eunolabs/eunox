@@ -27,6 +27,8 @@
  */
 
 import type { S3AnchorClient, GcsAnchorClient } from './ledger-signer';
+// S3 uses an in-package adapter, so a normal import here does not defeat the
+// lazy-loading boundary that exists for ledger-signer and the optional Azure SDK.
 import { AwsSdkS3AnchorClient } from './s3-anchor-client';
 
 // ── ObjectStore interface ─────────────────────────────────────────────────────
