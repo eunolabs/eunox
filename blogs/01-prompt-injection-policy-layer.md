@@ -180,17 +180,3 @@ The prompt injection problem isn't solvable inside the LLM. There's no phrasing 
 ---
 
 *Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era.md)*
-
-- **`allowedRecipientDomains`** checks email recipients against an allow-list. An injection attack that tries to exfiltrate data by sending an email to `attacker@external.com` fails because `external.com` is not in `corp.example.com`.
-
-- **`maxCalls`** is a distributed rate limit enforced via Redis. Each call decrements the counter. When the counter reaches zero, further calls to that tool are denied for the lifetime of the token. This prevents a looping agent from making unlimited calls to an expensive or sensitive API.
-
-If any condition fails, the call is denied. Unknown condition types — conditions that appear in a token but are not implemented by this version of the proxy — also cause denial. There is no "skip unknown conditions and allow" path.
-
-### Step 3: Obligation application
-
-Some conditions are not denial conditions but obligation conditions — they describe side effects that must be applied to allowed calls.
-
-- **Parameter rewrites.** A token may require that a specific header be injected into every upstream call, or that a `tenant_id` argument always be set to the issuing tenant's identifier, regardless of what the agent provided. This prevents an agent from accidentally (or deliberately) operating against a different tenant's data by omitting or spoofing the tenant parameter.
-
-*Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era.md)*

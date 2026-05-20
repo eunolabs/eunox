@@ -77,7 +77,7 @@ The fail-closed rule is especially important here: **if the proxy encounters a c
 
 **Obligation application.** Some policies have side effects rather than just allow/deny. Rate counters need to be incremented after a successful approval. Arguments might need sanitisation — strip PII from log payloads, normalise values. The response from upstream might need to be filtered before being returned to the client. This step handles all of that.
 
-**Audit write.** Before forwarding the call, write a record to the audit log. Not after — if you write after and the call hangs, you lose the record. The record contains: call timestamp, token identity, tool name, sanitised arguments, policy decision, conditions evaluated. Structured enough to be queryable. Written to a tamper-evident log (see below). Both approved and denied calls get logged — denials are often more interesting than approvals.
+**Audit write.** Before forwarding the call, write an initial decision record to the audit log. Not after — if you wait and the call hangs, you lose the fact that the call was approved and forwarded. Then, when the upstream call completes (success or error), write or update a completion record with the response outcome and latency. The initial record contains call timestamp, token identity, tool name, sanitised arguments, policy decision, and conditions evaluated. Completion adds execution outcome details. Structured enough to be queryable. Written to a tamper-evident log (see below). Both approved and denied calls get logged — denials are often more interesting than approvals.
 
 **Forward or deny.** Everything passed. The call goes to the upstream server. The result comes back and is returned to the client. Or something failed, and the call is denied.
 
