@@ -2600,19 +2600,20 @@ export const AgentRuntimeConfigSchema = z
         'URL of the capability-issuer this agent authenticates against. Required. ' +
         'Example: https://issuer.example.com',
       ),
-    AUTH_TOKEN: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        'Bootstrap credential presented to the issuer to obtain the first capability token. ' +
-        'This is the agent\'s proof of identity (e.g. an OIDC access token or API key). ' +
-        'Required unless AUTH_TOKEN_FILE is set.',
-      ),
+    AUTH_TOKEN: optionalString.describe(
+      'Bootstrap credential presented to the issuer to obtain the first capability token. ' +
+      'This is the agent\'s proof of identity (e.g. an OIDC access token or API key). ' +
+      'Required unless AUTH_TOKEN_FILE is set.',
+    ),
 
     AUTH_TOKEN_FILE: z
       .string()
+      .transform((v) => (v === '' ? undefined : v.trim()))
       .optional()
+      .refine(
+        (v) => v === undefined || v.length > 0,
+        'AUTH_TOKEN_FILE must be a non-blank file path.',
+      )
       .describe(
         'Path to a file containing the authentication token. When set, the runtime reads ' +
         'the token from this file on every capability-issuance request so the token is never ' +

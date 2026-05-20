@@ -1317,6 +1317,99 @@ describe('MinterConfigSchema — Task 17 (Postgres pool config)', () => {
   });
 });
 
+describe('AgentRuntimeConfigSchema — AUTH_TOKEN / AUTH_TOKEN_FILE validation', () => {
+  /** Minimal valid agent-runtime env with the given token field(s) patched in. */
+  const base = {
+    AGENT_ID: 'agent-01',
+    GATEWAY_URL: 'https://gateway.example.com',
+    ISSUER_URL: 'https://issuer.example.com',
+  };
+
+  it('accepts AUTH_TOKEN alone', () => {
+    const result = loadConfig(
+      { ...base, AUTH_TOKEN: 'my-secret-token' },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.config as Record<string, unknown>).AUTH_TOKEN).toBe('my-secret-token');
+  });
+
+  it('accepts AUTH_TOKEN_FILE alone', () => {
+    const result = loadConfig(
+      { ...base, AUTH_TOKEN_FILE: '/var/run/service-account/token' },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.config as Record<string, unknown>).AUTH_TOKEN_FILE).toBe(
+      '/var/run/service-account/token',
+    );
+  });
+
+  it('rejects when neither AUTH_TOKEN nor AUTH_TOKEN_FILE is set', () => {
+    const result = loadConfig(base, 'agent-runtime');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'AUTH_TOKEN')).toBe(true);
+  });
+
+  it('treats AUTH_TOKEN="" as unset and still fails when AUTH_TOKEN_FILE is also absent', () => {
+    const result = loadConfig({ ...base, AUTH_TOKEN: '' }, 'agent-runtime');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'AUTH_TOKEN')).toBe(true);
+  });
+
+  it('treats AUTH_TOKEN="" as unset but passes when AUTH_TOKEN_FILE is set', () => {
+    const result = loadConfig(
+      { ...base, AUTH_TOKEN: '', AUTH_TOKEN_FILE: '/var/run/service-account/token' },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Empty AUTH_TOKEN is coerced to undefined by optionalString.
+    expect((result.config as Record<string, unknown>).AUTH_TOKEN).toBeUndefined();
+    expect((result.config as Record<string, unknown>).AUTH_TOKEN_FILE).toBe(
+      '/var/run/service-account/token',
+    );
+  });
+
+  it('accepts both AUTH_TOKEN and AUTH_TOKEN_FILE set (AUTH_TOKEN_FILE takes precedence at runtime)', () => {
+    const result = loadConfig(
+      {
+        ...base,
+        AUTH_TOKEN: 'my-secret-token',
+        AUTH_TOKEN_FILE: '/var/run/service-account/token',
+      },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('trims leading/trailing whitespace from AUTH_TOKEN_FILE', () => {
+    const result = loadConfig(
+      { ...base, AUTH_TOKEN_FILE: '  /var/run/service-account/token  ' },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.config as Record<string, unknown>).AUTH_TOKEN_FILE).toBe(
+      '/var/run/service-account/token',
+    );
+  });
+
+  it('rejects a whitespace-only AUTH_TOKEN_FILE', () => {
+    const result = loadConfig(
+      { ...base, AUTH_TOKEN_FILE: '   ' },
+      'agent-runtime',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.field === 'AUTH_TOKEN_FILE')).toBe(true);
+  });
+});
+
 describe('GatewayConfigSchema — Task 13 (HOSTED_MODE audience enforcement)', () => {
   it('HOSTED_MODE defaults to false when not set', () => {
     const result = loadConfig({}, 'gateway');

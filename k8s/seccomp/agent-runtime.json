@@ -192,9 +192,9 @@
       ]
     },
     {
-      "comment": "Allow clone3 unconditionally. clone3 passes a struct clone_args pointer as its first argument; filtering on that pointer value is not meaningful. Namespace creation via clone3 is blocked at the capability layer (cap-drop ALL removes CAP_SYS_ADMIN).",
+      "comment": "Block clone3: unlike clone, clone3 accepts namespace-creation flags via a clone_args struct pointer whose contents cannot be filtered by seccomp argument rules. Blocking clone3 forces glibc to fall back to clone, which is allowed only when no namespace-creation flags are set (see SCMP_CMP_MASKED_EQ rule above).",
       "names": ["clone3"],
-      "action": "SCMP_ACT_ALLOW"
+      "action": "SCMP_ACT_ERRNO"
     },
     {
       "comment": "Allow AF_INET (IPv4), AF_INET6 (IPv6), and AF_UNIX sockets only. AF_PACKET (7) and AF_NETLINK (16) are blocked — they allow raw network access and kernel netlink manipulation respectively.",

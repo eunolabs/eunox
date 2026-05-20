@@ -268,6 +268,30 @@ export function dumpEnvTemplate(service: EunoServiceName): string {
     }
   }
 
+  // Second pass: if the first probe had object-level failures (required
+  // fields missing), Zod skips cross-field `refine` / `superRefine`
+  // callbacks because they only run on a successfully-parsed value.  To
+  // detect those cross-field requirements we run a second probe with
+  // the unconditionally-required fields filled in using their hint
+  // values so that object parsing succeeds and the refines can execute.
+  if (!probe.success) {
+    const minimalEnv: Record<string, string> = {};
+    for (const [name, type] of Object.entries(shape)) {
+      if (conditionallyRequired.has(name)) {
+        minimalEnv[name] = inferOperatorHint(type);
+      }
+    }
+    const probe2 = schema.safeParse(minimalEnv);
+    if (!probe2.success) {
+      for (const issue of probe2.error.issues) {
+        const head = issue.path[0];
+        if (typeof head === 'string' && head in shape) {
+          conditionallyRequired.add(head);
+        }
+      }
+    }
+  }
+
   const blocks: string[] = [SERVICE_HEADERS[service], ''];
   for (const [name, type] of Object.entries(shape)) {
     const summary = summariseField(name, type, conditionallyRequired);
