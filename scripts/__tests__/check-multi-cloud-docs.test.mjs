@@ -102,7 +102,7 @@ function makeValidIdpSetup() {
     '',
     'OAuth service account for SCIM provisioning.',
     'ISSUER_SCIM_BEARER_TOKEN=<token>',
-    '        externalId: user.id,   // Google internal user ID',
+    'externalId: user.id,   // Google internal user ID',
     'ISSUER_SCIM_GROUP_ROLE_MAP={"EunoReaders":"reader"}',
   ].join('\n');
 }

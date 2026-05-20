@@ -54,7 +54,7 @@ gateway:
     # Cross-chain anchor to GCS with retention policy (optional; SOC 2 CC7.4).
     # ENABLE_CROSS_CHAIN_ANCHOR: "true"
     # AUDIT_LEDGER_GCS_BUCKET: "euno-audit-anchor-prod"
-    # GCP_PROJECT_ID: "my-gcp-project"
+    # (GCP_PROJECT_ID is already set above)
 
     # Secret store provider: uncomment to enable SDK-based Secret Manager
     # lookup at startup instead of relying on env vars or ESO/Add-on injection.
