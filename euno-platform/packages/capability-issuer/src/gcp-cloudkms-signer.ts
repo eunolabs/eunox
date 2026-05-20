@@ -347,6 +347,7 @@ export interface GCPKeyVersionInfo {
    * stringified numeric value (e.g. `'1'`) rather than the enum name
    * (`'ENABLED'`).  Consult the Cloud KMS
    * `CryptoKeyVersion.CryptoKeyVersionState` proto enum for the mapping.
+   * The sentinel value `'UNKNOWN'` is returned when the proto field is absent.
    */
   state: string;
   /**

@@ -984,6 +984,26 @@ function fnv1a32LockId(tenantId: string): bigint {
  *
  * Enforces a minimum decoded length of 32 bytes (256 bits).
  */
+/** Validate that s3.anchorIntervalRows and gcs.anchorIntervalRows match when both are set. */
+function validateAnchorIntervalConsistency(
+  s3Interval: number | undefined,
+  gcsInterval: number | undefined,
+  callerName: string,
+): number {
+  if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
+    throw new Error(
+      `${callerName}: s3.anchorIntervalRows (${s3Interval}) and ` +
+      `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
+    );
+  }
+  return s3Interval ?? gcsInterval ?? 1000;
+}
+
+/** Coerce an unknown thrown value into an Error instance. */
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 function decodeHmacSecret(raw: string): Buffer {
   // Try hex first: if the string is even-length and all hex chars, decode it.
   if (/^[0-9a-fA-F]+$/.test(raw) && raw.length % 2 === 0) {
@@ -1289,13 +1309,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
     this.advisoryLockMode = options.advisoryLockMode ?? 'global';
     const s3Interval = options.s3?.anchorIntervalRows;
     const gcsInterval = options.gcs?.anchorIntervalRows;
-    if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
-      throw new Error(
-        `PostgresLedgerBackend: s3.anchorIntervalRows (${s3Interval}) and ` +
-        `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
-      );
-    }
-    this.anchorIntervalRows = s3Interval ?? gcsInterval ?? 1000;
+    this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PostgresLedgerBackend');
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((err) => {
@@ -1489,7 +1503,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
           const toSeq = nextSeq;
           this.lastAnchoredSeq = toSeq;
           this.triggerObjectStoreAnchor(fromSeq, toSeq, replicaId).catch((err) => {
-            this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+            this.onAnchorError(toError(err));
           });
         }
 
@@ -1659,7 +1673,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
           contentType: 'application/json',
         });
       } catch (err) {
-        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+        this.onAnchorError(toError(err));
       }
     }
 
@@ -1675,7 +1689,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
           contentType: 'application/json',
         });
       } catch (err) {
-        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+        this.onAnchorError(toError(err));
       }
     }
   }
@@ -2093,7 +2107,7 @@ export class AzureConfidentialLedgerBackend implements LedgerBackend {
       try {
         tx = await this.client.getTransaction(txId);
       } catch (err) {
-        this.onError(err instanceof Error ? err : new Error(String(err)));
+        this.onError(toError(err));
         continue;
       }
       if (!tx) continue;
@@ -2332,13 +2346,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     this.hmacSecret = decodeHmacSecret(options.hmacSecret);
     const s3Interval = options.s3?.anchorIntervalRows;
     const gcsInterval = options.gcs?.anchorIntervalRows;
-    if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
-      throw new Error(
-        `PerReplicaPostgresLedgerBackend: s3.anchorIntervalRows (${s3Interval}) and ` +
-        `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
-      );
-    }
-    this.anchorIntervalRows = s3Interval ?? gcsInterval ?? 1000;
+    this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PerReplicaPostgresLedgerBackend');
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
@@ -2545,7 +2553,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
             const toSeq = nextSeq;
             this.lastAnchoredSeq = toSeq;
             this.triggerObjectStoreAnchor(fromSeq, toSeq, replicaId).catch((err) => {
-              this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+              this.onAnchorError(toError(err));
             });
           }
 
@@ -2712,7 +2720,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           contentType: 'application/json',
         });
       } catch (err) {
-        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+        this.onAnchorError(toError(err));
       }
     }
 
@@ -2728,7 +2736,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           contentType: 'application/json',
         });
       } catch (err) {
-        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+        this.onAnchorError(toError(err));
       }
     }
   }
@@ -2943,7 +2951,7 @@ export class CrossChainAnchor {
     try {
       tips = await this.backend.getReplicaTips();
     } catch (err) {
-      this.onError(err instanceof Error ? err : new Error(String(err)));
+      this.onError(toError(err));
       return;
     }
 
@@ -2974,7 +2982,7 @@ export class CrossChainAnchor {
     try {
       signed = await this.signCommitment(commitment);
     } catch (err) {
-      this.onError(err instanceof Error ? err : new Error(String(err)));
+      this.onError(toError(err));
       return;
     }
 
