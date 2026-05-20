@@ -1,6 +1,6 @@
 # AGT: Defense in Depth Inside the Agent Process
 
-*The final post in the "Architecture deep-dives" series. The previous posts covered [capability tokens](../promotion.md#post-9) and [the enforcement pipeline](../promotion.md#post-10). Both of those describe defenses at the gateway — the external reference monitor. This post covers the other enforcement layer: the one that runs inside the agent process, before any tool call reaches the network.*
+*The final post in the "Architecture deep-dives" series. The previous posts covered capability tokens (post 9, "Capability tokens: a cryptographic contract between agent and operator") and the enforcement pipeline (post 10, "The Tool Gateway as a reference monitor"). Both describe defenses at the gateway — the external reference monitor. This post covers the other enforcement layer: the one that runs inside the agent process, before any tool call reaches the network. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
 
 ---
 
@@ -207,6 +207,6 @@ The better path, if latency is a real concern for condition evaluation, is proba
 
 ---
 
-*This post concludes the "Architecture deep-dives" series. If you're building an enterprise AI governance platform and want to understand the design choices that led here, I'd suggest reading them in order: [post 9 (capability tokens)](../promotion.md) → [post 10 (enforcement pipeline)](../promotion.md) → [post 11 (audit logs)](./11-tamper-evident-audit-logs.md) → [post 12 (pluggable adapters)](./12-pluggable-adapters.md) → [post 13 (partner federation)](./13-partner-did-federation.md) → this post.*
+*This post concludes the "Architecture deep-dives" series. If you're building an enterprise AI governance platform and want to understand the design choices that led here, I'd suggest reading them in order: post 9 (capability tokens) → post 10 (enforcement pipeline) → [post 11 (audit logs)](./11-tamper-evident-audit-logs.md) → [post 12 (pluggable adapters)](./12-pluggable-adapters.md) → [post 13 (partner federation)](./13-partner-did-federation.md) → this post. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
 
 *The next series covers design principles: why the system fails closed, how the YAML policy format stays honest across deployment tiers, and how we think about defense in depth for SQL injection through an LLM.*

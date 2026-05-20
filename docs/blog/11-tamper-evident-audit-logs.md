@@ -1,6 +1,6 @@
 # Tamper-Evident Audit Logs: OCSF, HMAC Chaining, and KMS-Signed Evidence
 
-*Published in the "Architecture deep-dives" series. Read [post 10](../promotion.md#post-2--explainer-mcp-ecosystem--security-audience) first if you haven't seen the enforcement pipeline yet — understanding how the gateway evaluates a tool call is a prerequisite for understanding why the audit record for that call looks the way it does.*
+*Published in the "Architecture deep-dives" series. Read post 10 ("The Tool Gateway as a reference monitor") first if you haven't seen the enforcement pipeline yet — understanding how the gateway evaluates a tool call is a prerequisite for understanding why the audit record for that call looks the way it does. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
 
 ---
 
