@@ -161,9 +161,9 @@ Change `GATEWAY_URL` to `https://` and configure mTLS via:
 ### P3 — Landlock self-restriction in `main.ts`
 
 Compile a small `landlock-wrapper` binary (Rust or C) that installs Landlock
-network restrictions (port 3001 + 3002 only) then `execve()`s Node. Use it as
-the container `CMD`. Requires Linux ≥ 6.7 (available in AKS node pools as of
-2025).
+network restrictions (port 3001 + 3002 only) then calls `execve()` to replace
+itself with Node. Use it as the container `CMD`. Requires Linux ≥ 6.7 (available
+in AKS node pools as of 2025).
 
 ### P3 — Ephemeral per-session pods
 
