@@ -667,3 +667,82 @@ helm rollback euno --namespace euno
       `/euno/audit` log group (SOC 2 CC7 requirement).
 - [ ] Security Hub findings are reviewed weekly; high-severity denials trigger
       automated alerts via EventBridge.
+
+---
+
+## 10. S3 audit anchor — endpoint configuration (Phase 2)
+
+The cross-chain audit anchor writes Merkle roots to an S3 Object Lock bucket.
+The standard bootstrap auto-creates the S3 client when `AUDIT_LEDGER_S3_BUCKET`
+is set — no custom entrypoint required.
+
+### 10.1 Standard configuration
+
+```bash
+AUDIT_LEDGER_S3_BUCKET=euno-prod-audit-anchors
+AUDIT_LEDGER_ANCHOR_INTERVAL=1000   # write every 1000 audit rows
+ENABLE_CROSS_CHAIN_ANCHOR=true
+# Region is taken from AWS_REGION (the standard EKS IRSA env var)
+```
+
+The bucket MUST have Object Lock enabled in `COMPLIANCE` mode.  The writing pod's
+IRSA role needs `s3:PutObject` and `s3:PutObjectRetention` on the bucket.
+
+### 10.2 VPC endpoint / PrivateLink configuration
+
+When traffic to S3 must stay within the VPC (zero-internet-egress clusters),
+use an S3 Interface VPC Endpoint and configure Euno with the endpoint URL:
+
+```bash
+# Create a VPC Interface Endpoint for S3 (one-time setup):
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0a1b2c3d \
+  --service-name com.amazonaws.us-east-1.s3 \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-1a2b3c4d subnet-5e6f7a8b \
+  --security-group-ids sg-01234567 \
+  --private-dns-enabled
+
+# Pod environment override:
+AUDIT_LEDGER_S3_ENDPOINT=https://bucket.vpce-0a1b2c3d4e5f.s3.us-east-1.vpce.amazonaws.com
+```
+
+For path-style URL addressing (required by some VPC endpoint configurations):
+
+```bash
+AUDIT_LEDGER_S3_FORCE_PATH_STYLE=true
+```
+
+### 10.3 GovCloud (us-gov-*) regions
+
+GovCloud endpoints are resolved automatically from `AWS_REGION`:
+
+```bash
+AWS_REGION=us-gov-west-1
+AUDIT_LEDGER_S3_BUCKET=euno-govcloud-audit-anchors
+# No AUDIT_LEDGER_S3_ENDPOINT override needed for standard GovCloud S3
+```
+
+FIPS endpoints are selected by the AWS SDK when `AWS_USE_FIPS_ENDPOINT=true`
+is set in the pod environment.
+
+### 10.4 IAM policy for S3 anchor
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EunoS3Anchor",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::euno-prod-audit-anchors/*"
+    }
+  ]
+}
+```
+
+Attach this policy to the `euno-gateway` IRSA role (see §3).

@@ -1547,17 +1547,35 @@ export const GatewayConfigSchema = z
     }),
     AUDIT_LEDGER_S3_BUCKET: optionalString.describe(
       'S3 bucket for periodic Merkle-root anchoring. ' +
-      'NOTE: the standard bootstrap does not inject an S3 client — setting this env var ' +
-      'without a custom entrypoint that constructs PostgresLedgerBackend directly (with an ' +
-      'S3AnchorClient) will cause a startup error. When properly wired, every ' +
-      'AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root of ' +
-      'those rows to S3. The bucket MUST have Object Lock enabled. ' +
+      'When AUDIT_LEDGER_S3_BUCKET is set, the standard bootstrap automatically constructs ' +
+      'an S3AnchorClient using the standard AWS credential provider chain (IAM role / IRSA / ' +
+      'instance profile / AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars). ' +
+      'The bucket MUST have Object Lock enabled. ' +
+      'Every AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root ' +
+      'of those rows to S3. ' +
       'When unset, no S3 anchoring is performed (HMAC + in-DB chain is the only protection).',
     ),
     AUDIT_LEDGER_S3_PREFIX: optionalString.describe(
       'S3 key prefix for ledger anchor objects. ' +
       'Default "audit-anchor/". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json.',
     ),
+    AUDIT_LEDGER_S3_ENDPOINT: optionalString.describe(
+      'Custom S3 endpoint URL for VPC endpoint / PrivateLink deployments. ' +
+      'Example: https://bucket.vpce-0a1b2c3d4e5f.s3.us-east-1.vpce.amazonaws.com . ' +
+      'When unset the AWS SDK uses the standard regional endpoint for AWS_REGION. ' +
+      'GovCloud (us-gov-west-1 / us-gov-east-1) endpoints are resolved automatically ' +
+      'from the region; this override is only needed for PrivateLink or custom endpoint scenarios. ' +
+      'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+    ),
+    AUDIT_LEDGER_S3_FORCE_PATH_STYLE: envBoolean({
+      default: false,
+      description:
+        'When true, forces path-style S3 URL addressing ' +
+        '(https://s3.<region>.amazonaws.com/<bucket>/<key>) instead of virtual-hosted-style ' +
+        '(https://<bucket>.s3.<region>.amazonaws.com/<key>). ' +
+        'Required for some VPC endpoint configurations and for MinIO-compatible local testing. ' +
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+    }),
     AUDIT_LEDGER_ANCHOR_INTERVAL: envPositiveInt({
       default: 1000,
       min: 1,

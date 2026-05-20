@@ -239,12 +239,26 @@ describe('AwsSecretsManagerSecretStore', () => {
       GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
     }), { virtual: true });
 
-    const val = await store.getSecret('MY_AWS_SECRET');
+    // Need an ARN override for the secret to reach Secrets Manager
+    const storeWithArn = new AwsSecretsManagerSecretStore({
+      region: 'us-east-1',
+      arnsBySecretName: { MY_AWS_SECRET: 'MY_AWS_SECRET' },
+    });
+    const storeWithArnAny = storeWithArn as unknown as Record<string, unknown>;
+    storeWithArnAny['client'] = {
+      send: async (cmd: Record<string, unknown>) => {
+        const id = cmd['SecretId'] as string;
+        return buildAwsClient({ MY_AWS_SECRET: 'aws-value' }).client.send({ SecretId: id });
+      },
+    };
+    const val = await storeWithArn.getSecret('MY_AWS_SECRET');
     expect(val).toBe('aws-value');
   });
 
   it('returns undefined for ResourceNotFoundException', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { MISSING: 'arn:aws:secretsmanager:us-east-1:123:secret:missing' },
+    });
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
       async send(_cmd: unknown) {
@@ -260,7 +274,9 @@ describe('AwsSecretsManagerSecretStore', () => {
   });
 
   it('re-throws other errors', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { ANY: 'arn:aws:secretsmanager:us-east-1:123:secret:any' },
+    });
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
       async send(_cmd: unknown) {
@@ -276,7 +292,9 @@ describe('AwsSecretsManagerSecretStore', () => {
   });
 
   it('caches successfully fetched values', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { CACHED_AWS: 'arn:aws:secretsmanager:us-east-1:123:secret:cached' },
+    });
     let callCount = 0;
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
@@ -293,6 +311,84 @@ describe('AwsSecretsManagerSecretStore', () => {
     await store.getSecret('CACHED_AWS');
     await store.getSecret('CACHED_AWS');
     expect(callCount).toBe(1);
+  });
+
+  // ── ARN fallback behaviour ────────────────────────────────────────────────
+
+  it('falls back to fallbackEnv when no ARN is configured for the name', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: { MY_ENV_SECRET: 'env-value' },
+    });
+    expect(await store.getSecret('MY_ENV_SECRET')).toBe('env-value');
+  });
+
+  it('treats empty fallbackEnv value as undefined (same as EnvSecretStore)', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: { EMPTY_SECRET: '' },
+    });
+    expect(await store.getSecret('EMPTY_SECRET')).toBeUndefined();
+  });
+
+  it('returns undefined from fallbackEnv for a missing key', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: {},
+    });
+    expect(await store.getSecret('NOT_PRESENT')).toBeUndefined();
+  });
+
+  it('uses the ARN as SecretId when arnsBySecretName has an entry for the name', async () => {
+    const capturedSecretIds: string[] = [];
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {
+        HMAC_SECRET: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+      },
+      fallbackEnv: {},
+    });
+    const storeAny = store as unknown as Record<string, unknown>;
+    storeAny['client'] = {
+      async send(cmd: Record<string, unknown>) {
+        capturedSecretIds.push(cmd['SecretId'] as string);
+        return { SecretString: 'fetched-from-sm' };
+      },
+    };
+    jest.mock('@aws-sdk/client-secrets-manager', () => ({
+      SecretsManagerClient: jest.fn(),
+      GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
+    }), { virtual: true });
+
+    const val = await store.getSecret('HMAC_SECRET');
+    expect(val).toBe('fetched-from-sm');
+    expect(capturedSecretIds).toEqual([
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+    ]);
+  });
+
+  it('mixes ARN and env fallback for different secrets in the same store', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {
+        HMAC_SECRET: 'arn:aws:secretsmanager:us-east-1:123:secret:hmac',
+      },
+      fallbackEnv: {
+        ADMIN_KEY: 'admin-from-env',
+        HMAC_SECRET: 'should-not-be-used', // ARN takes precedence
+      },
+    });
+    const storeAny = store as unknown as Record<string, unknown>;
+    storeAny['client'] = {
+      async send(_cmd: unknown) {
+        return { SecretString: 'hmac-from-sm' };
+      },
+    };
+    jest.mock('@aws-sdk/client-secrets-manager', () => ({
+      SecretsManagerClient: jest.fn(),
+      GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
+    }), { virtual: true });
+
+    expect(await store.getSecret('HMAC_SECRET')).toBe('hmac-from-sm');
+    expect(await store.getSecret('ADMIN_KEY')).toBe('admin-from-env');
   });
 });
 
@@ -442,6 +538,39 @@ describe('createSecretStoreFromEnv', () => {
       AWS_REGION: 'us-west-2',
     });
     expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
+  });
+
+  it('populates arnsBySecretName from AWS_SECRETS_ARN_* env vars', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      AWS_REGION: 'us-east-1',
+      AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET:
+        'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+      AWS_SECRETS_ARN_GATEWAY_ADMIN_API_KEY:
+        'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/admin-key-xyz',
+    }) as AwsSecretsManagerSecretStore;
+
+    const cfg = (store as unknown as Record<string, unknown>)['config'] as {
+      arnsBySecretName: Record<string, string>;
+    };
+    expect(cfg.arnsBySecretName['AUDIT_LEDGER_HMAC_SECRET']).toBe(
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+    );
+    expect(cfg.arnsBySecretName['GATEWAY_ADMIN_API_KEY']).toBe(
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/admin-key-xyz',
+    );
+  });
+
+  it('sets fallbackEnv to the supplied env map for aws-secretsmanager', () => {
+    const env: NodeJS.ProcessEnv = {
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      GATEWAY_ADMIN_API_KEY: 'env-admin-key',
+    };
+    const store = createSecretStoreFromEnv(env) as AwsSecretsManagerSecretStore;
+    const cfg = (store as unknown as Record<string, unknown>)['config'] as {
+      fallbackEnv: NodeJS.ProcessEnv;
+    };
+    expect(cfg.fallbackEnv).toBe(env);
   });
 
   it('returns GcpSecretManagerSecretStore when SECRET_STORE_PROVIDER=gcp-secretmanager', () => {

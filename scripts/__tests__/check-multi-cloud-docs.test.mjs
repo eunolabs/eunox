@@ -56,6 +56,13 @@ function makeValidDeployEks() {
     'Prometheus → CloudWatch via ADOT Collector.',
     'OCSF audit event → Security Hub finding mapping.',
     'CloudWatch Insights query templates for denial_reason histograms.',
+    '',
+    '## 10. S3 audit anchor — endpoint configuration (Phase 2)',
+    '',
+    'Set AUDIT_LEDGER_S3_ENDPOINT for VPC endpoint deployments.',
+    'Set AUDIT_LEDGER_S3_FORCE_PATH_STYLE=true for path-style addressing.',
+    'VPC endpoint / PrivateLink configuration for S3.',
+    'GovCloud: set AWS_REGION=us-gov-west-1.',
   ].join('\n');
 }
 
@@ -84,6 +91,15 @@ function makeValidSecretsAws() {
     '## 6. ESO vs. ASCP — comparison',
     '',
     '| Concern | External Secrets Operator | ASCP |',
+    '',
+    '## 9. Native SDK integration — AwsSecretsManagerSecretStore (Phase 2)',
+    '',
+    'Use AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET to override individual secrets.',
+    'arnsBySecretName map built automatically from AWS_SECRETS_ARN_* env vars.',
+    '',
+    '## 9.4 EdDSA shim — AwsEdDsaSigner',
+    '',
+    'Set AWS_EDDSA_KEY_ARN=arn:aws:secretsmanager:... to enable EdDSA signing.',
   ].join('\n');
 }
 
@@ -127,6 +143,25 @@ function makeValidValuesAws() {
     'postureEmitter:',
     '  persistence:',
     '    storageClass: gp3',
+  ].join('\n');
+}
+
+function makeValidMultiCloudPlan() {
+  return [
+    '# Multi-Cloud Ecosystem Support Plan',
+    '',
+    '## AWS ecosystem plan',
+    '',
+    '### Phase 2 — Native SDK integration (medium-term)',
+    '',
+    '- [x] **AWS Secrets Manager secrets-store adapter**',
+    '  - arnsBySecretName map for ARN-based overrides.',
+    '',
+    '- [x] **S3 cross-chain anchor — region and endpoint improvements**',
+    '  - AUDIT_LEDGER_S3_ENDPOINT env var added.',
+    '',
+    '- [x] **AWS KMS signer — additional key specs**',
+    '  - EdDSA signing shim (AwsEdDsaSigner) for partner DID.',
   ].join('\n');
 }
 
@@ -213,6 +248,7 @@ function makeValidFixtures(base) {
   writeFileSync(join(base, 'docs', 'secrets-aws.md'), makeValidSecretsAws());
   writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), makeValidIdpSetup());
   writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-aws.yaml'), makeValidValuesAws());
+  writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'), makeValidMultiCloudPlan());
   writeFileSync(join(base, 'docs', 'deploy-gke.md'), makeValidDeployGke());
   writeFileSync(join(base, 'docs', 'secrets-gcp.md'), makeValidSecretsGcp());
   writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'), makeValidValuesGcp());
@@ -229,7 +265,7 @@ function run(root) {
 // Tests — AWS Phase 1
 // ---------------------------------------------------------------------------
 
-test('passes on fully valid multi-cloud Phase 1 documentation', () => {
+test('passes on fully valid AWS Phase 1+2 and GCP Phase 1 documentation', () => {
   const base = makeTmpRoot();
   try {
     makeValidFixtures(base);
@@ -398,7 +434,7 @@ test('fails when secrets-aws.md is missing AUDIT_LEDGER_HMAC_SECRET reference', 
   try {
     makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'secrets-aws.md'),
-      makeValidSecretsAws().replace('AUDIT_LEDGER_HMAC_SECRET', 'HMAC_SECRET'));
+      makeValidSecretsAws().replace(/AUDIT_LEDGER_HMAC_SECRET/g, 'HMAC_SECRET'));
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /AUDIT_LEDGER_HMAC_SECRET/);
@@ -453,8 +489,9 @@ test('fails when secrets-aws.md is missing the SecretStore example', () => {
   const base = makeTmpRoot();
   try {
     makeValidFixtures(base);
+    // Replace all 'SecretStore' occurrences including in AwsSecretsManagerSecretStore
     writeFileSync(join(base, 'docs', 'secrets-aws.md'),
-      makeValidSecretsAws().replace('SecretStore', 'StoreResource'));
+      makeValidSecretsAws().replace(/SecretStore/g, 'StoreResource'));
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /SecretStore/);
@@ -611,6 +648,198 @@ test('fails when values-aws.yaml is missing aws-cognito identity provider', () =
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /aws-cognito/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── Phase 2 tests ────────────────────────────────────────────────────────────
+
+test('[Phase 2] fails when deploy-eks.md is missing AUDIT_LEDGER_S3_ENDPOINT', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-eks.md'),
+      makeValidDeployEks().replace('AUDIT_LEDGER_S3_ENDPOINT', 'S3_ENDPOINT'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AUDIT_LEDGER_S3_ENDPOINT/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when deploy-eks.md is missing AUDIT_LEDGER_S3_FORCE_PATH_STYLE', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-eks.md'),
+      makeValidDeployEks().replace('AUDIT_LEDGER_S3_FORCE_PATH_STYLE', 'FORCE_PATH_STYLE'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AUDIT_LEDGER_S3_FORCE_PATH_STYLE/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when deploy-eks.md is missing VPC endpoint reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-eks.md'),
+      makeValidDeployEks().replace(/VPC endpoint/g, 'private endpoint'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /VPC endpoint/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when deploy-eks.md is missing GovCloud region example', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-eks.md'),
+      makeValidDeployEks().replace('us-gov-west-1', 'us-east-1'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GovCloud/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when secrets-aws.md is missing AwsSecretsManagerSecretStore section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace('AwsSecretsManagerSecretStore', 'NativeSecretStore'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AwsSecretsManagerSecretStore/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when secrets-aws.md is missing AWS_SECRETS_ARN_* pattern', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace(/AWS_SECRETS_ARN_/g, 'SECRETS_ARN_'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AWS_SECRETS_ARN_/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when secrets-aws.md is missing arnsBySecretName explanation', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace('arnsBySecretName', 'arnMap'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /arnsBySecretName/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when secrets-aws.md is missing AwsEdDsaSigner documentation', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace('AwsEdDsaSigner', 'EdDsaSigner'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AwsEdDsaSigner/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when secrets-aws.md is missing AWS_EDDSA_KEY_ARN env var', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace('AWS_EDDSA_KEY_ARN', 'EDDSA_KEY_ARN'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AWS_EDDSA_KEY_ARN/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when multi-cloud-plan.md is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'docs', 'multi-cloud-plan.md'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /multi-cloud-plan\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when multi-cloud-plan.md AWS Secrets Manager item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] **AWS Secrets Manager secrets-store adapter**',
+        '[ ] **AWS Secrets Manager secrets-store adapter**',
+      ));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AWS Secrets Manager adapter/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when multi-cloud-plan.md S3 endpoint item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] **S3 cross-chain anchor',
+        '[ ] **S3 cross-chain anchor',
+      ));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /S3 endpoint item/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 2] fails when multi-cloud-plan.md KMS signer item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] **AWS KMS signer',
+        '[ ] **AWS KMS signer',
+      ));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /KMS.*signer item/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

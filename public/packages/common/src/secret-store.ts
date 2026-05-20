@@ -249,6 +249,21 @@ export class AzureKeyVaultSecretStore implements SecretStore {
  *
  * The `@aws-sdk/client-secrets-manager` package MUST be installed in the
  * deployment image.
+ *
+ * ## ARN-based fallback
+ *
+ * Operators often need to migrate secrets to Secrets Manager incrementally.
+ * Supply `arnsBySecretName` to resolve specific secret names to their Secrets
+ * Manager ARNs; any name that has no ARN entry is looked up in the fallback
+ * `env` map (defaulting to `process.env` when omitted).
+ *
+ * ```
+ * # CloudFormation / CDK snippet example
+ * AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET=arn:aws:secretsmanager:…
+ * ```
+ *
+ * `createSecretStoreFromEnv()` automatically builds the `arnsBySecretName`
+ * map from every `AWS_SECRETS_ARN_*` environment variable it finds.
  */
 export interface AwsSecretsManagerSecretStoreConfig {
   /** AWS region. Defaults to the SDK default (`AWS_REGION` / `AWS_DEFAULT_REGION`). */
@@ -259,15 +274,40 @@ export interface AwsSecretsManagerSecretStoreConfig {
   secretAccessKey?: string;
   /** Optional AWS STS session token (for temporary credentials). */
   sessionToken?: string;
+  /**
+   * Per-secret ARN overrides.
+   *
+   * Maps a logical secret name (e.g. `AUDIT_LEDGER_HMAC_SECRET`) to its
+   * Secrets Manager ARN or full secret name.  When `getSecret(name)` is
+   * called, the store uses `arnsBySecretName[name]` as the `SecretId` if
+   * present; otherwise it falls back to the env lookup.
+   *
+   * Build this map automatically from `AWS_SECRETS_ARN_*` env vars by using
+   * {@link createSecretStoreFromEnv}.
+   */
+  arnsBySecretName?: Record<string, string>;
+  /**
+   * Fallback environment map used when a secret name has no ARN override.
+   *
+   * Defaults to `process.env` when omitted.  Pass an explicit map in tests
+   * or when you need to scope the fallback to a subset of env vars.
+   */
+  fallbackEnv?: NodeJS.ProcessEnv;
 }
 
 /**
  * `SecretStore` backed by AWS Secrets Manager.
  *
- * Each `getSecret(name)` call sends a `GetSecretValueCommand` with
- * `SecretId: name` and returns the `SecretString` field.
+ * ## Lookup strategy
  *
- * Results are cached in memory for the lifetime of this instance.
+ * For each `getSecret(name)` call:
+ * 1. If `arnsBySecretName[name]` is set, fetch the secret from Secrets Manager
+ *    using that ARN (or secret name) as the `SecretId`.
+ * 2. If no ARN override exists, return the value from `fallbackEnv[name]`
+ *    (or `process.env[name]` when `fallbackEnv` is not provided).
+ *
+ * Results from Secrets Manager are cached in memory for the lifetime of this
+ * instance to avoid redundant round-trips.
  */
 export class AwsSecretsManagerSecretStore implements SecretStore {
   private readonly config: AwsSecretsManagerSecretStoreConfig;
@@ -316,6 +356,18 @@ export class AwsSecretsManagerSecretStore implements SecretStore {
     const cached = this.cache.get(name);
     if (cached !== undefined) return cached;
 
+    // Determine the SecretId to use.
+    // If an ARN override is configured for this secret name, use it; otherwise
+    // fall back to the environment map without touching Secrets Manager at all.
+    const arn = this.config.arnsBySecretName?.[name];
+    if (arn === undefined) {
+      // No ARN configured — fall back to the environment map.
+      const envMap = this.config.fallbackEnv ?? process.env;
+      const envValue = envMap[name];
+      return envValue === '' ? undefined : envValue;
+    }
+
+    // ARN override is present — fetch from Secrets Manager.
     // Lazily build the SDK client so tests can mock `require()` before the
     // first call.
     if (!this.client) {
@@ -335,7 +387,7 @@ export class AwsSecretsManagerSecretStore implements SecretStore {
     }
 
     try {
-      const command = new sdk.GetSecretValueCommand({ SecretId: name });
+      const command = new sdk.GetSecretValueCommand({ SecretId: arn });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response: any = await (this.client as any).send(command);
       const value: string | undefined = response?.SecretString;
@@ -534,8 +586,24 @@ export function createSecretStore(
  * |-----------------------|-----------------------------------------------------------------------------------------------------------------------|
  * | `env` (default)       | — none —                                                                                                              |
  * | `azure-keyvault`      | `SECRET_STORE_AZURE_VAULT_URL` (required), `AZURE_CREDENTIAL_TYPE`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` |
- * | `aws-secretsmanager`  | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`                                       |
+ * | `aws-secretsmanager`  | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_SECRETS_ARN_*`                  |
  * | `gcp-secretmanager`   | `GCP_PROJECT_ID` (required), `GOOGLE_APPLICATION_CREDENTIALS` (ADC key file, consumed by SDK automatically)          |
+ *
+ * ### AWS ARN override pattern
+ *
+ * When `SECRET_STORE_PROVIDER=aws-secretsmanager`, any env var of the form
+ * `AWS_SECRETS_ARN_<NAME>` is treated as a per-secret ARN override.  The
+ * store fetches that secret from Secrets Manager when `getSecret('<NAME>')`
+ * is called; for names without an override it returns the value of `env['<NAME>']`
+ * directly (the same behaviour as `EnvSecretStore`).
+ *
+ * ```bash
+ * # Example: only AUDIT_LEDGER_HMAC_SECRET is in Secrets Manager;
+ * # ADMIN_API_KEY is still supplied via a plain env var.
+ * SECRET_STORE_PROVIDER=aws-secretsmanager
+ * AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET=arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc123
+ * ADMIN_API_KEY=changeme   # falls back to env lookup
+ * ```
  *
  * @param env - A `NodeJS.ProcessEnv`-shaped map.  Defaults to `process.env`.
  *
@@ -582,11 +650,22 @@ export function createSecretStoreFromEnv(
     }
 
     case 'aws-secretsmanager': {
+      // Build arnsBySecretName from every AWS_SECRETS_ARN_* env var found.
+      // E.g. AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET → { AUDIT_LEDGER_HMAC_SECRET: '<arn>' }
+      const arnPrefix = 'AWS_SECRETS_ARN_';
+      const arnsBySecretName: Record<string, string> = {};
+      for (const [key, value] of Object.entries(env)) {
+        if (key.startsWith(arnPrefix) && value) {
+          arnsBySecretName[key.slice(arnPrefix.length)] = value;
+        }
+      }
       return new AwsSecretsManagerSecretStore({
         region: env['AWS_REGION'],
         accessKeyId: env['AWS_ACCESS_KEY_ID'],
         secretAccessKey: env['AWS_SECRET_ACCESS_KEY'],
         sessionToken: env['AWS_SESSION_TOKEN'],
+        arnsBySecretName,
+        fallbackEnv: env,
       });
     }
 
