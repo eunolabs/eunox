@@ -75,23 +75,36 @@ workarounds.
 
 ### Phase 2 — Native SDK integration (medium-term)
 
-- [ ] **AWS Secrets Manager secrets-store adapter**
-  - Implement `SecretsManagerSecretStore` that satisfies the internal
-    `SecretStore` interface used by `createLedgerSignerFromConfig` and
-    the issuer config loader (`loadConfigOrExit(..., 'issuer')`)
-  - Fall back to `process.env` when `AWS_SECRETS_ARN_*` vars are absent
+- [x] **AWS Secrets Manager secrets-store adapter**
+  - `AwsSecretsManagerSecretStore` satisfies the internal `SecretStore`
+    interface used by `createLedgerSignerFromConfig` and the issuer config
+    loader (`loadConfigOrExit(..., 'issuer')`)
+  - `arnsBySecretName` map lets operators pin individual secrets to Secrets
+    Manager ARNs; `createSecretStoreFromEnv` auto-builds the map from every
+    `AWS_SECRETS_ARN_<NAME>` env var it finds
+  - Falls back to `fallbackEnv` (default `process.env`) for secrets without
+    an ARN override — supports incremental migration
   - Unit tests with `@aws-sdk/client-secrets-manager` mock
 
-- [ ] **S3 cross-chain anchor — region and endpoint improvements**
-  - Current `CrossChainAnchor` already writes to S3 Object Lock; review
-    whether GovCloud (`us-gov-*`) and FIPS endpoints work without changes
-  - Add `AUDIT_LEDGER_S3_ENDPOINT` override for VPC endpoint / PrivateLink
-    deployments
+- [x] **S3 cross-chain anchor — region and endpoint improvements**
+  - `AUDIT_LEDGER_S3_ENDPOINT` env var added to `GatewayConfigSchema`;
+    passed to `AwsSdkS3AnchorClient` for VPC endpoint / PrivateLink deployments
+  - `AUDIT_LEDGER_S3_FORCE_PATH_STYLE` env var added for path-style addressing
+    (required for some VPC endpoint configurations and MinIO)
+  - `createS3AnchorClientFromEnv()` factory in `@euno/common-infra` —
+    the standard bootstrap auto-creates an `S3AnchorClient` when
+    `AUDIT_LEDGER_S3_BUCKET` is set; no custom entrypoint required
+  - GovCloud (`us-gov-*`) endpoints are resolved automatically from `AWS_REGION`
+    by the SDK; no special handling required
+  - Unit tests in `common-infra`
 
-- [ ] **AWS KMS signer — additional key specs**
-  - Add `ECC_NIST_P384` and `ECC_NIST_P521` key spec support to
-    `aws-kms-signer.ts` (currently RS256/PS256 RSA only)
-  - EdDSA signing via external signer shim for partner DID (`did:ion`) use cases
+- [x] **AWS KMS signer — additional key specs**
+  - `ECC_NIST_P384` → ES384 and `ECC_NIST_P521` → ES512 already supported
+    in `aws-kms-signer.ts` (auto-detected from `GetPublicKeyCommand.KeySpec`)
+  - EdDSA signing shim (`AwsEdDsaSigner`) for partner DID (`did:ion`) use cases:
+    stores Ed25519 private key in Secrets Manager; signs locally with `jose`;
+    configured via `AWS_EDDSA_KEY_ARN` env var
+  - Unit tests in `capability-issuer/tests/aws-eddsa-signer.test.ts`
 
 ### Phase 3 — Infrastructure-as-code (longer-term)
 
