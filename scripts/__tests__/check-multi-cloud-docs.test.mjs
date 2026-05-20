@@ -265,7 +265,7 @@ function run(root) {
 // Tests — AWS Phase 1
 // ---------------------------------------------------------------------------
 
-test('passes on fully valid AWS and GCP Phase 1 documentation', () => {
+test('passes on fully valid AWS Phase 1+2 and GCP Phase 1 documentation', () => {
   const base = makeTmpRoot();
   try {
     makeValidFixtures(base);
