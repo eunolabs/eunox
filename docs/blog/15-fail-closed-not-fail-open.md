@@ -34,7 +34,7 @@ This isn't a policy you configure. It's baked into the enforcement architecture 
 
 ## Unknown conditions fail closed
 
-This is the one I'm most proud of because it's the easiest to get wrong. [Post 10 covered the enforcement engine](../blog-articles.md) in detail, but the key point for this discussion is how the condition registry handles a condition type it doesn't recognize.
+This is the one I'm most proud of because it's the easiest to get wrong. [Post 10 covered the enforcement engine](../../blogs/10-tool-gateway-reference-monitor.md) in detail, but the key point for this discussion is how the condition registry handles a condition type it doesn't recognize.
 
 When the gateway evaluates a capability token, it iterates over the token's conditions and evaluates each one against the incoming request. The conditions are typed: `allowedOperations`, `maxCalls`, `allowedTables`, `timeWindow`, `ipRange`, and so on. The registry maps each type string to a handler function that performs the evaluation.
 
