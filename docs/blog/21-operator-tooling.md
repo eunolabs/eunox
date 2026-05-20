@@ -1,6 +1,6 @@
 # Operator Tooling: Kill Switches, Revocation, and SCIM Provisioning
 
-*Third post in the "User experience and developer ergonomics" series. [Post 9](./09-capability-tokens.md) covered capability tokens — the JWTs that this post's revocation machinery controls. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit chain that records every action described here. [Post 26](./26-redis-enforcement-substrate.md) explains the Redis substrate that makes the kill switch and revocation checks fast and distributed. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+*Third post in the "User experience and developer ergonomics" series. [Post 9](./09-capability-tokens.md) covered capability tokens — the JWTs that this post's revocation machinery controls. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit chain that records every action described here. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index, including the upcoming post on the Redis substrate that makes the kill switch and revocation checks fast and distributed.*
 
 ---
 
@@ -49,7 +49,7 @@ curl -X POST http://localhost:3003/admin/kill-switch/global/activate \
   -d '{"tenantId": "acme-corp", "acknowledgesCrossTenantImpact": true}'
 ```
 
-The `acknowledgesCrossTenantImpact: true` field is not just a formality. In the code, the API handler checks for it and returns a `403` without it. The reason is auditability: the audit record for a global kill should reflect that the operator understood the scope of what they were doing. When you're presenting incident response evidence to a regulator, having an explicit acknowledgment in the audit trail is significantly better than a record that says "global kill was activated" with no indication that the operator considered the consequences.
+The `acknowledgesCrossTenantImpact: true` field is not just a formality. In the code, the API handler checks for it and returns a `400` without it. The reason is auditability: the audit record for a global kill should reflect that the operator understood the scope of what they were doing. When you're presenting incident response evidence to a regulator, having an explicit acknowledgment in the audit trail is significantly better than a record that says "global kill was activated" with no indication that the operator considered the consequences.
 
 ---
 
@@ -76,7 +76,7 @@ curl -X POST http://localhost:3003/admin/kill-switch/agent/sales-research-bot/re
 curl -X POST http://localhost:3003/admin/kill-switch/global/deactivate \
   -H "X-Admin-API-Key: $ADMIN_KEY" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"tenantId": "acme-corp", "acknowledgesCrossTenantImpact": true}'
 
 # Reset all kill switches at once
 curl -X POST http://localhost:3003/admin/kill-switch/reset \
@@ -126,7 +126,7 @@ curl -X POST http://localhost:3003/admin/revoke \
 
 The `expiresAt` field is optional. If omitted, the revocation entry is kept for 24 hours — long enough to cover the typical maximum token TTL. If you know when the token expires, pass that timestamp so the gateway can clean up the revocation entry at the right time rather than keeping it for a full 24 hours.
 
-After revocation, any token with that JTI is rejected at the gateway with `TOKEN_REVOKED`, regardless of whether the token's cryptographic signature would otherwise be valid. The revocation list is backed by Redis ([post 26](./26-redis-enforcement-substrate.md)), so it's checked on every tool call with sub-millisecond latency.
+After revocation, any token with that JTI is rejected at the gateway with `TOKEN_REVOKED`, regardless of whether the token's cryptographic signature would otherwise be valid. The revocation list is backed by Redis (see the [series index](../blog-articles.md) for the upcoming post on the Redis enforcement substrate), so it's checked on every tool call with sub-millisecond latency.
 
 ---
 

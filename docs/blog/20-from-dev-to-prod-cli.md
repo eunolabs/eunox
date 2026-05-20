@@ -284,7 +284,7 @@ The whole loop from "blank policy" to "reviewed and deployed" is designed to tak
 
 The local HMAC audit log uses a signing key at `~/.euno/key`. This key is created automatically on first use with secure random bytes. The file permissions are set to `0600` — readable only by the current user.
 
-If you're running the proxy in an automated context (CI, a container, a server), make sure the key path is consistent across invocations. If the key is regenerated for every run, you lose the ability to verify signatures from previous runs (the signature uses the key that existed when the record was written). The `--audit-log` flag lets you specify a custom log path; by implication, the key is co-located with the log.
+If you're running the proxy in an automated context (CI, a container, a server), make sure the key path is consistent across invocations. If the key is regenerated for every run, you lose the ability to verify signatures from previous runs (the signature uses the key that existed when the record was written). The `--audit-log` flag lets you specify a custom log path; the signing key always remains at `~/.euno/key` regardless of where the log is written.
 
 For production deployments, the hosted gateway uses KMS-backed signing, which addresses the key management complexity. But for local development, the file-based key is deliberately simple. The critical property is that you don't lose it between runs of the proxy.
 

@@ -78,7 +78,7 @@ The `conditions` array narrows what an otherwise-permitted action is allowed to 
 
 The conditions that ship with euno cover the situations that come up repeatedly across real deployments. I'll describe each one with the concrete scenario it solves.
 
-**`maxCalls`** — rate limiting. This is the most widely used condition. An agent with `count: 100, windowSeconds: 60` can make at most 100 calls to this resource in any 60-second window. The window is sliding, not fixed. The counter is per-session in local mode, or per-tenant across all sessions in hosted mode (backed by a distributed Redis counter). See [post 26](./26-redis-enforcement-substrate.md) for how that distributed counter works.
+**`maxCalls`** — rate limiting. This is the most widely used condition. An agent with `count: 100, windowSeconds: 60` can make at most 100 calls to this resource in any 60-second window. The window is sliding, not fixed. The counter is per-session in local mode, or per-tenant across all sessions in hosted mode (backed by a distributed Redis counter). See the [series index](../blog-articles.md) for the upcoming post on how that distributed counter works.
 
 ```yaml
 - type: maxCalls
@@ -108,7 +108,7 @@ The conditions that ship with euno cover the situations that come up repeatedly 
   operations: [SELECT, EXPLAIN, SHOW]
 ```
 
-**`allowedExtensions`** — file extension allowlist. Applies to any tool call that includes a file path argument. The enforcement engine recognizes common argument key names (`path`, `filename`, `file`, `filepath`) and extracts the extension using standard path semantics. Use this to prevent an agent from writing `.sh`, `.exe`, `.so`, or any other executable format.
+**`allowedExtensions`** — file extension allowlist. Applies to any tool call that includes a file path argument. The enforcement engine recognizes common argument key names (`filePath`, `path`, `file`, `filename`) and extracts the extension using standard path semantics. Use this to prevent an agent from writing `.sh`, `.exe`, `.so`, or any other executable format.
 
 ```yaml
 - type: allowedExtensions
@@ -122,7 +122,7 @@ The conditions that ship with euno cover the situations that come up repeatedly 
   tables: [orders, products, customers, inventory, catalog]
 ```
 
-**`recipientDomain`** — outbound communication domain allowlist. Applies when an agent can send messages or emails. Prevents an agent from exfiltrating data by sending it to an external address that isn't in your approved list. The field under examination is the `to`, `recipient`, `email`, or `address` argument key.
+**`recipientDomain`** — outbound communication domain allowlist. Applies when an agent can send messages or emails. Prevents an agent from exfiltrating data by sending it to an external address that isn't in your approved list. The fields under examination are `to`, `recipients`, `cc`, and `bcc` (each can be a string or array of strings).
 
 ```yaml
 - type: recipientDomain

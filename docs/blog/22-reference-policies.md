@@ -62,7 +62,7 @@ The extension check on reads is more permissive (also includes `.log`, `.xml`, `
 
 **Layer 3: Burst guards on destructive operations.** `delete_file` is limited to 5 calls per minute. This is a behavioral guardrail against a looping agent that repeatedly calls `delete_file` — a failure mode that can happen when the agent gets confused and enters a retry loop. `write_file` is limited to 100 calls per minute, which is generous for legitimate use but will catch runaway write loops.
 
-**The `move_file` edge case.** One nuance worth highlighting: the `move_file` tool takes `source` and `destination` arguments, not a `path` argument. The euno enforcement engine's `extractFilePath()` function recognizes common argument key names (`path`, `filename`, `file`, `filepath`) but not `source` and `destination`. This means the `allowedExtensions` condition can't be applied to `move_file` — the engine doesn't know which argument to check.
+**The `move_file` edge case.** One nuance worth highlighting: the `move_file` tool takes `source` and `destination` arguments, not a `path` argument. The euno enforcement engine's `extractFilePath()` function recognizes common argument key names (`filePath`, `path`, `file`, `filename`) but not `source` and `destination`. This means the `allowedExtensions` condition can't be applied to `move_file` — the engine doesn't know which argument to check.
 
 The workaround is to encode the path confinement and extension restriction directly in the `argumentSchema` patterns:
 
@@ -189,7 +189,7 @@ Code and repository search are the most expensive GitHub API operations (both in
 
 **The important caveat about unlisted tools.** The GitHub policy comment includes an explicit warning that I want to repeat here: branch deletion, repository deletion, secrets management, and organization admin tools are all exposed by the GitHub MCP server and are **not** covered by this policy. They'll be allowed by default.
 
-If your agent has any possibility of calling these tools — even accidentally through a clever prompt injection — you need to add explicit constraints. The cleanest way to block a specific dangerous tool while leaving everything else alone is to add a `timeWindow` condition in the distant past (so the condition always evaluates to "outside the allowed window"), which will deny any call to that tool:
+If your agent has any possibility of calling these tools — even accidentally through a clever prompt injection — you need to add explicit constraints. The cleanest way to block a specific dangerous tool while leaving everything else alone is to add a `timeWindow` condition in the distant future (so the condition always evaluates to "before the allowed window starts"), which will deny any call to that tool:
 
 ```yaml
 - resource: delete_branch
@@ -223,7 +223,7 @@ The Slack policy demonstrates two things that don't come up in the other policie
       windowSeconds: 3600
 ```
 
-The `recipientDomain` condition checks the `to`, `recipient`, `email`, or `address` argument field. For `send_dm`, the target is typically an email address or a Slack user ID. When it's an email address, the domain check works as expected — it blocks direct messages to external addresses (potential data exfiltration via "send this sensitive document to attacker@external.com").
+The `recipientDomain` condition checks the `to`, `recipients`, `cc`, and `bcc` argument fields (each can be a string or an array of strings). For `send_dm`, the target is typically an email address or a Slack user ID. When it's an email address, the domain check works as expected — it blocks direct messages to external addresses (potential data exfiltration via "send this sensitive document to attacker@external.com").
 
 This is one of the primary threat vectors for AI agents with communication capabilities: an attacker embeds a hidden instruction in a document the agent processes, telling it to forward the document's contents to an external email. The `recipientDomain` condition is the policy-level defense against this. Without it, the only protection is the model's own judgment — which is explicitly not a security guarantee.
 
@@ -294,7 +294,7 @@ Let me break down what the regex is doing:
   - `172\.(?:1[6-9]|2[0-9]|3[01])\.` — blocks `172.16.x.x` through `172.31.x.x` (RFC 1918 Class B private range). The regex is careful about the second octet bounds.
   - `169\.254\.` — blocks `169.254.x.x` (link-local, including the cloud metadata endpoint `169.254.169.254`).
 
-- **What it doesn't block:** The method enum (`GET`, `HEAD`, `OPTIONS`) limits the agent to safe HTTP methods. POST, PUT, DELETE, PATCH are all rejected.
+- **What else it blocks:** The method enum (`GET`, `HEAD`, `OPTIONS`) limits the agent to safe HTTP methods. POST, PUT, DELETE, PATCH are all rejected.
 
 **The critical limitation to understand.** The policy comment is explicit about this and I want to repeat it clearly: this protection is **lexical**, not network-level. It matches the URL string. It does not perform DNS resolution.
 
