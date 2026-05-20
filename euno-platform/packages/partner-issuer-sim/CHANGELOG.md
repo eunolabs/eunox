@@ -3,6 +3,18 @@
 All notable changes to this package will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.1] — Stage 5 Task 14 reference materials
+
+### Added
+
+- `docs/mvp.md` Stage-5 status block completed with Task 14 entry
+  confirming all 15 Stage-5 tasks are shipped.
+- `README.md` top-level Stage-5 enterprise section linking to partner
+  federation documentation and CLI usage examples.
+- `public/packages/cli/README.md` §"Stage 5: Enterprise Features" —
+  partner-federation token validation workflows and SOC 2 audit export
+  CLI commands.
+
 ## [1.0.0] — Stage 5 GA
 
 **Milestone:** Partner federation promoted from design-partner prototype to

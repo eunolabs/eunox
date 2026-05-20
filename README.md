@@ -146,6 +146,55 @@ full flow, [`docs/issuer-idp-setup.md`](./docs/issuer-idp-setup.md) for IdP
 configuration, and [`docs/self-host.md §11`](./docs/self-host.md) for
 self-hosting the issuer alongside the gateway.
 
+### Enterprise deployment (Stage 5)
+
+Stage 5 adds the full enterprise compliance and federation tier. All four
+quarantined packages are now GA:
+
+```bash
+# Verify a partner-issued capability token (EdDSA, did:web or did:ion)
+euno validate-token eyJ... \
+  --iss did:web:partner.example.com \
+  --jwks-url https://partner.example.com/.well-known/jwks.json
+
+# Export a SOC 2 audit bundle (CC7 controls, signed OCSF evidence)
+euno audit export \
+  --gateway-url https://gateway.euno.example \
+  --admin-key $EUNO_ADMIN_API_KEY \
+  --scope soc2-cc7 \
+  --out ./audit-bundle.jsonl
+
+# Check Stage-5 service discovery document
+euno discover --issuer-url https://issuer.euno.example
+```
+
+Key capabilities added in Stage 5:
+
+- 🏛️  **Partner DID federation.** Cross-org trust via W3C DIDs (`did:web`,
+  `did:ion`) with per-DID circuit breakers, two-eyes approval workflow, and
+  pin attestation.  See [`docs/ADAPTERS.md §Partner Federation`](./docs/ADAPTERS.md).
+- ⛓️  **Cross-chain audit anchor.** `CrossChainAnchor` commits an HMAC root
+  hash of every N audit records to S3 Object-Lock, giving you a tamper-evident
+  ledger even across Postgres replicas.
+- 📋 **SOC 2 audit export.** `GET /api/v1/audit/export` returns a
+  cursor-paginated, cryptographically signed OCSF evidence bundle filterable
+  by SOC 2 CC6/CC7 controls.
+- 🛡️  **AGT in-process guard.** `createAgtGuard()` adds a defense-in-depth
+  layer inside the agent process — policy is checked *before* the gateway
+  is ever called.
+- 👤 **SCIM 2.0 provisioning.** Automatic role-to-capability mapping from
+  your enterprise IdP directory via the SCIM 2.0 protocol.
+- 🔍 **Discovery endpoint v1.0.0.** `/.well-known/capability-issuer` now
+  returns Stage-5 fields (`partnerFederation`, `scim`, `auditExport`,
+  `capabilities`) with ETag caching.
+- 📦 **On-prem Helm bundle.** A single umbrella chart deploys all six
+  services; `k8s/air-gap-images.txt` + `scripts/pull-air-gap-images.sh`
+  support fully air-gapped installations.
+
+See [`docs/self-host.md §12`](./docs/self-host.md) for the complete
+self-hosting runbook and [`docs/security/soc2-mapping.md`](./docs/security/soc2-mapping.md)
+for the SOC 2 control mapping.
+
 See [the website](./web/features.html) for worked demos of every
 condition type.
 
@@ -159,8 +208,8 @@ euno follows a [staged execution plan](./docs/mvp.md):
 | 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit | ✅ Done |
 | 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
 | 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ✅ Done |
-| 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | ✅ **Current** — see [docs/mvp.md §Stage 4](./docs/mvp.md#stage-4-capability-issuer--identity) |
-| 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | Planned |
+| 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | ✅ Done |
+| 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | ✅ **Done** — see [docs/mvp.md §Stage 5](./docs/mvp.md#stage-5-enterprise--full-vision) |
 
 The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
 `framework-adapters`) are **feature-frozen** during Stages 0–2 — accepting
