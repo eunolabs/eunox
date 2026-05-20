@@ -26,7 +26,7 @@
  * options on the ledger backend/anchor constructors.
  */
 
-import { S3AnchorClient, GcsAnchorClient } from './ledger-signer';
+import type { S3AnchorClient, GcsAnchorClient } from './ledger-signer';
 import { AwsSdkS3AnchorClient } from './s3-anchor-client';
 
 // ── ObjectStore interface ─────────────────────────────────────────────────────

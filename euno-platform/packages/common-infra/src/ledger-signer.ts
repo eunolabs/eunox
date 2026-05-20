@@ -1186,6 +1186,12 @@ export interface PostgresLedgerOptions {
    */
   objectStores?: ObjectStore[];
   /**
+   * Key prefix used for `objectStores` PUT keys.
+   * Default: `audit-anchor/`.
+   * Does not affect the legacy `s3?`/`gcs?` prefix (each has its own `prefix` field).
+   */
+  objectStoresPrefix?: string;
+  /**
    * Called when an S3, GCS, or objectStore anchor write fails.  The append
    * itself succeeds — anchoring is best-effort (the ledger is the primary
    * tamper-evidence; external storage is a secondary independent witness).
@@ -1299,6 +1305,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
   private readonly s3?: Required<PostgresLedgerOptions>['s3'];
   private readonly gcs?: Required<PostgresLedgerOptions>['gcs'];
   private readonly objectStores: ObjectStore[];
+  private readonly objectStoresPrefix: string;
   private readonly onAnchorError: (err: Error) => void;
 
   /** Base delay (ms) for the first retry on a lock-hash collision in per-tenant mode. */
@@ -1329,6 +1336,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.objectStores = options.objectStores ?? [];
+    this.objectStoresPrefix = options.objectStoresPrefix ?? 'audit-anchor/';
     this.onAnchorError = options.onAnchorError ?? ((err) => {
       // Swallow by default; callers should wire in a logger.
       void err;
@@ -1712,7 +1720,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
 
     // Cloud-agnostic object stores — each isolated.
     for (let i = 0; i < this.objectStores.length; i++) {
-      const key = `audit-anchor/${replicaId}/${fromSeq}-${toSeq}.json`;
+      const key = `${this.objectStoresPrefix}${replicaId}/${fromSeq}-${toSeq}.json`;
       try {
         await this.objectStores[i]!.put(key, anchorPayload, 'application/json');
       } catch (err) {
@@ -2238,6 +2246,12 @@ export interface PerReplicaPostgresLedgerOptions {
    */
   objectStores?: ObjectStore[];
   /**
+   * Key prefix used for `objectStores` PUT keys.
+   * Default: `audit-anchor/`.
+   * Does not affect the legacy `s3?`/`gcs?` prefix (each has its own `prefix` field).
+   */
+  objectStoresPrefix?: string;
+  /**
    * Called when an S3, GCS, or objectStore anchor write fails.  The append itself succeeds.
    * Default: swallow silently.
    */
@@ -2351,6 +2365,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
   private readonly s3?: Required<PerReplicaPostgresLedgerOptions>['s3'];
   private readonly gcs?: Required<PerReplicaPostgresLedgerOptions>['gcs'];
   private readonly objectStores: ObjectStore[];
+  private readonly objectStoresPrefix: string;
   private readonly onAnchorError: (err: Error) => void;
 
   /** Tracks the seq of the last anchor (S3 or GCS) for this replica. */
@@ -2383,6 +2398,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.objectStores = options.objectStores ?? [];
+    this.objectStoresPrefix = options.objectStoresPrefix ?? 'audit-anchor/';
     this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
   }
 
@@ -2776,7 +2792,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
 
     // Cloud-agnostic object stores — each isolated.
     for (let i = 0; i < this.objectStores.length; i++) {
-      const key = `audit-anchor/${replicaId}/${fromSeq}-${toSeq}.json`;
+      const key = `${this.objectStoresPrefix}${replicaId}/${fromSeq}-${toSeq}.json`;
       try {
         await this.objectStores[i]!.put(key, anchorPayload, 'application/json');
       } catch (err) {

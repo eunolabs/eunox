@@ -340,6 +340,12 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
       const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
       const objectStoreProvider = dynConfig.AUDIT_LEDGER_OBJECT_STORE_PROVIDER;
+      const objectStoresPrefix =
+        objectStoreProvider === 'gcs'
+          ? env['AUDIT_LEDGER_GCS_PREFIX']
+          : objectStoreProvider === 's3'
+            ? env['AUDIT_LEDGER_S3_PREFIX']
+            : env['AUDIT_LEDGER_S3_PREFIX'] ?? env['AUDIT_LEDGER_GCS_PREFIX'];
 
       // Build a cloud-agnostic ObjectStore when AUDIT_LEDGER_OBJECT_STORE_PROVIDER is set.
       let genericObjectStore: ObjectStore | undefined;
@@ -351,7 +357,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       if (ledgerBackendName === 'postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
         if (!hmacSecret) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.');
-        if (gcsBucket) {
+        if (gcsBucket && objectStoreProvider !== 'gcs') {
           throw new Error(
             'AUDIT_LEDGER_GCS_BUCKET is set but no GCS client is wired in the standard ' +
               'bootstrap. Provide a GcsAnchorClient by constructing PostgresLedgerBackend ' +
@@ -389,6 +395,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               }
             : {}),
           ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+          ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
           onAnchorError: (err: Error) => logger.error('Ledger anchor failed', { error: err.message }),
         });
 
@@ -493,6 +500,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               }
             : {}),
           ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+          ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
           onAnchorError: (err: Error) => logger.error('Per-replica ledger anchor failed', { error: err.message }),
         });
 
@@ -523,7 +531,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           table: table ?? 'euno_audit_ledger_v2',
         });
 
-        if (gcsBucket) {
+        if (gcsBucket && objectStoreProvider !== 'gcs') {
           logger.warn(
             'AUDIT_LEDGER_GCS_BUCKET is set with per-replica-postgres but no GCS client is ' +
               'wired in the standard bootstrap. The bucket value is ignored — periodic Merkle-root ' +
@@ -567,6 +575,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               lastCommitmentTs = Date.now();
             },
             ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+            ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
           };
           crossChainAnchor = new CrossChainAnchor(perReplicaBackend, anchorOpts);
           crossChainAnchor.start();
