@@ -162,6 +162,22 @@ function makeValidMultiCloudPlan() {
     '',
     '- [x] **AWS KMS signer — additional key specs**',
     '  - EdDSA signing shim (AwsEdDsaSigner) for partner DID.',
+    '',
+    '### Phase 3 — Infrastructure-as-code (longer-term)',
+    '',
+    '- [x] **AWS CDK constructs** (`infra/aws/cdk/`)',
+    '  - EunoGatewayStack, EunoIssuerStack, EunoEnterpriseStack.',
+    '',
+    '- [x] **Terraform module** (`infra/aws/terraform/`)',
+    '  - Modular layout: network/, compute/, data/, security/, observability/.',
+    '',
+    '## Cross-cloud work',
+    '',
+    '- [x] `k8s/helm/euno/values-azure.yaml`',
+    '  - Azure/AKS Helm overrides.',
+    '',
+    '- [x] **Multi-cloud runbook index** (`docs/multi-cloud.md`)',
+    '  - Links to deployment guides and IaC.',
   ].join('\n');
 }
 
@@ -243,6 +259,195 @@ function makeValidValuesGcp() {
   ].join('\n');
 }
 
+function makeValidValuesAzure() {
+  return [
+    '# Euno umbrella chart — Azure / AKS overrides',
+    '',
+    'gateway:',
+    '  image:',
+    '    repository: myeunoregistry.azurecr.io/euno/tool-gateway',
+    '  serviceAccountAnnotations:',
+    '    azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000000"',
+    '  env:',
+    '    SIGNING_PROVIDER: azure-keyvault',
+    '    AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"',
+    '',
+    'issuer:',
+    '  env:',
+    '    IDENTITY_PROVIDER: azure-ad',
+  ].join('\n');
+}
+
+function makeValidMultiCloudDoc() {
+  return [
+    '# Multi-Cloud Runbook Index',
+    '',
+    '## Cloud-provider deployment guides',
+    '',
+    '| Cloud | Guide |',
+    '| AWS | [docs/deploy-eks.md](deploy-eks.md) |',
+    '| GCP | [docs/deploy-gke.md](deploy-gke.md) |',
+    '',
+    '## Infrastructure-as-code',
+    '',
+    '| AWS | CDK (TypeScript) | infra/aws/cdk/ |',
+    '| AWS | Terraform (modular) | infra/aws/terraform/ |',
+  ].join('\n');
+}
+
+function makeValidCdkGatewayStack() {
+  return [
+    "import * as eks from 'aws-cdk-lib/aws-eks';",
+    "import * as rds from 'aws-cdk-lib/aws-rds';",
+    "import * as elasticache from 'aws-cdk-lib/aws-elasticache';",
+    "import * as kms from 'aws-cdk-lib/aws-kms';",
+    "import * as s3 from 'aws-cdk-lib/aws-s3';",
+    "import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';",
+    '',
+    'export class EunoGatewayStack extends cdk.Stack {',
+    '  // EKS Fargate profile for euno-system namespace',
+    '  public readonly fargateProfile: eks.FargateProfile;',
+    '  // Object Lock bucket for audit anchor',
+    '  objectLockEnabled: true,',
+    '}',
+  ].join('\n');
+}
+
+function makeValidCdkIssuerStack() {
+  return [
+    "import * as cognito from 'aws-cdk-lib/aws-cognito';",
+    '',
+    'export class EunoIssuerStack extends EunoGatewayStack {',
+    '  // Cognito User Pool for agent-user identity management',
+    '  public readonly userPool: cognito.UserPool;',
+    '  // SCIM bridge endpoint wiring via Cognito domain',
+    '  // PARTNER_DID_PIN_SECRET — PIN protecting partner DID private key',
+    '  const partnerPin = new secretsmanager.Secret(this, "PARTNER_DID_PIN_SECRET");',
+    '}',
+  ].join('\n');
+}
+
+function makeValidCdkEnterpriseStack() {
+  return [
+    "import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';",
+    "import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';",
+    "import * as firehose from 'aws-cdk-lib/aws-kinesisfirehose';",
+    "import * as securityhub from 'aws-cdk-lib/aws-securityhub';",
+    '',
+    'export class EunoEnterpriseStack extends EunoIssuerStack {',
+    '  // Partner DID registry DynamoDB table',
+    '  public readonly partnerDidRegistry: dynamodb.Table;',
+    '}',
+  ].join('\n');
+}
+
+function makeValidCdkPackageJson() {
+  return JSON.stringify({
+    name: '@euno/aws-cdk',
+    dependencies: {
+      'aws-cdk-lib': '^2.100.0',
+      constructs: '^10.0.0',
+    },
+  }, null, 2);
+}
+
+function makeValidCdkGatewayTest() {
+  return [
+    "import { Template } from 'aws-cdk-lib/assertions';",
+    "import { EunoGatewayStack } from '../src/stacks/gateway-stack';",
+    '',
+    "test('creates EunoGatewayStack', () => {",
+    '  const template = Template.fromStack(stack);',
+    '  // test body',
+    '});',
+  ].join('\n');
+}
+
+function makeValidCdkIssuerTest() {
+  return [
+    "import { Template } from 'aws-cdk-lib/assertions';",
+    "import { EunoIssuerStack } from '../src/stacks/issuer-stack';",
+    '',
+    "test('creates EunoIssuerStack', () => {",
+    '  const template = Template.fromStack(stack);',
+    '  // test body',
+    '});',
+  ].join('\n');
+}
+
+function makeValidCdkEnterpriseTest() {
+  return [
+    "import { Template } from 'aws-cdk-lib/assertions';",
+    "import { EunoEnterpriseStack } from '../src/stacks/enterprise-stack';",
+    '',
+    "test('creates EunoEnterpriseStack', () => {",
+    '  const template = Template.fromStack(stack);',
+    '  // test body',
+    '});',
+  ].join('\n');
+}
+
+function makeValidTfNetworkMain() {
+  return [
+    '# network/main.tf',
+    'resource "aws_vpc" "main" {}',
+    'resource "aws_nat_gateway" "main" {}',
+    'resource "aws_subnet" "public" {}',
+  ].join('\n');
+}
+
+function makeValidTfComputeMain() {
+  return [
+    '# compute/main.tf',
+    'resource "aws_eks_cluster" "main" {}',
+    'resource "aws_eks_fargate_profile" "euno_system" {}',
+  ].join('\n');
+}
+
+function makeValidTfDataMain() {
+  return [
+    '# data/main.tf',
+    'resource "aws_db_instance" "postgres" {}',
+    'resource "aws_elasticache_replication_group" "redis" {}',
+  ].join('\n');
+}
+
+function makeValidTfSecurityMain() {
+  return [
+    '# security/main.tf',
+    'resource "aws_kms_key" "capability_signing" {',
+    '  key_usage = "SIGN_VERIFY"',
+    '}',
+    'resource "aws_secretsmanager_secret" "hmac_key" {}',
+    'resource "aws_cognito_user_pool" "main" {}',
+    'resource "aws_iam_role" "gateway_irsa" {}',
+    'resource "aws_iam_role" "issuer_irsa" {}',
+  ].join('\n');
+}
+
+function makeValidTfObservabilityMain() {
+  return [
+    '# observability/main.tf',
+    'resource "aws_cloudwatch_log_group" "runtime" {}',
+    'resource "aws_securityhub_account" "main" {}',
+    'resource "aws_cloudtrail" "main" {}',
+  ].join('\n');
+}
+
+function makeValidTfReadme() {
+  return [
+    '# Euno AWS Terraform — Modular Layout',
+    '',
+    '## Quick start',
+    '',
+    '```bash',
+    'terraform init',
+    'terraform plan  -var-file=terraform.tfvars',
+    'terraform apply -var-file=terraform.tfvars',
+    '```',
+  ].join('\n');
+}
+
 function makeValidFixtures(base) {
   writeFileSync(join(base, 'docs', 'deploy-eks.md'), makeValidDeployEks());
   writeFileSync(join(base, 'docs', 'secrets-aws.md'), makeValidSecretsAws());
@@ -252,6 +457,47 @@ function makeValidFixtures(base) {
   writeFileSync(join(base, 'docs', 'deploy-gke.md'), makeValidDeployGke());
   writeFileSync(join(base, 'docs', 'secrets-gcp.md'), makeValidSecretsGcp());
   writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'), makeValidValuesGcp());
+
+  // Phase 3 — CDK constructs
+  mkdirSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks'), { recursive: true });
+  mkdirSync(join(base, 'infra', 'aws', 'cdk', 'test'), { recursive: true });
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'gateway-stack.ts'),
+    makeValidCdkGatewayStack());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'issuer-stack.ts'),
+    makeValidCdkIssuerStack());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'enterprise-stack.ts'),
+    makeValidCdkEnterpriseStack());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'package.json'), makeValidCdkPackageJson());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'test', 'gateway-stack.test.ts'),
+    makeValidCdkGatewayTest());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'test', 'issuer-stack.test.ts'),
+    makeValidCdkIssuerTest());
+  writeFileSync(join(base, 'infra', 'aws', 'cdk', 'test', 'enterprise-stack.test.ts'),
+    makeValidCdkEnterpriseTest());
+
+  // Phase 3 — Terraform modules
+  mkdirSync(join(base, 'infra', 'aws', 'terraform', 'network'), { recursive: true });
+  mkdirSync(join(base, 'infra', 'aws', 'terraform', 'compute'), { recursive: true });
+  mkdirSync(join(base, 'infra', 'aws', 'terraform', 'data'), { recursive: true });
+  mkdirSync(join(base, 'infra', 'aws', 'terraform', 'security'), { recursive: true });
+  mkdirSync(join(base, 'infra', 'aws', 'terraform', 'observability'), { recursive: true });
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'network', 'main.tf'),
+    makeValidTfNetworkMain());
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'compute', 'main.tf'),
+    makeValidTfComputeMain());
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'data', 'main.tf'),
+    makeValidTfDataMain());
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'security', 'main.tf'),
+    makeValidTfSecurityMain());
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'observability', 'main.tf'),
+    makeValidTfObservabilityMain());
+  writeFileSync(join(base, 'infra', 'aws', 'terraform', 'README.md'),
+    makeValidTfReadme());
+
+  // Phase 3 — values-azure.yaml and multi-cloud.md
+  writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+    makeValidValuesAzure());
+  writeFileSync(join(base, 'docs', 'multi-cloud.md'), makeValidMultiCloudDoc());
 }
 
 function run(root) {
@@ -1290,6 +1536,586 @@ test('fails when values-gcp.yaml is missing GCP_PROJECT_ID placeholder', () => {
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /GCP_PROJECT_ID/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Tests — Phase 3 (AWS CDK constructs, Terraform modules, values-azure, multi-cloud.md)
+// ---------------------------------------------------------------------------
+
+test('[Phase 3] passes on full Phase 3 fixtures', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    const result = run(base);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /all checks passed/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── CDK gateway-stack.ts ─────────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/cdk/src/stacks/gateway-stack.ts is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'gateway-stack.ts'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /gateway-stack\.ts/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when gateway-stack.ts is missing EunoGatewayStack class', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'gateway-stack.ts'),
+      makeValidCdkGatewayStack().replace('EunoGatewayStack', 'EunoBaseStack'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /EunoGatewayStack class/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when gateway-stack.ts is missing EKS import', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'gateway-stack.ts'),
+      makeValidCdkGatewayStack().replace("import * as eks from 'aws-cdk-lib/aws-eks';", ''),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/aws-eks/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when gateway-stack.ts is missing S3 Object Lock', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'gateway-stack.ts'),
+      makeValidCdkGatewayStack().replace('objectLockEnabled: true,', '// no object lock'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Object Lock/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── CDK issuer-stack.ts ───────────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/cdk/src/stacks/issuer-stack.ts is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'issuer-stack.ts'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /issuer-stack\.ts/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when issuer-stack.ts is missing EunoIssuerStack', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'issuer-stack.ts'),
+      makeValidCdkIssuerStack().replace('EunoIssuerStack', 'EunoExtendedStack'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /EunoIssuerStack class/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when issuer-stack.ts is missing Cognito import', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'issuer-stack.ts'),
+      makeValidCdkIssuerStack().replace("import * as cognito from 'aws-cdk-lib/aws-cognito';", ''),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/aws-cognito/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when issuer-stack.ts is missing PARTNER_DID_PIN_SECRET', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'issuer-stack.ts'),
+      makeValidCdkIssuerStack().replace(/PARTNER_DID_PIN_SECRET/g, 'DID_PIN_SECRET'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /PARTNER_DID_PIN_SECRET/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── CDK enterprise-stack.ts ──────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/cdk/src/stacks/enterprise-stack.ts is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'enterprise-stack.ts'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /enterprise-stack\.ts/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when enterprise-stack.ts is missing DynamoDB import', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'enterprise-stack.ts'),
+      makeValidCdkEnterpriseStack().replace(
+        "import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';", ''),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/aws-dynamodb/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when enterprise-stack.ts is missing CloudTrail import', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'enterprise-stack.ts'),
+      makeValidCdkEnterpriseStack().replace(
+        "import * as cloudtrail from 'aws-cdk-lib/aws-cloudtrail';", ''),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/aws-cloudtrail/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when enterprise-stack.ts is missing Firehose import', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'src', 'stacks', 'enterprise-stack.ts'),
+      makeValidCdkEnterpriseStack().replace(
+        "import * as firehose from 'aws-cdk-lib/aws-kinesisfirehose';", ''),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/aws-kinesisfirehose/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── CDK package.json ──────────────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/cdk/package.json is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'package.json'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /package\.json/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/cdk/package.json is missing aws-cdk-lib', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'package.json'),
+      JSON.stringify({ name: '@euno/aws-cdk', dependencies: { constructs: '^10.0.0' } }, null, 2),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── CDK test files ────────────────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/cdk/test/gateway-stack.test.ts is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'test', 'gateway-stack.test.ts'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /gateway-stack\.test\.ts/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when gateway-stack.test.ts does not use aws-cdk-lib/assertions', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'cdk', 'test', 'gateway-stack.test.ts'),
+      makeValidCdkGatewayTest().replace("from 'aws-cdk-lib/assertions'", "from 'jest'"),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws-cdk-lib\/assertions/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/cdk/test/enterprise-stack.test.ts is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'cdk', 'test', 'enterprise-stack.test.ts'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /enterprise-stack\.test\.ts/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── Terraform sub-modules ─────────────────────────────────────────────────────
+
+test('[Phase 3] fails when infra/aws/terraform/network/main.tf is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'infra', 'aws', 'terraform', 'network', 'main.tf'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /network\/main\.tf/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/terraform/security/main.tf is missing KMS resource', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'terraform', 'security', 'main.tf'),
+      makeValidTfSecurityMain().replace('aws_kms_key', 'aws_iam_key'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws_kms_key/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/terraform/security/main.tf is missing SIGN_VERIFY', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'terraform', 'security', 'main.tf'),
+      makeValidTfSecurityMain().replace('SIGN_VERIFY', 'ENCRYPT_DECRYPT'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /SIGN_VERIFY/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/terraform/observability/main.tf is missing CloudTrail', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'terraform', 'observability', 'main.tf'),
+      makeValidTfObservabilityMain().replace('aws_cloudtrail', 'aws_config_rule'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /aws_cloudtrail/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when infra/aws/terraform/README.md is missing terraform init', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'infra', 'aws', 'terraform', 'README.md'),
+      makeValidTfReadme().replace('terraform init', 'tf init'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /terraform init/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── values-azure.yaml ─────────────────────────────────────────────────────────
+
+test('[Phase 3] fails when k8s/helm/euno/values-azure.yaml is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /values-azure\.yaml/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when values-azure.yaml is missing ACR reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+      makeValidValuesAzure().replace(/azurecr\.io/g, 'ghcr.io'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /azurecr\.io/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when values-azure.yaml is missing Workload Identity annotation', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+      makeValidValuesAzure().replace(
+        'azure.workload.identity/client-id', 'azure.identity/client-id'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /azure\.workload\.identity\/client-id/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when values-azure.yaml is missing azure-keyvault signing provider', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+      makeValidValuesAzure().replace('azure-keyvault', 'software'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /azure-keyvault/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when values-azure.yaml is missing azure-ad identity provider', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+      makeValidValuesAzure().replace('azure-ad', 'aws-cognito'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /azure-ad/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when values-azure.yaml is missing AZURE_TENANT_ID placeholder', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
+      makeValidValuesAzure().replace(/AZURE_TENANT_ID/g, 'TENANT_ID'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AZURE_TENANT_ID/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── docs/multi-cloud.md ───────────────────────────────────────────────────────
+
+test('[Phase 3] fails when docs/multi-cloud.md is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'docs', 'multi-cloud.md'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /multi-cloud\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when docs/multi-cloud.md is missing deploy-eks.md link', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud.md'),
+      makeValidMultiCloudDoc().replace(/deploy-eks\.md/g, 'eks.md'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /deploy-eks\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when docs/multi-cloud.md is missing infra/aws/cdk reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud.md'),
+      makeValidMultiCloudDoc().replace('infra/aws/cdk', 'aws/cdk'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /infra\/aws\/cdk/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── multi-cloud-plan.md Phase 3 items ────────────────────────────────────────
+
+test('[Phase 3] fails when multi-cloud-plan.md AWS CDK item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace('[x] **AWS CDK constructs**', '[ ] **AWS CDK constructs**'),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AWS CDK constructs.*checked/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when multi-cloud-plan.md Terraform item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] **Terraform module** (`infra/aws/terraform/',
+        '[ ] **Terraform module** (`infra/aws/terraform/',
+      ),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Terraform.*modular layout.*checked/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when multi-cloud-plan.md values-azure.yaml item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] `k8s/helm/euno/values-azure.yaml`',
+        '[ ] `k8s/helm/euno/values-azure.yaml`',
+      ),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /values-azure\.yaml.*checked/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Phase 3] fails when multi-cloud-plan.md multi-cloud runbook item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(
+      join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlan().replace(
+        '[x] **Multi-cloud runbook index**',
+        '[ ] **Multi-cloud runbook index**',
+      ),
+    );
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /multi-cloud runbook index.*checked/i);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

@@ -108,14 +108,14 @@ workarounds.
 
 ### Phase 3 — Infrastructure-as-code (longer-term)
 
-- [ ] **AWS CDK constructs** (`infra/aws/cdk/`)
+- [x] **AWS CDK constructs** (`infra/aws/cdk/`)
   - `EunoGatewayStack` — EKS Fargate cluster, RDS Postgres, ElastiCache Redis,
     KMS key, S3 Object Lock bucket, Secrets Manager secrets, IAM roles
   - `EunoIssuerStack` — adds Cognito User Pool, SCIM endpoint wiring
   - `EunoEnterpriseStack` — adds partner DID registry, SOC 2 audit pipeline
   - CDK unit tests via `aws-cdk-lib/assertions`
 
-- [ ] **Terraform module** (`infra/aws/terraform/`)
+- [x] **Terraform module** (`infra/aws/terraform/`)
   - Modular layout: `network/`, `compute/`, `data/`, `security/`, `observability/`
   - Variables file with euno-specific naming conventions
   - README with `terraform init / plan / apply` walkthrough
@@ -238,8 +238,8 @@ workarounds.
     store independently — a failure in one does not block others
   - 33 new unit tests in `common-infra/src/__tests__/object-store.test.ts`
 
-- [ ] **Helm chart — cloud-specific values files**
-  - `k8s/helm/euno/values-azure.yaml`
+- [x] **Helm chart — cloud-specific values files**
+  - [x] `k8s/helm/euno/values-azure.yaml`
   - [x] `k8s/helm/euno/values-aws.yaml`
   - [x] `k8s/helm/euno/values-gcp.yaml`
   - Each file documents every provider-specific override with inline comments
@@ -255,7 +255,7 @@ workarounds.
 
 ### Documentation
 
-- [ ] **Multi-cloud runbook index** (`docs/multi-cloud.md`)
+- [x] **Multi-cloud runbook index** (`docs/multi-cloud.md`)
   - Quick comparison table (this document)
   - Links to per-cloud deployment guides, secrets guides, SCIM guides,
     and observability guides
