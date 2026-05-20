@@ -58,7 +58,7 @@ Mapping the five enforcement tiers from the threat model to current status:
 | 1 | Hypervisor-level tap iptables (Firecracker) | ❌ Not implemented — plain OCI |
 | 2 | Network namespace + iptables | ✅ Kubernetes `NetworkPolicy` (CNI-enforced) |
 | 3 | WASM capability grant | ❌ Not applicable (Node.js runtime) |
-| 4 | Landlock + custom seccomp allowlist | ⚠️ `RuntimeDefault` blocklist only; no Landlock |
+| 4 | Landlock + custom seccomp allowlist | ✅ Custom seccomp allowlist (`k8s/seccomp/agent-runtime.json`) |
 | 5 | AppArmor/SELinux profiles | ⚠️ None defined for agent pods |
 
 ### Gap 1 — No gVisor / Kata runtime class (shared host kernel)
@@ -66,35 +66,69 @@ Agent pods run on the host kernel. A Node.js CVE or kernel 0-day from inside
 the container is a full escape. `docs/sandboxing.md` calls for gVisor/Kata
 Containers but this is not wired in any manifest.
 
-### Gap 2 — Custom seccomp allowlist absent
+**Status:** operator-configurable — `k8s/agent-runtime.yaml` carries a commented
+`runtimeClassName` block with step-by-step instructions for both AKS Pod Sandboxing
+(`kata-mshv-vm-isolation`) and gVisor. Activating it requires a cluster-level node
+pool configuration change and a one-line uncomment in the manifest.
+
+### Gap 2 — Custom seccomp allowlist absent ✅ Fixed
 `RuntimeDefault` is Docker's blocklist of ~50 syscalls. A tailored Node.js 18
 allowlist blocks ~90% more of the exploitable syscall surface (e.g. `ptrace`,
 `mount`, `clone(CLONE_NEWUSER)`, `bpf`, `io_uring`, `keyctl`,
 `perf_event_open`).
 
-### Gap 3 — `AUTH_TOKEN` in environment variable
-`AUTH_TOKEN` is required as a plain env var (visible in `kubectl describe pod`,
-stored in a `Secret`). It should be obtained via projected workload identity
+**Status:** `k8s/seccomp/agent-runtime.json` implemented; container seccompProfile
+switched from `RuntimeDefault` to `Localhost`.
+
+### Gap 3 — `AUTH_TOKEN` in environment variable ✅ Fixed
+`AUTH_TOKEN` was a required field visible in `kubectl describe pod` and stored
+in a Kubernetes `Secret`. It should be obtained via projected workload identity
 (Azure Workload Identity, SPIRE SVID, or a short-TTL projected service account
 token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
 
-### Gap 4 — ServiceAccount token automounting
-The `agent-runtime` ServiceAccount has `automountServiceAccountToken` unset
-(defaults to `true`). The agent process has no legitimate reason to call the
-Kubernetes API; the projected token enlarges the attack surface.
+**Status:** Fully implemented:
+- `AUTH_TOKEN` is now optional in `AgentRuntimeConfigSchema`.
+- `AUTH_TOKEN_FILE` field added — path to a file the runtime reads on every
+  capability-issuance call (token never persisted in memory between refreshes).
+- `main.ts` builds a file-reader `authTokenProvider` when `AUTH_TOKEN_FILE` is set.
+- `k8s/agent-runtime.yaml` carries a commented `sa-token` projected volume block
+  (kubelet-managed, audience-bound, 1-hour expiry) and a `AUTH_TOKEN_FILE` env
+  var commented with enablement instructions.
+- The agent-runtime `ServiceAccount` carries a commented Azure Workload Identity
+  annotation block.
 
-### Gap 5 — Unbounded `emptyDir` volumes
-`/tmp`, `/app/tmp`, `/app/logs` have no `sizeLimit`. A misbehaving agent can
-fill node disk, causing a node-wide eviction cascade (DoS to other workloads).
+### Gap 4 — ServiceAccount token automounting ✅ Fixed
+The `agent-runtime` ServiceAccount had `automountServiceAccountToken` unset
+(defaults to `true`).
 
-### Gap 6 — Plain HTTP to gateway
+**Status:** `automountServiceAccountToken: false` on the ServiceAccount.
+
+### Gap 5 — Unbounded `emptyDir` volumes ✅ Fixed
+`/tmp`, `/app/tmp`, `/app/logs` had no `sizeLimit`.
+
+**Status:** All three volumes capped (`/tmp` 64 MiB, `/app/tmp` 64 MiB,
+`/app/logs` 128 MiB).
+
+### Gap 6 — Plain HTTP to gateway ⚠️ Scaffolded
 `GATEWAY_URL` defaults to `http://envoy-shard-router:3002`. Network-level
 attackers inside the cluster can observe tool calls. DPoP mitigates bearer-token
 theft but not content confidentiality.
 
+**Status:** Infrastructure scaffolding committed; requires operator activation:
+- `k8s/agent-runtime.yaml` carries a commented cert-manager `Certificate` resource
+  block for issuing a cluster-internal TLS certificate for the agent pod.
+- Commented `tls-ca` volume and `NODE_EXTRA_CA_CERTS` env var show exactly which
+  lines to uncomment to enable the CA trust bundle in Node.js.
+- `k8s/network-policies.yaml` carries a commented port `8443` rule for the Envoy
+  egress once TLS is configured.
+- Activating requires: (1) cert-manager installed + ClusterIssuer named
+  `cluster-internal-ca`; (2) Envoy configured with TLS listener on port 8443;
+  (3) three commented blocks in `k8s/agent-runtime.yaml` uncommented;
+  (4) `GATEWAY_URL` changed to `https://envoy-shard-router:8443`.
+
 ---
 
-## 4. Implemented Hardening (this PR)
+## 4. Implemented Hardening
 
 ### 4.1 Custom seccomp allowlist — `k8s/seccomp/agent-runtime.json`
 
@@ -137,26 +171,39 @@ highest-confidence defence against container-escape exploits.
 **AKS:** enable `--workload-runtime KataMshvVmIsolation` on the agent node pool.
 **Self-managed K8s:** add a gVisor node pool; label it and schedule agent pods there.
 
+### 4.5 `AUTH_TOKEN_FILE` — file-based token provider (Gap 3)
+
+`AUTH_TOKEN` is now optional. The new `AUTH_TOKEN_FILE` config variable accepts a
+filesystem path from which the runtime reads the token on every capability
+issuance/refresh call. When set, `main.ts` builds a `buildFileTokenProvider()`
+that reads the file at call time, so:
+
+1. No static credential sits in the environment or process memory between calls.
+2. The kubelet-managed token is automatically picked up after rotation (every hour
+   for projected service-account tokens).
+
+The manifest carries a commented `sa-token` projected volume (audience-bound,
+1-hour TTL) and a commented `AUTH_TOKEN_FILE` env var. Enabling requires:
+1. Azure Workload Identity or SPIRE configured on the cluster.
+2. The ServiceAccount annotated with `azure.workload.identity/client-id`.
+3. Three comment blocks in `k8s/agent-runtime.yaml` uncommented.
+
+### 4.6 cert-manager TLS certificate scaffolding (Gap 6 — awaiting operator activation)
+
+`k8s/agent-runtime.yaml` carries a commented cert-manager `Certificate` resource
+block that issues a cluster-internal TLS certificate for the agent pod when
+cert-manager ≥ v1.12 is installed. A commented `tls-ca` volume + `NODE_EXTRA_CA_CERTS`
+env var show exactly what to uncomment to trust the cluster-internal CA in Node.js.
+
+`k8s/network-policies.yaml` carries a commented port `8443` egress rule for the
+Envoy shard router.
+
+Full activation steps are documented in the cert-manager `Certificate` block in
+`k8s/agent-runtime.yaml`.
+
 ---
 
-## 5. Remaining Recommendations (not implemented)
-
-### P1 — Replace static `AUTH_TOKEN` with workload identity
-
-Use **Azure Workload Identity** (AKS) or **SPIRE** to federate the agent's
-pod identity to the Capability Issuer without any stored secret:
-
-1. Annotate the `agent-runtime` ServiceAccount with
-   `azure.workload.identity/client-id: <managed-identity-client-id>`.
-2. Mount the projected OIDC token at `/var/run/service-account/token`.
-3. Implement `AgentRuntimeConfig.authTokenProvider` to exchange the OIDC token
-   for a capability token via the issuer's `/api/v1/issue` endpoint.
-
-### P2 — Enable HTTPS with mTLS between agent and gateway
-
-Change `GATEWAY_URL` to `https://` and configure mTLS via:
-- **Istio / Linkerd** (automatic per-pod SPIFFE mTLS), or
-- **cert-manager** cluster-internal CA + projected certificate volumes.
+## 5. Remaining Recommendations
 
 ### P3 — Landlock self-restriction in `main.ts`
 

@@ -82,6 +82,11 @@ spec:
     ports:
     - protocol: TCP
       port: 3002
+    # ── Gap 6 / P2 — TLS listener port ──────────────────────────────────────
+    # Uncomment when Envoy is configured with a TLS listener (cert-manager or
+    # service mesh) and GATEWAY_URL is changed to https://envoy-shard-router:8443.
+    # - protocol: TCP
+    #   port: 8443
 
   # Allow traffic to Tool Gateway directly.
   # This permits direct-to-gateway calls (e.g. if GATEWAY_URL is changed to
