@@ -1,6 +1,18 @@
 {{/*
 api-key-minter Deployment
 */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "euno.fullname" . }}-minter
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minter
+  {{- with .Values.minter.serviceAccountAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,7 +32,11 @@ spec:
         app.kubernetes.io/name: euno-minter
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: minter
+        {{- with .Values.minter.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "euno.fullname" . }}-minter
       containers:
         - name: minter
           image: "{{ .Values.minter.image.repository }}:{{ .Values.minter.image.tag }}"

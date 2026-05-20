@@ -10,11 +10,14 @@ variable "gcp_region"         { type = string }
 variable "environment"        { type = string }
 variable "labels"             { type = map(string) }
 variable "log_retention_days" { type = number }
+variable "notification_channel_ids" {
+  type    = list(string)
+  default = []
+}
 
 locals {
-  log_bucket_name  = "${var.name_prefix}-runtime-logs-${var.environment}"
-  audit_bucket_id  = "${var.name_prefix}-audit-logs-${var.environment}"
-  notification_channel_display = "Euno Platform Alerts (${var.environment})"
+  log_bucket_name = "${var.name_prefix}-runtime-logs-${var.environment}"
+  audit_bucket_id = "${var.name_prefix}-audit-logs-${var.environment}"
 }
 
 # ---------------------------------------------------------------------------
@@ -143,6 +146,7 @@ resource "google_monitoring_alert_policy" "denial_spike" {
   project      = var.project_id
   display_name = "Euno — Denial Spike (${var.environment})"
   combiner     = "OR"
+  notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "Denial rate exceeds 50/min for 5 minutes"
@@ -171,6 +175,7 @@ resource "google_monitoring_alert_policy" "invalid_token_burst" {
   project      = var.project_id
   display_name = "Euno — Invalid Token Burst (${var.environment})"
   combiner     = "OR"
+  notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "Invalid tokens exceed 20/min for 2 minutes"
@@ -199,6 +204,7 @@ resource "google_monitoring_alert_policy" "pod_crash_loop" {
   project      = var.project_id
   display_name = "Euno — Pod Crash Loop (${var.environment})"
   combiner     = "OR"
+  notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "GKE pod restart count > 5 in 10 minutes"

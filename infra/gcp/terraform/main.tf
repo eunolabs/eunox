@@ -107,6 +107,24 @@ variable "gke_node_max_count" {
   default     = 3
 }
 
+variable "k8s_namespace" {
+  description = "Kubernetes namespace where Euno is installed."
+  type        = string
+  default     = "euno"
+}
+
+variable "issuer_kubernetes_service_account_name" {
+  description = "Kubernetes ServiceAccount name used by capability-issuer."
+  type        = string
+  default     = "euno-issuer"
+}
+
+variable "gateway_kubernetes_service_account_name" {
+  description = "Kubernetes ServiceAccount name used by tool-gateway."
+  type        = string
+  default     = "euno-gateway"
+}
+
 # Data inputs forwarded to module.data
 variable "db_tier" {
   description = "Cloud SQL machine tier."
@@ -137,6 +155,12 @@ variable "log_retention_days" {
   description = "Cloud Logging bucket retention in days."
   type        = number
   default     = 90
+}
+
+variable "alert_notification_channel_ids" {
+  description = "Cloud Monitoring notification channel IDs for alert policies."
+  type        = list(string)
+  default     = []
 }
 
 # ---------------------------------------------------------------------------
@@ -209,6 +233,9 @@ module "compute" {
   gke_node_machine_type = var.gke_node_machine_type
   gke_node_count        = var.gke_node_count
   gke_node_max_count    = var.gke_node_max_count
+  k8s_namespace         = var.k8s_namespace
+  issuer_ksa_name       = var.issuer_kubernetes_service_account_name
+  gateway_ksa_name      = var.gateway_kubernetes_service_account_name
   signing_key_id        = module.security.signing_key_id
 
   depends_on = [module.network, module.security]
@@ -240,6 +267,7 @@ module "observability" {
   environment        = var.environment
   labels             = local.common_labels
   log_retention_days = var.log_retention_days
+  notification_channel_ids = var.alert_notification_channel_ids
 
   depends_on = [google_project_service.required]
 }

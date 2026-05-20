@@ -14,12 +14,16 @@ variable "subnetwork_id"         { type = string }
 variable "gke_node_machine_type" { type = string }
 variable "gke_node_count"        { type = number }
 variable "gke_node_max_count"    { type = number }
+variable "k8s_namespace"         { type = string }
+variable "issuer_ksa_name"       { type = string }
+variable "gateway_ksa_name"      { type = string }
 variable "signing_key_id"        { type = string }
 
 locals {
   cluster_name    = "${var.name_prefix}-gke-${var.environment}"
   issuer_sa_id    = "${var.name_prefix}-issuer-sa"
   gateway_sa_id   = "${var.name_prefix}-gateway-sa"
+  node_sa_id      = "${var.name_prefix}-gke-node-sa"
   artifact_repo   = "${var.name_prefix}-images"
 }
 
@@ -40,17 +44,24 @@ resource "google_service_account" "gateway" {
   description  = "Used by tool-gateway pods via GKE Workload Identity."
 }
 
+resource "google_service_account" "nodes" {
+  project      = var.project_id
+  account_id   = local.node_sa_id
+  display_name = "Euno GKE Node Pool"
+  description  = "Used by GKE nodes with minimum runtime permissions."
+}
+
 # Workload Identity bindings — Kubernetes SA → GCP SA.
 resource "google_service_account_iam_member" "issuer_wi" {
   service_account_id = google_service_account.issuer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[euno-system/capability-issuer]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.k8s_namespace}/${var.issuer_ksa_name}]"
 }
 
 resource "google_service_account_iam_member" "gateway_wi" {
   service_account_id = google_service_account.gateway.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[euno-system/tool-gateway]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.k8s_namespace}/${var.gateway_ksa_name}]"
 }
 
 # KMS signing permissions.
@@ -102,6 +113,25 @@ resource "google_project_iam_member" "gateway_monitoring" {
   project = var.project_id
   role    = "roles/monitoring.metricWriter"
   member  = "serviceAccount:${google_service_account.gateway.email}"
+}
+
+# GKE node pool runtime permissions.
+resource "google_project_iam_member" "node_logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
+resource "google_project_iam_member" "node_monitoring" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
+resource "google_project_iam_member" "node_artifact_registry_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
 }
 
 # ---------------------------------------------------------------------------
@@ -216,11 +246,14 @@ resource "google_container_node_pool" "system" {
     disk_type    = "pd-ssd"
     image_type   = "COS_CONTAINERD"
 
-    # Bind each node to its dedicated GCP SA so Workload Identity can derive
-    # pod-level credentials without any JSON key file on disk.
-    service_account = google_service_account.gateway.email
+    # Bind nodes to a dedicated SA with minimal runtime permissions.
+    service_account = google_service_account.nodes.email
 
-    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
+      "https://www.googleapis.com/auth/devstorage.read_only",
+    ]
 
     workload_metadata_config {
       mode = "GKE_METADATA"

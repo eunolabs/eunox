@@ -15,6 +15,9 @@ services_cidr = "10.56.0.0/20"
 gke_node_machine_type = "e2-standard-4"
 gke_node_count        = 1
 gke_node_max_count    = 3
+k8s_namespace         = "euno"
+issuer_kubernetes_service_account_name  = "euno-issuer"
+gateway_kubernetes_service_account_name = "euno-gateway"
 
 # Cloud SQL — use a larger tier for production workloads.
 db_tier       = "db-custom-2-7680"   # 2 vCPU, 7.5 GiB RAM
@@ -26,6 +29,9 @@ redis_memory_size_gb = 4
 
 # Logging retention.
 log_retention_days = 90
+alert_notification_channel_ids = [
+  # "projects/my-gcp-project-id/notificationChannels/1234567890"
+]
 
 labels = {
   product   = "euno"

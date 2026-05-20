@@ -56,32 +56,6 @@ resource "google_kms_crypto_key" "capability_signing" {
   }
 }
 
-# Grant the Issuer SA signer + viewer access.
-resource "google_kms_crypto_key_iam_member" "issuer_signer" {
-  crypto_key_id = google_kms_crypto_key.capability_signing.id
-  role          = "roles/cloudkms.signerVerifier"
-  member        = "serviceAccount:${local.issuer_sa_email}"
-}
-
-resource "google_kms_crypto_key_iam_member" "issuer_viewer" {
-  crypto_key_id = google_kms_crypto_key.capability_signing.id
-  role          = "roles/cloudkms.publicKeyViewer"
-  member        = "serviceAccount:${local.issuer_sa_email}"
-}
-
-# Grant the Gateway SA verifier + viewer access.
-resource "google_kms_crypto_key_iam_member" "gateway_signer" {
-  crypto_key_id = google_kms_crypto_key.capability_signing.id
-  role          = "roles/cloudkms.signerVerifier"
-  member        = "serviceAccount:${local.gateway_sa_email}"
-}
-
-resource "google_kms_crypto_key_iam_member" "gateway_viewer" {
-  crypto_key_id = google_kms_crypto_key.capability_signing.id
-  role          = "roles/cloudkms.publicKeyViewer"
-  member        = "serviceAccount:${local.gateway_sa_email}"
-}
-
 # ---------------------------------------------------------------------------
 # Secret Manager — one secret per Euno credential
 # ---------------------------------------------------------------------------
