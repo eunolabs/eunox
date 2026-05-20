@@ -78,8 +78,8 @@ name: "Claude Desktop (local)"
 version: "1.0.0"
 
 requiredCapabilities:
-  - resource: "filesystem://read/**"
-    actions: ["read"]
+  - resource: "read_file"
+    actions: [call]
     conditions:
       - type: allowedExtensions
         extensions: [".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".go"]
@@ -87,8 +87,8 @@ requiredCapabilities:
         count: 200
         windowSeconds: 3600
 
-  - resource: "filesystem://write/**"
-    actions: ["write"]
+  - resource: "write_file"
+    actions: [call]
     conditions:
       - type: allowedExtensions
         extensions: [".md", ".txt", ".json"]
@@ -112,8 +112,8 @@ Let me walk through the decisions in here.
 If you're using multiple MCP servers, you add more capabilities here. For a Postgres server, it might look like:
 
 ```yaml
-  - resource: "db://analytics/**"
-    actions: ["read"]
+  - resource: "execute_sql"
+    actions: [call]
     conditions:
       - type: allowedOperations
         operations: ["SELECT"]
@@ -199,10 +199,10 @@ Now try one that should be blocked: if you have access to your database, ask Cla
 Check your local audit log:
 
 ```bash
-cat ~/.euno/audit.jsonl | tail -20 | python3 -m json.tool
+tail -20 ~/.euno/audit.jsonl | jq .
 ```
 
-You'll see JSONL records — one per tool call. Both allowed and denied calls are there. Each record has the tool name, the arguments (or an args hash if you've configured redaction), the decision, the conditions that were evaluated, and the timestamp. This is the record that tells you what Claude has been doing and whether any of it looked unusual.
+You'll see JSONL records — one per tool call. Both allowed and denied calls are there. Each record has the tool name and resource, the decision, the denial code/condition type when denied, and the timestamp. This is the record that tells you what Claude has been doing and whether any of it looked unusual.
 
 The format is OCSF (Open Cybersecurity Schema Framework) API Activity events — structured enough that if you wanted to, you could feed these into Splunk, Datadog, or any other SIEM without writing a custom parser.
 

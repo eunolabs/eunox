@@ -69,7 +69,7 @@ All of these are O(1) operations on the token claims. No external state, no data
 
 ### Step 4: Revocation check
 
-Now we make our first external call. The token's `jti` is checked against the revocation list — a Redis sorted set or hash that contains the JTIs of revoked tokens.
+Now we make our first external call. The token's `jti` is checked against the revocation list — in Redis this is stored as per-token keys like `revoked:<jti>` with TTL so entries age out automatically when the token lifetime ends.
 
 If the JTI is in the revocation list: deny. The token has been explicitly revoked — the session was terminated, a security event was detected, or an admin killed this specific session.
 
@@ -115,7 +115,7 @@ This asymmetry is intentional and important. During policy evolution — when a 
 
 Some specific conditions and how they're evaluated:
 
-**`allowedOperations`**: Extract the first non-whitespace keyword from the `query` argument (after stripping comments). Check it against the allowed list. This is case-insensitive and done on the raw argument string. An injection that produces `/* comment */ DROP TABLE users` would have `DROP` as the first keyword and fail. An injection that produces `SELECT /*; DROP TABLE users; --*/` from legitimate_table would pass — the first keyword is `SELECT` — but the multi-statement guard (if configured) would catch the embedded `DROP`.
+**`allowedOperations`**: Extract the first non-whitespace keyword from the `query` argument and check it against the allowed list. This is case-insensitive and done on the raw argument string. If the query starts with a block comment token (for example `/* ... */ SELECT ...`), the extracted token won't match the allowlist and the call is denied fail-closed.
 
 **`maxCalls`**: Fetch-and-increment the rate counter in Redis, scoped to the `(jti, resource, condition-hash)` tuple. If the counter exceeds the limit: deny. If Redis is unavailable: deny. The increment is atomic (Redis `INCR` command) so two concurrent calls both at the limit can't both get approved by reading a stale counter.
 
@@ -133,8 +133,6 @@ Some conditions generate obligations — side effects that must happen on an all
 
 The main obligations:
 
-**Rate counter increment.** For `maxCalls` conditions that allowed the call, the counter needs to be incremented. This happens here rather than during the evaluation step to avoid a scenario where the evaluation increments the counter but the call is later denied by a different condition. (All conditions are evaluated before any counter increments happen.)
-
 **Argument sanitisation.** `redactFields` obligations mark specific argument fields for scrubbing before audit logging. The gateway creates a sanitised copy of the arguments for the audit record, with the redacted fields replaced by a placeholder.
 
 **Context injection.** Some policies require headers or metadata to be injected into the upstream call. For example, stamping an audit correlation ID onto upstream requests so the backend's own logs can be correlated with the gateway's audit records. This happens at obligation application time, before forwarding.
@@ -143,13 +141,11 @@ Obligations cannot change a deny to an allow. They're applied only when the deci
 
 ### Step 9: Audit write
 
-Before forwarding the approved call to the upstream tool, the gateway writes an audit record to the Postgres ledger. Before, not after.
+Before forwarding the approved call to the upstream tool, the gateway writes audit evidence to the Postgres ledger. Before, not after.
 
-Why before? If you write the audit record after the upstream call returns and the upstream call hangs or errors, you have a call you can't account for. The initial audit record is written with the decision, the token identity, the tool name, the sanitised arguments, and the conditions that were evaluated. When the upstream call completes (or fails), a completion record is written with the response outcome and latency.
+Why before? If you only write after the upstream call returns and the upstream call hangs or errors, you have a call you can't account for. The record includes the decision, token identity, tool name, and a hash of the request arguments (`argsHash`) plus the evaluated condition outcomes.
 
-The audit records are OCSF (Open Cybersecurity Schema Framework) API Activity events. The schema maps cleanly to agent tool calls: `actor` is the token subject (the agent's DID), `target.name` is the tool name, `api.request.body` is the sanitised arguments hash, `status_id` is the decision (allow/deny), `metadata` carries the `jti`, condition results, and denial reasons if applicable.
-
-HMAC chaining ties the audit records together. Each record includes an HMAC of the previous record's content, keyed by a secret that the gateway operator holds. Deletion or modification of any record breaks the chain at that point, and the chain break is detectable by anyone who verifies the record sequence. The chain is verified by `GET /api/v1/audit/verify-chain` and is part of the evidence bundle exported for SOC 2 audits.
+For verification, the evidence chain uses `previousHash`/`seq` linkage and signatures, and the gateway exposes `GET /api/v1/audit/chain-proof` for chain-proof material plus `GET /api/v1/audit/export` and `GET /api/v1/audit/signing-keys` for offline verification workflows.
 
 Every call gets an audit record — allowed and denied. Denied calls are often the most interesting ones. An anomalous spike in denied calls for a specific condition type tells you something is happening that your policy was designed to prevent. That's signal worth having.
 
@@ -181,7 +177,7 @@ The tests that matter most for the reference monitor property:
 
 **Condition registry exhaustiveness.** Every built-in condition type must have tests for: (a) a call that satisfies the condition, (b) a call that violates the condition, (c) an edge case (empty list, boundary values). And there's a test that verifies an unknown condition type produces a deny.
 
-**Concurrency for rate counters.** The `maxCalls` counter test includes a concurrent call test: N goroutines simultaneously call the same rate-limited capability. The total approved calls must equal exactly the configured limit, not "approximately the limit" or "the limit per goroutine."
+**Concurrency for rate counters.** The `maxCalls` counter test includes a concurrent call test: N simultaneous requests/promises call the same rate-limited capability. The total approved calls must equal exactly the configured limit, not "approximately the limit" or "the limit per request stream."
 
 **Audit completeness.** After running a set of calls through the pipeline, the test verifies that the audit record count equals the call count, not a subset. Every call got an audit record.
 
