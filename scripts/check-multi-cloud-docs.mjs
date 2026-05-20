@@ -131,6 +131,8 @@ requireText(secretsAwsGuide, 'ADMIN_API_KEY',
   'secrets-aws.md: ADMIN_API_KEY (GATEWAY_ADMIN_API_KEY) referenced');
 requireText(secretsAwsGuide, 'PARTNER_DID_PIN_SECRET',
   'secrets-aws.md: PARTNER_DID_PIN_SECRET referenced');
+requireText(secretsAwsGuide, 'EunoKmsSigningPolicy',
+  'secrets-aws.md: EunoKmsSigningPolicy IAM policy defined');
 requireText(secretsAwsGuide, 'External Secrets Operator',
   'secrets-aws.md: External Secrets Operator (ESO) section');
 requireText(secretsAwsGuide, 'SecretStore',

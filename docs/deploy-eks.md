@@ -9,7 +9,7 @@
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
 > - [`docs/secrets-aws.md`](./secrets-aws.md) — AWS Secrets Manager integration
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP setup (Cognito SCIM §10)
-> - [`docs/multi-cloud.md`](./multi-cloud.md) — multi-cloud runbook index
+> - [`docs/multi-cloud-plan.md`](./multi-cloud-plan.md) — multi-cloud runbook index
 > - [`docs/self-host.md`](./self-host.md) — self-host overview
 
 ---
@@ -114,8 +114,8 @@ aws iam attach-role-policy \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoSecretsReadPolicy
 ```
 
-See [`docs/secrets-aws.md`](./secrets-aws.md) for the `EunoSecretsReadPolicy`
-and `EunoKmsSigningPolicy` IAM policy documents.
+See [`docs/secrets-aws.md`](./secrets-aws.md) §3 for the `EunoSecretsReadPolicy`
+(`§3.1`) and `EunoKmsSigningPolicy` (`§3.2`) IAM policy documents.
 
 ### 3.2 `tool-gateway` IAM role
 
@@ -326,7 +326,6 @@ metadata:
   name: euno-ingress
   namespace: euno
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:123456789012:certificate/<cert-id>"
@@ -334,6 +333,7 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
 spec:
+  ingressClassName: alb
   rules:
     - host: euno.example.com
       http:
@@ -514,7 +514,7 @@ Key Euno metrics forwarded to CloudWatch:
 The tool-gateway emits OCSF-structured audit evidence records. Map them to
 AWS Security Hub findings using the following pattern:
 
-#### 7.2.1 Kinesis Firehose → Lambda → Security Hub pipeline
+#### 7.2.1 CloudWatch Logs → Lambda → Security Hub pipeline
 
 ```
 tool-gateway audit ledger
@@ -537,21 +537,30 @@ tool-gateway audit ledger
 | `evidence.tenantId` | `AwsAccountId` |
 | `evidence.capabilityId` | `Resources[0].Details.Other.capabilityId` |
 
-Example Lambda handler (Node.js):
+Example Lambda handler (Node.js). The Lambda is triggered by a CloudWatch Logs
+subscription filter; the event payload is base64-encoded gzip JSON.
 
 ```javascript
 // lambda/ocsf-to-securityhub.mjs
+import zlib from 'zlib';
 import { SecurityHubClient, BatchImportFindingsCommand } from '@aws-sdk/client-securityhub';
 
 const hub = new SecurityHubClient({});
 
 export async function handler(event) {
+  // CloudWatch Logs subscription filter payload: base64-encoded gzip JSON.
+  const payload = Buffer.from(event.awslogs.data, 'base64');
+  const logData = JSON.parse(zlib.gunzipSync(payload).toString('utf8'));
+
   const findings = [];
 
-  for (const record of event.Records) {
-    const evidence = JSON.parse(
-      Buffer.from(record.kinesis.data, 'base64').toString('utf8'),
-    );
+  for (const logEvent of logData.logEvents) {
+    let evidence;
+    try {
+      evidence = JSON.parse(logEvent.message);
+    } catch {
+      continue; // skip non-JSON log lines
+    }
     if (evidence.outcome !== 'deny') continue; // only import denials
 
     findings.push({

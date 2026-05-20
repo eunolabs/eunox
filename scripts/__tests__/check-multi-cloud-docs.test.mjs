@@ -67,6 +67,10 @@ function makeValidSecretsAws() {
     'ADMIN_API_KEY — stored in Secrets Manager.',
     'PARTNER_DID_PIN_SECRET — stored in Secrets Manager.',
     '',
+    '## 3. IAM policies',
+    '',
+    'EunoKmsSigningPolicy for KMS signing access.',
+    '',
     '## 4. External Secrets Operator (ESO)',
     '',
     'Create a SecretStore in the euno namespace.',
@@ -324,6 +328,20 @@ test('fails when secrets-aws.md is missing PARTNER_DID_PIN_SECRET reference', ()
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /PARTNER_DID_PIN_SECRET/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-aws.md is missing the EunoKmsSigningPolicy definition', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-aws.md'),
+      makeValidSecretsAws().replace(/EunoKmsSigningPolicy/g, 'KmsPolicy'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /EunoKmsSigningPolicy/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

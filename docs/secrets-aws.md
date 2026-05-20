@@ -8,7 +8,7 @@
 > **Related documents:**
 > - [`docs/deploy-eks.md`](./deploy-eks.md) — full EKS deployment guide
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — environment-variable reference
-> - [`docs/multi-cloud.md`](./multi-cloud.md) — multi-cloud runbook index
+> - [`docs/multi-cloud-plan.md`](./multi-cloud-plan.md) — multi-cloud runbook index
 
 ---
 
@@ -64,7 +64,9 @@ aws secretsmanager create-secret \
 
 ---
 
-## 3. IAM policy
+## 3. IAM policies
+
+### 3.1 `EunoSecretsReadPolicy` — Secrets Manager read
 
 Both ESO and ASCP require an IAM policy that permits `secretsmanager:GetSecretValue`
 on the relevant secrets.
@@ -96,6 +98,43 @@ aws iam create-policy \
   --policy-name EunoSecretsReadPolicy \
   --policy-document file://iam-policies/euno-secrets-read.json
 ```
+
+### 3.2 `EunoKmsSigningPolicy` — KMS signing
+
+The `capability-issuer` and `tool-gateway` pods need KMS signing access when
+`SIGNING_PROVIDER=aws-kms`. This policy must be scoped to the specific key ARN.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EunoKmsSigning",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Sign",
+        "kms:GetPublicKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "arn:aws:kms:us-east-1:123456789012:key/<key-id>"
+      ]
+    }
+  ]
+}
+```
+
+Create the policy:
+
+```bash
+aws iam create-policy \
+  --policy-name EunoKmsSigningPolicy \
+  --policy-document file://iam-policies/euno-kms-signing.json
+```
+
+> **Key requirements:** The KMS key must be an asymmetric key with key usage
+> `SIGN_VERIFY` and key spec `RSA_2048` (or `ECC_NIST_P256` for ECDSA).
+> Set `AWS_KMS_KEY_ID` in the service env to the full key ARN or key alias.
 
 ---
 
