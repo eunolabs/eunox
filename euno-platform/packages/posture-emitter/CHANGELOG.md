@@ -26,8 +26,9 @@ enterprise capability (Stage 5, Task 4 / Task 6).
   pipeline's `onSigned` callback.
 - `POSTURE_EMITTER_ENABLED` environment variable; gateway bootstrap step 11a
   builds and starts `DurablePostureEmitter` when set.
-- `euno_posture_emitter_queue_depth` and `euno_posture_emitter_retry_total`
-  Prometheus gauges exposed on the gateway `/metrics` endpoint.
+- Observability hooks for queue depth and retry activity are exposed by the
+  posture-emitter library for integrators to wire into their monitoring
+  stack; this package does not itself define gateway `/metrics` metric names.
 - 12 unit tests in
   `euno-platform/packages/tool-gateway/tests/posture-emitter-plugin.test.ts`
   covering the evidence-to-inventory-record conversion and fail-open
