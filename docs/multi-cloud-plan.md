@@ -218,7 +218,7 @@ workarounds.
 
 ---
 
-## Prioritisation
+## Prioritization
 
 The work above is ordered so that **documentation and configuration** can
 be shipped first (no code changes, high user value), followed by **native
