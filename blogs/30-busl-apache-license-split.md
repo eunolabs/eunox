@@ -64,7 +64,7 @@ The Apache 2.0 license on the types package means:
 - Academic researchers can work with the schema for analysis and experimentation
 - Organisations can build their own enforcement implementations if they choose — the contract is public and reusable
 
-The [schema parity post](./16-schema-parity-over-version-drift.md) explains the design decision to keep `@euno/mcp`, `@euno/langchain`, and the gateway all sharing a single type definition. The Apache license on that shared type is what makes that ecosystem property durable.
+The [schema parity post](../docs/blog/16-schema-parity-over-version-drift.md) explains the design decision to keep `@euno/mcp`, `@euno/langchain`, and the gateway all sharing a single type definition. The Apache license on that shared type is what makes that ecosystem property durable.
 
 ---
 
@@ -164,7 +164,7 @@ Nothing changes practically. You were already licensed to self-host it. The conv
 
 **Can I contribute code to the BUSL parts?**
 
-Yes, through the standard PR process. Contributions to the platform components are welcome. Contributors assign copyright to the project under a CLA (Contributor License Agreement) that permits us to license contributions under both BUSL and, eventually, Apache 2.0 on conversion. The CLA is in `CONTRIBUTING.md`.
+Yes, through the standard PR process. Contributions to the platform components are welcome. The repository does not currently include a separate `CONTRIBUTING.md` or CLA file; contributions are governed by the existing license terms in `LICENSE`, including the standard contribution clause there.
 
 ---
 

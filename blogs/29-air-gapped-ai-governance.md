@@ -28,33 +28,52 @@ The euno air-gap support targets the soft air-gap model as the default, with doc
 
 The first problem in any air-gapped deployment is knowing exactly what container images you need. You can't do `docker pull` at runtime if there's no internet. Everything has to be pre-staged in a private registry that your deployment environment can reach.
 
-The `k8s/air-gap-images.txt` manifest is the authoritative list of every image required by the euno Helm charts. It looks like this:
+The `k8s/air-gap-images.txt` manifest is the authoritative list of the service images, optional simulator image, build-time base images, and optional bundled dependencies used by the Stage-5 deployment assets. It looks like this:
 
 ```
-ghcr.io/euno/tool-gateway:1.14.2
-ghcr.io/euno/capability-issuer:1.14.2
-ghcr.io/euno/api-key-minter:1.14.2
-ghcr.io/euno/posture-emitter:1.14.2
-ghcr.io/euno/partner-issuer-sim:1.0.0
-postgres:16.2-alpine
-redis:7.2.4-alpine
+ghcr.io/edgeobs/euno/tool-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
+ghcr.io/edgeobs/euno/capability-issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
+ghcr.io/edgeobs/euno/api-key-minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
+ghcr.io/edgeobs/euno/db-token-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
+ghcr.io/edgeobs/euno/storage-grant-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
+ghcr.io/edgeobs/euno/posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
+ghcr.io/edgeobs/euno/partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
+node:20-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
+alpine/curl:latest@sha256:0000000000000000000000000000000000000000000000000000000000000011
+bitnami/postgresql:16@sha256:0000000000000000000000000000000000000000000000000000000000000020
+bitnami/redis:7@sha256:0000000000000000000000000000000000000000000000000000000000000021
 ```
 
 The list is versioned alongside the Helm charts, so the image manifest and the chart are always in sync. Every chart bump that changes an image dependency updates `air-gap-images.txt` as part of the same commit.
 
-The `scripts/pull-air-gap-images.sh` script takes the manifest and a target registry URL, pulls each image, retags it for the target registry, and pushes it. You run this from a machine that has internet access and can also reach your private registry:
+The `scripts/pull-air-gap-images.sh` script takes the manifest, pulls each image, and optionally retags/pushes it when you set `PRIVATE_REGISTRY`. You run this from a machine that has internet access and can also reach your private registry:
 
 ```bash
-./scripts/pull-air-gap-images.sh \
-  --registry registry.internal.example.com/euno \
-  --tag-suffix -airgap
+PRIVATE_REGISTRY=registry.internal.example.com \
+  sh scripts/pull-air-gap-images.sh
 ```
 
-After the script completes, every image in the manifest is available at your private registry. The Helm charts accept a global `imageRegistry` override value, so pointing the entire deployment at your private registry is a one-line change in your `values.yaml`:
+After the script completes, every image in the manifest is available at your private registry. The umbrella chart currently overrides repositories per service, so the practical pattern is to point each service at your private registry in `values.yaml` (or start from the provider-specific values files under `k8s/helm/euno/`):
 
 ```yaml
-global:
-  imageRegistry: registry.internal.example.com/euno
+gateway:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/tool-gateway
+issuer:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/capability-issuer
+minter:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/api-key-minter
+dbTokenService:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/db-token-service
+storageGrantService:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/storage-grant-service
+postureEmitter:
+  image:
+    repository: registry.internal.example.com/edgeobs/euno/posture-emitter
 ```
 
 One thing to get right: verify the image digests. SHA-256 image digests are in the manifest alongside the tags. When deploying in a security-sensitive environment, you want to deploy by digest, not by tag — tags are mutable. Add the digests to your Kubernetes deployment specs and your private registry settings will enforce them. If an image has been tampered with between pull and deployment, the digest won't match.
@@ -63,20 +82,20 @@ One thing to get right: verify the image digests. SHA-256 image digests are in t
 
 ## The Helm umbrella chart
 
-The `k8s/helm/euno/` directory contains the umbrella chart that deploys the full euno stack. The umbrella chart pulls in the individual service charts as subcharts and provides a single `values.yaml` interface for configuring the whole deployment.
+The `k8s/helm/euno/` directory contains the umbrella chart that deploys the full euno stack. It renders the core service Deployments, Services, ConfigMaps, and Secrets directly from one chart and provides a single `values.yaml` interface for configuring the whole deployment; the only subcharts are the optional Postgres and Redis dependencies.
 
 The services covered:
 
-| Service | Chart | Purpose |
+| Service | Helm key | Purpose |
 |---|---|---|
-| tool-gateway | `charts/tool-gateway/` | Enforcement engine, audit ledger writer |
-| capability-issuer | `charts/capability-issuer/` | JWT minting, OIDC federation |
-| api-key-minter | `charts/api-key-minter/` | API key lifecycle, admin console |
-| posture-emitter | `charts/posture-emitter/` | System posture telemetry |
-| postgres | upstream chart | Audit ledger, policy store |
-| redis | upstream chart | Shared enforcement state |
+| tool-gateway | `gateway` | Enforcement engine, audit ledger writer |
+| capability-issuer | `issuer` | JWT minting, OIDC federation |
+| api-key-minter | `minter` | API key lifecycle, admin console |
+| db-token-service | `dbTokenService` | Database token brokering |
+| storage-grant-service | `storageGrantService` | Storage grant brokering |
+| posture-emitter | `postureEmitter` | System posture telemetry |
 
-The upstream charts for postgres and redis need to be vendored into your private Helm repository for air-gap deployments. The air-gap setup docs in `docs/DEPLOYMENT.md` cover how to do this with `helm pull` and your internal chart repository.
+Postgres and Redis are external dependencies by default, not services the umbrella chart installs automatically. For quick local evaluation you can enable the optional Bitnami subcharts with `--set postgresql.enabled=true --set redis.enabled=true`; for production air-gap deployments you normally vendor those upstream charts into your private Helm repository or point the services at operator-managed Postgres and Redis instead.
 
 For the most constrained deployments, there's also a `docker-compose.yml` in `infra/` with the `full` profile that runs the complete stack. This is useful for single-node deployments (on-premises servers that aren't running Kubernetes) and for development environments. In air-gapped contexts it's often the simpler starting point if you're not already running Kubernetes.
 
@@ -106,85 +125,38 @@ capabilityIssuer:
 
 ### The tool gateway and JWKS
 
-The gateway verifies capability tokens by fetching the issuer's JWKS. In connected mode, the JWKS URL in the token's `iss` claim is used to discover keys. In air-gapped mode, the gateway needs to be pre-configured with the static public key set for each issuer it trusts.
+The gateway verifies capability tokens by fetching the issuer's JWKS from the URL you configure explicitly. In connected and disconnected deployments alike, the supported knob is `ISSUER_JWKS_URL`, optionally paired with `ISSUER_METADATA_URL` when you also mirror the issuer discovery document internally.
 
-The `GATEWAY_STATIC_JWKS` environment variable accepts a JSON object mapping issuer URLs to their JWKS:
+In practice, air-gapped operators host the issuer inside the same network segment (or mirror its JWKS onto an internal endpoint) and point the gateway at that internal URL:
 
-```json
-{
-  "https://capability-issuer.internal.example.com": {
-    "keys": [
-      { "kty": "RSA", "kid": "v1", "n": "...", "e": "AQAB" }
-    ]
-  }
-}
+```env
+ISSUER_JWKS_URL=http://capability-issuer:3001/.well-known/jwks.json
+ISSUER_METADATA_URL=http://capability-issuer:3001/.well-known/capability-issuer
 ```
 
-When this is set, the gateway skips the HTTP JWKS fetch and uses the static keys. Key rotation in this mode requires updating the static configuration — something to factor into your key management procedures. You'll want to script key rotation so that the static JWKS is updated and the gateway is restarted before the old key is decommissioned.
+Key rotation still happens through the JWKS endpoint — you rotate the issuer key, publish the new key in JWKS, and keep the old key available for the normal token-TTL overlap window.
 
 ### Partner DID resolution
 
 W3C Decentralised Identifiers (DIDs) are how euno's partner federation system establishes cross-organisation trust. `did:web` documents live at `https://<domain>/.well-known/did.json`. In connected mode, the gateway fetches these over the public internet. In air-gapped mode, the internet isn't reachable.
 
-For air-gapped partner DID resolution, there are two supported approaches.
+For air-gapped partner DID trust, the supported mechanisms today are the bootstrap allowlist and the partner-DID registry workflow.
 
-**Static DID configuration.** The gateway accepts a `STATIC_DID_DOCUMENTS` environment variable mapping DID identifiers to their DID documents. This is a JSON object:
+**Bootstrap allowlist.** `TRUSTED_PARTNER_DIDS` seeds a comma-separated allowlist of partner issuer DIDs. That's the fastest way to stand up a disconnected lab or bootstrap a new environment, but it's intentionally blocked by default in production unless you explicitly relax `PARTNER_DID_REGISTRY_REQUIRED`.
 
-```json
-{
-  "did:web:partner.example.com": {
-    "@context": ["https://www.w3.org/ns/did/v1"],
-    "id": "did:web:partner.example.com",
-    "verificationMethod": [...]
-  }
-}
-```
+**Partner-DID registry.** For production deployments, the supported path is the gateway's partner-DID registry and admin approval workflow. You register the trusted DIDs there, then host the corresponding `did:web` documents on internal DNS/HTTP endpoints or mirrored domains that the gateway can resolve from the restricted network.
 
-When a partner DID is in the static map, the gateway uses the static document rather than attempting HTTP resolution. You update this when your partner rotates their keys (at which point you'd update the static document and redeploy the gateway configuration).
-
-**Internal DID proxy.** For more dynamic environments, you can run a DID resolver proxy on your internal network that serves DID documents from a locally-maintained registry. The gateway's DID resolver is configurable to use a custom resolver endpoint rather than the standard well-known URL pattern. The proxy maintains the DID documents by sync from a controlled external connection (updated during maintenance windows, for example) and serves them to the gateway over the internal network.
-
-The static configuration approach is simpler and appropriate for most air-gapped deployments where the set of partner organisations is small and changes infrequently. The proxy approach is better for deployments that maintain active federation with many partners and need to handle partner key rotations without redeploying gateway configuration.
+In other words, the disconnected part is operational rather than magical: the gateway still resolves `did:web` from infrastructure you make reachable inside the enclave, and trust is enforced by `TRUSTED_PARTNER_DIDS` or the registry instead of an unsupported static-document map.
 
 ---
 
 ## On-premises KMS integration
 
-Every JWT signed by euno needs a signing key. In cloud deployments this is a KMS-backed key in Azure Key Vault, AWS KMS, or GCP Cloud KMS. In air-gapped environments, you need a local equivalent.
+Every JWT signed by euno needs a signing key. The capability issuer currently ships with three built-in signing providers: `azure-keyvault`, `aws-kms`, and `gcp-cloudkms`. For regulated on-prem or sovereign deployments, the practical pattern is private connectivity from the enclave to one of those approved KMS endpoints rather than a separate local signer implementation.
 
-**HashiCorp Vault** is the most common answer. If you're running an air-gapped Kubernetes environment, you're probably already running Vault for secrets management. The signing adapter for Vault is the `VaultSigningAdapter` in `packages/common-infra/`. Configuration:
+That usually means something like private networking to Azure Key Vault, AWS KMS, or GCP Cloud KMS from the restricted environment, with the rest of the application traffic still isolated from the public internet. For local development and rehearsal, the AWS path can also be exercised with LocalStack, which emulates the KMS API closely enough for issuer bring-up.
 
-```yaml
-capabilityIssuer:
-  signing:
-    adapter: vault
-    vault:
-      address: https://vault.internal.example.com
-      authMethod: kubernetes
-      roleName: capability-issuer
-      transitKeyPath: secret/euno/signing-key
-```
-
-The Vault transit secrets engine is used for signing operations — the private key never leaves Vault, which is the same HSM-boundary property you get from the cloud KMS options. Vault Enterprise supports HSM-backed transit keys if you need the physical HSM boundary.
-
-**PKCS#11 / local HSM.** For organisations with dedicated HSM hardware (SafeNet Luna, Thales, etc.), the `Pkcs11SigningAdapter` is available. You configure it with the PKCS#11 library path and the key identifier:
-
-```yaml
-capabilityIssuer:
-  signing:
-    adapter: pkcs11
-    pkcs11:
-      libraryPath: /usr/lib/pkcs11/libsofthsm2.so
-      slot: 0
-      pin: ${PKCS11_PIN}
-      keyLabel: euno-signing-key
-```
-
-SoftHSM2 is supported as a software-only PKCS#11 implementation for environments that need the interface without dedicated hardware — useful for development and testing air-gap configurations before deploying with real hardware.
-
-**Fallback: file-based key.** For deployments that don't have Vault or HSM access — small-scale on-premises deployments, lab environments, emergency scenarios — the signing adapter can be configured to use a key file. This is less secure than a hardware-backed key but maintains the JWT signature chain. Key files should be stored with appropriate permissions (`600`, owned by the service account) and ideally encrypted at rest using your platform's volume encryption.
-
-This fallback is documented but I'd encourage any production deployment to use Vault or hardware. The threat model for tamper-evident audit records depends on an adversary not being able to forge JWT signatures. A key file that someone can read is a key they can use.
+What the repository does **not** currently ship is a Vault signer, a PKCS#11 signer, or a file-based capability-issuer signer. If you need a fully disconnected local HSM integration, that's an extension point in the signing registry rather than something you can enable with an existing config flag today.
 
 ---
 
@@ -195,7 +167,7 @@ After deploying in an air-gapped environment, you need to verify that everything
 The `infra/smoke-test.sh` script has a Stage-5 section specifically for this. It tests:
 
 1. Capability token issuance — can the capability issuer mint a JWT without making an external HTTP call?
-2. Token verification at the gateway — does the gateway correctly verify the token using its static or local key configuration?
+2. Token verification at the gateway — does the gateway correctly verify the token using its internal `ISSUER_JWKS_URL` configuration?
 3. Enforcement — does a valid call pass and an invalid call deny?
 4. Audit write — does the audit record appear in the Postgres ledger?
 5. Kill-switch — does activating the kill-switch block calls within one second?
@@ -225,9 +197,9 @@ The options:
 
 I want to be honest about this. Air-gapped deployments are harder to operate than cloud deployments, and some of the failure modes are different.
 
-**Key rotation is more manual.** In a cloud KMS deployment, key rotation is a single API call. In a Vault or HSM deployment, key rotation involves generating a new key, updating the JWKS in any static configurations, and coordinating the switchover. This can be scripted, but it requires more process discipline.
+**Key rotation is more manual.** Even with the currently supported cloud KMS providers, restricted-network deployments still require more choreography: rotate the signing key, publish the new key in the internal JWKS endpoint, and coordinate the overlap window before retiring the old key. This can be scripted, but it requires more process discipline.
 
-**DID resolution lag.** If a partner organisation rotates their DID keys, you won't automatically pick up the new document. For static DID configurations, you'll have verification failures until the static document is updated. For proxy-based resolution, the lag is the sync interval. Neither is ideal, though the partner DID circuit breaker (described in [the DID federation post](./13-partner-did-federation.md)) will trip correctly on sustained verification failures and prevent calls from proceeding on stale credentials.
+**DID resolution lag.** If a partner organisation rotates their DID keys, you won't automatically pick up the new document until your internal mirror or private `did:web` hosting is updated. If you're using the bootstrap allowlist, you'll also need to keep the trusted DID set current; if you're using the registry workflow, you need the corresponding approval/update step. Neither is ideal, though the partner DID circuit breaker (described in [the DID federation post](./13-partner-did-federation.md)) will trip correctly on sustained verification failures and prevent calls from proceeding on stale credentials.
 
 **No automatic updates.** Connected deployments can pull new image versions on a schedule. Air-gapped deployments require a managed update cycle — pull new images to the private registry, run the air-gap script, roll out the deployment. This is your standard change management process, and it's better security practice in any case, but it means you're committed to an explicit update schedule.
 
@@ -242,15 +214,16 @@ None of these are blockers. Regulated-industry deployments accept these trade-of
 For reference, here's the sequence for a first-time air-gapped deployment:
 
 1. Run `scripts/pull-air-gap-images.sh` against the target private registry from an internet-connected machine
-2. Vendor the upstream Helm charts (postgres, redis) into your private chart repository
-3. Configure your on-premises KMS (Vault, PKCS#11, or key file with appropriate protections)
-4. Prepare static DID documents or configure an internal DID proxy
-5. Configure static JWKS for the capability issuer if not running an internal IdP
-6. Deploy with the Helm umbrella chart, pointing `global.imageRegistry` at your private registry
-7. Run `scripts/check-deployment-bundle.mjs` to validate the deployment configuration
-8. Run `infra/smoke-test.sh` with network egress monitoring to verify disconnected operation
-9. Verify the audit chain is intact with `GET /api/v1/audit/chain-proof`
+2. Vendor the optional upstream Helm charts (postgres, redis) into your private chart repository if you plan to enable the bundled subcharts
+3. Override each service's `image.repository` in `values.yaml` (or start from `k8s/helm/euno/values-aws.yaml` / `values-gcp.yaml`) so the chart points at your private registry
+4. Decide how the capability issuer will reach a supported signing provider (`azure-keyvault`, `aws-kms`, or `gcp-cloudkms`) from the restricted network
+5. Point `ISSUER_JWKS_URL` at an internal issuer JWKS endpoint
+6. Seed partner trust with `TRUSTED_PARTNER_DIDS` for bootstrap or the partner-DID registry workflow for production
+7. Deploy with the Helm umbrella chart
+8. Run `scripts/check-deployment-bundle.mjs` to validate the deployment configuration
+9. Run `infra/smoke-test.sh` with network egress monitoring to verify disconnected operation
+10. Verify the audit chain is intact with `GET /api/v1/audit/chain-proof`
 
 For on-premises environments that aren't running Kubernetes, the docker-compose path replaces steps 1-3 of the Helm configuration but is otherwise equivalent.
 
-The full deployment guide is in `docs/DEPLOYMENT.md`, Section 12. For compliance requirements that include a formal deployment verification step, the smoke test output and check-deployment-bundle output can be archived as deployment evidence.
+The full deployment guide is in `docs/DEPLOYMENT.md`, in the "Stage-5 on-prem deployment" section. For compliance requirements that include a formal deployment verification step, the smoke test output and check-deployment-bundle output can be archived as deployment evidence.
