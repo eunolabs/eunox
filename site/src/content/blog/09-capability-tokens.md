@@ -13,7 +13,7 @@ Every serious question about agent security eventually comes back to the same th
 
 This is the capability token's job. It's the artefact that carries the answer to that question in a form that an enforcement point can verify without talking to anyone, without trusting the agent's claims about itself, and without being fooled by anything the agent has encountered since it started running.
 
-I've touched on capability tokens in several earlier posts — [the least-privilege post](./02-least-privilege-agent-era.md) explains why classical RBAC doesn't work for agents, [the prompt injection post](./01-prompt-injection-policy-layer.md) shows how tokens encode the conditions that block injection attacks, and [the policy proxy post](./06-mcp-policy-proxy.md) covers the enforcement pipeline they flow through. This post goes deeper on the token itself: what's in it, why it's structured this way, and why a short-lived signed JWT is the right foundation for per-session agent authorisation.
+I've touched on capability tokens in several earlier posts — [the least-privilege post](./02-least-privilege-agent-era) explains why classical RBAC doesn't work for agents, [the prompt injection post](./01-prompt-injection-policy-layer) shows how tokens encode the conditions that block injection attacks, and [the policy proxy post](./06-mcp-policy-proxy) covers the enforcement pipeline they flow through. This post goes deeper on the token itself: what's in it, why it's structured this way, and why a short-lived signed JWT is the right foundation for per-session agent authorisation.
 
 ---
 
@@ -121,7 +121,7 @@ Each capability entry has:
 
 - `allowedExtensions: [".csv", ".json", ".pdf"]` — File calls (read or write) are checked against the extension of the file path argument. A write to `output.exe` fails this check.
 
-- `recipientDomain: ["corp.example.com"]` — Email calls check the recipient address domain. An instruction to send email to `attacker@external.com` fails here, regardless of what produced the instruction. This is the control that would have blocked the law firm exfiltration scenario from [the failure modes post](./03-agent-governance-failure-modes.md).
+- `recipientDomain: ["corp.example.com"]` — Email calls check the recipient address domain. An instruction to send email to `attacker@external.com` fails here, regardless of what produced the instruction. This is the control that would have blocked the law firm exfiltration scenario from [the failure modes post](./03-agent-governance-failure-modes).
 
 - `timeWindow: { notBefore: "...", notAfter: "..." }` — The capability is only usable during a specified time range. A deployment capability gated to business hours won't fire at 2am even if the agent is running.
 
@@ -232,6 +232,6 @@ The token is the contract. But a contract is only as useful as the paper trail t
 
 ---
 
-*Previous: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)*
+*Previous: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway)*
 
-*Next: [The Tool Gateway as a reference monitor: implementing PDP in practice](./10-tool-gateway-reference-monitor.md)*
+*Next: [The Tool Gateway as a reference monitor: implementing PDP in practice](./10-tool-gateway-reference-monitor)*

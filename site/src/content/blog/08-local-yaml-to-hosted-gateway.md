@@ -11,7 +11,7 @@ audience: "developers and platform engineers scaling agent governance beyond a s
 
 Every system that goes through serious adoption has a moment where the early design runs out of runway. Not because the early design was wrong — it was right for what it was. But the assumptions it was built on stop holding, and you have to evolve. With euno, that moment arrived predictably: the day an agent deployment went from "one developer, one machine" to "multiple agents, multiple users, shared infrastructure."
 
-This post is about that transition — what breaks, what stays the same, and the specific decisions we made about how to bridge the gap without requiring everyone to rewrite their policies or relearn the system. If you've read [the drop-in governance tutorial](./07-drop-in-governance-claude-desktop.md), this is the follow-up: what happens when that setup grows up.
+This post is about that transition — what breaks, what stays the same, and the specific decisions we made about how to bridge the gap without requiring everyone to rewrite their policies or relearn the system. If you've read [the drop-in governance tutorial](./07-drop-in-governance-claude-desktop), this is the follow-up: what happens when that setup grows up.
 
 ---
 
@@ -19,7 +19,7 @@ This post is about that transition — what breaks, what stays the same, and the
 
 When you run `@euno/mcp proxy --policy ./euno.policy.yaml` in local mode, the whole governance stack is in one process. The policy YAML is loaded at startup. Conditions are evaluated in-memory. Call counters live in-memory. The audit log goes to a local file — `~/.euno/audit.jsonl`.
 
-This design was deliberate. For a single developer using Claude Desktop, it's exactly right. There's no infrastructure to run, no services to keep up, no distributed state to worry about. You change a YAML file and restart. The feedback loop is tight. Onboarding takes five minutes, as [the previous post](./07-drop-in-governance-claude-desktop.md) demonstrates.
+This design was deliberate. For a single developer using Claude Desktop, it's exactly right. There's no infrastructure to run, no services to keep up, no distributed state to worry about. You change a YAML file and restart. The feedback loop is tight. Onboarding takes five minutes, as [the previous post](./07-drop-in-governance-claude-desktop) demonstrates.
 
 But several of the assumptions behind local mode break the moment you scale:
 
@@ -234,6 +234,6 @@ That flexibility is what makes the architecture useful in practice. Not everyone
 
 ---
 
-*Previous: [Drop-in governance: adding @euno/mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop.md)*
+*Previous: [Drop-in governance: adding @euno/mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop)*
 
-*Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+*Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens)*

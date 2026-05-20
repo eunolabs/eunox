@@ -39,7 +39,7 @@ A pentester — hired by the firm before a planned external audit, fortunately �
 
 The agent processed the document, encountered the instruction, and followed it. The summary went out in forty-five seconds. No error, no log entry that flagged anything unusual — it looked like a normal `send_email` call. If this had been a real attacker rather than a pentester, those files would have been gone.
 
-This is prompt injection, and if you haven't read up on it yet, you should — there's a longer treatment in [the prompt injection post](./01-prompt-injection-policy-layer.md) with specifics on how a policy layer can catch this class of attack. The short version here: you can't stop a language model from being convinced by text in its context window. That's not a fixable property of LLMs — it's what they're designed to do. What you *can* do is constrain what the agent is allowed to do even when convinced.
+This is prompt injection, and if you haven't read up on it yet, you should — there's a longer treatment in [the prompt injection post](./01-prompt-injection-policy-layer) with specifics on how a policy layer can catch this class of attack. The short version here: you can't stop a language model from being convinced by text in its context window. That's not a fixable property of LLMs — it's what they're designed to do. What you *can* do is constrain what the agent is allowed to do even when convinced.
 
 In this case, the fix was recipient allowlisting: the `send_email` tool should only be able to send to addresses on an explicit list — the firm's own domain, known client contacts, registered co-counsel. External arbitrary addresses should be a hard no, enforced at the tool layer, not just mentioned in the system prompt. You could go further and add argument constraints: the email body can only contain text derived from documents the current session has explicit read authorisation for.
 
@@ -59,7 +59,7 @@ When this was found during an internal review, the response was something like "
 
 The right fix here has two parts. First, per-user credentials: instead of one shared service account with broad access, each user's session should authenticate with credentials that carry only their own permissions — the same data access that user would have in any other tool. If the finance employee can't see engineering compensation in the HR system, their agent session shouldn't be able to either. Second, table and column allowlists: even with per-user credentials, explicitly scoping which tables an agent can query in a given context reduces the blast radius when something unexpected happens.
 
-This is the least-privilege problem applied to AI. It's not new — we've known for decades that service accounts shouldn't be omnipotent. The [least privilege post](./02-least-privilege-agent-era.md) goes into detail on how to structure capability grants for agents specifically. But the same core principle applies: grant the minimum access needed for the task at hand, and enforce it at the data layer, not the prompt layer.
+This is the least-privilege problem applied to AI. It's not new — we've known for decades that service accounts shouldn't be omnipotent. The [least privilege post](./02-least-privilege-agent-era) goes into detail on how to structure capability grants for agents specifically. But the same core principle applies: grant the minimum access needed for the task at hand, and enforce it at the data layer, not the prompt layer.
 
 ---
 
@@ -109,6 +109,6 @@ If you're deploying agents and haven't worked through this explicitly, here's a 
 - **For multi-tenant deployments**: where is the tenant scope enforced? If the answer involves the word "prompt," that's not an answer.
 - **For any agent that can iterate**: does it have a step budget? A time limit? A checkpoint mechanism? Does someone get notified if it runs long?
 
-The framework that ties this together — continuous verification, fail-closed defaults, capability tokens with explicit scope — is what zero trust for AI agents looks like in practice. [That post](./04-zero-trust-ai-agents.md) goes into the architecture in detail.
+The framework that ties this together — continuous verification, fail-closed defaults, capability tokens with explicit scope — is what zero trust for AI agents looks like in practice. [That post](./04-zero-trust-ai-agents) goes into the architecture in detail.
 
 The short version: if you'd be uncomfortable explaining to your CISO exactly what an agent has access to and what stops it from abusing that access, that's where to start.

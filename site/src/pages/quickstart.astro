@@ -100,9 +100,9 @@ requiredCapabilities:
 
         <h2 id="claude">Claude Desktop / Cursor / Windsurf</h2>
         <p>Add the proxy as an <code>mcpServers</code> entry in <code>claude_desktop_config.json</code> (or the equivalent file for Cursor / Windsurf):</p>
-<pre><code>{"{"}"
-  "mcpServers": {"{"}"
-    "filesystem-governed": {"{"}"
+<pre><code>{'{'}
+  "mcpServers": {'{'}
+    "filesystem-governed": {'{'}
       "command": "npx",
       "args": [
         "-y", "@euno/mcp", "proxy",
@@ -110,9 +110,9 @@ requiredCapabilities:
         "--",
         "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
       ]
-    {"}"}
-  {"}"}
-{"}"}</code></pre>
+    {'}'}
+  {'}'}
+{'}'}</code></pre>
         <p>Without <code>--policy</code> the proxy is transparent — handy for capturing an audit trail before you write any rules.</p>
 
         <h2 id="http">HTTP transport · LangChain.js</h2>
@@ -126,17 +126,17 @@ requiredCapabilities:
 
         <h2 id="langchain">In-process LangChain.js</h2>
         <p>If your agent runs LangChain tools in-process and you don't want a separate proxy process, install <code>@euno/langchain</code> and wrap your tool:</p>
-<pre><code>import {"{"} createLocalRuntime, wrapAsLangChainTool {"}"} from '@euno/langchain';
+<pre><code>import {'{'} createLocalRuntime, wrapAsLangChainTool {'}'} from '@euno/langchain';
 
-const runtime = await createLocalRuntime({"{"} policyFile: './euno.policy.yaml' {"}"});
+const runtime = await createLocalRuntime({'{'} policyFile: './euno.policy.yaml' {'}'});
 
-const queryTool = wrapAsLangChainTool(runtime, {"{"}"
+const queryTool = wrapAsLangChainTool(runtime, {'{'}
   name:        'query_db',
   description: 'Run a read-only SQL query',
-  schema: {"{"} type: 'object', required: ['sql'],
-            properties: {"{"} sql: {"{"} type: 'string' {"}"} {"}"} {"}"},
-  handler: async ({"{"} sql {"}"}) =&gt; db.query(String(sql)),
-{"}"});</code></pre>
+  schema: {'{'} type: 'object', required: ['sql'],
+            properties: {'{'} sql: {'{'} type: 'string' {'}'} {'}'} {'}'},
+  handler: async ({'{'} sql {'}'}) =&gt; db.query(String(sql)),
+{'}'});</code></pre>
         <p>Same YAML, same conditions, same audit format — no transport hop.</p>
 
         <h2 id="next">Next steps</h2>

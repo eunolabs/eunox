@@ -43,7 +43,7 @@ That's the right place to enforce policy. Not in the model, where you're fightin
 
 ## Where MCP fits in
 
-If you haven't run into the [Model Context Protocol](./05-mcp-explained.md) yet — brief version: it's a standard protocol that defines how AI agents discover and call tools. Instead of every model having its own custom integration format, MCP gives you a common wire format. Tools are MCP servers; the agent runtime is an MCP client. A tool written once works with any MCP-compatible agent.
+If you haven't run into the [Model Context Protocol](./05-mcp-explained) yet — brief version: it's a standard protocol that defines how AI agents discover and call tools. Instead of every model having its own custom integration format, MCP gives you a common wire format. Tools are MCP servers; the agent runtime is an MCP client. A tool written once works with any MCP-compatible agent.
 
 This matters here because MCP creates a clean, well-defined interception point. Every tool call is a discrete JSON-RPC message with a tool name and structured arguments. That message travels from the agent runtime to the MCP server. If you sit something between them, you see every call before anything executes. That's exactly where a policy proxy lives.
 
@@ -138,7 +138,7 @@ A typical set of conditions for an analytics agent:
 
 For `execute_sql`, the proxy pulls the first keyword out of the query string and checks it against the allowlist. `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `TRUNCATE` — all blocked if the only permitted operation is `SELECT`. This check runs on the parsed string value, not on the model's stated intent, not on what the system prompt said. It doesn't matter how the injection was phrased to produce the call. The argument is what it is.
 
-`allowedPaths` checks file paths against a glob pattern list. A call to `read_file` with `/etc/passwd` doesn't match `/data/reports/**` and gets denied. `allowedRecipientDomains` checks email recipients — the law firm exfiltration in [the governance failure modes post](./03-agent-governance-failure-modes.md) would have been stopped right here. `maxCalls` is a distributed rate counter in Redis — when it hits zero, further calls are denied for the lifetime of that token.
+`allowedPaths` checks file paths against a glob pattern list. A call to `read_file` with `/etc/passwd` doesn't match `/data/reports/**` and gets denied. `allowedRecipientDomains` checks email recipients — the law firm exfiltration in [the governance failure modes post](./03-agent-governance-failure-modes) would have been stopped right here. `maxCalls` is a distributed rate counter in Redis — when it hits zero, further calls are denied for the lifetime of that token.
 
 If any condition fails, the whole call is denied. And unknown condition types — conditions in the token that this version of the proxy doesn't recognise — also cause denial. There's no "skip and continue" path for things the proxy doesn't understand. Future policy extensions that the proxy hasn't been updated to evaluate yet cause denials, not silent bypass.
 
@@ -184,4 +184,4 @@ The prompt injection problem isn't solvable inside the LLM. There's no phrasing 
 
 ---
 
-*Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era.md)*
+*Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era)*

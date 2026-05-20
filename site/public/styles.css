@@ -840,26 +840,28 @@ footer.site-footer a:hover { color: #c4b5fd; }
     border-color: #818cf8;
     box-shadow: 0 4px 20px rgba(99,102,241,0.08);
 }
-.blog-card h2 {
+.blog-card .blog-card-title {
     font-size: 1.25em;
     font-weight: 600;
     margin: 0 0 8px;
-}
-.blog-card h2 a {
     color: #1e1b4b;
-    text-decoration: none;
-    border: 0;
 }
-.blog-card h2 a:hover { color: #6d28d9; }
-.blog-card .blog-meta {
+.blog-card .blog-card-meta {
     font-size: 0.82em;
     color: #94a3b8;
     margin-bottom: 10px;
 }
-.blog-card p {
+.blog-card .blog-card-desc {
     color: #475569;
     font-size: 0.95em;
     margin: 0;
+}
+.blog-card .blog-card-read {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 0.88em;
+    font-weight: 600;
+    color: #6d28d9;
 }
 
 /* ── Blog post content ────────────────────────────────────────────── */

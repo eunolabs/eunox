@@ -26,7 +26,7 @@ const { Content } = await post.render();
 
     <main class="content-section blog-post-content">
         <div class="blog-post-meta">
-            <time datetime={post.data.pubDate}>{new Date(post.data.pubDate).toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
+            <time datetime={post.data.pubDate.toISOString().slice(0, 10)}>{post.data.pubDate.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
         </div>
         <Content />
     </main>

@@ -61,11 +61,14 @@ jobs:
       # If you use a custom domain (eunolabs.ai) the base is "/" and this step
       # is a no-op.
       - name: Configure GitHub Pages
+        id: pages
         uses: actions/configure-pages@v4
 
       - name: Build Astro site
         run: npm run build
         working-directory: site
+        env:
+          PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

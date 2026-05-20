@@ -17,7 +17,7 @@ The typical next step is to just... not think about it, and carry on. The typica
 
 This post is the middle path. I'm going to walk you through adding real, substantive governance to your Claude Desktop MCP setup in the time it takes to write a short YAML file and edit one JSON config. The governance layer we're adding is `@euno/mcp` — a policy proxy that sits between Claude and your MCP servers, checks every tool call against a policy you define, and blocks anything that doesn't match.
 
-If you want to understand the theory behind why this architecture works, [the policy proxy design post](./06-mcp-policy-proxy.md) covers that in depth. This post is the hands-on tutorial.
+If you want to understand the theory behind why this architecture works, [the policy proxy design post](./06-mcp-policy-proxy) covers that in depth. This post is the hands-on tutorial.
 
 ---
 
@@ -112,7 +112,7 @@ Let me walk through the decisions in here.
 
 **Separate `write` capability with narrower scope.** Reads and writes are separate capabilities with separate rate limits. Claude can read 200 files per hour; it can only write 20 per hour. This is deliberate — an automated loop that starts writing files will hit the wall quickly. Read access is broader than write access. These should almost never be the same.
 
-**`maxCalls` conditions.** We covered this in [the failure modes post](./03-agent-governance-failure-modes.md) — the accounts reconciliation agent that sent 847 emails. The same failure mode applies to file writes. If Claude misunderstands a task and starts writing dozens of files in a loop, you want it to stop at 20, not continue indefinitely.
+**`maxCalls` conditions.** We covered this in [the failure modes post](./03-agent-governance-failure-modes) — the accounts reconciliation agent that sent 847 emails. The same failure mode applies to file writes. If Claude misunderstands a task and starts writing dozens of files in a loop, you want it to stop at 20, not continue indefinitely.
 
 If you're using multiple MCP servers, you add more capabilities here. For a Postgres server, it might look like:
 
@@ -127,7 +127,7 @@ If you're using multiple MCP servers, you add more capabilities here. For a Post
         windowSeconds: 3600
 ```
 
-That `allowedOperations: ["SELECT"]` is the condition that blocks the `DROP TABLE` attack from [the prompt injection post](./01-prompt-injection-policy-layer.md). It checks the first keyword of any SQL query and rejects anything that isn't `SELECT`. One condition, one line in YAML, enormous blast radius reduction.
+That `allowedOperations: ["SELECT"]` is the condition that blocks the `DROP TABLE` attack from [the prompt injection post](./01-prompt-injection-policy-layer). It checks the first keyword of any SQL query and rejects anything that isn't `SELECT`. One condition, one line in YAML, enormous blast radius reduction.
 
 ---
 
@@ -233,7 +233,7 @@ A few things I've found useful during this iteration phase:
 
 I want to be straight about the limits of the local mode setup.
 
-**Rate limits are per-process.** The `maxCalls` counters in local mode are in-memory in the proxy process. If you restart Claude Desktop, the counters reset. This is fine for a single-user local setup. For a shared or multi-user deployment, you need shared Redis-backed counters — which is what the hosted gateway provides. [The migration post](./08-local-yaml-to-hosted-gateway.md) covers that transition when you get there.
+**Rate limits are per-process.** The `maxCalls` counters in local mode are in-memory in the proxy process. If you restart Claude Desktop, the counters reset. This is fine for a single-user local setup. For a shared or multi-user deployment, you need shared Redis-backed counters — which is what the hosted gateway provides. [The migration post](./08-local-yaml-to-hosted-gateway) covers that transition when you get there.
 
 **The audit log is local and mutable.** `~/.euno/audit.jsonl` is HMAC-chained, so tampering is detectable, but it's a file on your local machine. If someone has access to your machine, they have access to the audit log. For compliance use cases — SOC 2, regulatory requirements — you want a durable, centralised audit store, which again requires the hosted gateway.
 
@@ -253,6 +253,6 @@ The principle of "start with the policy in a YAML file, enforce at the tool call
 
 ---
 
-*Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md)*
+*Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy)*
 
-*Next: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)*
+*Next: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway)*

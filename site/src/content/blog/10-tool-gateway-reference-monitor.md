@@ -13,7 +13,7 @@ The "reference monitor" concept has been in computer security literature since J
 
 For decades this was implemented at the OS level — the kernel's access control layer, SELinux, mandatory access control. When we talk about a tool gateway for AI agents, we're implementing exactly the same concept at the application layer, with AI agent sessions as subjects and tool calls as the requests to be mediated.
 
-This post is about what that mediation actually looks like in code — the enforcement pipeline that every tool call runs through before it reaches an upstream tool, and why each step is designed the way it is. If you've read [the capability tokens post](./09-capability-tokens.md) and want to understand what happens to those tokens once they arrive at the gateway, this is the continuation.
+This post is about what that mediation actually looks like in code — the enforcement pipeline that every tool call runs through before it reaches an upstream tool, and why each step is designed the way it is. If you've read [the capability tokens post](./09-capability-tokens) and want to understand what happens to those tokens once they arrive at the gateway, this is the continuation.
 
 ---
 
@@ -207,4 +207,4 @@ That's the right architecture for a system where the principal doing the request
 
 ---
 
-*Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+*Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens)*
