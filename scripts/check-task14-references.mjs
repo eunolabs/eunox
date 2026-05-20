@@ -123,7 +123,7 @@ requireText(
 
 requireText(
   readmeContent,
-  'Stage 5',
+  '| 5 |',
   'Stage 5 row in README.md project-status table',
 );
 
