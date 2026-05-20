@@ -208,6 +208,12 @@ workarounds.
     `GcpSecretManagerSecretStore`
   - Document the selection logic: if `SECRET_STORE_PROVIDER` is set, load the
     corresponding implementation; otherwise fall back to `process.env`
+  - `createSecretStoreFromEnv()` factory in `@euno/common-core` wired to env config
+  - `SECRET_STORE_PROVIDER` and provider-specific vars added to `IssuerConfigSchema`
+    and `GatewayConfigSchema` with cross-field validation
+  - Unit tests in `public/packages/common/src/__tests__/secret-store.test.ts`
+  - Config schema tests in `euno-platform/packages/common/tests/config.test.ts`
+  - `docs/ADAPTERS.md` §"Secret Store" added
 
 - [ ] **Cloud-agnostic object storage anchor**
   - Refactor `CrossChainAnchor` to use an `ObjectStore` interface

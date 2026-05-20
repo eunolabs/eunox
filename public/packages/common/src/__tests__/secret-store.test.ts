@@ -21,6 +21,8 @@ import {
   GcpSecretManagerSecretStore,
   createSecretStore,
   createSecretStoreFromEnv,
+  getSecretOrThrow,
+  SecretNotFoundError,
 } from '../secret-store';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -584,7 +586,7 @@ describe('createSecretStoreFromEnv', () => {
   it('throws when gcp-secretmanager is selected but GCP_PROJECT_ID is missing', () => {
     expect(() =>
       createSecretStoreFromEnv({ SECRET_STORE_PROVIDER: 'gcp-secretmanager' }),
-    ).toThrow('GCP_PROJECT_ID must be set');
+    ).toThrow('SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) must be set');
   });
 
   it('throws for an unrecognised SECRET_STORE_PROVIDER value', () => {
@@ -610,5 +612,84 @@ describe('createSecretStoreFromEnv', () => {
     };
     expect(cfg.credentialType).toBe('client-secret');
     expect(cfg.clientId).toBe('client-id');
+  });
+});
+
+// ── getSecretOrThrow / SecretNotFoundError ─────────────────────────────────────
+
+describe('getSecretOrThrow', () => {
+  it('returns the secret value when present', async () => {
+    const store = new EnvSecretStore({ MY_KEY: 'my-value' });
+    const value = await getSecretOrThrow(store, 'MY_KEY');
+    expect(value).toBe('my-value');
+  });
+
+  it('throws SecretNotFoundError when secret is absent', async () => {
+    const store = new EnvSecretStore({});
+    await expect(getSecretOrThrow(store, 'MISSING_KEY')).rejects.toBeInstanceOf(SecretNotFoundError);
+  });
+
+  it('SecretNotFoundError has the correct secretName and provider', async () => {
+    const store = new EnvSecretStore({});
+    let caught: SecretNotFoundError | undefined;
+    try {
+      await getSecretOrThrow(store, 'MISSING_KEY');
+    } catch (err) {
+      caught = err as SecretNotFoundError;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.secretName).toBe('MISSING_KEY');
+    expect(caught!.name).toBe('SecretNotFoundError');
+  });
+
+  it('SecretNotFoundError message contains the secret name', async () => {
+    const store = new EnvSecretStore({});
+    await expect(getSecretOrThrow(store, 'MY_SECRET')).rejects.toThrow('MY_SECRET');
+  });
+});
+
+describe('createSecretStoreFromEnv — SECRET_STORE_* prefixed vars', () => {
+  it('prefers SECRET_STORE_AWS_REGION over AWS_REGION for aws-secretsmanager', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      SECRET_STORE_AWS_REGION: 'eu-central-1',
+      AWS_REGION: 'us-east-1',
+    });
+    expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
+  });
+
+  it('falls back to AWS_REGION when SECRET_STORE_AWS_REGION is absent', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      AWS_REGION: 'us-west-2',
+    });
+    expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
+  });
+
+  it('prefers SECRET_STORE_GCP_PROJECT_ID over GCP_PROJECT_ID', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'gcp-secretmanager',
+      SECRET_STORE_GCP_PROJECT_ID: 'override-project',
+      GCP_PROJECT_ID: 'fallback-project',
+    });
+    expect(store).toBeInstanceOf(GcpSecretManagerSecretStore);
+  });
+
+  it('falls back to GCP_PROJECT_ID when SECRET_STORE_GCP_PROJECT_ID is absent', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'gcp-secretmanager',
+      GCP_PROJECT_ID: 'my-project',
+    });
+    expect(store).toBeInstanceOf(GcpSecretManagerSecretStore);
+  });
+
+  it('prefers SECRET_STORE_AZURE_CREDENTIAL_TYPE over AZURE_CREDENTIAL_TYPE', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'azure-keyvault',
+      SECRET_STORE_AZURE_VAULT_URL: 'https://vault.azure.net/',
+      SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'managed-identity',
+      AZURE_CREDENTIAL_TYPE: 'default',
+    });
+    expect(store).toBeInstanceOf(AzureKeyVaultSecretStore);
   });
 });

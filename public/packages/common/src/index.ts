@@ -29,6 +29,7 @@ export * from './tool-transport';
 export * from './gateway-quota';
 export * from './key-utils';
 export * from './kill-switch';
+export * from './secret-store';
 export * from './runtime';
 export * from './manifest-validator';
 export * from './usage-meter';

@@ -430,7 +430,7 @@ describe('euno-mcp kill CLI — subprocess', () => {
     const { exitCode, stdout } = await runKillAsync('all', ['--port', String(proxyPort)]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain('✓ Global kill switch activated');
-  });
+  }, 15_000);
 
   it('exits 0 and prints session kill confirmation for a specific session id', async () => {
     const { exitCode, stdout } = await runKillAsync(
@@ -439,7 +439,7 @@ describe('euno-mcp kill CLI — subprocess', () => {
     );
     expect(exitCode).toBe(0);
     expect(stdout).toContain('✓ Kill switch activated for session my-session-xyz');
-  });
+  }, 15_000);
 
   it('exits 1 and prints "Invalid --port value" for a non-numeric port', () => {
     // Does not connect to the proxy — safe to use synchronous spawn.

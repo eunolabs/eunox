@@ -70,6 +70,44 @@ export interface SecretStore {
   getSecret(name: string): Promise<string | undefined>;
 }
 
+/**
+ * Thrown when {@link getSecretOrThrow} cannot find the requested secret.
+ */
+export class SecretNotFoundError extends Error {
+  constructor(
+    public readonly secretName: string,
+    public readonly provider: string,
+  ) {
+    super(
+      `SecretStore (${provider}): secret "${secretName}" not found. ` +
+        'Ensure the secret is provisioned and the runtime has permission to read it.',
+    );
+    this.name = 'SecretNotFoundError';
+  }
+}
+
+/**
+ * Convenience wrapper around `store.getSecret(name)` that throws a
+ * {@link SecretNotFoundError} when the secret is absent rather than
+ * returning `undefined`.
+ *
+ * @example
+ * ```typescript
+ * const hmac = await getSecretOrThrow(store, 'AUDIT_LEDGER_HMAC_SECRET');
+ * ```
+ */
+export async function getSecretOrThrow(
+  store: SecretStore,
+  name: string,
+): Promise<string> {
+  const value = await store.getSecret(name);
+  if (value === undefined) {
+    const provider = store.constructor?.name ?? 'unknown';
+    throw new SecretNotFoundError(name, provider);
+  }
+  return value;
+}
+
 // ── Provider type ─────────────────────────────────────────────────────────────
 
 /** The set of built-in `SecretStore` provider identifiers. */
@@ -635,7 +673,8 @@ export function createSecretStoreFromEnv(
             'when SECRET_STORE_PROVIDER=azure-keyvault.',
         );
       }
-      const credentialType = env['AZURE_CREDENTIAL_TYPE'] as
+      // Prefer SECRET_STORE_AZURE_CREDENTIAL_TYPE; fall back to AZURE_CREDENTIAL_TYPE for compat.
+      const credentialType = (env['SECRET_STORE_AZURE_CREDENTIAL_TYPE'] ?? env['AZURE_CREDENTIAL_TYPE']) as
         | 'default'
         | 'managed-identity'
         | 'client-secret'
@@ -643,9 +682,9 @@ export function createSecretStoreFromEnv(
       return new AzureKeyVaultSecretStore({
         vaultUrl,
         credentialType: credentialType ?? 'default',
-        clientId: env['AZURE_CLIENT_ID'],
-        clientSecret: env['AZURE_CLIENT_SECRET'],
-        tenantId: env['AZURE_TENANT_ID'],
+        clientId: env['SECRET_STORE_AZURE_CLIENT_ID'] ?? env['AZURE_CLIENT_ID'],
+        clientSecret: env['SECRET_STORE_AZURE_CLIENT_SECRET'] ?? env['AZURE_CLIENT_SECRET'],
+        tenantId: env['SECRET_STORE_AZURE_TENANT_ID'] ?? env['AZURE_TENANT_ID'],
       });
     }
 
@@ -659,27 +698,32 @@ export function createSecretStoreFromEnv(
           arnsBySecretName[key.slice(arnPrefix.length)] = value;
         }
       }
+      // Prefer SECRET_STORE_AWS_* vars; fall back to bare AWS_* for backward compat.
       return new AwsSecretsManagerSecretStore({
-        region: env['AWS_REGION'],
-        accessKeyId: env['AWS_ACCESS_KEY_ID'],
-        secretAccessKey: env['AWS_SECRET_ACCESS_KEY'],
-        sessionToken: env['AWS_SESSION_TOKEN'],
+        region: env['SECRET_STORE_AWS_REGION'] ?? env['AWS_REGION'],
+        accessKeyId: env['SECRET_STORE_AWS_ACCESS_KEY_ID'] ?? env['AWS_ACCESS_KEY_ID'],
+        secretAccessKey: env['SECRET_STORE_AWS_SECRET_ACCESS_KEY'] ?? env['AWS_SECRET_ACCESS_KEY'],
+        sessionToken: env['SECRET_STORE_AWS_SESSION_TOKEN'] ?? env['AWS_SESSION_TOKEN'],
         arnsBySecretName,
         fallbackEnv: env,
       });
     }
 
     case 'gcp-secretmanager': {
-      const projectId = env['GCP_PROJECT_ID'];
+      // Prefer SECRET_STORE_GCP_PROJECT_ID; fall back to GCP_PROJECT_ID for backward compat.
+      const projectId = env['SECRET_STORE_GCP_PROJECT_ID'] ?? env['GCP_PROJECT_ID'];
       if (!projectId) {
         throw new Error(
-          'createSecretStoreFromEnv: GCP_PROJECT_ID must be set ' +
+          'createSecretStoreFromEnv: SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) must be set ' +
             'when SECRET_STORE_PROVIDER=gcp-secretmanager.',
         );
       }
       // GOOGLE_APPLICATION_CREDENTIALS is consumed automatically by the GCP
       // SDK as Application Default Credentials; we don't need to forward it.
-      return new GcpSecretManagerSecretStore({ projectId });
+      return new GcpSecretManagerSecretStore({
+        projectId,
+        keyFilePath: env['SECRET_STORE_GCP_KEY_FILE_PATH'],
+      });
     }
 
     default: {
