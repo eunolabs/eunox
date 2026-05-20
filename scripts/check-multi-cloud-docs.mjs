@@ -145,8 +145,8 @@ function requireText(content, needle, description) {
 function extractSection(content, headingPrefix) {
   if (content === null) return null;
   const idx = content.indexOf(`\n${headingPrefix}`);
-  // If the parent file exists but the heading is absent, return empty string so
-  // section-scoped requireText() calls emit clear "Missing:" diagnostics.
+  // Return content from the matched heading onward; if the heading is absent,
+  // return empty string so section-scoped requireText() calls emit "Missing:".
   return idx >= 0 ? content.slice(idx + 1) : '';
 }
 
