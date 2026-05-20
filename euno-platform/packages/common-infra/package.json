@@ -24,7 +24,7 @@
     "@euno/common-core": "*"
   },
   "devDependencies": {
-    "@aws-sdk/client-kms": "3.515.0",
+    "@aws-sdk/client-kms": "3.1050.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.11.0",
     "jest": "^30.3.0",

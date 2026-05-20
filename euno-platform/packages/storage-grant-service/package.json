@@ -24,9 +24,9 @@
     "winston": "^3.11.0"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-s3": "^3.515.0",
-    "@aws-sdk/client-sts": "^3.515.0",
-    "@aws-sdk/s3-request-presigner": "^3.515.0",
+    "@aws-sdk/client-s3": "^3.1050.0",
+    "@aws-sdk/client-sts": "^3.1050.0",
+    "@aws-sdk/s3-request-presigner": "^3.1050.0",
     "@azure/storage-blob": "^12.31.0",
     "@google-cloud/storage": "^7.19.0"
   },

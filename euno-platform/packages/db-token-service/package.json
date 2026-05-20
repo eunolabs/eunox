@@ -24,9 +24,9 @@
     "winston": "^3.11.0"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-rds": "^3.515.0",
-    "@aws-sdk/client-sts": "^3.515.0",
-    "@aws-sdk/rds-signer": "^3.515.0",
+    "@aws-sdk/client-rds": "^3.1050.0",
+    "@aws-sdk/client-sts": "^3.1050.0",
+    "@aws-sdk/rds-signer": "^3.1050.0",
     "@azure/identity": "^4.0.0",
     "google-auth-library": "^10.6.2"
   },
