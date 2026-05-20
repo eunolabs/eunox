@@ -604,3 +604,175 @@ resolver and any private ION sidecar that anchors on the same Bitcoin Mainnet.
   private nodes, use a certificate from a CA in the system trust store.
 - `did:key` is stateless and requires no network call. It is always available
   regardless of ION resolver connectivity.
+
+---
+
+## 10. Cognito SCIM bridge (AWS IAM Identity Center)
+
+> **Status:** Multi-cloud Phase 1. Use this section when you want to provision
+> users and groups into the Euno issuer from AWS Cognito via the SCIM 2.0
+> protocol, using **AWS IAM Identity Center** as the SCIM push source.
+
+AWS Cognito User Pools do not have a built-in outbound SCIM push capability.
+The recommended integration path is to use **AWS IAM Identity Center** (formerly
+AWS SSO) as the SCIM push source, with the IAM Identity Center SCIM endpoint
+configured to push to the Euno issuer's SCIM endpoint.
+
+### 10.1 Architecture
+
+```
+AWS IAM Identity Center
+  (SCIM automatic provisioning)
+        │
+        │  HTTPS POST /scim/v2/Users
+        │  HTTPS POST /scim/v2/Groups
+        ▼
+Euno capability-issuer (/scim/v2/)
+  ──► scim_users / scim_groups tables (Postgres)
+        │
+        ▼
+  role enrichment at token issuance
+  (IdP roles ∪ SCIM group-mapped roles)
+```
+
+IAM Identity Center acts as the identity source and SCIM push source.
+Cognito User Pools authenticate users at runtime; IAM Identity Center
+manages the authoritative group memberships that drive SCIM provisioning.
+
+### 10.2 Prerequisites
+
+- AWS IAM Identity Center enabled in your AWS organisation (or standalone account).
+- `ISSUER_DB_URL` set and pointing at a Postgres instance.
+- `ISSUER_SCIM_BEARER_TOKEN` set (≥ 32 characters, stored in Secrets Manager —
+  see [`docs/secrets-aws.md`](./secrets-aws.md)).
+- The Euno issuer is reachable from IAM Identity Center over HTTPS.
+  On EKS, expose the issuer via an internal ALB with ACM certificate
+  (see [`docs/deploy-eks.md`](./deploy-eks.md) §5).
+
+### 10.3 IAM Identity Center — SCIM configuration
+
+1. Open **AWS Console → IAM Identity Center → Settings → Automatic provisioning**.
+
+2. Click **Enable** under *Automatic provisioning*. IAM Identity Center
+   generates a **SCIM endpoint URL** and an **Access token**.
+
+3. Copy the generated **SCIM endpoint URL** (e.g.
+   `https://scim.us-east-1.amazonaws.com/…/scim/v2/`).
+   You do **not** use this URL directly — instead, configure IAM Identity Center
+   to push to the **Euno** SCIM endpoint (step 4).
+
+4. Under **Identity source → External identity provider** (or built-in
+   directory), navigate to **Provisioning** and supply the Euno SCIM endpoint:
+
+   | Field | Value |
+   |---|---|
+   | SCIM endpoint | `https://<issuer-host>/scim/v2` |
+   | Bearer token | `<ISSUER_SCIM_BEARER_TOKEN>` |
+
+   > **Note:** If IAM Identity Center's provisioning UI does not support a
+   > custom SCIM endpoint directly, use the **AWS SCIM gateway** Lambda
+   > pattern described in §10.6.
+
+5. Under **Attribute mappings**, verify the following mappings are active:
+
+   | IAM Identity Center attribute | SCIM attribute |
+   |---|---|
+   | `${user:AD_GUID}` or `${user:subject}` | `externalId` |
+   | `${user:email}` | `userName` |
+   | `${user:givenName}` | `name.givenName` |
+   | `${user:familyName}` | `name.familyName` |
+   | `${user:displayName}` | `displayName` |
+
+   The Euno SCIM user lookup uses `externalId` (matched against the IdP `sub`
+   claim) first, then `userName` (email). Ensure `externalId` is mapped to
+   the same identifier that Cognito will include as the `sub` claim in ID
+   tokens.
+
+6. Click **Save configuration** and then **Test connection** to verify
+   connectivity.
+
+### 10.4 Group provisioning and role mapping
+
+1. In IAM Identity Center, create **Groups** whose display names match the
+   entries in your `ISSUER_SCIM_GROUP_ROLE_MAP`:
+
+   ```bash
+   # Example group display names → euno roles
+   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+   ```
+
+2. Assign users to the relevant groups in IAM Identity Center.
+
+3. IAM Identity Center pushes `POST /scim/v2/Groups` with the group's `displayName`
+   and member list to the Euno issuer.
+
+4. At token issuance time, the issuer looks up the authenticated user's SCIM
+   group memberships and adds the mapped roles to the role set provided by
+   the Cognito ID token (`cognito:groups` claim).
+
+### 10.5 Attribute mappings for Cognito
+
+When using Cognito as the runtime identity provider alongside IAM Identity
+Center for SCIM provisioning, ensure the attribute values are consistent:
+
+| Attribute | Cognito ID token claim | IAM Identity Center → SCIM `externalId` |
+|---|---|---|
+| User identifier | `sub` (UUID assigned by Cognito) | Must match. Map `${user:subject}` → `externalId` in IAM Identity Center. |
+| Email | `email` | `userName` in SCIM |
+| Groups | `cognito:groups` | `members` list in `/scim/v2/Groups` |
+
+The Euno SCIM enrichment matches the Cognito `sub` claim value against
+`scim_users.external_id`. For the match to succeed, IAM Identity Center must
+push the same `sub` value as the SCIM `externalId`.
+
+If the Cognito `sub` values differ from the IAM Identity Center subject
+identifiers (e.g. when IAM Identity Center uses its own internal IDs), use
+the **email-based fallback**: Euno will fall back to matching `userName`
+against the user's email from the Cognito token if `externalId` does not match.
+
+### 10.6 Alternative: custom SCIM proxy Lambda (advanced)
+
+When IAM Identity Center cannot push directly to an arbitrary SCIM endpoint
+(e.g. in organisations that restrict outbound SCIM destinations), deploy a
+thin Lambda proxy that:
+
+1. Receives SCIM events from IAM Identity Center's built-in SCIM endpoint.
+2. Forwards them to the Euno issuer's `/scim/v2/` endpoint with the
+   `ISSUER_SCIM_BEARER_TOKEN`.
+
+```
+IAM Identity Center
+  → built-in SCIM endpoint
+    → EventBridge / SNS
+      → Lambda (scim-proxy)
+        → Euno /scim/v2/
+```
+
+This pattern is also useful when the Euno issuer is deployed in a private VPC
+without an internet-facing ALB.
+
+### 10.7 Environment variables
+
+```bash
+# Issuer — enable SCIM 2.0
+ISSUER_DB_URL=postgres://issuer:secret@db:5432/issuer_db
+ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-from-secrets-manager>
+ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+
+# Identity provider remains Cognito for runtime authentication:
+IDENTITY_PROVIDER=aws-cognito
+AWS_COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+AWS_COGNITO_CLIENT_ID=<app-client-id>
+```
+
+### 10.8 Security checklist
+
+- [ ] `ISSUER_SCIM_BEARER_TOKEN` is stored in AWS Secrets Manager and rotated
+      at least annually (SOC 2 CC6.1).
+- [ ] The SCIM endpoint is behind TLS (ACM certificate on the ALB).
+- [ ] Access to `/scim/v2/` is restricted to IAM Identity Center source IPs
+      at the ALB level (WAF IP set rule), or the endpoint is on an internal ALB.
+- [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` has been reviewed — mapping a group to
+      an `admin`-tier role grants elevated capabilities to all group members.
+- [ ] User `externalId` ↔ Cognito `sub` mapping has been validated end-to-end
+      in a staging environment before production rollout.
