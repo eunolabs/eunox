@@ -99,14 +99,14 @@ const mvpContent = readFile('docs/mvp.md');
 
 requireText(
   mvpContent,
-  'Task 14',
-  'Task 14 entry in docs/mvp.md Stage-5 status block',
+  '> - [x] Task 14',
+  'Task 14 checklist entry in docs/mvp.md Stage 5 status block',
 );
 
 requireText(
   mvpContent,
-  'Stage-5 status block',
-  'Stage-5 status block header in docs/mvp.md',
+  '> **Stage 5 — status block',
+  'Stage 5 status block header in docs/mvp.md',
 );
 
 // ---------------------------------------------------------------------------
