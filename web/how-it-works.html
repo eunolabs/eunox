@@ -16,7 +16,7 @@
                 <img src="./assets/eunolabs.png" alt="euno">
                 <span class="wordmark">euno</span>
             </a>
-            <span class="stage-badge">Stage 5</span>
+            <span class="stage-badge">GA</span>
         </div>
         <nav class="header-nav" aria-label="Primary">
             <a href="./quickstart.html" class="nav-link">Quick start</a>
@@ -51,7 +51,7 @@
                 <li><a href="#parity">Schema parity</a></li>
                 <li><a href="#audit">Audit log internals</a></li>
                 <li><a href="#guarantees">Enforcement guarantees</a></li>
-                <li><a href="#stages">Stage 0 → Stage 5 roadmap</a></li>
+                <li><a href="#stages">Platform capabilities</a></li>
             </ul>
         </div>
 
@@ -108,7 +108,7 @@ host ◄────────────────── result / Capabili
         <h2 id="parity">Schema parity — one shape, zero drift</h2>
         <p>The policy file is a <strong>literal subset</strong> of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code> (Apache-2.0). <code>@euno/mcp</code> imports condition types directly from <code>@euno/common-core</code> and never defines its own. This means:</p>
         <ul>
-            <li>A policy authored today for <code>@euno/mcp</code> is forward-compatible with the Stage-3 hosted gateway and the Stage-4 capability issuer.</li>
+            <li>A policy authored today for <code>@euno/mcp</code> is forward-compatible with the hosted gateway and the capability issuer.</li>
             <li>Unknown condition types are denied at <strong>two</strong> points: <code>euno-mcp validate</code> rejects the policy, and the runtime engine refuses to evaluate it.</li>
             <li>The same enforcement engine is reused by <code>@euno/langchain</code> for in-process LangChain.js tools.</li>
         </ul>
@@ -123,7 +123,7 @@ host ◄────────────────── result / Capabili
         <p>The log rotates at <strong>100 MiB</strong>. Rotated files are named <code>audit.jsonl.&lt;ISO-timestamp&gt;</code>. <code>verifyAuditEvent()</code> recomputes the HMAC for round-trip integrity checks, and <code>euno-mcp stats</code> aggregates denials across active and rotated logs into an ASCII histogram grouped by <code>conditionType</code> and <code>denialCode</code>.</p>
 
         <div class="callout">
-            <strong>Why HMAC and not a digital signature?</strong> Stage 1–2 audit is <em>tamper-evident locally</em> — anyone with read access to the key can verify, anyone without it cannot forge. Stage 5 introduces enterprise KMS-backed signing (Azure Key Vault, AWS KMS, GCP Cloud KMS) and a cross-chain anchor for tamper-evident audit across hosts.
+            <strong>Why HMAC and not a digital signature?</strong> Local audit is <em>tamper-evident on-device</em> — anyone with read access to the key can verify, anyone without it cannot forge. The enterprise tier introduces KMS-backed signing (Azure Key Vault, AWS KMS, GCP Cloud KMS) and a cross-chain anchor for tamper-evident audit across hosts.
         </div>
 
         <h2 id="guarantees">Enforcement guarantees</h2>
@@ -134,18 +134,16 @@ host ◄────────────────── result / Capabili
             <li><strong><code>allowedOperations</code> is a first-word check</strong> — it splits on whitespace and matches the first token against the allowlist. It is not a SQL parser. Pair with <code>argumentSchema</code> if you need stricter parsing.</li>
         </ul>
 
-        <h2 id="stages">Stage 0 → Stage 5 roadmap</h2>
-        <p>euno follows a staged execution plan, and all five implementation stages are now complete. The same policy schema spans local proxy enforcement, the hosted gateway, the capability issuer, and the Stage-5 enterprise federation and compliance surface.</p>
+        <h2 id="stages">Platform capabilities</h2>
+        <p>The same policy schema spans local proxy enforcement, the hosted gateway, the capability issuer, and the enterprise federation and compliance surface. All capability tiers are generally available.</p>
 
         <table>
-            <thead><tr><th>Stage</th><th>Ships</th><th>Status</th></tr></thead>
+            <thead><tr><th>Capability tier</th><th>What's included</th></tr></thead>
             <tbody>
-                <tr><td>0</td><td>Common types, CLI, license boundary, repo structure</td><td>✅ Done</td></tr>
-                <tr><td>1</td><td><code>@euno/mcp</code> 0.1.x — local MCP proxy, policy engine, OCSF audit</td><td>✅ Done</td></tr>
-                <tr><td>2</td><td><code>@euno/mcp</code> 0.1.0 — full condition matrix, <code>@euno/langchain</code>, reference policies</td><td>✅ Done</td></tr>
-                <tr><td>3</td><td>Hosted Tool Gateway, API-key façade, signed JWT capability tokens</td><td>✅ Done</td></tr>
-                <tr><td>4</td><td>Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity)</td><td>✅ Done</td></tr>
-                <tr><td>5</td><td>Enterprise: DID federation, KMS, SOC 2, multi-cloud</td><td>✅ <strong>Current release</strong></td></tr>
+                <tr><td><strong>Local proxy</strong></td><td><code>@euno/mcp</code> proxy, policy engine, OCSF audit log, full condition matrix, <code>@euno/langchain</code>, reference policies</td></tr>
+                <tr><td><strong>Hosted gateway</strong></td><td>Tool Gateway, API-key façade, signed JWT capability tokens, shared Redis state, Postgres audit ledger</td></tr>
+                <tr><td><strong>Identity-bound tokens</strong></td><td>Capability Issuer, IdP integration (Entra ID, Cognito, Cloud Identity), PKCE flow, role-to-capability mapping</td></tr>
+                <tr><td><strong>Enterprise</strong></td><td>DID federation, KMS signing, SOC 2 audit export, SCIM 2.0, cross-chain anchor, AGT guard, on-prem Helm bundle</td></tr>
             </tbody>
         </table>
 
