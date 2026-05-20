@@ -46,7 +46,7 @@ The partner DID registration workflow requires two operators — a proposer and 
 POST /admin/partner-dids/proposals
 X-Admin-Api-Key: <key>
 X-Admin-Operator: alice@example.com
-Body: { "did": "did:web:partner.example.com", "trustScope": "tool-calls" }
+Body: { "did": "did:web:partner.example.com" }
 ```
 
 This creates the proposal but does *not* activate it. A different operator (different identity from `alice@example.com`) must then approve:
@@ -180,7 +180,7 @@ One design decision I want to be explicit about, because it's occasionally pushe
 
 If Company A trusts Company B, and Company B trusts Company C, that does *not* mean Company A's gateway trusts Company C. Company C must be explicitly registered in Company A's `PartnerDidRegistry` through the two-eyes workflow. There is no automatic inference of trust.
 
-This is intentional and it has a clear security property: the set of trusted issuers is always explicit, auditable, and requires deliberate human action to expand. There is no path by which an attacker who compromises a trusted partner can use that relationship to bootstrap trust for an additional entity. See [post 17 in this series](../blog-articles.md#17-declarative-not-transitive-the-partner-federation-trust-model) for a longer treatment of why declarative-not-transitive is the right model for cross-org AI agent governance.
+This is intentional and it has a clear security property: the set of trusted issuers is always explicit, auditable, and requires deliberate human action to expand. There is no path by which an attacker who compromises a trusted partner can use that relationship to bootstrap trust for an additional entity. See [post 17 in this series](../blog-articles.md#design-principles) for a longer treatment of why declarative-not-transitive is the right model for cross-org AI agent governance.
 
 ---
 

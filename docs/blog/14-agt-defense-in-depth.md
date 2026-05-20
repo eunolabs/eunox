@@ -123,6 +123,8 @@ The `onDeny` callback is where guard denials land — in your application's logg
 `createAgtGuard()` takes a `ToolTransport` as its second argument. In production, this is an `HttpToolTransport` configured with the gateway URL. In tests, it's an `InProcessToolTransport` backed by a mock handler — this means you can write unit tests for your agent's tool-calling behavior, including guard behavior, without a live gateway instance.
 
 ```typescript
+import { createAgtGuard, HttpToolTransport, InProcessToolTransport } from '@euno/agent-runtime';
+
 // In production
 const guard = createAgtGuard(options, new HttpToolTransport('https://gateway.example.com'));
 

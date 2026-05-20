@@ -96,7 +96,7 @@ The design solution is that each replica maintains its own chain identified by `
 
 For SOC 2 audit purposes, the export endpoint (`GET /api/v1/audit/export`) returns records sorted by replica and sequence. The auditor can verify each replica chain independently. If you have three gateway replicas running at high availability, you get three chains that can each be verified independently. A record gap in any chain is immediately detectable.
 
-The `replicaId` is set at gateway startup — typically derived from the pod name in Kubernetes (`POD_NAME` env var), which is stable and deterministic within a deployment. If you're rolling a deployment and a pod restarts, the new instance picks up from `seq: 0` in its own chain. The old chain is sealed. Both chains are present in the export and both are independently verifiable.
+The `replicaId` is set at gateway startup — typically derived from the pod name in Kubernetes (`POD_NAME` env var), which is stable and deterministic within a deployment. If you're rolling a deployment and a pod restarts, the new instance picks up from `seq: 1` in its own chain. The old chain is sealed. Both chains are present in the export and both are independently verifiable.
 
 ---
 

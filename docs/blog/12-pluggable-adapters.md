@@ -1,6 +1,6 @@
 # Pluggable Adapters: Building a Cloud-Portable Identity and Signing Layer
 
-*Part of the "Architecture deep-dives" series. [Post 9](../promotion.md) introduced capability tokens; [post 10](../promotion.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.*
+*Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.*
 
 ---
 
