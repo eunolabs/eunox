@@ -14,6 +14,7 @@ const mockGetCryptoKey = jest.fn();
 const mockGetPublicKey = jest.fn();
 const mockAsymmetricSign = jest.fn();
 const mockClose = jest.fn();
+const mockListCryptoKeyVersions = jest.fn();
 
 jest.mock('@google-cloud/kms', () => ({
   KeyManagementServiceClient: jest.fn().mockImplementation(() => ({
@@ -21,10 +22,11 @@ jest.mock('@google-cloud/kms', () => ({
     getPublicKey: mockGetPublicKey,
     asymmetricSign: mockAsymmetricSign,
     close: mockClose,
+    listCryptoKeyVersions: mockListCryptoKeyVersions,
   })),
 }));
 
-import { GCPCloudKMSSigner } from '../src/gcp-cloudkms-signer';
+import { GCPCloudKMSSigner, GCPKeyVersionInfo } from '../src/gcp-cloudkms-signer';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -285,5 +287,151 @@ describe('GCPCloudKMSSigner – dispose()', () => {
     await signer.dispose();
 
     expect(mockClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listKeyVersions() tests
+// ---------------------------------------------------------------------------
+
+describe('GCPCloudKMSSigner – listKeyVersions()', () => {
+  const CRYPTO_KEY_NAME = `projects/${GCP_CONFIG.projectId}/locations/${GCP_CONFIG.locationId}/keyRings/${GCP_CONFIG.keyRingId}/cryptoKeys/${GCP_CONFIG.cryptoKeyId}`;
+
+  beforeEach(() => {
+    mockListCryptoKeyVersions.mockReset();
+  });
+
+  it('returns an array of GCPKeyVersionInfo objects', async () => {
+    const now = new Date('2024-01-01T00:00:00Z');
+    const laterDate = new Date('2024-06-01T00:00:00Z');
+
+    mockListCryptoKeyVersions.mockResolvedValueOnce([
+      [
+        {
+          name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/1`,
+          state: 3, // ENABLED in the enum
+          algorithm: 8, // EC_SIGN_P256_SHA256
+          createTime: { seconds: BigInt(Math.floor(now.getTime() / 1000)) },
+        },
+        {
+          name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/2`,
+          state: 3,
+          algorithm: 8,
+          createTime: { seconds: BigInt(Math.floor(laterDate.getTime() / 1000)) },
+        },
+      ],
+    ]);
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    const versions = await signer.listKeyVersions();
+
+    expect(mockListCryptoKeyVersions).toHaveBeenCalledWith({
+      parent: CRYPTO_KEY_NAME,
+    });
+    expect(versions).toHaveLength(2);
+    expect(versions[0]!.name).toBe(`${CRYPTO_KEY_NAME}/cryptoKeyVersions/1`);
+    expect(versions[0]!.state).toBe('3');
+    expect(versions[0]!.algorithm).toBe('8');
+    expect(typeof versions[0]!.createTime).toBe('string');
+  });
+
+  it('returns empty array when no versions exist', async () => {
+    mockListCryptoKeyVersions.mockResolvedValueOnce([[]]);
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    const versions = await signer.listKeyVersions();
+    expect(versions).toEqual([]);
+  });
+
+  it('handles versions with no algorithm (e.g. DESTROYED state)', async () => {
+    mockListCryptoKeyVersions.mockResolvedValueOnce([
+      [
+        {
+          name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/1`,
+          state: 5, // DESTROYED
+          algorithm: undefined,
+          createTime: undefined,
+          destroyTime: { seconds: BigInt(1700000000) },
+        },
+      ],
+    ]);
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    const versions = await signer.listKeyVersions();
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.algorithm).toBeUndefined();
+    expect(versions[0]!.createTime).toBeUndefined();
+    expect(typeof versions[0]!.destroyTime).toBe('string');
+  });
+
+  it('handles null/undefined version list gracefully', async () => {
+    // Simulate an unexpected null return from the SDK.
+    mockListCryptoKeyVersions.mockResolvedValueOnce([null]);
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    const versions = await signer.listKeyVersions();
+    expect(versions).toEqual([]);
+  });
+
+  it('can be used to detect rotation (new version appears)', async () => {
+    // First call: only version 1.
+    mockListCryptoKeyVersions.mockResolvedValueOnce([
+      [{ name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/1`, state: 3, createTime: { seconds: BigInt(1700000000) } }],
+    ]);
+    // Second call: versions 1 and 2 (rotation happened).
+    mockListCryptoKeyVersions.mockResolvedValueOnce([
+      [
+        { name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/1`, state: 3, createTime: { seconds: BigInt(1700000000) } },
+        { name: `${CRYPTO_KEY_NAME}/cryptoKeyVersions/2`, state: 3, createTime: { seconds: BigInt(1710000000) } },
+      ],
+    ]);
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    const before = await signer.listKeyVersions();
+    const after = await signer.listKeyVersions();
+
+    // Rotation detection: new versions appeared.
+    const newVersions = after.filter(
+      (v: GCPKeyVersionInfo) => !before.some((b: GCPKeyVersionInfo) => b.name === v.name),
+    );
+    expect(newVersions).toHaveLength(1);
+    expect(newVersions[0]!.name).toContain('cryptoKeyVersions/2');
+  });
+
+  it('propagates errors from listCryptoKeyVersions', async () => {
+    mockListCryptoKeyVersions.mockRejectedValueOnce(new Error('KMS API error'));
+
+    const signer = new GCPCloudKMSSigner({
+      type: 'gcp-cloudkms',
+      name: 'test',
+      gcpKMS: GCP_CONFIG,
+    });
+
+    await expect(signer.listKeyVersions()).rejects.toThrow('KMS API error');
   });
 });

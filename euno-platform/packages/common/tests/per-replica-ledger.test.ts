@@ -25,6 +25,9 @@ import { CryptoSigner, createAuditEvidence, signEvidenceWithChain } from '../src
 import { GENESIS_HASH, ChainTipSnapshot, SignedCrossChainCommitment } from '../src/wire';
 import { canonicalSha256 } from '../src/utils';
 
+// ── Import GcsAnchorClient type for typing in tests ───────────────────────────
+import type { GcsAnchorClient } from '../src/ledger-signer';
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeEvidence(i: number) {
@@ -974,5 +977,249 @@ describe('CrossChainAnchor', () => {
     const replicaIdsInCommitment = c.tips.map((t: ChainTipSnapshot) => t.replicaId);
     expect(replicaIdsInCommitment).toEqual([...replicaIdsInCommitment].sort());
     expect(c.tipCount).toBe(3);
+  });
+});
+
+// ── GCS anchor — PerReplicaPostgresLedgerBackend ──────────────────────────────
+
+describe('PerReplicaPostgresLedgerBackend GCS anchor', () => {
+  it('calls GCS putObject with correct key and payload after anchorIntervalRows rows', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const putCalls: Array<{ bucket: string; key: string; body: string; contentType: string }> = [];
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'replica-gcs', {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: { async putObject(p) { putCalls.push(p); } },
+        bucket: 'per-replica-gcs-bucket',
+        prefix: 'per-replica-anchor/',
+        anchorIntervalRows: 2,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    for (let i = 1; i <= 2; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'replica-gcs', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(putCalls.length).toBe(1);
+    const call = putCalls[0]!;
+    expect(call.bucket).toBe('per-replica-gcs-bucket');
+    expect(call.key).toMatch(/^per-replica-anchor\/replica-gcs\/1-2\.json$/);
+    expect(call.contentType).toBe('application/json');
+
+    const payload = JSON.parse(call.body) as Record<string, unknown>;
+    expect(payload['schemaVersion']).toBe('1.0');
+    expect(payload['fromSeq']).toBe(1);
+    expect(payload['toSeq']).toBe(2);
+    expect(typeof payload['merkleRoot']).toBe('string');
+    expect(payload['replicaId']).toBe('replica-gcs');
+  });
+
+  it('calls onAnchorError when GCS write fails', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const errors: Error[] = [];
+    const failingGcs: GcsAnchorClient = {
+      putObject: async () => { throw new Error('GCS per-replica error'); },
+    };
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r-gcs', {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: failingGcs,
+        bucket: 'bucket',
+        anchorIntervalRows: 1,
+      },
+      onAnchorError: (e) => errors.push(e),
+    });
+    const cryptoSigner = new EcP256Signer();
+    const ev = makeEvidence(1);
+    const signed = await backend.appendEntry(ev, 'r-gcs', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+    expect(signed.seq).toBe(1);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]!.message).toBe('GCS per-replica error');
+  });
+
+  it('calls both S3 and GCS putObject when both are configured (multi-cloud)', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const s3Calls: Array<{ bucket: string }> = [];
+    const gcsCalls: Array<{ bucket: string }> = [];
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r-mc', {
+      hmacSecret: HMAC_SECRET,
+      s3: {
+        client: { async putObject(p) { s3Calls.push(p); } },
+        bucket: 's3-bucket',
+        anchorIntervalRows: 2,
+      },
+      gcs: {
+        client: { async putObject(p) { gcsCalls.push(p); } },
+        bucket: 'gcs-bucket',
+        anchorIntervalRows: 2,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    for (let i = 1; i <= 2; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'r-mc', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(s3Calls.length).toBe(1);
+    expect(gcsCalls.length).toBe(1);
+    expect(s3Calls[0]!.bucket).toBe('s3-bucket');
+    expect(gcsCalls[0]!.bucket).toBe('gcs-bucket');
+  });
+
+  it('uses gcs anchorIntervalRows when only gcs is configured', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const putCalls: Array<unknown> = [];
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r1', {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: { async putObject(p: unknown) { putCalls.push(p); } },
+        bucket: 'gcs-bucket',
+        anchorIntervalRows: 3,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    // 2 rows — below threshold, should NOT trigger
+    for (let i = 1; i <= 2; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'r1', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+    await new Promise((r) => setTimeout(r, 10));
+    expect(putCalls.length).toBe(0);
+
+    // 3rd row — reaches threshold, should trigger
+    const ev3 = makeEvidence(3);
+    await backend.appendEntry(ev3, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev3, cryptoSigner, ph, seq),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(putCalls.length).toBe(1);
+  });
+});
+
+// ── GCS anchor — CrossChainAnchor ─────────────────────────────────────────────
+
+describe('CrossChainAnchor GCS anchor', () => {
+  it('calls GCS putObject for each cross-chain commitment', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r1', {
+      hmacSecret: HMAC_SECRET,
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    const gcsPutCalls: Array<{ key: string; body: string }> = [];
+    const commitments: SignedCrossChainCommitment[] = [];
+    const anchor = new CrossChainAnchor(backend, {
+      intervalMs: 30,
+      coordinatorId: 'coord-1',
+      cryptoSigner,
+      gcs: {
+        client: { async putObject(p) { gcsPutCalls.push(p); } },
+        bucket: 'gcs-cross-chain-bucket',
+        prefix: 'cross-chain-anchor/',
+      },
+      onCommitment: (c) => commitments.push(c),
+    });
+    anchor.start();
+    await new Promise((r) => setTimeout(r, 120));
+    await anchor.stop();
+
+    expect(gcsPutCalls.length).toBeGreaterThanOrEqual(1);
+    const call = gcsPutCalls[0]!;
+    expect(call.key).toMatch(/^cross-chain-anchor\/cross-chain\/coord-1\//);
+    const parsedBody = JSON.parse(call.body) as Record<string, unknown>;
+    expect(Array.isArray(parsedBody['tips'])).toBe(true);
+    expect(typeof parsedBody['merkleRoot']).toBe('string');
+  });
+
+  it('calls both S3 and GCS when both are configured on CrossChainAnchor', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r1', {
+      hmacSecret: HMAC_SECRET,
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    const s3Calls: Array<{ bucket: string }> = [];
+    const gcsCalls: Array<{ bucket: string }> = [];
+    const anchor = new CrossChainAnchor(backend, {
+      intervalMs: 30,
+      coordinatorId: 'coord-mc',
+      cryptoSigner,
+      s3: {
+        client: { async putObject(p) { s3Calls.push(p); } },
+        bucket: 's3-cross-chain',
+      },
+      gcs: {
+        client: { async putObject(p) { gcsCalls.push(p); } },
+        bucket: 'gcs-cross-chain',
+      },
+    });
+    anchor.start();
+    await new Promise((r) => setTimeout(r, 120));
+    await anchor.stop();
+
+    expect(s3Calls.length).toBeGreaterThanOrEqual(1);
+    expect(gcsCalls.length).toBeGreaterThanOrEqual(1);
+    expect(s3Calls[0]!.bucket).toBe('s3-cross-chain');
+    expect(gcsCalls[0]!.bucket).toBe('gcs-cross-chain');
+  });
+
+  it('calls onError when GCS write fails on CrossChainAnchor but continues', async () => {
+    const { pool } = makeMockPerReplicaPool();
+    const backend = new PerReplicaPostgresLedgerBackend(pool, 'r1', {
+      hmacSecret: HMAC_SECRET,
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+
+    const anchorErrors: Error[] = [];
+    const commitments: SignedCrossChainCommitment[] = [];
+    const anchor = new CrossChainAnchor(backend, {
+      intervalMs: 30,
+      coordinatorId: 'coord-fail',
+      cryptoSigner,
+      gcs: {
+        client: { putObject: async () => { throw new Error('GCS cross-chain error'); } },
+        bucket: 'gcs-bucket',
+      },
+      onError: (e) => anchorErrors.push(e),
+      onCommitment: (c) => commitments.push(c),
+    });
+    anchor.start();
+    await new Promise((r) => setTimeout(r, 120));
+    await anchor.stop();
+
+    // GCS errors are isolated — onCommitment is still called.
+    expect(anchorErrors.some((e) => e.message.includes('GCS cross-chain error'))).toBe(true);
+    expect(commitments.length).toBeGreaterThanOrEqual(1);
   });
 });

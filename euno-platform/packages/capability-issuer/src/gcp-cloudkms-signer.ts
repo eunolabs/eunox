@@ -295,4 +295,70 @@ export class GCPCloudKMSSigner extends SigningAdapter {
     this.publicKeyCache = undefined;
     this.versionName = undefined;
   }
+
+  /**
+   * List all crypto key versions for the configured key.  Useful for
+   * **automated rotation detection**: callers can poll this method and compare
+   * the returned list against a cached snapshot to detect when a new primary
+   * version has been promoted.
+   *
+   * @returns Array of key version descriptors in the order returned by the GCP
+   *   API (not guaranteed to be sorted).  The list may include versions in any
+   *   state.  Note: `state` and `algorithm` are the raw serialised values from
+   *   the proto response — they may be stringified numeric enum values
+   *   (e.g. `'1'` rather than `'ENABLED'`) depending on the library version.
+   *   Consult the Cloud KMS proto enum definitions when comparing these fields.
+   */
+  async listKeyVersions(): Promise<GCPKeyVersionInfo[]> {
+    const cryptoKeyName = [
+      `projects/${this.gcpConfig.projectId}`,
+      `locations/${this.gcpConfig.locationId}`,
+      `keyRings/${this.gcpConfig.keyRingId}`,
+      `cryptoKeys/${this.gcpConfig.cryptoKeyId}`,
+    ].join('/');
+
+    const [versions] = await this.kmsClient.listCryptoKeyVersions({
+      parent: cryptoKeyName,
+    });
+
+    return (versions ?? []).map((v) => ({
+      name: String(v.name ?? ''),
+      state: String(v.state ?? 'UNKNOWN'),
+      algorithm: v.algorithm !== undefined ? String(v.algorithm) : undefined,
+      createTime: v.createTime?.seconds !== undefined
+        ? new Date(Number(v.createTime.seconds) * 1000).toISOString()
+        : undefined,
+      destroyTime: v.destroyTime?.seconds !== undefined
+        ? new Date(Number(v.destroyTime.seconds) * 1000).toISOString()
+        : undefined,
+    }));
+  }
+}
+
+/**
+ * Descriptor for a single GCP Cloud KMS crypto key version, returned by
+ * {@link GCPCloudKMSSigner.listKeyVersions}.
+ */
+export interface GCPKeyVersionInfo {
+  /** Full resource name, e.g. `projects/.../cryptoKeys/.../cryptoKeyVersions/3`. */
+  name: string;
+  /**
+   * Version state.  The value is the raw serialised proto enum — it may be a
+   * stringified numeric value (e.g. `'1'`) rather than the enum name
+   * (`'ENABLED'`).  Consult the Cloud KMS
+   * `CryptoKeyVersion.CryptoKeyVersionState` proto enum for the mapping.
+   * The sentinel value `'UNKNOWN'` is returned when the proto field is absent.
+   */
+  state: string;
+  /**
+   * Algorithm identifier.  The value is the raw serialised proto enum — it may
+   * be a stringified numeric value rather than the enum name
+   * (e.g. `'26'` rather than `'EC_SIGN_P256_SHA256'`).  May be `undefined`
+   * for destroyed versions.
+   */
+  algorithm?: string;
+  /** ISO-8601 timestamp of when this version was created, if available. */
+  createTime?: string;
+  /** ISO-8601 timestamp of scheduled destruction, if applicable. */
+  destroyTime?: string;
 }

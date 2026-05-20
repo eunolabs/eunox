@@ -1576,14 +1576,30 @@ export const GatewayConfigSchema = z
         'Required for some VPC endpoint configurations and for MinIO-compatible local testing. ' +
         'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
     }),
+    AUDIT_LEDGER_GCS_BUCKET: optionalString.describe(
+      'GCS bucket for periodic Merkle-root anchoring (GCP equivalent of AUDIT_LEDGER_S3_BUCKET). ' +
+      'NOTE: the standard bootstrap does not inject a GCS client — behavior differs by backend: ' +
+      'the postgres (global-lock) backend will raise a startup error if this is set without a ' +
+      'custom entrypoint that provides a GcsAnchorClient; the per-replica-postgres backend only ' +
+      'logs a warning and continues without GCS anchoring. In either case, GCS anchoring requires ' +
+      'a custom entrypoint that constructs the ledger backend directly with a GcsAnchorClient. ' +
+      'When properly wired, every AUDIT_LEDGER_ANCHOR_INTERVAL successful appends also PUT the ' +
+      'Merkle root to GCS. The bucket SHOULD have a retention policy enabled. Can be used ' +
+      'alongside AUDIT_LEDGER_S3_BUCKET for multi-cloud redundancy. ' +
+      'When unset, no GCS anchoring is performed.',
+    ),
+    AUDIT_LEDGER_GCS_PREFIX: optionalString.describe(
+      'GCS object key prefix for ledger anchor objects. ' +
+      'Default "audit-anchor/". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json.',
+    ),
     AUDIT_LEDGER_ANCHOR_INTERVAL: envPositiveInt({
       default: 1000,
       min: 1,
       description:
-        'Number of ledger rows between S3 Object-Lock anchor writes. Default 1000. ' +
+        'Number of ledger rows between S3/GCS Object-Lock anchor writes. Default 1000. ' +
         'Lower values provide more frequent external witnesses (smaller gap between a ' +
-        'DB tamper event and S3 detection) at the cost of more S3 PUT requests. ' +
-        'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+        'DB tamper event and S3/GCS detection) at the cost of more PUT requests. ' +
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET or AUDIT_LEDGER_GCS_BUCKET is set.',
     }),
 
     AUDIT_LEDGER_RETENTION_DAYS: envPositiveInt({

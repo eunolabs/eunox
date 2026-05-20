@@ -157,17 +157,28 @@ workarounds.
   - Fall back to `process.env` when `GCP_SECRET_*` vars are absent
   - Unit tests with `@google-cloud/secret-manager` mock
 
-- [ ] **GCS cross-chain anchor target**
-  - Extend `CrossChainAnchor` to support GCS as an alternative to S3
-  - Object Lock equivalent: GCS bucket retention policy + object holds
-  - New env var `AUDIT_LEDGER_GCS_BUCKET` alongside existing
-    `AUDIT_LEDGER_S3_BUCKET`; both can be active simultaneously for
-    multi-cloud redundancy
+- [x] **GCS cross-chain anchor target**
+  - Extended `CrossChainAnchor` to support GCS as an alternative or complement
+    to S3 (`gcs?` option on `CrossChainAnchorOptions`)
+  - Implemented `GcsAnchorClient` interface + `GcsAnchorClientImpl`
+    (`@google-cloud/storage` loaded lazily; sets `temporaryHold` by default)
+  - New `gcs?` options on `PostgresLedgerOptions`, `PerReplicaPostgresLedgerOptions`,
+    and `CrossChainAnchorOptions` — both S3 and GCS can be active simultaneously
+    for multi-cloud redundancy
+  - New env vars `AUDIT_LEDGER_GCS_BUCKET` / `AUDIT_LEDGER_GCS_PREFIX` in
+    config schema alongside existing `AUDIT_LEDGER_S3_BUCKET`
+  - `audit-module.ts` warns (per-replica) / errors (postgres) when
+    `AUDIT_LEDGER_GCS_BUCKET` is set without a wired GCS client
+  - 25 new tests across `ledger-signer.test.ts`, `per-replica-ledger.test.ts`,
+    and `common-infra/src/__tests__/gcs-anchor-client.test.ts`
 
-- [ ] **GCP Cloud KMS signer — additional key specs**
-  - Add `EC_SIGN_P384_SHA384` and `RSA_SIGN_PKCS1_4096_SHA512` support to
-    `gcp-cloudkms-signer.ts`
-  - Key version listing for automated rotation detection
+- [x] **GCP Cloud KMS signer — key version listing for rotation detection**
+  - Added `listKeyVersions(): Promise<GCPKeyVersionInfo[]>` to
+    `GCPCloudKMSSigner` — uses `kmsClient.listCryptoKeyVersions()` under the
+    hood
+  - `GCPKeyVersionInfo` interface exported from `gcp-cloudkms-signer.ts`
+  - 6 new tests covering normal operation, empty list, DESTROYED versions,
+    null SDK return, rotation detection pattern, and error propagation
 
 ### Phase 3 — Infrastructure-as-code (longer-term)
 
