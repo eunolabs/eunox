@@ -586,7 +586,7 @@ describe('createSecretStoreFromEnv', () => {
   it('throws when gcp-secretmanager is selected but GCP_PROJECT_ID is missing', () => {
     expect(() =>
       createSecretStoreFromEnv({ SECRET_STORE_PROVIDER: 'gcp-secretmanager' }),
-    ).toThrow('must be set');
+    ).toThrow('SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) must be set');
   });
 
   it('throws for an unrecognised SECRET_STORE_PROVIDER value', () => {

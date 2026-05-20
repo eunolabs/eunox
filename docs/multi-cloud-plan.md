@@ -208,10 +208,10 @@ workarounds.
     `GcpSecretManagerSecretStore`
   - Document the selection logic: if `SECRET_STORE_PROVIDER` is set, load the
     corresponding implementation; otherwise fall back to `process.env`
-  - `createSecretStore()` factory in `@euno/common-infra` wired to env config
+  - `createSecretStoreFromEnv()` factory in `@euno/common-core` wired to env config
   - `SECRET_STORE_PROVIDER` and provider-specific vars added to `IssuerConfigSchema`
     and `GatewayConfigSchema` with cross-field validation
-  - Unit tests in `euno-platform/packages/common-infra/src/__tests__/secret-store.test.ts`
+  - Unit tests in `public/packages/common/src/__tests__/secret-store.test.ts`
   - Config schema tests in `euno-platform/packages/common/tests/config.test.ts`
   - `docs/ADAPTERS.md` §"Secret Store" added
 

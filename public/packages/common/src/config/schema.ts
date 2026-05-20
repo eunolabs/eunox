@@ -2241,7 +2241,7 @@ export const GatewayConfigSchema = z
         '"env" (default): read directly from environment variables (no cloud dependency). ' +
         '"azure-keyvault": read from Azure Key Vault secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
         '"aws-secretsmanager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
-        '"gcp-secretmanager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
+        '"gcp-secretmanager": read from GCP Secret Manager (requires SECRET_STORE_GCP_PROJECT_ID). ' +
         'See docs/ADAPTERS.md §"Secret store" for the name-mapping convention.',
     }),
     SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
