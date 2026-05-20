@@ -240,11 +240,14 @@ automatically — no `imagePullSecrets` are required.
 For cross-project Artifact Registry:
 
 ```bash
-# Grant the node service account read access to the registry
+# AR_PROJECT_ID  = project that owns the Artifact Registry repository.
+# PROJECT_ID     = project that hosts the GKE cluster (defined earlier in this guide).
+# Grant the GKE node service account read access to the cross-project registry.
+AR_PROJECT_ID="${AR_PROJECT_ID:?set AR_PROJECT_ID to the Artifact Registry host project}"
 gcloud artifacts repositories add-iam-policy-binding euno \
-  --project "${PROJECT_ID}" \
+  --project "${AR_PROJECT_ID}" \
   --location "${REGION}" \
-  --member "serviceAccount:$(gcloud projects describe ${SOURCE_PROJECT} \
+  --member "serviceAccount:$(gcloud projects describe ${PROJECT_ID} \
     --format='value(projectNumber)')-compute@developer.gserviceaccount.com" \
   --role "roles/artifactregistry.reader"
 ```
@@ -578,8 +581,8 @@ gcloud logging metrics create euno_tool_calls_denied \
   --description "Euno tool call denials by denial reason" \
   --log-filter 'resource.type="k8s_container" jsonPayload.evidence.outcome="deny"' \
   --value-extractor 'EXTRACT(jsonPayload.evidence.denialReason)' \
-  --label-extractor 'EXTRACT(jsonPayload.evidence.denialReason):denial_reason' \
-  --label-extractor 'EXTRACT(jsonPayload.evidence.agentId):agent_id'
+  --label-extractor 'denial_reason=EXTRACT(jsonPayload.evidence.denialReason)' \
+  --label-extractor 'agent_id=EXTRACT(jsonPayload.evidence.agentId)'
 ```
 
 #### Cloud Logging query templates (Cloud Logging query language)

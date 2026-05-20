@@ -949,6 +949,40 @@ test('fails when issuer-idp-setup.md is missing the externalId = user.id mapping
   }
 });
 
+test('fails when issuer-idp-setup.md §11 is missing ISSUER_SCIM_BEARER_TOKEN', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    // Keep ISSUER_SCIM_BEARER_TOKEN in §10 but remove it from §11 only.
+    const content = makeValidIdpSetup().replace(
+      'OAuth service account for SCIM provisioning.\nISSUER_SCIM_BEARER_TOKEN=<token>',
+      'OAuth service account for SCIM provisioning.');
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), content);
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ISSUER_SCIM_BEARER_TOKEN/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md §11 is missing ISSUER_SCIM_GROUP_ROLE_MAP', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    // Keep ISSUER_SCIM_GROUP_ROLE_MAP in §10 but remove it from §11 only.
+    const content = makeValidIdpSetup().replace(
+      'externalId: user.id,   // Google internal user ID\nISSUER_SCIM_GROUP_ROLE_MAP={"EunoReaders":"reader"}',
+      'externalId: user.id,   // Google internal user ID');
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), content);
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ISSUER_SCIM_GROUP_ROLE_MAP/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('fails when k8s/helm/euno/values-gcp.yaml is missing', () => {
   const base = makeTmpRoot();
   try {

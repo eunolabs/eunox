@@ -53,9 +53,9 @@
  *   7. docs/issuer-idp-setup.md contains the Google Workspace SCIM bridge (§11):
  *      - Section heading for Google Workspace SCIM bridge
  *      - OAuth service account reference
- *      - ISSUER_SCIM_BEARER_TOKEN environment variable reference
- *      - sub claim / externalId mapping
- *      - ISSUER_SCIM_GROUP_ROLE_MAP reference
+ *      - ISSUER_SCIM_BEARER_TOKEN environment variable reference (§11-scoped)
+ *      - sub claim / externalId mapping (externalId: user.id)
+ *      - ISSUER_SCIM_GROUP_ROLE_MAP reference (§11-scoped)
  *   8. k8s/helm/euno/values-gcp.yaml exists and contains required entries:
  *      - Artifact Registry reference (pkg.dev)
  *      - Workload Identity annotation (iam.gke.io/gcp-service-account)
@@ -122,6 +122,18 @@ function requireText(content, needle, description) {
   if (!content.includes(needle)) {
     failures.push(`Missing: ${description} (looked for: ${JSON.stringify(needle)})`);
   }
+}
+
+/**
+ * Extract the text starting from the first occurrence of a level-2 heading
+ * whose text begins with the given prefix (e.g. '## 11.'). Returns an empty
+ * string when the heading is not found, so that requireText() calls on the
+ * result will fail as expected.
+ */
+function extractSection(content, headingPrefix) {
+  if (content === null) return null;
+  const idx = content.indexOf(`\n${headingPrefix}`);
+  return idx >= 0 ? content.slice(idx + 1) : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +291,15 @@ requireText(idpSetup, 'OAuth service account',
   'issuer-idp-setup.md: OAuth service account reference in Google Workspace SCIM section');
 requireText(idpSetup, 'externalId: user.id',
   'issuer-idp-setup.md: externalId = Google user.id mapping in Google Workspace SCIM section');
+
+// Scope the following checks to the §11 section so that §10 (Cognito) entries
+// do not satisfy GCP-specific requirements.
+const idpSetupSection11 = extractSection(idpSetup, '## 11.');
+
+requireText(idpSetupSection11, 'ISSUER_SCIM_BEARER_TOKEN',
+  'issuer-idp-setup.md §11: ISSUER_SCIM_BEARER_TOKEN environment variable');
+requireText(idpSetupSection11, 'ISSUER_SCIM_GROUP_ROLE_MAP',
+  'issuer-idp-setup.md §11: ISSUER_SCIM_GROUP_ROLE_MAP environment variable');
 
 // ---------------------------------------------------------------------------
 // Check 8 — k8s/helm/euno/values-gcp.yaml

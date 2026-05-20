@@ -45,11 +45,16 @@ gateway:
     ADMIN_HOST: "127.0.0.1"
 
     # Cloud KMS-backed audit evidence signing.
-    # Set SIGNING_PROVIDER=gcp-cloudkms and supply the KMS key resource name.
+    # Set SIGNING_PROVIDER=gcp-cloudkms and supply the individual KMS key
+    # components (project, location, key ring, crypto key, optional version).
+    # Use GCP_LOCATION_ID=global for multi-region key rings, or a specific
+    # region (e.g. us-central1) for region-locked key rings.
     SIGNING_PROVIDER: gcp-cloudkms
     GCP_PROJECT_ID: "my-gcp-project"
-    GCP_KMS_KEY_RESOURCE: "projects/my-gcp-project/locations/global/keyRings/euno/cryptoKeys/gateway-signing-key/cryptoKeyVersions/1"
-    GCP_REGION: us-central1
+    GCP_LOCATION_ID: global
+    GCP_KEYRING_ID: euno
+    GCP_CRYPTOKEY_ID: gateway-signing-key
+    GCP_CRYPTOKEY_VERSION: "1"
 
     # Cross-chain anchor to GCS with retention policy (optional; SOC 2 CC7.4).
     # ENABLE_CROSS_CHAIN_ANCHOR: "true"
@@ -58,9 +63,10 @@ gateway:
 
     # Secret store provider: uncomment to enable SDK-based Secret Manager
     # lookup at startup instead of relying on env vars or ESO/Add-on injection.
-    # SECRET_STORE_PROVIDER: gcp-secret-manager
-    # GCP_SECRET_AUDIT_LEDGER_HMAC_SECRET: "projects/my-gcp-project/secrets/euno-prod-audit-ledger-hmac-secret/versions/latest"
-    # GCP_SECRET_ADMIN_API_KEY: "projects/my-gcp-project/secrets/euno-prod-gateway-admin-api-key/versions/latest"
+    # Requires GCP_PROJECT_ID (already set above); uses Application Default
+    # Credentials (ADC). Secret names must match the values expected by the
+    # service (see docs/secrets-gcp.md for the full list).
+    # SECRET_STORE_PROVIDER: gcp-secretmanager
 
   # ── Sensitive values ─────────────────────────────────────────────────────
   # When using ESO or the Secret Manager Add-on (recommended), set
@@ -91,7 +97,10 @@ issuer:
 
     # Token signing via Cloud KMS.
     SIGNING_PROVIDER: gcp-cloudkms
-    GCP_KMS_KEY_RESOURCE: "projects/my-gcp-project/locations/global/keyRings/euno/cryptoKeys/issuer-signing-key/cryptoKeyVersions/1"
+    GCP_LOCATION_ID: global
+    GCP_KEYRING_ID: euno
+    GCP_CRYPTOKEY_ID: issuer-signing-key
+    GCP_CRYPTOKEY_VERSION: "1"
 
     # Schema initialisation — run once on first deploy.
     ISSUER_DB_SCHEMA_INIT: "true"
