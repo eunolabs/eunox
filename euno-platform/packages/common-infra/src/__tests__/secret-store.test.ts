@@ -220,10 +220,8 @@ describe('AzureKeyVaultSecretStore', () => {
 
   describe('constructor validation', () => {
     it('throws when credentialType=client-secret and required fields are missing', () => {
-      // Mock the require calls.
-      jest.mock('@azure/keyvault-secrets', () => ({ SecretClient: class {} }), { virtual: true });
-      jest.mock('@azure/identity', () => ({ DefaultAzureCredential: class {} }), { virtual: true });
-
+      // Credential validation happens BEFORE the SDK require() call, so no
+      // SDK mocking is needed here — the constructor throws early.
       expect(() => {
         new AzureKeyVaultSecretStore({
           vaultUrl: 'https://my-vault.vault.azure.net/',
@@ -234,9 +232,8 @@ describe('AzureKeyVaultSecretStore', () => {
     });
 
     it('throws when @azure/keyvault-secrets is not installed', () => {
-      jest.mock('@azure/keyvault-secrets', () => { throw new Error('not installed'); }, { virtual: true });
-      jest.mock('@azure/identity', () => ({ DefaultAzureCredential: class {} }), { virtual: true });
-
+      // The SDK is not installed in the test environment, so require()
+      // fails naturally — no jest.mock() is needed.
       expect(() => {
         new AzureKeyVaultSecretStore({ vaultUrl: 'https://vault.azure.net/' });
       }).toThrow('@azure/keyvault-secrets');
@@ -364,11 +361,8 @@ describe('AwsSecretsManagerSecretStore', () => {
 
   describe('constructor', () => {
     it('throws when @aws-sdk/client-secrets-manager is not installed', () => {
-      jest.mock(
-        '@aws-sdk/client-secrets-manager',
-        () => { throw new Error('not installed'); },
-        { virtual: true },
-      );
+      // The SDK is not installed in the test environment, so require()
+      // fails naturally — no jest.mock() is needed.
       expect(() => new AwsSecretsManagerSecretStore()).toThrow(
         '@aws-sdk/client-secrets-manager',
       );
@@ -538,20 +532,13 @@ describe('GcpSecretManagerSecretStore', () => {
 
   describe('constructor', () => {
     it('throws when projectId is missing', () => {
-      jest.mock(
-        '@google-cloud/secret-manager',
-        () => ({ SecretManagerServiceClient: class {} }),
-        { virtual: true },
-      );
+      // projectId validation happens BEFORE the SDK require() call — no mocking needed.
       expect(() => new GcpSecretManagerSecretStore({}, {})).toThrow('projectId is required');
     });
 
     it('throws when @google-cloud/secret-manager is not installed', () => {
-      jest.mock(
-        '@google-cloud/secret-manager',
-        () => { throw new Error('not installed'); },
-        { virtual: true },
-      );
+      // The SDK is not installed in the test environment, so require()
+      // fails naturally — no jest.mock() is needed.
       expect(() => new GcpSecretManagerSecretStore({ projectId: 'p' })).toThrow(
         '@google-cloud/secret-manager',
       );
@@ -606,7 +593,7 @@ describe('createSecretStore', () => {
   it('dispatches to AwsSecretsManagerSecretStore for aws-secrets-manager', () => {
     // We cannot construct the real impl (SDK not installed), but we can at
     // least verify it attempts to instantiate the right class by catching
-    // the "package not installed" error.
+    // the "package not installed" error thrown naturally.
     expect(() =>
       createSecretStore({ SECRET_STORE_PROVIDER: 'aws-secrets-manager' }),
     ).toThrow('@aws-sdk/client-secrets-manager');

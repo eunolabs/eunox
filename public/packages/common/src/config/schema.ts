@@ -2594,6 +2594,11 @@ export const GatewayConfigSchema = z
           'are required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
       });
     }
+    // Note: GatewayConfigSchema does not include GCP_PROJECT_ID (that is an
+    // issuer-only field). The createSecretStore() factory still falls back to
+    // GCP_PROJECT_ID at runtime, but schema-level validation can only check
+    // fields that are declared in the schema, so we require explicit
+    // SECRET_STORE_GCP_PROJECT_ID here.
     if (
       cfg.SECRET_STORE_PROVIDER === 'gcp-secret-manager' &&
       !cfg.SECRET_STORE_GCP_PROJECT_ID
