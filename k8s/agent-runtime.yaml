@@ -1,9 +1,17 @@
-# Sprint 1: Agent Runtime with Sandbox Security Constraints
+# Agent Runtime with Sandbox Security Constraints
+#
+# Baseline (Sprint 1):
 # - Read-only root filesystem
 # - Least-privilege Linux capabilities (all dropped)
 # - Network egress restricted via NetworkPolicy
 # - No sensitive host paths accessible
 # - Runs as non-root user
+#
+# Hardening (see docs/security/agent-runtime-sandbox-architecture.md):
+# - Custom seccomp allowlist (k8s/seccomp/agent-runtime.json) — ~90% syscall surface reduction
+# - emptyDir volume size limits — prevents node-disk DoS from a compromised agent
+# - automountServiceAccountToken: false — removes Kubernetes API credential from pod
+# - runtimeClassName annotation (commented) — enable for gVisor or AKS Pod Sandboxing
 
 apiVersion: apps/v1
 kind: Deployment
@@ -28,6 +36,22 @@ spec:
         role: agent
     spec:
       serviceAccountName: agent-runtime
+      # ── Kernel isolation (P0 recommendation) ──────────────────────────────────
+      # Uncomment ONE of the following runtimeClassName lines to give the agent
+      # a fully isolated kernel, eliminating the shared-kernel escape risk.
+      #
+      # AKS Pod Sandboxing (Kata / Microsoft HyperV) — recommended for AKS:
+      #   Prerequisite: node pool created with --workload-runtime KataMshvVmIsolation
+      #   https://learn.microsoft.com/en-us/azure/aks/use-pod-sandboxing
+      #
+      # runtimeClassName: kata-mshv-vm-isolation
+      #
+      # gVisor (self-managed K8s) — recommended for EKS/GKE/bare-metal:
+      #   Prerequisite: node pool with gVisor runtime handler installed
+      #   https://gvisor.dev/docs/user_guide/quick_start/kubernetes/
+      #
+      # runtimeClassName: gvisor
+      #
       # Sprint 1: Security context for pod
       securityContext:
         runAsNonRoot: true
@@ -84,6 +108,15 @@ spec:
             - ALL
           # Sprint 1: Read-only root filesystem
           readOnlyRootFilesystem: true
+          # Custom seccomp allowlist — Node.js 18 HTTPS client surface only.
+          # Blocks ptrace, mount, clone(CLONE_NEWUSER), bpf, io_uring, keyctl,
+          # perf_event_open, setuid, and kernel module syscalls.
+          # The profile file must be deployed to each cluster node at:
+          #   /var/lib/kubelet/seccomp/agent-runtime.json
+          # See k8s/seccomp/agent-runtime.json and docs/security/agent-runtime-sandbox-architecture.md
+          seccompProfile:
+            type: Localhost
+            localhostProfile: agent-runtime.json
         # Sprint 1: Mount only necessary volumes (ephemeral scratch)
         volumeMounts:
         - name: tmp
@@ -95,11 +128,15 @@ spec:
       # Sprint 1: Ephemeral volumes only
       volumes:
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          # Size limit prevents a compromised agent from exhausting node disk storage.
+          sizeLimit: 64Mi
       - name: app-tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 64Mi
       - name: logs
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 128Mi
 ---
 apiVersion: v1
 kind: Service
@@ -124,3 +161,7 @@ kind: ServiceAccount
 metadata:
   name: agent-runtime
   namespace: euno-system
+# The agent-runtime process has no legitimate reason to call the Kubernetes API.
+# Disabling automounting removes the projected token from the pod filesystem,
+# eliminating it as an exfiltration target if the agent is compromised.
+automountServiceAccountToken: false
