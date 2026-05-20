@@ -15,7 +15,7 @@
     "better-sqlite3": "^11.10.0"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-securityhub": "^3.515.0",
+    "@aws-sdk/client-securityhub": "^3.1050.0",
     "@azure/arm-security": "^6.0.0",
     "@azure/identity": "^4.0.0",
     "@google-cloud/security-center": "^9.0.0"
