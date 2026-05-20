@@ -140,7 +140,14 @@ export class EunoGatewayStack extends cdk.Stack {
       3653: logs.RetentionDays.TEN_YEARS,
       0: logs.RetentionDays.INFINITE,
     };
-    const logRetention = logRetentionMap[props.logRetentionDays ?? 90] ?? logs.RetentionDays.THREE_MONTHS;
+    const logRetentionDays = props.logRetentionDays ?? 90;
+    if (!(logRetentionDays in logRetentionMap)) {
+      throw new Error(
+        `Unsupported logRetentionDays value: ${logRetentionDays}. ` +
+        `Supported values: ${Object.keys(logRetentionMap).join(', ')}.`,
+      );
+    }
+    const logRetention = logRetentionMap[logRetentionDays];
     const fargate = props.fargate ?? true;
     const vpcCidr = props.vpcCidr ?? '10.40.0.0/16';
 

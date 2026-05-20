@@ -4,6 +4,7 @@
 
 locals {
   common_tags           = merge(var.tags, { environment = var.environment })
+  # Treat empty-string the same as unset so the documented default is applied.
   cognito_domain_prefix = coalesce(nullif(var.cognito_domain_prefix, ""), "${var.name_prefix}-${var.environment}")
   oidc_issuer           = replace(var.cluster_oidc_provider_url, "https://", "")
   runtime_log_group_arn = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/${var.name_prefix}/runtime"

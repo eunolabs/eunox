@@ -14,7 +14,7 @@ resource "aws_security_group" "rds" {
   vpc_id      = var.vpc_id
   tags        = merge(local.common_tags, { Name = "${var.name_prefix}-rds-sg" })
 
-  # Ingress is restricted to the EKS cluster security group.
+  # Ingress is restricted to the EKS cluster security group (rules below).
   egress {
     from_port   = 0
     to_port     = 0
