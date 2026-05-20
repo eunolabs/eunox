@@ -301,4 +301,4 @@ The prompt injection problem is not solvable inside the LLM. It is solvable at t
 
 ---
 
-*Next in this series: [Least-privilege for AI: translating a 20-year-old principle to the agent era](./02-least-privilege-agent-era.md)*
+*Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era.md)*
