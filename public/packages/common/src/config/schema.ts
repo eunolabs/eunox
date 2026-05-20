@@ -1657,10 +1657,74 @@ export const GatewayConfigSchema = z
       default: 1000,
       min: 1,
       description:
-        'Number of ledger rows between S3/GCS Object-Lock anchor writes. Default 1000. ' +
+        'Number of ledger rows between S3/GCS/objectStore anchor writes. Default 1000. ' +
         'Lower values provide more frequent external witnesses (smaller gap between a ' +
         'DB tamper event and S3/GCS detection) at the cost of more PUT requests. ' +
-        'Only relevant when AUDIT_LEDGER_S3_BUCKET or AUDIT_LEDGER_GCS_BUCKET is set.',
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET, AUDIT_LEDGER_GCS_BUCKET, or ' +
+        'AUDIT_LEDGER_OBJECT_STORE_PROVIDER is set.',
+    }),
+
+    AUDIT_LEDGER_OBJECT_STORE_PROVIDER: optionalString.describe(
+      'Cloud-agnostic object storage provider for audit-ledger anchoring. ' +
+      'When set, the standard bootstrap automatically constructs an ObjectStore ' +
+      'implementation and wires it into the CrossChainAnchor and ledger backends. ' +
+      'Valid values: "s3" (AWS S3), "gcs" (Google Cloud Storage), "azure-blob" (Azure Blob Storage). ' +
+      'Provider-specific configuration is supplied via companion environment variables: ' +
+      '"s3" reads AUDIT_LEDGER_S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, etc.; ' +
+      '"gcs" reads AUDIT_LEDGER_GCS_BUCKET, GOOGLE_APPLICATION_CREDENTIALS, etc.; ' +
+      '"azure-blob" reads AUDIT_LEDGER_AZURE_CONTAINER, AUDIT_LEDGER_AZURE_STORAGE_CONNECTION_STRING, ' +
+      'AUDIT_LEDGER_AZURE_ACCOUNT_NAME, AUDIT_LEDGER_AZURE_ACCOUNT_KEY, AUDIT_LEDGER_AZURE_ENDPOINT. ' +
+      'When unset, the legacy AUDIT_LEDGER_S3_BUCKET / AUDIT_LEDGER_GCS_BUCKET mechanism is used.',
+    ),
+
+    AUDIT_LEDGER_AZURE_CONTAINER: optionalString.describe(
+      'Azure Blob Storage container name for audit-ledger anchoring. ' +
+      'Required when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob. ' +
+      'The container should have an immutability policy (time-based retention or legal hold) ' +
+      'configured so that written anchor objects are write-once — this is the Azure equivalent ' +
+      'of S3 Object Lock COMPLIANCE mode.',
+    ),
+
+    AUDIT_LEDGER_AZURE_STORAGE_CONNECTION_STRING: optionalString.describe(
+      'Azure Storage connection string for audit-ledger blob anchoring. ' +
+      'Used when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob. ' +
+      'When provided, takes precedence over AUDIT_LEDGER_AZURE_ACCOUNT_NAME + ' +
+      'AUDIT_LEDGER_AZURE_ACCOUNT_KEY. ' +
+      'Use "UseDevelopmentStorage=true" for Azurite local testing. ' +
+      'Not recommended for production — prefer managed identity (accountName only) ' +
+      'or shared-key (accountName + accountKey) authentication.',
+    ),
+
+    AUDIT_LEDGER_AZURE_ACCOUNT_NAME: optionalString.describe(
+      'Azure Storage account name for audit-ledger blob anchoring. ' +
+      'Used when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob and ' +
+      'AUDIT_LEDGER_AZURE_STORAGE_CONNECTION_STRING is not set. ' +
+      'When provided without AUDIT_LEDGER_AZURE_ACCOUNT_KEY, authentication uses ' +
+      'DefaultAzureCredential (managed identity / workload identity). ' +
+      'Recommended for AKS deployments with pod-level managed identity.',
+    ),
+
+    AUDIT_LEDGER_AZURE_ACCOUNT_KEY: optionalString.describe(
+      'Azure Storage shared key (base64-encoded) for audit-ledger blob anchoring. ' +
+      'Used when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob and ' +
+      'AUDIT_LEDGER_AZURE_ACCOUNT_NAME is also set. ' +
+      'When omitted, DefaultAzureCredential is used for authentication.',
+    ),
+
+    AUDIT_LEDGER_AZURE_ENDPOINT: optionalString.describe(
+      'Custom Azure Blob Storage endpoint URL. ' +
+      'Used when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob. ' +
+      'Example: http://127.0.0.1:10000/devstoreaccount1 for Azurite local testing. ' +
+      'When unset the standard https://<accountName>.blob.core.windows.net endpoint is used.',
+    ),
+
+    AUDIT_LEDGER_GCS_SKIP_HOLD: envBoolean({
+      default: false,
+      description:
+        'When true, skips setting the temporaryHold on GCS anchor objects. ' +
+        'Only relevant when AUDIT_LEDGER_OBJECT_STORE_PROVIDER=gcs. ' +
+        'Use when the bucket enforces immutability via a retention policy alone and ' +
+        'the calling identity lacks the storage.objects.update IAM permission. Default false.',
     }),
 
     AUDIT_LEDGER_RETENTION_DAYS: envPositiveInt({

@@ -15,7 +15,7 @@ workarounds.
 | Identity provider | ✅ Entra ID (`azure-ad` adapter) | ✅ Cognito (`aws-cognito` adapter) | ✅ Cloud Identity (`gcp-identity` adapter) |
 | Token signing (KMS) | ✅ Key Vault (`azure-keyvault` signer) | ✅ KMS (`aws-kms` signer) | ✅ Cloud KMS (`gcp-cloudkms` signer) |
 | Secrets management | ✅ Key Vault secrets referenced in docs | ⚠️ Secrets Manager — referenced in docs, no native SDK integration | ⚠️ Secret Manager — referenced in docs, no native SDK integration |
-| Audit ledger storage | ✅ Azure Blob (S3-compatible via `@azure/storage-blob`) | ✅ S3 Object Lock (cross-chain anchor) | ⚠️ GCS — not yet integrated as cross-chain anchor target |
+| Audit ledger storage | ✅ Azure Blob (`AzureBlobObjectStore` via `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob`; managed identity, shared-key, or connection-string auth) | ✅ S3 Object Lock (`S3ObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=s3`; cross-chain anchor) | ✅ GCS (`GcsObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=gcs`; `temporaryHold` per object; multi-cloud redundancy alongside S3) |
 | Infrastructure-as-code | ⚠️ Bicep/ARM — not provided | ⚠️ CloudFormation / CDK — not provided | ⚠️ Deployment Manager / Terraform — not provided |
 | Container registry | ⚠️ ACR — not documented | ⚠️ ECR — not documented | ⚠️ Artifact Registry — not documented |
 | Helm deployment | ✅ AKS compatible | ⚠️ EKS — tested manually, not documented | ⚠️ GKE — tested manually, not documented |
@@ -215,12 +215,28 @@ workarounds.
   - Config schema tests in `euno-platform/packages/common/tests/config.test.ts`
   - `docs/ADAPTERS.md` §"Secret Store" added
 
-- [ ] **Cloud-agnostic object storage anchor**
-  - Refactor `CrossChainAnchor` to use an `ObjectStore` interface
-    (`put(key, data): Promise<void>`) instead of hard-coding the AWS SDK
-  - Built-in implementations: `S3ObjectStore`, `GcsObjectStore`,
-    `AzureBlobObjectStore`
-  - Selection via `AUDIT_LEDGER_OBJECT_STORE_PROVIDER` env var
+- [x] **Cloud-agnostic object storage anchor**
+  - Refactored `CrossChainAnchor`, `PostgresLedgerBackend`, and
+    `PerReplicaPostgresLedgerBackend` to support an `ObjectStore` interface
+    (`put(key, data, contentType): Promise<void>`) via the new `objectStores?`
+    option, decoupling anchor writes from provider-specific clients
+  - Built-in implementations: `S3ObjectStore` (wraps existing `S3AnchorClient`),
+    `GcsObjectStore` (wraps existing `GcsAnchorClient`), `AzureBlobObjectStore`
+    (lazily loads `@azure/storage-blob`; uses `DefaultAzureCredential`,
+    shared-key, or connection-string auth)
+  - `createObjectStoreFromEnv()` factory selects the implementation based on
+    `AUDIT_LEDGER_OBJECT_STORE_PROVIDER` (`s3` | `gcs` | `azure-blob`)
+  - New env vars: `AUDIT_LEDGER_OBJECT_STORE_PROVIDER`,
+    `AUDIT_LEDGER_AZURE_CONTAINER`, `AUDIT_LEDGER_AZURE_STORAGE_CONNECTION_STRING`,
+    `AUDIT_LEDGER_AZURE_ACCOUNT_NAME`, `AUDIT_LEDGER_AZURE_ACCOUNT_KEY`,
+    `AUDIT_LEDGER_AZURE_ENDPOINT`, `AUDIT_LEDGER_GCS_SKIP_HOLD` added to
+    `GatewayConfigSchema`
+  - `audit-module.ts` standard bootstrap automatically wires the generic
+    `ObjectStore` into both the ledger backend and the `CrossChainAnchor`
+    when `AUDIT_LEDGER_OBJECT_STORE_PROVIDER` is set
+  - All three backends (`objectStores` array) fan out to every configured
+    store independently — a failure in one does not block others
+  - 33 new unit tests in `common-infra/src/__tests__/object-store.test.ts`
 
 - [ ] **Helm chart — cloud-specific values files**
   - `k8s/helm/euno/values-azure.yaml`

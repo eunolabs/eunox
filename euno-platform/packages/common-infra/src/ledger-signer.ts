@@ -58,6 +58,7 @@ import { AuditEvidence, SignedAuditEvidence, GENESIS_HASH, ChainTipSnapshot, Cro
 import { EvidenceSigner } from '@euno/common-core';
 import { CryptoSigner, signEvidenceWithChain, canonicalizeEvidenceFields } from '@euno/common-core';
 import { canonicalSha256, computeMerkleRoot, generateId } from '@euno/common-core';
+import type { ObjectStore } from './object-store';
 
 // ── LedgerEntry ───────────────────────────────────────────────────────────────
 
@@ -1171,9 +1172,23 @@ export interface PostgresLedgerOptions {
     anchorIntervalRows?: number;
   };
   /**
-   * Called when an S3 or GCS anchor write fails.  The append itself succeeds —
-   * anchoring is best-effort (the ledger is the primary tamper-evidence;
-   * S3/GCS is a secondary independent witness).
+   * Cloud-agnostic object store targets.
+   *
+   * Every `anchorIntervalRows` successful appends trigger a Merkle-root PUT
+   * to **each** store in this array.  Failures are isolated per store and
+   * reported via `onAnchorError`.  Both `objectStores` and the legacy `s3?` /
+   * `gcs?` options can be active simultaneously — they are all fanned out to
+   * independently.
+   *
+   * Use `createObjectStoreFromEnv()` to build implementations from environment
+   * variables, or pass `S3ObjectStore` / `GcsObjectStore` /
+   * `AzureBlobObjectStore` instances directly.
+   */
+  objectStores?: ObjectStore[];
+  /**
+   * Called when an S3, GCS, or objectStore anchor write fails.  The append
+   * itself succeeds — anchoring is best-effort (the ledger is the primary
+   * tamper-evidence; external storage is a secondary independent witness).
    */
   onAnchorError?: (err: Error) => void;
 }
@@ -1283,6 +1298,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
   private readonly anchorIntervalRows: number;
   private readonly s3?: Required<PostgresLedgerOptions>['s3'];
   private readonly gcs?: Required<PostgresLedgerOptions>['gcs'];
+  private readonly objectStores: ObjectStore[];
   private readonly onAnchorError: (err: Error) => void;
 
   /** Base delay (ms) for the first retry on a lock-hash collision in per-tenant mode. */
@@ -1312,6 +1328,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
     this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PostgresLedgerBackend');
     this.s3 = options.s3;
     this.gcs = options.gcs;
+    this.objectStores = options.objectStores ?? [];
     this.onAnchorError = options.onAnchorError ?? ((err) => {
       // Swallow by default; callers should wire in a logger.
       void err;
@@ -1497,8 +1514,8 @@ export class PostgresLedgerBackend implements LedgerBackend {
 
         await conn.query('COMMIT');
 
-        // Trigger S3 and/or GCS anchor asynchronously (fire-and-forget with error callback).
-        if ((this.s3 || this.gcs) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
+        // Trigger S3, GCS, and/or objectStores anchor asynchronously (fire-and-forget with error callback).
+        if ((this.s3 || this.gcs || this.objectStores.length > 0) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
           const fromSeq = this.lastAnchoredSeq + 1;
           const toSeq = nextSeq;
           this.lastAnchoredSeq = toSeq;
@@ -1645,7 +1662,7 @@ export class PostgresLedgerBackend implements LedgerBackend {
     toSeq: number,
     replicaId: string,
   ): Promise<void> {
-    if (!this.s3 && !this.gcs) return;
+    if (!this.s3 && !this.gcs && this.objectStores.length === 0) return;
 
     const entries = await this.getEntries(fromSeq, toSeq);
     if (entries.length === 0) return;
@@ -1688,6 +1705,16 @@ export class PostgresLedgerBackend implements LedgerBackend {
           body: anchorPayload,
           contentType: 'application/json',
         });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
+
+    // Cloud-agnostic object stores — each isolated.
+    for (let i = 0; i < this.objectStores.length; i++) {
+      const key = `audit-anchor/${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.objectStores[i]!.put(key, anchorPayload, 'application/json');
       } catch (err) {
         this.onAnchorError(toError(err));
       }
@@ -2206,7 +2233,12 @@ export interface PerReplicaPostgresLedgerOptions {
     anchorIntervalRows?: number;
   };
   /**
-   * Called when an S3 or GCS anchor write fails.  The append itself succeeds.
+   * Cloud-agnostic object store targets.  Same semantics as
+   * {@link PostgresLedgerOptions.objectStores}.
+   */
+  objectStores?: ObjectStore[];
+  /**
+   * Called when an S3, GCS, or objectStore anchor write fails.  The append itself succeeds.
    * Default: swallow silently.
    */
   onAnchorError?: (err: Error) => void;
@@ -2318,6 +2350,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
   private readonly anchorIntervalRows: number;
   private readonly s3?: Required<PerReplicaPostgresLedgerOptions>['s3'];
   private readonly gcs?: Required<PerReplicaPostgresLedgerOptions>['gcs'];
+  private readonly objectStores: ObjectStore[];
   private readonly onAnchorError: (err: Error) => void;
 
   /** Tracks the seq of the last anchor (S3 or GCS) for this replica. */
@@ -2349,6 +2382,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PerReplicaPostgresLedgerBackend');
     this.s3 = options.s3;
     this.gcs = options.gcs;
+    this.objectStores = options.objectStores ?? [];
     this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
   }
 
@@ -2547,8 +2581,8 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           this.tipHash = finalRecordHash;
           this.tipSeq = nextSeq;
 
-          // Trigger S3 and/or GCS anchor asynchronously.
-          if ((this.s3 || this.gcs) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
+          // Trigger S3, GCS, and/or objectStores anchor asynchronously.
+          if ((this.s3 || this.gcs || this.objectStores.length > 0) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
             const fromSeq = this.lastAnchoredSeq + 1;
             const toSeq = nextSeq;
             this.lastAnchoredSeq = toSeq;
@@ -2692,7 +2726,7 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
     toSeq: number,
     replicaId: string,
   ): Promise<void> {
-    if (!this.s3 && !this.gcs) return;
+    if (!this.s3 && !this.gcs && this.objectStores.length === 0) return;
 
     const entries = await this.getEntries(fromSeq, toSeq);
     if (entries.length === 0) return;
@@ -2735,6 +2769,16 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           body: anchorPayload,
           contentType: 'application/json',
         });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
+
+    // Cloud-agnostic object stores — each isolated.
+    for (let i = 0; i < this.objectStores.length; i++) {
+      const key = `audit-anchor/${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.objectStores[i]!.put(key, anchorPayload, 'application/json');
       } catch (err) {
         this.onAnchorError(toError(err));
       }
@@ -2801,6 +2845,28 @@ export interface CrossChainAnchorOptions {
   };
 
   /**
+   * Cloud-agnostic object store targets.
+   *
+   * Every cross-chain commitment is PUT to **each** store in this array using
+   * the key `{prefix}cross-chain/{coordinatorId}/{seq}.json` where `prefix`
+   * defaults to `audit-anchor/`.  Failures are isolated per store and reported
+   * via `onError`.  Both `objectStores` and the legacy `s3?`/`gcs?` options
+   * can be active simultaneously.
+   *
+   * Use `createObjectStoreFromEnv()` to build implementations from environment
+   * variables, or pass `S3ObjectStore` / `GcsObjectStore` /
+   * `AzureBlobObjectStore` instances directly.
+   */
+  objectStores?: ObjectStore[];
+
+  /**
+   * Key prefix used for `objectStores` PUT keys.
+   * Default: `audit-anchor/`.
+   * Does not affect the legacy `s3?`/`gcs?` prefix (each has its own `prefix` field).
+   */
+  objectStoresPrefix?: string;
+
+  /**
    * Additional external anchors (HTTP webhook, SIEM, transparency log).
    * The raw `SignedCrossChainCommitment` JSON is delivered to each anchor's
    * `anchorCrossChain(commitment)` call.  Errors from individual anchors
@@ -2810,8 +2876,8 @@ export interface CrossChainAnchorOptions {
 
   /**
    * Called when a cross-chain commitment cycle fails (query error, sign
-   * error, S3 error, etc.).  The anchor continues running on subsequent
-   * ticks.  Default: swallow silently.
+   * error, S3 error, objectStore error, etc.).  The anchor continues running
+   * on subsequent ticks.  Default: swallow silently.
    */
   onError?: (err: Error) => void;
 
@@ -2885,6 +2951,8 @@ export class CrossChainAnchor {
   private readonly cryptoSigner: CryptoSigner;
   private readonly s3?: Required<CrossChainAnchorOptions>['s3'];
   private readonly gcs?: Required<CrossChainAnchorOptions>['gcs'];
+  private readonly objectStores: ObjectStore[];
+  private readonly objectStoresPrefix: string;
   private readonly anchors: CrossChainExternalAnchor[];
   private readonly onError: (err: Error) => void;
   private readonly onCommitment?: (commitment: SignedCrossChainCommitment) => void;
@@ -2912,6 +2980,8 @@ export class CrossChainAnchor {
     this.cryptoSigner = options.cryptoSigner;
     this.s3 = options.s3;
     this.gcs = options.gcs;
+    this.objectStores = options.objectStores ?? [];
+    this.objectStoresPrefix = options.objectStoresPrefix ?? 'audit-anchor/';
     this.anchors = options.anchors ?? [];
     this.onError = options.onError ?? (() => { /* swallow */ });
     this.onCommitment = options.onCommitment;
@@ -2990,6 +3060,8 @@ export class CrossChainAnchor {
     // correctly even if publishing fails.
     this.previousCommitmentHash = canonicalSha256(signed);
 
+    const signedJson = JSON.stringify(signed);
+
     // Publish to S3 Object-Lock.
     if (this.s3) {
       const prefix = this.s3.prefix ?? 'audit-anchor/';
@@ -2998,7 +3070,7 @@ export class CrossChainAnchor {
         await this.s3.client.putObject({
           bucket: this.s3.bucket,
           key,
-          body: JSON.stringify(signed),
+          body: signedJson,
           contentType: 'application/json',
         });
       } catch (err) {
@@ -3016,13 +3088,27 @@ export class CrossChainAnchor {
         await this.gcs.client.putObject({
           bucket: this.gcs.bucket,
           key,
-          body: JSON.stringify(signed),
+          body: signedJson,
           contentType: 'application/json',
         });
       } catch (err) {
         this.onError(err instanceof Error ? err : new Error(
           `CrossChainAnchor GCS write failed: ${String(err)}`,
         ));
+      }
+    }
+
+    // Publish to cloud-agnostic object stores.
+    if (this.objectStores.length > 0) {
+      const key = `${this.objectStoresPrefix}cross-chain/${this.coordinatorId}/${commitmentSeq}.json`;
+      for (let i = 0; i < this.objectStores.length; i++) {
+        try {
+          await this.objectStores[i]!.put(key, signedJson, 'application/json');
+        } catch (err) {
+          this.onError(err instanceof Error ? err : new Error(
+            `CrossChainAnchor objectStore[${i}] write failed: ${String(err)}`,
+          ));
+        }
       }
     }
 
