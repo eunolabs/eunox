@@ -182,7 +182,7 @@ workarounds.
 
 ### Phase 3 — Infrastructure-as-code (longer-term)
 
-- [ ] **Terraform module** (`infra/gcp/terraform/`)
+- [x] **Terraform module** (`infra/gcp/terraform/`)
   - `network/` — VPC, subnets, Cloud NAT
   - `compute/` — GKE cluster with Workload Identity, node pool autoscaling
   - `data/` — Cloud SQL (Postgres), Memorystore Redis
@@ -190,7 +190,7 @@ workarounds.
   - `observability/` — Cloud Monitoring dashboards, alerting policies
   - README with `terraform init / plan / apply` walkthrough
 
-- [ ] **Google Cloud Deployment Manager / Config Connector** (`infra/gcp/config-connector/`)
+- [x] **Google Cloud Deployment Manager / Config Connector** (`infra/gcp/config-connector/`)
   - KRM manifests for Cloud SQL, Memorystore, Cloud KMS, and Artifact Registry
   - Annotated with Workload Identity bindings
 

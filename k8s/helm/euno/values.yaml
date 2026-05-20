@@ -52,6 +52,8 @@ gateway:
     type: ClusterIP
     port: 3002
     adminPort: 3003
+  serviceAccountAnnotations: {}
+  podLabels: {}
   # Non-sensitive configuration — stored in a ConfigMap.
   env:
     NODE_ENV: production
@@ -77,6 +79,8 @@ issuer:
   service:
     type: ClusterIP
     port: 3001
+  serviceAccountAnnotations: {}
+  podLabels: {}
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
@@ -94,6 +98,8 @@ minter:
   service:
     type: ClusterIP
     port: 3004
+  serviceAccountAnnotations: {}
+  podLabels: {}
   env:
     NODE_ENV: production
   secretEnv: {}
@@ -145,6 +151,8 @@ postureEmitter:
     repository: ghcr.io/edgeobs/euno/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
+  serviceAccountAnnotations: {}
+  podLabels: {}
   persistence:
     enabled: true
     size: 1Gi

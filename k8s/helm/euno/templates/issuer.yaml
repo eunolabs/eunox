@@ -1,6 +1,18 @@
 {{/*
 capability-issuer Deployment
 */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "euno.fullname" . }}-issuer
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
+  {{- with .Values.issuer.serviceAccountAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,7 +32,11 @@ spec:
         app.kubernetes.io/name: euno-issuer
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: issuer
+        {{- with .Values.issuer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "euno.fullname" . }}-issuer
       containers:
         - name: issuer
           image: "{{ .Values.issuer.image.repository }}:{{ .Values.issuer.image.tag }}"

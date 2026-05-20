@@ -8,6 +8,18 @@ postureEmitter.replicaCount to any value other than 1.
 {{- if ne (int .Values.postureEmitter.replicaCount) 1 }}
   {{- fail (printf "posture-emitter replicaCount must be exactly 1 (SQLite single-writer constraint); got %d" (int .Values.postureEmitter.replicaCount)) }}
 {{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "euno.fullname" . }}-posture-emitter
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: posture-emitter
+  {{- with .Values.postureEmitter.serviceAccountAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +42,11 @@ spec:
         app.kubernetes.io/name: euno-posture-emitter
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: posture-emitter
+        {{- with .Values.postureEmitter.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "euno.fullname" . }}-posture-emitter
       containers:
         - name: posture-emitter
           image: "{{ .Values.postureEmitter.image.repository }}:{{ .Values.postureEmitter.image.tag }}"

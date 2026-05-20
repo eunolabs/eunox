@@ -1,6 +1,18 @@
 {{/*
 tool-gateway Deployment
 */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "euno.fullname" . }}-gateway
+  labels:
+    {{- include "euno.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  {{- with .Values.gateway.serviceAccountAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,7 +32,11 @@ spec:
         app.kubernetes.io/name: euno-gateway
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: gateway
+        {{- with .Values.gateway.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "euno.fullname" . }}-gateway
       containers:
         - name: gateway
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
