@@ -1,4 +1,4 @@
-# Least-privilege for AI: translating a 20-year-old principle to the agent era
+# Least-privilege for AI: translating a 50-year-old principle to the agent era
 
 *Audience: security architects and developers building multi-tool agent systems*
 
@@ -246,7 +246,7 @@ The tool gateway receives the call. It:
 2. Identifies the tool being called and locates the applicable conditions in the token
 3. Evaluates each condition against the actual call arguments
 4. Applies any obligation conditions (rate limit, parameter injection)
-5. Records the decision in the HMAC-chained audit ledger
+5. Records the decision in the signed hash-chained audit ledger
 6. Forwards the call (ALLOW) or returns an error (DENY)
 
 Steps 1–5 all happen before the call reaches the upstream MCP server. If any step fails, the call is denied and the upstream server is never contacted.
@@ -255,7 +255,7 @@ Steps 1–5 all happen before the call reaches the upstream MCP server. If any s
 
 The audit ledger records every decision — allowed and denied calls, the arguments, the token JTI, the agent identity, and the decision rationale. The records are exportable via the `/api/v1/audit/export` endpoint in OCSF format, suitable for ingestion into any SIEM.
 
-The HMAC chain makes the ledger tamper-evident: if any record is deleted or modified, the chain breaks, and the break is detectable by any party that holds the chain's public key. This is the property that makes the audit trail useful for compliance and incident response, not just operational monitoring.
+The signed hash chain makes the ledger tamper-evident: if any record is deleted or modified, the chain breaks, and the break is detectable by any party that can verify the signing keys. This is the property that makes the audit trail useful for compliance and incident response, not just operational monitoring.
 
 ---
 
@@ -272,7 +272,7 @@ The concepts from classical access control all have analogues in the capability-
 | Scope | OAuth scope string | `tools` map in token | Machine-evaluable conditions, not opaque strings |
 | Revocation | Account disable, role removal | Token JTI revocation, kill-switch | Takes effect in milliseconds, no redeploy |
 | Delegation | Role assumption, OAuth token exchange | Token attenuation chain | Permissions can only narrow, never widen |
-| Audit | IAM access logs, OAuth grant records | HMAC-chained OCSF events | Tamper-evident, argument-level detail |
+| Audit | IAM access logs, OAuth grant records | Signed hash-chained OCSF events | Tamper-evident, argument-level detail |
 
 The core principle is the same — grant only what is needed. The mechanism is different — because what "only what is needed" means for an agent is per-tool, per-argument conditions evaluated at call time, not a role assigned at provisioning time.
 

@@ -224,10 +224,10 @@ Each audit record contains:
 - The tool name and full argument payload (so the exact injected string is preserved)
 - The capability token JTI and the agent's identity (`sub` claim)
 - The decision (ALLOW or DENY) and the specific condition that caused a denial
-- A nanosecond-precision timestamp
-- An HMAC linking this record to the previous record in the chain
+- A Unix epoch millisecond timestamp
+- `seq`/`previousHash` chain fields included in signed evidence records
 
-The HMAC chain is the tamper-evidence mechanism. Each record's HMAC is computed over the record's own content plus the previous record's HMAC. If an attacker tries to delete, modify, or reorder records — to hide evidence of the injection attempt — the chain breaks, and the tampering is detectable. The audit record for the blocked `DROP TABLE` call cannot be quietly removed after the fact.
+The `seq`/`previousHash` chain is the tamper-evidence mechanism, and those fields are covered by per-record signatures. If an attacker tries to delete, modify, or reorder records — to hide evidence of the injection attempt — the chain breaks, and the tampering is detectable. The audit record for the blocked `DROP TABLE` call cannot be quietly removed after the fact.
 
 ---
 
@@ -241,9 +241,9 @@ The proxy's enforcement behaviour in every error or edge case deserves explicit 
 
 **If the token contains a condition type this version of the proxy does not recognise:** The call is denied. Unknown conditions fail closed. If a new condition type is added to the policy schema and deployed in a token before the proxy is updated to evaluate it, calls under that token will be denied until the proxy is updated. This is the correct behaviour: an unevaluated condition is an unenforced constraint, and unenforced constraints are security gaps.
 
-**If the audit database is unreachable:** The call is denied. The proxy will not forward calls that it cannot record. An agent that operates without an audit trail cannot be investigated after the fact, and the ability to investigate is part of the security guarantee.
+**If audit evidence generation fails (for example, the audit database is unreachable):** The call still proceeds today, and the proxy logs the failure for operators to investigate. This is a current availability-over-strict-audit tradeoff in the implementation.
 
-**If the HMAC chain is in an inconsistent state:** The proxy halts new audit writes and alerts. It does not silently write unchained records.
+**If the audit chain is in an inconsistent state:** The proxy halts new audit writes and alerts. It does not silently write unchained records.
 
 This fail-closed posture is a design choice that must be made explicitly and defended organisationally. There will be pressure, when Redis goes down or the audit database is unavailable, to add a fallback that "keeps things working." Resist that pressure. The security property — that every tool call is policy-checked and recorded — is only meaningful if it is unconditional. An "except when the database is down" clause is an exploitable window.
 
@@ -275,7 +275,7 @@ One of the underappreciated values of the audit ledger is what it enables after 
 
 2. **Revoke the token.** If there is any concern that the injection attempt included a successful earlier step (exfiltrating data before the DROP, for example), the token can be immediately added to the revocation list. All subsequent calls from that agent instance are blocked.
 
-3. **Reconstruct the sequence.** The HMAC-chained audit ledger provides a complete, tamper-evident sequence of every tool call the agent made during the session. You can see exactly what the agent read, what it queried, what it sent, and in what order — before and after the injection attempt.
+3. **Reconstruct the sequence.** The signed hash-chained audit ledger provides a complete, tamper-evident sequence of every tool call the agent made during the session. You can see exactly what the agent read, what it queried, what it sent, and in what order — before and after the injection attempt.
 
 4. **Export evidence for compliance.** The audit records, signed with the gateway's private key and exportable via the `/api/v1/audit/export` endpoint, provide non-repudiable evidence of what occurred. This is directly useful for SOC 2 incident response requirements under CC7 (System Operations).
 
