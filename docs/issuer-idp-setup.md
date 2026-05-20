@@ -776,3 +776,226 @@ AWS_COGNITO_CLIENT_ID=<app-client-id>
       an `admin`-tier role grants elevated capabilities to all group members.
 - [ ] User `externalId` ↔ Cognito `sub` mapping has been validated end-to-end
       in a staging environment before production rollout.
+
+---
+
+## 11. Google Workspace SCIM bridge (Cloud Identity)
+
+> **Status:** Multi-cloud Phase 1. Use this section when you want to provision
+> users and groups into the Euno issuer from Google Workspace (formerly G Suite)
+> via the SCIM 2.0 protocol, using a **Google Workspace SCIM provisioning**
+> service account and OAuth 2.0 credential.
+
+Google Workspace supports outbound SCIM provisioning to third-party apps via
+an **OAuth service account**. The provisioning agent authenticates with a
+service account credential and pushes user and group lifecycle events to the
+Euno issuer's SCIM endpoint.
+
+### 11.1 Architecture
+
+```
+Google Workspace Admin SDK
+  (user / group provisioning events)
+        │
+        │  HTTPS POST /scim/v2/Users
+        │  HTTPS POST /scim/v2/Groups
+        ▼
+Euno capability-issuer (/scim/v2/)
+  ──► scim_users / scim_groups tables (Postgres)
+        │
+        ▼
+  role enrichment at token issuance
+  (IdP roles ∪ SCIM group-mapped roles)
+```
+
+The provisioning agent uses an **OAuth service account** to authenticate to
+the Euno SCIM endpoint. At runtime, GCP Cloud Identity / Firebase Auth
+authenticates users and issues ID tokens; the SCIM provisioning layer keeps
+the group membership data up to date independently.
+
+### 11.2 Prerequisites
+
+- Google Workspace with a domain admin account.
+- A GCP project with the **Admin SDK API** enabled.
+- `ISSUER_DB_URL` set and pointing at a Postgres instance.
+- `ISSUER_SCIM_BEARER_TOKEN` set (≥ 32 characters, stored in GCP Secret
+  Manager — see [`docs/secrets-gcp.md`](./secrets-gcp.md)).
+- The Euno issuer is reachable from the provisioning agent over HTTPS.
+  On GKE, expose the issuer via a GKE Ingress with a Google-managed SSL
+  certificate (see [`docs/deploy-gke.md`](./deploy-gke.md) §5).
+
+### 11.3 Create an OAuth service account for SCIM provisioning
+
+Google Workspace SCIM provisioning uses an **OAuth service account** (a GCP
+service account with Google Workspace domain-wide delegation).
+
+1. In the GCP Console: **IAM & Admin → Service Accounts → Create**.
+   - **Name**: `euno-scim-provisioner`
+   - **Description**: `SCIM provisioning agent for Euno capability issuer`
+
+2. Download a JSON key for the service account (this key will be used by the
+   provisioning agent — keep it in Secret Manager):
+
+   ```bash
+   gcloud iam service-accounts keys create /tmp/euno-scim-sa.json \
+     --iam-account "euno-scim-provisioner@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --project "${PROJECT_ID}"
+   ```
+
+3. In Google Workspace Admin Console: **Security → Access and data controls →
+   API controls → Manage Domain-Wide Delegation → Add new**.
+   - **Client ID**: `<service-account-client-id>` (from the JSON key file)
+   - **OAuth scopes**:
+     - `https://www.googleapis.com/auth/admin.directory.user.readonly`
+     - `https://www.googleapis.com/auth/admin.directory.group.readonly`
+
+### 11.4 Google Workspace SCIM provisioning — configuration
+
+Google Workspace does not have a built-in "push to arbitrary SCIM endpoint"
+feature in all editions. The recommended approaches are:
+
+**Option A — Google Cloud Identity SCIM provisioning (Google Workspace Enterprise)**
+
+1. In Google Admin Console: **Apps → Web and mobile apps → Add app →
+   Add SAML app** (or OIDC app) → configure provisioning.
+2. Under **Provisioning**, enable **Automatic provisioning** and supply the
+   Euno SCIM endpoint:
+
+   | Field | Value |
+   |---|---|
+   | SCIM base URL | `https://<issuer-host>/scim/v2` |
+   | OAuth bearer token | `<ISSUER_SCIM_BEARER_TOKEN>` |
+
+3. Under **Attribute mappings**, ensure the following are active:
+
+   | Google Workspace attribute | SCIM attribute |
+   |---|---|
+   | `id` (Google internal user ID) | `externalId` |
+   | `primaryEmail` | `userName` |
+   | `name.givenName` | `name.givenName` |
+   | `name.familyName` | `name.familyName` |
+   | `name.fullName` | `displayName` |
+   | `suspended` → `false` | `active` |
+
+   The Euno SCIM user lookup uses `externalId` (matched against the IdP `sub`
+   claim). For GCP Cloud Identity / Firebase Auth, the `sub` claim in the ID
+   token is the Google internal user ID (`id`). Map `id → externalId` to
+   ensure correct matching.
+
+**Option B — Custom SCIM provisioning agent (all Google Workspace editions)**
+
+For editions without built-in SCIM provisioning, deploy a lightweight Cloud
+Run service or Cloud Function that polls the Google Admin SDK Directory API
+and pushes changes to the Euno SCIM endpoint:
+
+```javascript
+// cloud-run/google-workspace-scim-sync.mjs
+// Sync Google Workspace users and groups to the Euno SCIM endpoint.
+import { google } from 'googleapis';
+
+const EUNO_SCIM_BASE = process.env.EUNO_SCIM_BASE_URL;
+const EUNO_BEARER   = process.env.ISSUER_SCIM_BEARER_TOKEN;
+const ADMIN_EMAIL   = process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL;
+
+const auth = new google.auth.GoogleAuth({
+  scopes: [
+    'https://www.googleapis.com/auth/admin.directory.user.readonly',
+    'https://www.googleapis.com/auth/admin.directory.group.readonly',
+  ],
+});
+
+// Impersonate the Workspace admin for Directory API calls.
+const client = await auth.getClient();
+client.subject = ADMIN_EMAIL;
+
+const admin = google.admin({ version: 'directory_v1', auth: client });
+
+async function syncUsers() {
+  const { data } = await admin.users.list({ customer: 'my_customer' });
+  for (const user of data.users ?? []) {
+    await fetch(`${EUNO_SCIM_BASE}/Users`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${EUNO_BEARER}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        externalId: user.id,   // Google internal user ID → matches GCP sub claim
+        userName: user.primaryEmail,
+        displayName: user.name?.fullName ?? user.primaryEmail,
+        name: {
+          givenName: user.name?.givenName ?? '',
+          familyName: user.name?.familyName ?? '',
+        },
+        active: !user.suspended,
+      }),
+    });
+  }
+}
+```
+
+### 11.5 Group provisioning and role mapping
+
+1. In Google Workspace Admin Console, create **Groups** whose names match
+   entries in your `ISSUER_SCIM_GROUP_ROLE_MAP`:
+
+   ```bash
+   # Example group names → euno roles
+   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+   ```
+
+2. Assign users to the relevant groups in Google Workspace Admin Console.
+
+3. The provisioning agent pushes `POST /scim/v2/Groups` with the group's
+   `displayName` and member list to the Euno issuer.
+
+4. At token issuance time, the issuer looks up the authenticated user's SCIM
+   group memberships (by `externalId` = Google `sub` claim, falling back to
+   `userName` = email) and adds the mapped roles to the role set provided by
+   the GCP Cloud Identity ID token.
+
+### 11.6 Attribute mappings for Cloud Identity
+
+When using GCP Cloud Identity / Firebase Auth as the runtime identity provider
+alongside Google Workspace SCIM provisioning, ensure attribute values are
+consistent:
+
+| Attribute | GCP Cloud Identity ID token claim | Google Workspace → SCIM mapping |
+|---|---|---|
+| User identifier | `sub` (Google internal user ID) | `id → externalId` — this must match the `sub` value in the ID token. |
+| Email | `email` | `primaryEmail → userName` |
+| Groups | (not in token; enriched via SCIM) | `members` list in `/scim/v2/Groups` |
+
+The Euno SCIM enrichment matches the GCP `sub` claim value against
+`scim_users.external_id`. For the match to succeed, the provisioning agent
+must push the same Google internal user ID as the SCIM `externalId`.
+
+### 11.7 Environment variables
+
+```bash
+# Issuer — enable SCIM 2.0
+ISSUER_DB_URL=postgres://issuer:secret@db:5432/issuer_db
+ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-from-secret-manager>
+ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+
+# Identity provider remains GCP Cloud Identity for runtime authentication:
+IDENTITY_PROVIDER=gcp-identity
+GCP_PROJECT_ID=my-gcp-project
+GCP_IDENTITY_AUDIENCE=https://issuer.euno.example.com
+```
+
+### 11.8 Security checklist
+
+- [ ] `ISSUER_SCIM_BEARER_TOKEN` is stored in GCP Secret Manager and rotated
+      at least annually (SOC 2 CC6.1).
+- [ ] The SCIM endpoint is behind TLS (Google-managed SSL certificate on the
+      GKE Ingress).
+- [ ] Access to `/scim/v2/` is restricted to the provisioning agent's source
+      IP range or via an internal GKE Ingress.
+- [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` has been reviewed — mapping a group to
+      an `admin`-tier role grants elevated capabilities to all group members.
+- [ ] User `externalId` ↔ GCP Cloud Identity `sub` mapping has been validated
+      end-to-end in a staging environment before production rollout.
+- [ ] The OAuth service account's domain-wide delegation scopes are limited
+      to read-only Directory API scopes.

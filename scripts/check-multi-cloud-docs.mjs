@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * CI lint: verify that the AWS Phase 1 multi-cloud documentation is complete.
+ * CI lint: verify that the AWS Phase 1 and GCP Phase 1 multi-cloud
+ * documentation is complete.
  *
  * Checks performed:
  *   1. docs/deploy-eks.md exists and contains required sections:
@@ -28,6 +29,39 @@
  *      - IRSA annotation (eks.amazonaws.com/role-arn)
  *      - SIGNING_PROVIDER: aws-kms
  *      - IDENTITY_PROVIDER: aws-cognito
+ *   5. docs/deploy-gke.md exists and contains required sections:
+ *      - Workload Identity Federation section
+ *      - iam.gke.io/gcp-service-account annotation
+ *      - Artifact Registry image configuration
+ *      - GKE Ingress section
+ *      - Google-managed SSL certificate
+ *      - values-gcp.yaml reference
+ *      - Cloud Monitoring observability section
+ *      - Security Command Center section
+ *      - OCSF → SCC finding mapping
+ *      - Log-based metrics / denial histogram
+ *   6. docs/secrets-gcp.md exists and contains required sections:
+ *      - AUDIT_LEDGER_HMAC_SECRET reference
+ *      - ADMIN_API_KEY reference
+ *      - PARTNER_DID_PIN_SECRET reference
+ *      - Secret Accessor role / IAM binding
+ *      - External Secrets Operator (ESO) section
+ *      - SecretStore resource example
+ *      - ExternalSecret resource example
+ *      - Secret Manager Add-on section
+ *      - ESO vs. comparison table
+ *   7. docs/issuer-idp-setup.md contains the Google Workspace SCIM bridge (§11):
+ *      - Section heading for Google Workspace SCIM bridge
+ *      - OAuth service account reference
+ *      - ISSUER_SCIM_BEARER_TOKEN environment variable reference
+ *      - sub claim / externalId mapping
+ *      - ISSUER_SCIM_GROUP_ROLE_MAP reference
+ *   8. k8s/helm/euno/values-gcp.yaml exists and contains required entries:
+ *      - Artifact Registry reference (pkg.dev)
+ *      - Workload Identity annotation (iam.gke.io/gcp-service-account)
+ *      - SIGNING_PROVIDER: gcp-cloudkms
+ *      - IDENTITY_PROVIDER: gcp-identity
+ *      - GCP_PROJECT_ID placeholder
  *
  * Usage (from the repo root):
  *
@@ -182,6 +216,89 @@ requireText(valuesAws, 'AWS_COGNITO_USER_POOL_ID',
   'values-aws.yaml: AWS_COGNITO_USER_POOL_ID placeholder');
 requireText(valuesAws, 'gp3',
   'values-aws.yaml: gp3 EBS storage class for posture-emitter');
+
+// ---------------------------------------------------------------------------
+// Check 5 — docs/deploy-gke.md
+// ---------------------------------------------------------------------------
+
+const gkeGuide = requireFile('docs/deploy-gke.md', 'docs/deploy-gke.md');
+
+requireText(gkeGuide, 'Workload Identity',
+  'deploy-gke.md: Workload Identity Federation section');
+requireText(gkeGuide, 'iam.gke.io/gcp-service-account',
+  'deploy-gke.md: Workload Identity annotation example');
+requireText(gkeGuide, 'Artifact Registry',
+  'deploy-gke.md: Artifact Registry image configuration section');
+requireText(gkeGuide, 'GKE Ingress',
+  'deploy-gke.md: GKE Ingress section');
+requireText(gkeGuide, 'ManagedCertificate',
+  'deploy-gke.md: Google-managed SSL certificate (ManagedCertificate) section');
+requireText(gkeGuide, 'values-gcp.yaml',
+  'deploy-gke.md: reference to values-gcp.yaml');
+requireText(gkeGuide, 'Cloud Monitoring',
+  'deploy-gke.md: Cloud Monitoring observability section');
+requireText(gkeGuide, 'Security Command Center',
+  'deploy-gke.md: Security Command Center section');
+requireText(gkeGuide, 'OCSF',
+  'deploy-gke.md: OCSF → Security Command Center finding mapping');
+requireText(gkeGuide, 'denial_reason',
+  'deploy-gke.md: denial_reason histogram query');
+
+// ---------------------------------------------------------------------------
+// Check 6 — docs/secrets-gcp.md
+// ---------------------------------------------------------------------------
+
+const secretsGcpGuide = requireFile('docs/secrets-gcp.md', 'docs/secrets-gcp.md');
+
+requireText(secretsGcpGuide, 'AUDIT_LEDGER_HMAC_SECRET',
+  'secrets-gcp.md: AUDIT_LEDGER_HMAC_SECRET referenced');
+requireText(secretsGcpGuide, 'ADMIN_API_KEY',
+  'secrets-gcp.md: ADMIN_API_KEY referenced');
+requireText(secretsGcpGuide, 'PARTNER_DID_PIN_SECRET',
+  'secrets-gcp.md: PARTNER_DID_PIN_SECRET referenced');
+requireText(secretsGcpGuide, 'secretAccessor',
+  'secrets-gcp.md: Secret Accessor IAM role binding');
+requireText(secretsGcpGuide, 'External Secrets Operator',
+  'secrets-gcp.md: External Secrets Operator (ESO) section');
+requireText(secretsGcpGuide, 'SecretStore',
+  'secrets-gcp.md: ESO SecretStore resource example');
+requireText(secretsGcpGuide, 'ExternalSecret',
+  'secrets-gcp.md: ESO ExternalSecret resource example');
+requireText(secretsGcpGuide, 'Secret Manager Add-on',
+  'secrets-gcp.md: Secret Manager Add-on section');
+requireText(secretsGcpGuide, 'ESO vs.',
+  'secrets-gcp.md: ESO vs. comparison table or section');
+
+// ---------------------------------------------------------------------------
+// Check 7 — docs/issuer-idp-setup.md Google Workspace SCIM bridge section
+// ---------------------------------------------------------------------------
+
+requireText(idpSetup, 'Google Workspace SCIM bridge',
+  'issuer-idp-setup.md: Google Workspace SCIM bridge section heading');
+requireText(idpSetup, 'OAuth service account',
+  'issuer-idp-setup.md: OAuth service account reference in Google Workspace SCIM section');
+requireText(idpSetup, 'externalId: user.id',
+  'issuer-idp-setup.md: externalId = Google user.id mapping in Google Workspace SCIM section');
+
+// ---------------------------------------------------------------------------
+// Check 8 — k8s/helm/euno/values-gcp.yaml
+// ---------------------------------------------------------------------------
+
+const valuesGcp = requireFile('k8s/helm/euno/values-gcp.yaml',
+  'k8s/helm/euno/values-gcp.yaml');
+
+requireText(valuesGcp, 'pkg.dev',
+  'values-gcp.yaml: Artifact Registry reference (pkg.dev)');
+requireText(valuesGcp, 'iam.gke.io/gcp-service-account',
+  'values-gcp.yaml: Workload Identity annotation (iam.gke.io/gcp-service-account)');
+requireText(valuesGcp, 'gcp-cloudkms',
+  'values-gcp.yaml: SIGNING_PROVIDER: gcp-cloudkms');
+requireText(valuesGcp, 'gcp-identity',
+  'values-gcp.yaml: IDENTITY_PROVIDER: gcp-identity');
+requireText(valuesGcp, 'GCP_PROJECT_ID',
+  'values-gcp.yaml: GCP_PROJECT_ID placeholder');
+requireText(valuesGcp, 'premium-rwo',
+  'values-gcp.yaml: premium-rwo GKE storage class for posture-emitter');
 
 // ---------------------------------------------------------------------------
 // Results
