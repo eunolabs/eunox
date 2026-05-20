@@ -139,7 +139,7 @@ export interface AzureKeyVaultSecretStoreConfig {
  */
 export class AzureKeyVaultSecretStore implements SecretStore {
   private readonly config: AzureKeyVaultSecretStoreConfig;
-  // Lazily initialised on the first call to getSecret().
+  // Lazily initialized on the first call to getSecret().
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private client?: any;
   private readonly cache = new Map<string, string>();
@@ -298,13 +298,14 @@ export class AwsSecretsManagerSecretStore implements SecretStore {
     const opts: Record<string, unknown> = {};
     if (this.config.region) opts['region'] = this.config.region;
     if (this.config.accessKeyId && this.config.secretAccessKey) {
-      opts['credentials'] = {
+      const credentials: Record<string, string> = {
         accessKeyId: this.config.accessKeyId,
         secretAccessKey: this.config.secretAccessKey,
-        ...(this.config.sessionToken
-          ? { sessionToken: this.config.sessionToken }
-          : {}),
       };
+      if (this.config.sessionToken) {
+        credentials['sessionToken'] = this.config.sessionToken;
+      }
+      opts['credentials'] = credentials;
     }
 
     return new sdk.SecretsManagerClient(opts);
