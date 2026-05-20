@@ -1,9 +1,17 @@
-# Sprint 1: Agent Runtime with Sandbox Security Constraints
+# Agent Runtime with Sandbox Security Constraints
+#
+# Baseline (Sprint 1):
 # - Read-only root filesystem
 # - Least-privilege Linux capabilities (all dropped)
 # - Network egress restricted via NetworkPolicy
 # - No sensitive host paths accessible
 # - Runs as non-root user
+#
+# Hardening (see docs/security/agent-runtime-sandbox-architecture.md):
+# - Custom seccomp allowlist (k8s/seccomp/agent-runtime.json) — ~90% syscall surface reduction
+# - emptyDir volume size limits — prevents node-disk DoS from a compromised agent
+# - automountServiceAccountToken: false — removes Kubernetes API credential from pod
+# - runtimeClassName annotation (commented) — enable for gVisor or AKS Pod Sandboxing
 
 apiVersion: apps/v1
 kind: Deployment
@@ -28,6 +36,22 @@ spec:
         role: agent
     spec:
       serviceAccountName: agent-runtime
+      # ── Kernel isolation (P0 recommendation) ──────────────────────────────────
+      # Uncomment ONE of the following runtimeClassName lines to give the agent
+      # a fully isolated kernel, eliminating the shared-kernel escape risk.
+      #
+      # AKS Pod Sandboxing (Kata / Microsoft HyperV) — recommended for AKS:
+      #   Prerequisite: node pool created with --workload-runtime KataMshvVmIsolation
+      #   https://learn.microsoft.com/en-us/azure/aks/use-pod-sandboxing
+      #
+      # runtimeClassName: kata-mshv-vm-isolation
+      #
+      # gVisor (self-managed K8s) — recommended for EKS/GKE/bare-metal:
+      #   Prerequisite: node pool with gVisor runtime handler installed
+      #   https://gvisor.dev/docs/user_guide/quick_start/kubernetes/
+      #
+      # runtimeClassName: gvisor
+      #
       # Sprint 1: Security context for pod
       securityContext:
         runAsNonRoot: true
@@ -60,12 +84,38 @@ spec:
           # To bypass sharding (e.g. when Envoy is unavailable), change this to
           # http://tool-gateway:3002 — sharding will be disabled and the gateway
           # will use Redis for all call-counter operations.
+          #
+          # ── Gap 6 / P2 — HTTPS upgrade ────────────────────────────────────────
+          # When in-cluster mTLS is configured (via cert-manager or a service mesh)
+          # change this value to https://envoy-shard-router:8443 (or whichever
+          # TLS listener port Envoy exposes) and set NODE_EXTRA_CA_CERTS below.
+          # Until then, the NetworkPolicy default-deny egress provides the primary
+          # traffic-isolation guarantee.
           value: "http://envoy-shard-router:3002"
         - name: ISSUER_URL
           value: "http://capability-issuer:3001"
         # Sprint 2: Token refresh interval
         - name: TOKEN_REFRESH_INTERVAL
           value: "600"
+        # ── Gap 3 / P1 — Workload Identity token file ─────────────────────────
+        # Uncomment when Azure Workload Identity or SPIRE is configured on this
+        # cluster and the agent-runtime ServiceAccount is annotated with the
+        # managed-identity client ID (see ServiceAccount block below).
+        # The kubelet rotates this file automatically; the agent re-reads it on
+        # every capability-issuance call so no long-lived secret is retained.
+        # When AUTH_TOKEN_FILE is set, AUTH_TOKEN is NOT required.
+        #
+        # - name: AUTH_TOKEN_FILE
+        #   value: "/var/run/service-account/token"
+        #
+        # ── Gap 6 / P2 — Internal CA certificate for HTTPS ───────────────────
+        # Uncomment when cert-manager issues an internal-CA-signed certificate
+        # for the Envoy router and the CA bundle is mounted below.
+        # This tells Node.js to trust the cluster-internal CA in addition to
+        # the system trust bundle.
+        #
+        # - name: NODE_EXTRA_CA_CERTS
+        #   value: "/var/run/tls/ca.crt"
         resources:
           requests:
             memory: "128Mi"
@@ -84,6 +134,15 @@ spec:
             - ALL
           # Sprint 1: Read-only root filesystem
           readOnlyRootFilesystem: true
+          # Custom seccomp allowlist — Node.js 18 HTTPS client surface only.
+          # Blocks ptrace, mount, clone(CLONE_NEWUSER), bpf, io_uring, keyctl,
+          # perf_event_open, setuid, and kernel module syscalls.
+          # The profile file must be deployed to each cluster node at:
+          #   /var/lib/kubelet/seccomp/agent-runtime.json
+          # See k8s/seccomp/agent-runtime.json and docs/security/agent-runtime-sandbox-architecture.md
+          seccompProfile:
+            type: Localhost
+            localhostProfile: agent-runtime.json
         # Sprint 1: Mount only necessary volumes (ephemeral scratch)
         volumeMounts:
         - name: tmp
@@ -92,14 +151,66 @@ spec:
           mountPath: /app/tmp
         - name: logs
           mountPath: /app/logs
+        # ── Gap 3 / P1 — Projected service-account OIDC token ─────────────────
+        # Uncomment to mount the kubelet-managed OIDC token for Workload Identity.
+        # The token is audience-bound to the Capability Issuer and auto-rotated
+        # every hour by the kubelet.  Pair with AUTH_TOKEN_FILE env var above.
+        #
+        # - name: sa-token
+        #   mountPath: /var/run/service-account
+        #   readOnly: true
+        #
+        # ── Gap 6 / P2 — Internal CA certificate bundle ────────────────────────
+        # Uncomment when cert-manager mounts an internal CA bundle for HTTPS.
+        # Pair with NODE_EXTRA_CA_CERTS env var above.
+        #
+        # - name: tls-ca
+        #   mountPath: /var/run/tls
+        #   readOnly: true
       # Sprint 1: Ephemeral volumes only
       volumes:
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          # Size limit prevents a compromised agent from exhausting node disk storage.
+          sizeLimit: 64Mi
       - name: app-tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 64Mi
       - name: logs
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 128Mi
+      # ── Gap 3 / P1 — Projected service-account OIDC token (Workload Identity) ──
+      # Uncomment to supply a kubelet-managed, audience-bound, auto-rotating
+      # OIDC token to the container.  The token is readable at
+      # /var/run/service-account/token and referenced by AUTH_TOKEN_FILE.
+      #
+      # Prerequisites:
+      #   AKS:  Annotate the agent-runtime ServiceAccount below with
+      #         azure.workload.identity/client-id: <managed-identity-client-id>
+      #         and enable the OIDC issuer + Workload Identity webhook on the cluster.
+      #   SPIRE: Install the SPIRE agent DaemonSet; configure a SPIFFE ID for
+      #          the agent-runtime ServiceAccount; mount the SVID socket instead.
+      #
+      # - name: sa-token
+      #   projected:
+      #     sources:
+      #     - serviceAccountToken:
+      #         audience: capability-issuer
+      #         expirationSeconds: 3600
+      #         path: token
+      #
+      # ── Gap 6 / P2 — cert-manager internal CA certificate ──────────────────────
+      # Uncomment when cert-manager is installed and has issued a ClusterIssuer
+      # (or Issuer) named 'cluster-internal-ca' in the euno-system namespace.
+      # This mounts the CA bundle so Node.js can validate the Envoy TLS certificate.
+      # See the cert-manager Certificate resource section at the bottom of this file.
+      #
+      # - name: tls-ca
+      #   secret:
+      #     secretName: agent-runtime-tls
+      #     items:
+      #     - key: ca.crt
+      #       path: ca.crt
 ---
 apiVersion: v1
 kind: Service
@@ -124,3 +235,53 @@ kind: ServiceAccount
 metadata:
   name: agent-runtime
   namespace: euno-system
+  # ── Gap 3 / P1 — Azure Workload Identity annotation ────────────────────────
+  # Uncomment and set the managed-identity client ID to enable Workload Identity.
+  # The agent pod will receive an OIDC token at /var/run/service-account/token
+  # (once the projected volume above is uncommented) that it can exchange for a
+  # capability token via the issuer without storing a static secret.
+  #
+  # annotations:
+  #   azure.workload.identity/client-id: "<managed-identity-client-id>"
+  #   azure.workload.identity/tenant-id: "<azure-tenant-id>"
+# The agent-runtime process has no legitimate reason to call the Kubernetes API.
+# Disabling automounting removes the projected token from the pod filesystem,
+# eliminating it as an exfiltration target if the agent is compromised.
+automountServiceAccountToken: false
+---
+# ── Gap 6 / P2 — cert-manager Certificate for in-cluster HTTPS ─────────────────
+#
+# Uncomment this entire resource block when cert-manager ≥ v1.12 is installed
+# and a ClusterIssuer named 'cluster-internal-ca' exists in the cluster.
+#
+# This issues a TLS certificate for the agent-runtime pod signed by the internal
+# CA.  The resulting Secret (agent-runtime-tls) provides:
+#   tls.crt / tls.key — client certificate for mTLS with the Envoy router
+#   ca.crt            — cluster-internal CA bundle (mount via tls-ca volume above)
+#
+# After enabling:
+#   1. Uncomment the 'tls-ca' volume and volumeMount above.
+#   2. Set NODE_EXTRA_CA_CERTS=/var/run/tls/ca.crt in the env block above.
+#   3. Change GATEWAY_URL to https://envoy-shard-router:8443 (TLS port).
+#   4. Configure Envoy to require client certificates signed by the same CA.
+#
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: agent-runtime-tls
+#   namespace: euno-system
+# spec:
+#   secretName: agent-runtime-tls
+#   duration: 24h
+#   renewBefore: 6h
+#   subject:
+#     organizations:
+#     - euno-system
+#   commonName: agent-runtime.euno-system.svc.cluster.local
+#   dnsNames:
+#   - agent-runtime.euno-system.svc.cluster.local
+#   - agent-runtime.euno-system.svc
+#   issuerRef:
+#     name: cluster-internal-ca
+#     kind: ClusterIssuer
+#     group: cert-manager.io

@@ -2600,12 +2600,26 @@ export const AgentRuntimeConfigSchema = z
         'URL of the capability-issuer this agent authenticates against. Required. ' +
         'Example: https://issuer.example.com',
       ),
-    AUTH_TOKEN: z
+    AUTH_TOKEN: optionalString.describe(
+      'Bootstrap credential presented to the issuer to obtain the first capability token. ' +
+      'This is the agent\'s proof of identity (e.g. an OIDC access token or API key). ' +
+      'Required unless AUTH_TOKEN_FILE is set.',
+    ),
+
+    AUTH_TOKEN_FILE: z
       .string()
-      .min(1)
+      .transform((v) => (v === '' ? undefined : v.trim()))
+      .optional()
+      .refine(
+        (v) => v === undefined || v.length > 0,
+        'AUTH_TOKEN_FILE must be a non-blank file path.',
+      )
       .describe(
-        'Bootstrap credential presented to the issuer to obtain the first capability token. ' +
-        'This is the agent\'s proof of identity (e.g. an OIDC access token or API key). Required.',
+        'Path to a file containing the authentication token. When set, the runtime reads ' +
+        'the token from this file on every capability-issuance request so the token is never ' +
+        'retained in memory between refreshes. Use with Kubernetes projected service-account ' +
+        'tokens (Azure Workload Identity, SPIRE) mounted at e.g. ' +
+        '/var/run/service-account/token. Takes precedence over AUTH_TOKEN when both are set.',
       ),
 
     // Token refresh
@@ -2615,7 +2629,14 @@ export const AgentRuntimeConfigSchema = z
         'How often (seconds) the agent proactively refreshes its capability token before it ' +
         'expires. Default 600 (10 minutes). Set below DEFAULT_TOKEN_TTL on the issuer.',
     }),
-  });
+  })
+  .refine(
+    (cfg) => !!(cfg.AUTH_TOKEN ?? cfg.AUTH_TOKEN_FILE),
+    {
+      message: 'Either AUTH_TOKEN or AUTH_TOKEN_FILE must be set.',
+      path: ['AUTH_TOKEN'],
+    },
+  );
 
 export type AgentRuntimeConfig = z.infer<typeof AgentRuntimeConfigSchema>;
 
