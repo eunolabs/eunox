@@ -53,6 +53,12 @@ variable "db_instance_class" {
   default     = "db.t3.medium"
 }
 
+variable "db_username" {
+  description = "Master username for the RDS PostgreSQL instance."
+  type        = string
+  default     = "euno_admin"
+}
+
 variable "db_multi_az" {
   description = "Enable Multi-AZ for the RDS instance (recommended for production)."
   type        = bool

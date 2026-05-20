@@ -53,7 +53,7 @@ module "network" {
   tags         = var.tags
 }
 
-# ── Observability (created early so log group ARNs are available for IRSA) ───
+# ── Observability ──────────────────────────────────────────────────────────────
 
 module "observability" {
   source = "./observability"
@@ -63,14 +63,10 @@ module "observability" {
   aws_account_id            = var.aws_account_id
   aws_region                = var.aws_region
   log_retention_days        = var.log_retention_days
-  cloudtrail_s3_bucket_name = "${var.name_prefix}-cloudtrail-${var.environment}-${var.aws_account_id}"
   alarm_notification_email  = var.alarm_notification_email
   enable_security_hub       = var.enable_security_hub
   audit_anchor_bucket_arn   = module.security.audit_anchor_bucket_arn
   tags                      = var.tags
-
-  # CloudTrail bucket must exist before the trail can be created.
-  depends_on = [module.security]
 }
 
 # ── Compute ───────────────────────────────────────────────────────────────────
@@ -98,7 +94,9 @@ module "data" {
   environment         = var.environment
   vpc_id              = module.network.vpc_id
   isolated_subnet_ids = module.network.isolated_subnet_ids
+  eks_cluster_security_group_id = module.compute.cluster_security_group_id
   db_instance_class   = var.db_instance_class
+  db_username         = var.db_username
   db_multi_az         = var.db_multi_az
   cache_node_type     = var.cache_node_type
   cache_num_replicas  = var.cache_num_replicas
@@ -114,10 +112,9 @@ module "security" {
   name_prefix               = var.name_prefix
   environment               = var.environment
   aws_account_id            = var.aws_account_id
+  aws_region                = var.aws_region
   cluster_oidc_provider_arn = module.compute.cluster_oidc_provider_arn
   cluster_oidc_provider_url = module.compute.cluster_oidc_provider_url
-  runtime_log_group_arn     = module.observability.runtime_log_group_arn
-  audit_log_group_arn       = module.observability.audit_log_group_arn
   enable_cognito            = var.enable_cognito
   cognito_domain_prefix     = var.cognito_domain_prefix
   tags                      = var.tags

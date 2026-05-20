@@ -10,36 +10,6 @@
 #
 # All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
 # should be sourced from Azure Key Vault rather than supplied here.
-<<<<<<< HEAD
-# See docs/secrets-azure.md for External Secrets Operator and Azure Key Vault
-# Secrets Provider (CSI) wiring.
-#
-# See docs/deploy-aks.md for the full AKS deployment guide, including:
-#   - Workload Identity Federation (azure.workload.identity) setup
-#   - Azure Container Registry (ACR) image push script
-#   - Azure Application Gateway Ingress Controller (AGIC) setup
-#   - Azure Monitor / Microsoft Defender for Cloud observability
-# ---------------------------------------------------------------------------
-
-# ── Container images — Azure Container Registry ───────────────────────────────
-# Replace myeunoregistry.azurecr.io with your ACR login server.
-# Euno images are published to ghcr.io; push to ACR with the script in
-# docs/deploy-aks.md §4.2 (push-images-to-acr.sh).
-gateway:
-  image:
-    repository: myeunoregistry.azurecr.io/euno/tool-gateway
-    tag: "1.0.0"
-    pullPolicy: IfNotPresent
-
-  # ── Workload Identity annotation ─────────────────────────────────────────
-  # Annotate the gateway ServiceAccount with the Azure Managed Identity
-  # client ID so the pod can call Key Vault and ACR via Workload Identity.
-  # Replace with your actual managed identity client ID
-  # (see docs/deploy-aks.md §3.3).
-  serviceAccountAnnotations:
-    azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000000"
-
-=======
 # See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" and
 # docs/secrets-gcp.md (substitute Azure equivalents) for External Secrets
 # Operator and Azure Key Vault Provider for Secrets Store CSI Driver wiring.
@@ -75,7 +45,6 @@ gateway:
   podLabels:
     azure.workload.identity/use: "true"
 
->>>>>>> origin/main
   # ── Non-sensitive configuration ──────────────────────────────────────────
   env:
     NODE_ENV: production
@@ -84,41 +53,6 @@ gateway:
     ADMIN_HOST: "127.0.0.1"
 
     # Azure Key Vault-backed audit evidence signing.
-<<<<<<< HEAD
-    # Set SIGNING_PROVIDER=azure-keyvault and supply the Key Vault URI and
-    # key name. The pod identity (Workload Identity above) must have
-    # "Key Vault Crypto User" RBAC role on the key.
-    SIGNING_PROVIDER: azure-keyvault
-    AZURE_KEYVAULT_URI: "https://my-euno-kv.vault.azure.net/"
-    AZURE_KEYVAULT_KEY_NAME: "capability-signing-key"
-    AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
-
-    # Cross-chain anchor to Azure Blob Storage with immutability policy
-    # (optional; enables SOC 2 CC7.4).
-    # ENABLE_CROSS_CHAIN_ANCHOR: "true"
-    # AUDIT_LEDGER_AZURE_STORAGE_ACCOUNT: "myeunoauditstorage"
-    # AUDIT_LEDGER_AZURE_CONTAINER: "audit-anchor"
-
-    # Secret store provider: uncomment to enable SDK-based Key Vault
-    # lookup at startup instead of relying on env vars or ESO/CSI injection.
-    # SECRET_STORE_PROVIDER: azure-keyvault
-    # AZURE_KEYVAULT_URI is already set above.
-
-  # ── Sensitive values ─────────────────────────────────────────────────────
-  # When using ESO or the Azure Key Vault Secrets Provider (recommended),
-  # set existingSecret instead and leave secretEnv empty.
-  # existingSecret: euno-gateway-secret
-  secretEnv: {}
-
-  # ── Pod labels required for Workload Identity ────────────────────────────
-  podLabels:
-    azure.workload.identity/use: "true"
-
-# ── capability-issuer ─────────────────────────────────────────────────────────
-issuer:
-  image:
-    repository: myeunoregistry.azurecr.io/euno/capability-issuer
-=======
     # Set SIGNING_PROVIDER=azure-keyvault and supply the Key Vault URL.
     SIGNING_PROVIDER: azure-keyvault
     AZURE_KEYVAULT_URL: "https://my-euno-keyvault.vault.azure.net/"
@@ -146,16 +80,11 @@ issuer:
 issuer:
   image:
     repository: myacr.azurecr.io/euno/capability-issuer
->>>>>>> origin/main
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   serviceAccountAnnotations:
-<<<<<<< HEAD
-    azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000001"
-=======
     azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000000"
->>>>>>> origin/main
 
   podLabels:
     azure.workload.identity/use: "true"
@@ -164,19 +93,6 @@ issuer:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
 
-<<<<<<< HEAD
-    # Identity provider: Microsoft Entra ID (formerly Azure AD).
-    # See docs/issuer-idp-setup.md §5 for Entra ID setup
-    # and §12 for Azure AD SCIM provisioning.
-    IDENTITY_PROVIDER: azure-ad
-    AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
-    AZURE_AD_CLIENT_ID: "<entra-app-client-id>"
-
-    # Token signing via Azure Key Vault.
-    SIGNING_PROVIDER: azure-keyvault
-    AZURE_KEYVAULT_URI: "https://my-euno-kv.vault.azure.net/"
-    AZURE_KEYVAULT_KEY_NAME: "issuer-signing-key"
-=======
     # Identity provider: Azure Active Directory (Entra ID).
     # See docs/issuer-idp-setup.md §1 for Azure AD setup and §9 for SCIM.
     IDENTITY_PROVIDER: azure-ad
@@ -187,18 +103,12 @@ issuer:
     SIGNING_PROVIDER: azure-keyvault
     AZURE_KEYVAULT_URL: "https://my-euno-keyvault.vault.azure.net/"
     AZURE_KEYVAULT_KEY_NAME: "capability-signing-key"
->>>>>>> origin/main
 
     # Schema initialisation — run once on first deploy.
     ISSUER_DB_SCHEMA_INIT: "true"
 
-<<<<<<< HEAD
-    # SCIM 2.0 provisioning (Azure AD Enterprise Application).
-    # See docs/issuer-idp-setup.md §12 for the full SCIM bridge guide.
-=======
     # SCIM 2.0 provisioning (Entra ID SCIM endpoint).
     # See docs/issuer-idp-setup.md §9 for the full SCIM bridge guide.
->>>>>>> origin/main
     # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
 
   # existingSecret: euno-issuer-secret
@@ -207,12 +117,6 @@ issuer:
 # ── api-key-minter ────────────────────────────────────────────────────────────
 minter:
   image:
-<<<<<<< HEAD
-    repository: myeunoregistry.azurecr.io/euno/api-key-minter
-    tag: "1.0.0"
-    pullPolicy: IfNotPresent
-
-=======
     repository: myacr.azurecr.io/euno/api-key-minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
@@ -223,7 +127,6 @@ minter:
   podLabels:
     azure.workload.identity/use: "true"
 
->>>>>>> origin/main
   env:
     NODE_ENV: production
 
@@ -232,60 +135,34 @@ minter:
 # ── db-token-service ──────────────────────────────────────────────────────────
 dbTokenService:
   image:
-<<<<<<< HEAD
-    repository: myeunoregistry.azurecr.io/euno/db-token-service
-=======
     repository: myacr.azurecr.io/euno/db-token-service
->>>>>>> origin/main
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   env:
     NODE_ENV: production
     DB_TOKENS_ENABLED: "false"
-<<<<<<< HEAD
-    # AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"  # required when DB_TOKENS_ENABLED=true
-=======
     # AZURE_KEYVAULT_URL: https://my-euno-keyvault.vault.azure.net/   # required when DB_TOKENS_ENABLED=true
->>>>>>> origin/main
 
   secretEnv: {}
 
 # ── storage-grant-service ─────────────────────────────────────────────────────
 storageGrantService:
   image:
-<<<<<<< HEAD
-    repository: myeunoregistry.azurecr.io/euno/storage-grant-service
-=======
     repository: myacr.azurecr.io/euno/storage-grant-service
->>>>>>> origin/main
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   env:
     NODE_ENV: production
     STORAGE_GRANTS_ENABLED: "false"
-<<<<<<< HEAD
-    # AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"  # required when STORAGE_GRANTS_ENABLED=true
-=======
     # AZURE_KEYVAULT_URL: https://my-euno-keyvault.vault.azure.net/   # required when STORAGE_GRANTS_ENABLED=true
->>>>>>> origin/main
 
   secretEnv: {}
 
 # ── posture-emitter ───────────────────────────────────────────────────────────
 postureEmitter:
   image:
-<<<<<<< HEAD
-    repository: myeunoregistry.azurecr.io/euno/posture-emitter
-    tag: "1.0.0"
-    pullPolicy: IfNotPresent
-
-  persistence:
-    enabled: true
-    size: 1Gi
-    storageClass: managed-premium   # Azure Premium SSD (LRS)
-=======
     repository: myacr.azurecr.io/euno/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
@@ -300,7 +177,6 @@ postureEmitter:
     enabled: true
     size: 1Gi
     storageClass: managed-csi   # Azure Disk (Standard SSD) via AKS CSI driver
->>>>>>> origin/main
     mountPath: /data
 
   env:
@@ -308,43 +184,16 @@ postureEmitter:
     POSTURE_EMITTER_ENABLED: "false"
     POSTURE_EMITTER_PLUGINS: "stdout"
     POSTURE_DURABLE_QUEUE_PATH: "/data/posture.db"
-<<<<<<< HEAD
-    # Enable Microsoft Defender for Cloud plugin when POSTURE_EMITTER_ENABLED=true:
-    # POSTURE_EMITTER_PLUGINS: "azure-defender"
-    # AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
-    # AZURE_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000002"
-=======
     # Enable Microsoft Sentinel plugin when POSTURE_EMITTER_ENABLED=true:
     # POSTURE_EMITTER_PLUGINS: "sentinel"
     # AZURE_SENTINEL_WORKSPACE_ID: "00000000-0000-0000-0000-000000000000"
     # AZURE_SENTINEL_WORKSPACE_KEY: "<primary-key>"
->>>>>>> origin/main
 
   secretEnv: {}
 
 # ── Bitnami sub-charts (disabled — use Azure Database + Azure Cache in production) ─
 postgresql:
   enabled: false
-<<<<<<< HEAD
-  # Use Azure Database for PostgreSQL – Flexible Server in production:
-  #   AUDIT_LEDGER_PG_URL and ISSUER_DB_URL should point at the Flexible
-  #   Server endpoint (use Azure AD authentication or connection string).
-  # Minimum Flexible Server configuration:
-  #   compute tier: Burstable (dev) or General Purpose (production)
-  #   storage: P10 SSD (128 GiB) minimum for production
-  #   backups: geo-redundant backups enabled (retention: 7 days)
-  #   high availability: zone-redundant (production)
-
-redis:
-  enabled: false
-  # Use Azure Cache for Redis in production:
-  #   REDIS_URL should point at the Azure Cache hostname and SSL port.
-  # Minimum Azure Cache configuration:
-  #   tier: Standard (staging) or Premium (production)
-  #   version: Redis 7
-  #   TLS: enabled (port 6380)
-  #   Microsoft Entra authentication: enabled (recommended over access keys)
-=======
   # Use Azure Database for PostgreSQL (Flexible Server) in production:
   #   AUDIT_LEDGER_PG_URL and ISSUER_DB_URL should point at the Flexible Server
   #   endpoint (private endpoint recommended; SSL required).
@@ -364,4 +213,3 @@ redis:
   #   TLS: enabled (port 6380)
   #   auth: enabled (set in REDIS_URL as rediss://:<auth-key>@<host>:6380)
   #   geo-replication: optional for disaster recovery
->>>>>>> origin/main

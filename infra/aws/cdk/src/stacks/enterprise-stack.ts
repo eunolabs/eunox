@@ -4,8 +4,8 @@
  *
  * Additional resources provisioned:
  *   - DynamoDB table for partner DID registry (on-demand, point-in-time recovery)
- *   - CloudTrail trail for management + data events (S3 write, Secrets Manager,
- *     KMS) to satisfy SOC 2 CC6.1 / CC7.2 / CC7.3
+ *   - CloudTrail trail for management events + S3 data events on the audit-anchor
+ *     bucket to satisfy SOC 2 CC6.1 / CC7.2 / CC7.3
  *   - S3 bucket for CloudTrail logs (server-side encryption, Object Lock GOVERNANCE)
  *   - Kinesis Firehose delivery stream → S3 data lake for OCSF audit events
  *   - Security Hub enablement with CIS AWS Foundations Benchmark standard
@@ -14,7 +14,7 @@
  *       • invalid-token burst
  *       • kill-switch activation
  *   - SNS topic for alarm notifications (plug in PagerDuty / Slack)
- *   - IAM IRSA role for the partner-issuer-sim and posture-emitter pods
+ *   - Uses gateway/issuer IRSA roles inherited from base stacks
  *
  * Usage:
  *
@@ -73,7 +73,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
   public readonly partnerDidRegistry: dynamodb.Table;
   /** S3 bucket for CloudTrail management / data event logs. */
   public readonly cloudTrailBucket: s3.Bucket;
-  /** CloudTrail trail (management + data events for S3, Secrets Manager, KMS). */
+  /** CloudTrail trail (management events + S3 data events for audit-anchor). */
   public readonly trail: cloudtrail.Trail;
   /** Kinesis Firehose delivery stream for OCSF audit events → S3 data lake. */
   public readonly auditFirehose: firehose.CfnDeliveryStream;

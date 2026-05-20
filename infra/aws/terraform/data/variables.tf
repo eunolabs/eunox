@@ -18,10 +18,21 @@ variable "isolated_subnet_ids" {
   type        = list(string)
 }
 
+variable "eks_cluster_security_group_id" {
+  description = "EKS cluster security group ID allowed to connect to RDS/Redis."
+  type        = string
+}
+
 variable "db_instance_class" {
   description = "RDS PostgreSQL instance class."
   type        = string
   default     = "db.t3.medium"
+}
+
+variable "db_username" {
+  description = "Master username for the RDS PostgreSQL instance."
+  type        = string
+  default     = "euno_admin"
 }
 
 variable "db_multi_az" {

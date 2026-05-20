@@ -14,8 +14,7 @@ resource "aws_security_group" "rds" {
   vpc_id      = var.vpc_id
   tags        = merge(local.common_tags, { Name = "${var.name_prefix}-rds-sg" })
 
-  # Ingress is controlled by aws_security_group_rule resources added by the
-  # compute module after the EKS cluster is known.  No egress needed.
+  # Ingress is restricted to the EKS cluster security group.
   egress {
     from_port   = 0
     to_port     = 0
@@ -36,6 +35,26 @@ resource "aws_security_group" "redis" {
     protocol    = "-1"
     cidr_blocks = ["127.0.0.1/32"] # deny all egress by default
   }
+}
+
+resource "aws_security_group_rule" "rds_from_eks" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.rds.id
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = var.eks_cluster_security_group_id
+  description              = "Allow PostgreSQL traffic from EKS workloads."
+}
+
+resource "aws_security_group_rule" "redis_from_eks" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.redis.id
+  from_port                = 6380
+  to_port                  = 6380
+  protocol                 = "tcp"
+  source_security_group_id = var.eks_cluster_security_group_id
+  description              = "Allow Redis TLS traffic from EKS workloads."
 }
 
 # ── RDS PostgreSQL ────────────────────────────────────────────────────────────
@@ -78,6 +97,8 @@ resource "aws_db_instance" "postgres" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_name                = "euno"
+  username               = var.db_username
+  manage_master_user_password = true
 
   # Storage
   storage_type          = "gp3"

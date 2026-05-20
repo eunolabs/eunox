@@ -21,5 +21,10 @@ output "cluster_oidc_provider_arn" {
 
 output "cluster_oidc_provider_url" {
   value       = aws_eks_cluster.main.identity[0].oidc[0].issuer
-  description = "OIDC provider URL (without https://) for IRSA condition keys."
+  description = "OIDC provider URL (includes https://) for IRSA condition keys."
+}
+
+output "cluster_security_group_id" {
+  value       = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  description = "EKS cluster security group ID used for data-plane ingress rules."
 }

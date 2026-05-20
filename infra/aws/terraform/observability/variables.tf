@@ -24,11 +24,6 @@ variable "log_retention_days" {
   default     = 90
 }
 
-variable "cloudtrail_s3_bucket_name" {
-  description = "Name of the S3 bucket to store CloudTrail logs."
-  type        = string
-}
-
 variable "alarm_notification_email" {
   description = "Email address to subscribe to the CloudWatch alarm SNS topic. Empty = no subscription."
   type        = string

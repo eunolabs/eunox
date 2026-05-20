@@ -3,9 +3,11 @@
 # ---------------------------------------------------------------------------
 
 locals {
-  common_tags          = merge(var.tags, { environment = var.environment })
-  cognito_domain_prefix = coalesce(var.cognito_domain_prefix, "${var.name_prefix}-${var.environment}")
+  common_tags           = merge(var.tags, { environment = var.environment })
+  cognito_domain_prefix = coalesce(nullif(var.cognito_domain_prefix, ""), "${var.name_prefix}-${var.environment}")
   oidc_issuer           = replace(var.cluster_oidc_provider_url, "https://", "")
+  runtime_log_group_arn = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/${var.name_prefix}/runtime"
+  audit_log_group_arn   = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/${var.name_prefix}/audit"
 }
 
 # ── KMS signing key ───────────────────────────────────────────────────────────
@@ -259,8 +261,8 @@ data "aws_iam_policy_document" "issuer_policy" {
       "logs:DescribeLogStreams",
     ]
     resources = [
-      "${var.runtime_log_group_arn}:*",
-      "${var.audit_log_group_arn}:*",
+      "${local.runtime_log_group_arn}:*",
+      "${local.audit_log_group_arn}:*",
     ]
   }
 
@@ -357,8 +359,8 @@ data "aws_iam_policy_document" "gateway_policy" {
       "logs:DescribeLogStreams",
     ]
     resources = [
-      "${var.runtime_log_group_arn}:*",
-      "${var.audit_log_group_arn}:*",
+      "${local.runtime_log_group_arn}:*",
+      "${local.audit_log_group_arn}:*",
     ]
   }
 }

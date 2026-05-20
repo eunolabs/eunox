@@ -56,7 +56,7 @@ export interface EunoGatewayStackProps extends cdk.StackProps {
    * that require DaemonSets or privileged containers).
    */
   fargate?: boolean;
-  /** RDS PostgreSQL instance class. Default: 'db.t3.medium'. */
+  /** RDS PostgreSQL instance type. Default: 't3.medium'. */
   dbInstanceClass?: string;
   /** Multi-AZ RDS deployment. Default: true. */
   dbMultiAz?: boolean;
@@ -120,7 +120,27 @@ export class EunoGatewayStack extends cdk.Stack {
     cdk.Tags.of(this).add('component', 'capability-governance');
     cdk.Tags.of(this).add('environment', this.environment);
 
-    const logRetention = logs.RetentionDays.THREE_MONTHS;
+    const logRetentionMap: Record<number, logs.RetentionDays> = {
+      1: logs.RetentionDays.ONE_DAY,
+      3: logs.RetentionDays.THREE_DAYS,
+      5: logs.RetentionDays.FIVE_DAYS,
+      7: logs.RetentionDays.ONE_WEEK,
+      14: logs.RetentionDays.TWO_WEEKS,
+      30: logs.RetentionDays.ONE_MONTH,
+      60: logs.RetentionDays.TWO_MONTHS,
+      90: logs.RetentionDays.THREE_MONTHS,
+      120: logs.RetentionDays.FOUR_MONTHS,
+      150: logs.RetentionDays.FIVE_MONTHS,
+      180: logs.RetentionDays.SIX_MONTHS,
+      365: logs.RetentionDays.ONE_YEAR,
+      400: logs.RetentionDays.THIRTEEN_MONTHS,
+      545: logs.RetentionDays.EIGHTEEN_MONTHS,
+      731: logs.RetentionDays.TWO_YEARS,
+      1827: logs.RetentionDays.FIVE_YEARS,
+      3653: logs.RetentionDays.TEN_YEARS,
+      0: logs.RetentionDays.INFINITE,
+    };
+    const logRetention = logRetentionMap[props.logRetentionDays ?? 90] ?? logs.RetentionDays.THREE_MONTHS;
     const fargate = props.fargate ?? true;
     const vpcCidr = props.vpcCidr ?? '10.40.0.0/16';
 
@@ -264,10 +284,7 @@ export class EunoGatewayStack extends cdk.Stack {
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_15_4,
       }),
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
-        ec2.InstanceSize.MEDIUM,
-      ),
+      instanceType: new ec2.InstanceType(props.dbInstanceClass ?? 't3.medium'),
       vpc: this.vpc,
       subnetGroup: dbSubnetGroup,
       securityGroups: [dbSecurityGroup],
@@ -320,7 +337,7 @@ export class EunoGatewayStack extends cdk.Stack {
       defaultCapacity: fargate ? 0 : 2,
       defaultCapacityInstance: fargate
         ? undefined
-        : ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.LARGE),
+        : new ec2.InstanceType(props.nodeInstanceType ?? 't3.large'),
       clusterLogging: [
         eks.ClusterLoggingTypes.API,
         eks.ClusterLoggingTypes.AUDIT,

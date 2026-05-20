@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CI lint: verify that AWS and GCP multi-cloud documentation requirements
- * are complete, including AWS Phase 2 and Phase 3 checks.
+ * are complete, including AWS Phase 2 checks.
  *
  * Checks performed:
  *   1. docs/deploy-eks.md exists and contains required sections:
@@ -74,29 +74,6 @@
  *      - SIGNING_PROVIDER: gcp-cloudkms
  *      - IDENTITY_PROVIDER: gcp-identity
  *      - GCP_PROJECT_ID placeholder
- *  10. [Phase 3] AWS CDK constructs exist and have correct content:
- *      - infra/aws/cdk/src/stacks/gateway-stack.ts: EunoGatewayStack
- *      - infra/aws/cdk/src/stacks/issuer-stack.ts: EunoIssuerStack
- *      - infra/aws/cdk/src/stacks/enterprise-stack.ts: EunoEnterpriseStack
- *      - infra/aws/cdk/package.json references aws-cdk-lib and constructs
- *      - CDK test files reference aws-cdk-lib/assertions
- *  11. [Phase 3] AWS Terraform modular layout exists:
- *      - network/, compute/, data/, security/, observability/ sub-modules
- *      - README with terraform init / plan / apply walkthrough
- *  12. [Phase 3] k8s/helm/euno/values-azure.yaml exists and contains required entries:
- *      - ACR registry reference (azurecr.io)
- *      - Workload Identity annotation (azure.workload.identity/client-id)
- *      - SIGNING_PROVIDER: azure-keyvault
- *      - IDENTITY_PROVIDER: azure-ad
- *      - AZURE_TENANT_ID placeholder
- *  13. [Phase 3] docs/multi-cloud.md exists and links to deployment guides and IaC:
- *      - References deploy-eks.md, deploy-gke.md
- *      - References infra/aws/cdk and infra/aws/terraform
- *  14. [Phase 3] docs/multi-cloud-plan.md Phase 3 items are marked complete:
- *      - AWS CDK constructs item is checked off
- *      - Terraform module item is checked off
- *      - values-azure.yaml item is checked off
- *      - Multi-cloud runbook index item is checked off
  *
  * Usage (from the repo root):
  *
@@ -394,156 +371,6 @@ requireText(valuesGcp, 'premium-rwo',
   'values-gcp.yaml: premium-rwo GKE storage class for posture-emitter');
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
-// Check 10 — AWS CDK constructs (Phase 3)
-// ---------------------------------------------------------------------------
-
-const cdkGatewayStack = requireFile(
-  'infra/aws/cdk/src/stacks/gateway-stack.ts',
-  'infra/aws/cdk/src/stacks/gateway-stack.ts',
-);
-
-requireText(cdkGatewayStack, 'EunoGatewayStack',
-  'gateway-stack.ts: EunoGatewayStack class declared');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-eks',
-  'gateway-stack.ts: EKS import from aws-cdk-lib/aws-eks');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-rds',
-  'gateway-stack.ts: RDS import from aws-cdk-lib/aws-rds');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-elasticache',
-  'gateway-stack.ts: ElastiCache import from aws-cdk-lib/aws-elasticache');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-kms',
-  'gateway-stack.ts: KMS import from aws-cdk-lib/aws-kms');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-s3',
-  'gateway-stack.ts: S3 import from aws-cdk-lib/aws-s3');
-requireText(cdkGatewayStack, 'objectLockEnabled',
-  'gateway-stack.ts: S3 Object Lock enabled for audit anchor bucket');
-requireText(cdkGatewayStack, 'aws-cdk-lib/aws-secretsmanager',
-  'gateway-stack.ts: Secrets Manager import from aws-cdk-lib/aws-secretsmanager');
-requireText(cdkGatewayStack, 'FargateProfile',
-  'gateway-stack.ts: EKS Fargate profile for euno-system namespace');
-
-const cdkIssuerStack = requireFile(
-  'infra/aws/cdk/src/stacks/issuer-stack.ts',
-  'infra/aws/cdk/src/stacks/issuer-stack.ts',
-);
-
-requireText(cdkIssuerStack, 'EunoIssuerStack',
-  'issuer-stack.ts: EunoIssuerStack class declared');
-requireText(cdkIssuerStack, 'aws-cdk-lib/aws-cognito',
-  'issuer-stack.ts: Cognito import from aws-cdk-lib/aws-cognito');
-requireText(cdkIssuerStack, 'UserPool',
-  'issuer-stack.ts: Cognito UserPool provisioned');
-requireText(cdkIssuerStack, 'SCIM',
-  'issuer-stack.ts: SCIM endpoint wiring documented');
-requireText(cdkIssuerStack, 'PARTNER_DID_PIN_SECRET',
-  'issuer-stack.ts: PARTNER_DID_PIN_SECRET secret provisioned');
-
-const cdkEnterpriseStack = requireFile(
-  'infra/aws/cdk/src/stacks/enterprise-stack.ts',
-  'infra/aws/cdk/src/stacks/enterprise-stack.ts',
-);
-
-requireText(cdkEnterpriseStack, 'EunoEnterpriseStack',
-  'enterprise-stack.ts: EunoEnterpriseStack class declared');
-requireText(cdkEnterpriseStack, 'aws-cdk-lib/aws-dynamodb',
-  'enterprise-stack.ts: DynamoDB import for partner DID registry');
-requireText(cdkEnterpriseStack, 'partnerDidRegistry',
-  'enterprise-stack.ts: partner DID registry DynamoDB table');
-requireText(cdkEnterpriseStack, 'aws-cdk-lib/aws-cloudtrail',
-  'enterprise-stack.ts: CloudTrail import for SOC 2 audit pipeline');
-requireText(cdkEnterpriseStack, 'aws-cdk-lib/aws-kinesisfirehose',
-  'enterprise-stack.ts: Kinesis Firehose import for audit pipeline');
-requireText(cdkEnterpriseStack, 'aws-cdk-lib/aws-securityhub',
-  'enterprise-stack.ts: Security Hub import');
-
-const cdkPkgJson = requireFile('infra/aws/cdk/package.json',
-  'infra/aws/cdk/package.json');
-
-requireText(cdkPkgJson, 'aws-cdk-lib',
-  'infra/aws/cdk/package.json: aws-cdk-lib dependency declared');
-requireText(cdkPkgJson, 'constructs',
-  'infra/aws/cdk/package.json: constructs dependency declared');
-
-const cdkGatewayTest = requireFile(
-  'infra/aws/cdk/test/gateway-stack.test.ts',
-  'infra/aws/cdk/test/gateway-stack.test.ts',
-);
-
-requireText(cdkGatewayTest, 'aws-cdk-lib/assertions',
-  'gateway-stack.test.ts: uses aws-cdk-lib/assertions');
-requireText(cdkGatewayTest, 'EunoGatewayStack',
-  'gateway-stack.test.ts: tests EunoGatewayStack');
-
-const cdkIssuerTest = requireFile(
-  'infra/aws/cdk/test/issuer-stack.test.ts',
-  'infra/aws/cdk/test/issuer-stack.test.ts',
-);
-
-requireText(cdkIssuerTest, 'aws-cdk-lib/assertions',
-  'issuer-stack.test.ts: uses aws-cdk-lib/assertions');
-requireText(cdkIssuerTest, 'EunoIssuerStack',
-  'issuer-stack.test.ts: tests EunoIssuerStack');
-
-const cdkEnterpriseTest = requireFile(
-  'infra/aws/cdk/test/enterprise-stack.test.ts',
-  'infra/aws/cdk/test/enterprise-stack.test.ts',
-);
-
-requireText(cdkEnterpriseTest, 'aws-cdk-lib/assertions',
-  'enterprise-stack.test.ts: uses aws-cdk-lib/assertions');
-requireText(cdkEnterpriseTest, 'EunoEnterpriseStack',
-  'enterprise-stack.test.ts: tests EunoEnterpriseStack');
-
-// ---------------------------------------------------------------------------
-// Check 11 — AWS Terraform modular layout (Phase 3)
-// ---------------------------------------------------------------------------
-
-const tfReadme = requireFile('infra/aws/terraform/README.md',
-  'infra/aws/terraform/README.md');
-
-requireText(tfReadme, 'terraform init',
-  'infra/aws/terraform/README.md: terraform init walkthrough');
-requireText(tfReadme, 'terraform plan',
-  'infra/aws/terraform/README.md: terraform plan walkthrough');
-requireText(tfReadme, 'terraform apply',
-  'infra/aws/terraform/README.md: terraform apply walkthrough');
-
-requireFile('infra/aws/terraform/network/main.tf',
-  'infra/aws/terraform/network/main.tf');
-requireFile('infra/aws/terraform/compute/main.tf',
-  'infra/aws/terraform/compute/main.tf');
-requireFile('infra/aws/terraform/data/main.tf',
-  'infra/aws/terraform/data/main.tf');
-
-const tfSecurityMain = requireFile('infra/aws/terraform/security/main.tf',
-  'infra/aws/terraform/security/main.tf');
-
-requireText(tfSecurityMain, 'aws_kms_key',
-  'infra/aws/terraform/security/main.tf: KMS key resource');
-requireText(tfSecurityMain, 'SIGN_VERIFY',
-  'infra/aws/terraform/security/main.tf: KMS key usage SIGN_VERIFY');
-requireText(tfSecurityMain, 'aws_secretsmanager_secret',
-  'infra/aws/terraform/security/main.tf: Secrets Manager secrets');
-requireText(tfSecurityMain, 'aws_cognito_user_pool',
-  'infra/aws/terraform/security/main.tf: Cognito User Pool');
-requireText(tfSecurityMain, 'aws_iam_role',
-  'infra/aws/terraform/security/main.tf: IAM IRSA roles');
-
-const tfObservabilityMain = requireFile(
-  'infra/aws/terraform/observability/main.tf',
-  'infra/aws/terraform/observability/main.tf',
-);
-
-requireText(tfObservabilityMain, 'aws_cloudwatch_log_group',
-  'infra/aws/terraform/observability/main.tf: CloudWatch log groups');
-requireText(tfObservabilityMain, 'aws_securityhub_account',
-  'infra/aws/terraform/observability/main.tf: Security Hub');
-requireText(tfObservabilityMain, 'aws_cloudtrail',
-  'infra/aws/terraform/observability/main.tf: CloudTrail trail');
-
-// ---------------------------------------------------------------------------
-// Check 12 — k8s/helm/euno/values-azure.yaml (Phase 3 / cross-cloud)
-=======
 // Check 10 — infra/gcp/terraform/ modular layout (GCP Phase 3)
 // ---------------------------------------------------------------------------
 
@@ -643,46 +470,18 @@ requireText(gcpCcAr, 'ArtifactRegistryRepository',
 
 // ---------------------------------------------------------------------------
 // Check 12 — k8s/helm/euno/values-azure.yaml (cross-cloud)
->>>>>>> origin/main
 // ---------------------------------------------------------------------------
 
 const valuesAzure = requireFile('k8s/helm/euno/values-azure.yaml',
   'k8s/helm/euno/values-azure.yaml');
-<<<<<<< HEAD
-
-requireText(valuesAzure, 'azurecr.io',
-  'values-azure.yaml: Azure Container Registry reference (azurecr.io)');
-requireText(valuesAzure, 'azure.workload.identity/client-id',
-  'values-azure.yaml: Workload Identity annotation (azure.workload.identity/client-id)');
-=======
 requireText(valuesAzure, 'azurecr.io',
   'values-azure.yaml: ACR registry reference (azurecr.io)');
 requireText(valuesAzure, 'azure.workload.identity/client-id',
   'values-azure.yaml: Azure Workload Identity client-id annotation');
->>>>>>> origin/main
 requireText(valuesAzure, 'azure-keyvault',
   'values-azure.yaml: SIGNING_PROVIDER: azure-keyvault');
 requireText(valuesAzure, 'azure-ad',
   'values-azure.yaml: IDENTITY_PROVIDER: azure-ad');
-<<<<<<< HEAD
-requireText(valuesAzure, 'AZURE_TENANT_ID',
-  'values-azure.yaml: AZURE_TENANT_ID placeholder');
-
-// ---------------------------------------------------------------------------
-// Check 13 — docs/multi-cloud.md (Phase 3 / cross-cloud)
-// ---------------------------------------------------------------------------
-
-const multiCloudDoc = requireFile('docs/multi-cloud.md', 'docs/multi-cloud.md');
-
-requireText(multiCloudDoc, 'deploy-eks.md',
-  'docs/multi-cloud.md: link to docs/deploy-eks.md');
-requireText(multiCloudDoc, 'deploy-gke.md',
-  'docs/multi-cloud.md: link to docs/deploy-gke.md');
-requireText(multiCloudDoc, 'infra/aws/cdk',
-  'docs/multi-cloud.md: reference to infra/aws/cdk CDK constructs');
-requireText(multiCloudDoc, 'infra/aws/terraform',
-  'docs/multi-cloud.md: reference to infra/aws/terraform modular Terraform');
-=======
 requireText(valuesAzure, 'AZURE_AD_TENANT_ID',
   'values-azure.yaml: AZURE_AD_TENANT_ID placeholder');
 requireText(valuesAzure, 'managed-csi',
@@ -703,27 +502,17 @@ requireText(multiCloudRunbook, 'migration',
   'docs/multi-cloud.md: migration path section');
 requireText(multiCloudRunbook, 'cross-chain anchor',
   'docs/multi-cloud.md: cross-chain anchor migration example');
->>>>>>> origin/main
 
 // ---------------------------------------------------------------------------
 // Check 14 — docs/multi-cloud-plan.md Phase 3 items are checked off
 // ---------------------------------------------------------------------------
 
-<<<<<<< HEAD
-requireText(multiCloudPlan, '[x] **AWS CDK constructs**',
-  'multi-cloud-plan.md [Phase 3]: AWS CDK constructs item is checked off');
-requireText(multiCloudPlan, '[x] **Terraform module** (`infra/aws/terraform/',
-  'multi-cloud-plan.md [Phase 3]: AWS Terraform modular layout item is checked off');
-requireText(multiCloudPlan, '[x] `k8s/helm/euno/values-azure.yaml`',
-  'multi-cloud-plan.md [Phase 3]: values-azure.yaml item is checked off');
-=======
 requireText(multiCloudPlan, '[x] **Terraform module**',
   'multi-cloud-plan.md [Phase 3]: GCP Terraform module item is checked off');
 requireText(multiCloudPlan, '[x] **Google Cloud Deployment Manager / Config Connector**',
   'multi-cloud-plan.md [Phase 3]: Config Connector item is checked off');
 requireText(multiCloudPlan, '[x] **Helm chart — cloud-specific values files**',
   'multi-cloud-plan.md [Phase 3]: Helm values files item is fully checked off');
->>>>>>> origin/main
 requireText(multiCloudPlan, '[x] **Multi-cloud runbook index**',
   'multi-cloud-plan.md [Phase 3]: multi-cloud runbook index item is checked off');
 

@@ -20,6 +20,7 @@ use_fargate        = true        # set false to use managed node groups (e.g. de
 
 # ── Data stores ───────────────────────────────────────────────────────────────
 db_instance_class = "db.t3.medium"    # db.m6g.large recommended for production
+db_username       = "euno_admin"
 db_multi_az       = true
 cache_node_type   = "cache.t3.medium" # cache.m6g.large recommended for production
 cache_num_replicas = 1

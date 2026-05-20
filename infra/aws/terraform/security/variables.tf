@@ -14,17 +14,7 @@ variable "cluster_oidc_provider_arn" {
 }
 
 variable "cluster_oidc_provider_url" {
-  description = "OIDC provider URL (without https://) from the compute module."
-  type        = string
-}
-
-variable "runtime_log_group_arn" {
-  description = "CloudWatch runtime log group ARN (from observability module)."
-  type        = string
-}
-
-variable "audit_log_group_arn" {
-  description = "CloudWatch audit log group ARN (from observability module)."
+  description = "OIDC provider URL (includes https://) from the compute module."
   type        = string
 }
 

@@ -35,7 +35,7 @@ import { EunoGatewayStack, EunoGatewayStackProps } from './gateway-stack';
 export interface EunoIssuerStackProps extends EunoGatewayStackProps {
   /**
    * When true (default) the Cognito User Pool is created in this stack.
-   * Set to false and provide cognitoUserPoolId to reuse an existing pool.
+   * Set to false and provide cognitoUserPoolArn to reuse an existing pool.
    */
   createCognitoUserPool?: boolean;
   /**
@@ -56,7 +56,7 @@ export interface EunoIssuerStackProps extends EunoGatewayStackProps {
  */
 export class EunoIssuerStack extends EunoGatewayStack {
   /** Cognito User Pool for agent-user and operator identity management. */
-  public readonly userPool: cognito.UserPool;
+  public readonly userPool: cognito.IUserPool;
   /** Cognito App Client for agent-runtime auth flows (ALLOW_USER_SRP_AUTH). */
   public readonly userPoolClient: cognito.UserPoolClient;
   /** Cognito User Pool domain for hosted UI and SCIM endpoint. */
@@ -96,11 +96,14 @@ export class EunoIssuerStack extends EunoGatewayStack {
         },
       });
     } else {
+      if (!props.cognitoUserPoolArn) {
+        throw new Error('cognitoUserPoolArn is required when createCognitoUserPool is false.');
+      }
       // Import an existing User Pool by ARN when managed externally.
       this.userPool = cognito.UserPool.fromUserPoolArn(
         this,
         'UserPool',
-        props.cognitoUserPoolArn!,
+        props.cognitoUserPoolArn,
       );
     }
 

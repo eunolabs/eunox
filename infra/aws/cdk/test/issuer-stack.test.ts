@@ -58,6 +58,18 @@ describe('EunoIssuerStack', () => {
   });
 
   describe('Cognito User Pool', () => {
+    test('throws a clear error when createCognitoUserPool=false without cognitoUserPoolArn', () => {
+      const app = new cdk.App();
+      expect(() => {
+        new EunoIssuerStack(app, 'MissingPoolArn', {
+          env: defaultEnv,
+          namePrefix: 'euno',
+          environment: 'test',
+          createCognitoUserPool: false,
+        });
+      }).toThrow('cognitoUserPoolArn is required when createCognitoUserPool is false.');
+    });
+
     test('creates a Cognito User Pool with the correct name', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
