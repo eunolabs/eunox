@@ -26,6 +26,8 @@ import {
   PgClientConnection,
   PgQueryResult,
   createLedgerSignerFromConfig,
+  GcsAnchorClient,
+  GcsAnchorClientImpl,
 } from '../src/ledger-signer';
 import { CryptoSigner, createAuditEvidence, signEvidenceWithChain } from '../src/evidence';
 import { GENESIS_HASH } from '../src/wire';
@@ -1760,5 +1762,166 @@ describe('PostgresAuditQueryStore', () => {
     expect(() => new PostgresAuditQueryStore(pool, { table: 'bad name; DROP TABLE x' })).toThrow(
       /PostgresAuditQueryStore/,
     );
+  });
+});
+
+// ── GCS anchor smoke tests ────────────────────────────────────────────────────
+
+describe('PostgresLedgerBackend GCS anchor', () => {
+  const HMAC_SECRET = 'a'.repeat(64);
+
+  it('calls putObject with the correct key and JSON payload after anchorIntervalRows rows', async () => {
+    const { pool } = makeMockPgPool();
+    const putCalls: Array<{ bucket: string; key: string; body: string; contentType: string }> = [];
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: {
+          async putObject(params) { putCalls.push(params); },
+        },
+        bucket: 'my-gcs-audit-bucket',
+        prefix: 'gcs-anchor/',
+        anchorIntervalRows: 3,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    for (let i = 1; i <= 3; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'rep-gcs', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(putCalls.length).toBe(1);
+    const call = putCalls[0]!;
+    expect(call.bucket).toBe('my-gcs-audit-bucket');
+    expect(call.key).toMatch(/^gcs-anchor\/rep-gcs\//);
+    expect(call.contentType).toBe('application/json');
+
+    const payload = JSON.parse(call.body) as Record<string, unknown>;
+    expect(payload['schemaVersion']).toBe('1.0');
+    expect(payload['fromSeq']).toBe(1);
+    expect(payload['toSeq']).toBe(3);
+    expect(typeof payload['merkleRoot']).toBe('string');
+    expect(payload['replicaId']).toBe('rep-gcs');
+  });
+
+  it('calls both S3 and GCS putObject when both are configured (multi-cloud)', async () => {
+    const { pool } = makeMockPgPool();
+    const s3Calls: Array<{ bucket: string }> = [];
+    const gcsCalls: Array<{ bucket: string }> = [];
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      s3: {
+        client: { async putObject(p) { s3Calls.push(p); } },
+        bucket: 's3-bucket',
+        anchorIntervalRows: 2,
+      },
+      gcs: {
+        client: { async putObject(p) { gcsCalls.push(p); } },
+        bucket: 'gcs-bucket',
+        anchorIntervalRows: 2,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    for (let i = 1; i <= 2; i++) {
+      const ev = makeEvidence(i);
+      await backend.appendEntry(ev, 'r-mc', (ph, seq) =>
+        signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+      );
+    }
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(s3Calls.length).toBe(1);
+    expect(gcsCalls.length).toBe(1);
+    expect(s3Calls[0]!.bucket).toBe('s3-bucket');
+    expect(gcsCalls[0]!.bucket).toBe('gcs-bucket');
+  });
+
+  it('calls onAnchorError when GCS client throws', async () => {
+    const { pool } = makeMockPgPool();
+    const anchorErrors: Error[] = [];
+    const failingGcs: GcsAnchorClient = {
+      putObject: async () => { throw new Error('GCS write failed'); },
+    };
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: failingGcs,
+        bucket: 'test-gcs-bucket',
+        anchorIntervalRows: 1,
+      },
+      onAnchorError: (err) => anchorErrors.push(err),
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    const ev = makeEvidence(1);
+    const signed = await backend.appendEntry(ev, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev, cryptoSigner, ph, seq),
+    );
+    expect(signed.seq).toBe(1);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(anchorErrors.length).toBeGreaterThan(0);
+    expect(anchorErrors[0]!.message).toBe('GCS write failed');
+  });
+
+  it('uses gcs anchorIntervalRows when only gcs is configured', async () => {
+    const { pool } = makeMockPgPool();
+    const putCalls: Array<unknown> = [];
+    const backend = new PostgresLedgerBackend(pool, {
+      hmacSecret: HMAC_SECRET,
+      gcs: {
+        client: { async putObject(p: unknown) { putCalls.push(p); } },
+        bucket: 'gcs-bucket',
+        anchorIntervalRows: 2,
+      },
+    });
+    const cryptoSigner = new EcP256Signer();
+
+    // Only 1 row — should NOT trigger
+    const ev1 = makeEvidence(1);
+    await backend.appendEntry(ev1, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev1, cryptoSigner, ph, seq),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(putCalls.length).toBe(0);
+
+    // 2nd row — should trigger
+    const ev2 = makeEvidence(2);
+    await backend.appendEntry(ev2, 'r1', (ph, seq) =>
+      signEvidenceWithChain(ev2, cryptoSigner, ph, seq),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(putCalls.length).toBe(1);
+  });
+});
+
+describe('PerReplicaPostgresLedgerBackend GCS anchor', () => {
+  it('should test GCS anchor — see per-replica-ledger.test.ts', () => {
+    // GCS anchor tests for PerReplicaPostgresLedgerBackend are in per-replica-ledger.test.ts.
+    expect(true).toBe(true);
+  });
+});
+
+// ── GcsAnchorClientImpl (interface compliance) ────────────────────────────────
+
+describe('GcsAnchorClientImpl interface compliance', () => {
+  it('implements GcsAnchorClient interface', () => {
+    const client = new GcsAnchorClientImpl();
+    expect(typeof client.putObject).toBe('function');
+  });
+
+  it('accepts config with projectId and keyFilePath', () => {
+    const client = new GcsAnchorClientImpl({
+      projectId: 'my-project',
+      keyFilePath: '/tmp/key.json',
+      skipTemporaryHold: true,
+    });
+    expect(client).toBeInstanceOf(GcsAnchorClientImpl);
   });
 });

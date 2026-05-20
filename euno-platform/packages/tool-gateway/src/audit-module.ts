@@ -257,6 +257,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     AUDIT_LEDGER_TABLE?: string;
     AUDIT_LEDGER_RUN_MIGRATIONS?: boolean;
     AUDIT_LEDGER_S3_BUCKET?: string;
+    AUDIT_LEDGER_GCS_BUCKET?: string;
     AUDIT_LEDGER_ANCHOR_INTERVAL?: number;
     AUDIT_LEDGER_ACL_ENDPOINT?: string;
     AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number;
@@ -331,6 +332,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       const table = dynConfig.AUDIT_LEDGER_TABLE;
       const runMigrations = dynConfig.AUDIT_LEDGER_RUN_MIGRATIONS ?? false;
       const s3Bucket = dynConfig.AUDIT_LEDGER_S3_BUCKET;
+      const gcsBucket = dynConfig.AUDIT_LEDGER_GCS_BUCKET;
       const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
       const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
 
@@ -345,6 +347,14 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               'AUDIT_LEDGER_S3_BUCKET to rely on HMAC + in-DB chain integrity only.',
           );
         }
+        if (gcsBucket) {
+          throw new Error(
+            'AUDIT_LEDGER_GCS_BUCKET is set but no GCS client is wired in the standard ' +
+              'bootstrap. Provide a GcsAnchorClient by constructing PostgresLedgerBackend ' +
+              'directly (with the gcs.client option) in a custom entrypoint, or unset ' +
+              'AUDIT_LEDGER_GCS_BUCKET to rely on HMAC + in-DB chain integrity only.',
+          );
+        }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires
         const { Pool } = require('pg') as { Pool: new (cfg: { connectionString: string }) => import('@euno/common').PgPool };
@@ -354,7 +364,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         const pgBackend = new PostgresLedgerBackend(pgPool, {
           table,
           hmacSecret,
-          onAnchorError: (err: Error) => logger.error('Ledger S3 anchor failed', { error: err.message }),
+          onAnchorError: (err: Error) => logger.error('Ledger anchor failed', { error: err.message }),
         });
 
         if (runMigrations) {
@@ -471,6 +481,15 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
               'to S3. Construct PerReplicaPostgresLedgerBackend with an S3AnchorClient in a ' +
               'custom entrypoint to enable S3 anchoring.',
+          );
+        }
+
+        if (gcsBucket) {
+          logger.warn(
+            'AUDIT_LEDGER_GCS_BUCKET is set with per-replica-postgres but no GCS client is ' +
+              'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
+              'to GCS. Construct PerReplicaPostgresLedgerBackend with a GcsAnchorClient ' +
+              '(e.g. GcsAnchorClientImpl) in a custom entrypoint to enable GCS anchoring.',
           );
         }
 

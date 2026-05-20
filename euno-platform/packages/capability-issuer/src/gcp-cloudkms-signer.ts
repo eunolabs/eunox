@@ -295,4 +295,59 @@ export class GCPCloudKMSSigner extends SigningAdapter {
     this.publicKeyCache = undefined;
     this.versionName = undefined;
   }
+
+  /**
+   * List all crypto key versions for the configured key, ordered by version
+   * number ascending.  Useful for **automated rotation detection**: callers
+   * can poll this method and compare the returned list against a cached
+   * snapshot to detect when a new primary version has been promoted.
+   *
+   * @returns Array of key version descriptors.  The list may include versions
+   *   in any state (`ENABLED`, `DISABLED`, `DESTROY_SCHEDULED`, `DESTROYED`).
+   *   Filter by `state === 'ENABLED'` to find currently usable versions.
+   */
+  async listKeyVersions(): Promise<GCPKeyVersionInfo[]> {
+    const cryptoKeyName = [
+      `projects/${this.gcpConfig.projectId}`,
+      `locations/${this.gcpConfig.locationId}`,
+      `keyRings/${this.gcpConfig.keyRingId}`,
+      `cryptoKeys/${this.gcpConfig.cryptoKeyId}`,
+    ].join('/');
+
+    const [versions] = await this.kmsClient.listCryptoKeyVersions({
+      parent: cryptoKeyName,
+    });
+
+    return (versions ?? []).map((v) => ({
+      name: String(v.name ?? ''),
+      state: String(v.state ?? 'UNKNOWN'),
+      algorithm: v.algorithm !== undefined ? String(v.algorithm) : undefined,
+      createTime: v.createTime?.seconds !== undefined
+        ? new Date(Number(v.createTime.seconds) * 1000).toISOString()
+        : undefined,
+      destroyTime: v.destroyTime?.seconds !== undefined
+        ? new Date(Number(v.destroyTime.seconds) * 1000).toISOString()
+        : undefined,
+    }));
+  }
+}
+
+/**
+ * Descriptor for a single GCP Cloud KMS crypto key version, returned by
+ * {@link GCPCloudKMSSigner.listKeyVersions}.
+ */
+export interface GCPKeyVersionInfo {
+  /** Full resource name, e.g. `projects/.../cryptoKeys/.../cryptoKeyVersions/3`. */
+  name: string;
+  /**
+   * Version state string.  Common values: `'ENABLED'`, `'DISABLED'`,
+   * `'DESTROY_SCHEDULED'`, `'DESTROYED'`, `'CRYPTO_KEY_VERSION_STATE_UNSPECIFIED'`.
+   */
+  state: string;
+  /** GCP algorithm name, e.g. `'EC_SIGN_P256_SHA256'`.  May be `undefined` for destroyed versions. */
+  algorithm?: string;
+  /** ISO-8601 timestamp of when this version was created, if available. */
+  createTime?: string;
+  /** ISO-8601 timestamp of scheduled destruction, if applicable. */
+  destroyTime?: string;
 }
