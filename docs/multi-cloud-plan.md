@@ -176,7 +176,7 @@ workarounds.
 
 ### Shared infrastructure improvements
 
-- [ ] **Secrets abstraction layer (`SecretStore` interface)**
+- [x] **Secrets abstraction layer (`SecretStore` interface)**
   - Define a minimal `SecretStore` interface (already implicit in config code)
     as a first-class exported type in `@euno/common-core`
   - Register built-in implementations: `EnvSecretStore` (default),
