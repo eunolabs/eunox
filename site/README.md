@@ -72,4 +72,4 @@ Blog posts live in `src/content/blog/` as Markdown files with YAML front matter 
 
 ## License
 
-Apache-2.0, same as the rest of `public/`.
+Apache-2.0, same as the rest of the euno open-source project.
