@@ -514,9 +514,9 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         if (gcsBucket) {
           logger.warn(
             'AUDIT_LEDGER_GCS_BUCKET is set with per-replica-postgres but no GCS client is ' +
-              'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
-              'to GCS. Construct PerReplicaPostgresLedgerBackend with a GcsAnchorClient ' +
-              '(e.g. GcsAnchorClientImpl) in a custom entrypoint to enable GCS anchoring.',
+              'wired in the standard bootstrap. The bucket value is ignored — periodic Merkle-root ' +
+              'anchoring to GCS will not occur. Provide a GcsAnchorClient (e.g. GcsAnchorClientImpl) ' +
+              'to PerReplicaPostgresLedgerBackend in a custom entrypoint to enable GCS anchoring.',
           );
         }
 

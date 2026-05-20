@@ -1901,13 +1901,6 @@ describe('PostgresLedgerBackend GCS anchor', () => {
   });
 });
 
-describe('PerReplicaPostgresLedgerBackend GCS anchor', () => {
-  it('should test GCS anchor — see per-replica-ledger.test.ts', () => {
-    // GCS anchor tests for PerReplicaPostgresLedgerBackend are in per-replica-ledger.test.ts.
-    expect(true).toBe(true);
-  });
-});
-
 // ── GcsAnchorClientImpl (interface compliance) ────────────────────────────────
 
 describe('GcsAnchorClientImpl interface compliance', () => {

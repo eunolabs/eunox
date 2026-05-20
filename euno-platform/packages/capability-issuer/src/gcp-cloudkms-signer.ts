@@ -297,14 +297,17 @@ export class GCPCloudKMSSigner extends SigningAdapter {
   }
 
   /**
-   * List all crypto key versions for the configured key, ordered by version
-   * number ascending.  Useful for **automated rotation detection**: callers
-   * can poll this method and compare the returned list against a cached
-   * snapshot to detect when a new primary version has been promoted.
+   * List all crypto key versions for the configured key.  Useful for
+   * **automated rotation detection**: callers can poll this method and compare
+   * the returned list against a cached snapshot to detect when a new primary
+   * version has been promoted.
    *
-   * @returns Array of key version descriptors.  The list may include versions
-   *   in any state (`ENABLED`, `DISABLED`, `DESTROY_SCHEDULED`, `DESTROYED`).
-   *   Filter by `state === 'ENABLED'` to find currently usable versions.
+   * @returns Array of key version descriptors in the order returned by the GCP
+   *   API (not guaranteed to be sorted).  The list may include versions in any
+   *   state.  Note: `state` and `algorithm` are the raw serialised values from
+   *   the proto response — they may be stringified numeric enum values
+   *   (e.g. `'1'` rather than `'ENABLED'`) depending on the library version.
+   *   Consult the Cloud KMS proto enum definitions when comparing these fields.
    */
   async listKeyVersions(): Promise<GCPKeyVersionInfo[]> {
     const cryptoKeyName = [
@@ -340,11 +343,18 @@ export interface GCPKeyVersionInfo {
   /** Full resource name, e.g. `projects/.../cryptoKeys/.../cryptoKeyVersions/3`. */
   name: string;
   /**
-   * Version state string.  Common values: `'ENABLED'`, `'DISABLED'`,
-   * `'DESTROY_SCHEDULED'`, `'DESTROYED'`, `'CRYPTO_KEY_VERSION_STATE_UNSPECIFIED'`.
+   * Version state.  The value is the raw serialised proto enum — it may be a
+   * stringified numeric value (e.g. `'1'`) rather than the enum name
+   * (`'ENABLED'`).  Consult the Cloud KMS
+   * `CryptoKeyVersion.CryptoKeyVersionState` proto enum for the mapping.
    */
   state: string;
-  /** GCP algorithm name, e.g. `'EC_SIGN_P256_SHA256'`.  May be `undefined` for destroyed versions. */
+  /**
+   * Algorithm identifier.  The value is the raw serialised proto enum — it may
+   * be a stringified numeric value rather than the enum name
+   * (e.g. `'26'` rather than `'EC_SIGN_P256_SHA256'`).  May be `undefined`
+   * for destroyed versions.
+   */
   algorithm?: string;
   /** ISO-8601 timestamp of when this version was created, if available. */
   createTime?: string;

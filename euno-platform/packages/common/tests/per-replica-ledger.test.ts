@@ -25,7 +25,7 @@ import { CryptoSigner, createAuditEvidence, signEvidenceWithChain } from '../src
 import { GENESIS_HASH, ChainTipSnapshot, SignedCrossChainCommitment } from '../src/wire';
 import { canonicalSha256 } from '../src/utils';
 
-// ── Re-export GcsAnchorClient for type usage in tests ─────────────────────────
+// ── Import GcsAnchorClient type for typing in tests ───────────────────────────
 import type { GcsAnchorClient } from '../src/ledger-signer';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

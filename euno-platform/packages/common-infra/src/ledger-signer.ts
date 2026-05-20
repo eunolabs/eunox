@@ -1287,7 +1287,15 @@ export class PostgresLedgerBackend implements LedgerBackend {
     this.hmacSecret = decodeHmacSecret(options.hmacSecret);
     this.advisoryLockId = options.advisoryLockId ?? BigInt('0x455534004C454447');
     this.advisoryLockMode = options.advisoryLockMode ?? 'global';
-    this.anchorIntervalRows = options.s3?.anchorIntervalRows ?? options.gcs?.anchorIntervalRows ?? 1000;
+    const s3Interval = options.s3?.anchorIntervalRows;
+    const gcsInterval = options.gcs?.anchorIntervalRows;
+    if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
+      throw new Error(
+        `PostgresLedgerBackend: s3.anchorIntervalRows (${s3Interval}) and ` +
+        `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
+      );
+    }
+    this.anchorIntervalRows = s3Interval ?? gcsInterval ?? 1000;
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((err) => {
@@ -1639,29 +1647,36 @@ export class PostgresLedgerBackend implements LedgerBackend {
       ts: new Date().toISOString(),
     });
 
-    // S3 anchor
+    // S3 anchor — isolated so a failure here does not prevent the GCS anchor.
     if (this.s3) {
       const prefix = this.s3.prefix ?? 'audit-anchor/';
       const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
-      await this.s3.client.putObject({
-        bucket: this.s3.bucket,
-        key,
-        body: anchorPayload,
-        contentType: 'application/json',
-      });
+      try {
+        await this.s3.client.putObject({
+          bucket: this.s3.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
 
-    // GCS anchor (independent of S3; errors are propagated to the caller so
-    // onAnchorError is invoked for either store's failure)
+    // GCS anchor — isolated so a failure here does not prevent the S3 anchor.
     if (this.gcs) {
       const prefix = this.gcs.prefix ?? 'audit-anchor/';
       const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
-      await this.gcs.client.putObject({
-        bucket: this.gcs.bucket,
-        key,
-        body: anchorPayload,
-        contentType: 'application/json',
-      });
+      try {
+        await this.gcs.client.putObject({
+          bucket: this.gcs.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }
 }
@@ -2315,7 +2330,15 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       throw new Error('PerReplicaPostgresLedgerBackend: hmacSecret is required');
     }
     this.hmacSecret = decodeHmacSecret(options.hmacSecret);
-    this.anchorIntervalRows = options.s3?.anchorIntervalRows ?? options.gcs?.anchorIntervalRows ?? 1000;
+    const s3Interval = options.s3?.anchorIntervalRows;
+    const gcsInterval = options.gcs?.anchorIntervalRows;
+    if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
+      throw new Error(
+        `PerReplicaPostgresLedgerBackend: s3.anchorIntervalRows (${s3Interval}) and ` +
+        `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
+      );
+    }
+    this.anchorIntervalRows = s3Interval ?? gcsInterval ?? 1000;
     this.s3 = options.s3;
     this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
@@ -2677,28 +2700,36 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       ts: new Date().toISOString(),
     });
 
-    // S3 anchor
+    // S3 anchor — isolated so a failure here does not prevent the GCS anchor.
     if (this.s3) {
       const prefix = this.s3.prefix ?? 'audit-anchor/';
       const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
-      await this.s3.client.putObject({
-        bucket: this.s3.bucket,
-        key,
-        body: anchorPayload,
-        contentType: 'application/json',
-      });
+      try {
+        await this.s3.client.putObject({
+          bucket: this.s3.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
 
-    // GCS anchor
+    // GCS anchor — isolated so a failure here does not prevent the S3 anchor.
     if (this.gcs) {
       const prefix = this.gcs.prefix ?? 'audit-anchor/';
       const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
-      await this.gcs.client.putObject({
-        bucket: this.gcs.bucket,
-        key,
-        body: anchorPayload,
-        contentType: 'application/json',
-      });
+      try {
+        await this.gcs.client.putObject({
+          bucket: this.gcs.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }
 }
