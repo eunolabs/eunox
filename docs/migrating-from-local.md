@@ -7,8 +7,8 @@
 > **Related documents:**
 > - [`docs/self-host.md`](./self-host.md) — BYO-GW path for teams who want to
 >   run all infrastructure themselves
-> - [`docs/stage-3-design.md`](./stage-3-design.md) — authoritative Stage-3
->   architecture decisions
+> - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — system architecture and
+>   component overview
 > - [`docs/stage-3-gateway-protocol.md`](./stage-3-gateway-protocol.md) — wire
 >   protocol reference for the `/api/v1/enforce` endpoint
 > - [`docs/enforcement.md`](./enforcement.md) — cryptographic-token invariant
@@ -18,7 +18,7 @@
 
 ## 1. The before / after
 
-### Local mode (Stage 1–2)
+### Local mode
 
 Policy lives in a YAML file on disk. All enforcement logic runs inside the
 `@euno/mcp` process. State (call counters, kill-switch) is scoped to a single
@@ -46,7 +46,7 @@ process and lost on restart. The audit log is a local HMAC-signed JSONL file.
 euno-mcp proxy --policy ./euno.policy.yaml -- node ./my-mcp-server.js
 ```
 
-### Hosted mode (Stage 3)
+### Hosted mode
 
 Policy lives in the gateway's policy store. Enforcement runs on the hosted
 gateway, which holds shared Redis state (call counters, kill-switch, revocation

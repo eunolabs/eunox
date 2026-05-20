@@ -10,7 +10,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | --- | ---------- |
 | [../README.md](../README.md) | Project README — value prop, quick start, links. |
 | [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup. |
-| [euno-mcp README](../public/packages/mcp/README.md) | Stage 2 developer product: @euno/mcp quickstart and condition reference. |
+| [euno-mcp README](../public/packages/mcp/README.md) | `@euno/mcp` quickstart and condition reference. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 
 ## 2. Architecture
@@ -22,7 +22,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | [enforcement.md](./enforcement.md) | Policy decision point, enforcement guarantees. |
 | [diagrams.md](./diagrams.md) | Mermaid architecture diagrams. |
 | [architecture-follow-up-tasks-2026-05.md](./architecture-follow-up-tasks-2026-05.md) | Numbered architecture review follow-up task list. |
-| [mvp.md](./mvp.md) | Staged execution plan, gate criteria, business model. |
+| [mvp.md](./mvp.md) | Implementation history, gate criteria, business model. |
 
 ## 3. Design references
 
@@ -31,9 +31,9 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | [ADAPTERS.md](./ADAPTERS.md) | Pluggable identity / signing adapter pattern. |
 | [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns. |
 | [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md) | Schema versioning, deployment ordering. |
-| [DISTRIBUTED_STATE.md](./DISTRIBUTED_STATE.md) | Redis-backed shared state (Stage 3+). |
-| [sandboxing.md](./sandboxing.md) | Sandbox reference architecture (Stage 2+). |
-| [stage-3-design.md](./stage-3-design.md) | Stage 3 design freeze RFC: KMS, Postgres, Redis, API-key scheme, enforcer wire protocol. |
+| [DISTRIBUTED_STATE.md](./DISTRIBUTED_STATE.md) | Redis-backed shared state for multi-agent deployments. |
+| [sandboxing.md](./sandboxing.md) | Sandbox reference architecture. |
+| [stage-3-design.md](./stage-3-design.md) | Hosted gateway design: KMS, Postgres, Redis, API-key scheme, enforcer wire protocol. |
 
 ## 4. Deployment and operations
 
@@ -52,12 +52,20 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | [stage-0-freeze.md](./stage-0-freeze.md) | Platform package freeze policy. |
 | [mcp-support.md](./mcp-support.md) | MCP SDK pin, protocol support window. |
 
-## 6. Stage 1 launch
+## 6. Launch resources
 
 | Doc | What it is |
 | --- | ---------- |
 | [promotion.md](./promotion.md) | Launch copy and messaging for @euno/mcp. |
 | [launch-post.md](../public/packages/mcp/docs/launch-post.md) | Draft Show HN post. |
+| [blog-articles.md](./blog-articles.md) | Suggested blog article list: background, architecture, UX, technology, design principles. |
+
+## 7. Roadmap and planning
+
+| Doc | What it is |
+| --- | ---------- |
+| [mvp.md](./mvp.md) | Implementation history, gate criteria, business model. |
+| [multi-cloud-plan.md](./multi-cloud-plan.md) | Plan for deepening AWS and GCP ecosystem support alongside Azure. |
 
 ---
 
