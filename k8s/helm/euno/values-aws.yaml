@@ -1,0 +1,192 @@
+# Euno umbrella chart — AWS / EKS overrides
+# ---------------------------------------------------------------------------
+# Apply this file on top of the base values.yaml when deploying on Amazon EKS:
+#
+#   helm install euno ./k8s/helm/euno \
+#     --namespace euno \
+#     -f k8s/helm/euno/values.yaml \
+#     -f k8s/helm/euno/values-aws.yaml
+#
+# All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
+# should be sourced from AWS Secrets Manager rather than supplied here.
+# See docs/secrets-aws.md for External Secrets Operator and ASCP wiring.
+#
+# See docs/deploy-eks.md for the full EKS deployment guide, including:
+#   - IAM Roles for Service Accounts (IRSA) setup
+#   - ECR image push script
+#   - ALB Ingress Controller + ACM certificate configuration
+#   - CloudWatch / Security Hub observability
+# ---------------------------------------------------------------------------
+
+# ── Container images — ECR private registry ──────────────────────────────────
+# Replace 123456789012 with your AWS account ID and adjust the region/tag.
+# Euno images are published to ghcr.io; push to ECR with the script in
+# docs/deploy-eks.md §4.2 (push-images-to-ecr.sh).
+gateway:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/tool-gateway
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  # ── IRSA annotation ──────────────────────────────────────────────────────
+  # Annotate the gateway ServiceAccount with the IAM role ARN so the pod can
+  # call KMS and Secrets Manager without a static access key.
+  # Replace with your actual role ARN (see docs/deploy-eks.md §3.2).
+  serviceAccountAnnotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-gateway-role"
+
+  # ── Non-sensitive configuration ──────────────────────────────────────────
+  env:
+    NODE_ENV: production
+    EUNO_DEPLOYMENT_TIER: multi-replica
+    GATEWAY_AUDIENCE: tool-gateway
+    ADMIN_HOST: "127.0.0.1"
+
+    # KMS-backed audit evidence signing.
+    # Set SIGNING_PROVIDER=aws-kms and supply the KMS key ARN.
+    SIGNING_PROVIDER: aws-kms
+    AWS_KMS_KEY_ID: "arn:aws:kms:us-east-1:123456789012:key/<key-id>"
+    AWS_REGION: us-east-1
+
+    # Cross-chain anchor to S3 Object Lock (optional; enables SOC 2 CC7.4).
+    # ENABLE_CROSS_CHAIN_ANCHOR: "true"
+    # AUDIT_LEDGER_S3_BUCKET: "euno-audit-anchor-prod"
+    # AUDIT_LEDGER_S3_REGION: "us-east-1"
+    # AUDIT_LEDGER_S3_ENDPOINT: ""  # leave blank for standard S3; set for VPC endpoint
+
+    # Secret store provider: uncomment to enable SDK-based Secrets Manager
+    # lookup at startup instead of relying on env vars or ESO/ASCP injection.
+    # SECRET_STORE_PROVIDER: aws-secrets-manager
+    # AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET: "arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/audit-ledger-hmac-secret"
+    # AWS_SECRETS_ARN_ADMIN_API_KEY: "arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/gateway-admin-api-key"
+
+  # ── Sensitive values ─────────────────────────────────────────────────────
+  # When using ESO or ASCP (recommended), set existingSecret instead and
+  # leave secretEnv empty.
+  # existingSecret: euno-gateway-secret
+  secretEnv: {}
+
+# ── capability-issuer ─────────────────────────────────────────────────────────
+issuer:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/capability-issuer
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  serviceAccountAnnotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-issuer-role"
+
+  env:
+    NODE_ENV: production
+    EUNO_DEPLOYMENT_TIER: multi-replica
+
+    # Identity provider: AWS Cognito.
+    # See docs/issuer-idp-setup.md §3 for Cognito setup and §10 for SCIM.
+    IDENTITY_PROVIDER: aws-cognito
+    AWS_COGNITO_USER_POOL_ID: "us-east-1_XXXXXXXXX"
+    AWS_COGNITO_CLIENT_ID: "<cognito-app-client-id>"
+    AWS_COGNITO_REGION: us-east-1
+
+    # Token signing via AWS KMS.
+    SIGNING_PROVIDER: aws-kms
+    AWS_KMS_KEY_ID: "arn:aws:kms:us-east-1:123456789012:key/<issuer-key-id>"
+    AWS_REGION: us-east-1
+
+    # Schema initialisation — run once on first deploy.
+    ISSUER_DB_SCHEMA_INIT: "true"
+
+    # SCIM 2.0 provisioning (Cognito IAM Identity Center bridge).
+    # See docs/issuer-idp-setup.md §10 for the full SCIM bridge guide.
+    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+
+  # existingSecret: euno-issuer-secret
+  secretEnv: {}
+
+# ── api-key-minter ────────────────────────────────────────────────────────────
+minter:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/api-key-minter
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  env:
+    NODE_ENV: production
+
+  secretEnv: {}
+
+# ── db-token-service ──────────────────────────────────────────────────────────
+dbTokenService:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/db-token-service
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  env:
+    NODE_ENV: production
+    DB_TOKENS_ENABLED: "false"
+    # AWS_REGION: us-east-1   # required when DB_TOKENS_ENABLED=true
+
+  secretEnv: {}
+
+# ── storage-grant-service ─────────────────────────────────────────────────────
+storageGrantService:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/storage-grant-service
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  env:
+    NODE_ENV: production
+    STORAGE_GRANTS_ENABLED: "false"
+    # AWS_REGION: us-east-1   # required when STORAGE_GRANTS_ENABLED=true
+
+  secretEnv: {}
+
+# ── posture-emitter ───────────────────────────────────────────────────────────
+postureEmitter:
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/posture-emitter
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: gp3   # EKS gp3 EBS volumes (preferred over gp2)
+    mountPath: /data
+
+  env:
+    NODE_ENV: production
+    POSTURE_EMITTER_ENABLED: "false"
+    POSTURE_EMITTER_PLUGINS: "stdout"
+    POSTURE_DURABLE_QUEUE_PATH: "/data/posture.db"
+    # Enable Security Hub plugin when POSTURE_EMITTER_ENABLED=true:
+    # POSTURE_EMITTER_PLUGINS: "security-hub"
+    # AWS_REGION: us-east-1
+    # AWS_SECURITY_HUB_PRODUCT_ARN: "arn:aws:securityhub:us-east-1:123456789012:product/123456789012/default"
+
+  secretEnv: {}
+  #   AWS_SECRET_ACCESS_KEY: ""   # not needed when IRSA is configured
+
+# ── Bitnami sub-charts (disabled — use RDS + ElastiCache in production) ───────
+postgresql:
+  enabled: false
+  # Use Amazon RDS for PostgreSQL in production:
+  #   AUDIT_LEDGER_PG_URL and ISSUER_DB_URL should point at RDS endpoints.
+  # Minimum RDS configuration:
+  #   engine: postgres 14 or 15
+  #   storage: gp3, 20 GiB minimum
+  #   backup retention: 7 days
+  #   deletion protection: enabled
+  #   multi-az: enabled (production)
+
+redis:
+  enabled: false
+  # Use Amazon ElastiCache for Redis in production:
+  #   REDIS_URL should point at the ElastiCache primary endpoint.
+  # Minimum ElastiCache configuration:
+  #   engine: redis 7.x
+  #   node type: cache.t3.medium minimum (cache.m6g.large for production)
+  #   cluster mode: disabled (single shard with read replicas)
+  #   encryption in transit: enabled (TLS)
+  #   auth token: enabled (set in REDIS_URL as rediss://:<token>@<host>:6380)
