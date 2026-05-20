@@ -245,6 +245,24 @@ export const IssuerConfigSchema = z
         'Identity provider used to authenticate /issue callers. One of: azure-ad, aws-cognito, gcp-identity, did.',
     }),
 
+    // Secrets store ---------------------------------------------------------
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
+      default: 'env',
+      description:
+        'Secrets-store backend used to resolve sensitive runtime values. ' +
+        '"env" (default): read from process environment variables. ' +
+        '"azure-keyvault": Azure Key Vault Secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secretsmanager": AWS Secrets Manager (uses the standard credential chain; ' +
+        'optionally override region via AWS_REGION). ' +
+        '"gcp-secretmanager": GCP Secret Manager (requires GCP_PROJECT_ID; uses ADC).',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault URL used by the secrets store (required when SECRET_STORE_PROVIDER=azure-keyvault). ' +
+      'May be the same vault as AZURE_KEYVAULT_URL or a separate, secrets-only vault. ' +
+      'Example: https://my-secrets-vault.vault.azure.net/',
+    ),
+
     // Azure Key Vault -------------------------------------------------------
     AZURE_KEYVAULT_URL: optionalString.describe(
       'Azure Key Vault URL (required when SIGNING_PROVIDER=azure-keyvault). Example: https://your-vault.vault.azure.net/',
@@ -1156,6 +1174,24 @@ export const GatewayConfigSchema = z
       'misconfigured ingress / route cannot expose /admin/* even by accident. Recommended ' +
       'values: "127.0.0.1" for sidecar-only access, or the pod\'s internal cluster IP. ' +
       'When unset (non-production only) the admin server binds to all interfaces (Express default).',
+    ),
+
+    // Secrets store ---------------------------------------------------------
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
+      default: 'env',
+      description:
+        'Secrets-store backend used to resolve sensitive runtime values. ' +
+        '"env" (default): read from process environment variables. ' +
+        '"azure-keyvault": Azure Key Vault Secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secretsmanager": AWS Secrets Manager (uses the standard credential chain; ' +
+        'optionally override region via AWS_REGION). ' +
+        '"gcp-secretmanager": GCP Secret Manager (requires GCP_PROJECT_ID; uses ADC).',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault URL used by the secrets store (required when SECRET_STORE_PROVIDER=azure-keyvault). ' +
+      'May be the same vault as AUDIT_SIGNING_AZURE_VAULT_URL or a separate, secrets-only vault. ' +
+      'Example: https://my-secrets-vault.vault.azure.net/',
     ),
 
     // Issuer + backend wiring -----------------------------------------------

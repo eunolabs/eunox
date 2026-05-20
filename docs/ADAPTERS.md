@@ -484,6 +484,87 @@ PARTNER_ISSUER_DISCOVERY_URL=https://partner-staging.example.com/.well-known/cap
 
 ---
 
+## Secrets abstraction layer (`SecretStore`)
+
+Services can read sensitive runtime values (e.g. `AUDIT_LEDGER_HMAC_SECRET`,
+`GATEWAY_ADMIN_API_KEY`) from a cloud-native secret manager instead of, or in
+addition to, environment variables.  The `SecretStore` interface is exported
+from `@euno/common-core`:
+
+```typescript
+import { createSecretStoreFromEnv, SecretStore } from '@euno/common-core';
+
+const store: SecretStore = createSecretStoreFromEnv(process.env);
+const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');
+```
+
+### Interface
+
+```typescript
+interface SecretStore {
+  getSecret(name: string): Promise<string | undefined>;
+}
+```
+
+- Returns `undefined` (never throws) for a missing secret.
+- May throw for transient I/O or authentication errors.
+- Implementations cache fetched values in memory for the process lifetime.
+
+### Built-in implementations
+
+| Provider key            | Class                            | SDK required                                     |
+|-------------------------|----------------------------------|--------------------------------------------------|
+| `env` **(default)**     | `EnvSecretStore`                 | none — reads `process.env`                       |
+| `azure-keyvault`        | `AzureKeyVaultSecretStore`       | `@azure/keyvault-secrets`, `@azure/identity`     |
+| `aws-secretsmanager`    | `AwsSecretsManagerSecretStore`   | `@aws-sdk/client-secrets-manager`                |
+| `gcp-secretmanager`     | `GcpSecretManagerSecretStore`    | `@google-cloud/secret-manager`                   |
+
+Cloud SDKs are **not** hard dependencies of `@euno/common-core`; they are
+dynamically `require()`d at construction time.  Install whichever SDK your
+deployment uses.
+
+### Selection via environment variables
+
+Set `SECRET_STORE_PROVIDER` in the service environment to select the backend:
+
+```env
+# Default — read directly from process.env
+SECRET_STORE_PROVIDER=env
+
+# Azure Key Vault
+SECRET_STORE_PROVIDER=azure-keyvault
+SECRET_STORE_AZURE_VAULT_URL=https://my-secrets-vault.vault.azure.net/
+AZURE_CREDENTIAL_TYPE=managed-identity   # or default / client-secret
+
+# AWS Secrets Manager — uses the standard credential chain (IRSA, instance profile, etc.)
+SECRET_STORE_PROVIDER=aws-secretsmanager
+AWS_REGION=us-east-1
+
+# GCP Secret Manager — uses Application Default Credentials
+SECRET_STORE_PROVIDER=gcp-secretmanager
+GCP_PROJECT_ID=my-project-123
+```
+
+`createSecretStoreFromEnv(process.env)` reads these variables and returns the
+appropriate implementation.  Alternatively, use `createSecretStore(provider,
+config)` to construct an instance programmatically.
+
+### Implementing a custom `SecretStore`
+
+Any object that satisfies the `SecretStore` interface can be used:
+
+```typescript
+import { SecretStore } from '@euno/common-core';
+
+class VaultSecretStore implements SecretStore {
+  async getSecret(name: string): Promise<string | undefined> {
+    // fetch from HashiCorp Vault, Infisical, etc.
+  }
+}
+```
+
+---
+
 ## References
 
 - [W3C Decentralized Identifiers (DIDs)](https://www.w3.org/TR/did-core/)
