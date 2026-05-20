@@ -51,24 +51,24 @@ workarounds.
 
 ### Phase 1 — Documentation and configuration (near-term)
 
-- [ ] **EKS deployment guide** (`docs/deploy-eks.md`)
+- [x] **EKS deployment guide** (`docs/deploy-eks.md`)
   - IAM roles for service accounts (IRSA) wiring for capability-issuer and
     tool-gateway pods
   - ECR image pull configuration and air-gap image push script
   - ALB Ingress Controller + ACM certificate setup
   - Example `values.yaml` overrides for the Helm umbrella chart
 
-- [ ] **AWS Secrets Manager integration** (`docs/secrets-aws.md`)
+- [x] **AWS Secrets Manager integration** (`docs/secrets-aws.md`)
   - How to reference `AUDIT_LEDGER_HMAC_SECRET`, `GATEWAY_ADMIN_API_KEY`, and
     `PARTNER_DID_PIN_SECRET` from Secrets Manager at pod startup
   - External Secrets Operator vs. AWS Secrets and Configuration Provider (ASCP)
     side-by-side comparison
 
-- [ ] **Cognito SCIM bridge guide** (`docs/issuer-idp-setup.md` §Cognito SCIM)
+- [x] **Cognito SCIM bridge guide** (`docs/issuer-idp-setup.md` §Cognito SCIM)
   - Cognito User Pool + AWS IAM Identity Center SCIM endpoint configuration
   - Attribute mappings for `sub`, `email`, and group claims to euno roles
 
-- [ ] **CloudWatch / Security Hub observability guide**
+- [x] **CloudWatch / Security Hub observability guide**
   - Prometheus → CloudWatch Metrics forwarding (ADOT Collector)
   - OCSF audit event → Security Hub finding mapping
   - CloudWatch Insights query templates for denial-reason histograms
@@ -200,7 +200,7 @@ workarounds.
 
 - [ ] **Helm chart — cloud-specific values files**
   - `k8s/helm/euno/values-azure.yaml`
-  - `k8s/helm/euno/values-aws.yaml`
+  - [x] `k8s/helm/euno/values-aws.yaml`
   - `k8s/helm/euno/values-gcp.yaml`
   - Each file documents every provider-specific override with inline comments
 

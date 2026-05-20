@@ -6,4 +6,3 @@ export * from './issuance-rate-limiter';
 export * from './kms-evidence-signer';
 export * from './kms-token-signer';
 export * from './redis-usage-meter';
-export * from './secret-store';

@@ -34,3 +34,4 @@ export * from './runtime';
 export * from './manifest-validator';
 export * from './usage-meter';
 export * from './agt-guard';
+export * from './secret-store';

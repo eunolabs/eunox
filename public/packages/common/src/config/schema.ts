@@ -890,16 +890,16 @@ export const IssuerConfigSchema = z
     // When SECRET_STORE_PROVIDER is set, runtime secrets (HMAC keys, admin
     // API keys, SCIM tokens, etc.) are read from the configured cloud secret
     // store instead of process.env. See docs/ADAPTERS.md §"Secret store"
-    // and createSecretStore() in @euno/common-infra for usage.
+    // and createSecretStoreFromEnv() in @euno/common-core for usage.
     SECRET_STORE_PROVIDER: envEnum({
-      values: ['env', 'azure-keyvault', 'aws-secrets-manager', 'gcp-secret-manager'] as const,
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
       default: 'env',
       description:
         'Secrets backend used to resolve runtime secrets. ' +
         '"env" (default): read directly from environment variables (no cloud dependency). ' +
         '"azure-keyvault": read from Azure Key Vault secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
-        '"aws-secrets-manager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
-        '"gcp-secret-manager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
+        '"aws-secretsmanager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
+        '"gcp-secretmanager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
         'See docs/ADAPTERS.md §"Secret store" for the name-mapping convention.',
     }),
     SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
@@ -927,7 +927,7 @@ export const IssuerConfigSchema = z
     ),
     SECRET_STORE_AWS_REGION: optionalString.describe(
       'AWS region for Secrets Manager. Optional; defaults to the SDK default ' +
-      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secrets-manager.',
+      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secretsmanager.',
     ),
     SECRET_STORE_AWS_ACCESS_KEY_ID: optionalString.describe(
       'AWS access key ID for Secrets Manager. Optional; falls back to the default credential provider chain.',
@@ -940,7 +940,7 @@ export const IssuerConfigSchema = z
     ),
     SECRET_STORE_GCP_PROJECT_ID: optionalString.describe(
       'GCP project ID for Secret Manager. When unset, falls back to GCP_PROJECT_ID. ' +
-      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secretmanager.',
     ),
     SECRET_STORE_GCP_KEY_FILE_PATH: optionalString.describe(
       'Optional path to a GCP service account key file for Secret Manager. ' +
@@ -1208,7 +1208,7 @@ export const IssuerConfigSchema = z
       });
     }
     if (
-      cfg.SECRET_STORE_PROVIDER === 'gcp-secret-manager' &&
+      cfg.SECRET_STORE_PROVIDER === 'gcp-secretmanager' &&
       !cfg.SECRET_STORE_GCP_PROJECT_ID &&
       !cfg.GCP_PROJECT_ID
     ) {
@@ -1216,7 +1216,7 @@ export const IssuerConfigSchema = z
         code: z.ZodIssueCode.custom,
         path: ['SECRET_STORE_GCP_PROJECT_ID'],
         message:
-          'SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) is required when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+          'SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) is required when SECRET_STORE_PROVIDER=gcp-secretmanager.',
       });
     }
 
@@ -2188,16 +2188,16 @@ export const GatewayConfigSchema = z
     // When SECRET_STORE_PROVIDER is set, runtime secrets (HMAC keys, admin
     // API keys, etc.) are read from the configured cloud secret store
     // instead of process.env. See docs/ADAPTERS.md §"Secret store" and
-    // createSecretStore() in @euno/common-infra for usage.
+    // createSecretStoreFromEnv() in @euno/common-core for usage.
     SECRET_STORE_PROVIDER: envEnum({
-      values: ['env', 'azure-keyvault', 'aws-secrets-manager', 'gcp-secret-manager'] as const,
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
       default: 'env',
       description:
         'Secrets backend used to resolve runtime secrets. ' +
         '"env" (default): read directly from environment variables (no cloud dependency). ' +
         '"azure-keyvault": read from Azure Key Vault secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
-        '"aws-secrets-manager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
-        '"gcp-secret-manager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
+        '"aws-secretsmanager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
+        '"gcp-secretmanager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
         'See docs/ADAPTERS.md §"Secret store" for the name-mapping convention.',
     }),
     SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
@@ -2225,7 +2225,7 @@ export const GatewayConfigSchema = z
     ),
     SECRET_STORE_AWS_REGION: optionalString.describe(
       'AWS region for Secrets Manager. Optional; defaults to the SDK default ' +
-      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secrets-manager.',
+      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secretsmanager.',
     ),
     SECRET_STORE_AWS_ACCESS_KEY_ID: optionalString.describe(
       'AWS access key ID for Secrets Manager. Optional; falls back to the default credential provider chain.',
@@ -2238,7 +2238,7 @@ export const GatewayConfigSchema = z
     ),
     SECRET_STORE_GCP_PROJECT_ID: optionalString.describe(
       'GCP project ID for Secret Manager. When unset, falls back to GCP_PROJECT_ID. ' +
-      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secretmanager.',
     ),
     SECRET_STORE_GCP_KEY_FILE_PATH: optionalString.describe(
       'Optional path to a GCP service account key file for Secret Manager. ' +
@@ -2600,14 +2600,14 @@ export const GatewayConfigSchema = z
     // fields that are declared in the schema, so we require explicit
     // SECRET_STORE_GCP_PROJECT_ID here.
     if (
-      cfg.SECRET_STORE_PROVIDER === 'gcp-secret-manager' &&
+      cfg.SECRET_STORE_PROVIDER === 'gcp-secretmanager' &&
       !cfg.SECRET_STORE_GCP_PROJECT_ID
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['SECRET_STORE_GCP_PROJECT_ID'],
         message:
-          'SECRET_STORE_GCP_PROJECT_ID is required when SECRET_STORE_PROVIDER=gcp-secret-manager ' +
+          'SECRET_STORE_GCP_PROJECT_ID is required when SECRET_STORE_PROVIDER=gcp-secretmanager ' +
           '(the gateway schema does not include GCP_PROJECT_ID; set SECRET_STORE_GCP_PROJECT_ID explicitly).',
       });
     }

@@ -1544,35 +1544,35 @@ describe('SecretStore schema — IssuerConfigSchema cross-field validation', () 
     expect(result.ok).toBe(true);
   });
 
-  it('accepts SECRET_STORE_PROVIDER=aws-secrets-manager', () => {
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager', () => {
     const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'aws-secrets-manager' },
+      { ...baseIssuer, SECRET_STORE_PROVIDER: 'aws-secretsmanager' },
       'issuer',
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('aws-secrets-manager');
+    expect(result.config.SECRET_STORE_PROVIDER).toBe('aws-secretsmanager');
   });
 
-  it('accepts SECRET_STORE_PROVIDER=gcp-secret-manager with GCP_PROJECT_ID set', () => {
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with GCP_PROJECT_ID set', () => {
     const result = loadConfig(
       {
         ...baseIssuer,
-        SECRET_STORE_PROVIDER: 'gcp-secret-manager',
+        SECRET_STORE_PROVIDER: 'gcp-secretmanager',
         GCP_PROJECT_ID: 'my-project',
       },
       'issuer',
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('gcp-secret-manager');
+    expect(result.config.SECRET_STORE_PROVIDER).toBe('gcp-secretmanager');
   });
 
-  it('accepts SECRET_STORE_PROVIDER=gcp-secret-manager with SECRET_STORE_GCP_PROJECT_ID set', () => {
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with SECRET_STORE_GCP_PROJECT_ID set', () => {
     const result = loadConfig(
       {
         ...baseIssuer,
-        SECRET_STORE_PROVIDER: 'gcp-secret-manager',
+        SECRET_STORE_PROVIDER: 'gcp-secretmanager',
         SECRET_STORE_GCP_PROJECT_ID: 'my-project',
       },
       'issuer',
@@ -1580,9 +1580,9 @@ describe('SecretStore schema — IssuerConfigSchema cross-field validation', () 
     expect(result.ok).toBe(true);
   });
 
-  it('rejects SECRET_STORE_PROVIDER=gcp-secret-manager without any project ID', () => {
+  it('rejects SECRET_STORE_PROVIDER=gcp-secretmanager without any project ID', () => {
     const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'gcp-secret-manager' },
+      { ...baseIssuer, SECRET_STORE_PROVIDER: 'gcp-secretmanager' },
       'issuer',
     );
     expect(result.ok).toBe(false);
@@ -1631,17 +1631,17 @@ describe('SecretStore schema — GatewayConfigSchema cross-field validation', ()
     expect(err).toBeDefined();
   });
 
-  it('accepts SECRET_STORE_PROVIDER=aws-secrets-manager on gateway', () => {
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager on gateway', () => {
     const result = loadConfig(
-      { SECRET_STORE_PROVIDER: 'aws-secrets-manager' },
+      { SECRET_STORE_PROVIDER: 'aws-secretsmanager' },
       'gateway',
     );
     expect(result.ok).toBe(true);
   });
 
-  it('rejects SECRET_STORE_PROVIDER=gcp-secret-manager without project ID on gateway', () => {
+  it('rejects SECRET_STORE_PROVIDER=gcp-secretmanager without project ID on gateway', () => {
     const result = loadConfig(
-      { SECRET_STORE_PROVIDER: 'gcp-secret-manager' },
+      { SECRET_STORE_PROVIDER: 'gcp-secretmanager' },
       'gateway',
     );
     expect(result.ok).toBe(false);
@@ -1650,10 +1650,10 @@ describe('SecretStore schema — GatewayConfigSchema cross-field validation', ()
     expect(err).toBeDefined();
   });
 
-  it('accepts SECRET_STORE_PROVIDER=gcp-secret-manager with SECRET_STORE_GCP_PROJECT_ID on gateway', () => {
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with SECRET_STORE_GCP_PROJECT_ID on gateway', () => {
     const result = loadConfig(
       {
-        SECRET_STORE_PROVIDER: 'gcp-secret-manager',
+        SECRET_STORE_PROVIDER: 'gcp-secretmanager',
         SECRET_STORE_GCP_PROJECT_ID: 'my-project',
       },
       'gateway',
