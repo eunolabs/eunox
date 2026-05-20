@@ -164,7 +164,7 @@ euno audit export \
   --scope soc2-cc7 \
   --out ./audit-bundle.jsonl
 
-# Check Stage-5 service discovery document
+# Check the service discovery document
 euno discover --issuer-url https://issuer.euno.example
 ```
 

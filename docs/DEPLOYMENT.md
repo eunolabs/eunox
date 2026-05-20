@@ -6,8 +6,8 @@ local-mode usage.
 
 The hosted platform services (Capability Issuer and Tool Gateway) are
 available for teams that need shared state, persistent audit, and managed
-key infrastructure. When deploying the platform for an internal design
-partner, use the current workspace paths:
+key infrastructure. When deploying the platform for an early access deployment,
+use the current workspace paths:
 
 | Service | Workspace | Default port |
 | --- | --- | --- |

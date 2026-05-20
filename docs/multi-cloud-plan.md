@@ -78,7 +78,7 @@ workarounds.
 - [ ] **AWS Secrets Manager secrets-store adapter**
   - Implement `SecretsManagerSecretStore` that satisfies the internal
     `SecretStore` interface used by `createLedgerSignerFromConfig` and
-    `createIssuerConfigFromEnv`
+    the issuer config loader (`loadConfigOrExit(..., 'issuer')`)
   - Fall back to `process.env` when `AWS_SECRETS_ARN_*` vars are absent
   - Unit tests with `@aws-sdk/client-secrets-manager` mock
 

@@ -92,7 +92,7 @@ euno verify-bundle ./audit-soc2-cc7.jsonl \
 
 ### Service discovery
 
-Inspect the Stage-5 discovery document to confirm which enterprise
+Inspect the service discovery document to confirm which enterprise
 features your issuer has enabled.
 
 ```bash
