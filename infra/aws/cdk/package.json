@@ -1,0 +1,25 @@
+{
+  "name": "@euno/aws-cdk",
+  "version": "1.0.0",
+  "description": "AWS CDK constructs for deploying Euno Capability-Native Agent Governance",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "synth": "cdk synth",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.150.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.14.0",
+    "aws-cdk": "^2.150.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.5.0"
+  }
+}

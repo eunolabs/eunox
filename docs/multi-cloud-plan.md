@@ -108,14 +108,14 @@ workarounds.
 
 ### Phase 3 — Infrastructure-as-code (longer-term)
 
-- [ ] **AWS CDK constructs** (`infra/aws/cdk/`)
+- [x] **AWS CDK constructs** (`infra/aws/cdk/`)
   - `EunoGatewayStack` — EKS Fargate cluster, RDS Postgres, ElastiCache Redis,
     KMS key, S3 Object Lock bucket, Secrets Manager secrets, IAM roles
   - `EunoIssuerStack` — adds Cognito User Pool, SCIM endpoint wiring
   - `EunoEnterpriseStack` — adds partner DID registry, SOC 2 audit pipeline
   - CDK unit tests via `aws-cdk-lib/assertions`
 
-- [ ] **Terraform module** (`infra/aws/terraform/`)
+- [x] **Terraform module** (`infra/aws/terraform/`)
   - Modular layout: `network/`, `compute/`, `data/`, `security/`, `observability/`
   - Variables file with euno-specific naming conventions
   - README with `terraform init / plan / apply` walkthrough
