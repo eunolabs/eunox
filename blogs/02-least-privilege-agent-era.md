@@ -4,116 +4,53 @@
 
 ---
 
-## The principle has not changed. The problem has.
+Least privilege is one of those principles that everyone agrees with and almost nobody implements properly. Give every process and user only the access they need, no more. Saltzer and Schroeder wrote it down in 1975. It's held up perfectly for fifty years. Nobody's arguing against it.
 
-Least privilege is one of the oldest and most durable ideas in computer security. Give every process, user, and service only the permissions it needs to do its job — no more, no less. The formulation dates to Jerome Saltzer and Michael Schroeder's 1975 paper, *The Protection of Information in Computer Systems*, which articulated eight design principles for building secure systems. Fifty years of subsequent practice has not invalidated a single one of them.
+The problem isn't the principle. It's that the tools we've built to implement it — RBAC, OAuth scopes, cloud IAM — were designed around a set of assumptions that AI agents violate in almost every direction. Not slightly. Fundamentally.
 
-Nothing about the principle itself needs updating for the AI agent era. What does need updating is the set of mechanisms we use to implement it. For the past two decades, least privilege in software systems has been implemented primarily through three mechanisms: Role-Based Access Control (RBAC), OAuth 2.0 scopes, and cloud IAM roles. These are mature, well-understood, and well-tooled. They are also structurally ill-suited to multi-tool, multi-step agentic workflows.
-
-Using them directly to govern AI agents leaves significant, exploitable gaps. This post explains why — and what a more appropriate model looks like.
+This post is about the gap between those assumptions and the reality of how agents work, and what a model that actually fits looks like.
 
 ---
 
-## A brief history of how we got here
+## Why the old tools don't fit
 
-Understanding why classical access control doesn't fit agents requires understanding what problems it was designed to solve and the assumptions it bakes in.
+To understand the mismatch, it helps to understand what the classic tools were built for.
 
-### The origins of RBAC
+RBAC was formalised in the 1990s. The problem it was solving: enterprise organisations have hundreds or thousands of employees, each needing access to a defined set of systems. Managing permissions user-by-user doesn't scale. Managing them role-by-role does. The model works because the cast of principals is relatively stable, the set of resources is known, and the operations on those resources are bounded. Someone in "Finance" can read the billing tables. Someone in "Engineering" can access the code repositories. These assignments are made at provisioning time and reviewed periodically.
 
-Role-Based Access Control emerged from work done in the 1970s and formalised in NIST publications in the mid-1990s. The core insight was that managing permissions for individual users in large organisations was operationally intractable. Assigning permissions to roles — and then assigning users to roles — made large-scale permission management feasible.
+OAuth 2.0 solved a different problem: a user delegating access to a third-party application without sharing their credentials. The scope mechanism — `repo:read`, `calendar:write`, `email:send` — gives users something readable to approve or reject. The granularity is intentionally coarse, because the value here is legibility, not precision. You review it once, click allow, and move on.
 
-RBAC assumes a relatively stable cast of principals (employees, contractors, service accounts), a known set of resources (files, databases, applications), and a bounded set of operations (read, write, admin). Permission assignments are made at provisioning time and reviewed periodically. The enforcement question — "is this principal allowed to perform this action?" — is answered by a membership check: does this user have a role that grants this permission?
+Cloud IAM extended RBAC to infrastructure. An EC2 instance gets an IAM role. The role lets it read from a specific S3 bucket and write to a specific DynamoDB table. The principal is stable (the instance identity), the resources are known (the specific bucket and table), the permissions are set at deployment time.
 
-This works well for human users interacting with defined systems. It was extended to service accounts — background processes with stable identities that need consistent access to specific resources — with similar success.
+All three of these assume: a stable principal doing predictable things, with permissions set in advance.
 
-### OAuth 2.0 and the delegation layer
-
-OAuth 2.0, standardised in RFC 6749 in 2012, addressed a different problem: how to allow a user to grant a third-party application access to their resources without sharing their credentials. The scope mechanism — a set of string claims in an access token that describes what the bearer is permitted to do — enabled coarse-grained delegation.
-
-Scopes like `repo:read`, `calendar:write`, or `email:send` are human-readable labels that a user can review when approving an OAuth authorisation request. The granularity is intentionally coarse: the value of the scope mechanism is its legibility to humans who need to make approval decisions, not its precision as a policy language.
-
-OAuth tokens typically have multi-hour lifetimes. They are issued to a specific client application for a specific user. Revocation exists but is rarely used in practice because the expectation is that tokens are short enough to expire naturally.
-
-### Cloud IAM: RBAC at infrastructure scale
-
-Cloud IAM (AWS IAM, Azure RBAC, GCP IAM) extended the RBAC model to infrastructure resources. An IAM role might grant an EC2 instance the ability to read from an S3 bucket or write to a DynamoDB table. The principal is stable (the instance's IAM role), the resources are known (the specific bucket or table), and the policy is set at deployment time.
-
-Cloud IAM is sophisticated in many ways — it supports resource-level conditions, tag-based access control, and cross-account delegation. But its foundational model is still: a stable principal, a known resource, a bounded action set, policy set at configuration time.
+An AI agent violates all of that.
 
 ---
 
-## What is structurally different about agents
+## What's actually different about agents
 
-An AI agent is a fundamentally different kind of principal. The structural differences are not superficial — they go to the assumptions that RBAC, OAuth, and IAM were built on.
+The same agent deployment might, for one task, call `read_file`, then `execute_sql`, then `send_email`. For a different task, it might call `list_calendar_events`, `create_meeting`, and `update_crm_contact`. The tool sequence is determined at runtime by a language model's reasoning process, responding to an open-ended natural language task. You can't predict it at provisioning time. You can't write a meaningful IAM policy for it — either it's so broad it covers everything the agent might ever do, or it's so narrow the agent can't function, or it's a sprawling mess of hyper-specific roles that nobody can maintain.
 
-### Difference 1: Dynamic, runtime tool selection
+The other problem is that agents don't just call tools — they chain them. The output of step N feeds into step N+1. Which means the arguments to step N+1 are influenced by whatever was in the data the agent retrieved in step N. Including, potentially, adversarial content in that data.
 
-A human user who logs into a system generally knows what they are going to do. They open the email client to read email. They connect to the database to run a report. Their actions are predictable enough that access control policies set at provisioning time are adequate.
+Here's a concrete version: an agent summarises supplier contracts and emails the summaries to the legal team. Step one: query the supplier directory for the latest contract ID. Step two: fetch the contract document. Step three: summarise. Step four: email. An OAuth scope of `email:send` says the agent can send email. It says nothing about to whom. If a malicious instruction in the contract document (step two) redirects the email destination from `legal@corp.example.com` to `attacker@external.com`, the scope check passes. The attacker gets the document. Nothing in the OAuth model caught this.
 
-An AI agent's tool usage is determined at runtime by the model's reasoning process, based on the task description and the evolving state of the conversation. The same agent deployment might, for a given task, call `read_file`, `execute_sql`, and `send_email` in sequence — and for a different task, call `list_calendar_events`, `create_meeting`, and `update_contact`. The tools used, the arguments passed, and the sequence of operations are all emergent from the model's reasoning. They cannot be fully predicted at provisioning time.
+That's the gap between "authorises the capability class" and "authorises this specific exercise of the capability". For agents, the gap is exploitable. This is discussed in more detail in [the prompt injection post](./01-prompt-injection-policy-layer.md), but the core point here is: an access control model that doesn't constrain arguments can't actually enforce least privilege for agents.
 
-An OAuth scope of `tools:invoke` or an IAM role of `agent-service-role` says nothing useful about which specific tools can be called, with what arguments, against which data, at what rate. It is either too broad (every tool, any argument, unlimited rate) or requires an impractical proliferation of hyper-specific roles (one IAM role per tool per agent type per environment).
+There's also the lifetime problem. An employee's IAM role persists for years. A microservice's service account persists for the lifetime of the app. That stability makes sense for those principals. An agent task is ephemeral — it runs, it completes, it's done. Giving the agent a long-lived credential with all the permissions it might ever need means those permissions persist across tasks, accumulating into exactly the kind of over-provisioned access that least privilege is designed to prevent. An injection attack that exploits permissions granted for task 1 but not needed for task 47 is a direct consequence of not scoping access per-task.
 
-The access control decision for an agent must happen *per-call*, not *per-session*. The relevant policy question is not "is this agent authenticated?" but "is this specific call, with these specific arguments, to this specific tool, permitted under this agent's current task scope?"
-
-### Difference 2: Multi-step chaining and data provenance
-
-Agents plan and execute sequences of steps. The output of step N becomes part of the input to step N+1. A classical access control check at session establishment has no visibility into the data flowing through the agent's reasoning process during execution.
-
-Consider an agent tasked with "summarise the latest contract from our supplier directory and send it to the legal team." The agent might:
-
-1. Query the supplier directory database to get the latest contract ID
-2. Fetch the contract document using the ID
-3. Call a summarisation tool
-4. Send the summary by email
-
-A prompt injection attack embedded in the contract document (step 2) could attempt to redirect step 4: instead of emailing `legal@corp.example.com`, the injected instruction might cause the agent to send the full document to `attacker@external.com`. 
-
-An OAuth token with `email:send` scope would not prevent this. The scope says the agent can send email — it says nothing about to whom, or under what circumstances. Effective least privilege here requires constraining the recipient to `corp.example.com` domains, and that constraint must be evaluated at the moment step 4 executes, against the actual recipient argument, not at session establishment.
-
-This is the core limitation of coarse-grained scope-based access control in agentic systems: it authorises the capability class (`email:send`) but not the specific exercise of that capability (`email:send to legal@corp.example.com only`). In a world where adversarial content can influence the arguments the agent passes to its tools, the gap between "can send email" and "can send email only to these recipients" is an exploitable attack surface.
-
-### Difference 3: Short-lived, task-scoped execution contexts
-
-Human users and service accounts are long-lived principals. An employee's IAM role persists for the duration of their employment. A microservice's service account persists for the lifetime of the application. This stability is appropriate for their use cases.
-
-An AI agent task is inherently ephemeral. A useful mental model is that each task is a bounded execution context with its own permission budget. The billing-summary agent handling a particular user's request should have access to exactly the data and tools it needs for that request — and when the request is complete, those permissions should expire. There should be no residual access from previous tasks that a later injection attack could exploit.
-
-Assigning a broad, long-lived IAM role to the agent process means that the agent's permissions persist indefinitely, across tasks, regardless of what the current task actually requires. An injection attack that occurs during task 47 can exploit permissions that were granted (but not needed) during task 1.
-
-Short-lived, task-scoped tokens are the right granularity. Each task gets a fresh token with exactly the permissions that task requires. When the task ends, the token expires. There is no residual access to exploit.
-
-### Difference 4: No human-in-the-loop at enforcement time
-
-OAuth authorisation flows have a human decision point built in. The user sees a consent screen: "This application is requesting access to your email and calendar. Allow?" They can review the scope and make a judgement.
-
-Agents operate autonomously. When the agent calls `execute_sql` with a dynamically constructed query, there is no human reviewing the specific query before it executes. The policy must encode the operator's intent with enough precision that the enforcement layer can make correct allow/deny decisions automatically — without human review of individual calls — across a space of possible arguments that the operator cannot fully enumerate in advance.
-
-This changes the nature of the policy problem. Classical access control policies describe what a principal can do in terms of static role memberships and resource-level permissions. Agent policies must describe what a principal can do in terms of runtime conditions over actual argument values. The policy language must be expressive enough to cover the cases the operator cares about — and the enforcement must be precise enough to give effect to that expression.
-
-### Difference 5: Composable, multi-agent pipelines
-
-Modern AI deployments increasingly involve multiple cooperating agents. An orchestrator agent breaks a complex task into sub-tasks and delegates them to specialist agents. A coding agent spawns sub-agents to run tests or perform code review. A research agent delegates fact-checking to a verification agent.
-
-In these pipelines, each agent has its own identity, its own tool access, and its own policy. The orchestrator must be able to delegate a subset of its permissions to downstream agents — but it must not be able to grant permissions it does not itself possess, and it must not be able to escalate a downstream agent's permissions beyond its own.
-
-Classical access control has limited support for constrained delegation of this kind. OAuth's token exchange (RFC 8693) allows delegation but requires explicit support from the authorisation server. IAM role chaining has limits and does not support fine-grained constraint attenuation. Neither model was designed for the case where permissions need to be progressively narrowed through a chain of delegating agents.
+And finally: there's no human in the loop at enforcement time. OAuth has a consent screen — the user sees what's being requested and approves it. Agent tool calls happen autonomously, at machine speed, potentially dozens per session. The policy has to be precise enough that the enforcement layer can make correct allow/deny decisions without a human reviewing individual calls. That's a much harder bar than "show the user a scope list and let them click OK."
 
 ---
 
-## Why the capability-token model fits
+## The capability token model
 
-The capability-token model addresses each of these structural differences. It was not invented for AI agents — the concept of capability-based security dates to the 1960s work of Dennis and Van Horn — but the properties it provides map well to the agentic problem space.
+The solution that fits these constraints has a name with a long history — capability-based security, dating to Dennis and Van Horn's work in the 1960s — but the specific shape for agents is worth spelling out.
 
-In the capability-token model, a capability token is a signed, self-contained authorisation grant that specifies exactly what its bearer may do. The token is:
+Instead of a long-lived role assignment, each agent task gets a short-lived JWT capability token. The token is issued by a capability issuer that has authenticated the agent's identity and compiled the operator's policy into a cryptographically signed grant. It encodes, precisely, what this agent is allowed to do during this task — not as opaque scope strings, but as machine-evaluable conditions over actual argument values.
 
-- **Issued** by a trusted capability issuer that has authenticated the agent's identity and compiled the operator's policy manifest into a signed JWT
-- **Short-lived**, with an expiry measured in minutes to hours
-- **Task-scoped**, carrying only the permissions the current task requires
-- **Condition-bearing**, containing structured rules that constrain tool usage to specific argument patterns
-- **Cryptographically bound** to the agent's identity, preventing it from being used by a different agent
-
-Here is an example token payload for a supplier analytics agent:
+Here's what a token payload looks like for a supplier analytics agent:
 
 ```json
 {
@@ -144,175 +81,95 @@ Here is an example token payload for a supplier analytics agent:
 }
 ```
 
-This token encodes, in machine-evaluable form, exactly what this agent is permitted to do during this task. The policy is precise. Every condition is evaluable against actual call arguments. The token expires in one hour. It is signed by the capability issuer's private key — the agent cannot modify it, and a forged token will fail signature verification.
+Every condition in there is evaluable against a concrete call. `allowedOperations: ["SELECT"]` means the proxy extracts the first keyword from the SQL query and checks it against that list — not against the model's stated intent, against the actual argument value. `allowedRecipientDomains` means that email to `attacker@external.com` gets blocked, regardless of what injection produced the call. `maxCalls: 5` means after five emails, the tool is exhausted for the lifetime of this token.
 
-### Per-call, per-argument enforcement in detail
-
-When the agent sends a tool call, the policy proxy extracts the token and evaluates each applicable condition against the actual arguments. This is not a membership check — it is not "does this agent have role X?" — it is an evaluation of structured predicates over concrete values.
-
-For `execute_sql`:
-- Extract the first keyword from `args.query`. If it is not in `allowedOperations`, deny.
-- Match `args.query` against the pattern `^SELECT\s`. If it does not match, deny.
-- Check `len(args.query) <= 8192`. If not, deny.
-- Check `args.database` is one of `["supplier_db", "analytics_db"]`. If not, deny.
-- Decrement the call counter in Redis. If the counter is at zero, deny.
-
-These checks happen on the actual values in the actual call, not on abstract claims. An injection attack that causes the agent to pass `DROP TABLE users` as the `query` argument fails the `allowedOperations` check and the pattern check — regardless of how that string got into the agent's reasoning process.
-
-### Short expiry and active revocation
-
-Tokens expire after at most one hour. But operators do not always have an hour. An agent that appears to be behaving unexpectedly — making unusual queries, accessing unusual files, sending emails to unusual recipients — can be stopped immediately:
-
-- **Token revocation:** Push the token's JTI to the Redis revocation list. Subsequent calls from the agent with that token are denied. Takes effect in milliseconds.
-- **Kill-switch:** Set a kill-switch flag in Redis for the deployment. All agent activity stops immediately, regardless of which tokens are in flight. Takes effect before the next call to the proxy.
-
-These controls do not require redeploying the agent, updating the model, or modifying any configuration files. They are operational controls available to whoever has write access to the Redis instance.
-
-### Attenuation without amplification
-
-When agent A needs to delegate a sub-task to agent B, A's token can be used to derive B's token — but only with equal or lesser permissions. The attenuation property is enforced by the capability issuer: it checks that every permission in the derived token is a subset of the parent token's permissions. If A is limited to `SELECT` on `supplier_db`, B's derived token cannot grant `INSERT` on `orders_db`.
-
-This preserves least privilege through arbitrarily deep delegation chains. An orchestrator agent cannot escalate its sub-agents' permissions beyond its own. A compromised sub-agent cannot use a derived token to access resources the orchestrator was not permitted to access.
-
-### Cryptographic identity binding and DPoP
-
-Each token is issued to a specific agent identity — a DID (Decentralised Identifier) or client ID that the capability issuer authenticated before issuing the token. The `sub` claim binds the token to that identity.
-
-To prevent token theft and replay, the gateway supports DPoP (Demonstrating Proof-of-Possession, RFC 9449). With DPoP, the agent includes a signed proof-of-possession token with each request, demonstrating that it holds the private key corresponding to the public key in its identity. A token stolen from one agent instance cannot be used by a different agent instance, because the different instance does not have the private key needed to generate a valid DPoP proof.
+The token expires in an hour. When the task is done, access is gone. A subsequent task gets a new token scoped to what that task requires. There's no residual access to exploit.
 
 ---
 
-## The full authorisation flow: from policy to enforcement
+## Per-call enforcement is what makes this real
 
-Walking through the complete flow makes the architecture concrete.
+The token is only useful if it's enforced at the right level of granularity. A session-level check — "does this agent have a valid token?" — misses the point. The enforcement has to happen on every individual call, against the actual arguments.
 
-### 1. Operator authors the policy manifest
+For `execute_sql`, that means: pull the first keyword out of the query. Check it against `allowedOperations`. Match the query against the `pattern`. Verify the `database` argument is in the enum. Check the Redis rate counter and decrement it. All five checks run on the actual values in the actual call. An injection attack that produces `DELETE FROM users` as the query argument fails the operation check and the pattern check, regardless of how it was phrased to the model.
 
-An operator — a security engineer, a platform team member, or a developer with the appropriate responsibility — authors a YAML capability manifest:
-
-```yaml
-# manifests/supplier-analytics-agent.yaml
-agentId: supplier-analytics-agent
-version: "1.0"
-tools:
-  execute_sql:
-    allowedOperations:
-      - SELECT
-    argumentSchema:
-      query:
-        pattern: "^SELECT\\s"
-        maxLength: 8192
-      database:
-        enum:
-          - supplier_db
-          - analytics_db
-    maxCalls: 100
-  read_file:
-    allowedPaths:
-      - "/data/contracts/**"
-      - "/data/invoices/**"
-    maxCalls: 200
-  send_email:
-    allowedRecipientDomains:
-      - corp.example.com
-    maxCalls: 5
-```
-
-This manifest is committed to the version control system. Changes go through the same review process as any security-sensitive configuration — pull request, approval from a designated reviewer, automated schema validation in CI.
-
-The shared `AgentCapabilityManifest` schema is public (Apache 2.0 licensed). The policy format is the same whether you are running the local proxy for development or the full gateway in production. There is no format migration when you move between environments.
-
-### 2. Agent requests a capability token
-
-When the agent process starts a new task, it requests a capability token from the capability issuer. The request includes:
-
-- The agent's identity credential (an OIDC token from the IdP, or a signed DID assertion for partner-federated agents)
-- The task scope (which manifest to use)
-- The DPoP public key (for possession binding)
-
-The capability issuer authenticates the agent identity — checking the OIDC token with the IdP, or resolving and verifying the DID for federated partners. It looks up the applicable manifest for this agent identity and task scope. It compiles the manifest into a JWT payload, signs it with its private key (RS256 or EdDSA), and returns the signed token.
-
-For enterprise deployments, the signing key lives in a KMS (Azure Key Vault, AWS KMS, or GCP Cloud KMS), never in the issuer process's memory. The KMS enforces HSM-backed key custody, key rotation, and access logging.
-
-### 3. Agent includes the token in every tool call
-
-The agent runtime attaches the capability token to every outgoing MCP tool call — in the `Authorization` header or as an MCP protocol extension, depending on the transport. The agent does not interpret the token's contents. It is simply a credential that the gateway will validate.
-
-### 4. Gateway enforces the policy
-
-The tool gateway receives the call. It:
-
-1. Extracts and verifies the capability token (signature, expiry, issuer, audience, revocation, kill-switch)
-2. Identifies the tool being called and locates the applicable conditions in the token
-3. Evaluates each condition against the actual call arguments
-4. Applies any obligation conditions (rate limit, parameter injection)
-5. Records the decision in the signed hash-chained audit ledger
-6. Forwards the call (ALLOW) or returns an error (DENY)
-
-Steps 1–5 all happen before the call reaches the upstream MCP server. If any step fails, the call is denied and the upstream server is never contacted.
-
-### 5. Operator reviews the audit trail
-
-The audit ledger records every decision — allowed and denied calls, the arguments, the token JTI, the agent identity, and the decision rationale. The records are exportable via the `/api/v1/audit/export` endpoint in OCSF format, suitable for ingestion into any SIEM.
-
-The signed hash chain makes the ledger tamper-evident: if any record is deleted or modified, the chain breaks, and the break is detectable by any party that can verify the signing keys. This is the property that makes the audit trail useful for compliance and incident response, not just operational monitoring.
+The enforcement layer that does all this is the tool gateway — the proxy that sits between the agent runtime and the upstream tools. Every call goes through it. The upstream servers never see an unauthorised call because the only path to them is through the gateway. This is explained in more detail in [the policy proxy post](./06-mcp-policy-proxy.md), but the architectural principle is simple: you can only enforce least privilege if you can intercept the call.
 
 ---
 
-## Mapping old concepts to new ones
+## Emergency controls that work at runtime
 
-The concepts from classical access control all have analogues in the capability-token model. The differences are in granularity and timing.
+Here's something classical access control doesn't do well: stopping an agent mid-run.
 
-| Classical concept | Classical mechanism | Agent equivalent | Key difference |
-|---|---|---|---|
-| Principal identity | Username, service account | Agent DID or client ID | Ephemeral per-task, DPoP-bound |
-| Permission assignment | Role membership | Capability token issuance | Short-lived, task-scoped |
-| Access check | Role membership lookup | Per-call condition evaluation | Evaluated against actual arguments |
-| Policy definition | RBAC role config, IAM policy JSON | YAML capability manifest | Per-tool, per-argument conditions |
-| Scope | OAuth scope string | `tools` map in token | Machine-evaluable conditions, not opaque strings |
-| Revocation | Account disable, role removal | Token JTI revocation, kill-switch | Takes effect in milliseconds, no redeploy |
-| Delegation | Role assumption, OAuth token exchange | Token attenuation chain | Permissions can only narrow, never widen |
-| Audit | IAM access logs, OAuth grant records | Signed hash-chained OCSF events | Tamper-evident, argument-level detail |
+If you have a long-lived IAM role assigned to an agent process and the agent starts doing something unexpected, your options are limited. You can kill the process. You can revoke the role. Both of those have latency — they require changes that propagate.
 
-The core principle is the same — grant only what is needed. The mechanism is different — because what "only what is needed" means for an agent is per-tool, per-argument conditions evaluated at call time, not a role assigned at provisioning time.
+The token model gives you two much faster levers.
+
+**Token revocation.** Every capability token has a JTI (JWT ID). Push that ID to a Redis revocation list and every subsequent call from that agent using that token is denied within milliseconds. No redeploy. No config change. One write to Redis.
+
+**Kill-switch.** One flag in Redis that suspends all agent activity for a deployment instantly. Set it and every call fails until it's cleared, regardless of which tokens are in flight. That's your emergency stop when something is actively wrong and you need agents to stop *now*.
+
+These are operational controls that matter more than they might sound. Agents operate at machine speed. Between "we see something wrong in the audit log" and "we need this to stop," there might be seconds. The difference between a control that takes effect in milliseconds and one that takes minutes can be the difference between an incident and a significant breach.
 
 ---
 
-## What this means operationally
+## Delegation without escalation
 
-Adopting the capability-token model changes how several operational functions work.
+Modern agent deployments increasingly involve chains of agents. An orchestrator breaks down a complex task and delegates sub-tasks to specialist agents. Each sub-agent has its own token, its own identity, its own policy.
 
-**Provisioning** now means authoring a YAML manifest and checking it into version control, rather than assigning IAM roles through a cloud console. The manifest is the source of truth. It is reviewable, diffable, and auditable.
+The problem: the orchestrator needs to give the sub-agent enough access to do its job, but shouldn't be able to give it more than the orchestrator itself has. Classical access control handles this poorly — OAuth token exchange exists but requires specific infrastructure support; IAM role chaining has limits.
 
-**Onboarding a new agent type** means writing a new manifest file, having it reviewed, and merging it. The capability issuer can be configured to serve the new manifest to authenticated agents with the corresponding identity. No cloud console access required.
+The capability token model handles it with an attenuation property: when the orchestrator derives a token for a sub-agent, the issuer verifies that every permission in the derived token is a subset of the parent. The orchestrator is limited to `SELECT` on `supplier_db`? The sub-agent's derived token can't grant `INSERT` on `orders_db`. It can only narrow, never widen.
 
-**Responding to an incident** means: identify the token JTI from the audit records, push it to the revocation list (takes effect immediately), review the full call sequence in the audit ledger, tighten the manifest, and redeploy the manifest (not the agent or the model).
-
-**Compliance evidence** is produced automatically. Every call, with its full argument payload and decision rationale, is recorded in a signed OCSF event that can be exported for SOC 2, ISO 27001, or any other framework's audit evidence requirements.
-
-**Multi-tenant deployments** are handled by issuing separate capability tokens per tenant, with tenant-scoped conditions (e.g., `database: { enum: ["tenant_a_db"] }`). An agent serving tenant A cannot be made to query tenant B's database, even if a prompt injection attack attempts to redirect it — the token's conditions are tenant-scoped and the gateway enforces them.
+This preserves least privilege through arbitrarily deep delegation chains without any special configuration per-chain. The math is simple: you can give away a subset of what you have, but you can't give away what you don't have.
 
 ---
 
-## The limits of the model
+## DPoP and the token theft problem
 
-The capability-token model is not a complete solution to all AI security problems. It is important to be honest about what it does and does not address.
+There's one more wrinkle worth mentioning. A signed JWT can be stolen. If an attacker intercepts a valid capability token, can they use it from a different process?
 
-**It does not prevent the model from producing incorrect or harmful outputs** that do not involve tool calls. Content policy and output safety are separate concerns.
+DPoP (Demonstrating Proof-of-Possession, RFC 9449) closes this gap. With DPoP, the agent generates a key pair and includes the public key in its token request. Each subsequent call includes a short-lived signed proof that the caller holds the corresponding private key. A stolen token is useless without the private key, which never leaves the legitimate agent process.
 
-**It does not prevent all prompt injection.** If an injection successfully causes the agent to call a tool with arguments that are within its permitted scope, the call will be allowed. The blast radius is bounded by the token's conditions — but it is not zero. Defence in depth (input sanitisation, narrow tool schemas, human-in-the-loop for high-impact actions) remains necessary.
-
-**It requires well-written manifests.** A manifest that permits `allowedOperations: [SELECT, INSERT, UPDATE, DELETE]` provides much weaker protection than one that permits only `SELECT`. The model enforces the policy you write. Writing narrow, correct policies requires the same discipline as writing secure code.
-
-**It requires the gateway to be the only path to tools.** If the agent can reach the SQL database directly (without going through the gateway), the capability-token enforcement is bypassed entirely. The architecture must ensure that every tool call goes through the gateway.
+For most deployments this is an additional layer rather than a baseline requirement. But for high-sensitivity deployments where token interception is a real concern, it's the right mechanism.
 
 ---
 
-## A foundation, not a destination
+## What changes operationally
 
-Least privilege for AI agents is not a solved problem that you implement once and move on from. It is a practice — one that requires ongoing attention as your agent deployment evolves, as new tools are added, as new attack techniques are discovered, and as your understanding of what "only what is needed" means for each agent type deepens.
+Adopting this model changes some workflows in ways that are worth flagging.
 
-The capability-token model provides the right foundation for that practice: a precise, evaluable, version-controlled, cryptographically enforced expression of what each agent may do, evaluated at the only moment that matters — when the action is about to happen. The principle is fifty years old. The mechanisms are new. The work of applying them carefully is yours to do.
+**Provisioning** becomes authoring a YAML manifest and merging it through normal code review. No cloud console, no IAM UI. The manifest is version-controlled, diffable, reviewable by security engineers who don't have cloud admin access. Policy changes are pull requests.
+
+**Onboarding a new agent type** means writing a new manifest. The capability issuer serves it to authenticated agents with the right identity. No cross-team tickets for cloud role assignments.
+
+**Responding to an incident**: identify the token JTI from the audit log, push it to the revocation list (takes effect in milliseconds), review the full session call sequence, tighten the manifest. The agent and model don't need to be redeployed to update policy.
+
+**Multi-tenant deployments**: each tenant's agent session gets a token with tenant-scoped conditions. An agent serving tenant A literally cannot be made to query tenant B's database, even by a prompt injection that tries to redirect it. The token conditions are scoped and the gateway enforces them on the actual arguments.
+
+---
+
+## Honest about what it doesn't solve
+
+The capability token model is not a complete solution to AI security problems, and it's worth being straight about that.
+
+It doesn't prevent the model from producing bad outputs that don't involve tool calls. Content safety is a separate problem.
+
+It doesn't prevent all prompt injection. If an injection causes the agent to call a permitted tool with permitted arguments — within the scope defined in the token — the call will go through. The blast radius is bounded by the token conditions, but it isn't zero. Defence in depth (narrow tool schemas, read-only database credentials, human confirmation triggers for high-impact actions) is still necessary.
+
+It requires well-written manifests. A token that permits `allowedOperations: [SELECT, INSERT, UPDATE, DELETE]` is far weaker than one that permits only `SELECT`. The enforcement gives effect to the policy you write. Writing tight policies requires the same careful thinking as writing secure code.
+
+And it requires the gateway to be the only path to tools. If the agent can reach the SQL database directly — bypassing the gateway — capability token enforcement is meaningless. The architecture has to ensure every tool call goes through the enforcement point.
+
+---
+
+## The principle is old. The mechanism is new.
+
+Least privilege for AI agents isn't a solved problem you implement once and move on from. It's an ongoing practice. New tools get added. New attack techniques get discovered. Your understanding of what "minimum necessary access" means for each agent type deepens over time.
+
+What the capability token model gives you is the right foundation: precise, evaluable, version-controlled, cryptographically enforced conditions, checked at the only moment that matters — when the action is about to happen.
+
+For the full picture of how the token interacts with the gateway's enforcement pipeline, see [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md). For the zero trust architecture these tokens sit inside, see [Zero trust for AI agents](./04-zero-trust-ai-agents.md).
 
 ---
 
