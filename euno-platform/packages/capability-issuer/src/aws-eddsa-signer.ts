@@ -97,7 +97,8 @@ export class AwsEdDsaSigner extends SigningAdapter {
   private resolvedKeyId?: string;
 
   constructor(config: Omit<AwsEdDsaSignerConfig, 'name'> & { name?: string }) {
-    super({ name: 'aws-eddsa-shim', ...config } as AwsEdDsaSignerConfig);
+    const name = config.name ?? 'aws-eddsa-shim';
+    super({ name, ...config } as AwsEdDsaSignerConfig);
     if (!config.keyArn && !config.keyPem) {
       throw new Error(
         'AwsEdDsaSigner: either keyArn (Secrets Manager ARN) or keyPem (PEM string) ' +
@@ -109,7 +110,7 @@ export class AwsEdDsaSigner extends SigningAdapter {
         'AwsEdDsaSigner: keyArn and keyPem are mutually exclusive; provide exactly one.',
       );
     }
-    this.eddsaConfig = { name: 'aws-eddsa-shim', ...config } as AwsEdDsaSignerConfig;
+    this.eddsaConfig = { name, ...config } as AwsEdDsaSignerConfig;
   }
 
   /**
