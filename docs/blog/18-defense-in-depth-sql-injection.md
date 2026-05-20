@@ -1,6 +1,6 @@
 # Defense-in-Depth for SQL Injection Through an LLM
 
-*Fourth and final post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../blog-articles.md) (in the "Why AI agents need guardrails" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+*Fourth and final post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../../blogs/03-agent-governance-failure-modes.md) (in the "Why AI agents need guardrails" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
 
 ---
 
