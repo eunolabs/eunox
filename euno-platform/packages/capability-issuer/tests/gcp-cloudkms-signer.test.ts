@@ -24,7 +24,7 @@ jest.mock('@google-cloud/kms', () => ({
     close: mockClose,
     listCryptoKeyVersions: mockListCryptoKeyVersions,
   })),
-}));
+}), { virtual: true });
 
 import { GCPCloudKMSSigner, GCPKeyVersionInfo } from '../src/gcp-cloudkms-signer';
 

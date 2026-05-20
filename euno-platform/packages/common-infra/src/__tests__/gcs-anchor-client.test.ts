@@ -14,10 +14,9 @@ jest.mock('@google-cloud/storage', () => {
 }, { virtual: true });
 
 import { GcsAnchorClientImpl } from '../ledger-signer';
-import { Storage } from '@google-cloud/storage';
 
-// Typed handle to the mocked Storage constructor.
-const MockStorage = Storage as jest.MockedClass<typeof Storage>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const MockStorage: jest.MockedFunction<any> = jest.requireMock('@google-cloud/storage').Storage;
 
 describe('GcsAnchorClientImpl', () => {
   let setMetadata: jest.Mock;
@@ -34,9 +33,10 @@ describe('GcsAnchorClientImpl', () => {
     bucketMock = jest.fn().mockReturnValue({ file: fileMock });
 
     // Storage constructor returns an object with `.bucket(name)`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     MockStorage.mockImplementation(() => ({
       bucket: bucketMock,
-    }) as unknown as InstanceType<typeof Storage>);
+    }));
   });
 
   it('calls bucket().file().save() with correct args', async () => {

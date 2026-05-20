@@ -51,6 +51,7 @@ import {
   SignedBatchCommitment,
   SignedCrossChainCommitment,
 } from '@euno/common';
+import { createS3AnchorClientFromEnv, S3AnchorClient } from '@euno/common-infra';
 import { CrossChainCommitmentStore } from './routes/chain-proof';
 
 type Logger = ReturnType<typeof createLogger>;
@@ -257,6 +258,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     AUDIT_LEDGER_TABLE?: string;
     AUDIT_LEDGER_RUN_MIGRATIONS?: boolean;
     AUDIT_LEDGER_S3_BUCKET?: string;
+    AUDIT_LEDGER_S3_ENDPOINT?: string;
+    AUDIT_LEDGER_S3_FORCE_PATH_STYLE?: boolean;
     AUDIT_LEDGER_GCS_BUCKET?: string;
     AUDIT_LEDGER_ANCHOR_INTERVAL?: number;
     AUDIT_LEDGER_ACL_ENDPOINT?: string;
@@ -339,14 +342,6 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       if (ledgerBackendName === 'postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
         if (!hmacSecret) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.');
-        if (s3Bucket) {
-          throw new Error(
-            'AUDIT_LEDGER_S3_BUCKET is set but no S3 client is wired in the standard ' +
-              'bootstrap. Provide an S3AnchorClient by constructing PostgresLedgerBackend ' +
-              'directly (with the s3.client option) in a custom entrypoint, or unset ' +
-              'AUDIT_LEDGER_S3_BUCKET to rely on HMAC + in-DB chain integrity only.',
-          );
-        }
         if (gcsBucket) {
           throw new Error(
             'AUDIT_LEDGER_GCS_BUCKET is set but no GCS client is wired in the standard ' +
@@ -361,9 +356,29 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         const pgPool = new Pool({ connectionString: pgUrl });
         ledgerPgPool = pgPool;
 
+        // Auto-build S3AnchorClient from env when AUDIT_LEDGER_S3_BUCKET is set.
+        let s3Client: S3AnchorClient | undefined;
+        if (s3Bucket) {
+          s3Client = createS3AnchorClientFromEnv(env);
+          logger.info('Audit ledger S3 anchor enabled (postgres)', {
+            bucket: s3Bucket,
+            endpoint: dynConfig.AUDIT_LEDGER_S3_ENDPOINT,
+          });
+        }
+
         const pgBackend = new PostgresLedgerBackend(pgPool, {
           table,
           hmacSecret,
+          ...(s3Bucket && s3Client
+            ? {
+                s3: {
+                  client: s3Client,
+                  bucket: s3Bucket,
+                  prefix: env['AUDIT_LEDGER_S3_PREFIX'],
+                  anchorIntervalRows: anchorInterval,
+                },
+              }
+            : {}),
           onAnchorError: (err: Error) => logger.error('Ledger anchor failed', { error: err.message }),
         });
 
@@ -394,6 +409,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         logger.info('Audit ledger backend: postgres', {
           table: table ?? 'euno_audit_ledger',
           anchorInterval,
+          s3Bucket: s3Bucket ?? null,
         });
       } else if (ledgerBackendName === 'acl') {
         let aclClient: AzureConfidentialLedgerClient;
@@ -442,9 +458,29 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         const pgPool = new Pool({ connectionString: pgUrl });
         ledgerPgPool = pgPool;
 
+        // Auto-build S3AnchorClient from env when AUDIT_LEDGER_S3_BUCKET is set.
+        let perReplicaS3Client: S3AnchorClient | undefined;
+        if (s3Bucket) {
+          perReplicaS3Client = createS3AnchorClientFromEnv(env);
+          logger.info('Audit ledger S3 anchor enabled (per-replica-postgres)', {
+            bucket: s3Bucket,
+            endpoint: dynConfig.AUDIT_LEDGER_S3_ENDPOINT,
+          });
+        }
+
         const perReplicaBackend = new PerReplicaPostgresLedgerBackend(pgPool, replicaId, {
           table,
           hmacSecret,
+          ...(s3Bucket && perReplicaS3Client
+            ? {
+                s3: {
+                  client: perReplicaS3Client,
+                  bucket: s3Bucket,
+                  prefix: env['AUDIT_LEDGER_S3_PREFIX'],
+                  anchorIntervalRows: anchorInterval,
+                },
+              }
+            : {}),
           onAnchorError: (err: Error) => logger.error('Per-replica ledger S3 anchor failed', { error: err.message }),
         });
 
@@ -474,15 +510,6 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
         auditQueryStore = new PostgresAuditQueryStore(pgPool, {
           table: table ?? 'euno_audit_ledger_v2',
         });
-
-        if (s3Bucket) {
-          logger.warn(
-            'AUDIT_LEDGER_S3_BUCKET is set with per-replica-postgres but no S3 client is ' +
-              'wired in the standard bootstrap. Cross-chain commitments will not be anchored ' +
-              'to S3. Construct PerReplicaPostgresLedgerBackend with an S3AnchorClient in a ' +
-              'custom entrypoint to enable S3 anchoring.',
-          );
-        }
 
         if (gcsBucket) {
           logger.warn(

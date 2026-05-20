@@ -1,0 +1,93 @@
+name: Deploy site to GitHub Pages
+
+# Deploys the Astro site in site/ to GitHub Pages whenever changes land on
+# main inside the site/ directory or this workflow file.  The deploy job uses
+# the standard GitHub Pages OIDC token — no extra secrets required.
+#
+# Prerequisite: enable GitHub Pages for this repository and set the source to
+# "GitHub Actions" (Settings → Pages → Build and deployment → Source).
+# If you are using a custom domain (eunolabs.ai), add a CNAME file to
+# site/public/ and configure the domain in the Pages settings.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  # Allow a manual redeploy from the Actions tab without a code push.
+  workflow_dispatch:
+
+# Grant the GITHUB_TOKEN the minimum permissions required for Pages OIDC
+# publishing.  The deploy job uses the `id-token: write` permission to obtain
+# a short-lived OIDC token; `pages: write` allows uploading the Pages
+# artifact.  Everything else defaults to read.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Prevent concurrent deployments that could leave the site in an inconsistent
+# state.  `cancel-in-progress: false` lets the in-flight deploy finish before
+# queuing the next one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # build: install Astro, compile to static HTML, and upload as a Pages
+  #        artifact so the deploy job can pick it up.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Install only the site's own dependencies — avoids pulling the entire
+      # platform monorepo (TypeScript, Jest, etc.) for a static site build.
+      - name: Install site dependencies
+        run: npm install
+        working-directory: site
+
+      # Injects the correct `base` path into the Astro config when the site
+      # is deployed to a subdirectory (e.g. https://edgeobs.github.io/euno-platform/).
+      # If you use a custom domain (eunolabs.ai) the base is "/" and this step
+      # is a no-op.
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Build Astro site
+        run: npm run build
+        working-directory: site
+        env:
+          PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # site/dist/ is Astro's default static output directory.
+          path: site/dist
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # deploy: take the uploaded artifact and publish it to GitHub Pages.
+  #         Runs only after a successful build job.
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

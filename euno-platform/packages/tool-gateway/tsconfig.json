@@ -5,12 +5,14 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@euno/capability-issuer/adapters": ["../capability-issuer/dist/exports"]
+      "@euno/capability-issuer/adapters": ["../capability-issuer/dist/exports"],
+      "@euno/common-infra": ["../common-infra/dist/index"]
     }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"],
   "references": [
-    { "path": "../common" }
+    { "path": "../common" },
+    { "path": "../common-infra" }
   ]
 }

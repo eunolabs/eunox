@@ -1,0 +1,34 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+    const posts = await getCollection('blog');
+    return posts.map(post => ({
+        params: { slug: post.slug },
+        props: { post },
+    }));
+}
+
+const { post } = Astro.props;
+const { Content } = await post.render();
+---
+<BaseLayout title={`${post.data.title} · euno`} description={post.data.description} activePage="blog">
+
+    <section class="hero hero-compact">
+        <div class="hero-eyebrow"><span class="dot"></span>Blog</div>
+        <h1>{post.data.title}</h1>
+    </section>
+
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="/">Home</a> &nbsp;›&nbsp; <a href="/blog">Blog</a> &nbsp;›&nbsp; {post.data.title}
+    </nav>
+
+    <main class="content-section blog-post-content">
+        <div class="blog-post-meta">
+            <time datetime={post.data.pubDate.toISOString().slice(0, 10)}>{post.data.pubDate.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
+        </div>
+        <Content />
+    </main>
+
+</BaseLayout>

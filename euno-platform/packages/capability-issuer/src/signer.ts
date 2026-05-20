@@ -32,4 +32,5 @@ export {
 export { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from './azure-signer';
 export { DIDSigner, DIDSigningAdapterConfig } from './did-signer';
 export { AWSKMSSigner, AWSKMSAdapterConfig } from './aws-kms-signer';
+export { AwsEdDsaSigner, AwsEdDsaSignerConfig, createAwsEdDsaSignerFromEnv } from './aws-eddsa-signer';
 export { GCPCloudKMSSigner, GCPCloudKMSAdapterConfig } from './gcp-cloudkms-signer';
