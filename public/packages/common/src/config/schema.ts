@@ -245,6 +245,24 @@ export const IssuerConfigSchema = z
         'Identity provider used to authenticate /issue callers. One of: azure-ad, aws-cognito, gcp-identity, did.',
     }),
 
+    // Secrets store ---------------------------------------------------------
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
+      default: 'env',
+      description:
+        'Secrets-store backend used to resolve sensitive runtime values. ' +
+        '"env" (default): read from process environment variables. ' +
+        '"azure-keyvault": Azure Key Vault Secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secretsmanager": AWS Secrets Manager (uses the standard credential chain; ' +
+        'optionally override region via AWS_REGION). ' +
+        '"gcp-secretmanager": GCP Secret Manager (requires GCP_PROJECT_ID; uses ADC).',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault URL used by the secrets store (required when SECRET_STORE_PROVIDER=azure-keyvault). ' +
+      'May be the same vault as AZURE_KEYVAULT_URL or a separate, secrets-only vault. ' +
+      'Example: https://my-secrets-vault.vault.azure.net/',
+    ),
+
     // Azure Key Vault -------------------------------------------------------
     AZURE_KEYVAULT_URL: optionalString.describe(
       'Azure Key Vault URL (required when SIGNING_PROVIDER=azure-keyvault). Example: https://your-vault.vault.azure.net/',
@@ -1017,6 +1035,14 @@ export const IssuerConfigSchema = z
           'DB_INSTANCES_FILE is required when DB_TOKENS_ENABLED=true (operator-declared instance allow-list).',
       });
     }
+    if (cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' && !cfg.SECRET_STORE_AZURE_VAULT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_VAULT_URL'],
+        message:
+          'SECRET_STORE_AZURE_VAULT_URL is required when SECRET_STORE_PROVIDER=azure-keyvault.',
+      });
+    }
 
     // Production-tier safety invariants (R-5 extension). The deployment
     // checklist's hard requirements are encoded here so a misconfigured
@@ -1251,6 +1277,24 @@ export const GatewayConfigSchema = z
       'misconfigured ingress / route cannot expose /admin/* even by accident. Recommended ' +
       'values: "127.0.0.1" for sidecar-only access, or the pod\'s internal cluster IP. ' +
       'When unset (non-production only) the admin server binds to all interfaces (Express default).',
+    ),
+
+    // Secrets store ---------------------------------------------------------
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secretsmanager', 'gcp-secretmanager'] as const,
+      default: 'env',
+      description:
+        'Secrets-store backend used to resolve sensitive runtime values. ' +
+        '"env" (default): read from process environment variables. ' +
+        '"azure-keyvault": Azure Key Vault Secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secretsmanager": AWS Secrets Manager (uses the standard credential chain; ' +
+        'optionally override region via AWS_REGION). ' +
+        '"gcp-secretmanager": GCP Secret Manager (requires GCP_PROJECT_ID; uses ADC).',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault URL used by the secrets store (required when SECRET_STORE_PROVIDER=azure-keyvault). ' +
+      'May be the same vault as AUDIT_SIGNING_AZURE_VAULT_URL or a separate, secrets-only vault. ' +
+      'Example: https://my-secrets-vault.vault.azure.net/',
     ),
 
     // Issuer + backend wiring -----------------------------------------------
@@ -1598,25 +1642,59 @@ export const GatewayConfigSchema = z
     }),
     AUDIT_LEDGER_S3_BUCKET: optionalString.describe(
       'S3 bucket for periodic Merkle-root anchoring. ' +
-      'NOTE: the standard bootstrap does not inject an S3 client — setting this env var ' +
-      'without a custom entrypoint that constructs PostgresLedgerBackend directly (with an ' +
-      'S3AnchorClient) will cause a startup error. When properly wired, every ' +
-      'AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root of ' +
-      'those rows to S3. The bucket MUST have Object Lock enabled. ' +
+      'When AUDIT_LEDGER_S3_BUCKET is set, the standard bootstrap automatically constructs ' +
+      'an S3AnchorClient using the standard AWS credential provider chain (IAM role / IRSA / ' +
+      'instance profile / AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars). ' +
+      'The bucket MUST have Object Lock enabled. ' +
+      'Every AUDIT_LEDGER_ANCHOR_INTERVAL successful appends trigger a PUT of the Merkle root ' +
+      'of those rows to S3. ' +
       'When unset, no S3 anchoring is performed (HMAC + in-DB chain is the only protection).',
     ),
     AUDIT_LEDGER_S3_PREFIX: optionalString.describe(
       'S3 key prefix for ledger anchor objects. ' +
       'Default "audit-anchor/". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json.',
     ),
+    AUDIT_LEDGER_S3_ENDPOINT: optionalString.describe(
+      'Custom S3 endpoint URL for VPC endpoint / PrivateLink deployments. ' +
+      'Example: https://bucket.vpce-0a1b2c3d4e5f.s3.us-east-1.vpce.amazonaws.com . ' +
+      'When unset the AWS SDK uses the standard regional endpoint for AWS_REGION. ' +
+      'GovCloud (us-gov-west-1 / us-gov-east-1) endpoints are resolved automatically ' +
+      'from the region; this override is only needed for PrivateLink or custom endpoint scenarios. ' +
+      'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+    ),
+    AUDIT_LEDGER_S3_FORCE_PATH_STYLE: envBoolean({
+      default: false,
+      description:
+        'When true, forces path-style S3 URL addressing ' +
+        '(https://s3.<region>.amazonaws.com/<bucket>/<key>) instead of virtual-hosted-style ' +
+        '(https://<bucket>.s3.<region>.amazonaws.com/<key>). ' +
+        'Required for some VPC endpoint configurations and for MinIO-compatible local testing. ' +
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+    }),
+    AUDIT_LEDGER_GCS_BUCKET: optionalString.describe(
+      'GCS bucket for periodic Merkle-root anchoring (GCP equivalent of AUDIT_LEDGER_S3_BUCKET). ' +
+      'NOTE: the standard bootstrap does not inject a GCS client — behavior differs by backend: ' +
+      'the postgres (global-lock) backend will raise a startup error if this is set without a ' +
+      'custom entrypoint that provides a GcsAnchorClient; the per-replica-postgres backend only ' +
+      'logs a warning and continues without GCS anchoring. In either case, GCS anchoring requires ' +
+      'a custom entrypoint that constructs the ledger backend directly with a GcsAnchorClient. ' +
+      'When properly wired, every AUDIT_LEDGER_ANCHOR_INTERVAL successful appends also PUT the ' +
+      'Merkle root to GCS. The bucket SHOULD have a retention policy enabled. Can be used ' +
+      'alongside AUDIT_LEDGER_S3_BUCKET for multi-cloud redundancy. ' +
+      'When unset, no GCS anchoring is performed.',
+    ),
+    AUDIT_LEDGER_GCS_PREFIX: optionalString.describe(
+      'GCS object key prefix for ledger anchor objects. ' +
+      'Default "audit-anchor/". Resulting key: {prefix}{replicaId}/{fromSeq}-{toSeq}.json.',
+    ),
     AUDIT_LEDGER_ANCHOR_INTERVAL: envPositiveInt({
       default: 1000,
       min: 1,
       description:
-        'Number of ledger rows between S3 Object-Lock anchor writes. Default 1000. ' +
+        'Number of ledger rows between S3/GCS Object-Lock anchor writes. Default 1000. ' +
         'Lower values provide more frequent external witnesses (smaller gap between a ' +
-        'DB tamper event and S3 detection) at the cost of more S3 PUT requests. ' +
-        'Only relevant when AUDIT_LEDGER_S3_BUCKET is set.',
+        'DB tamper event and S3/GCS detection) at the cost of more PUT requests. ' +
+        'Only relevant when AUDIT_LEDGER_S3_BUCKET or AUDIT_LEDGER_GCS_BUCKET is set.',
     }),
 
     AUDIT_LEDGER_RETENTION_DAYS: envPositiveInt({
@@ -2535,6 +2613,14 @@ export const GatewayConfigSchema = z
     }
 
     // Multi-issuer trust hardening cross-field rules.
+    if (cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' && !cfg.SECRET_STORE_AZURE_VAULT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_VAULT_URL'],
+        message:
+          'SECRET_STORE_AZURE_VAULT_URL is required when SECRET_STORE_PROVIDER=azure-keyvault.',
+      });
+    }
     if (cfg.REQUIRE_COSIGNATURE_COUNT > 0 && !cfg.COSIGNER_JWKS_FILE && !cfg.COSIGNER_JWKS_INLINE) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

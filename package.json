@@ -5,10 +5,12 @@
   "description": "Capability-Native Agent Governance System with Azure Integration",
   "workspaces": [
     "public/packages/*",
-    "euno-platform/packages/*"
+    "euno-platform/packages/*",
+    "site"
   ],
   "scripts": {
     "build": "npm run build -w @euno/common-core && npm run build -w @euno/common-infra && npm run build -w @euno/common && npm run build -w @euno/posture-emitter && npm run build -w @euno/mcp && npm run build -w @euno/langchain && npm run build --workspaces",
+    "build:site": "npm run build -w @euno/site",
     "test": "npm run test --workspaces",
     "lint": "npm run lint:license-boundary && npm run lint:threat-model-signoff && npm run lint:stage5-docs && npm run lint:deployment-bundle && npm run lint:task14-refs && npm run lint:multi-cloud-docs && npm run lint --workspaces",
     "lint:license-boundary": "node scripts/check-license-boundary.mjs",

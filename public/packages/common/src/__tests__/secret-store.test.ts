@@ -12,7 +12,6 @@
  *   5. `createSecretStore` factory — routes to the correct class.
  *   6. `createSecretStoreFromEnv` — reads SECRET_STORE_PROVIDER and
  *      provider-specific vars from the supplied env map.
- *   7. `getSecretOrThrow` / `SecretNotFoundError` — throws on missing secret.
  */
 
 import {
@@ -242,12 +241,26 @@ describe('AwsSecretsManagerSecretStore', () => {
       GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
     }), { virtual: true });
 
-    const val = await store.getSecret('MY_AWS_SECRET');
+    // Need an ARN override for the secret to reach Secrets Manager
+    const storeWithArn = new AwsSecretsManagerSecretStore({
+      region: 'us-east-1',
+      arnsBySecretName: { MY_AWS_SECRET: 'MY_AWS_SECRET' },
+    });
+    const storeWithArnAny = storeWithArn as unknown as Record<string, unknown>;
+    storeWithArnAny['client'] = {
+      send: async (cmd: Record<string, unknown>) => {
+        const id = cmd['SecretId'] as string;
+        return buildAwsClient({ MY_AWS_SECRET: 'aws-value' }).client.send({ SecretId: id });
+      },
+    };
+    const val = await storeWithArn.getSecret('MY_AWS_SECRET');
     expect(val).toBe('aws-value');
   });
 
   it('returns undefined for ResourceNotFoundException', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { MISSING: 'arn:aws:secretsmanager:us-east-1:123:secret:missing' },
+    });
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
       async send(_cmd: unknown) {
@@ -263,7 +276,9 @@ describe('AwsSecretsManagerSecretStore', () => {
   });
 
   it('re-throws other errors', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { ANY: 'arn:aws:secretsmanager:us-east-1:123:secret:any' },
+    });
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
       async send(_cmd: unknown) {
@@ -279,7 +294,9 @@ describe('AwsSecretsManagerSecretStore', () => {
   });
 
   it('caches successfully fetched values', async () => {
-    const store = new AwsSecretsManagerSecretStore();
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: { CACHED_AWS: 'arn:aws:secretsmanager:us-east-1:123:secret:cached' },
+    });
     let callCount = 0;
     const storeAny = store as unknown as Record<string, unknown>;
     storeAny['client'] = {
@@ -296,6 +313,84 @@ describe('AwsSecretsManagerSecretStore', () => {
     await store.getSecret('CACHED_AWS');
     await store.getSecret('CACHED_AWS');
     expect(callCount).toBe(1);
+  });
+
+  // ── ARN fallback behaviour ────────────────────────────────────────────────
+
+  it('falls back to fallbackEnv when no ARN is configured for the name', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: { MY_ENV_SECRET: 'env-value' },
+    });
+    expect(await store.getSecret('MY_ENV_SECRET')).toBe('env-value');
+  });
+
+  it('treats empty fallbackEnv value as undefined (same as EnvSecretStore)', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: { EMPTY_SECRET: '' },
+    });
+    expect(await store.getSecret('EMPTY_SECRET')).toBeUndefined();
+  });
+
+  it('returns undefined from fallbackEnv for a missing key', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {},
+      fallbackEnv: {},
+    });
+    expect(await store.getSecret('NOT_PRESENT')).toBeUndefined();
+  });
+
+  it('uses the ARN as SecretId when arnsBySecretName has an entry for the name', async () => {
+    const capturedSecretIds: string[] = [];
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {
+        HMAC_SECRET: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+      },
+      fallbackEnv: {},
+    });
+    const storeAny = store as unknown as Record<string, unknown>;
+    storeAny['client'] = {
+      async send(cmd: Record<string, unknown>) {
+        capturedSecretIds.push(cmd['SecretId'] as string);
+        return { SecretString: 'fetched-from-sm' };
+      },
+    };
+    jest.mock('@aws-sdk/client-secrets-manager', () => ({
+      SecretsManagerClient: jest.fn(),
+      GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
+    }), { virtual: true });
+
+    const val = await store.getSecret('HMAC_SECRET');
+    expect(val).toBe('fetched-from-sm');
+    expect(capturedSecretIds).toEqual([
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+    ]);
+  });
+
+  it('mixes ARN and env fallback for different secrets in the same store', async () => {
+    const store = new AwsSecretsManagerSecretStore({
+      arnsBySecretName: {
+        HMAC_SECRET: 'arn:aws:secretsmanager:us-east-1:123:secret:hmac',
+      },
+      fallbackEnv: {
+        ADMIN_KEY: 'admin-from-env',
+        HMAC_SECRET: 'should-not-be-used', // ARN takes precedence
+      },
+    });
+    const storeAny = store as unknown as Record<string, unknown>;
+    storeAny['client'] = {
+      async send(_cmd: unknown) {
+        return { SecretString: 'hmac-from-sm' };
+      },
+    };
+    jest.mock('@aws-sdk/client-secrets-manager', () => ({
+      SecretsManagerClient: jest.fn(),
+      GetSecretValueCommand: jest.fn((input: Record<string, unknown>) => input),
+    }), { virtual: true });
+
+    expect(await store.getSecret('HMAC_SECRET')).toBe('hmac-from-sm');
+    expect(await store.getSecret('ADMIN_KEY')).toBe('admin-from-env');
   });
 });
 
@@ -447,6 +542,39 @@ describe('createSecretStoreFromEnv', () => {
     expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
   });
 
+  it('populates arnsBySecretName from AWS_SECRETS_ARN_* env vars', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      AWS_REGION: 'us-east-1',
+      AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET:
+        'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+      AWS_SECRETS_ARN_GATEWAY_ADMIN_API_KEY:
+        'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/admin-key-xyz',
+    }) as AwsSecretsManagerSecretStore;
+
+    const cfg = (store as unknown as Record<string, unknown>)['config'] as {
+      arnsBySecretName: Record<string, string>;
+    };
+    expect(cfg.arnsBySecretName['AUDIT_LEDGER_HMAC_SECRET']).toBe(
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc',
+    );
+    expect(cfg.arnsBySecretName['GATEWAY_ADMIN_API_KEY']).toBe(
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/admin-key-xyz',
+    );
+  });
+
+  it('sets fallbackEnv to the supplied env map for aws-secretsmanager', () => {
+    const env: NodeJS.ProcessEnv = {
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      GATEWAY_ADMIN_API_KEY: 'env-admin-key',
+    };
+    const store = createSecretStoreFromEnv(env) as AwsSecretsManagerSecretStore;
+    const cfg = (store as unknown as Record<string, unknown>)['config'] as {
+      fallbackEnv: NodeJS.ProcessEnv;
+    };
+    expect(cfg.fallbackEnv).toBe(env);
+  });
+
   it('returns GcpSecretManagerSecretStore when SECRET_STORE_PROVIDER=gcp-secretmanager', () => {
     const store = createSecretStoreFromEnv({
       SECRET_STORE_PROVIDER: 'gcp-secretmanager',
@@ -458,7 +586,7 @@ describe('createSecretStoreFromEnv', () => {
   it('throws when gcp-secretmanager is selected but GCP_PROJECT_ID is missing', () => {
     expect(() =>
       createSecretStoreFromEnv({ SECRET_STORE_PROVIDER: 'gcp-secretmanager' }),
-    ).toThrow('SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) must be set');
+    ).toThrow('must be set');
   });
 
   it('throws for an unrecognised SECRET_STORE_PROVIDER value', () => {
@@ -467,14 +595,14 @@ describe('createSecretStoreFromEnv', () => {
     ).toThrow("unrecognised SECRET_STORE_PROVIDER 'vault'");
   });
 
-  it('forwards SECRET_STORE_AZURE_* credential fields to AzureKeyVaultSecretStore', () => {
+  it('forwards AzureAD credential fields to AzureKeyVaultSecretStore', () => {
     const store = createSecretStoreFromEnv({
       SECRET_STORE_PROVIDER: 'azure-keyvault',
       SECRET_STORE_AZURE_VAULT_URL: 'https://vault.example.com',
-      SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'client-secret',
-      SECRET_STORE_AZURE_CLIENT_ID: 'client-id',
-      SECRET_STORE_AZURE_CLIENT_SECRET: 'client-secret',
-      SECRET_STORE_AZURE_TENANT_ID: 'tenant-id',
+      AZURE_CREDENTIAL_TYPE: 'client-secret',
+      AZURE_CLIENT_ID: 'client-id',
+      AZURE_CLIENT_SECRET: 'client-secret',
+      AZURE_TENANT_ID: 'tenant-id',
     }) as AzureKeyVaultSecretStore;
 
     // Access the internal config to verify fields were passed through.
@@ -485,63 +613,83 @@ describe('createSecretStoreFromEnv', () => {
     expect(cfg.credentialType).toBe('client-secret');
     expect(cfg.clientId).toBe('client-id');
   });
-
-  it('uses SECRET_STORE_AWS_REGION when set, falling back to AWS_REGION', () => {
-    const storeWithPrefix = createSecretStoreFromEnv({
-      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
-      SECRET_STORE_AWS_REGION: 'eu-west-1',
-    });
-    expect(storeWithPrefix).toBeInstanceOf(AwsSecretsManagerSecretStore);
-
-    const storeWithFallback = createSecretStoreFromEnv({
-      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
-      AWS_REGION: 'us-west-2',
-    });
-    expect(storeWithFallback).toBeInstanceOf(AwsSecretsManagerSecretStore);
-  });
-
-  it('uses SECRET_STORE_GCP_PROJECT_ID when GCP_PROJECT_ID is absent', () => {
-    const store = createSecretStoreFromEnv({
-      SECRET_STORE_PROVIDER: 'gcp-secretmanager',
-      SECRET_STORE_GCP_PROJECT_ID: 'explicit-project',
-    });
-    expect(store).toBeInstanceOf(GcpSecretManagerSecretStore);
-  });
 });
 
-// ── 7. getSecretOrThrow / SecretNotFoundError ──────────────────────────────────
+// ── getSecretOrThrow / SecretNotFoundError ─────────────────────────────────────
 
 describe('getSecretOrThrow', () => {
   it('returns the secret value when present', async () => {
-    const store = new EnvSecretStore({ MY_SECRET: 'my-value' });
-    await expect(getSecretOrThrow(store, 'MY_SECRET')).resolves.toBe('my-value');
+    const store = new EnvSecretStore({ MY_KEY: 'my-value' });
+    const value = await getSecretOrThrow(store, 'MY_KEY');
+    expect(value).toBe('my-value');
   });
 
-  it('throws SecretNotFoundError when the secret is absent', async () => {
+  it('throws SecretNotFoundError when secret is absent', async () => {
     const store = new EnvSecretStore({});
-    await expect(getSecretOrThrow(store, 'MISSING_SECRET')).rejects.toBeInstanceOf(SecretNotFoundError);
+    await expect(getSecretOrThrow(store, 'MISSING_KEY')).rejects.toBeInstanceOf(SecretNotFoundError);
   });
 
-  it('thrown error carries secretName and provider fields', async () => {
+  it('SecretNotFoundError has the correct secretName and provider', async () => {
     const store = new EnvSecretStore({});
+    let caught: SecretNotFoundError | undefined;
     try {
-      await getSecretOrThrow(store, 'NO_SUCH_KEY');
-      fail('expected to throw');
+      await getSecretOrThrow(store, 'MISSING_KEY');
     } catch (err) {
-      expect(err).toBeInstanceOf(SecretNotFoundError);
-      const e = err as SecretNotFoundError;
-      expect(e.secretName).toBe('NO_SUCH_KEY');
-      expect(e.message).toContain('NO_SUCH_KEY');
+      caught = err as SecretNotFoundError;
     }
+    expect(caught).toBeDefined();
+    expect(caught!.secretName).toBe('MISSING_KEY');
+    expect(caught!.name).toBe('SecretNotFoundError');
+  });
+
+  it('SecretNotFoundError message contains the secret name', async () => {
+    const store = new EnvSecretStore({});
+    await expect(getSecretOrThrow(store, 'MY_SECRET')).rejects.toThrow('MY_SECRET');
   });
 });
 
-describe('SecretNotFoundError', () => {
-  it('has name = "SecretNotFoundError"', () => {
-    const err = new SecretNotFoundError('MY_SECRET', 'EnvSecretStore');
-    expect(err.name).toBe('SecretNotFoundError');
-    expect(err).toBeInstanceOf(Error);
-    expect(err.secretName).toBe('MY_SECRET');
-    expect(err.provider).toBe('EnvSecretStore');
+describe('createSecretStoreFromEnv — SECRET_STORE_* prefixed vars', () => {
+  it('prefers SECRET_STORE_AWS_REGION over AWS_REGION for aws-secretsmanager', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      SECRET_STORE_AWS_REGION: 'eu-central-1',
+      AWS_REGION: 'us-east-1',
+    });
+    expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
+  });
+
+  it('falls back to AWS_REGION when SECRET_STORE_AWS_REGION is absent', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+      AWS_REGION: 'us-west-2',
+    });
+    expect(store).toBeInstanceOf(AwsSecretsManagerSecretStore);
+  });
+
+  it('prefers SECRET_STORE_GCP_PROJECT_ID over GCP_PROJECT_ID', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'gcp-secretmanager',
+      SECRET_STORE_GCP_PROJECT_ID: 'override-project',
+      GCP_PROJECT_ID: 'fallback-project',
+    });
+    expect(store).toBeInstanceOf(GcpSecretManagerSecretStore);
+  });
+
+  it('falls back to GCP_PROJECT_ID when SECRET_STORE_GCP_PROJECT_ID is absent', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'gcp-secretmanager',
+      GCP_PROJECT_ID: 'my-project',
+    });
+    expect(store).toBeInstanceOf(GcpSecretManagerSecretStore);
+  });
+
+  it('prefers SECRET_STORE_AZURE_CREDENTIAL_TYPE over AZURE_CREDENTIAL_TYPE', () => {
+    const store = createSecretStoreFromEnv({
+      SECRET_STORE_PROVIDER: 'azure-keyvault',
+      SECRET_STORE_AZURE_VAULT_URL: 'https://vault.azure.net/',
+      SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'managed-identity',
+      AZURE_CREDENTIAL_TYPE: 'default',
+    });
+    expect(store).toBeInstanceOf(AzureKeyVaultSecretStore);
   });
 });

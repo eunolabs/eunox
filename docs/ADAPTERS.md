@@ -492,12 +492,11 @@ environment variables.  The `SecretStore` interface is exported from
 `@euno/common-core`:
 
 ```typescript
-import { createSecretStoreFromEnv, SecretStore, getSecretOrThrow } from '@euno/common-core';
+import { createSecretStoreFromEnv, getSecretOrThrow, SecretNotFoundError, SecretStore } from '@euno/common-core';
 
 const store: SecretStore = createSecretStoreFromEnv(process.env);
-const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');
-// Or throw if absent:
-const adminKey = await getSecretOrThrow(store, 'GATEWAY_ADMIN_API_KEY');
+const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');         // undefined if absent
+const adminKey   = await getSecretOrThrow(store, 'GATEWAY_ADMIN_API_KEY');    // throws SecretNotFoundError
 ```
 
 ### Interface
@@ -512,8 +511,8 @@ interface SecretStore {
 - May throw for transient I/O or authentication errors.
 - Implementations cache fetched values in memory for the process lifetime.
 
-`getSecretOrThrow(store, name)` is a standalone utility that throws
-`SecretNotFoundError` when `store.getSecret(name)` returns `undefined`.
+Use `getSecretOrThrow(store, name)` (exported from `@euno/common-core`) when
+the secret is required and its absence should be a hard error.
 
 ### Built-in implementations
 
@@ -543,46 +542,25 @@ SECRET_STORE_PROVIDER=azure-keyvault
 SECRET_STORE_AZURE_VAULT_URL=https://my-secrets-vault.vault.azure.net/
 SECRET_STORE_AZURE_CREDENTIAL_TYPE=managed-identity   # or default / client-secret
 
+# Azure Key Vault with explicit client-secret credentials
+SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret
+SECRET_STORE_AZURE_CLIENT_ID=<client-id>
+SECRET_STORE_AZURE_CLIENT_SECRET=<client-secret>
+SECRET_STORE_AZURE_TENANT_ID=<tenant-id>
+
 # AWS Secrets Manager — uses the standard credential chain (IRSA, instance profile, etc.)
 SECRET_STORE_PROVIDER=aws-secretsmanager
-SECRET_STORE_AWS_REGION=us-east-1   # optional; falls back to AWS_REGION
+SECRET_STORE_AWS_REGION=us-east-1          # optional; falls back to AWS_REGION
 
 # GCP Secret Manager — uses Application Default Credentials
 SECRET_STORE_PROVIDER=gcp-secretmanager
-SECRET_STORE_GCP_PROJECT_ID=my-project-123   # or GCP_PROJECT_ID
+SECRET_STORE_GCP_PROJECT_ID=my-project-123   # or GCP_PROJECT_ID (fallback)
+SECRET_STORE_GCP_KEY_FILE_PATH=/etc/gcp/sa-key.json   # optional; uses ADC when unset
 ```
 
 `createSecretStoreFromEnv(process.env)` reads these variables and returns the
 appropriate implementation.  Alternatively, use `createSecretStore(provider,
 config)` to construct an instance programmatically.
-
-#### Azure `client-secret` credential
-
-```env
-SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret
-SECRET_STORE_AZURE_CLIENT_ID=<app-registration-client-id>
-SECRET_STORE_AZURE_CLIENT_SECRET=<secret>
-SECRET_STORE_AZURE_TENANT_ID=<directory-tenant-id>
-```
-
-#### GCP service account key file
-
-```env
-SECRET_STORE_GCP_KEY_FILE_PATH=/etc/gcp/sa-key.json
-```
-
-### SDK installation
-
-```bash
-# Azure Key Vault
-npm install @azure/keyvault-secrets @azure/identity
-
-# AWS Secrets Manager
-npm install @aws-sdk/client-secrets-manager
-
-# GCP Secret Manager
-npm install @google-cloud/secret-manager
-```
 
 ### Implementing a custom `SecretStore`
 

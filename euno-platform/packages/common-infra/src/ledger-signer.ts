@@ -658,6 +658,144 @@ export interface S3AnchorClient {
   }): Promise<void>;
 }
 
+// ── GcsAnchorClient interface + implementation ────────────────────────────────
+
+/**
+ * Minimal interface for a GCS object-storage PUT operation used by the audit
+ * ledger anchor.
+ *
+ * Callers provide their own implementation (e.g. `@google-cloud/storage`
+ * `Storage` wrapped in a small adapter) or use the bundled
+ * {@link GcsAnchorClientImpl}, so the core ledger package does not depend on
+ * the GCP SDK.
+ *
+ * The bucket SHOULD have a **retention policy** configured so that objects
+ * are automatically protected for a fixed period — this is the GCS equivalent
+ * of S3 Object Lock.  The {@link GcsAnchorClientImpl} additionally sets a
+ * `temporaryHold` on each anchor object, making it undeletable until an
+ * operator explicitly releases the hold, which provides a per-object
+ * protection layer on top of any bucket-level retention policy.
+ */
+export interface GcsAnchorClient {
+  putObject(params: {
+    bucket: string;
+    key: string;
+    body: string;
+    contentType: string;
+  }): Promise<void>;
+}
+
+/**
+ * Configuration for {@link GcsAnchorClientImpl}.
+ *
+ * Authentication uses Application Default Credentials (ADC) by default —
+ * Workload Identity Federation (no JSON key file), `GOOGLE_APPLICATION_CREDENTIALS`
+ * key file, or `gcloud auth application-default login` in development.
+ */
+export interface GcsAnchorClientConfig {
+  /**
+   * Optional path to a GCP service account key file.
+   * When omitted, Application Default Credentials are used (recommended for
+   * Workload Identity / GKE deployments).
+   */
+  keyFilePath?: string;
+  /**
+   * Optional GCP project ID.  When omitted the SDK resolves it from the
+   * credentials or `GCLOUD_PROJECT` / `GOOGLE_CLOUD_PROJECT` environment
+   * variables.
+   */
+  projectId?: string;
+  /**
+   * When `true`, skip setting `temporaryHold` on anchor objects after upload.
+   *
+   * Useful when the bucket enforces immutability via a **retention policy**
+   * alone and the calling identity lacks the `storage.objects.update` IAM
+   * permission required to set object holds.
+   *
+   * Default: `false` (holds are set by default for defence-in-depth).
+   */
+  skipTemporaryHold?: boolean;
+}
+
+/**
+ * `GcsAnchorClient` backed by `@google-cloud/storage`.
+ *
+ * The `@google-cloud/storage` package is **not** a hard dependency of
+ * `@euno/common-infra`.  It is loaded lazily on the first `putObject()` call
+ * so that deployments not using GCS do not need it installed.
+ *
+ * ### Immutability
+ *
+ * Each anchor object is written and then (unless `skipTemporaryHold` is set)
+ * locked with `temporaryHold: true`.  A temporary hold prevents deletion and
+ * overwrite until it is explicitly released via the GCS API or Console.  This
+ * is the per-object tamper-evidence layer; pair it with a bucket-level
+ * **retention policy** for time-bounded immutability equivalent to S3 Object
+ * Lock COMPLIANCE mode.
+ */
+export class GcsAnchorClientImpl implements GcsAnchorClient {
+  private readonly config: GcsAnchorClientConfig;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private storage?: any;
+
+  constructor(config: GcsAnchorClientConfig = {}) {
+    this.config = config;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildStorage(): any {
+    let sdk: { Storage: new (opts?: Record<string, unknown>) => unknown };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      sdk = require('@google-cloud/storage');
+    } catch {
+      throw new Error(
+        'GcsAnchorClientImpl: the "@google-cloud/storage" package is not installed. ' +
+          'Add it to your deployment image: npm install @google-cloud/storage',
+      );
+    }
+
+    const opts: Record<string, unknown> = {};
+    if (this.config.keyFilePath) {
+      opts['keyFilename'] = this.config.keyFilePath;
+    }
+    if (this.config.projectId) {
+      opts['projectId'] = this.config.projectId;
+    }
+
+    return new sdk.Storage(opts);
+  }
+
+  async putObject(params: {
+    bucket: string;
+    key: string;
+    body: string;
+    contentType: string;
+  }): Promise<void> {
+    if (!this.storage) {
+      this.storage = this.buildStorage();
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bucket = (this.storage as any).bucket(params.bucket);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const file = bucket.file(params.key);
+
+    // Upload the anchor payload.
+    await file.save(params.body, {
+      resumable: false,
+      contentType: params.contentType,
+    });
+
+    // Set a temporary hold on the object so it cannot be deleted or overwritten
+    // until the hold is explicitly released.  This is the per-object tamper-
+    // evidence layer on top of any bucket-level retention policy.
+    if (!this.config.skipTemporaryHold) {
+      await file.setMetadata({ temporaryHold: true });
+    }
+  }
+}
+
 // ── PostgresLedgerBackend ─────────────────────────────────────────────────────
 
 /**
@@ -846,6 +984,26 @@ function fnv1a32LockId(tenantId: string): bigint {
  *
  * Enforces a minimum decoded length of 32 bytes (256 bits).
  */
+/** Validate that s3.anchorIntervalRows and gcs.anchorIntervalRows match when both are set. */
+function validateAnchorIntervalConsistency(
+  s3Interval: number | undefined,
+  gcsInterval: number | undefined,
+  callerName: string,
+): number {
+  if (s3Interval !== undefined && gcsInterval !== undefined && s3Interval !== gcsInterval) {
+    throw new Error(
+      `${callerName}: s3.anchorIntervalRows (${s3Interval}) and ` +
+      `gcs.anchorIntervalRows (${gcsInterval}) must match when both are configured`,
+    );
+  }
+  return s3Interval ?? gcsInterval ?? 1000;
+}
+
+/** Coerce an unknown thrown value into an Error instance. */
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 function decodeHmacSecret(raw: string): Buffer {
   // Try hex first: if the string is even-length and all hex chars, decode it.
   if (/^[0-9a-fA-F]+$/.test(raw) && raw.length % 2 === 0) {
@@ -988,9 +1146,34 @@ export interface PostgresLedgerOptions {
     anchorIntervalRows?: number;
   };
   /**
-   * Called when an S3 anchor write fails.  The append itself succeeds —
+   * Optional GCS anchor.  When configured alongside (or instead of) `s3`,
+   * every `anchorIntervalRows` successful appends also trigger a Merkle root
+   * PUT to GCS.  Both S3 and GCS can be active simultaneously for multi-cloud
+   * redundancy.
+   *
+   * The bucket SHOULD have a **retention policy** configured.  Each anchor
+   * object also receives a `temporaryHold` (unless disabled in the client
+   * config) for per-object immutability.
+   */
+  gcs?: {
+    client: GcsAnchorClient;
+    bucket: string;
+    /**
+     * Key prefix for anchor objects.
+     * Resulting key: `{prefix}{replicaId}/{fromSeq}-{toSeq}.json`
+     * Default: `audit-anchor/`.
+     */
+    prefix?: string;
+    /**
+     * Number of rows between GCS anchors (per replica).
+     * Default: 1000.
+     */
+    anchorIntervalRows?: number;
+  };
+  /**
+   * Called when an S3 or GCS anchor write fails.  The append itself succeeds —
    * anchoring is best-effort (the ledger is the primary tamper-evidence;
-   * S3 is a secondary independent witness).
+   * S3/GCS is a secondary independent witness).
    */
   onAnchorError?: (err: Error) => void;
 }
@@ -1067,12 +1250,16 @@ interface LedgerSelectRow extends Record<string, unknown> {
  * detects silent DB-level modifications without re-verifying cryptographic
  * signatures.
  *
- * ### S3 Object-Lock anchor
+ * ### S3 Object-Lock anchor and GCS anchor
  *
  * When `s3` is configured, every `anchorIntervalRows` successful appends
  * trigger a Merkle root of those rows' `recordHash` values to be PUT to S3
  * with the `Content-Type: application/json` header. The S3 bucket MUST have
  * Object Lock enabled so the object is immutable for its retention period.
+ *
+ * When `gcs` is configured (alongside or instead of `s3`), the same anchor
+ * payload is also PUT to GCS.  Both can be active simultaneously for
+ * multi-cloud redundancy.
  *
  * The anchor payload is a JSON object:
  * ```json
@@ -1095,13 +1282,14 @@ export class PostgresLedgerBackend implements LedgerBackend {
   private readonly advisoryLockMode: 'global' | 'per-tenant';
   private readonly anchorIntervalRows: number;
   private readonly s3?: Required<PostgresLedgerOptions>['s3'];
+  private readonly gcs?: Required<PostgresLedgerOptions>['gcs'];
   private readonly onAnchorError: (err: Error) => void;
 
   /** Base delay (ms) for the first retry on a lock-hash collision in per-tenant mode. */
   private static readonly RETRY_BACKOFF_BASE_MS = 10;
 
   /**
-   * Tracks the seq of the last S3 anchor so we know when to emit the next one.
+   * Tracks the seq of the last anchor (S3 or GCS) so we know when to emit the next one.
    * Seeded from the DB tip by `initialize()` so restarts resume at the correct
    * position rather than re-anchoring a potentially huge range.
    */
@@ -1119,8 +1307,11 @@ export class PostgresLedgerBackend implements LedgerBackend {
     this.hmacSecret = decodeHmacSecret(options.hmacSecret);
     this.advisoryLockId = options.advisoryLockId ?? BigInt('0x455534004C454447');
     this.advisoryLockMode = options.advisoryLockMode ?? 'global';
-    this.anchorIntervalRows = options.s3?.anchorIntervalRows ?? 1000;
+    const s3Interval = options.s3?.anchorIntervalRows;
+    const gcsInterval = options.gcs?.anchorIntervalRows;
+    this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PostgresLedgerBackend');
     this.s3 = options.s3;
+    this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((err) => {
       // Swallow by default; callers should wire in a logger.
       void err;
@@ -1306,13 +1497,13 @@ export class PostgresLedgerBackend implements LedgerBackend {
 
         await conn.query('COMMIT');
 
-        // Trigger S3 anchor asynchronously (fire-and-forget with error callback).
-        if (this.s3 && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
+        // Trigger S3 and/or GCS anchor asynchronously (fire-and-forget with error callback).
+        if ((this.s3 || this.gcs) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
           const fromSeq = this.lastAnchoredSeq + 1;
           const toSeq = nextSeq;
           this.lastAnchoredSeq = toSeq;
-          this.triggerS3Anchor(fromSeq, toSeq, replicaId).catch((err) => {
-            this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+          this.triggerObjectStoreAnchor(fromSeq, toSeq, replicaId).catch((err) => {
+            this.onAnchorError(toError(err));
           });
         }
 
@@ -1449,12 +1640,12 @@ export class PostgresLedgerBackend implements LedgerBackend {
       .digest();
   }
 
-  private async triggerS3Anchor(
+  private async triggerObjectStoreAnchor(
     fromSeq: number,
     toSeq: number,
     replicaId: string,
   ): Promise<void> {
-    if (!this.s3) return;
+    if (!this.s3 && !this.gcs) return;
 
     const entries = await this.getEntries(fromSeq, toSeq);
     if (entries.length === 0) return;
@@ -1470,15 +1661,37 @@ export class PostgresLedgerBackend implements LedgerBackend {
       ts: new Date().toISOString(),
     });
 
-    const prefix = this.s3.prefix ?? 'audit-anchor/';
-    const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+    // S3 anchor — isolated so a failure here does not prevent the GCS anchor.
+    if (this.s3) {
+      const prefix = this.s3.prefix ?? 'audit-anchor/';
+      const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.s3.client.putObject({
+          bucket: this.s3.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
 
-    await this.s3.client.putObject({
-      bucket: this.s3.bucket,
-      key,
-      body: anchorPayload,
-      contentType: 'application/json',
-    });
+    // GCS anchor — isolated so a failure here does not prevent the S3 anchor.
+    if (this.gcs) {
+      const prefix = this.gcs.prefix ?? 'audit-anchor/';
+      const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.gcs.client.putObject({
+          bucket: this.gcs.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
   }
 }
 
@@ -1894,7 +2107,7 @@ export class AzureConfidentialLedgerBackend implements LedgerBackend {
       try {
         tx = await this.client.getTransaction(txId);
       } catch (err) {
-        this.onError(err instanceof Error ? err : new Error(String(err)));
+        this.onError(toError(err));
         continue;
       }
       if (!tx) continue;
@@ -1974,7 +2187,26 @@ export interface PerReplicaPostgresLedgerOptions {
     anchorIntervalRows?: number;
   };
   /**
-   * Called when an S3 anchor write fails.  The append itself succeeds.
+   * Optional GCS anchor.  Same semantics as {@link PostgresLedgerOptions.gcs}.
+   * Both S3 and GCS can be active simultaneously for multi-cloud redundancy.
+   */
+  gcs?: {
+    client: GcsAnchorClient;
+    bucket: string;
+    /**
+     * Key prefix for anchor objects.
+     * Resulting key: `{prefix}{replicaId}/{fromSeq}-{toSeq}.json`
+     * Default: `audit-anchor/`.
+     */
+    prefix?: string;
+    /**
+     * Number of rows between GCS anchors (per replica).
+     * Default: 1000.
+     */
+    anchorIntervalRows?: number;
+  };
+  /**
+   * Called when an S3 or GCS anchor write fails.  The append itself succeeds.
    * Default: swallow silently.
    */
   onAnchorError?: (err: Error) => void;
@@ -2085,9 +2317,10 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
   private readonly hmacSecret: Buffer;
   private readonly anchorIntervalRows: number;
   private readonly s3?: Required<PerReplicaPostgresLedgerOptions>['s3'];
+  private readonly gcs?: Required<PerReplicaPostgresLedgerOptions>['gcs'];
   private readonly onAnchorError: (err: Error) => void;
 
-  /** Tracks the seq of the last S3 anchor for this replica. */
+  /** Tracks the seq of the last anchor (S3 or GCS) for this replica. */
   private lastAnchoredSeq = 0;
 
   /**
@@ -2111,8 +2344,11 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       throw new Error('PerReplicaPostgresLedgerBackend: hmacSecret is required');
     }
     this.hmacSecret = decodeHmacSecret(options.hmacSecret);
-    this.anchorIntervalRows = options.s3?.anchorIntervalRows ?? 1000;
+    const s3Interval = options.s3?.anchorIntervalRows;
+    const gcsInterval = options.gcs?.anchorIntervalRows;
+    this.anchorIntervalRows = validateAnchorIntervalConsistency(s3Interval, gcsInterval, 'PerReplicaPostgresLedgerBackend');
     this.s3 = options.s3;
+    this.gcs = options.gcs;
     this.onAnchorError = options.onAnchorError ?? ((_err: Error) => { /* swallow anchor error */ });
   }
 
@@ -2311,13 +2547,13 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
           this.tipHash = finalRecordHash;
           this.tipSeq = nextSeq;
 
-          // Trigger S3 anchor asynchronously.
-          if (this.s3 && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
+          // Trigger S3 and/or GCS anchor asynchronously.
+          if ((this.s3 || this.gcs) && nextSeq - this.lastAnchoredSeq >= this.anchorIntervalRows) {
             const fromSeq = this.lastAnchoredSeq + 1;
             const toSeq = nextSeq;
             this.lastAnchoredSeq = toSeq;
-            this.triggerS3Anchor(fromSeq, toSeq, replicaId).catch((err) => {
-              this.onAnchorError(err instanceof Error ? err : new Error(String(err)));
+            this.triggerObjectStoreAnchor(fromSeq, toSeq, replicaId).catch((err) => {
+              this.onAnchorError(toError(err));
             });
           }
 
@@ -2451,12 +2687,12 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       .digest();
   }
 
-  private async triggerS3Anchor(
+  private async triggerObjectStoreAnchor(
     fromSeq: number,
     toSeq: number,
     replicaId: string,
   ): Promise<void> {
-    if (!this.s3) return;
+    if (!this.s3 && !this.gcs) return;
 
     const entries = await this.getEntries(fromSeq, toSeq);
     if (entries.length === 0) return;
@@ -2472,15 +2708,37 @@ export class PerReplicaPostgresLedgerBackend implements LedgerBackend {
       ts: new Date().toISOString(),
     });
 
-    const prefix = this.s3.prefix ?? 'audit-anchor/';
-    const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+    // S3 anchor — isolated so a failure here does not prevent the GCS anchor.
+    if (this.s3) {
+      const prefix = this.s3.prefix ?? 'audit-anchor/';
+      const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.s3.client.putObject({
+          bucket: this.s3.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
 
-    await this.s3.client.putObject({
-      bucket: this.s3.bucket,
-      key,
-      body: anchorPayload,
-      contentType: 'application/json',
-    });
+    // GCS anchor — isolated so a failure here does not prevent the S3 anchor.
+    if (this.gcs) {
+      const prefix = this.gcs.prefix ?? 'audit-anchor/';
+      const key = `${prefix}${replicaId}/${fromSeq}-${toSeq}.json`;
+      try {
+        await this.gcs.client.putObject({
+          bucket: this.gcs.bucket,
+          key,
+          body: anchorPayload,
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onAnchorError(toError(err));
+      }
+    }
   }
 }
 
@@ -2519,6 +2777,22 @@ export interface CrossChainAnchorOptions {
    */
   s3?: {
     client: S3AnchorClient;
+    bucket: string;
+    /**
+     * Key prefix.  Default: `audit-anchor/`.
+     */
+    prefix?: string;
+  };
+
+  /**
+   * Optional GCS anchor.  When configured alongside (or instead of) `s3`,
+   * every cross-chain commitment is also PUT to GCS with the key:
+   *   `{prefix}cross-chain/{coordinatorId}/{seq}.json`
+   * The bucket SHOULD have a retention policy configured.
+   * Both S3 and GCS can be active simultaneously for multi-cloud redundancy.
+   */
+  gcs?: {
+    client: GcsAnchorClient;
     bucket: string;
     /**
      * Key prefix.  Default: `audit-anchor/`.
@@ -2610,6 +2884,7 @@ export class CrossChainAnchor {
   private readonly coordinatorId: string;
   private readonly cryptoSigner: CryptoSigner;
   private readonly s3?: Required<CrossChainAnchorOptions>['s3'];
+  private readonly gcs?: Required<CrossChainAnchorOptions>['gcs'];
   private readonly anchors: CrossChainExternalAnchor[];
   private readonly onError: (err: Error) => void;
   private readonly onCommitment?: (commitment: SignedCrossChainCommitment) => void;
@@ -2636,6 +2911,7 @@ export class CrossChainAnchor {
     this.coordinatorId = options.coordinatorId;
     this.cryptoSigner = options.cryptoSigner;
     this.s3 = options.s3;
+    this.gcs = options.gcs;
     this.anchors = options.anchors ?? [];
     this.onError = options.onError ?? (() => { /* swallow */ });
     this.onCommitment = options.onCommitment;
@@ -2675,7 +2951,7 @@ export class CrossChainAnchor {
     try {
       tips = await this.backend.getReplicaTips();
     } catch (err) {
-      this.onError(err instanceof Error ? err : new Error(String(err)));
+      this.onError(toError(err));
       return;
     }
 
@@ -2706,7 +2982,7 @@ export class CrossChainAnchor {
     try {
       signed = await this.signCommitment(commitment);
     } catch (err) {
-      this.onError(err instanceof Error ? err : new Error(String(err)));
+      this.onError(toError(err));
       return;
     }
 
@@ -2728,6 +3004,24 @@ export class CrossChainAnchor {
       } catch (err) {
         this.onError(err instanceof Error ? err : new Error(
           `CrossChainAnchor S3 write failed: ${String(err)}`,
+        ));
+      }
+    }
+
+    // Publish to GCS.
+    if (this.gcs) {
+      const prefix = this.gcs.prefix ?? 'audit-anchor/';
+      const key = `${prefix}cross-chain/${this.coordinatorId}/${commitmentSeq}.json`;
+      try {
+        await this.gcs.client.putObject({
+          bucket: this.gcs.bucket,
+          key,
+          body: JSON.stringify(signed),
+          contentType: 'application/json',
+        });
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(
+          `CrossChainAnchor GCS write failed: ${String(err)}`,
         ));
       }
     }

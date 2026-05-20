@@ -208,34 +208,25 @@ euno is production-ready across all capability tiers:
 | **Identity-bound tokens** | Capability Issuer, IdP integration (Entra ID, Cognito, Cloud Identity), PKCE flow, role-to-capability mapping | ✅ GA |
 | **Enterprise** | DID federation, KMS signing, SOC 2 audit export, SCIM 2.0, cross-chain anchor, AGT guard, on-prem Helm bundle | ✅ GA |
 
-| Stage | Ships | Status |
-|-------|-------|--------|
-| 1 | Local proxy (`@euno/mcp`, `@euno/langchain`) | ✅ Done |
-| 2 | Hosted gateway (tool-gateway, API-key façade, Postgres ledger) | ✅ Done |
-| 3 | Identity-bound capability tokens (capability-issuer, IdP integration) | ✅ Done |
-| 4 | Enterprise foundations (KMS signing, role-policy store, DPoP, AGT guard) | ✅ Done |
-| 5 | Enterprise deployment (DID federation, SOC 2 export, SCIM 2.0, cross-chain anchor, on-prem Helm bundle) | ✅ Done |
+### Enterprise deployment (Stage 5)
+
+The enterprise tier is complete and generally available. See the enterprise
+compliance and federation section above for capabilities and CLI examples.
+
+### Development stage history
+
+| Stage | What was delivered | Status |
+|---|---|---|
+| 1 | `@euno/mcp` local proxy, policy engine, OCSF audit log | ✅ Done |
+| 2 | Tool Gateway, API-key façade, signed JWT tokens | ✅ Done |
+| 3 | Capability Issuer, IdP integration (Entra ID), PKCE flow | ✅ Done |
+| 4 | Multi-tenant policies, SCIM 2.0, advanced conditions, AGT guard | ✅ Done |
+| 5 | DID federation, KMS signing, SOC 2 audit export, cross-chain anchor, on-prem Helm bundle | ✅ Done |
 
 See [`docs/mvp.md`](./docs/mvp.md) for the full implementation history.
 
 The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
 `framework-adapters`) accept security fixes and dependency bumps at all times.
-
-### Enterprise deployment (Stage 5)
-
-Stage 5 delivers the full enterprise compliance and federation tier — all
-packages are generally available. The key capabilities are:
-
-- 🏛️  **Partner DID federation** with per-DID circuit breakers and two-eyes
-  approval workflow.
-- 📋 **SOC 2 audit export** (CC6/CC7 controls, signed OCSF evidence bundle).
-- 👤 **SCIM 2.0 provisioning** from your enterprise IdP directory.
-- ⛓️  **Cross-chain audit anchor** to S3 Object-Lock for tamper-evident ledgers.
-- 📦 **On-prem Helm bundle** with air-gap support.
-
-See [`docs/self-host.md §12`](./docs/self-host.md) for the complete operator
-runbook and [`docs/security/soc2-mapping.md`](./docs/security/soc2-mapping.md)
-for the SOC 2 control mapping.
 
 ## Packages
 

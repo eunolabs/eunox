@@ -1,0 +1,36 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('blog')).sort(
+  (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf()
+);
+---
+<BaseLayout title="Blog · euno" description="Articles on AI agent security, capability governance, MCP policy enforcement, and the euno platform." activePage="blog">
+
+    <section class="hero hero-compact">
+        <div class="hero-eyebrow"><span class="dot"></span>Blog</div>
+        <h1>Agent security, <em>in depth</em></h1>
+        <p class="hero-sub">Articles on AI agent governance, capability tokens, MCP enforcement, and the architecture behind euno.</p>
+    </section>
+
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="/">Home</a> &nbsp;›&nbsp; Blog
+    </nav>
+
+    <main class="content-section">
+        <div class="blog-list">
+            {posts.map(post => (
+                <a class="blog-card" href={`/blog/${post.slug}`}>
+                    <div class="blog-card-meta">
+                        <time datetime={post.data.pubDate.toISOString().slice(0, 10)}>{post.data.pubDate.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
+                    </div>
+                    <h2 class="blog-card-title">{post.data.title}</h2>
+                    <p class="blog-card-desc">{post.data.description}</p>
+                    <span class="blog-card-read">Read →</span>
+                </a>
+            ))}
+        </div>
+    </main>
+
+</BaseLayout>

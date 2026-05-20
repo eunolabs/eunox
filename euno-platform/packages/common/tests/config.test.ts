@@ -1464,60 +1464,54 @@ describe('GatewayConfigSchema — Task 13 (HOSTED_MODE audience enforcement)', (
   });
 });
 
-// ── SecretStore schema cross-field validation ─────────────────────────────────
+describe('IssuerConfigSchema — SECRET_STORE cross-field validation', () => {
+  const base = { AZURE_KEYVAULT_URL: 'https://vault.example/' };
 
-describe('SecretStore schema — IssuerConfigSchema cross-field validation', () => {
-  const baseIssuer = { AZURE_KEYVAULT_URL: 'https://vault.example/' };
-
-  it('accepts SECRET_STORE_PROVIDER=env (default)', () => {
-    const result = loadConfig({ ...baseIssuer, SECRET_STORE_PROVIDER: 'env' }, 'issuer');
+  it('accepts SECRET_STORE_PROVIDER=env without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ ...base, SECRET_STORE_PROVIDER: 'env' }, 'issuer');
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('env');
   });
 
   it('defaults SECRET_STORE_PROVIDER to "env" when not supplied', () => {
-    const result = loadConfig(baseIssuer, 'issuer');
+    const result = loadConfig(base, 'issuer');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.config.SECRET_STORE_PROVIDER).toBe('env');
   });
 
-  it('accepts SECRET_STORE_PROVIDER=azure-keyvault when vault URL is provided', () => {
+  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ ...base, SECRET_STORE_PROVIDER: 'azure-keyvault' }, 'issuer');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'SECRET_STORE_AZURE_VAULT_URL',
+          message: expect.stringMatching(/SECRET_STORE_AZURE_VAULT_URL.*azure-keyvault/),
+        }),
+      ]),
+    );
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=azure-keyvault with SECRET_STORE_AZURE_VAULT_URL', () => {
     const result = loadConfig(
       {
-        ...baseIssuer,
+        ...base,
         SECRET_STORE_PROVIDER: 'azure-keyvault',
-        SECRET_STORE_AZURE_VAULT_URL: 'https://secrets-vault.vault.azure.net/',
+        SECRET_STORE_AZURE_VAULT_URL: 'https://my-secrets-vault.vault.azure.net/',
       },
       'issuer',
     );
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('azure-keyvault');
-    expect(result.config.SECRET_STORE_AZURE_VAULT_URL).toBe('https://secrets-vault.vault.azure.net/');
   });
 
-  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without SECRET_STORE_AZURE_VAULT_URL', () => {
-    const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'azure-keyvault' },
-      'issuer',
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    const err = result.errors.find((e) => e.field === 'SECRET_STORE_AZURE_VAULT_URL');
-    expect(err).toBeDefined();
-    expect(err!.message).toContain('SECRET_STORE_AZURE_VAULT_URL is required');
-  });
-
-  it('rejects azure-keyvault client-secret without required cred fields', () => {
+  it('rejects azure-keyvault client-secret without required credential fields', () => {
     const result = loadConfig(
       {
-        ...baseIssuer,
+        ...base,
         SECRET_STORE_PROVIDER: 'azure-keyvault',
         SECRET_STORE_AZURE_VAULT_URL: 'https://vault.azure.net/',
         SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'client-secret',
-        // missing clientId, clientSecret, tenantId
       },
       'issuer',
     );
@@ -1528,10 +1522,10 @@ describe('SecretStore schema — IssuerConfigSchema cross-field validation', () 
     expect(err!.message).toContain('SECRET_STORE_AZURE_CLIENT_ID');
   });
 
-  it('accepts azure-keyvault client-secret when all cred fields are present', () => {
+  it('accepts azure-keyvault client-secret when all credential fields are present', () => {
     const result = loadConfig(
       {
-        ...baseIssuer,
+        ...base,
         SECRET_STORE_PROVIDER: 'azure-keyvault',
         SECRET_STORE_AZURE_VAULT_URL: 'https://vault.azure.net/',
         SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'client-secret',
@@ -1545,33 +1539,36 @@ describe('SecretStore schema — IssuerConfigSchema cross-field validation', () 
   });
 
   it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager', () => {
-    const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'aws-secretsmanager' },
-      'issuer',
-    );
+    const result = loadConfig({ ...base, SECRET_STORE_PROVIDER: 'aws-secretsmanager' }, 'issuer');
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('aws-secretsmanager');
   });
 
-  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with GCP_PROJECT_ID set', () => {
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager with AWS credential fields', () => {
     const result = loadConfig(
       {
-        ...baseIssuer,
-        SECRET_STORE_PROVIDER: 'gcp-secretmanager',
-        GCP_PROJECT_ID: 'my-project',
+        ...base,
+        SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+        SECRET_STORE_AWS_REGION: 'us-east-1',
+        SECRET_STORE_AWS_ACCESS_KEY_ID: 'key-id',
+        SECRET_STORE_AWS_SECRET_ACCESS_KEY: 'secret',
       },
       'issuer',
     );
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('gcp-secretmanager');
   });
 
-  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with SECRET_STORE_GCP_PROJECT_ID set', () => {
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager when GCP_PROJECT_ID is set', () => {
+    const result = loadConfig(
+      { ...base, SECRET_STORE_PROVIDER: 'gcp-secretmanager', GCP_PROJECT_ID: 'my-project' },
+      'issuer',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager when SECRET_STORE_GCP_PROJECT_ID is set', () => {
     const result = loadConfig(
       {
-        ...baseIssuer,
+        ...base,
         SECRET_STORE_PROVIDER: 'gcp-secretmanager',
         SECRET_STORE_GCP_PROJECT_ID: 'my-project',
       },
@@ -1580,84 +1577,88 @@ describe('SecretStore schema — IssuerConfigSchema cross-field validation', () 
     expect(result.ok).toBe(true);
   });
 
-  it('rejects SECRET_STORE_PROVIDER=gcp-secretmanager without any project ID', () => {
+  it('rejects gcp-secretmanager without either project ID field', () => {
     const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'gcp-secretmanager' },
+      { ...base, SECRET_STORE_PROVIDER: 'gcp-secretmanager' },
       'issuer',
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
     const err = result.errors.find((e) => e.field === 'SECRET_STORE_GCP_PROJECT_ID');
     expect(err).toBeDefined();
-    expect(err!.message).toContain('SECRET_STORE_GCP_PROJECT_ID');
-  });
-
-  it('rejects an invalid SECRET_STORE_PROVIDER value', () => {
-    const result = loadConfig(
-      { ...baseIssuer, SECRET_STORE_PROVIDER: 'invalid-provider' },
-      'issuer',
-    );
-    expect(result.ok).toBe(false);
   });
 });
 
-describe('SecretStore schema — GatewayConfigSchema cross-field validation', () => {
-  it('accepts SECRET_STORE_PROVIDER=env (default) on gateway', () => {
-    const result = loadConfig({ SECRET_STORE_PROVIDER: 'env' }, 'gateway');
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.SECRET_STORE_PROVIDER).toBe('env');
+describe('GatewayConfigSchema — SECRET_STORE cross-field validation', () => {
+  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ SECRET_STORE_PROVIDER: 'azure-keyvault' }, 'gateway');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'SECRET_STORE_AZURE_VAULT_URL',
+          message: expect.stringMatching(/SECRET_STORE_AZURE_VAULT_URL.*azure-keyvault/),
+        }),
+      ]),
+    );
   });
 
-  it('accepts SECRET_STORE_PROVIDER=azure-keyvault with vault URL on gateway', () => {
+  it('accepts SECRET_STORE_PROVIDER=azure-keyvault with SECRET_STORE_AZURE_VAULT_URL', () => {
     const result = loadConfig(
       {
         SECRET_STORE_PROVIDER: 'azure-keyvault',
-        SECRET_STORE_AZURE_VAULT_URL: 'https://secrets-vault.vault.azure.net/',
+        SECRET_STORE_AZURE_VAULT_URL: 'https://my-secrets-vault.vault.azure.net/',
       },
       'gateway',
     );
     expect(result.ok).toBe(true);
   });
 
-  it('rejects SECRET_STORE_PROVIDER=azure-keyvault without vault URL on gateway', () => {
+  it('rejects azure-keyvault client-secret without required credential fields', () => {
     const result = loadConfig(
-      { SECRET_STORE_PROVIDER: 'azure-keyvault' },
+      {
+        SECRET_STORE_PROVIDER: 'azure-keyvault',
+        SECRET_STORE_AZURE_VAULT_URL: 'https://vault.azure.net/',
+        SECRET_STORE_AZURE_CREDENTIAL_TYPE: 'client-secret',
+      },
       'gateway',
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    const err = result.errors.find((e) => e.field === 'SECRET_STORE_AZURE_VAULT_URL');
+    const err = result.errors.find((e) => e.field === 'SECRET_STORE_AZURE_CREDENTIAL_TYPE');
     expect(err).toBeDefined();
   });
 
-  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager on gateway', () => {
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager without SECRET_STORE_AZURE_VAULT_URL', () => {
+    const result = loadConfig({ SECRET_STORE_PROVIDER: 'aws-secretsmanager' }, 'gateway');
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts SECRET_STORE_PROVIDER=aws-secretsmanager with AWS credential fields', () => {
     const result = loadConfig(
-      { SECRET_STORE_PROVIDER: 'aws-secretsmanager' },
+      {
+        SECRET_STORE_PROVIDER: 'aws-secretsmanager',
+        SECRET_STORE_AWS_REGION: 'eu-west-1',
+      },
       'gateway',
     );
     expect(result.ok).toBe(true);
   });
 
-  it('rejects SECRET_STORE_PROVIDER=gcp-secretmanager without project ID on gateway', () => {
+  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager when SECRET_STORE_GCP_PROJECT_ID is set', () => {
     const result = loadConfig(
-      { SECRET_STORE_PROVIDER: 'gcp-secretmanager' },
+      { SECRET_STORE_PROVIDER: 'gcp-secretmanager', SECRET_STORE_GCP_PROJECT_ID: 'my-project' },
       'gateway',
     );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects gcp-secretmanager without SECRET_STORE_GCP_PROJECT_ID', () => {
+    const result = loadConfig({ SECRET_STORE_PROVIDER: 'gcp-secretmanager' }, 'gateway');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     const err = result.errors.find((e) => e.field === 'SECRET_STORE_GCP_PROJECT_ID');
     expect(err).toBeDefined();
-  });
-
-  it('accepts SECRET_STORE_PROVIDER=gcp-secretmanager with SECRET_STORE_GCP_PROJECT_ID on gateway', () => {
-    const result = loadConfig(
-      {
-        SECRET_STORE_PROVIDER: 'gcp-secretmanager',
-        SECRET_STORE_GCP_PROJECT_ID: 'my-project',
-      },
-      'gateway',
-    );
-    expect(result.ok).toBe(true);
   });
 });

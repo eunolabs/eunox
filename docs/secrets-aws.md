@@ -404,3 +404,84 @@ Automate this with an EventBridge rule that triggers a Lambda function on the
 - [ ] CloudTrail is capturing `secretsmanager:GetSecretValue` calls for the
       `euno/prod/*` prefix; alerts are configured for unexpected access
       patterns.
+
+---
+
+## 9. Native SDK integration — `AwsSecretsManagerSecretStore` (Phase 2)
+
+Euno now ships a native `AwsSecretsManagerSecretStore` implementation in
+`@euno/common-core` that fetches secrets from Secrets Manager at runtime using
+the standard AWS SDK v3 credential provider chain (IRSA, EC2 instance profile,
+`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` env vars).
+
+### 9.1 ARN-based fallback pattern
+
+Instead of managing external Kubernetes Secrets or volume mounts, operators can
+tell Euno to fetch specific secrets directly from Secrets Manager at startup by
+setting `AWS_SECRETS_ARN_*` environment variables.
+
+```bash
+# Pod environment (e.g. injected via EKS Pod Identity / IRSA-annotated Deployment)
+SECRET_STORE_PROVIDER=aws-secretsmanager
+AWS_REGION=us-east-1
+
+# Pin individual secrets to their Secrets Manager ARNs:
+AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET=arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/audit-ledger-hmac-secret
+AWS_SECRETS_ARN_ADMIN_API_KEY=arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/gateway-admin-api-key
+
+# Secrets without an ARN override are still read from env vars (fallback):
+PARTNER_DID_PIN_SECRET=changeme   # still a plain env var for non-sensitive overrides
+```
+
+`createSecretStoreFromEnv()` (called automatically by service startup)
+auto-builds the `arnsBySecretName` map from every `AWS_SECRETS_ARN_<NAME>`
+variable it finds.  For any name without an ARN entry, the store returns the
+value of `process.env[name]` directly — identical to the default
+`EnvSecretStore` behaviour.
+
+This **incremental migration** approach lets operators move secrets to Secrets
+Manager one at a time without changing the rest of the configuration.
+
+### 9.2 IAM policy addition
+
+The pod's IRSA role needs `secretsmanager:GetSecretValue` on each pinned ARN.
+The existing `EunoSecretsReadPolicy` from §3.1 already covers the `euno/prod/*`
+prefix.  If you use explicit ARNs outside that prefix, add them to the policy
+`Resource` array.
+
+### 9.3 ASCP / ESO vs. native SDK
+
+| Approach | Requires cluster component | Requires Kubernetes Secret | Direct Secrets Manager call at startup |
+|---|---|---|---|
+| ESO | ✅ ESO controller | ✅ synced `Secret` | ❌ |
+| ASCP | ✅ CSI driver | ✅ via `secretObjects` | ❌ |
+| **Native SDK (`AWS_SECRETS_ARN_*`)** | ❌ None | ❌ None | ✅ |
+
+Use the native SDK approach when you want to minimise cluster components and
+are comfortable with the pod startup latency of a Secrets Manager API call
+(typically < 50 ms for same-region calls).
+
+### 9.4 EdDSA shim for partner DID (`did:ion`) use cases (Phase 2)
+
+AWS KMS does not natively support Ed25519 keys.  For partner-issued tokens using
+EdDSA signatures (`did:ion` / `did:key#Ed25519`), configure the `AwsEdDsaSigner`
+shim:
+
+```bash
+# Store the PEM-encoded Ed25519 PKCS#8 private key in Secrets Manager:
+aws secretsmanager create-secret \
+  --name euno/prod/partner-eddsa-key \
+  --secret-string "$(cat partner-ed25519-key.pem)" \
+  --region us-east-1
+
+# Pod environment:
+AWS_EDDSA_KEY_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/partner-eddsa-key
+AWS_EDDSA_KEY_ID=partner-signing-key-v1   # JWT kid claim (optional; defaults to ARN)
+```
+
+The `AwsEdDsaSigner` fetches the PEM from Secrets Manager on the first sign
+call, caches it in memory, and signs locally using `jose` (EdDSA / Ed25519).
+
+**IAM policy** — the same `EunoSecretsReadPolicy` covers the EdDSA key secret
+if it is under the `euno/prod/*` prefix.  Add it to the `Resource` array if
+stored elsewhere.

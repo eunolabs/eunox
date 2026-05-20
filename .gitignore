@@ -28,6 +28,9 @@ build/
 # can be served directly. The blanket `*.js` rule above would otherwise
 # silently drop these hand-written files.
 !web/**/*.js
+# Astro site's hand-written public JS entry point. The blanket `*.js`
+# rule above would otherwise silently drop this file.
+!site/public/main.js
 
 # Environment variables
 .env
