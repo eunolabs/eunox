@@ -169,9 +169,6 @@ export class AwsSdkS3AnchorClient implements S3AnchorClient {
  * - `AUDIT_LEDGER_S3_FORCE_PATH_STYLE`
  * - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
  *
- * Returns `undefined` when `AUDIT_LEDGER_S3_BUCKET` is not set (the caller
- * should check for bucket presence before calling this function).
- *
  * @param env - Environment variable map.  Defaults to `process.env`.
  */
 export function createS3AnchorClientFromEnv(

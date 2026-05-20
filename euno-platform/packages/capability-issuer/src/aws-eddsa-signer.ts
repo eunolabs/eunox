@@ -104,6 +104,11 @@ export class AwsEdDsaSigner extends SigningAdapter {
           'must be provided.',
       );
     }
+    if (config.keyArn && config.keyPem) {
+      throw new Error(
+        'AwsEdDsaSigner: keyArn and keyPem are mutually exclusive; provide exactly one.',
+      );
+    }
     this.eddsaConfig = { name: 'aws-eddsa-shim', ...config } as AwsEdDsaSignerConfig;
   }
 

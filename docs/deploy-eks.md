@@ -686,7 +686,7 @@ ENABLE_CROSS_CHAIN_ANCHOR=true
 ```
 
 The bucket MUST have Object Lock enabled in `COMPLIANCE` mode.  The writing pod's
-IRSA role needs `s3:PutObject` and `s3:PutObjectLockRetention` on the bucket.
+IRSA role needs `s3:PutObject` and `s3:PutObjectRetention` on the bucket.
 
 ### 10.2 VPC endpoint / PrivateLink configuration
 

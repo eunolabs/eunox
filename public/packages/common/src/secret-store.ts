@@ -599,10 +599,10 @@ export function createSecretStore(
  *
  * ```bash
  * # Example: only AUDIT_LEDGER_HMAC_SECRET is in Secrets Manager;
- * # GATEWAY_ADMIN_API_KEY is still supplied via a plain env var.
+ * # ADMIN_API_KEY is still supplied via a plain env var.
  * SECRET_STORE_PROVIDER=aws-secretsmanager
  * AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET=arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/hmac-abc123
- * GATEWAY_ADMIN_API_KEY=changeme   # falls back to env lookup
+ * ADMIN_API_KEY=changeme   # falls back to env lookup
  * ```
  *
  * @param env - A `NodeJS.ProcessEnv`-shaped map.  Defaults to `process.env`.

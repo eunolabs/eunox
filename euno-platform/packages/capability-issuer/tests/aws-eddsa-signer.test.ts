@@ -56,6 +56,18 @@ describe('AwsEdDsaSigner constructor', () => {
         }),
     ).not.toThrow();
   });
+
+  it('throws when both keyArn and keyPem are provided', () => {
+    expect(
+      () =>
+        new AwsEdDsaSigner({
+          type: 'aws-eddsa-shim',
+          name: 'aws-eddsa-shim',
+          keyArn: 'arn:aws:secretsmanager:us-east-1:123:secret:euno/eddsa',
+          keyPem: '-----BEGIN PRIVATE KEY-----\nMC4CAQA=\n-----END PRIVATE KEY-----',
+        }),
+    ).toThrow('mutually exclusive');
+  });
 });
 
 // ── AwsEdDsaSigner with inline keyPem ─────────────────────────────────────────
