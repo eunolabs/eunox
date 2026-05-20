@@ -145,6 +145,8 @@ function requireText(content, needle, description) {
 function extractSection(content, headingPrefix) {
   if (content === null) return null;
   const idx = content.indexOf(`\n${headingPrefix}`);
+  // Return empty string when the heading is absent so subsequent requireText()
+  // checks fail with clear "Missing:" diagnostics for section-specific fields.
   return idx >= 0 ? content.slice(idx + 1) : '';
 }
 
