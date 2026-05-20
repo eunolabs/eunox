@@ -484,6 +484,156 @@ PARTNER_ISSUER_DISCOVERY_URL=https://partner-staging.example.com/.well-known/cap
 
 ---
 
+## Secret Store
+
+The secret store abstraction layer decouples runtime-secret resolution from
+`process.env`. When `SECRET_STORE_PROVIDER` is set, the gateway and issuer
+read sensitive values (HMAC keys, admin API keys, SCIM tokens, etc.) from
+the configured cloud secret manager instead of directly from the environment.
+
+### Interface (`@euno/common-core`)
+
+```typescript
+import { SecretStore, SecretNotFoundError } from '@euno/common-core';
+
+interface SecretStore {
+  /** Returns the secret value, or `undefined` when absent. */
+  getSecret(name: string): Promise<string | undefined>;
+  /** Convenience wrapper — throws SecretNotFoundError when absent. */
+  getSecretOrThrow(name: string): Promise<string>;
+}
+```
+
+### Built-in implementations (`@euno/common-infra`)
+
+| `SECRET_STORE_PROVIDER` | Implementation                      | Required env vars                                    |
+|-------------------------|-------------------------------------|------------------------------------------------------|
+| `env` (default)         | `EnvSecretStore`                    | none                                                 |
+| `azure-keyvault`        | `AzureKeyVaultSecretStore`          | `SECRET_STORE_AZURE_VAULT_URL`                        |
+| `aws-secrets-manager`   | `AwsSecretsManagerSecretStore`      | none (uses default credential chain)                 |
+| `gcp-secret-manager`    | `GcpSecretManagerSecretStore`       | `GCP_PROJECT_ID` or `SECRET_STORE_GCP_PROJECT_ID`    |
+
+### Factory
+
+```typescript
+import { createSecretStore } from '@euno/common-infra';
+
+// Reads SECRET_STORE_PROVIDER (and any provider-specific vars) from env.
+const store = createSecretStore(process.env);
+const value = await store.getSecretOrThrow('AUDIT_LEDGER_HMAC_SECRET');
+```
+
+### Name-mapping convention
+
+Cloud implementations perform a two-step secret-name resolution:
+
+1. If the env var `<PROVIDER_PREFIX>_SECRET_<NAME>` is present, its value is
+   used as the cloud-side resource reference (ARN, resource ID, etc.).
+2. Otherwise the logical `name` is used directly.
+
+| Provider            | Env-var prefix               | Example                                                                 |
+|---------------------|------------------------------|-------------------------------------------------------------------------|
+| `azure-keyvault`    | `AZURE_KEYVAULT_SECRET_`     | `AZURE_KEYVAULT_SECRET_HMAC_KEY=hmac-signing-key`                       |
+| `aws-secrets-manager` | `AWS_SECRETS_ARN_`         | `AWS_SECRETS_ARN_HMAC_KEY=arn:aws:secretsmanager:us-east-1:…:my-secret` |
+| `gcp-secret-manager` | `GCP_SECRET_`              | `GCP_SECRET_HMAC_KEY=my-gcp-secret-id`                                  |
+
+### SDK dependencies
+
+Cloud SDKs are **not** hard dependencies of `@euno/common-infra`. Install
+only the SDK for the provider you use:
+
+```bash
+# Azure Key Vault
+npm install @azure/keyvault-secrets @azure/identity
+
+# AWS Secrets Manager
+npm install @aws-sdk/client-secrets-manager
+
+# GCP Secret Manager
+npm install @google-cloud/secret-manager
+```
+
+### Azure Key Vault configuration
+
+```env
+SECRET_STORE_PROVIDER=azure-keyvault
+SECRET_STORE_AZURE_VAULT_URL=https://my-vault.vault.azure.net/
+# Optional — defaults to DefaultAzureCredential
+SECRET_STORE_AZURE_CREDENTIAL_TYPE=managed-identity  # or: default | client-secret
+```
+
+For `client-secret` credential type, also set:
+
+```env
+SECRET_STORE_AZURE_CLIENT_ID=<app-registration-client-id>
+SECRET_STORE_AZURE_CLIENT_SECRET=<secret>
+SECRET_STORE_AZURE_TENANT_ID=<directory-tenant-id>
+```
+
+### AWS Secrets Manager configuration
+
+```env
+SECRET_STORE_PROVIDER=aws-secrets-manager
+SECRET_STORE_AWS_REGION=us-east-1   # optional; falls back to AWS_REGION
+```
+
+Authentication uses the standard AWS credential provider chain (IAM role,
+IRSA, instance profile, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env
+vars). Override with explicit credentials:
+
+```env
+SECRET_STORE_AWS_ACCESS_KEY_ID=<key-id>
+SECRET_STORE_AWS_SECRET_ACCESS_KEY=<secret>
+SECRET_STORE_AWS_SESSION_TOKEN=<token>   # for temporary credentials
+```
+
+### GCP Secret Manager configuration
+
+```env
+SECRET_STORE_PROVIDER=gcp-secret-manager
+GCP_PROJECT_ID=my-gcp-project
+# Or equivalently:
+# SECRET_STORE_GCP_PROJECT_ID=my-gcp-project
+```
+
+Authentication uses Application Default Credentials (Workload Identity,
+`GOOGLE_APPLICATION_CREDENTIALS`, or `gcloud auth application-default
+login`). Override with a service account key file:
+
+```env
+SECRET_STORE_GCP_KEY_FILE_PATH=/etc/gcp/sa-key.json
+```
+
+### Creating a custom SecretStore
+
+Implement the `SecretStore` interface from `@euno/common-core` and pass an
+instance directly to any component that accepts one:
+
+```typescript
+import { SecretStore, SecretNotFoundError } from '@euno/common-core';
+
+export class VaultSecretStore implements SecretStore {
+  constructor(private readonly client: VaultClient) {}
+
+  async getSecret(name: string): Promise<string | undefined> {
+    try {
+      return await this.client.read(name);
+    } catch (err) {
+      if (err.status === 404) return undefined;
+      throw err;
+    }
+  }
+
+  async getSecretOrThrow(name: string): Promise<string> {
+    const value = await this.getSecret(name);
+    if (value === undefined) throw new SecretNotFoundError(name, 'vault');
+    return value;
+  }
+}
+```
+
+---
+
 ## References
 
 - [W3C Decentralized Identifiers (DIDs)](https://www.w3.org/TR/did-core/)

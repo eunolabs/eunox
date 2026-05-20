@@ -886,6 +886,67 @@ export const IssuerConfigSchema = z
       'review before the mapping is applied — see docs/issuer-idp-setup.md §"SCIM provisioning".',
     ),
 
+    // Secrets abstraction layer (cross-cloud SecretStore) -------------------
+    // When SECRET_STORE_PROVIDER is set, runtime secrets (HMAC keys, admin
+    // API keys, SCIM tokens, etc.) are read from the configured cloud secret
+    // store instead of process.env. See docs/ADAPTERS.md §"Secret store"
+    // and createSecretStore() in @euno/common-infra for usage.
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secrets-manager', 'gcp-secret-manager'] as const,
+      default: 'env',
+      description:
+        'Secrets backend used to resolve runtime secrets. ' +
+        '"env" (default): read directly from environment variables (no cloud dependency). ' +
+        '"azure-keyvault": read from Azure Key Vault secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secrets-manager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
+        '"gcp-secret-manager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
+        'See docs/ADAPTERS.md §"Secret store" for the name-mapping convention.',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault base URL for the secret store. Required when SECRET_STORE_PROVIDER=azure-keyvault. ' +
+      'Example: https://my-vault.vault.azure.net/',
+    ),
+    SECRET_STORE_AZURE_CREDENTIAL_TYPE: envEnum({
+      values: ['default', 'managed-identity', 'client-secret'] as const,
+      default: 'default',
+      description:
+        'Azure credential strategy for the secret store Key Vault. One of: default, managed-identity, client-secret. ' +
+        'Defaults to "default" (DefaultAzureCredential). Only used when SECRET_STORE_PROVIDER=azure-keyvault.',
+    }),
+    SECRET_STORE_AZURE_CLIENT_ID: optionalString.describe(
+      'Azure service principal client ID for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AZURE_CLIENT_SECRET: optionalString.describe(
+      'Azure service principal client secret for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AZURE_TENANT_ID: optionalString.describe(
+      'Azure tenant ID for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AWS_REGION: optionalString.describe(
+      'AWS region for Secrets Manager. Optional; defaults to the SDK default ' +
+      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secrets-manager.',
+    ),
+    SECRET_STORE_AWS_ACCESS_KEY_ID: optionalString.describe(
+      'AWS access key ID for Secrets Manager. Optional; falls back to the default credential provider chain.',
+    ),
+    SECRET_STORE_AWS_SECRET_ACCESS_KEY: optionalString.describe(
+      'AWS secret access key for Secrets Manager. Optional; falls back to the default credential provider chain.',
+    ),
+    SECRET_STORE_AWS_SESSION_TOKEN: optionalString.describe(
+      'AWS session token for Secrets Manager (temporary credentials). Optional.',
+    ),
+    SECRET_STORE_GCP_PROJECT_ID: optionalString.describe(
+      'GCP project ID for Secret Manager. When unset, falls back to GCP_PROJECT_ID. ' +
+      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+    ),
+    SECRET_STORE_GCP_KEY_FILE_PATH: optionalString.describe(
+      'Optional path to a GCP service account key file for Secret Manager. ' +
+      'Falls back to Application Default Credentials (Workload Identity, GOOGLE_APPLICATION_CREDENTIALS) when unset.',
+    ),
+
   })
   // Cross-field validation: catch the pre-existing fail-closed cases at boot
   // rather than at first request, per the R-5 exit criterion.
@@ -1123,6 +1184,40 @@ export const IssuerConfigSchema = z
           });
         }
       }
+    }
+
+    // ── SecretStore provider cross-field validation ──────────────────────────
+    if (cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' && !cfg.SECRET_STORE_AZURE_VAULT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_VAULT_URL'],
+        message: 'SECRET_STORE_AZURE_VAULT_URL is required when SECRET_STORE_PROVIDER=azure-keyvault.',
+      });
+    }
+    if (
+      cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' &&
+      cfg.SECRET_STORE_AZURE_CREDENTIAL_TYPE === 'client-secret' &&
+      (!cfg.SECRET_STORE_AZURE_CLIENT_ID || !cfg.SECRET_STORE_AZURE_CLIENT_SECRET || !cfg.SECRET_STORE_AZURE_TENANT_ID)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_CREDENTIAL_TYPE'],
+        message:
+          'SECRET_STORE_AZURE_CLIENT_ID, SECRET_STORE_AZURE_CLIENT_SECRET, and SECRET_STORE_AZURE_TENANT_ID ' +
+          'are required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+      });
+    }
+    if (
+      cfg.SECRET_STORE_PROVIDER === 'gcp-secret-manager' &&
+      !cfg.SECRET_STORE_GCP_PROJECT_ID &&
+      !cfg.GCP_PROJECT_ID
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_GCP_PROJECT_ID'],
+        message:
+          'SECRET_STORE_GCP_PROJECT_ID (or GCP_PROJECT_ID) is required when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+      });
     }
 
   });
@@ -2088,6 +2183,67 @@ export const GatewayConfigSchema = z
     OCSF_HTTP_HEADERS: optionalString.describe(
       'Optional JSON object of additional HTTP headers for the http OCSF transport (e.g. \'{"x-api-key":"..."}\'). Ignored if OCSF_TRANSPORT≠http.',
     ),
+
+    // Secrets abstraction layer (cross-cloud SecretStore) -------------------
+    // When SECRET_STORE_PROVIDER is set, runtime secrets (HMAC keys, admin
+    // API keys, etc.) are read from the configured cloud secret store
+    // instead of process.env. See docs/ADAPTERS.md §"Secret store" and
+    // createSecretStore() in @euno/common-infra for usage.
+    SECRET_STORE_PROVIDER: envEnum({
+      values: ['env', 'azure-keyvault', 'aws-secrets-manager', 'gcp-secret-manager'] as const,
+      default: 'env',
+      description:
+        'Secrets backend used to resolve runtime secrets. ' +
+        '"env" (default): read directly from environment variables (no cloud dependency). ' +
+        '"azure-keyvault": read from Azure Key Vault secrets (requires SECRET_STORE_AZURE_VAULT_URL). ' +
+        '"aws-secrets-manager": read from AWS Secrets Manager (optionally configured via SECRET_STORE_AWS_REGION). ' +
+        '"gcp-secret-manager": read from GCP Secret Manager (requires GCP_PROJECT_ID or SECRET_STORE_GCP_PROJECT_ID). ' +
+        'See docs/ADAPTERS.md §"Secret store" for the name-mapping convention.',
+    }),
+    SECRET_STORE_AZURE_VAULT_URL: optionalString.describe(
+      'Azure Key Vault base URL for the secret store. Required when SECRET_STORE_PROVIDER=azure-keyvault. ' +
+      'Example: https://my-vault.vault.azure.net/',
+    ),
+    SECRET_STORE_AZURE_CREDENTIAL_TYPE: envEnum({
+      values: ['default', 'managed-identity', 'client-secret'] as const,
+      default: 'default',
+      description:
+        'Azure credential strategy for the secret store Key Vault. One of: default, managed-identity, client-secret. ' +
+        'Defaults to "default" (DefaultAzureCredential). Only used when SECRET_STORE_PROVIDER=azure-keyvault.',
+    }),
+    SECRET_STORE_AZURE_CLIENT_ID: optionalString.describe(
+      'Azure service principal client ID for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AZURE_CLIENT_SECRET: optionalString.describe(
+      'Azure service principal client secret for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AZURE_TENANT_ID: optionalString.describe(
+      'Azure tenant ID for the secret store. ' +
+      'Required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+    ),
+    SECRET_STORE_AWS_REGION: optionalString.describe(
+      'AWS region for Secrets Manager. Optional; defaults to the SDK default ' +
+      '(AWS_REGION / AWS_DEFAULT_REGION env vars). Only used when SECRET_STORE_PROVIDER=aws-secrets-manager.',
+    ),
+    SECRET_STORE_AWS_ACCESS_KEY_ID: optionalString.describe(
+      'AWS access key ID for Secrets Manager. Optional; falls back to the default credential provider chain.',
+    ),
+    SECRET_STORE_AWS_SECRET_ACCESS_KEY: optionalString.describe(
+      'AWS secret access key for Secrets Manager. Optional; falls back to the default credential provider chain.',
+    ),
+    SECRET_STORE_AWS_SESSION_TOKEN: optionalString.describe(
+      'AWS session token for Secrets Manager (temporary credentials). Optional.',
+    ),
+    SECRET_STORE_GCP_PROJECT_ID: optionalString.describe(
+      'GCP project ID for Secret Manager. When unset, falls back to GCP_PROJECT_ID. ' +
+      'Required (directly or via GCP_PROJECT_ID) when SECRET_STORE_PROVIDER=gcp-secret-manager.',
+    ),
+    SECRET_STORE_GCP_KEY_FILE_PATH: optionalString.describe(
+      'Optional path to a GCP service account key file for Secret Manager. ' +
+      'Falls back to Application Default Credentials (Workload Identity, GOOGLE_APPLICATION_CREDENTIALS) when unset.',
+    ),
   })
   .superRefine((cfg, ctx) => {
     // Hosted mode audience guard — must be checked in all environments.
@@ -2414,6 +2570,40 @@ export const GatewayConfigSchema = z
           `GATEWAY_SHARD_COUNT (${cfg.GATEWAY_SHARD_COUNT}). ` +
           'Each gateway replica needs a unique zero-based ordinal in the range ' +
           '[0, GATEWAY_SHARD_COUNT - 1]. For a StatefulSet use the pod ordinal from $POD_NAME.',
+      });
+    }
+
+    // ── SecretStore provider cross-field validation ──────────────────────────
+    if (cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' && !cfg.SECRET_STORE_AZURE_VAULT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_VAULT_URL'],
+        message: 'SECRET_STORE_AZURE_VAULT_URL is required when SECRET_STORE_PROVIDER=azure-keyvault.',
+      });
+    }
+    if (
+      cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' &&
+      cfg.SECRET_STORE_AZURE_CREDENTIAL_TYPE === 'client-secret' &&
+      (!cfg.SECRET_STORE_AZURE_CLIENT_ID || !cfg.SECRET_STORE_AZURE_CLIENT_SECRET || !cfg.SECRET_STORE_AZURE_TENANT_ID)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_AZURE_CREDENTIAL_TYPE'],
+        message:
+          'SECRET_STORE_AZURE_CLIENT_ID, SECRET_STORE_AZURE_CLIENT_SECRET, and SECRET_STORE_AZURE_TENANT_ID ' +
+          'are required when SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret.',
+      });
+    }
+    if (
+      cfg.SECRET_STORE_PROVIDER === 'gcp-secret-manager' &&
+      !cfg.SECRET_STORE_GCP_PROJECT_ID
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SECRET_STORE_GCP_PROJECT_ID'],
+        message:
+          'SECRET_STORE_GCP_PROJECT_ID is required when SECRET_STORE_PROVIDER=gcp-secret-manager ' +
+          '(the gateway schema does not include GCP_PROJECT_ID; set SECRET_STORE_GCP_PROJECT_ID explicitly).',
       });
     }
   });
