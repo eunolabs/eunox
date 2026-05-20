@@ -371,6 +371,152 @@ requireText(valuesGcp, 'premium-rwo',
   'values-gcp.yaml: premium-rwo GKE storage class for posture-emitter');
 
 // ---------------------------------------------------------------------------
+// Check 10 — infra/gcp/terraform/ modular layout (GCP Phase 3)
+// ---------------------------------------------------------------------------
+
+const gcpTfReadme = requireFile('infra/gcp/terraform/README.md',
+  'infra/gcp/terraform/README.md');
+requireText(gcpTfReadme, 'terraform init',
+  'infra/gcp/terraform/README.md: terraform init command');
+requireText(gcpTfReadme, 'terraform apply',
+  'infra/gcp/terraform/README.md: terraform apply command');
+requireText(gcpTfReadme, 'network/',
+  'infra/gcp/terraform/README.md: network/ sub-module reference');
+requireText(gcpTfReadme, 'compute/',
+  'infra/gcp/terraform/README.md: compute/ sub-module reference');
+requireText(gcpTfReadme, 'data/',
+  'infra/gcp/terraform/README.md: data/ sub-module reference');
+requireText(gcpTfReadme, 'security/',
+  'infra/gcp/terraform/README.md: security/ sub-module reference');
+requireText(gcpTfReadme, 'observability/',
+  'infra/gcp/terraform/README.md: observability/ sub-module reference');
+
+const gcpTfNetwork = requireFile('infra/gcp/terraform/network/main.tf',
+  'infra/gcp/terraform/network/main.tf');
+requireText(gcpTfNetwork, 'google_compute_network',
+  'infra/gcp/terraform/network/main.tf: VPC resource (google_compute_network)');
+requireText(gcpTfNetwork, 'google_compute_router_nat',
+  'infra/gcp/terraform/network/main.tf: Cloud NAT resource');
+
+const gcpTfCompute = requireFile('infra/gcp/terraform/compute/main.tf',
+  'infra/gcp/terraform/compute/main.tf');
+requireText(gcpTfCompute, 'google_container_cluster',
+  'infra/gcp/terraform/compute/main.tf: GKE cluster resource');
+requireText(gcpTfCompute, 'workload_identity_config',
+  'infra/gcp/terraform/compute/main.tf: Workload Identity configuration');
+requireText(gcpTfCompute, 'autoscaling',
+  'infra/gcp/terraform/compute/main.tf: node pool autoscaling');
+
+const gcpTfData = requireFile('infra/gcp/terraform/data/main.tf',
+  'infra/gcp/terraform/data/main.tf');
+requireText(gcpTfData, 'google_sql_database_instance',
+  'infra/gcp/terraform/data/main.tf: Cloud SQL instance resource');
+requireText(gcpTfData, 'POSTGRES_15',
+  'infra/gcp/terraform/data/main.tf: PostgreSQL 15 database version');
+requireText(gcpTfData, 'google_redis_instance',
+  'infra/gcp/terraform/data/main.tf: Memorystore Redis resource');
+
+const gcpTfSecurity = requireFile('infra/gcp/terraform/security/main.tf',
+  'infra/gcp/terraform/security/main.tf');
+requireText(gcpTfSecurity, 'google_kms_key_ring',
+  'infra/gcp/terraform/security/main.tf: Cloud KMS key ring resource');
+requireText(gcpTfSecurity, 'google_kms_crypto_key',
+  'infra/gcp/terraform/security/main.tf: Cloud KMS crypto key resource');
+requireText(gcpTfSecurity, 'google_secret_manager_secret',
+  'infra/gcp/terraform/security/main.tf: Secret Manager secret resource');
+requireText(gcpTfSecurity, 'secretmanager.secretAccessor',
+  'infra/gcp/terraform/security/main.tf: Secret Manager secretAccessor IAM role');
+
+const gcpTfObservability = requireFile('infra/gcp/terraform/observability/main.tf',
+  'infra/gcp/terraform/observability/main.tf');
+requireText(gcpTfObservability, 'google_monitoring_dashboard',
+  'infra/gcp/terraform/observability/main.tf: Cloud Monitoring dashboard');
+requireText(gcpTfObservability, 'google_monitoring_alert_policy',
+  'infra/gcp/terraform/observability/main.tf: Cloud Monitoring alert policy');
+requireText(gcpTfObservability, 'denial',
+  'infra/gcp/terraform/observability/main.tf: denial-related alert or metric');
+
+// ---------------------------------------------------------------------------
+// Check 11 — infra/gcp/config-connector/ KRM manifests (GCP Phase 3)
+// ---------------------------------------------------------------------------
+
+const gcpCcSql = requireFile('infra/gcp/config-connector/cloud-sql.yaml',
+  'infra/gcp/config-connector/cloud-sql.yaml');
+requireText(gcpCcSql, 'SQLInstance',
+  'infra/gcp/config-connector/cloud-sql.yaml: SQLInstance KRM resource');
+requireText(gcpCcSql, 'POSTGRES_15',
+  'infra/gcp/config-connector/cloud-sql.yaml: PostgreSQL 15 version');
+
+const gcpCcMemorystore = requireFile('infra/gcp/config-connector/memorystore.yaml',
+  'infra/gcp/config-connector/memorystore.yaml');
+requireText(gcpCcMemorystore, 'RedisInstance',
+  'infra/gcp/config-connector/memorystore.yaml: RedisInstance KRM resource');
+requireText(gcpCcMemorystore, 'STANDARD_HA',
+  'infra/gcp/config-connector/memorystore.yaml: STANDARD_HA Redis tier');
+
+const gcpCcKms = requireFile('infra/gcp/config-connector/cloud-kms.yaml',
+  'infra/gcp/config-connector/cloud-kms.yaml');
+requireText(gcpCcKms, 'KMSKeyRing',
+  'infra/gcp/config-connector/cloud-kms.yaml: KMSKeyRing KRM resource');
+requireText(gcpCcKms, 'KMSCryptoKey',
+  'infra/gcp/config-connector/cloud-kms.yaml: KMSCryptoKey KRM resource');
+requireText(gcpCcKms, 'workloadIdentityUser',
+  'infra/gcp/config-connector/cloud-kms.yaml: Workload Identity IAM binding');
+
+const gcpCcAr = requireFile('infra/gcp/config-connector/artifact-registry.yaml',
+  'infra/gcp/config-connector/artifact-registry.yaml');
+requireText(gcpCcAr, 'ArtifactRegistryRepository',
+  'infra/gcp/config-connector/artifact-registry.yaml: ArtifactRegistryRepository KRM resource');
+
+// ---------------------------------------------------------------------------
+// Check 12 — k8s/helm/euno/values-azure.yaml (cross-cloud)
+// ---------------------------------------------------------------------------
+
+const valuesAzure = requireFile('k8s/helm/euno/values-azure.yaml',
+  'k8s/helm/euno/values-azure.yaml');
+requireText(valuesAzure, 'azurecr.io',
+  'values-azure.yaml: ACR registry reference (azurecr.io)');
+requireText(valuesAzure, 'azure.workload.identity/client-id',
+  'values-azure.yaml: Azure Workload Identity client-id annotation');
+requireText(valuesAzure, 'azure-keyvault',
+  'values-azure.yaml: SIGNING_PROVIDER: azure-keyvault');
+requireText(valuesAzure, 'azure-ad',
+  'values-azure.yaml: IDENTITY_PROVIDER: azure-ad');
+requireText(valuesAzure, 'AZURE_AD_TENANT_ID',
+  'values-azure.yaml: AZURE_AD_TENANT_ID placeholder');
+requireText(valuesAzure, 'managed-csi',
+  'values-azure.yaml: managed-csi AKS storage class for posture-emitter');
+
+// ---------------------------------------------------------------------------
+// Check 13 — docs/multi-cloud.md runbook index (cross-cloud)
+// ---------------------------------------------------------------------------
+
+const multiCloudRunbook = requireFile('docs/multi-cloud.md', 'docs/multi-cloud.md');
+requireText(multiCloudRunbook, 'deploy-eks.md',
+  'docs/multi-cloud.md: link to deploy-eks.md');
+requireText(multiCloudRunbook, 'deploy-gke.md',
+  'docs/multi-cloud.md: link to deploy-gke.md');
+requireText(multiCloudRunbook, 'values-azure.yaml',
+  'docs/multi-cloud.md: reference to values-azure.yaml');
+requireText(multiCloudRunbook, 'migration',
+  'docs/multi-cloud.md: migration path section');
+requireText(multiCloudRunbook, 'cross-chain anchor',
+  'docs/multi-cloud.md: cross-chain anchor migration example');
+
+// ---------------------------------------------------------------------------
+// Check 14 — docs/multi-cloud-plan.md Phase 3 items are checked off
+// ---------------------------------------------------------------------------
+
+requireText(multiCloudPlan, '[x] **Terraform module**',
+  'multi-cloud-plan.md [Phase 3]: GCP Terraform module item is checked off');
+requireText(multiCloudPlan, '[x] **Google Cloud Deployment Manager / Config Connector**',
+  'multi-cloud-plan.md [Phase 3]: Config Connector item is checked off');
+requireText(multiCloudPlan, '[x] **Helm chart — cloud-specific values files**',
+  'multi-cloud-plan.md [Phase 3]: Helm values files item is fully checked off');
+requireText(multiCloudPlan, '[x] **Multi-cloud runbook index**',
+  'multi-cloud-plan.md [Phase 3]: multi-cloud runbook index item is checked off');
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 
