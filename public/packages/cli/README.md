@@ -42,7 +42,7 @@ per-IdP configuration recipes.
 
 ---
 
-## Enterprise Features
+## Stage 5: Enterprise Features
 
 Euno's enterprise tier adds partner DID federation, cross-chain audit
 anchoring, SOC 2 export, and SCIM 2.0 provisioning.

@@ -97,6 +97,13 @@ function makeValidIdpSetup() {
     'ISSUER_SCIM_BEARER_TOKEN=<token>',
     'externalId attribute mapping.',
     'ISSUER_SCIM_GROUP_ROLE_MAP={"EunoReaders":"reader"}',
+    '',
+    '## 11. Google Workspace SCIM bridge (Cloud Identity)',
+    '',
+    'OAuth service account for SCIM provisioning.',
+    'ISSUER_SCIM_BEARER_TOKEN=<token>',
+    'externalId: user.id,   // Google internal user ID',
+    'ISSUER_SCIM_GROUP_ROLE_MAP={"EunoReaders":"reader"}',
   ].join('\n');
 }
 
@@ -123,11 +130,92 @@ function makeValidValuesAws() {
   ].join('\n');
 }
 
+function makeValidDeployGke() {
+  return [
+    '# Deploying Euno on Google Kubernetes Engine (GKE)',
+    '',
+    '## 3. Workload Identity Federation',
+    '',
+    'Configure Workload Identity for each pod.',
+    'iam.gke.io/gcp-service-account annotation.',
+    '',
+    '## 4. Artifact Registry image configuration',
+    '',
+    'Push images to Artifact Registry.',
+    '',
+    '## 5. GKE Ingress and Google-managed SSL certificate',
+    '',
+    'Create a GKE Ingress resource.',
+    'Create a ManagedCertificate for SSL.',
+    '',
+    '## 6. Helm deployment with values-gcp.yaml',
+    '',
+    '## 7. Cloud Monitoring and Security Command Center observability',
+    '',
+    'Prometheus → Cloud Monitoring via OpenTelemetry Collector.',
+    'OCSF audit event → Security Command Center finding mapping.',
+    'Log-based metrics for denial_reason histograms in Cloud Logging.',
+  ].join('\n');
+}
+
+function makeValidSecretsGcp() {
+  return [
+    '# GCP Secret Manager Integration',
+    '',
+    'AUDIT_LEDGER_HMAC_SECRET — stored in Secret Manager.',
+    'ADMIN_API_KEY — stored in Secret Manager.',
+    'PARTNER_DID_PIN_SECRET — stored in Secret Manager.',
+    '',
+    '## 3. IAM bindings',
+    '',
+    'roles/secretmanager.secretAccessor binding for each service account.',
+    '',
+    '## 4. External Secrets Operator (ESO)',
+    '',
+    'Create a SecretStore in the euno namespace.',
+    'Create an ExternalSecret for the gateway.',
+    '',
+    '## 5. Secret Manager Add-on (Secrets Store CSI Driver)',
+    '',
+    'Enable the Secret Manager Add-on on the GKE cluster.',
+    '',
+    '## 6. ESO vs. Secret Manager Add-on — comparison',
+    '',
+    '| Concern | External Secrets Operator | Secret Manager Add-on (CSI) |',
+  ].join('\n');
+}
+
+function makeValidValuesGcp() {
+  return [
+    '# Euno umbrella chart — GCP / GKE overrides',
+    '',
+    'gateway:',
+    '  image:',
+    '    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/tool-gateway',
+    '  serviceAccountAnnotations:',
+    '    iam.gke.io/gcp-service-account: "euno-gateway@my-gcp-project.iam.gserviceaccount.com"',
+    '  env:',
+    '    SIGNING_PROVIDER: gcp-cloudkms',
+    '    GCP_PROJECT_ID: "my-gcp-project"',
+    '',
+    'issuer:',
+    '  env:',
+    '    IDENTITY_PROVIDER: gcp-identity',
+    '',
+    'postureEmitter:',
+    '  persistence:',
+    '    storageClass: premium-rwo',
+  ].join('\n');
+}
+
 function makeValidFixtures(base) {
   writeFileSync(join(base, 'docs', 'deploy-eks.md'), makeValidDeployEks());
   writeFileSync(join(base, 'docs', 'secrets-aws.md'), makeValidSecretsAws());
   writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), makeValidIdpSetup());
   writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-aws.yaml'), makeValidValuesAws());
+  writeFileSync(join(base, 'docs', 'deploy-gke.md'), makeValidDeployGke());
+  writeFileSync(join(base, 'docs', 'secrets-gcp.md'), makeValidSecretsGcp());
+  writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'), makeValidValuesGcp());
 }
 
 function run(root) {
@@ -138,10 +226,10 @@ function run(root) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Tests — AWS Phase 1
 // ---------------------------------------------------------------------------
 
-test('passes on fully valid AWS Phase 1 documentation', () => {
+test('passes on fully valid multi-cloud Phase 1 documentation', () => {
   const base = makeTmpRoot();
   try {
     makeValidFixtures(base);
@@ -436,7 +524,7 @@ test('fails when issuer-idp-setup.md is missing ISSUER_SCIM_BEARER_TOKEN', () =>
   try {
     makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'),
-      makeValidIdpSetup().replace('ISSUER_SCIM_BEARER_TOKEN', 'SCIM_TOKEN'));
+      makeValidIdpSetup().replace(/ISSUER_SCIM_BEARER_TOKEN/g, 'SCIM_TOKEN'));
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /ISSUER_SCIM_BEARER_TOKEN/);
@@ -450,7 +538,7 @@ test('fails when issuer-idp-setup.md is missing the externalId attribute mapping
   try {
     makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'),
-      makeValidIdpSetup().replace('externalId', 'external_id'));
+      makeValidIdpSetup().replace(/externalId/g, 'external_id'));
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /externalId/);
@@ -546,6 +634,433 @@ test('accepts --root=<path> (equals-sign form)', () => {
       timeout: 15000,
     });
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Tests — GCP Phase 1
+// ---------------------------------------------------------------------------
+
+test('fails when docs/deploy-gke.md is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'docs', 'deploy-gke.md'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /deploy-gke\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Workload Identity section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace(/Workload Identity/g, 'Pod Identity'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Workload Identity/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Workload Identity annotation example', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace('iam.gke.io/gcp-service-account', 'service-account-annotation'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Workload Identity annotation/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Artifact Registry section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace(/Artifact Registry/g, 'Container Registry'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Artifact Registry/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the GKE Ingress section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace(/GKE Ingress/g, 'Ingress'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GKE Ingress/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Google-managed SSL certificate section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace('ManagedCertificate', 'Certificate'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ManagedCertificate/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md does not reference values-gcp.yaml', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace('values-gcp.yaml', 'values.yaml'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /values-gcp\.yaml/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Cloud Monitoring section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace(/Cloud Monitoring/g, 'Metrics'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Cloud Monitoring/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the Security Command Center section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace(/Security Command Center/g, 'SIEM'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Security Command Center/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the OCSF → SCC mapping', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace('OCSF', 'structured'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /OCSF/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when deploy-gke.md is missing the denial_reason histogram query', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'deploy-gke.md'),
+      makeValidDeployGke().replace('denial_reason', 'denial-reason'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /denial_reason histogram/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when docs/secrets-gcp.md is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'docs', 'secrets-gcp.md'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /secrets-gcp\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing AUDIT_LEDGER_HMAC_SECRET reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace('AUDIT_LEDGER_HMAC_SECRET', 'HMAC_SECRET'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AUDIT_LEDGER_HMAC_SECRET/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing PARTNER_DID_PIN_SECRET reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace('PARTNER_DID_PIN_SECRET', 'DID_PIN_SECRET'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /PARTNER_DID_PIN_SECRET/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing the Secret Accessor IAM role binding', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace('secretAccessor', 'secretAdmin'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Secret Accessor/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing the ESO section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace(/External Secrets Operator/g, 'ESO'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /External Secrets Operator/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing the SecretStore example', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace('SecretStore', 'StoreResource'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /SecretStore/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing the Secret Manager Add-on section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace(/Secret Manager Add-on/g, 'CSI Add-on'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Secret Manager Add-on/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when secrets-gcp.md is missing the ESO vs. comparison', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'secrets-gcp.md'),
+      makeValidSecretsGcp().replace('ESO vs.', 'Comparison:'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ESO vs\./);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md is missing the Google Workspace SCIM bridge section', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'),
+      makeValidIdpSetup().replace('Google Workspace SCIM bridge', 'GWS SCIM section'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Google Workspace SCIM bridge/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md is missing the OAuth service account reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'),
+      makeValidIdpSetup().replace('OAuth service account', 'service account'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /OAuth service account/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md is missing the externalId = user.id mapping', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'),
+      makeValidIdpSetup().replace('externalId: user.id,', 'externalId: userId,'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /externalId.*user\.id/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md §11 is missing ISSUER_SCIM_BEARER_TOKEN', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    // Keep ISSUER_SCIM_BEARER_TOKEN in §10 but remove it from §11 only.
+    const content = makeValidIdpSetup().replace(
+      'OAuth service account for SCIM provisioning.\nISSUER_SCIM_BEARER_TOKEN=<token>',
+      'OAuth service account for SCIM provisioning.');
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), content);
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ISSUER_SCIM_BEARER_TOKEN/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when issuer-idp-setup.md §11 is missing ISSUER_SCIM_GROUP_ROLE_MAP', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    // Keep ISSUER_SCIM_GROUP_ROLE_MAP in §10 but remove it from §11 only.
+    const content = makeValidIdpSetup().replace(
+      'externalId: user.id,   // Google internal user ID\nISSUER_SCIM_GROUP_ROLE_MAP={"EunoReaders":"reader"}',
+      'externalId: user.id,   // Google internal user ID');
+    writeFileSync(join(base, 'docs', 'issuer-idp-setup.md'), content);
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ISSUER_SCIM_GROUP_ROLE_MAP/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when k8s/helm/euno/values-gcp.yaml is missing', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    unlinkSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /values-gcp\.yaml/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when values-gcp.yaml is missing the Artifact Registry reference', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'),
+      makeValidValuesGcp().replace(/pkg\.dev/g, 'gcr.io'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Artifact Registry.*pkg\.dev/i);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when values-gcp.yaml is missing the Workload Identity annotation', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'),
+      makeValidValuesGcp().replace(/iam\.gke\.io\/gcp-service-account/g, 'service-account'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /iam\.gke\.io\/gcp-service-account/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when values-gcp.yaml is missing gcp-cloudkms signing provider', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'),
+      makeValidValuesGcp().replace('gcp-cloudkms', 'software'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /gcp-cloudkms/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when values-gcp.yaml is missing gcp-identity identity provider', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'),
+      makeValidValuesGcp().replace('gcp-identity', 'azure-ad'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /gcp-identity/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('fails when values-gcp.yaml is missing GCP_PROJECT_ID placeholder', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-gcp.yaml'),
+      makeValidValuesGcp().replace(/GCP_PROJECT_ID/g, 'PROJECT_ID'));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GCP_PROJECT_ID/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

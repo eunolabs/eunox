@@ -113,24 +113,24 @@ workarounds.
 
 ### Phase 1 — Documentation and configuration (near-term)
 
-- [ ] **GKE deployment guide** (`docs/deploy-gke.md`)
+- [x] **GKE deployment guide** (`docs/deploy-gke.md`)
   - Workload Identity Federation for capability-issuer and tool-gateway pods
     (no service account keys on disk)
   - Artifact Registry image push and pull configuration
   - GKE Ingress + Google-managed SSL certificate setup
   - Example `values.yaml` overrides for the Helm umbrella chart
 
-- [ ] **GCP Secret Manager integration** (`docs/secrets-gcp.md`)
+- [x] **GCP Secret Manager integration** (`docs/secrets-gcp.md`)
   - How to reference secrets from Secret Manager at pod startup
   - External Secrets Operator vs. Secret Manager add-on comparison
   - IAM binding patterns for Workload Identity
 
-- [ ] **Google Workspace SCIM bridge guide** (`docs/issuer-idp-setup.md` §Google Workspace SCIM)
+- [x] **Google Workspace SCIM bridge guide** (`docs/issuer-idp-setup.md` §Google Workspace SCIM)
   - Google Workspace SCIM provisioning endpoint and OAuth service account setup
   - Attribute mappings for `sub`, `email`, and `groups` claims to euno roles
   - Cloud Identity → euno role mapping table example
 
-- [ ] **Cloud Monitoring / Security Command Center observability guide**
+- [x] **Cloud Monitoring / Security Command Center observability guide**
   - Prometheus → Cloud Monitoring (via OpenTelemetry Collector) integration
   - OCSF audit event → Security Command Center finding type mapping
   - Log-based metrics for denial histograms in Cloud Logging
@@ -195,7 +195,7 @@ workarounds.
 - [ ] **Helm chart — cloud-specific values files**
   - `k8s/helm/euno/values-azure.yaml`
   - [x] `k8s/helm/euno/values-aws.yaml`
-  - `k8s/helm/euno/values-gcp.yaml`
+  - [x] `k8s/helm/euno/values-gcp.yaml`
   - Each file documents every provider-specific override with inline comments
 
 ### Testing
