@@ -8,9 +8,9 @@ Command-line interface for the Euno capability-issuer and agent governance platf
 npm install -g @euno/cli
 ```
 
-## Stage 4: Hosted Issuer + Identity Provider
+## Hosted Issuer + Identity Provider
 
-With the Stage-4 hosted issuer, `euno request` and `euno validate-token`
+With the hosted issuer, `euno request` and `euno validate-token`
 connect to a live token-issuance service that authenticates users through
 your identity provider (Entra ID, AWS Cognito, or GCP Cloud Identity) and
 issues JWT capability tokens bound to the requesting user's identity.
@@ -42,11 +42,10 @@ per-IdP configuration recipes.
 
 ---
 
-## Stage 5: Enterprise Features
+## Enterprise Features
 
-Stage 5 promotes four previously quarantined packages to GA and adds
-partner DID federation, cross-chain audit anchoring, SOC 2 export, and
-SCIM 2.0 provisioning.
+Euno's enterprise tier adds partner DID federation, cross-chain audit
+anchoring, SOC 2 export, and SCIM 2.0 provisioning.
 
 ### Partner DID federation
 
@@ -103,8 +102,8 @@ euno discover --issuer-url https://issuer.euno.example
 The document reports `partnerFederation`, `scim`, `auditExport`, and
 `capabilities` fields (schema version 1.0.0).
 
-See [`docs/self-host.md §12`](../../../../docs/self-host.md) for the
-complete Stage-5 operator guide.
+See [`docs/self-host.md`](../../../../docs/self-host.md) for the
+complete operator guide.
 
 ---
 

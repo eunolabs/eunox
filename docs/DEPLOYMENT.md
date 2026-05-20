@@ -1,11 +1,13 @@
 # Deployment Notes
 
-Stage 1 does not require deployment: `@euno/mcp` runs locally as a stdio or
-HTTP MCP proxy and writes local audit evidence under `~/.euno/`.
+`@euno/mcp` runs locally as a stdio or HTTP MCP proxy and writes local
+audit evidence under `~/.euno/`. No server-side deployment is required for
+local-mode usage.
 
-The hosted platform services are frozen during Stages 1–2 and are not the
-recommended entry point for new users. When deploying the platform for an
-internal design partner, use the current workspace paths:
+The hosted platform services (Capability Issuer and Tool Gateway) are
+available for teams that need shared state, persistent audit, and managed
+key infrastructure. When deploying the platform for an internal design
+partner, use the current workspace paths:
 
 | Service | Workspace | Default port |
 | --- | --- | --- |
@@ -86,7 +88,7 @@ in code; this is not yet exposed as a standalone env var — wire it via
 
 Set `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
 
-**This is the recommended default for any Stage 3+ production deployment.**
+**This is the recommended default for any multi-replica or multi-tenant production deployment.**
 
 Each gateway replica maintains its own independent chain segment in the same
 PostgreSQL table.  Write serialisation is handled by an in-process queue

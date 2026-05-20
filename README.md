@@ -97,7 +97,7 @@ Claude Desktop / Cursor / Windsurf / LangChain.js / HTTP-transport setups.
   `--policy-backend`. Domain-specific guards via `--custom-condition`.
 - 🔒 **Zero infra. Zero cloud.** Runs entirely on your machine.
 
-### Hosted gateway (Stage 3)
+### Hosted gateway
 
 When your team outgrows a single process, one config change routes
 enforcement through the hosted Euno gateway — shared call counters, a
@@ -117,12 +117,12 @@ See [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) for the
 step-by-step guide, the cryptographic story behind the `sk-...` key, and the
 explicit data-boundary analysis (what leaves your network in hosted mode).
 
-### Hosted issuer (Stage 4)
+### Identity-bound capability tokens
 
-Stage 4 adds the **Capability Issuer** — a token-issuance service that ties
-agent capabilities to real user identities through your existing identity
-provider (Entra ID, AWS Cognito, or GCP Cloud Identity). Instead of a shared
-API key, each agent token is bound to the user who requested it:
+Euno's **Capability Issuer** ties agent capabilities to real user identities
+through your existing identity provider (Entra ID, AWS Cognito, or GCP
+Cloud Identity). Instead of a shared API key, each agent token is bound to
+the user who requested it:
 
 ```bash
 # Request a capability token via your IdP (PKCE flow)
@@ -143,13 +143,13 @@ many agents.
 
 See [`docs/quickstart-stage-4.md`](./docs/quickstart-stage-4.md) for the
 full flow, [`docs/issuer-idp-setup.md`](./docs/issuer-idp-setup.md) for IdP
-configuration, and [`docs/self-host.md §11`](./docs/self-host.md) for
+configuration, and [`docs/self-host.md`](./docs/self-host.md) for
 self-hosting the issuer alongside the gateway.
 
-### Enterprise deployment (Stage 5)
+### Enterprise compliance and federation
 
-Stage 5 adds the full enterprise compliance and federation tier. All four
-quarantined packages are now GA:
+Euno's enterprise tier adds full compliance and cross-organization federation. All
+enterprise packages are generally available:
 
 ```bash
 # Verify a partner-issued capability token (EdDSA, did:web or did:ion)
@@ -168,7 +168,7 @@ euno audit export \
 euno discover --issuer-url https://issuer.euno.example
 ```
 
-Key capabilities added in Stage 5:
+Key capabilities in the enterprise tier:
 
 - 🏛️  **Partner DID federation.** Cross-org trust via W3C DIDs (`did:web`,
   `did:ion`) with per-DID circuit breakers, two-eyes approval workflow, and
@@ -184,36 +184,34 @@ Key capabilities added in Stage 5:
   is ever called.
 - 👤 **SCIM 2.0 provisioning.** Automatic role-to-capability mapping from
   your enterprise IdP directory via the SCIM 2.0 protocol.
-- 🔍 **Discovery endpoint v1.0.0.** `/.well-known/capability-issuer` now
-  returns Stage-5 fields (`partnerFederation`, `scim`, `auditExport`,
-  `capabilities`) with ETag caching.
+- 🔍 **Discovery endpoint.** `/.well-known/capability-issuer` returns
+  federation, SCIM, audit-export, and capabilities metadata with ETag caching.
 - 📦 **On-prem Helm bundle.** A single umbrella chart deploys all six
   services; `k8s/air-gap-images.txt` + `scripts/pull-air-gap-images.sh`
   support fully air-gapped installations.
 
-See [`docs/self-host.md §12`](./docs/self-host.md) for the complete
+See [`docs/self-host.md`](./docs/self-host.md) for the complete
 self-hosting runbook and [`docs/security/soc2-mapping.md`](./docs/security/soc2-mapping.md)
 for the SOC 2 control mapping.
 
 See [the website](./web/features.html) for worked demos of every
 condition type.
 
-## Project status
+## Platform capabilities
 
-euno follows a [staged execution plan](./docs/mvp.md):
+euno is production-ready across all capability tiers:
 
-| Stage | Ships | Status |
-|-------|-------|--------|
-| 0 | Common types, CLI, license boundary, repo structure | ✅ Done |
-| 1 | `@euno/mcp` 0.1.x — local MCP proxy, policy engine, OCSF audit | ✅ Done |
-| 2 | `@euno/mcp` 0.1.0 — full condition matrix, `@euno/langchain`, reference policies | ✅ Done |
-| 3 | Hosted Tool Gateway, API-key façade, signed JWT capability tokens | ✅ Done |
-| 4 | Capability Issuer + IdP integration (Entra ID, Cognito, Cloud Identity) | ✅ Done |
-| 5 | Enterprise: DID federation, KMS, SOC 2, multi-cloud | ✅ **Done** — see [docs/mvp.md §Stage 5](./docs/mvp.md#stage-5-enterprise--full-vision) |
+| Capability tier | What's included | Status |
+|-----------------|-----------------|--------|
+| **Local proxy** | `@euno/mcp` proxy, policy engine, OCSF audit log, full condition matrix, `@euno/langchain` companion, reference policies | ✅ GA |
+| **Hosted gateway** | Tool Gateway, API-key façade, signed JWT capability tokens, shared Redis state, Postgres audit ledger | ✅ GA |
+| **Identity-bound tokens** | Capability Issuer, IdP integration (Entra ID, Cognito, Cloud Identity), PKCE flow, role-to-capability mapping | ✅ GA |
+| **Enterprise** | DID federation, KMS signing, SOC 2 audit export, SCIM 2.0, cross-chain anchor, AGT guard, on-prem Helm bundle | ✅ GA |
+
+See [`docs/mvp.md`](./docs/mvp.md) for the full implementation history.
 
 The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
-`framework-adapters`) are **feature-frozen** during Stages 0–2 — accepting
-only security fixes and dependency bumps.
+`framework-adapters`) accept security fixes and dependency bumps at all times.
 
 ## Packages
 

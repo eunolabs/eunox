@@ -214,7 +214,7 @@ The flag is **repeatable** — pass `--policy-backend` multiple times to load
 several modules.  Module errors fail fast before the proxy starts.
 
 See [docs/policy-backends.md](./docs/policy-backends.md) for the full interface
-reference, an OPA HTTP worked example, and Stage-3 compatibility notes.
+reference, an OPA HTTP worked example, and hosted-gateway compatibility notes.
 
 ## Custom conditions
 
@@ -312,7 +312,7 @@ On timeout the proxy returns a structured `CapabilityDenied` result with
 
 ---
 
-## Stage-3 remote-enforcer mode
+## Remote enforcer mode (hosted gateway)
 
 `@euno/mcp` can delegate enforcement to the hosted Euno gateway instead of
 evaluating policy in-process.  Pass `--enforcer-url` and `--enforcer-api-key`
