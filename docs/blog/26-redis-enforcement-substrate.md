@@ -159,7 +159,7 @@ The gateway bootstrap runs `checkProductionRedisHa()` and refuses to start if an
 
 The reason is that single-node Redis is a single point of failure for every Redis-backed enforcement check. In fail-closed mode, a Redis node failure stops the entire gateway. The HA check ensures that before you ever deploy to production, you've set up Redis Cluster or Redis Sentinel.
 
-The check inspects the URL scheme (or seed-list format) and verifies that it points to a Sentinel or Cluster setup. Accepted HA patterns are `redis+sentinel://`, `rediss+sentinel://`, `redis+cluster://`, `rediss+cluster://`, or comma-separated seed nodes. A plain `redis://host:6379` in production mode causes startup failure with a CR-3 error beginning: `"CR-3: Gateway refused to start — ... appears to point at a single-node Redis instance."`
+The check inspects the URL scheme (or seed-list format) and verifies that it points to a Sentinel or Cluster setup. Accepted HA patterns are `redis+sentinel://`, `rediss+sentinel://`, `redis+cluster://`, `rediss+cluster://`, or comma-separated seed nodes. A plain `redis://host:6379` in production mode causes startup failure with a CR-3 error. The exact implementation includes the env var name (for example `REDIS_URL`) and reads: `"CR-3: Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance. In production, all runtime-security state stores ... See docs/DEPLOYMENT.md §\"Redis HA for production\"."`
 
 For testing and development, non-production environments bypass this check. There is no `ALLOW_SINGLE_NODE_REDIS` production override.
 

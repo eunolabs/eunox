@@ -102,7 +102,7 @@ function lookupUser(scimPayload):
   return null
 ```
 
-The important constraint is that this lookup does not currently backfill `externalId` when a match is found by `userName`, and it does not emit a dedicated warning log for fallback lookups. Operationally, that means IdP configuration quality still matters: sending stable `externalId` values from the start is the safest way to avoid duplicate-identity edge cases during sync events.
+The important constraint is that this lookup does not currently backfill `externalId` when a match is found by `userName`, and it does not emit a dedicated warning log for fallback lookups. That's a known observability limitation in the current implementation. Operationally, it means IdP configuration quality still matters: sending stable `externalId` values from the start is the safest way to avoid duplicate-identity edge cases during sync events.
 
 ---
 
