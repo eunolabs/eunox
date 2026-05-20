@@ -133,9 +133,9 @@ An agent calls the `query_db` tool with a SQL query. The gateway evaluates the c
     "svc_name": "postgres-mcp-server"
   },
   "unmapped": {
-    "tenant_id": "acme-corp",
-    "condition_evaluations": [],
-    "obligations_applied": ["log"]
+    "tenantId": "acme-corp",
+    "conditionEvaluations": [],
+    "obligationsApplied": ["log"]
   }
 }
 ```
@@ -146,7 +146,7 @@ That's considerably more verbose than the minimal schema I almost shipped. Let m
 
 **`actor.policy`** is an extension to the standard actor structure. OCSF's API Activity class defines an `actor` object but doesn't mandate a policy field. We add it because the capability manifest that governed the enforcement decision is critical context for any audit query. "Which policy version was active when this call happened?" is the first question in many incident response investigations.
 
-**`unmapped`** is OCSF's escape hatch for extension fields that don't fit the standard schema. The standard advises putting non-standard fields here rather than inventing top-level keys. `tenant_id`, `condition_evaluations`, and `obligations_applied` live here. They show up in SIEM ingestion as extended fields and are fully queryable, but the ingestion pipeline knows not to try to normalize them against the standard schema.
+**`unmapped`** is OCSF's escape hatch for extension fields that don't fit the standard schema. The standard advises putting non-standard fields here rather than inventing top-level keys. `tenantId`, `conditionEvaluations`, and `obligationsApplied` live here. They show up in SIEM ingestion as extended fields and are fully queryable, but the ingestion pipeline knows not to try to normalize them against the standard schema.
 
 ---
 
@@ -176,17 +176,17 @@ An allowed call is interesting. A denied call is the record that actually gets s
     }
   },
   "unmapped": {
-    "tenant_id": "acme-corp",
-    "denial_code": "ALLOWED_OPERATIONS_VIOLATION",
-    "condition_type": "allowedOperations",
-    "matched_resource": "read_file"
+    "tenantId": "acme-corp",
+    "denialCode": "ALLOWED_OPERATIONS_VIOLATION",
+    "conditionType": "allowedOperations",
+    "matchedResource": "read_file"
   }
 }
 ```
 
 The `status: "Failure"` with `status_id: 2` is OCSF standard. The `api.response.error` field is the normalized denial code. The `severity_id: 3` (Medium) on denials is a deliberate choice — not every denial is an attack; agents probe boundaries naturally during normal operation. But denials cluster analysis in a SIEM benefits from having some severity attached. A single denial is informational; twenty denials in thirty seconds from the same session is worth a page.
 
-The `unmapped.condition_type` and `unmapped.denial_code` fields are the most useful for euno-specific queries. If you're investigating "why did the agent fail?" in your SIEM, filtering on `unmapped.condition_type = "maxCalls"` vs `unmapped.condition_type = "allowedOperations"` immediately partitions the investigation space.
+The `unmapped.conditionType` and `unmapped.denialCode` fields are the most useful for euno-specific queries. If you're investigating "why did the agent fail?" in your SIEM, filtering on `unmapped.conditionType = "maxCalls"` vs `unmapped.conditionType = "allowedOperations"` immediately partitions the investigation space.
 
 ---
 
@@ -208,11 +208,11 @@ Not every event is a tool call. The Authorization class (`class_uid: 3003`) cove
     "uid": "capability-manifest:sales-research-bot:v3"
   },
   "unmapped": {
-    "event_type": "TOKEN_ISSUED",
-    "tenant_id": "acme-corp",
+    "eventType": "TOKEN_ISSUED",
+    "tenantId": "acme-corp",
     "jti": "cap_token_abc123",
-    "agent_id": "sales-research-bot",
-    "token_ttl_seconds": 900
+    "agentId": "sales-research-bot",
+    "tokenTtlSeconds": 900
   }
 }
 ```
@@ -247,7 +247,7 @@ It's not free. The verbosity is real — a minimal custom audit record might be 
 
 The schema discipline also requires discipline in the team. Every new event type, every new field, goes through a mapping exercise: does this fit in an existing OCSF field, or does it go into `unmapped`? Getting that wrong in either direction is a problem. Over-mapping (forcing something into a standard field where it doesn't fit) creates confusion for security teams who see a familiar field name with a non-standard meaning. Under-mapping (putting everything in `unmapped` because it's easier) undermines the integration value entirely.
 
-The rule I use: if a field has a direct semantic equivalent in the OCSF schema, use the OCSF field. If it's AI-specific or euno-specific and has no OCSF equivalent, put it in `unmapped` with a `euno_` prefix. The prefix namespace makes it immediately clear, in any SIEM query, whether a field is OCSF standard or euno-specific.
+The rule I use: if a field has a direct semantic equivalent in the OCSF schema, use the OCSF field. If it's AI-specific or euno-specific and has no OCSF equivalent, put it in `unmapped` using our existing camelCase extension naming. Keeping that naming consistent makes it immediately clear, in any SIEM query, which fields are OCSF standard and which are euno-specific extensions.
 
 ---
 
@@ -257,7 +257,7 @@ Yes, with two things I'd do differently.
 
 First, I'd decide earlier to use `unmapped` for AI-specific fields and stick to it. The early codebase had some AI fields stuffed into OCSF `actor.process` and `api.request.flags` in ways that technically fit but made the records harder to read. Cleaning that up mid-stream is fine but takes time.
 
-Second, I'd document the OCSF class UIDs and field mapping as a first-class deliverable in the README, not an afterthought in the security docs. Every conversation with a security team starts with "show me the event schema" — having a one-page reference for the mapping accelerates those conversations substantially. The mapping is now in `docs/security/ocsf-mapping.md` and it's genuinely one of the first things I send to security teams evaluating the platform.
+Second, I'd document the OCSF class UIDs and field mapping as a first-class deliverable in the README, not an afterthought in the security docs. Every conversation with a security team starts with "show me the event schema" — having a one-page reference for the mapping accelerates those conversations substantially. The mapping is now in `docs/security/soc2-mapping.md` and it's genuinely one of the first things I send to security teams evaluating the platform.
 
 The bottom line: OCSF adds verbosity and schema discipline overhead. What it gives you in return — SIEM compatibility without customer-specific mapping work, a forward-compatible path to AI-specific event classes, and a standard vocabulary for SOC 2 evidence — is worth the cost for any security platform that expects enterprise customers.
 

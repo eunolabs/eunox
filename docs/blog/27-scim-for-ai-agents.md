@@ -87,7 +87,7 @@ The problem is that not every IdP sends `externalId` consistently. Some configur
 
 If we require `externalId` for all operations, we'll silently fail or create duplicate records whenever an IdP sends a `userName`-only event. If we require `userName`, we'll create duplicate records whenever the same user is pushed with different usernames (which shouldn't happen but does, during configuration mistakes or IdP migrations).
 
-The fallback strategy we implemented:
+The lookup strategy we implemented:
 
 ```
 function lookupUser(scimPayload):
@@ -97,19 +97,12 @@ function lookupUser(scimPayload):
     
   if scimPayload.userName:
     user = findByUserName(scimPayload.userName)
-    if user:
-      # Backfill externalId if we found the user by userName
-      if scimPayload.externalId and not user.externalId:
-        user.externalId = scimPayload.externalId
-        save(user)
-      return user
+    if user: return user
   
   return null
 ```
 
-The backfill step is important. If the IdP first sends a CREATE with `userName` only, and then later sends an UPDATE with both `externalId` and `userName`, we backfill the `externalId` on the record so future operations use the more stable identifier. This handles IdP configurations that don't send `externalId` on the initial CREATE but do on subsequent operations.
-
-We log a warning on every operation where we had to fall back to `userName` lookup: `"SCIM externalId missing for user {userName}; fell back to userName lookup. Configure your IdP to send externalId for stable provisioning."` This is visible in the gateway logs and in the SIEM, so an administrator configuring a new IdP integration will see the warnings and know to fix the IdP configuration.
+The important constraint is that this lookup does not currently backfill `externalId` when a match is found by `userName`, and it does not emit a dedicated warning log for fallback lookups. Operationally, that means IdP configuration quality still matters: sending stable `externalId` values from the start is the safest way to avoid duplicate-identity edge cases during sync events.
 
 ---
 
@@ -132,31 +125,23 @@ The SCIM `PATCH` operation uses a specific patch format defined in RFC 7644 and 
 }
 ```
 
-And to remove a member:
+And to remove one or more members by value list:
 
 ```json
 {
   "Operations": [
     {
       "op": "remove",
-      "path": "members[value eq \"user-scim-id-abc123\"]"
+      "path": "members",
+      "value": [
+        { "value": "user-scim-id-abc123" }
+      ]
     }
   ]
 }
 ```
 
-The `members[value eq "..."]` filter syntax is defined in the SCIM filter grammar (RFC 7644 §3.4.2). Parsing SCIM filter expressions is a non-trivial grammar implementation. I considered using an external library for it but ended up writing the parser ourselves because the external options we evaluated all had issues with complex filter expressions and some didn't handle the nested attribute path syntax correctly.
-
-The filter expression parser handles:
-
-- Equality: `value eq "..."`
-- Inequality: `value ne "..."`
-- Contains: `displayName co "ops"`
-- Starts with: `displayName sw "ai-"`
-- And/Or: `(value eq "abc") and (displayName co "ops")`
-- Presence: `externalId pr` (attribute is present)
-
-In practice, the filters in SCIM `PATCH` operations from real IdPs are almost always simple equality filters on the `value` attribute. But if your parser doesn't handle the full grammar, you'll get a 400 from an edge case some IdP sends six months after go-live, and the provisioning pipeline will stall until someone debugs it.
+For query filtering (`GET /Users?filter=...`, `GET /Groups?filter=...`), the current implementation supports a focused subset: `eq` and `co` on supported attributes. For group membership PATCH, we handle direct `members` add/remove/replace operations; we do not currently parse `members[value eq "..."]` path filters.
 
 ---
 
@@ -245,18 +230,18 @@ Some IdPs periodically do a full sync — they push the complete state of all us
 
 A naïve implementation of SCIM CREATE will create duplicate user records if the same user is pushed again with a new SCIM resource ID. IdPs sometimes change their internal IDs for a user across full syncs (particularly if the IdP configuration changed between syncs).
 
-Our handling:
-1. On `POST /scim/v2/Users`, after checking `externalId` and `userName` for existing records, if neither matches, create a new record — that's a genuinely new user.
-2. If `externalId` matches an existing record, this is an idempotent re-creation. Return `200 OK` with the existing resource representation (not `201 Created`). Don't modify the existing record unless the payload contains meaningful changes.
-3. Log a warning if the `userName` matches an existing record but `externalId` is new or different — this is either a rename, an IdP ID change, or a misconfiguration. Flag it for operator review.
+Our current handling is stricter:
+1. On `POST /scim/v2/Users`, attempt to create a new record.
+2. If uniqueness constraints are hit, return `409 User already exists`.
+3. Use PUT/PATCH flows for updates to existing users.
 
-The idempotency behavior on CREATE is technically non-standard (RFC 7644 says `POST` to `/Users` always creates), but every real IdP integration we've worked with benefits from it. Full syncs that would otherwise create duplicates on every run become safe no-ops for existing users. The `409 Conflict` response from a strict RFC 7644 implementation would cause IdP sync jobs to report errors, which generates noise and erodes operator trust in the integration.
+This is RFC-aligned behavior for create semantics, but it means IdP full-sync jobs must be configured to treat existing-user conflicts as expected update signals, not always-fatal provisioning failures.
 
 ---
 
 ## Testing your SCIM integration before go-live
 
-The SCIM spec is specific enough that automated testing against a reference implementation is possible. We ship a SCIM validation test suite at `tests/scim-integration/` that:
+The SCIM spec is specific enough that automated testing against a reference implementation is possible. In this repo, the SCIM coverage lives in `euno-platform/packages/capability-issuer/tests/scim.test.ts` and exercises flows such as:
 
 1. Provisions a test user via `POST /scim/v2/Users`
 2. Verifies the user appears in token issuance with the expected role
