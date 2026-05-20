@@ -51,7 +51,7 @@ import {
   SignedBatchCommitment,
   SignedCrossChainCommitment,
 } from '@euno/common';
-import { createS3AnchorClientFromEnv, S3AnchorClient } from '@euno/common-infra';
+import { createS3AnchorClientFromEnv, createObjectStoreFromEnv, ObjectStore, S3AnchorClient } from '@euno/common-infra';
 import { CrossChainCommitmentStore } from './routes/chain-proof';
 
 type Logger = ReturnType<typeof createLogger>;
@@ -266,6 +266,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
     AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS?: number;
     AUDIT_ANCHOR_URL?: string;
     ENABLE_CROSS_CHAIN_ANCHOR?: boolean;
+    AUDIT_LEDGER_OBJECT_STORE_PROVIDER?: string;
   };
   const dynConfig = validated as typeof validated & DynamicConfig;
   let evidenceSigner: EvidenceSigner | undefined;
@@ -338,11 +339,29 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
       const gcsBucket = dynConfig.AUDIT_LEDGER_GCS_BUCKET;
       const anchorInterval = dynConfig.AUDIT_LEDGER_ANCHOR_INTERVAL ?? 1000;
       const aclEndpoint = dynConfig.AUDIT_LEDGER_ACL_ENDPOINT;
+      const objectStoreProvider = dynConfig.AUDIT_LEDGER_OBJECT_STORE_PROVIDER;
+      // Reuse the existing legacy prefix knobs for the generic object-store
+      // path. Azure (and any future provider without a dedicated prefix env)
+      // falls back to whichever legacy prefix is configured so operators can
+      // still segregate anchors by environment/cluster.
+      const objectStoresPrefix =
+        objectStoreProvider === 'gcs'
+          ? env['AUDIT_LEDGER_GCS_PREFIX']
+          : objectStoreProvider === 's3'
+            ? env['AUDIT_LEDGER_S3_PREFIX']
+            : env['AUDIT_LEDGER_S3_PREFIX'] ?? env['AUDIT_LEDGER_GCS_PREFIX'];
+
+      // Build a cloud-agnostic ObjectStore when AUDIT_LEDGER_OBJECT_STORE_PROVIDER is set.
+      let genericObjectStore: ObjectStore | undefined;
+      if (objectStoreProvider) {
+        genericObjectStore = createObjectStoreFromEnv(env);
+        logger.info('Audit ledger object-store anchor enabled', { provider: objectStoreProvider });
+      }
 
       if (ledgerBackendName === 'postgres') {
         if (!pgUrl) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_PG_URL to be set.');
         if (!hmacSecret) throw new Error('AUDIT_LEDGER_BACKEND=postgres requires AUDIT_LEDGER_HMAC_SECRET to be set.');
-        if (gcsBucket) {
+        if (gcsBucket && objectStoreProvider !== 'gcs') {
           throw new Error(
             'AUDIT_LEDGER_GCS_BUCKET is set but no GCS client is wired in the standard ' +
               'bootstrap. Provide a GcsAnchorClient by constructing PostgresLedgerBackend ' +
@@ -379,6 +398,8 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
                 },
               }
             : {}),
+          ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+          ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
           onAnchorError: (err: Error) => logger.error('Ledger anchor failed', { error: err.message }),
         });
 
@@ -410,6 +431,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           table: table ?? 'euno_audit_ledger',
           anchorInterval,
           s3Bucket: s3Bucket ?? null,
+          objectStoreProvider: objectStoreProvider ?? null,
         });
       } else if (ledgerBackendName === 'acl') {
         let aclClient: AzureConfidentialLedgerClient;
@@ -481,7 +503,9 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
                 },
               }
             : {}),
-          onAnchorError: (err: Error) => logger.error('Per-replica ledger S3 anchor failed', { error: err.message }),
+          ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+          ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
+          onAnchorError: (err: Error) => logger.error('Per-replica ledger anchor failed', { error: err.message }),
         });
 
         if (runMigrations) {
@@ -511,7 +535,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           table: table ?? 'euno_audit_ledger_v2',
         });
 
-        if (gcsBucket) {
+        if (gcsBucket && objectStoreProvider !== 'gcs') {
           logger.warn(
             'AUDIT_LEDGER_GCS_BUCKET is set with per-replica-postgres but no GCS client is ' +
               'wired in the standard bootstrap. The bucket value is ignored — periodic Merkle-root ' +
@@ -554,12 +578,15 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
               store.add(c);
               lastCommitmentTs = Date.now();
             },
+            ...(genericObjectStore ? { objectStores: [genericObjectStore] } : {}),
+            ...(genericObjectStore && objectStoresPrefix ? { objectStoresPrefix } : {}),
           };
           crossChainAnchor = new CrossChainAnchor(perReplicaBackend, anchorOpts);
           crossChainAnchor.start();
           logger.info('CrossChainAnchor auto-started (ENABLE_CROSS_CHAIN_ANCHOR=true)', {
             intervalMs: crossChainIntervalMs,
             coordinatorId: replicaId,
+            objectStoreProvider: objectStoreProvider ?? null,
           });
 
           // Anchor lag gauge — updated lazily via collect() so no timer is needed.
@@ -583,6 +610,7 @@ export async function buildAuditModule(input: AuditModuleInput): Promise<AuditMo
           crossChainEnabled: crossChainAnchor !== undefined,
           crossChainAutoStarted: enableCrossChain && !crossChainAnchorOverride,
           crossChainIntervalMs,
+          objectStoreProvider: objectStoreProvider ?? null,
         });
       } else {
         throw new Error(`Unknown AUDIT_LEDGER_BACKEND value: "${ledgerBackendName}"`);

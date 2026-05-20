@@ -7,3 +7,4 @@ export * from './kms-evidence-signer';
 export * from './kms-token-signer';
 export * from './redis-usage-meter';
 export * from './s3-anchor-client';
+export * from './object-store';

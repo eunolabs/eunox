@@ -508,52 +508,41 @@ describe('chain-proof route: timingSafeEqual safety', () => {
 // ── buildAuditModule ENABLE_CROSS_CHAIN_ANCHOR focused test ──────────────────
 
 describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
-  test('17. creates crossChainCommitmentStore and calls start() on the anchor', async () => {
-    // Spy on CrossChainAnchor.prototype.start to verify it is called without
-    // letting a real timer fire (and without needing getReplicaTips to succeed).
-    const startSpy = jest.spyOn(CrossChainAnchor.prototype, 'start').mockImplementation(() => {
-      // no-op: prevents setInterval from being created
-    });
+  const TEST_RSA_PRIVATE_KEY_PEM = [
+    '-----BEGIN PRIVATE KEY-----',
+    'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRbcqcm4RSzpZE',
+    'LhFkcBG1JCwd08CEuijtZEv/etyIAv5lQtFui+Tn5JUaCqFYCyog6ISPDLAXWU+q',
+    '5rtgZ9T/6glKuVjt6HESV8uyTYhLgjXqurreF1NIzoYY99Bf/ErT183tbXeDUevS',
+    'A76zzg5lDIVYXtuJrk8nPCe/lvCSejTG4E9lTU44uiTXGDeiv9tf2jDKHKriwKkW',
+    'AQvfxObXMNWGHg6LR85QTc6QhBdx7+7HrJX7+5rDsRj+pCxeCOmAxVbJyNJIE+wu',
+    'GaLEjJ3g+1lp7mReC3WrcbDWXwlw1N7TG1/uvCz5/4fnra5pqyAfL8jA3CaHZW08',
+    'o9PiAfnbAgMBAAECggEAFKAkgnCWDvkoxl5dmMfs4wAl16HJe1Q8a2rJp+AgzejV',
+    'dBQgHZRusIAysLZS6r3untXgvbnCxxT4ym1zTs7Qc+6ZRxqhemB4mkLka2iOojLt',
+    '+wQPw7boLiUdpLCPl5rHHA4j29QmL/RFmgwY7GnBkI2ljdfU6CKA1w4zjvsqfy4/',
+    'cTFoQjqTTdiQXcVrKpi8de8cpLvq4b3EE+20wjT3bZkrhyxFBrKNBsX8rYcXedCm',
+    'GXNtSQ/6B6LxCR9Rg9Ob4YLsuPKS8/xoBrNbHX1/y2qRcEvrqU8blanYc038xayB',
+    'rLdODP+WUd31tTmSSBeLfEdPLG7PZE1INgZ1TvKi0QKBgQDHzNVWfSdG9cwlKyZi',
+    'Df/Z/8zqBsB+vUN7X3nhvjFa+320ywHrabvj3Vp51nHhEScOQMe9MdClxwNZlqd5',
+    '1Fgh3CGU9v0mfDXeO4CpPDwSWCCPKQNlL8F5fOGTrRmYjPnmWoYgNCXNs5euJKd5',
+    'Q6J7R/Ei/nMy1gxqbxboxoc2ywKBgQC6Vc3FMn1N1fsk7nzn2tj5sgd3rFCS8Xng',
+    '5HqYeN13QBHlo42bBLsP1nlMJ/5meny+XzNI+VJtTnh4xcNYoa+Aqw7J7c5qDTAD',
+    '3UBDCHTBU6kj3HiNDtxNIB+jPwbV4f9tRXOVxX6w3rhSfhLp3wxu9G09ssjp6YY9',
+    'THShedTXMQKBgB9nfbzbbRoFNnI9JwpQgv+D6nR6XTVOkFXK+wBVgbJ4Rxjss7+J',
+    '3gOB3l+6KiojJQ1jd0Gwm8gC0O769BX9H2ErFYgxjjbHXTwyBBYVpqeHfI6j9qmn',
+    '6PQsgdRRZ+2HcxwW7HARYkPDz7qKflxcGiTgePF0Jy09YbQ1A9fQpJ4jAoGAVEuc',
+    '2ykMJro2824wc3M91TgEyM7bZJ55VJQIIhILnncNoaVr2kU5muCb3yf4nsOqyzSm',
+    'Ls0bzPdC6OAOj3oVu0+nURKT3sY4gocFG04oA42lZuPGZYnjf8CYj3Fj1j53Hyfc',
+    'MlU2Cy22lRsT01lkdo19HfxTh/5tDC4aVTKYZwECgYEAjtyulM8jacJ/FpJjUGjw',
+    '5MtavO+lyrD1kxQVhzT93Oan8tMQKfBksXHlUah7Q2Oi0KV34eRKcHdNzksE4cE+',
+    'KZQp59vlDT9PCE87yvOu6dVxznU2m/U36egVbZ6MDAEMDO49QBGT0LuSfUWsdU18',
+    '2t71DZdT4IU46NRr4GY/NAU=',
+    '-----END PRIVATE KEY-----',
+  ].join('\n');
 
-    // Static RSA private key — avoids key-generation round-trip in every run.
-    const TEST_RSA_PRIVATE_KEY_PEM = [
-      '-----BEGIN PRIVATE KEY-----',
-      'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRbcqcm4RSzpZE',
-      'LhFkcBG1JCwd08CEuijtZEv/etyIAv5lQtFui+Tn5JUaCqFYCyog6ISPDLAXWU+q',
-      '5rtgZ9T/6glKuVjt6HESV8uyTYhLgjXqurreF1NIzoYY99Bf/ErT183tbXeDUevS',
-      'A76zzg5lDIVYXtuJrk8nPCe/lvCSejTG4E9lTU44uiTXGDeiv9tf2jDKHKriwKkW',
-      'AQvfxObXMNWGHg6LR85QTc6QhBdx7+7HrJX7+5rDsRj+pCxeCOmAxVbJyNJIE+wu',
-      'GaLEjJ3g+1lp7mReC3WrcbDWXwlw1N7TG1/uvCz5/4fnra5pqyAfL8jA3CaHZW08',
-      'o9PiAfnbAgMBAAECggEAFKAkgnCWDvkoxl5dmMfs4wAl16HJe1Q8a2rJp+AgzejV',
-      'dBQgHZRusIAysLZS6r3untXgvbnCxxT4ym1zTs7Qc+6ZRxqhemB4mkLka2iOojLt',
-      '+wQPw7boLiUdpLCPl5rHHA4j29QmL/RFmgwY7GnBkI2ljdfU6CKA1w4zjvsqfy4/',
-      'cTFoQjqTTdiQXcVrKpi8de8cpLvq4b3EE+20wjT3bZkrhyxFBrKNBsX8rYcXedCm',
-      'GXNtSQ/6B6LxCR9Rg9Ob4YLsuPKS8/xoBrNbHX1/y2qRcEvrqU8blanYc038xayB',
-      'rLdODP+WUd31tTmSSBeLfEdPLG7PZE1INgZ1TvKi0QKBgQDHzNVWfSdG9cwlKyZi',
-      'Df/Z/8zqBsB+vUN7X3nhvjFa+320ywHrabvj3Vp51nHhEScOQMe9MdClxwNZlqd5',
-      '1Fgh3CGU9v0mfDXeO4CpPDwSWCCPKQNlL8F5fOGTrRmYjPnmWoYgNCXNs5euJKd5',
-      'Q6J7R/Ei/nMy1gxqbxboxoc2ywKBgQC6Vc3FMn1N1fsk7nzn2tj5sgd3rFCS8Xng',
-      '5HqYeN13QBHlo42bBLsP1nlMJ/5meny+XzNI+VJtTnh4xcNYoa+Aqw7J7c5qDTAD',
-      '3UBDCHTBU6kj3HiNDtxNIB+jPwbV4f9tRXOVxX6w3rhSfhLp3wxu9G09ssjp6YY9',
-      'THShedTXMQKBgB9nfbzbbRoFNnI9JwpQgv+D6nR6XTVOkFXK+wBVgbJ4Rxjss7+J',
-      '3gOB3l+6KiojJQ1jd0Gwm8gC0O769BX9H2ErFYgxjjbHXTwyBBYVpqeHfI6j9qmn',
-      '6PQsgdRRZ+2HcxwW7HARYkPDz7qKflxcGiTgePF0Jy09YbQ1A9fQpJ4jAoGAVEuc',
-      '2ykMJro2824wc3M91TgEyM7bZJ55VJQIIhILnncNoaVr2kU5muCb3yf4nsOqyzSm',
-      'Ls0bzPdC6OAOj3oVu0+nURKT3sY4gocFG04oA42lZuPGZYnjf8CYj3Fj1j53Hyfc',
-      'MlU2Cy22lRsT01lkdo19HfxTh/5tDC4aVTKYZwECgYEAjtyulM8jacJ/FpJjUGjw',
-      '5MtavO+lyrD1kxQVhzT93Oan8tMQKfBksXHlUah7Q2Oi0KV34eRKcHdNzksE4cE+',
-      'KZQp59vlDT9PCE87yvOu6dVxznU2m/U36egVbZ6MDAEMDO49QBGT0LuSfUWsdU18',
-      '2t71DZdT4IU46NRr4GY/NAU=',
-      '-----END PRIVATE KEY-----',
-    ].join('\n');
-
-    const logger = createLogger('build-audit-module-test');
-    const metricsRegistry = createMetricsRegistry({
-      serviceName: `build-audit-module-test-${Date.now()}`,
-      collectDefaults: false,
-    });
-
-    const validated = {
+  function makeValidated(
+    overrides: Partial<import('@euno/common').GatewayConfig> = {},
+  ): import('@euno/common').GatewayConfig {
+    return {
       ENABLE_CRYPTOGRAPHIC_AUDIT: true,
       AUDIT_LEDGER_BACKEND: 'per-replica-postgres',
       AUDIT_LEDGER_PG_URL: 'postgresql://mock:mock@localhost:5432/mock',
@@ -567,11 +556,24 @@ describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
       AUDIT_PIPELINE_MAX_AGE_MS: 5000,
       AUDIT_PIPELINE_DRAIN_TIMEOUT_MS: 5000,
       NODE_ENV: 'test',
+      ...overrides,
     } as unknown as import('@euno/common').GatewayConfig;
+  }
 
-    const result = await buildAuditModule({
-      validated,
-      env: { EVIDENCE_SIGNING_KEY_PEM: TEST_RSA_PRIVATE_KEY_PEM },
+  function makeAuditModuleArgs(
+    logger = createLogger('build-audit-module-test'),
+    overrides: {
+      validated?: import('@euno/common').GatewayConfig;
+      env?: NodeJS.ProcessEnv;
+    } = {},
+  ) {
+    const metricsRegistry = createMetricsRegistry({
+      serviceName: `build-audit-module-test-${Date.now()}`,
+      collectDefaults: false,
+    });
+    return {
+      validated: overrides.validated ?? makeValidated(),
+      env: { EVIDENCE_SIGNING_KEY_PEM: TEST_RSA_PRIVATE_KEY_PEM, ...overrides.env },
       logger,
       config: {
         name: 'tool-gateway',
@@ -582,7 +584,16 @@ describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
       },
       metricsRegistry,
       replicaId: 'test-replica',
+    };
+  }
+
+  test('17. creates crossChainCommitmentStore and calls start() on the anchor', async () => {
+    // Spy on CrossChainAnchor.prototype.start to verify it is called without
+    // letting a real timer fire (and without needing getReplicaTips to succeed).
+    const startSpy = jest.spyOn(CrossChainAnchor.prototype, 'start').mockImplementation(() => {
+      // no-op: prevents setInterval from being created
     });
+    const result = await buildAuditModule(makeAuditModuleArgs());
 
     // Key assertions: anchor and store are both present.
     expect(result.crossChainAnchor).toBeDefined();
@@ -599,6 +610,79 @@ describe('buildAuditModule: ENABLE_CROSS_CHAIN_ANCHOR=true', () => {
     expect(anchorInterval).toBe(60000);
 
     startSpy.mockRestore();
+    if (result.ledgerPgPool) {
+      await result.ledgerPgPool.end();
+    }
+  });
+
+  test('18. reuses the GCS prefix for object-store-backed per-replica anchors without the legacy warning', async () => {
+    const startSpy = jest.spyOn(CrossChainAnchor.prototype, 'start').mockImplementation(() => {
+      // no-op
+    });
+    const logger = createLogger('build-audit-module-gcs-test');
+    const warnSpy = jest
+      .spyOn(logger, 'warn')
+      .mockImplementation((() => logger) as typeof logger.warn);
+
+    const result = await buildAuditModule(
+      makeAuditModuleArgs(logger, {
+        validated: makeValidated({
+          AUDIT_LEDGER_OBJECT_STORE_PROVIDER: 'gcs',
+          AUDIT_LEDGER_GCS_BUCKET: 'audit-gcs-bucket',
+          AUDIT_LEDGER_GCS_PREFIX: 'cluster-a/',
+        }),
+        env: {
+          AUDIT_LEDGER_OBJECT_STORE_PROVIDER: 'gcs',
+          AUDIT_LEDGER_GCS_BUCKET: 'audit-gcs-bucket',
+          AUDIT_LEDGER_GCS_PREFIX: 'cluster-a/',
+        },
+      }),
+    );
+
+    expect((result.auditLedgerBackend as unknown as { objectStoresPrefix: string }).objectStoresPrefix)
+      .toBe('cluster-a/');
+    expect((result.crossChainAnchor as unknown as { objectStoresPrefix: string }).objectStoresPrefix)
+      .toBe('cluster-a/');
+    expect(
+      warnSpy.mock.calls.some((call) => {
+        const message = call[0] as unknown;
+        return (
+          typeof message === 'string' &&
+          message.includes('AUDIT_LEDGER_GCS_BUCKET is set with per-replica-postgres')
+        );
+      }),
+    ).toBe(false);
+
+    warnSpy.mockRestore();
+    startSpy.mockRestore();
+    if (result.ledgerPgPool) {
+      await result.ledgerPgPool.end();
+    }
+  });
+
+  test('19. allows the postgres backend to use the generic GCS object store path', async () => {
+    const logger = createLogger('build-audit-module-postgres-gcs-test');
+    const result = await buildAuditModule(
+      makeAuditModuleArgs(logger, {
+        validated: makeValidated({
+          AUDIT_LEDGER_BACKEND: 'postgres',
+          ENABLE_CROSS_CHAIN_ANCHOR: false,
+          AUDIT_LEDGER_OBJECT_STORE_PROVIDER: 'gcs',
+          AUDIT_LEDGER_GCS_BUCKET: 'audit-gcs-bucket',
+          AUDIT_LEDGER_GCS_PREFIX: 'cluster-b/',
+        }),
+        env: {
+          AUDIT_LEDGER_OBJECT_STORE_PROVIDER: 'gcs',
+          AUDIT_LEDGER_GCS_BUCKET: 'audit-gcs-bucket',
+          AUDIT_LEDGER_GCS_PREFIX: 'cluster-b/',
+        },
+      }),
+    );
+
+    expect((result.auditLedgerBackend as unknown as { objectStoresPrefix: string }).objectStoresPrefix)
+      .toBe('cluster-b/');
+    expect(result.crossChainAnchor).toBeUndefined();
+
     if (result.ledgerPgPool) {
       await result.ledgerPgPool.end();
     }
