@@ -4,258 +4,110 @@
 
 ---
 
-## From buzzword to engineering discipline
+"Zero trust" has been through the corporate buzzword lifecycle at this point. You've seen the slide decks. You've sat through the vendor presentations where someone draws a castle-and-moat diagram, says "that's the old way," and then shows a new diagram that looks almost identical except the perimeter is now called "identity." If you're sceptical, that's reasonable. A lot of what gets sold as zero trust is just TLS plus a VPN replacement plus a dashboard showing you which employees clicked the phishing simulation.
 
-Zero trust has been one of the most discussed — and most misunderstood — concepts in enterprise security over the past decade. In its original, precise formulation by John Kindervag at Forrester Research in 2010, zero trust is a simple and powerful idea: stop assuming that anything inside your network perimeter can be trusted, and start verifying every access request, every time, regardless of where it originates.
+But the underlying idea — the actual idea that John Kindervag articulated at Forrester back in 2010 — is genuinely simple and genuinely right: stop assuming that anything on your network can be trusted. Verify every access, every time, at the point of the resource. Not at the edge. Not once at login. At the resource, every time.
 
-The perimeter model that zero trust replaced had a clear problem: once an attacker breached the perimeter — through a phishing attack, a compromised VPN credential, a misconfigured firewall rule — they found a network that largely trusted its own inhabitants. Lateral movement was easy. Resources that were supposed to be internal-only were accessible from anywhere inside. The perimeter was supposed to be the hard shell protecting the soft interior, but once the shell cracked, the interior was defenceless.
-
-Zero trust's answer: move the enforcement point from the perimeter to the resource. Every request to every resource must be authenticated, authorised, and verified — regardless of whether it comes from inside or outside the traditional perimeter. Trust nothing implicitly. Verify everything explicitly. Enforce at the point of access.
-
-The practical implementation of this principle has evolved significantly since 2010. NIST's 800-207 guidance, published in 2020, articulated zero trust as a set of tenets rather than a specific technology: verify explicitly, use least-privilege access, assume breach. BeyondCorp at Google, Zero Trust Architecture from NIST, and numerous vendor implementations have translated these tenets into concrete engineering patterns: identity-based access control, software-defined perimeters, continuous validation, micro-segmentation.
-
-What none of this literature anticipated was the emergence of AI agents as principals in enterprise systems — autonomous processes that make API calls, access data, and take actions on behalf of users, with a level of autonomy and a breadth of capability that no previous category of software had. This post applies zero trust principles to AI agents concretely, using euno's architecture as a worked example.
+That idea was designed for humans and service accounts. Applying it to AI agents turns out to be harder than it looks, but also more necessary than most teams realise until something goes wrong.
 
 ---
 
-## Why AI agents break classical zero trust implementations
+## Why AI agents break the assumptions classical zero trust was built on
 
-Before getting to the solution, it is worth being precise about why the problem is different for AI agents than for the conventional workloads that existing zero trust implementations were designed to handle.
+Classical zero trust assumes a few things that aren't true for AI agents.
 
-### Unpredictable access patterns
+It assumes predictable access patterns. You can write a policy for a service account because the service account does roughly the same things every day — it queries these tables, calls these APIs, on this schedule. You can verify that pattern over time and alert when it deviates. An AI agent's access patterns are determined at runtime by a language model choosing a sequence of tool calls. Two invocations with the same high-level intent can result in completely different sequences of tool calls. You can't write a static policy for something that chooses its own path.
 
-A conventional workload — a microservice, a batch job, an API server — has a known access pattern. It makes predictable calls to a defined set of resources. The access control policy for it can be written in advance: service A can read from database table B, service C can write to message queue D. Deviations from the expected pattern are rare and usually indicate a bug or an attack.
+It assumes the principal can't be manipulated through its inputs. A service account doesn't read documents. It doesn't process emails. It doesn't have a context window that a malicious actor can stuff with instructions. A language model does all of those things, and anything in that context window is potentially an instruction. This is prompt injection, and it means an attacker who can get content in front of your agent has a vector to manipulate what actions that agent takes — without touching your auth stack, your network, or your database. There's a longer exploration of this in [the prompt injection post](./01-prompt-injection-policy-layer.md), but the point here is that classical zero trust has no model for a principal that can be socially engineered.
 
-An AI agent's access pattern is determined at runtime by a language model's reasoning process, in response to an open-ended natural language task. The same agent deployment might, for a given user task, call `read_file`, then `execute_sql`, then `send_email`. For a different task, it might call `list_calendar`, then `create_event`, then `update_crm_contact`. The tools used, the arguments passed, the sequence and combination of operations — all emerge from the model's reasoning. They cannot be fully predicted at deployment time.
+It assumes stable identity. A service account is itself — the same identity, the same credentials, making the same kind of requests. An AI agent runs tasks. Different tasks need different capabilities. An agent doing a read-only research task should have completely different access than the same agent executing a file modification. But most deployments handle this by giving the agent maximum credentials and letting the system prompt limit what it does. Which is trust at the wrong layer, as we've seen. You can read about the failure modes that produces in [the governance failure modes post](./03-agent-governance-failure-modes.md).
 
-This creates a challenge for access control systems designed around predictable access patterns. A network segmentation rule that allows service A to reach resource B works when the relevant requests come in predictable forms. A policy for an AI agent must work across the full space of possible tool calls the agent might make, many of which were not anticipated when the policy was written.
-
-### Natural language as an attack surface
-
-Classical zero trust deals with principals that present cryptographic credentials — certificates, tokens, HMAC signatures. The control flow of those principals is determined by code, which behaves deterministically given the same inputs. If an access control check fails, the code handles the error; it does not decide to try a different approach.
-
-An AI agent's control flow is determined by a language model, which interprets natural language instructions and produces natural language outputs. Natural language can be manipulated in ways that binary code cannot. An attacker who can influence the text the agent reads — through a malicious document, a crafted web page, an adversarial database record — can potentially influence the actions the agent takes.
-
-This means that for AI agents, the principal is not fully in control of its own behaviour. The credentials are valid, the token is legitimate, the agent is authenticated — but the specific actions it takes can be influenced by external adversarial content. Classical zero trust verifies the identity of the principal; it does not and cannot verify that the principal's behaviour at any given moment is free from adversarial influence.
-
-### Ephemeral, task-scoped execution contexts
-
-Zero trust implementations typically deal with long-lived principals: user identities that persist for years, service accounts that persist for the lifetime of an application, machine identities tied to specific infrastructure. The assumption of relatively stable principals makes certain verification approaches practical: certificate-based identity, periodic re-authentication, session-level risk scoring.
-
-AI agent tasks are inherently ephemeral. A useful customer service agent might complete hundreds of tasks per day, each lasting seconds to minutes. Each task represents a distinct execution context with potentially different data access requirements. The agent handling a billing question should have access to billing data; the same agent handling a technical support question should have access to the knowledge base. These are not the same access requirements.
-
-This mismatch — a persistent principal with task-varying access requirements — creates pressure toward over-provisioning. If you cannot easily grant access per-task, you grant access per-deployment, and the deployment gets everything any task might ever need. Which is exactly the over-privileged credential pattern that produces failure modes 3 and 4 from our earlier analysis.
+So classical zero trust is necessary but not sufficient. You need the same properties — continuous verification, least-privilege access, fail-closed defaults — but applied in ways that account for what's different about agents.
 
 ---
 
-## The zero trust tenets applied to AI agents
+## The NIST 800-207 tenets, translated
 
-NIST 800-207 articulates zero trust as seven tenets. Applying each to AI agents specifically:
+NIST 800-207 lays out the seven tenets of zero trust. You can look them up, and they're worth reading, but I'll spare you the government-document prose and focus on the four that matter most here.
 
-### Tenet 1: All data sources and computing services are resources
+**Every resource is protected, regardless of network location.** For agents, this means your tools, databases, and APIs should require authentication and authorisation regardless of whether the call originates from your internal network or not. "Internal" is not a trust boundary. An agent calling an internal API with a stolen or overly-broad credential is still a problem. This sounds obvious but a lot of deployments have internal tools that trust any call from the company network, because they predate agents and were never built for a world where something on the network would make arbitrary API calls on behalf of users.
 
-*Standard interpretation*: every system component — databases, APIs, file systems, microservices — is a resource that requires access control, regardless of where it runs.
+**Access is granted per-session, per-task, with minimum necessary privilege.** This is the capability token idea. Instead of long-lived credentials that grant broad access, you issue short-lived tokens at the start of a session that encode exactly what this agent invocation is allowed to do — which tools, which operations, which data, with which constraints, until when. The token expires. When the task is done, the access goes away. [There's a full walkthrough of how to structure capability tokens](./02-least-privilege-agent-era.md) for agent deployments — the short version is that a token should encode identity, capability set, session scope, time bounds, and any numerical limits on consequential operations.
 
-*Agent-specific implication*: every tool the agent can call is a resource. The email service, the SQL database, the file system, the external API — these are all resources that should have explicit access policies. "The agent can call any tool it has been configured with" is the perimeter model in disguise. Zero trust requires explicit per-resource policy.
+**Policy is dynamic and includes posture data.** Static policies — "this service account can query these tables" — aren't enough when the thing making the request is context-sensitive. A well-implemented policy pipeline evaluates conditions at call time: what is the agent doing, what has it already done this session, does the current request match the stated capability, are there anomalies in the call pattern. The policy is a function evaluated per call, not a fixed rule checked at provisioning time.
 
-### Tenet 2: All communication is secured regardless of network location
-
-*Standard interpretation*: TLS everywhere, no unencrypted communication even on internal networks.
-
-*Agent-specific implication*: this tenet is relatively straightforward to implement for agents and is widely implemented. All agent-to-tool-gateway communication should be over TLS. The tool gateway-to-backend communication should also be encrypted. This is table stakes and rarely the source of agent security failures.
-
-### Tenet 3: Access to individual enterprise resources is granted on a per-session basis
-
-*Standard interpretation*: access grants should be specific to a session, not persistent across sessions. Each access request is evaluated fresh.
-
-*Agent-specific implication*: this is one of the most important tenets for agents. Access should be granted per-task, not per-deployment. A capability token issued for a specific task — with a bounded set of tools, specific argument constraints, and a short expiry — implements this tenet. The same agent deployment can be issued different tokens for different tasks, each with the specific access the task requires and no more.
-
-This is the architecture of euno's capability-token model: a JWT `AgentCapabilityManifest` issued by the capability issuer for a specific agent, task, and scope, with a short expiry. The token is not "this agent can do X, Y, and Z always." It is "this agent can do X with these constraints, Y with these constraints, and Z with these constraints, for the next fifteen minutes, for this specific task context."
-
-### Tenet 4: Access to resources is determined by dynamic policy
-
-*Standard interpretation*: access decisions should not be purely based on static, pre-configured policies. They should incorporate real-time data: the requester's identity, the requested resource, the requester's current security posture, environmental context.
-
-*Agent-specific implication*: static policies are a starting point, but agent access control benefits from dynamic evaluation. Is this agent in a known-good state? Has its posture been verified recently? Have there been anomalous behaviour signals? Is the requested tool call consistent with the task context?
-
-euno's posture emitter pattern addresses this: continuous reporting of agent runtime state (what capabilities are active, when they were last used, what the agent's current operational context is) to a centralised inventory. A zero trust policy engine can incorporate posture signals: if this agent has not been seen in the posture inventory for the past hour, treat its token with elevated scrutiny. If this agent's recent tool call pattern deviates significantly from baseline, apply additional verification.
-
-### Tenet 5: The enterprise monitors and measures the integrity and security posture of all owned and associated assets
-
-*Standard interpretation*: continuous monitoring of all devices, services, and endpoints. Compliance with security policy is an ongoing check, not a one-time certification.
-
-*Agent-specific implication*: agent audit logging is not optional — it is the implementation of this tenet for the agent fleet. Every tool call, with its full argument payload, result, and identity context, must be logged to a tamper-evident audit ledger. The HMAC-chained, OCSF-formatted audit log in euno's architecture implements this for the tool gateway layer.
-
-Continuous monitoring also means continuous anomaly detection: statistical baselines for each agent deployment's tool call patterns, alerts when an agent's behaviour deviates from baseline, automated responses (capability suspension, kill-switch) when anomalies exceed thresholds.
-
-### Tenet 6: All resource authentication and authorisation is dynamic and strictly enforced
-
-*Standard interpretation*: authentication is not a one-time check at session establishment. Authorisation is not a simple lookup in an access control list. Both are continuous, strictly enforced at every access attempt.
-
-*Agent-specific implication*: for agents, this means that every tool call is authenticated and authorised at the policy enforcement point, not just at session establishment. The tool gateway verifies the capability token on every call — not just the first time the agent connects. Token expiry is enforced strictly; an expired token is rejected even if the underlying identity is valid. Capability revocation takes effect immediately: a revoked token is rejected on the next call, not just on the next re-authentication.
-
-This is fundamentally different from the session-based model where an authenticated connection persists until it times out. An agent that is performing a long-running task should be re-verifying its authorisation on every tool call. If the operator revokes the agent's capability mid-task — because they see something wrong in the audit log, or because a kill-switch has been activated — the revocation should take effect on the next call, within seconds.
-
-### Tenet 7: The enterprise collects as much information as possible about the current state of assets, network infrastructure, and communications and uses it to improve its security posture
-
-*Standard interpretation*: comprehensive telemetry feeds a continuous improvement loop. Data collected about security incidents, near-misses, and normal operations is used to refine policies and detect threats earlier.
-
-*Agent-specific implication*: the audit data collected by the tool gateway is not just compliance evidence — it is a rich signal for improving agent governance. Aggregating across agent deployments: which tools are called most frequently? Which argument patterns are most common? Which calls fail policy checks and why? This data informs policy refinement, anomaly detection calibration, and capacity planning.
+**Everything is monitored and logged.** This one is easy to nod at and hard to implement well. The key properties for agent deployments: every tool call gets a log entry before and after execution (not just on failure), the log is tamper-evident so an agent that could compromise the logging path can't cover its tracks, and the log format is structured enough to be queryable. You need to be able to answer "which sessions accessed this data in the last 30 days" and "how many times did this agent invoke the send_email tool last week" without writing a log parser.
 
 ---
 
-## The policy enforcement architecture
+## Fail closed. This is not optional.
 
-Applying these tenets concretely to an AI agent deployment requires three components: a policy decision point, a policy enforcement point, and a policy information point.
+Before getting into architecture: the most important decision in designing any enforcement point for AI agents is this one, and it's a cultural and engineering decision as much as a technical one.
 
-### Policy Decision Point (PDP)
+When the enforcement point can't make a confident decision — the token is missing, the policy store is unreachable, the condition type isn't recognised, the Redis instance that backs your rate counters is temporarily unavailable — what happens?
 
-The PDP is where access decisions are made. For AI agents, this is the system that evaluates a proposed tool call against the applicable policy and returns a decision: permit, deny, or permit-with-obligations.
+The natural engineering instinct is to add a fallback. Don't break the user's experience. If the policy store is down, maybe permit with reduced confidence and flag for review. If the condition type is unrecognised, maybe skip that check and apply the rest. Fallbacks are good engineering practice in almost every other context.
 
-In euno's architecture, the capability issuer serves as the PDP at token-issuance time: it evaluates the requesting agent's identity, the requested capabilities, and the current policy configuration, and issues a token that encodes the decision. The tool gateway serves as the runtime PDP: on every incoming tool call, it verifies the token, evaluates any runtime conditions (rate limits, time windows, contextual conditions), and makes the permit/deny decision.
+For a security enforcement point, a fallback that permits is not a fallback. It's a hole. Every time the enforcement point falls back to permit, you have a moment where ungoverned actions can happen. Attackers who understand your system will deliberately trigger those moments. Even without adversarial intent, the failure scenario is "security was down, agent ran unconstrained, something we didn't expect happened."
 
-The separation of issuance-time and runtime decisions is important. Some policy decisions can be made at token issuance: this agent is permitted to call these tools, with these static constraints. Others must be made at runtime: has this agent exceeded its call limit? Is the current time within the permitted window? Is the specific argument within the permitted range?
+Fail closed means: unknown condition type? Deny. Policy store down? Deny. Token missing? Deny. Can't evaluate a condition? Deny. This will occasionally deny legitimate requests. That's the trade-off, and it's the right one. A transient deny is annoying. An ungoverned action might not be recoverable.
 
-### Policy Enforcement Point (PEP)
-
-The PEP sits between the agent and the backend resources, enforcing the decisions made by the PDP. In a well-designed zero trust architecture, the PEP is as close to the resource as possible — the further from the resource, the more surface area exists for bypass.
-
-For AI agents, the natural PEP is the tool gateway: the proxy through which all tool calls are routed before reaching backend systems. The tool gateway intercepts every call, verifies the capability token, evaluates runtime policy, enforces obligations (rate limiting, argument sanitisation, audit logging), and either forwards the call to the backend or rejects it.
-
-The key property of the PEP is that it is **mandatory**: the agent cannot reach the backend resource without going through it. An architecture where the PEP is optional — where the agent could, in principle, call the backend directly — is not zero trust. It is a monitoring system that can be bypassed.
-
-euno achieves this through a combination of the tool proxy pattern (all tool calls are routed through `@euno/mcp` or the tool gateway) and credential management (backend service credentials are held by the gateway, not by the agent). The agent cannot call the database directly because it does not have database credentials; the only path to database access is through the gateway, which enforces policy.
-
-### Policy Information Point (PIP)
-
-The PIP provides the contextual information that the PDP needs to make access decisions. For conventional zero trust, this includes device posture data, threat intelligence feeds, user behaviour analytics, and identity attributes.
-
-For AI agents, the PIP should include:
-
-- **Agent posture data**: is this agent deployment healthy? When was it last attested? What is its current operational context?
-- **Capability inventory**: what capabilities is this agent currently operating under? What has it done recently?
-- **Behavioural baselines**: what is normal for this agent? How does its current call pattern compare?
-- **Threat intelligence**: are there active campaigns targeting the tools this agent uses? Have similar agent deployments been compromised recently?
-- **User context**: what is the authenticated user's risk profile? Are there anomalous signals from their recent activity?
-
-euno's posture emitter provides the agent posture and capability inventory data. The audit log provides the behavioural history. Integration with enterprise threat intelligence and identity management systems rounds out the picture.
+The teams that have the hardest time accepting this are the ones who've optimised hard for availability and uptime. It feels backwards to make a security component that fails harder than everything else. But that's the property you want. Your load balancer should fail open — you'd rather some traffic get through than all traffic drop. Your security enforcement point should fail closed — you'd rather deny a few legitimate calls than permit ungoverned ones.
 
 ---
 
-## Practical implementation: the euno architecture as zero trust reference
+## What the enforcement pipeline actually looks like
 
-Translating the abstract tenets into a concrete architecture for an euno deployment:
+When an agent makes a tool call, here's what happens in a properly implemented zero trust pipeline before that call reaches the upstream tool:
 
-### Authentication layer
+**Token verification.** Is there a valid JWT capability token? Is the signature valid against the issuer's key? Is it expired? Has it been tampered with? If any of these fail, deny. Don't log "suspicious activity," just deny — a missing or invalid token is not an anomaly to investigate later, it's a hard stop.
 
-Every agent deployment has a unique identity, encoded in the `sub` claim of its capability token. Tokens are issued by the capability issuer after verification of the agent's OAuth 2.0 client credentials (or PKCE flow for interactive deployments). The issuer uses a signing key backed by a hardware security module (HSM) — Azure Key Vault, AWS KMS, or GCP Cloud KMS — ensuring that token signing keys are protected at the highest available level.
+**Revocation check.** Even a valid, unexpired token might have been revoked — because the user's session was terminated, because a security event triggered revocation, because an admin killed a runaway agent. The revocation check should be fast (Redis lookup is fine) and fail closed — if the revocation store is unreachable, assume the token might be revoked.
 
-DPoP (Demonstrating Proof of Possession) binding associates tokens with a specific key pair held by the agent, preventing token relay attacks: even if an attacker intercepts a valid capability token, they cannot use it without the corresponding private key.
+**Kill-switch check.** A coarser control than revocation: is there an active kill-switch that applies to this agent type, this tool, this capability class? Kill-switches let you stop a class of actions across all active sessions in seconds — useful when you discover an exploit and need to prevent any agent from calling a specific tool while you patch it.
 
-For multi-organisation deployments, the partner DID federation layer extends authentication across organisational boundaries: an agent from a partner organisation can present a token issued by the partner's capability issuer, which is verified against the partner's DID document. The verification includes circuit breaker logic to handle DID resolution infrastructure failures without failing open.
+**Capability match.** Does the token's capability set include permission to call this tool with these arguments? A token that grants `read_document` doesn't grant `send_email`. A token that grants `query_database` for table X doesn't grant it for table Y. This is the structural heart of the zero trust model — the token is the artefact that encodes what the agent is actually authorised to do, and this check enforces that.
 
-### Per-call authorisation at the gateway
+**Condition evaluation.** This is where it gets interesting. Conditions are dynamic constraints attached to capabilities: rate limits (no more than N calls per session), time windows (only callable between 09:00 and 17:00), argument patterns (email recipient must match this regex). These are evaluated per call against current state. This is also where unknown condition types fail closed — the enforcement point should only approve a capability when it can positively verify all conditions are satisfied.
 
-The tool gateway implements the runtime PDP and PEP. The enforcement pipeline on every tool call:
+**Obligation application.** Some policies require side effects rather than just allow/deny. Rate counters get incremented. Arguments might get sanitised (strip PII before logging). The response might need to be filtered. These aren't gates — the call proceeds — but they need to happen before the call is forwarded.
 
-1. **Token verification**: verify JWT signature, check expiry, validate issuer against trust store, check DPoP binding
-2. **Revocation check**: verify the token's JTI is not in the revocation list (Redis-backed for low latency)
-3. **Kill-switch check**: verify the global kill-switch is not active for this agent or tenant
-4. **Capability matching**: verify the requested tool is listed in the token's capability manifest
-5. **Condition evaluation**: evaluate any conditions on the capability (rate limits, time windows, argument patterns, contextual conditions)
-6. **Obligation application**: apply any obligations on the capability (rate counter increment, argument sanitisation, required audit fields)
-7. **Audit logging**: write a signed OCSF-formatted audit record to the tamper-evident ledger
-8. **Forward or reject**: forward the call to the backend tool, or return a 403 with a structured error
+**Audit write.** Before the call is forwarded to the upstream tool, the decision and context are written to the tamper-evident audit log. Not after. If you write the audit entry after the call returns and the call hangs or errors, you lose the record. Every call gets an entry regardless of outcome — denials matter too, sometimes more than approvals.
 
-This pipeline executes on every single tool call, not just at session establishment. An agent that has been operating normally for an hour and then receives an injected instruction that attempts to exfiltrate data will hit the per-call authorisation check for that exfiltration attempt — regardless of whether all previous calls were legitimate.
+**Forward or deny.** If everything above passes, the call goes through. If anything failed, it doesn't. The upstream tool never sees the call.
 
-### Capability tokens as zero trust artefacts
-
-The JWT `AgentCapabilityManifest` is the central zero trust artefact in euno's architecture. It encodes, in a cryptographically verifiable form:
-
-- **Who**: the agent's identity (`sub`), the issuer (`iss`), the audience (`aud`)
-- **What**: the specific tools the agent is permitted to use, with argument constraints for each
-- **When**: token expiry (`exp`), not-before time (`nbf`), and optional time-window conditions
-- **How much**: rate limit conditions (`maxCalls` per tool, `maxCalls` per session)
-- **Under what circumstances**: contextual conditions that must be satisfied at call time
-
-This is a richer representation of authorisation than an OAuth scope. A scope of `tools:invoke` says nothing about which tools, under what constraints, at what rate. A capability manifest says exactly which tools, with exactly what argument constraints, at exactly what rate, for exactly how long.
-
-The token is issued for a specific task context and has a short expiry — typically fifteen minutes to one hour, depending on the expected task duration. When the task is complete, or when the token expires, the agent must obtain a new token for a new task. This implements the per-session access grant tenet in a concrete, enforceable way.
-
-### Tamper-evident audit logging
-
-The HMAC-chained audit ledger in euno's tool gateway implements the continuous monitoring tenet with a specific additional property: **tamper evidence**. Each audit record includes an HMAC computed over its content and the HMAC of the previous record, forming a chain. If any record is modified or deleted, the chain breaks at that point. If records are inserted out of order, the chain is invalid.
-
-This is important for AI governance specifically because agents operate rapidly and autonomously. A security incident might involve an agent taking dozens of actions in minutes. By the time a human investigator is looking at the audit log, the agent has long since completed its task (or been stopped). The audit log is the primary evidence for reconstructing what happened.
-
-If the audit log is mutable — if an attacker who has compromised the agent or the gateway can also modify the log — the evidence trail can be covered. HMAC chaining prevents this: the chain provides cryptographic proof that the log has not been tampered with after the fact.
-
-For SOC 2 compliance, euno's `GET /api/v1/audit/export` endpoint produces signed evidence bundles that can be submitted to auditors as proof of control operation. The signature is produced by a KMS-backed signing key, providing hardware-level assurance of the evidence's integrity.
+Eight steps. Each one independently important. Each one failing closed.
 
 ---
 
-## Fail closed: the most important zero trust property for AI agents
+## The tamper-evident audit log
 
-Across all of the tenets and all of the architectural patterns, the single most important property of a zero trust implementation for AI agents is: **fail closed**.
+The audit log is worth a separate paragraph because teams often underinvest in it until they need it and then realise they don't have what they need.
 
-When the policy enforcement point cannot make a confident permit decision — because the token is missing, because the token cannot be verified, because the condition evaluation produces an error, because the policy store is unavailable — the correct answer is to deny the request.
+Tamper-evident means the log entries are chained — each entry includes a hash of the previous entry, so you can verify that nothing has been deleted or modified without invalidating the chain. An agent that compromised the logging path could still add false entries, but it can't retroactively remove or modify entries without detection. Pair this with a KMS-signed export at the end of a session and you have a log that satisfies most SOC 2 and regulatory audit requirements.
 
-This is the opposite of the behaviour that comes naturally to systems designed for reliability and user experience. When a network request fails, the natural engineering response is to implement a fallback. When a cache misses, serve from the origin. When an authentication service is unavailable, grant a grace period. These are reasonable choices for many failure modes in many systems.
-
-For a security enforcement point, they are wrong. A policy enforcement point that fails open — that permits requests when it cannot verify authorisation — is not a security control. It is a monitoring system with an availability-dependent security guarantee, which is no security guarantee at all.
-
-In euno's architecture, every failure mode at the enforcement layer defaults to deny:
-- Token verification failure: deny
-- Redis (revocation check) unavailable: deny
-- Condition evaluation error: deny
-- Policy store unavailable: deny
-- Capability manifest malformed: deny
-- Unknown condition type: deny
-
-The last item is particularly important: **unknown conditions fail closed**. A future version of the policy engine might introduce a new condition type. An agent with a capability token that contains an unrecognised condition is not permitted to operate as if the condition is satisfied. The enforcement point denies the request until it is updated to understand the new condition type. This prevents future policy extensions from inadvertently creating gaps where new conditions are silently ignored.
+OCSF (Open Cybersecurity Schema Framework) format for the entries means your log is queryable with standard security tooling. An API Activity event in OCSF gives you: actor identity, target resource, action taken, outcome, timestamp, metadata. For agent tool calls you have all of this: the token identity is the actor, the tool name is the target, the arguments are the request, the decision is the outcome. This is the right data model. Don't invent your own log schema when OCSF already maps cleanly.
 
 ---
 
-## Complementing perimeter controls, not replacing them
+## A maturity model, briefly
 
-Zero trust for AI agents does not mean abandoning perimeter security. It means not *depending* on it. Network segmentation, VPC boundaries, private subnets — these are still valuable as defence-in-depth layers. If an agent is compromised, network segmentation that prevents it from reaching resources outside its expected communication pattern adds friction for an attacker.
+You don't have to implement all of this at once. Here's a rough progression:
 
-But the lesson of zero trust is that perimeter controls are not sufficient. They can be breached. The tool gateway must enforce policy assuming that a breach has occurred: that the network request arriving at the gateway might come from a compromised agent, a replayed token, or a lateral movement attack rather than the legitimate agent. The per-call verification at the PEP is the control that holds regardless of the network origin of the request.
+**Phase 1 — Basic auth.** Agents authenticate to tools with API keys. No session scoping, no capability constraints. This is where most teams start. Better than nothing. Not meaningfully zero trust.
 
-This is also the correct framing for internal agent deployments. An agent that runs entirely inside your private network, calling internal microservices, is not exempt from zero trust principles. The prompt injection attack surface exists regardless of network topology. An adversarial document that causes an agent to exfiltrate data to an internal attacker-controlled endpoint is just as dangerous as one that exfiltrates to an external endpoint. The enforcement must be at the tool call layer, not at the network boundary.
+**Phase 2 — Token-based auth with expiry.** Short-lived JWTs instead of API keys. Tokens expire. Rotation is automated. Still no capability scoping — the token proves identity but doesn't constrain what the identity can do.
+
+**Phase 3 — Capability tokens with per-task scoping.** This is the meaningful step. Tokens encode capability sets. Different tasks get different tokens. Per-session rate limits. Revocation. This is where zero trust principles actually start applying.
+
+**Phase 4 — Full enforcement pipeline with dynamic conditions.** Condition evaluation per call. Audit logging with tamper-evidence. Kill-switches. Fail-closed defaults. Obligation application. This is production-grade.
+
+**Phase 5 — Federated cross-org trust.** When your agents need to call tools hosted by partner organisations, or when partner agents need to call your tools. DID-based identity verification. Federated policy. Cross-org audit trails. This is where enterprise deployments of any real complexity eventually end up.
+
+Most teams should be aiming for Phase 3 or 4 as their steady state. Phase 1 and 2 are transient steps, not destinations.
 
 ---
 
-## Getting started: a zero trust maturity model for AI agents
+The thing about zero trust is that it's demanding to implement well and the payoff isn't visible when it's working — it's only visible when something tries to go wrong and can't. That's a hard sell in an environment where you're under pressure to ship capability. But the agents you're deploying have real access to real systems with real consequences, and the blast radius when they misbehave is proportional to what you've given them access to.
 
-Organisations typically implement zero trust in phases, starting with the highest-value controls and expanding over time. The same approach applies to AI agent deployments:
-
-**Phase 1: Authentication and basic authorisation**
-- All agent-to-gateway communication uses verifiable identity (capability tokens, not shared API keys)
-- Per-call token verification at the gateway
-- Token expiry strictly enforced
-
-**Phase 2: Fine-grained capability scoping**
-- Capability tokens specify per-tool permissions with argument constraints
-- No agent operates with more permissions than its current task requires
-- Different tasks receive different tokens with task-appropriate scoping
-
-**Phase 3: Continuous monitoring and audit**
-- All tool calls logged to a tamper-evident audit ledger
-- Anomaly detection on tool call patterns
-- Real-time alerting on policy violations
-
-**Phase 4: Dynamic policy evaluation**
-- Posture data incorporated into access decisions
-- Behavioural baselines established and monitored
-- Risk-based policy adjustment (elevated scrutiny for anomalous agents)
-
-**Phase 5: Cross-organisation federation**
-- Partner DID federation for multi-organisation deployments
-- Federated audit evidence for cross-organisational accountability
-- Consistent policy enforcement across organisational boundaries
-
-Organisations that have reached Phase 3 or beyond are well-positioned to defend against the full range of AI agent failure modes and attack vectors. The investment is not primarily in exotic technology — it is in the engineering discipline of applying well-understood security principles consistently to a new category of software principal.
-
-The agents are here. The threat surface is real. The zero trust framework for addressing it is available. The work is in the implementation.
+Build the enforcement pipeline. Fail closed. Log everything. The work pays off in the scenarios you don't have to explain to your security team.
