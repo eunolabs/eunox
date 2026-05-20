@@ -1,0 +1,62 @@
+# Euno — Artifact Registry repository
+# ---------------------------------------------------------------------------
+# Provisions the Docker repository used to host Euno container images on GCP.
+# Mirrors the ECR repositories in the AWS deployment.
+#
+# Substitute:
+#   <YOUR_PROJECT_ID>  — your GCP project ID
+#   <YOUR_REGION>      — e.g. us-central1
+# ---------------------------------------------------------------------------
+
+apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
+kind: ArtifactRegistryRepository
+metadata:
+  name: euno-images
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  location: "<YOUR_REGION>"
+  format: DOCKER
+  description: "Euno service container images."
+  labels:
+    product: euno
+    component: capability-governance
+
+---
+
+# IAM binding — Capability Issuer pod can pull images.
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-issuer-registry-reader
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
+    kind: ArtifactRegistryRepository
+    name: euno-images
+    namespace: config-connector
+  role: roles/artifactregistry.reader
+  member: "serviceAccount:euno-issuer-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
+
+---
+
+# IAM binding — Tool Gateway pod can pull images.
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-gateway-registry-reader
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
+    kind: ArtifactRegistryRepository
+    name: euno-images
+    namespace: config-connector
+  role: roles/artifactregistry.reader
+  member: "serviceAccount:euno-gateway-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"

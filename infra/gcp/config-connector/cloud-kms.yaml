@@ -1,0 +1,125 @@
+# Euno — Cloud KMS key ring and asymmetric signing key
+# ---------------------------------------------------------------------------
+# Provisions the KMS resources used by GCPCloudKMSSigner for capability-token
+# signing and audit-log evidence signing.
+#
+# Substitute:
+#   <YOUR_PROJECT_ID>  — your GCP project ID
+#   <YOUR_REGION>      — e.g. us-central1  (use "global" for multi-region)
+# ---------------------------------------------------------------------------
+
+# KMS key ring — scoped to a single region.
+apiVersion: cloudkms.cnrm.cloud.google.com/v1beta1
+kind: KMSKeyRing
+metadata:
+  name: euno-keyring
+  namespace: config-connector
+  annotations:
+    # Workload Identity: the Config Connector KSA will use this service account.
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  location: "<YOUR_REGION>"
+
+---
+
+# Asymmetric RSA-2048 signing key — parity with Azure Key Vault RSA key.
+apiVersion: cloudkms.cnrm.cloud.google.com/v1beta1
+kind: KMSCryptoKey
+metadata:
+  name: euno-capability-signing-key
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  keyRingRef:
+    name: euno-keyring
+    namespace: config-connector
+  purpose: ASYMMETRIC_SIGN
+  versionTemplate:
+    algorithm: RSA_SIGN_PKCS1_2048_SHA256
+    protectionLevel: SOFTWARE
+  # Keys are never deleted automatically; set destroyScheduledDuration
+  # only after explicit operator review.
+  labels:
+    product: euno
+    component: capability-governance
+
+---
+
+# IAM binding — Capability Issuer service account can sign and verify.
+# Replace the member with your issuer GCP service account email.
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-issuer-kms-signer
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: cloudkms.cnrm.cloud.google.com/v1beta1
+    kind: KMSCryptoKey
+    name: euno-capability-signing-key
+    namespace: config-connector
+  role: roles/cloudkms.signerVerifier
+  member: "serviceAccount:euno-issuer-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
+
+---
+
+# IAM binding — Gateway SA verifier + viewer access (verify capability tokens).
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-gateway-kms-signer
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: cloudkms.cnrm.cloud.google.com/v1beta1
+    kind: KMSCryptoKey
+    name: euno-capability-signing-key
+    namespace: config-connector
+  role: roles/cloudkms.signerVerifier
+  member: "serviceAccount:euno-gateway-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
+
+---
+
+# Workload Identity bindings — allow the Kubernetes Service Accounts to
+# impersonate the GCP Service Accounts without any credential files on disk.
+# Apply these after the GKE cluster has been created and the Kubernetes SAs
+# (capability-issuer, tool-gateway) exist in the euno-system namespace.
+
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-issuer-workloadIdentityUser
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: iam.cnrm.cloud.google.com/v1beta1
+    kind: IAMServiceAccount
+    name: euno-issuer-sa
+    namespace: config-connector
+  role: roles/iam.workloadIdentityUser
+  member: "serviceAccount:<YOUR_PROJECT_ID>.svc.id.goog[euno-system/capability-issuer]"
+
+---
+
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: euno-gateway-workloadIdentityUser
+  namespace: config-connector
+  annotations:
+    cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
+spec:
+  resourceRef:
+    apiVersion: iam.cnrm.cloud.google.com/v1beta1
+    kind: IAMServiceAccount
+    name: euno-gateway-sa
+    namespace: config-connector
+  role: roles/iam.workloadIdentityUser
+  member: "serviceAccount:<YOUR_PROJECT_ID>.svc.id.goog[euno-system/tool-gateway]"
