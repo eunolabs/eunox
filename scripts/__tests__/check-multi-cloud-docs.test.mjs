@@ -1560,46 +1560,6 @@ function makeValidMultiCloudPlanPhase3() {
   ].join('\n');
 }
 
-function makeValidPhase3Fixtures(base) {
-  makeValidFixtures(base);
-
-  // Override multi-cloud-plan.md to include Phase 3 items checked.
-  writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
-    makeValidMultiCloudPlanPhase3());
-
-  mkdirSync(join(base, 'infra', 'gcp', 'terraform', 'network'), { recursive: true });
-  mkdirSync(join(base, 'infra', 'gcp', 'terraform', 'compute'), { recursive: true });
-  mkdirSync(join(base, 'infra', 'gcp', 'terraform', 'data'), { recursive: true });
-  mkdirSync(join(base, 'infra', 'gcp', 'terraform', 'security'), { recursive: true });
-  mkdirSync(join(base, 'infra', 'gcp', 'terraform', 'observability'), { recursive: true });
-  mkdirSync(join(base, 'infra', 'gcp', 'config-connector'), { recursive: true });
-
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'README.md'),
-    makeValidGcpTfReadme());
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'network', 'main.tf'),
-    makeValidGcpTfNetwork());
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'compute', 'main.tf'),
-    makeValidGcpTfCompute());
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'data', 'main.tf'),
-    makeValidGcpTfData());
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'security', 'main.tf'),
-    makeValidGcpTfSecurity());
-  writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'observability', 'main.tf'),
-    makeValidGcpTfObservability());
-  writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-sql.yaml'),
-    makeValidGcpCcSql());
-  writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'memorystore.yaml'),
-    makeValidGcpCcMemorystore());
-  writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-kms.yaml'),
-    makeValidGcpCcKms());
-  writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'artifact-registry.yaml'),
-    makeValidGcpCcAr());
-  writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
-    makeValidValuesAzure());
-  writeFileSync(join(base, 'docs', 'multi-cloud.md'),
-    makeValidMultiCloudRunbook());
-}
-
 // ---------------------------------------------------------------------------
 // Tests — GCP Phase 3
 // ---------------------------------------------------------------------------
@@ -1607,7 +1567,7 @@ function makeValidPhase3Fixtures(base) {
 test('[Phase 3] passes when all Phase 3 fixtures are present', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     const result = run(base);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /all checks passed/);
@@ -1619,7 +1579,7 @@ test('[Phase 3] passes when all Phase 3 fixtures are present', () => {
 test('[Phase 3] fails when infra/gcp/terraform/README.md is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'README.md'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1632,7 +1592,7 @@ test('[Phase 3] fails when infra/gcp/terraform/README.md is missing', () => {
 test('[Phase 3] fails when terraform README is missing terraform init', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'README.md'),
       makeValidGcpTfReadme().replace('terraform init', 'tf init'));
     const result = run(base);
@@ -1646,7 +1606,7 @@ test('[Phase 3] fails when terraform README is missing terraform init', () => {
 test('[Phase 3] fails when terraform README is missing terraform apply', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'README.md'),
       makeValidGcpTfReadme().replace('terraform apply', 'tf apply'));
     const result = run(base);
@@ -1660,7 +1620,7 @@ test('[Phase 3] fails when terraform README is missing terraform apply', () => {
 test('[Phase 3] fails when terraform README is missing network/ reference', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'README.md'),
       makeValidGcpTfReadme().replace('network/', 'vpc-module/'));
     const result = run(base);
@@ -1674,7 +1634,7 @@ test('[Phase 3] fails when terraform README is missing network/ reference', () =
 test('[Phase 3] fails when infra/gcp/terraform/network/main.tf is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'network', 'main.tf'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1687,7 +1647,7 @@ test('[Phase 3] fails when infra/gcp/terraform/network/main.tf is missing', () =
 test('[Phase 3] fails when network/main.tf is missing google_compute_network', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'network', 'main.tf'),
       makeValidGcpTfNetwork().replace('google_compute_network', 'google_compute_vpc'));
     const result = run(base);
@@ -1701,7 +1661,7 @@ test('[Phase 3] fails when network/main.tf is missing google_compute_network', (
 test('[Phase 3] fails when network/main.tf is missing Cloud NAT resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'network', 'main.tf'),
       makeValidGcpTfNetwork().replace('google_compute_router_nat', 'google_compute_router'));
     const result = run(base);
@@ -1715,7 +1675,7 @@ test('[Phase 3] fails when network/main.tf is missing Cloud NAT resource', () =>
 test('[Phase 3] fails when infra/gcp/terraform/compute/main.tf is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'compute', 'main.tf'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1728,7 +1688,7 @@ test('[Phase 3] fails when infra/gcp/terraform/compute/main.tf is missing', () =
 test('[Phase 3] fails when compute/main.tf is missing GKE cluster resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'compute', 'main.tf'),
       makeValidGcpTfCompute().replace('google_container_cluster', 'google_gke_cluster'));
     const result = run(base);
@@ -1742,7 +1702,7 @@ test('[Phase 3] fails when compute/main.tf is missing GKE cluster resource', () 
 test('[Phase 3] fails when compute/main.tf is missing Workload Identity config', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'compute', 'main.tf'),
       makeValidGcpTfCompute().replace('workload_identity_config', 'identity_config'));
     const result = run(base);
@@ -1756,7 +1716,7 @@ test('[Phase 3] fails when compute/main.tf is missing Workload Identity config',
 test('[Phase 3] fails when compute/main.tf is missing autoscaling', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'compute', 'main.tf'),
       makeValidGcpTfCompute().replace('autoscaling', 'scaling'));
     const result = run(base);
@@ -1770,7 +1730,7 @@ test('[Phase 3] fails when compute/main.tf is missing autoscaling', () => {
 test('[Phase 3] fails when infra/gcp/terraform/data/main.tf is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'data', 'main.tf'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1783,7 +1743,7 @@ test('[Phase 3] fails when infra/gcp/terraform/data/main.tf is missing', () => {
 test('[Phase 3] fails when data/main.tf is missing Cloud SQL resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'data', 'main.tf'),
       makeValidGcpTfData().replace('google_sql_database_instance', 'google_sql_instance'));
     const result = run(base);
@@ -1797,7 +1757,7 @@ test('[Phase 3] fails when data/main.tf is missing Cloud SQL resource', () => {
 test('[Phase 3] fails when data/main.tf is missing Memorystore resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'data', 'main.tf'),
       makeValidGcpTfData().replace('google_redis_instance', 'google_memorystore_instance'));
     const result = run(base);
@@ -1811,7 +1771,7 @@ test('[Phase 3] fails when data/main.tf is missing Memorystore resource', () => 
 test('[Phase 3] fails when infra/gcp/terraform/security/main.tf is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'security', 'main.tf'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1824,7 +1784,7 @@ test('[Phase 3] fails when infra/gcp/terraform/security/main.tf is missing', () 
 test('[Phase 3] fails when security/main.tf is missing Cloud KMS key ring', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'security', 'main.tf'),
       makeValidGcpTfSecurity().replace('google_kms_key_ring', 'google_kms_ring'));
     const result = run(base);
@@ -1838,7 +1798,7 @@ test('[Phase 3] fails when security/main.tf is missing Cloud KMS key ring', () =
 test('[Phase 3] fails when security/main.tf is missing Secret Manager resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'security', 'main.tf'),
       makeValidGcpTfSecurity().replace('google_secret_manager_secret', 'google_sm_secret'));
     const result = run(base);
@@ -1852,7 +1812,7 @@ test('[Phase 3] fails when security/main.tf is missing Secret Manager resource',
 test('[Phase 3] fails when security/main.tf is missing secretAccessor IAM role', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'security', 'main.tf'),
       makeValidGcpTfSecurity().replace('secretmanager.secretAccessor', 'secretmanager.admin'));
     const result = run(base);
@@ -1866,7 +1826,7 @@ test('[Phase 3] fails when security/main.tf is missing secretAccessor IAM role',
 test('[Phase 3] fails when infra/gcp/terraform/observability/main.tf is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'terraform', 'observability', 'main.tf'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1879,7 +1839,7 @@ test('[Phase 3] fails when infra/gcp/terraform/observability/main.tf is missing'
 test('[Phase 3] fails when observability/main.tf is missing Cloud Monitoring dashboard', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'observability', 'main.tf'),
       makeValidGcpTfObservability().replace('google_monitoring_dashboard', 'google_dashboard'));
     const result = run(base);
@@ -1893,7 +1853,7 @@ test('[Phase 3] fails when observability/main.tf is missing Cloud Monitoring das
 test('[Phase 3] fails when observability/main.tf is missing alert policy', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'terraform', 'observability', 'main.tf'),
       makeValidGcpTfObservability().replace('google_monitoring_alert_policy', 'google_alert'));
     const result = run(base);
@@ -1907,7 +1867,7 @@ test('[Phase 3] fails when observability/main.tf is missing alert policy', () =>
 test('[Phase 3] fails when infra/gcp/config-connector/cloud-sql.yaml is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-sql.yaml'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1920,7 +1880,7 @@ test('[Phase 3] fails when infra/gcp/config-connector/cloud-sql.yaml is missing'
 test('[Phase 3] fails when cloud-sql.yaml is missing SQLInstance resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-sql.yaml'),
       makeValidGcpCcSql().replace(/SQLInstance/g, 'DatabaseInstance'));
     const result = run(base);
@@ -1934,7 +1894,7 @@ test('[Phase 3] fails when cloud-sql.yaml is missing SQLInstance resource', () =
 test('[Phase 3] fails when infra/gcp/config-connector/memorystore.yaml is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'config-connector', 'memorystore.yaml'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1947,7 +1907,7 @@ test('[Phase 3] fails when infra/gcp/config-connector/memorystore.yaml is missin
 test('[Phase 3] fails when memorystore.yaml is missing RedisInstance resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'memorystore.yaml'),
       makeValidGcpCcMemorystore().replace('RedisInstance', 'MemorystoreInstance'));
     const result = run(base);
@@ -1961,7 +1921,7 @@ test('[Phase 3] fails when memorystore.yaml is missing RedisInstance resource', 
 test('[Phase 3] fails when infra/gcp/config-connector/cloud-kms.yaml is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-kms.yaml'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -1974,7 +1934,7 @@ test('[Phase 3] fails when infra/gcp/config-connector/cloud-kms.yaml is missing'
 test('[Phase 3] fails when cloud-kms.yaml is missing KMSKeyRing resource', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-kms.yaml'),
       makeValidGcpCcKms().replace(/KMSKeyRing/g, 'KeyRing'));
     const result = run(base);
@@ -1988,7 +1948,7 @@ test('[Phase 3] fails when cloud-kms.yaml is missing KMSKeyRing resource', () =>
 test('[Phase 3] fails when cloud-kms.yaml is missing Workload Identity binding', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'cloud-kms.yaml'),
       makeValidGcpCcKms().replace(/workloadIdentityUser/g, 'workloadIdentityViewer'));
     const result = run(base);
@@ -2002,7 +1962,7 @@ test('[Phase 3] fails when cloud-kms.yaml is missing Workload Identity binding',
 test('[Phase 3] fails when infra/gcp/config-connector/artifact-registry.yaml is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'infra', 'gcp', 'config-connector', 'artifact-registry.yaml'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -2015,7 +1975,7 @@ test('[Phase 3] fails when infra/gcp/config-connector/artifact-registry.yaml is 
 test('[Phase 3] fails when artifact-registry.yaml is missing ArtifactRegistryRepository', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'infra', 'gcp', 'config-connector', 'artifact-registry.yaml'),
       makeValidGcpCcAr().replace('ArtifactRegistryRepository', 'DockerRepository'));
     const result = run(base);
@@ -2029,7 +1989,7 @@ test('[Phase 3] fails when artifact-registry.yaml is missing ArtifactRegistryRep
 test('[Phase 3] fails when k8s/helm/euno/values-azure.yaml is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -2042,7 +2002,7 @@ test('[Phase 3] fails when k8s/helm/euno/values-azure.yaml is missing', () => {
 test('[Phase 3] fails when values-azure.yaml is missing ACR registry reference', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
       makeValidValuesAzure().replace(/azurecr\.io/g, 'myregistry.io'));
     const result = run(base);
@@ -2056,7 +2016,7 @@ test('[Phase 3] fails when values-azure.yaml is missing ACR registry reference',
 test('[Phase 3] fails when values-azure.yaml is missing Workload Identity annotation', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
       makeValidValuesAzure().replace(/azure\.workload\.identity\/client-id/g, 'client-id'));
     const result = run(base);
@@ -2070,7 +2030,7 @@ test('[Phase 3] fails when values-azure.yaml is missing Workload Identity annota
 test('[Phase 3] fails when values-azure.yaml is missing azure-keyvault signing provider', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
       makeValidValuesAzure().replace('azure-keyvault', 'software'));
     const result = run(base);
@@ -2084,7 +2044,7 @@ test('[Phase 3] fails when values-azure.yaml is missing azure-keyvault signing p
 test('[Phase 3] fails when values-azure.yaml is missing azure-ad identity provider', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'k8s', 'helm', 'euno', 'values-azure.yaml'),
       makeValidValuesAzure().replace('azure-ad', 'azure-b2c'));
     const result = run(base);
@@ -2098,7 +2058,7 @@ test('[Phase 3] fails when values-azure.yaml is missing azure-ad identity provid
 test('[Phase 3] fails when docs/multi-cloud.md is missing', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     rmSync(join(base, 'docs', 'multi-cloud.md'));
     const result = run(base);
     assert.equal(result.status, 1);
@@ -2111,7 +2071,7 @@ test('[Phase 3] fails when docs/multi-cloud.md is missing', () => {
 test('[Phase 3] fails when multi-cloud.md is missing deploy-eks.md link', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud.md'),
       makeValidMultiCloudRunbook().replace(/deploy-eks\.md/g, 'eks-guide.md'));
     const result = run(base);
@@ -2125,7 +2085,7 @@ test('[Phase 3] fails when multi-cloud.md is missing deploy-eks.md link', () => 
 test('[Phase 3] fails when multi-cloud.md is missing deploy-gke.md link', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud.md'),
       makeValidMultiCloudRunbook().replace(/deploy-gke\.md/g, 'gke-guide.md'));
     const result = run(base);
@@ -2139,7 +2099,7 @@ test('[Phase 3] fails when multi-cloud.md is missing deploy-gke.md link', () => 
 test('[Phase 3] fails when multi-cloud.md is missing migration path section', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud.md'),
       makeValidMultiCloudRunbook().replace('migration', 'upgrade'));
     const result = run(base);
@@ -2153,7 +2113,7 @@ test('[Phase 3] fails when multi-cloud.md is missing migration path section', ()
 test('[Phase 3] fails when multi-cloud.md is missing cross-chain anchor example', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud.md'),
       makeValidMultiCloudRunbook().replace('cross-chain anchor', 'audit anchor'));
     const result = run(base);
@@ -2167,7 +2127,7 @@ test('[Phase 3] fails when multi-cloud.md is missing cross-chain anchor example'
 test('[Phase 3] fails when multi-cloud-plan.md is missing GCP Terraform module check', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
       makeValidMultiCloudPlanPhase3().replace(
         '[x] **Terraform module**',
@@ -2184,7 +2144,7 @@ test('[Phase 3] fails when multi-cloud-plan.md is missing GCP Terraform module c
 test('[Phase 3] fails when multi-cloud-plan.md is missing Config Connector check', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
       makeValidMultiCloudPlanPhase3().replace(
         '[x] **Google Cloud Deployment Manager / Config Connector**',
@@ -2201,7 +2161,7 @@ test('[Phase 3] fails when multi-cloud-plan.md is missing Config Connector check
 test('[Phase 3] fails when multi-cloud-plan.md Helm values files item is not fully checked', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
       makeValidMultiCloudPlanPhase3().replace(
         '[x] **Helm chart — cloud-specific values files**',
@@ -2218,7 +2178,7 @@ test('[Phase 3] fails when multi-cloud-plan.md Helm values files item is not ful
 test('[Phase 3] fails when multi-cloud-plan.md multi-cloud runbook index is not checked', () => {
   const base = makeTmpRoot();
   try {
-    makeValidPhase3Fixtures(base);
+    makeValidFixtures(base);
     writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
       makeValidMultiCloudPlanPhase3().replace(
         '[x] **Multi-cloud runbook index**',
