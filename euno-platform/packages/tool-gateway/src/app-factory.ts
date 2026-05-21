@@ -38,6 +38,7 @@ import { createValidateRouter } from './routes/validate';
 import { createToolsRouter } from './routes/tools';
 import { createEnforceRouter } from './routes/enforce';
 import type { CoreGatewayDeps, PublicAppDeps, AdminAppDeps } from './bootstrap';
+import { Registry } from 'prom-client';
 
 /**
  * Build a fully-configured Express application from a dependency bag.
@@ -307,7 +308,7 @@ export function createAdminApp(deps: CoreGatewayDeps & AdminAppDeps): Express {
   // reachable through the public-facing load-balancer.  Prometheus scrapers
   // should be configured to target ADMIN_PORT (default 3003) instead of the
   // public port.  Plain GET handler: no body parsing required.
-  adminApp.get('/metrics', createMetricsHandler(deps.metricsRegistry) as express.RequestHandler);
+  adminApp.get('/metrics', createMetricsHandler(deps.metricsRegistry ?? new Registry()) as express.RequestHandler);
 
   adminApp.use(express.json());
 

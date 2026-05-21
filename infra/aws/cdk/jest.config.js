@@ -8,5 +8,5 @@ module.exports = {
   },
   // CDK synthesis creates large temp assets; run sequentially to avoid
   // filling the disk when multiple stacks are synthesised in parallel.
-  runInBand: true,
+  maxWorkers: 1,
 };
