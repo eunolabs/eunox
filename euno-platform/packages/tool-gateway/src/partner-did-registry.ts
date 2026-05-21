@@ -118,7 +118,15 @@ export function verifyPinAttestation(attestation: PinAttestation, secret: string
 // Schema types
 // ──────────────────────────────────────────────────────────────────────────────
 
-export type PartnerDidStatus = 'proposed' | 'active' | 'revoked';
+/**
+ * Runtime array of all valid {@link PartnerDidStatus} values.
+ *
+ * This tuple is the source of truth for status values used by runtime guards.
+ * Derive {@link PartnerDidStatus} from it so type-level and runtime values
+ * stay in sync.
+ */
+export const PARTNER_DID_STATUSES = ['proposed', 'active', 'revoked'] as const;
+export type PartnerDidStatus = (typeof PARTNER_DID_STATUSES)[number];
 
 /** Optional secondary-resolver spec for cross-check.  See 2C in the plan. */
 export interface SecondaryResolverSpec {
