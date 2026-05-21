@@ -28,6 +28,9 @@ import {
   createPartnerDidRegistryFromEnv,
 } from '../src/partner-did-registry';
 import { createAdminRouter } from '../src/admin-api';
+
+/** Shared admin API key for tests that exercise partner-did admin endpoints. */
+const PARTNER_DID_TEST_KEY = 'partner-did-test-key';
 import { createLogger, DefaultKillSwitchManager } from '@euno/common';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +235,7 @@ function buildAdminApp(registry?: InMemoryPartnerDidRegistry, opts: { requirePin
     createAdminRouter({
       killSwitchManager,
       logger,
+      adminApiKey: PARTNER_DID_TEST_KEY,
       partnerRegistry: registry,
       requirePin: opts.requirePin,
     }),
@@ -242,7 +246,8 @@ function buildAdminApp(registry?: InMemoryPartnerDidRegistry, opts: { requirePin
 describe('GET /admin/partner-dids', () => {
   it('returns 404 when no registry is configured', async () => {
     const app = buildAdminApp();
-    const res = await request(app).get('/admin/partner-dids');
+    const res = await request(app).get('/admin/partner-dids')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_CONFIGURED');
   });
@@ -250,7 +255,8 @@ describe('GET /admin/partner-dids', () => {
   it('returns empty list initially', async () => {
     const reg = new InMemoryPartnerDidRegistry();
     const app = buildAdminApp(reg);
-    const res = await request(app).get('/admin/partner-dids');
+    const res = await request(app).get('/admin/partner-dids')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(200);
     expect(res.body.entries).toHaveLength(0);
   });
@@ -260,7 +266,8 @@ describe('GET /admin/partner-dids', () => {
     await reg.propose({ did: 'did:web:a.com', proposer: 'alice' });
     await reg.propose({ did: 'did:web:b.com', proposer: 'alice' });
     const app = buildAdminApp(reg);
-    const res = await request(app).get('/admin/partner-dids');
+    const res = await request(app).get('/admin/partner-dids')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(200);
     expect(res.body.entries).toHaveLength(2);
   });
@@ -272,11 +279,13 @@ describe('GET /admin/partner-dids', () => {
     await reg.propose({ did: 'did:web:b.com', proposer: 'alice' });
     const app = buildAdminApp(reg);
 
-    const activeRes = await request(app).get('/admin/partner-dids?status=active');
+    const activeRes = await request(app).get('/admin/partner-dids?status=active')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(activeRes.body.entries).toHaveLength(1);
     expect(activeRes.body.entries[0].did).toBe('did:web:a.com');
 
-    const proposedRes = await request(app).get('/admin/partner-dids?status=proposed');
+    const proposedRes = await request(app).get('/admin/partner-dids?status=proposed')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(proposedRes.body.entries).toHaveLength(1);
     expect(proposedRes.body.entries[0].did).toBe('did:web:b.com');
   });
@@ -287,6 +296,7 @@ describe('POST /admin/partner-dids/proposals', () => {
     const app = buildAdminApp();
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({ did: 'did:web:example.com' });
     expect(res.status).toBe(404);
@@ -297,6 +307,7 @@ describe('POST /admin/partner-dids/proposals', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .send({ did: 'did:web:example.com' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_OPERATOR');
@@ -307,6 +318,7 @@ describe('POST /admin/partner-dids/proposals', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({});
     expect(res.status).toBe(400);
@@ -318,6 +330,7 @@ describe('POST /admin/partner-dids/proposals', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({ did: 'did:web:partner.example.com', notes: 'Acme Corp' });
     expect(res.status).toBe(201);
@@ -332,6 +345,7 @@ describe('POST /admin/partner-dids/proposals', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'carol')
       .send({ did: 'did:web:partner.example.com' });
     expect(res.status).toBe(409);
@@ -345,6 +359,7 @@ describe('POST /admin/partner-dids/proposals — requirePin enforcement', () => 
     const app = buildAdminApp(reg, { requirePin: true });
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({ did: 'did:web:partner.example.com', notes: 'no pin' });
     expect(res.status).toBe(400);
@@ -357,6 +372,7 @@ describe('POST /admin/partner-dids/proposals — requirePin enforcement', () => 
     const pin = jcsSha256({ id: 'did:web:partner.example.com' });
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({ did: 'did:web:partner.example.com', pinnedDocSha256: pin });
     expect(res.status).toBe(201);
@@ -368,6 +384,7 @@ describe('POST /admin/partner-dids/proposals — requirePin enforcement', () => 
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice')
       .send({ did: 'did:web:partner.example.com' });
     expect(res.status).toBe(201);
@@ -379,6 +396,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const app = buildAdminApp();
     const res = await request(app)
       .post('/admin/partner-dids/proposals/did%3Aweb%3Aexample.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
     expect(res.status).toBe(404);
   });
@@ -387,7 +405,8 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const reg = new InMemoryPartnerDidRegistry();
     const app = buildAdminApp(reg);
     const res = await request(app)
-      .post('/admin/partner-dids/proposals/did%3Aweb%3Aexample.com/approve');
+      .post('/admin/partner-dids/proposals/did%3Aweb%3Aexample.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_OPERATOR');
   });
@@ -398,6 +417,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals/did%3Aweb%3Apartner.example.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
     expect(res.status).toBe(200);
     expect(res.body.entry.status).toBe('active');
@@ -411,6 +431,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals/did%3Aweb%3Apartner.example.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('TWO_EYES_VIOLATION');
@@ -421,6 +442,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals/did%3Aweb%3Aunknown.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
@@ -433,6 +455,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/proposals/did%3Aweb%3Apartner.example.com/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'carol');
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('CONFLICT');
@@ -444,6 +467,7 @@ describe('DELETE /admin/partner-dids/:did', () => {
     const app = buildAdminApp();
     const res = await request(app)
       .delete('/admin/partner-dids/did%3Aweb%3Aexample.com')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(404);
   });
@@ -455,6 +479,7 @@ describe('DELETE /admin/partner-dids/:did', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .delete('/admin/partner-dids/did%3Aweb%3Apartner.example.com')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(200);
     expect(res.body.entry.status).toBe('revoked');
@@ -465,7 +490,8 @@ describe('DELETE /admin/partner-dids/:did', () => {
     const reg = new InMemoryPartnerDidRegistry();
     const app = buildAdminApp(reg);
     const res = await request(app)
-      .delete('/admin/partner-dids/did%3Aweb%3Aexample.com');
+      .delete('/admin/partner-dids/did%3Aweb%3Aexample.com')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_OPERATOR');
   });
@@ -475,6 +501,7 @@ describe('DELETE /admin/partner-dids/:did', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .delete('/admin/partner-dids/did%3Aweb%3Aunknown.com')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
@@ -486,6 +513,7 @@ describe('POST /admin/partner-dids/:did/refresh', () => {
     const app = buildAdminApp();
     const res = await request(app)
       .post('/admin/partner-dids/did%3Aweb%3Aexample.com/refresh')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_CONFIGURED');
@@ -497,7 +525,8 @@ describe('POST /admin/partner-dids/:did/refresh', () => {
     await reg.approve('did:web:partner.example.com', 'bob');
     const app = buildAdminApp(reg);
     const res = await request(app)
-      .post('/admin/partner-dids/did%3Aweb%3Apartner.example.com/refresh');
+      .post('/admin/partner-dids/did%3Aweb%3Apartner.example.com/refresh')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY);
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_OPERATOR');
   });
@@ -507,6 +536,7 @@ describe('POST /admin/partner-dids/:did/refresh', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/did%3Aweb%3Aexample.com/refresh')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('UNKNOWN_DID');
@@ -519,6 +549,7 @@ describe('POST /admin/partner-dids/:did/refresh', () => {
     const app = buildAdminApp(reg);
     const res = await request(app)
       .post('/admin/partner-dids/did%3Aweb%3Apartner.example.com/refresh')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(200);
     expect(res.body.did).toBe('did:web:partner.example.com');
@@ -751,6 +782,7 @@ function buildAdminAppWithFetch(
     createAdminRouter({
       killSwitchManager,
       logger,
+      adminApiKey: PARTNER_DID_TEST_KEY,
       partnerRegistry: registry,
       requirePin: opts.requirePin,
       pinAttestationSecret: opts.pinAttestationSecret,
@@ -774,6 +806,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin a
 
     const res = await request(app)
       .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
 
     expect(res.status).toBe(200);
@@ -793,6 +826,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin a
 
     const res = await request(app)
       .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
 
     expect(res.status).toBe(200);
@@ -812,6 +846,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin a
 
     const res = await request(app)
       .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
 
     expect(res.status).toBe(502);
@@ -831,6 +866,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin a
 
     const res = await request(app)
       .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
 
     // The proposer-supplied pin is kept; attestation is signed over it.
@@ -851,6 +887,7 @@ describe('POST /admin/partner-dids/proposals/:did/approve — auto-fetch + pin a
 
     const res = await request(app)
       .post(`/admin/partner-dids/proposals/${encodeURIComponent(DID)}/approve`)
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
       .set('X-Admin-Operator', 'bob');
 
     expect(res.status).toBe(200);

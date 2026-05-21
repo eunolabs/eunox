@@ -24,6 +24,7 @@ import {
   checkActionResolverHashParity,
   checkProductionRedisHa,
   checkProductionAdminHost,
+  checkProductionTrustProxy,
 } from '../src/bootstrap';
 import { createLogger } from '@euno/common';
 
@@ -696,6 +697,94 @@ describe('checkProductionAdminHost', () => {
       expect(() =>
         checkProductionAdminHost({ ADMIN_HOST: '  ' }, 'production'),
       ).toThrow('<unset>');
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// checkProductionTrustProxy
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('checkProductionTrustProxy', () => {
+  describe('non-production environments — always a no-op', () => {
+    it('does not throw when NODE_ENV=development and TRUST_PROXY=true', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'development')).not.toThrow();
+    });
+
+    it('does not throw when NODE_ENV=staging and TRUST_PROXY=true', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'staging')).not.toThrow();
+    });
+
+    it('does not throw when NODE_ENV=test and TRUST_PROXY=true', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'test')).not.toThrow();
+    });
+  });
+
+  describe('production — safe TRUST_PROXY values accepted', () => {
+    it('accepts TRUST_PROXY=1 (numeric hop count)', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: '1' }, 'production')).not.toThrow();
+    });
+
+    it('accepts TRUST_PROXY=2', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: '2' }, 'production')).not.toThrow();
+    });
+
+    it('accepts a CIDR range', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: '10.0.0.0/8' }, 'production'),
+      ).not.toThrow();
+    });
+
+    it('accepts "loopback" named preset', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'loopback' }, 'production'),
+      ).not.toThrow();
+    });
+
+    it('accepts TRUST_PROXY=false', () => {
+      expect(() => checkProductionTrustProxy({ TRUST_PROXY: 'false' }, 'production')).not.toThrow();
+    });
+
+    it('does not throw when TRUST_PROXY is unset', () => {
+      expect(() => checkProductionTrustProxy({}, 'production')).not.toThrow();
+    });
+  });
+
+  describe('production — TRUST_PROXY=true rejected (CR-5)', () => {
+    it('throws CR-5 when TRUST_PROXY=true', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'production'),
+      ).toThrow(/CR-5/);
+    });
+
+    it('throws CR-5 when TRUST_PROXY=TRUE (case-insensitive)', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'TRUE' }, 'production'),
+      ).toThrow(/CR-5/);
+    });
+
+    it('throws CR-5 when TRUST_PROXY="  true  " (with whitespace)', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: '  true  ' }, 'production'),
+      ).toThrow(/CR-5/);
+    });
+
+    it('error message includes source-IP spoofing risk', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'production'),
+      ).toThrow(/spoof/i);
+    });
+
+    it('error message includes actionable guidance (numeric hop count example)', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'production'),
+      ).toThrow(/TRUST_PROXY=1/);
+    });
+
+    it('error message references DEPLOYMENT.md', () => {
+      expect(() =>
+        checkProductionTrustProxy({ TRUST_PROXY: 'true' }, 'production'),
+      ).toThrow(/DEPLOYMENT\.md/);
     });
   });
 });

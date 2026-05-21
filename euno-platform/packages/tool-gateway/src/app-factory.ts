@@ -99,11 +99,6 @@ export function createApp(deps: GatewayDependencies): Express {
   // latency histogram (operators want to see throttled traffic too).
   app.use(createHttpMetricsMiddleware({ registry: metricsRegistry }));
 
-  // Prometheus scrape endpoint. Plain GET handler so it bypasses the JSON
-  // body parser and the rate limiter — Prometheus servers scrape on a tight
-  // schedule and must not be throttled.
-  app.get('/metrics', createMetricsHandler(metricsRegistry) as express.RequestHandler);
-
   // Rate limiting
   const limiter = rateLimit({
     windowMs: rateLimitWindowMs,
@@ -297,6 +292,12 @@ export function createAdminApp(deps: GatewayDependencies): Express {
 
   // Security headers (still worthwhile on an internal interface).
   adminApp.use(helmet());
+
+  // Prometheus scrape endpoint — served on the admin port so it is never
+  // reachable through the public-facing load-balancer.  Prometheus scrapers
+  // should be configured to target ADMIN_PORT (default 3003) instead of the
+  // public port.  Plain GET handler: no body parsing required.
+  adminApp.get('/metrics', createMetricsHandler(deps.metricsRegistry) as express.RequestHandler);
 
   adminApp.use(express.json());
 

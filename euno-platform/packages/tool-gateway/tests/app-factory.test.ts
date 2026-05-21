@@ -26,7 +26,7 @@ import {
 } from '@euno/common';
 import * as jose from 'jose';
 
-import { createApp } from '../src/app-factory';
+import { createApp, createAdminApp } from '../src/app-factory';
 import { EnforcementEngine } from '../src/enforcement';
 import { JWTTokenVerifier } from '../src/verifier';
 import type { GatewayDependencies } from '../src/bootstrap';
@@ -943,27 +943,43 @@ describe('createApp(deps) — R-2 in-process factory', () => {
     });
   });
 
-  describe('/metrics (F-5, addresses I-16)', () => {
-    it('exposes Prometheus metrics with the correct content-type', async () => {
+  describe('/metrics (F-5, addresses I-16) — served on admin app only', () => {
+    it('exposes Prometheus metrics from the admin app with the correct content-type', async () => {
       const { deps } = await buildDeps();
+      // createApp registers the HTTP metrics middleware against deps.metricsRegistry;
+      // createAdminApp serves the same shared registry on /metrics.
       const app = createApp(deps);
+      const adminApp = createAdminApp(deps);
 
-      const res = await request(app).get('/metrics');
+      // Make a real request through the public app so the HTTP metrics
+      // instruments are guaranteed to have been initialised by the middleware.
+      await request(app).get('/health');
+
+      const res = await request(adminApp).get('/metrics');
 
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toMatch(/text\/plain/);
-      // Standard HTTP middleware series should be registered, even with zero
-      // observed traffic (HELP/TYPE lines emitted by prom-client).
+      // Standard HTTP middleware series should be registered.
       expect(res.text).toContain('euno_http_request_duration_seconds');
       expect(res.text).toContain('euno_http_requests_total');
     });
 
-    it('records a sample after handling a request', async () => {
+    it('returns 404 for /metrics on the public app (no longer served there)', async () => {
       const { deps } = await buildDeps();
       const app = createApp(deps);
 
-      await request(app).get('/health');
       const res = await request(app).get('/metrics');
+
+      expect(res.status).toBe(404);
+    });
+
+    it('records a sample on the shared registry after handling a request on the public app', async () => {
+      const { deps } = await buildDeps();
+      const app = createApp(deps);
+      const adminApp = createAdminApp(deps);
+
+      await request(app).get('/health');
+      const res = await request(adminApp).get('/metrics');
 
       expect(res.status).toBe(200);
       // The /health request should have produced at least one observation
@@ -975,13 +991,14 @@ describe('createApp(deps) — R-2 in-process factory', () => {
 
     it('does not record observations for the /metrics endpoint itself', async () => {
       const { deps } = await buildDeps();
-      const app = createApp(deps);
+      const adminApp = createAdminApp(deps);
 
-      await request(app).get('/metrics');
-      await request(app).get('/metrics');
-      const res = await request(app).get('/metrics');
+      await request(adminApp).get('/metrics');
+      await request(adminApp).get('/metrics');
+      const res = await request(adminApp).get('/metrics');
 
-      // No counter sample with route="/metrics" should appear.
+      // The admin app does not mount the HTTP metrics middleware, so no
+      // route observations should be recorded for /metrics scrapes.
       expect(res.text).not.toMatch(
         /euno_http_requests_total\{[^}]*route="\/metrics"/,
       );
