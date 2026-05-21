@@ -200,6 +200,20 @@ describe('enforceCondition', () => {
     expect(result).toEqual({ allow: false, reason: expect.stringMatching(/mystery/) });
   });
 
+  it('exhaustiveness guard: switch default branch denies and includes type name (MH-R1)', async () => {
+    // This test documents that the switch-with-default approach in enforceCondition
+    // preserves the deny-by-default runtime behavior while the compile-time
+    // `const _exhaustive: never = condition` in the default branch catches any
+    // unhandled CapabilityCondition subtype at build time.
+    const unknownType = 'futureConditionType';
+    const result = await enforceCondition(
+      { type: unknownType } as unknown as CapabilityCondition,
+      {},
+    );
+    expect(result.allow).toBe(false);
+    expect((result as { reason: string }).reason).toContain(unknownType);
+  });
+
   describe('timeWindow', () => {
     it('denies before notBefore', async () => {
       const r = await enforceCondition(

@@ -47,3 +47,5 @@ export type {
   TelemetryEventBase,
   CreateTelemetryOptions,
 } from './telemetry';
+export { buildPdp } from './cli/pdp-factory';
+export type { EnforcementMode, BuildPdpResult } from './cli/pdp-factory';
