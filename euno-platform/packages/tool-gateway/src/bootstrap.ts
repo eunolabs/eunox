@@ -256,6 +256,14 @@ export interface AdminAppDeps {
   /** Kill-switch manager; required for the kill-switch admin endpoints. */
   killSwitchManager: KillSwitchManager;
   /**
+   * Prometheus registry exposed on `/metrics` on the admin port.
+   * The admin app serves the scrape endpoint so Prometheus can reach it
+   * without the request passing through the public-facing load-balancer.
+   * Optional: when omitted a fresh `Registry` is created automatically,
+   * so test code that only exercises admin routes need not supply one.
+   */
+  metricsRegistry?: import('prom-client').Registry;
+  /**
    * Per-issuer epoch store.  When set, every token verification also checks
    * the issuer epoch: tokens with `iat` before the epoch are rejected.
    * Wired from `REDIS_URL` (Redis-backed) or falls back to in-memory.

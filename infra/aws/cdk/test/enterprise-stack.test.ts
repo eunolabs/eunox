@@ -20,7 +20,7 @@ const defaultEnv = {
 function makeStack(
   props: Partial<ConstructorParameters<typeof EunoEnterpriseStack>[2]> = {},
 ) {
-  const app = new cdk.App();
+  const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
   return new EunoEnterpriseStack(app, 'TestEnterprise', {
     env: defaultEnv,
     namePrefix: 'euno',

@@ -20,7 +20,7 @@ const defaultEnv = {
 function makeStack(
   props: Partial<ConstructorParameters<typeof EunoIssuerStack>[2]> = {},
 ) {
-  const app = new cdk.App();
+  const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
   return new EunoIssuerStack(app, 'TestIssuer', {
     env: defaultEnv,
     namePrefix: 'euno',
@@ -59,7 +59,7 @@ describe('EunoIssuerStack', () => {
 
   describe('Cognito User Pool', () => {
     test('throws a clear error when createCognitoUserPool=false without cognitoUserPoolArn', () => {
-      const app = new cdk.App();
+      const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
       expect(() => {
         new EunoIssuerStack(app, 'MissingPoolArn', {
           env: defaultEnv,
@@ -119,7 +119,7 @@ describe('EunoIssuerStack', () => {
         ExplicitAuthFlows: Match.arrayWith(['ALLOW_USER_SRP_AUTH']),
         AccessTokenValidity: 15,
         IdTokenValidity: 15,
-        RefreshTokenValidity: 30,
+        RefreshTokenValidity: 43200, // cdk.Duration.days(30) → 43200 minutes
       });
     });
 

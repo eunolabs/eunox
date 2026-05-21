@@ -74,7 +74,7 @@ export class EunoIssuerStack extends EunoGatewayStack {
     // ── Cognito User Pool ─────────────────────────────────────────────────────
     if (createPool) {
       this.userPool = new cognito.UserPool(this, 'UserPool', {
-        userPoolName: `${this.namePrefix}-users-${this.environment}`,
+        userPoolName: `${this.namePrefix}-users-${this.deployEnv}`,
         selfSignUpEnabled: false,
         signInAliases: { email: true },
         autoVerify: { email: true },
@@ -125,7 +125,7 @@ export class EunoIssuerStack extends EunoGatewayStack {
     });
 
     // Cognito User Pool Domain for hosted UI / SCIM bridge endpoint.
-    const domainPrefix = props.cognitoDomainPrefix ?? `${this.namePrefix}-${this.environment}`;
+    const domainPrefix = props.cognitoDomainPrefix ?? `${this.namePrefix}-${this.deployEnv}`;
     this.userPoolDomain = new cognito.UserPoolDomain(this, 'UserPoolDomain', {
       userPool: this.userPool,
       cognitoDomain: { domainPrefix },
@@ -146,7 +146,7 @@ export class EunoIssuerStack extends EunoGatewayStack {
 
     // ── Secrets Manager — PARTNER_DID_PIN_SECRET ──────────────────────────────
     this.partnerDidPinSecret = new secretsmanager.Secret(this, 'PartnerDidPinSecret', {
-      secretName: `${this.namePrefix}/${this.environment}/partner-did-pin-secret`,
+      secretName: `${this.namePrefix}/${this.deployEnv}/partner-did-pin-secret`,
       description: 'PARTNER_DID_PIN_SECRET — PIN protecting the partner DID private key.',
       generateSecretString: {
         passwordLength: 64,
@@ -157,13 +157,13 @@ export class EunoIssuerStack extends EunoGatewayStack {
 
     // ── SSM Parameter Store — Cognito pool ID (non-sensitive) ─────────────────
     new ssm.StringParameter(this, 'CognitoUserPoolIdParam', {
-      parameterName: `/${this.namePrefix}/${this.environment}/cognito-user-pool-id`,
+      parameterName: `/${this.namePrefix}/${this.deployEnv}/cognito-user-pool-id`,
       stringValue: this.userPool.userPoolId,
       description: 'AWS_COGNITO_USER_POOL_ID — consumed by capability-issuer bootstrap.',
     });
 
     new ssm.StringParameter(this, 'CognitoClientIdParam', {
-      parameterName: `/${this.namePrefix}/${this.environment}/cognito-client-id`,
+      parameterName: `/${this.namePrefix}/${this.deployEnv}/cognito-client-id`,
       stringValue: this.userPoolClient.userPoolClientId,
       description: 'AWS_COGNITO_CLIENT_ID — consumed by capability-issuer bootstrap.',
     });
@@ -171,17 +171,22 @@ export class EunoIssuerStack extends EunoGatewayStack {
     // ── IRSA role for capability-issuer ───────────────────────────────────────
     const oidcProvider = this.cluster.openIdConnectProvider;
 
+    // Use CfnJson to defer OIDC issuer token resolution to deployment time.
+    const issuerIrsaConditions = new cdk.CfnJson(this, 'IssuerIrsaConditions', {
+      value: {
+        [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
+          'system:serviceaccount:euno-system:capability-issuer',
+        [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
+          'sts.amazonaws.com',
+      },
+    });
+
     this.issuerIrsaRole = new iam.Role(this, 'IssuerIrsaRole', {
-      roleName: `${this.namePrefix}-issuer-irsa-${this.environment}`,
+      roleName: `${this.namePrefix}-issuer-irsa-${this.deployEnv}`,
       assumedBy: new iam.WebIdentityPrincipal(
         oidcProvider.openIdConnectProviderArn,
         {
-          StringEquals: {
-            [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
-              'system:serviceaccount:euno-system:capability-issuer',
-            [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
-              'sts.amazonaws.com',
-          },
+          StringEquals: issuerIrsaConditions,
         },
       ),
     });
@@ -247,19 +252,19 @@ export class EunoIssuerStack extends EunoGatewayStack {
     new cdk.CfnOutput(this, 'IssuerRoleArn', {
       value: this.issuerIrsaRole.roleArn,
       description: 'Annotate the capability-issuer ServiceAccount with this ARN.',
-      exportName: `${this.namePrefix}-${this.environment}-issuer-role-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-issuer-role-arn`,
     });
 
     new cdk.CfnOutput(this, 'CognitoUserPoolId', {
       value: this.userPool.userPoolId,
       description: 'Set as AWS_COGNITO_USER_POOL_ID for capability-issuer.',
-      exportName: `${this.namePrefix}-${this.environment}-cognito-user-pool-id`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-cognito-user-pool-id`,
     });
 
     new cdk.CfnOutput(this, 'CognitoAppClientId', {
       value: this.userPoolClient.userPoolClientId,
       description: 'Set as AWS_COGNITO_CLIENT_ID for capability-issuer.',
-      exportName: `${this.namePrefix}-${this.environment}-cognito-app-client-id`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-cognito-app-client-id`,
     });
 
     new cdk.CfnOutput(this, 'CognitoScimEndpoint', {
@@ -267,13 +272,13 @@ export class EunoIssuerStack extends EunoGatewayStack {
       description:
         'Cognito hosted UI / SCIM bridge base URL. ' +
         'See docs/issuer-idp-setup.md §10 for SCIM wiring with IAM Identity Center.',
-      exportName: `${this.namePrefix}-${this.environment}-cognito-scim-endpoint`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-cognito-scim-endpoint`,
     });
 
     new cdk.CfnOutput(this, 'PartnerDidPinSecretArn', {
       value: this.partnerDidPinSecret.secretArn,
       description: 'AWS_SECRETS_ARN_PARTNER_DID_PIN_SECRET.',
-      exportName: `${this.namePrefix}-${this.environment}-partner-did-pin-secret-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-partner-did-pin-secret-arn`,
     });
   }
 }
