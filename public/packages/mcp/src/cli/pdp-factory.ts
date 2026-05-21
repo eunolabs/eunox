@@ -138,7 +138,7 @@ export async function buildPdp(mode: EnforcementMode): Promise<BuildPdpResult> {
       validateCustomConditionRegistrations(manifest);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const hint = /custom condition '.*' has no registered handler/.test(message)
+      const hint = /custom condition '[^']*' has no registered handler/.test(message)
         ? ' Hint: load the handler with --custom-condition <module>.'
         : '';
       process.stderr.write(`[euno-mcp] Policy validation failed: ${message}${hint}\n`);

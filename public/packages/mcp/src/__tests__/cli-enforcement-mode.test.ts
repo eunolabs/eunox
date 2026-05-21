@@ -36,7 +36,7 @@ import { buildPdp, EnforcementMode } from '../cli/pdp-factory';
 /** Capture text written to process.stderr during a callback. */
 async function captureStderr(fn: () => Promise<void>): Promise<string> {
   const chunks: string[] = [];
-  const spy = jest.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array, ...args: unknown[]) => {
+  const spy = jest.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
     chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
     return true;
   });
