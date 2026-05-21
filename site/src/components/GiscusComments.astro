@@ -21,8 +21,13 @@ const repoId     = import.meta.env.PUBLIC_GISCUS_REPO_ID      ?? '';
 const category   = import.meta.env.PUBLIC_GISCUS_CATEGORY     ?? 'Blog Comments';
 const categoryId = import.meta.env.PUBLIC_GISCUS_CATEGORY_ID  ?? '';
 const theme      = import.meta.env.PUBLIC_GISCUS_THEME        ?? 'preferred_color_scheme';
+
+// Only embed Giscus when both opaque IDs are configured; otherwise the widget
+// initialises with empty strings and silently breaks the comments section.
+const giscusEnabled = repoId.length > 0 && categoryId.length > 0;
 ---
 
+{giscusEnabled && (
 <section class="giscus-section" aria-label="Comments">
   <h3 class="giscus-heading">Discussion</h3>
   <!-- is:inline prevents Vite/Astro from bundling this as an ES module,
@@ -48,6 +53,7 @@ const theme      = import.meta.env.PUBLIC_GISCUS_THEME        ?? 'preferred_colo
     async
   ></script>
 </section>
+)}
 
 <style>
   .giscus-section {

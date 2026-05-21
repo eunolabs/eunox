@@ -27,8 +27,12 @@ on:
   workflow_dispatch:
 
 # Least-privilege token — Cloudflare deployment uses its own credentials.
+# `actions: write` is required for actions/upload-artifact (build job) and
+# `actions: read` for actions/download-artifact (deploy job); an explicit
+# permissions block sets all unspecified scopes to none, so we must list both.
 permissions:
   contents: read
+  actions: write
 
 # Prevent concurrent deployments.
 concurrency:
@@ -65,8 +69,8 @@ jobs:
           # Giscus comment widget configuration.
           # Set GISCUS_REPO_ID and GISCUS_CATEGORY_ID as repository variables
           # in Settings → Secrets and variables → Actions → Variables.
-          # If unset, the Giscus widget falls back to empty strings and will
-          # not initialise (no comments shown) without producing a build error.
+          # If either ID is unset, the Giscus widget is suppressed entirely
+          # (no comments section shown) rather than rendering with empty config.
           PUBLIC_GISCUS_REPO: edgeobs/euno-platform
           PUBLIC_GISCUS_REPO_ID: ${{ vars.GISCUS_REPO_ID }}
           PUBLIC_GISCUS_CATEGORY: Blog Comments
