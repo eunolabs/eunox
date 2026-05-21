@@ -30,11 +30,6 @@ import {
 } from './cli/validate-token';
 import { buildPdp, EnforcementMode } from './cli/pdp-factory';
 
-// Re-export so downstream consumers can import without depending on the path
-// of the internal pdp-factory module.
-export type { EnforcementMode, BuildPdpResult } from './cli/pdp-factory';
-export { buildPdp } from './cli/pdp-factory';
-
 // ---------------------------------------------------------------------------
 
 const program = new Command();
