@@ -37,14 +37,19 @@ import { createProxyRouter } from './routes/proxy';
 import { createValidateRouter } from './routes/validate';
 import { createToolsRouter } from './routes/tools';
 import { createEnforceRouter } from './routes/enforce';
-import type { GatewayDependencies } from './bootstrap';
+import type { CoreGatewayDeps, PublicAppDeps, AdminAppDeps } from './bootstrap';
 
 /**
  * Build a fully-configured Express application from a dependency bag.
  * The returned app is stateless with respect to env / I/O — everything it
  * needs is captured in `deps`.
+ *
+ * Accepts `CoreGatewayDeps & PublicAppDeps` — the intersection of the two
+ * sub-interfaces this factory actually consumes.  The broader
+ * `GatewayDependencies` intersection satisfies this type, so passing a full
+ * `GatewayDependencies` bag (as all current callers do) continues to work.
  */
-export function createApp(deps: GatewayDependencies): Express {
+export function createApp(deps: CoreGatewayDeps & PublicAppDeps): Express {
   const {
     logger,
     enforcementEngine,
@@ -278,8 +283,13 @@ export function createApp(deps: GatewayDependencies): Express {
  * the internal ClusterIP admin Service should target this port.
  *
  * Deliberately omits CORS, public rate limiting, and all public routes.
+ *
+ * Accepts `CoreGatewayDeps & AdminAppDeps` — the intersection of the two
+ * sub-interfaces this factory actually consumes.  The broader
+ * `GatewayDependencies` intersection satisfies this type, so passing a full
+ * `GatewayDependencies` bag (as all current callers do) continues to work.
  */
-export function createAdminApp(deps: GatewayDependencies): Express {
+export function createAdminApp(deps: CoreGatewayDeps & AdminAppDeps): Express {
   const { logger, killSwitchManager, adminApiKey, verifier } = deps;
   const adminApp = express();
 

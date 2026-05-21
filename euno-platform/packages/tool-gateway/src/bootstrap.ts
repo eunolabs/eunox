@@ -60,172 +60,71 @@ import {
 } from './gateway-telemetry';
 import { PostureEmitterPlugin } from './posture-emitter-plugin';
 import { DurablePostureEmitter } from '@euno/posture-emitter';
+import os from 'os';
 
 type Logger = ReturnType<typeof createLogger>;
 
+// ---------------------------------------------------------------------------
+// Dependency sub-interfaces
+// ---------------------------------------------------------------------------
+//
+// `GatewayDependencies` was previously a single flat interface with 40+ fields
+// spanning four distinct responsibility groups. This caused wide blast radius
+// on changes (every route test had to reason about all four groups) and allowed
+// `createApp()` / `createAdminApp()` to silently accept fields they never use.
+//
+// The bag is now split into four cohesive interfaces:
+//
+//  CoreGatewayDeps       — shared by createApp() and createAdminApp()
+//  PublicAppDeps         — consumed exclusively by the public-facing Express app
+//  AdminAppDeps          — consumed exclusively by the internal admin Express app
+//  LifecycleGatewayDeps  — lifecycle / shutdown bookkeeping (index.ts entrypoint)
+//
+// `GatewayDependencies` is expressed as their intersection so all existing
+// callers (tests, entrypoint, integration-test harness) continue to compile
+// without modification, while `createApp` / `createAdminApp` advertise only
+// the slice they actually consume. See docs/change-risk-report-2026-05.md § CR-R1.
+
 /**
- * Fully-wired runtime dependencies handed to `createApp(deps)`.
- *
- * The bag is intentionally explicit so the factory can be invoked from
- * tests with hand-rolled fakes (no env, no Redis, no HTTP).
+ * Fields shared by both `createApp()` and `createAdminApp()`.
  */
-export interface GatewayDependencies {
-  config: ServiceConfig;
+export interface CoreGatewayDeps {
+  /** Structured logger (winston-backed). */
   logger: Logger;
+  /** JWT token verifier; used by both the public enforce route and the admin router. */
   verifier: JWTTokenVerifier;
-  enforcementEngine: EnforcementEngine;
-  killSwitchManager: KillSwitchManager;
-  callCounterStore?: CallCounterStore;
-  revocationStore?: RevocationStore;
   /**
-   * Per-issuer epoch store.  When set, every token verification also checks
-   * the issuer epoch: tokens with `iat` before the epoch are rejected.
-   * Wired from `REDIS_URL` (Redis-backed) or falls back to in-memory.
-   */
-  epochStore?: RevocationEpochStore;
-  evidenceSigner?: EvidenceSigner;
-  /**
-   * Async audit pipeline (R-9). Present when evidence signing is
-   * enabled and `AUDIT_PIPELINE_ENABLED=true` (the default). The
-   * gateway entrypoint is responsible for calling `drain()` on
-   * shutdown so buffered evidence is flushed before exit. When set,
-   * `auditPipelineDrainTimeoutMs` is always populated by
-   * `initializeServices` from `AUDIT_PIPELINE_DRAIN_TIMEOUT_MS`.
-   */
-  auditPipeline?: AuditPipeline;
-  /**
-   * Drain timeout (ms) used by the entrypoint on SIGTERM/SIGINT.
-   * Always populated alongside `auditPipeline` (the validated config
-   * supplies a default), so the entrypoint never passes `undefined`
-   * into `AuditPipeline.drain()`.
-   */
-  auditPipelineDrainTimeoutMs: number;
-  /**
-   * Optional OCSF (F-6) audit transport. When configured via
-   * `OCSF_TRANSPORT`, every signed evidence record and every
-   * `AuditLogEntry`-shaped winston log line is also delivered as an
-   * OCSF v1.1 event to a SIEM-friendly sink. The gateway entrypoint
-   * is responsible for calling `close()` during shutdown.
-   */
-  ocsfTransport?: OcsfAuditTransport;
-  /**
-   * Optional shared DPoP replay store (F-2). When `REDIS_URL` is set
-   * a `RedisDpopReplayStore` is wired so a captured proof cannot be
-   * replayed once per replica inside its acceptance window;
-   * otherwise an `InMemoryDpopReplayStore` is used (single-replica
-   * / dev). The entrypoint is responsible for calling `close()` on
-   * shutdown when the implementation owns external resources.
-   */
-  dpopReplayStore?: DpopReplayStore;
-  /**
-   * PostgreSQL connection pool owned by the ledger backend.  Present when
-   * `AUDIT_LEDGER_BACKEND=postgres` or `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
-   * The entrypoint is responsible for calling `ledgerPgPool.end()` on graceful
-   * shutdown so connection sockets are released.
-   */
-  ledgerPgPool?: import('@euno/common').PgPool;
-  /**
-   * Cross-chain anchor for the per-replica ledger backend.  Present when
-   * `AUDIT_LEDGER_BACKEND=per-replica-postgres` and either
-   * `ENABLE_CROSS_CHAIN_ANCHOR=true` or an anchor was injected via
-   * `InjectableBootstrapDeps`.  The entrypoint is responsible for calling
-   * `crossChainAnchor.stop()` during graceful shutdown.
-   */
-  crossChainAnchor?: CrossChainAnchor;
-  /**
-   * In-memory ring buffer of `SignedCrossChainCommitment` records emitted by
-   * the cross-chain anchor.  Present when `crossChainAnchor` is set.
-   * Served by `GET /api/v1/audit/chain-proof` (admin-key authenticated).
-   */
-  crossChainCommitmentStore?: CrossChainCommitmentStore;
-  /**
-   * The ledger backend exposed by the audit module. Present when
-   * `AUDIT_LEDGER_BACKEND` is set to a queryable backend (`postgres`,
-   * `per-replica-postgres`, `in-memory`, or `acl`). Used by the audit
-   * query route (`GET /api/v1/audit/records`) to serve paginated,
-   * filterable evidence without a separate DB connection pool.
-   */
-  auditLedgerBackend?: import('@euno/common').LedgerBackend;
-  /**
-   * Query-only projection of the audit ledger. Present when a queryable
-   * backend is configured.
+   * Express `trust proxy` setting (security-critical for F-2 DPoP
+   * `htu` reconstruction). When the gateway is deployed behind a
+   * TLS-terminating reverse proxy / load balancer, this MUST be
+   * configured so `req.protocol` / `req.hostname` reflect the
+   * client-facing scheme and host the agent actually dialled (the
+   * one its DPoP proof was signed against). Plumbed from the
+   * `TRUST_PROXY` env var. Unset means Express's default of `false`
+   * — safe for direct deployments.
    *
-   * Backed by a {@link PostgresAuditQueryStore} that shares the pool
-   * with the write backend — no additional DB connection pool.  When
-   * present, the audit route prefers this over {@link auditLedgerBackend}
-   * because the query store carries no chain state, advisory locks, or
-   * HMAC material — it is a lighter-weight read path.
-   *
-   * For deployments that want to direct audit queries to a dedicated
-   * read replica, construct a {@link PostgresAuditQueryStore} with an
-   * independent pool and inject it here.
+   * Accepts the full Express vocabulary: a boolean, a hop count, a
+   * comma-separated list of CIDRs / IPs, or "loopback" /
+   * "linklocal" / "uniquelocal". See:
+   * https://expressjs.com/en/guide/behind-proxies.html
    */
-  auditQueryStore?: import('@euno/common').AuditQueryStore;
-  /**
-   * SPKI PEM of the evidence-signing public key.  Present when the active
-   * signer is a software signer (`AUDIT_SIGNING_KMS_PROVIDER` is not set).
-   * Used by the `GET /api/v1/audit/signing-keys` JWKS endpoint so compliance
-   * consumers can verify exported `SignedAuditEvidence` records offline.
-   *
-   * KMS-backed signers do not populate this field.
-   */
-  auditSigningPublicKeyPem?: string;
-  /**
-   * Key ID recorded in every signed evidence record.  Populated alongside
-   * `auditSigningPublicKeyPem` (software signer only).
-   */
-  auditSigningKeyId?: string;
-  /**
-   * Signing algorithm (JWS name, e.g. `RS256`).  Populated alongside
-   * `auditSigningPublicKeyPem` (software signer only).
-   */
-  auditSigningAlgorithm?: string;
-  /**
-   * Azure Confidential Ledger client for the ACL ledger backend.
-   *
-   * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
-   * the following precedence:
-   *   1. **This field** — if set, used as-is. Preferred for custom credentials,
-   *      per-collection configuration, or injecting a mock in tests.
-   *   2. **`AUDIT_LEDGER_ACL_ENDPOINT`** env var — if set, the bootstrap
-   *      constructs a client using `DefaultAzureCredential` from `@azure/identity`
-   *      (workload identity, managed identity, or `AZURE_*` env vars).
-   *
-   * A startup error is thrown when neither option is provided.
-   */
-  ledgerAclClient?: AzureConfidentialLedgerClient;
+  trustProxy?: string | boolean | number;
   /** Optional admin API key; when set the admin router enforces it. */
   adminApiKey?: string;
-  /**
-   * Optional tenant identifier that scopes the admin API to a single tenant.
-   * When set, all mutating admin operations require a matching `tenantId` in
-   * the request body.  Plumbed from `ADMIN_TENANT_ID`.
-   */
-  adminTenantId?: string;
-  /**
-   * Whether the kill-switch manager was configured with `failOpenOnWrite=true`
-   * (`KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`).  When true, the admin router
-   * returns `207 Multi-Status` for mutating kill-switch endpoints to signal
-   * that the kill was applied locally but fleet-wide propagation is not
-   * guaranteed (CI-3).  Plumbed from `KILL_SWITCH_FAIL_OPEN_ON_WRITE`.
-   */
-  killSwitchFailOpenOnWrite?: boolean;
+}
+
+/**
+ * Fields consumed exclusively by the public-facing Express application
+ * returned by `createApp()`.
+ *
+ * Tests that only exercise public routes can construct this interface without
+ * having to supply kill-switch, partner-registry, or admin-app fields.
+ */
+export interface PublicAppDeps {
+  /** Enforcement engine (token verification + capability checking). */
+  enforcementEngine: EnforcementEngine;
   /** Backend service URL for the proxy route. */
   backendServiceUrl: string;
-  /** Port the admin HTTP server listens on (separate from the public `config.port`). */
-  adminPort: number;
-  /**
-   * Network interface the admin HTTP server binds to. When set, the
-   * entrypoint passes this as the `host` argument to `adminApp.listen()`
-   * so the admin surface is reachable only on the named interface
-   * (e.g. `127.0.0.1` or the pod's internal cluster IP) — defence in
-   * depth against an ingress / route misconfiguration that would
-   * otherwise expose `/admin/*` on the public load-balancer. The
-   * gateway schema requires this to be a non-wildcard value when
-   * NODE_ENV=production. Undefined falls back to Express's default
-   * (bind all interfaces) for non-production / dev convenience.
-   */
-  adminHost?: string;
   /** CORS origins; empty array disables CORS. */
   allowedOrigins: string[];
   /** Rate-limit window in ms (sliding). */
@@ -259,22 +158,6 @@ export interface GatewayDependencies {
    */
   region?: string;
   /**
-   * Express `trust proxy` setting (security-critical for F-2 DPoP
-   * `htu` reconstruction). When the gateway is deployed behind a
-   * TLS-terminating reverse proxy / load balancer, this MUST be
-   * configured so `req.protocol` / `req.hostname` reflect the
-   * client-facing scheme and host the agent actually dialled (the
-   * one its DPoP proof was signed against). Plumbed from the
-   * `TRUST_PROXY` env var. Unset means Express's default of `false`
-   * — safe for direct deployments.
-   *
-   * Accepts the full Express vocabulary: a boolean, a hop count, a
-   * comma-separated list of CIDRs / IPs, or "loopback" /
-   * "linklocal" / "uniquelocal". See:
-   * https://expressjs.com/en/guide/behind-proxies.html
-   */
-  trustProxy?: string | boolean | number;
-  /**
    * Pluggable {@link ActionResolver} (R-7, addresses I-4 and I-5).
    * Used by the proxy route to derive a capability action from the
    * inbound HTTP request, and by the tools route to derive an action
@@ -283,6 +166,101 @@ export interface GatewayDependencies {
    * existing deployments keep their pre-R-7 behaviour exactly.
    */
   actionResolver: ActionResolver;
+  /**
+   * Hosted-mode telemetry collector (Task 16 — Telemetry continuity).
+   * Present when `EUNO_TELEMETRY=1` (explicit opt-in, DI-4).  The enforce
+   * route passes enforcement decisions to this collector; `initializeServices`
+   * starts its flush timer and the entrypoint calls `stop()` on graceful
+   * shutdown so any pending tenant stats are flushed before exit.
+   *
+   * `null` means telemetry is disabled (the default).
+   * Omitted (undefined) is equivalent to `null` — telemetry is not collected.
+   */
+  gatewayTelemetry?: GatewayTelemetryCollector | null;
+  /**
+   * Source-IP trust mode for `POST /api/v1/enforce` (CR-2 fix).
+   *
+   * - `'gateway'` (default): use `req.ip` (connection-derived, respects
+   *   `TRUST_PROXY`) as the authoritative `sourceIp` for `ipRange` conditions.
+   *   Emits a `warn` log when the client-supplied body value differs.
+   * - `'client'`: legacy behaviour — use the value from the request body.
+   *
+   * Plumbed from `ENFORCE_SOURCE_IP_MODE` env var.
+   */
+  sourceIpMode?: 'gateway' | 'client';
+  /**
+   * Query-only projection of the audit ledger. Present when a queryable
+   * backend is configured.
+   *
+   * Backed by a {@link PostgresAuditQueryStore} that shares the pool
+   * with the write backend — no additional DB connection pool.  When
+   * present, the audit route prefers this over {@link auditLedgerBackend}
+   * because the query store carries no chain state, advisory locks, or
+   * HMAC material — it is a lighter-weight read path.
+   *
+   * For deployments that want to direct audit queries to a dedicated
+   * read replica, construct a {@link PostgresAuditQueryStore} with an
+   * independent pool and inject it here.
+   */
+  auditQueryStore?: import('@euno/common').AuditQueryStore;
+  /**
+   * The ledger backend exposed by the audit module. Present when
+   * `AUDIT_LEDGER_BACKEND` is set to a queryable backend (`postgres`,
+   * `per-replica-postgres`, `in-memory`, or `acl`). Used by the audit
+   * query route (`GET /api/v1/audit/records`) to serve paginated,
+   * filterable evidence without a separate DB connection pool.
+   */
+  auditLedgerBackend?: import('@euno/common').LedgerBackend;
+  /**
+   * In-memory ring buffer of `SignedCrossChainCommitment` records emitted by
+   * the cross-chain anchor.  Present when `crossChainAnchor` is set.
+   * Served by `GET /api/v1/audit/chain-proof` (admin-key authenticated).
+   */
+  crossChainCommitmentStore?: CrossChainCommitmentStore;
+  /**
+   * SPKI PEM of the evidence-signing public key.  Present when the active
+   * signer is a software signer (`AUDIT_SIGNING_KMS_PROVIDER` is not set).
+   * Used by the `GET /api/v1/audit/signing-keys` JWKS endpoint so compliance
+   * consumers can verify exported `SignedAuditEvidence` records offline.
+   *
+   * KMS-backed signers do not populate this field.
+   */
+  auditSigningPublicKeyPem?: string;
+  /**
+   * Key ID recorded in every signed evidence record.  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).
+   */
+  auditSigningKeyId?: string;
+  /**
+   * Signing algorithm (JWS name, e.g. `RS256`).  Populated alongside
+   * `auditSigningPublicKeyPem` (software signer only).
+   */
+  auditSigningAlgorithm?: string;
+  /**
+   * Maximum upstream response body size (bytes) to buffer for field-level
+   * redaction. Responses larger than this limit AND carrying a redaction
+   * obligation are refused with HTTP 502 (`redaction_oversize`). Defaults
+   * to 1 MiB; plumbed from `RESPONSE_REDACTION_MAX_BYTES`.
+   */
+  responseRedactionMaxBytes: number;
+}
+
+/**
+ * Fields consumed exclusively by the internal admin Express application
+ * returned by `createAdminApp()`.
+ *
+ * Tests that only exercise admin routes can construct this interface without
+ * having to supply enforcement-engine, metrics-registry, or audit-chain fields.
+ */
+export interface AdminAppDeps {
+  /** Kill-switch manager; required for the kill-switch admin endpoints. */
+  killSwitchManager: KillSwitchManager;
+  /**
+   * Per-issuer epoch store.  When set, every token verification also checks
+   * the issuer epoch: tokens with `iat` before the epoch are rejected.
+   * Wired from `REDIS_URL` (Redis-backed) or falls back to in-memory.
+   */
+  epochStore?: RevocationEpochStore;
   /**
    * Optional partner-issuer resolver (cross-org trust harness). When
    * `TRUSTED_PARTNER_DIDS` is set, this is a configured
@@ -316,12 +294,19 @@ export interface GatewayDependencies {
    */
   partnerDidAutoFetchPin?: boolean;
   /**
-   * Maximum upstream response body size (bytes) to buffer for field-level
-   * redaction. Responses larger than this limit AND carrying a redaction
-   * obligation are refused with HTTP 502 (`redaction_oversize`). Defaults
-   * to 1 MiB; plumbed from `RESPONSE_REDACTION_MAX_BYTES`.
+   * Optional tenant identifier that scopes the admin API to a single tenant.
+   * When set, all mutating admin operations require a matching `tenantId` in
+   * the request body.  Plumbed from `ADMIN_TENANT_ID`.
    */
-  responseRedactionMaxBytes: number;
+  adminTenantId?: string;
+  /**
+   * Optional OCSF (F-6) audit transport. When configured via
+   * `OCSF_TRANSPORT`, every signed evidence record and every
+   * `AuditLogEntry`-shaped winston log line is also delivered as an
+   * OCSF v1.1 event to a SIEM-friendly sink. The gateway entrypoint
+   * is responsible for calling `close()` during shutdown.
+   */
+  ocsfTransport?: OcsfAuditTransport;
   /**
    * Per-tenant billing usage meter (Task 17).
    *
@@ -339,27 +324,93 @@ export interface GatewayDependencies {
    */
   auditRetentionDays?: number;
   /**
-   * Hosted-mode telemetry collector (Task 16 — Telemetry continuity).
-   * Present when `EUNO_TELEMETRY=1` (explicit opt-in, DI-4).  The enforce
-   * route passes enforcement decisions to this collector; `initializeServices`
-   * starts its flush timer and the entrypoint calls `stop()` on graceful
-   * shutdown so any pending tenant stats are flushed before exit.
-   *
-   * `null` means telemetry is disabled (the default).
-   * Omitted (undefined) is equivalent to `null` — telemetry is not collected.
+   * Whether the kill-switch manager was configured with `failOpenOnWrite=true`
+   * (`KILL_SWITCH_FAIL_OPEN_ON_WRITE=true`).  When true, the admin router
+   * returns `207 Multi-Status` for mutating kill-switch endpoints to signal
+   * that the kill was applied locally but fleet-wide propagation is not
+   * guaranteed (CI-3).  Plumbed from `KILL_SWITCH_FAIL_OPEN_ON_WRITE`.
    */
-  gatewayTelemetry?: GatewayTelemetryCollector | null;
+  killSwitchFailOpenOnWrite?: boolean;
+}
+
+/**
+ * Fields used only by the entrypoint (`index.ts`) for lifecycle and graceful
+ * shutdown — not needed by either Express app factory.
+ */
+export interface LifecycleGatewayDeps {
+  /** Service configuration (name, port, environment). */
+  config: ServiceConfig;
+  /** Port the admin HTTP server listens on (separate from the public `config.port`). */
+  adminPort: number;
   /**
-   * Source-IP trust mode for `POST /api/v1/enforce` (CR-2 fix).
-   *
-   * - `'gateway'` (default): use `req.ip` (connection-derived, respects
-   *   `TRUST_PROXY`) as the authoritative `sourceIp` for `ipRange` conditions.
-   *   Emits a `warn` log when the client-supplied body value differs.
-   * - `'client'`: legacy behaviour — use the value from the request body.
-   *
-   * Plumbed from `ENFORCE_SOURCE_IP_MODE` env var.
+   * Network interface the admin HTTP server binds to. When set, the
+   * entrypoint passes this as the `host` argument to `adminApp.listen()`
+   * so the admin surface is reachable only on the named interface
+   * (e.g. `127.0.0.1` or the pod's internal cluster IP) — defence in
+   * depth against an ingress / route misconfiguration that would
+   * otherwise expose `/admin/*` on the public load-balancer. The
+   * gateway schema requires this to be a non-wildcard value when
+   * NODE_ENV=production. Undefined falls back to Express's default
+   * (bind all interfaces) for non-production / dev convenience.
    */
-  sourceIpMode?: 'gateway' | 'client';
+  adminHost?: string;
+  /**
+   * Drain timeout (ms) used by the entrypoint on SIGTERM/SIGINT.
+   * Always populated alongside `auditPipeline` (the validated config
+   * supplies a default), so the entrypoint never passes `undefined`
+   * into `AuditPipeline.drain()`.
+   */
+  auditPipelineDrainTimeoutMs: number;
+  callCounterStore?: CallCounterStore;
+  revocationStore?: RevocationStore;
+  evidenceSigner?: EvidenceSigner;
+  /**
+   * Async audit pipeline (R-9). Present when evidence signing is
+   * enabled and `AUDIT_PIPELINE_ENABLED=true` (the default). The
+   * gateway entrypoint is responsible for calling `drain()` on
+   * shutdown so buffered evidence is flushed before exit. When set,
+   * `auditPipelineDrainTimeoutMs` is always populated by
+   * `initializeServices` from `AUDIT_PIPELINE_DRAIN_TIMEOUT_MS`.
+   */
+  auditPipeline?: AuditPipeline;
+  /**
+   * Optional shared DPoP replay store (F-2). When `REDIS_URL` is set
+   * a `RedisDpopReplayStore` is wired so a captured proof cannot be
+   * replayed once per replica inside its acceptance window;
+   * otherwise an `InMemoryDpopReplayStore` is used (single-replica
+   * / dev). The entrypoint is responsible for calling `close()` on
+   * shutdown when the implementation owns external resources.
+   */
+  dpopReplayStore?: DpopReplayStore;
+  /**
+   * PostgreSQL connection pool owned by the ledger backend.  Present when
+   * `AUDIT_LEDGER_BACKEND=postgres` or `AUDIT_LEDGER_BACKEND=per-replica-postgres`.
+   * The entrypoint is responsible for calling `ledgerPgPool.end()` on graceful
+   * shutdown so connection sockets are released.
+   */
+  ledgerPgPool?: import('@euno/common').PgPool;
+  /**
+   * Cross-chain anchor for the per-replica ledger backend.  Present when
+   * `AUDIT_LEDGER_BACKEND=per-replica-postgres` and either
+   * `ENABLE_CROSS_CHAIN_ANCHOR=true` or an anchor was injected via
+   * `InjectableBootstrapDeps`.  The entrypoint is responsible for calling
+   * `crossChainAnchor.stop()` during graceful shutdown.
+   */
+  crossChainAnchor?: CrossChainAnchor;
+  /**
+   * Azure Confidential Ledger client for the ACL ledger backend.
+   *
+   * When `AUDIT_LEDGER_BACKEND=acl` the bootstrap resolves the client using
+   * the following precedence:
+   *   1. **This field** — if set, used as-is. Preferred for custom credentials,
+   *      per-collection configuration, or injecting a mock in tests.
+   *   2. **`AUDIT_LEDGER_ACL_ENDPOINT`** env var — if set, the bootstrap
+   *      constructs a client using `DefaultAzureCredential` from `@azure/identity`
+   *      (workload identity, managed identity, or `AZURE_*` env vars).
+   *
+   * A startup error is thrown when neither option is provided.
+   */
+  ledgerAclClient?: AzureConfidentialLedgerClient;
   /**
    * Durable posture emitter (Task 4 / § 4.4).
    *
@@ -371,6 +422,28 @@ export interface GatewayDependencies {
    */
   durablePostureEmitter?: import('@euno/posture-emitter').DurablePostureEmitter;
 }
+
+/**
+ * Fully-wired runtime dependency bag handed to `createApp(deps)` and
+ * `createAdminApp(deps)`.
+ *
+ * Expressed as the intersection of four cohesive sub-interfaces so the full
+ * bag satisfies the narrower types those factory functions now accept:
+ *
+ *  - `createApp(deps: CoreGatewayDeps & PublicAppDeps)`
+ *  - `createAdminApp(deps: CoreGatewayDeps & AdminAppDeps)`
+ *
+ * All existing callers that construct a `GatewayDependencies` and pass it to
+ * either factory continue to compile without modification. Tests that want to
+ * exercise only one factory can construct the corresponding narrower type.
+ *
+ * See docs/change-risk-report-2026-05.md § CR-R1.
+ */
+export interface GatewayDependencies
+  extends CoreGatewayDeps,
+    PublicAppDeps,
+    AdminAppDeps,
+    LifecycleGatewayDeps {}
 
 /**
  * Map a validated `GatewayConfig` to the runtime `ServiceConfig` shape
@@ -884,35 +957,45 @@ export interface InjectableBootstrapDeps {
   crossChainAnchor?: CrossChainAnchor;
 }
 
+// ---------------------------------------------------------------------------
+// Gateway counter bag
+// ---------------------------------------------------------------------------
+
 /**
- * Fetch the issuer public key, build verifier + enforcement engine and all
- * supporting stores. Throws on misconfiguration so the gateway fails closed.
+ * Strongly-typed record of every Prometheus Counter created by
+ * {@link buildGatewayCounters}.  Passing this record explicitly between
+ * phases of `initializeServices` makes the ordering dependency visible in
+ * the type system: a phase that needs a counter receives it as a named
+ * argument rather than relying on positional proximity in a 500-line body.
  *
- * Returns the dependency bag consumed by `createApp(deps)` plus the
- * `setReady` toggle the entrypoint flips once the server starts listening.
+ * See docs/change-risk-report-2026-05.md § CR-R2.
  */
-export async function initializeServices(
-  env: NodeJS.ProcessEnv = process.env,
-  injectDeps: InjectableBootstrapDeps = {},
-): Promise<{ deps: GatewayDependencies; setReady: (ready: boolean) => void }> {
-  // ── Step 1: Validate config ───────────────────────────────────────────────
-  const validated: GatewayConfig = loadConfigOrExit(env, 'gateway');
-  const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
-  const logger = createLogger(config.name, config.environment);
+interface GatewayCounters {
+  decisionsCounter: Counter<string>;
+  redisErrorsCounter: Counter<string>;
+  revocationUnavailableCounter: Counter;
+  counterFallbackCounter: Counter;
+  usageMeterErrorsCounter: Counter;
+  /** Only present when `GATEWAY_SHARD_COUNT > 1`. */
+  shardMisroutedCounter?: Counter;
+}
 
-  // ── Step 2: OCSF transport (F-6) — created early so it can be shared with
-  //            both the enforcement-engine audit logger and the pipeline sink.
-  const ocsfProduct = { name: 'euno-tool-gateway', vendor: 'Euno' };
-  const ocsfTransport: OcsfAuditTransport | undefined = createOcsfTransportFromEnv(env, logger);
-  if (ocsfTransport) {
-    logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
-  }
-
-  // ── Step 3: Prometheus registry + counters ────────────────────────────────
-  // Created BEFORE the stores so all callbacks are fully bound when passed to
-  // the module factories — the late-binding anti-pattern is eliminated.
-  const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
-
+/**
+ * Create all gateway Prometheus Counters and pre-seed them to zero so they
+ * appear in `/metrics` before the first event.
+ *
+ * All counters are created **before** the store builders are called so the
+ * callbacks passed to those builders are bound to concrete instances.
+ * Extracting this into a named function makes the before/after ordering
+ * explicit: the return value (the counter bag) must flow into the store
+ * builders — rather than the ordering being implicit from line proximity.
+ *
+ * @internal Called only by `initializeServices()`.
+ */
+function buildGatewayCounters(
+  metricsRegistry: Registry,
+  shardCount: number,
+): GatewayCounters {
   const decisionsCounter = new Counter({
     name: 'euno_gateway_decisions_total',
     help: 'Authorization decisions made by the gateway, labelled allow|deny.',
@@ -964,9 +1047,8 @@ export async function initializeServices(
   });
   usageMeterErrorsCounter.inc(0);
 
-  // H-1: shard mis-route counter — conditional on sharding being enabled.
-  const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
-  const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
+  // H-1: shard mis-route counter — only registered when sharding is enabled
+  // so the metric never appears for single-shard deployments.
   let shardMisroutedCounter: Counter | undefined;
   if (shardCount > 1) {
     shardMisroutedCounter = new Counter({
@@ -979,9 +1061,70 @@ export async function initializeServices(
     shardMisroutedCounter.inc(0);
   }
 
-  // Partner-DID circuit transitions — registered after partnerResolver is known;
-  // declared here so the closure captures the variable reference.
-  let partnerDidCircuitTransitionsCounter: Counter<string> | undefined;
+  return {
+    decisionsCounter,
+    redisErrorsCounter,
+    revocationUnavailableCounter,
+    counterFallbackCounter,
+    usageMeterErrorsCounter,
+    shardMisroutedCounter,
+  };
+}
+
+/**
+ * Fetch the issuer public key, build verifier + enforcement engine and all
+ * supporting stores. Throws on misconfiguration so the gateway fails closed.
+ *
+ * Returns the dependency bag consumed by `createApp(deps)` plus the
+ * `setReady` toggle the entrypoint flips once the server starts listening.
+ */
+export async function initializeServices(
+  env: NodeJS.ProcessEnv = process.env,
+  injectDeps: InjectableBootstrapDeps = {},
+): Promise<{ deps: GatewayDependencies; setReady: (ready: boolean) => void }> {
+  // ── Step 1: Validate config ───────────────────────────────────────────────
+  const validated: GatewayConfig = loadConfigOrExit(env, 'gateway');
+  const config: ServiceConfig = gatewayConfigToServiceConfig(validated);
+  const logger = createLogger(config.name, config.environment);
+
+  // ── Step 2: OCSF transport (F-6) — created early so it can be shared with
+  //            both the enforcement-engine audit logger and the pipeline sink.
+  const ocsfProduct = { name: 'euno-tool-gateway', vendor: 'Euno' };
+  const ocsfTransport: OcsfAuditTransport | undefined = createOcsfTransportFromEnv(env, logger);
+  if (ocsfTransport) {
+    logger.info('OCSF audit transport enabled', { transport: ocsfTransport.name });
+  }
+
+  // ── Step 3: Prometheus registry + counters ────────────────────────────────
+  // Counters are created BEFORE the stores so all callbacks are fully bound
+  // when passed to the module factories.  buildGatewayCounters() returns a
+  // typed bag; the bag is passed explicitly to the store builders so the
+  // ordering contract is visible in the call graph (not just in line order).
+  // See docs/change-risk-report-2026-05.md § CR-R2.
+  const metricsRegistry = createMetricsRegistry({ serviceName: 'tool-gateway' });
+  const shardCount = validated.GATEWAY_SHARD_COUNT ?? 1;
+  const shardIndex = validated.GATEWAY_SHARD_INDEX ?? 0;
+
+  const {
+    decisionsCounter,
+    redisErrorsCounter,
+    revocationUnavailableCounter,
+    counterFallbackCounter,
+    usageMeterErrorsCounter,
+    shardMisroutedCounter,
+  } = buildGatewayCounters(metricsRegistry, shardCount);
+
+  // Mutable ref shared between the revocation-module callback (bound NOW,
+  // before the counter exists) and the post-construction registration block
+  // (where the counter is created if a partner resolver was wired).
+  //
+  // Using an explicit ref object rather than a bare `let` variable makes the
+  // deferred-assignment contract self-documenting: readers can see that the
+  // closure captures a container whose `current` member is populated later,
+  // rather than reasoning about JS variable-binding semantics for a `let`.
+  //
+  // See docs/change-risk-report-2026-05.md § CR-R2.
+  const partnerCircuitCounterRef: { current: Counter<string> | undefined } = { current: undefined };
 
   // ── Step 4: DPoP replay store (F-2) ──────────────────────────────────────
   const { dpopReplayStore } = await buildDpopModule(
@@ -1006,14 +1149,14 @@ export async function initializeServices(
     onCounterFallback: () => counterFallbackCounter.inc(),
     onShardMisrouted: () => shardMisroutedCounter?.inc(),
     onPartnerCircuitStateChange: (did, from, to) => {
-      partnerDidCircuitTransitionsCounter?.inc({ did, from, to });
+      partnerCircuitCounterRef.current?.inc({ did, from, to });
     },
   });
 
   // Register partner-DID circuit counter now that we know whether a resolver
   // was wired (avoids registering a counter that can never be incremented).
   if (partnerResolver) {
-    partnerDidCircuitTransitionsCounter = new Counter({
+    partnerCircuitCounterRef.current = new Counter({
       name: 'euno_gateway_partner_did_circuit_transitions_total',
       help: 'Number of per-DID circuit breaker state transitions for partner DID document resolution. ' +
         'Labels: did (partner DID string), from (previous state), to (new state). ' +
@@ -1229,11 +1372,14 @@ export async function initializeServices(
   });
 
   // ── Step 10: Replica identity ─────────────────────────────────────────────
-  const replicaIdFromEnv = (validated as { AUDIT_REPLICA_ID?: string }).AUDIT_REPLICA_ID;
-  let replicaId = replicaIdFromEnv ?? 'unknown-replica';
-  if (!replicaIdFromEnv) {
+  // AUDIT_REPLICA_ID is a declared field on GatewayConfig (added in the Zod
+  // schema) — no cast needed. Falls back to os.hostname() (static import at
+  // the top of this file) rather than a dynamic require() cast.
+  // See docs/change-risk-report-2026-05.md § CR-R2.
+  let replicaId = validated.AUDIT_REPLICA_ID ?? 'unknown-replica';
+  if (!validated.AUDIT_REPLICA_ID) {
     try {
-      replicaId = (require('os') as typeof import('os')).hostname();
+      replicaId = os.hostname();
     } catch {
       // hostname() failed — keep the default 'unknown-replica'
     }
