@@ -35,6 +35,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import { KubectlV30Layer } from '@aws-cdk/lambda-layer-kubectl-v30';
 import { Construct } from 'constructs';
 
 export interface EunoGatewayStackProps extends cdk.StackProps {
@@ -103,22 +104,22 @@ export class EunoGatewayStack extends cdk.Stack {
   public readonly repositories: Record<string, ecr.Repository>;
 
   protected readonly namePrefix: string;
-  protected readonly environment: string;
+  protected readonly deployEnv: string;
   protected readonly commonTags: Record<string, string>;
 
   constructor(scope: Construct, id: string, props: EunoGatewayStackProps = {}) {
     super(scope, id, props);
 
     this.namePrefix = props.namePrefix ?? 'euno';
-    this.environment = props.environment ?? 'pilot';
+    this.deployEnv = props.environment ?? 'pilot';
     this.commonTags = {
       product: 'euno',
       component: 'capability-governance',
-      environment: this.environment,
+      environment: this.deployEnv,
     };
     cdk.Tags.of(this).add('product', 'euno');
     cdk.Tags.of(this).add('component', 'capability-governance');
-    cdk.Tags.of(this).add('environment', this.environment);
+    cdk.Tags.of(this).add('environment', this.deployEnv);
 
     const logRetentionMap: Record<number, logs.RetentionDays> = {
       1: logs.RetentionDays.ONE_DAY,
@@ -192,7 +193,7 @@ export class EunoGatewayStack extends cdk.Stack {
 
     // ── KMS signing key ───────────────────────────────────────────────────────
     this.signingKey = new kms.Key(this, 'CapabilitySigningKey', {
-      description: `Euno capability-token signing key (${this.namePrefix}-${this.environment})`,
+      description: `Euno capability-token signing key (${this.namePrefix}-${this.deployEnv})`,
       keySpec: kms.KeySpec.RSA_2048,
       keyUsage: kms.KeyUsage.SIGN_VERIFY,
       enableKeyRotation: false, // asymmetric keys do not support rotation
@@ -202,7 +203,7 @@ export class EunoGatewayStack extends cdk.Stack {
 
     // ── S3 audit anchor bucket with Object Lock ───────────────────────────────
     this.auditAnchorBucket = new s3.Bucket(this, 'AuditAnchorBucket', {
-      bucketName: `${this.namePrefix}-audit-anchor-${this.environment}-${this.account}`,
+      bucketName: `${this.namePrefix}-audit-anchor-${this.deployEnv}-${this.account}`,
       versioned: true, // required for Object Lock
       objectLockEnabled: true,
       objectLockDefaultRetention: s3.ObjectLockRetention.compliance(cdk.Duration.days(2557)), // ~7 years
@@ -214,7 +215,7 @@ export class EunoGatewayStack extends cdk.Stack {
 
     // ── Secrets Manager secrets ───────────────────────────────────────────────
     this.hmacKeySecret = new secretsmanager.Secret(this, 'HmacKeySecret', {
-      secretName: `${this.namePrefix}/${this.environment}/audit-ledger-hmac-secret`,
+      secretName: `${this.namePrefix}/${this.deployEnv}/audit-ledger-hmac-secret`,
       description: 'AUDIT_LEDGER_HMAC_SECRET — 64-byte hex HMAC key for audit evidence signing.',
       generateSecretString: {
         passwordLength: 128,
@@ -224,7 +225,7 @@ export class EunoGatewayStack extends cdk.Stack {
     });
 
     this.adminApiKeySecret = new secretsmanager.Secret(this, 'AdminApiKeySecret', {
-      secretName: `${this.namePrefix}/${this.environment}/gateway-admin-api-key`,
+      secretName: `${this.namePrefix}/${this.deployEnv}/gateway-admin-api-key`,
       description: 'ADMIN_API_KEY — gateway operator API key (≥32 chars).',
       generateSecretString: {
         passwordLength: 64,
@@ -234,7 +235,7 @@ export class EunoGatewayStack extends cdk.Stack {
     });
 
     this.redisAuthTokenSecret = new secretsmanager.Secret(this, 'RedisAuthTokenSecret', {
-      secretName: `${this.namePrefix}/${this.environment}/redis-auth-token`,
+      secretName: `${this.namePrefix}/${this.deployEnv}/redis-auth-token`,
       description: 'ElastiCache Redis auth token for TLS-encrypted cluster access.',
       generateSecretString: {
         passwordLength: 64,
@@ -313,12 +314,12 @@ export class EunoGatewayStack extends cdk.Stack {
     const cacheSubnetGroup = new elasticache.CfnSubnetGroup(this, 'CacheSubnetGroup', {
       description: 'Euno ElastiCache Redis subnet group (isolated subnets).',
       subnetIds: this.vpc.isolatedSubnets.map((s) => s.subnetId),
-      cacheSubnetGroupName: `${this.namePrefix}-cache-${this.environment}`,
+      cacheSubnetGroupName: `${this.namePrefix}-cache-${this.deployEnv}`,
     });
 
     this.redisReplicationGroup = new elasticache.CfnReplicationGroup(this, 'Redis', {
-      replicationGroupDescription: `Euno HA Redis — ${this.namePrefix}-${this.environment}`,
-      replicationGroupId: `${this.namePrefix}-${this.environment}`,
+      replicationGroupDescription: `Euno HA Redis — ${this.namePrefix}-${this.deployEnv}`,
+      replicationGroupId: `${this.namePrefix}-${this.deployEnv}`,
       atRestEncryptionEnabled: true,
       transitEncryptionEnabled: true,
       authToken: this.redisAuthTokenSecret.secretValue.unsafeUnwrap(),
@@ -337,8 +338,9 @@ export class EunoGatewayStack extends cdk.Stack {
     const clusterVersion = eks.KubernetesVersion.V1_30;
 
     this.cluster = new eks.Cluster(this, 'Cluster', {
-      clusterName: `${this.namePrefix}-eks-${this.environment}`,
+      clusterName: `${this.namePrefix}-eks-${this.deployEnv}`,
       version: clusterVersion,
+      kubectlLayer: new KubectlV30Layer(this, 'KubectlLayer'),
       vpc: this.vpc,
       vpcSubnets: [{ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }],
       defaultCapacity: fargate ? 0 : 2,
@@ -368,17 +370,24 @@ export class EunoGatewayStack extends cdk.Stack {
     // ── IRSA role for tool-gateway ────────────────────────────────────────────
     const oidcProvider = this.cluster.openIdConnectProvider;
 
+    // Use CfnJson to defer OIDC issuer token resolution to deployment time.
+    // The issuer URL contains CloudFormation intrinsic functions that cannot
+    // be used directly as map keys during synthesis.
+    const irsaConditions = new cdk.CfnJson(this, 'GatewayIrsaConditions', {
+      value: {
+        [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
+          'system:serviceaccount:euno-system:tool-gateway',
+        [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
+          'sts.amazonaws.com',
+      },
+    });
+
     this.gatewayIrsaRole = new iam.Role(this, 'GatewayIrsaRole', {
-      roleName: `${this.namePrefix}-gateway-irsa-${this.environment}`,
+      roleName: `${this.namePrefix}-gateway-irsa-${this.deployEnv}`,
       assumedBy: new iam.WebIdentityPrincipal(
         oidcProvider.openIdConnectProviderArn,
         {
-          StringEquals: {
-            [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
-              'system:serviceaccount:euno-system:tool-gateway',
-            [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
-              'sts.amazonaws.com',
-          },
+          StringEquals: irsaConditions,
         },
       ),
     });
@@ -438,49 +447,49 @@ export class EunoGatewayStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ClusterName', {
       value: this.cluster.clusterName,
       description: 'EKS cluster name.',
-      exportName: `${this.namePrefix}-${this.environment}-cluster-name`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-cluster-name`,
     });
 
     new cdk.CfnOutput(this, 'ClusterOidcProviderArn', {
       value: oidcProvider.openIdConnectProviderArn,
       description: 'OIDC provider ARN for IRSA bindings.',
-      exportName: `${this.namePrefix}-${this.environment}-oidc-provider-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-oidc-provider-arn`,
     });
 
     new cdk.CfnOutput(this, 'GatewayRoleArn', {
       value: this.gatewayIrsaRole.roleArn,
       description: 'Annotate the tool-gateway ServiceAccount with this ARN.',
-      exportName: `${this.namePrefix}-${this.environment}-gateway-role-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-gateway-role-arn`,
     });
 
     new cdk.CfnOutput(this, 'SigningKeyArn', {
       value: this.signingKey.keyArn,
       description: 'ARN to set as AWS_KMS_KEY_ID for AWSKMSSigner.',
-      exportName: `${this.namePrefix}-${this.environment}-signing-key-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-signing-key-arn`,
     });
 
     new cdk.CfnOutput(this, 'AuditAnchorBucketName', {
       value: this.auditAnchorBucket.bucketName,
       description: 'Set as AUDIT_LEDGER_S3_BUCKET for cross-chain anchoring.',
-      exportName: `${this.namePrefix}-${this.environment}-audit-anchor-bucket`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-audit-anchor-bucket`,
     });
 
     new cdk.CfnOutput(this, 'DatabaseEndpoint', {
       value: this.database.dbInstanceEndpointAddress,
       description: 'RDS endpoint for AUDIT_LEDGER_PG_URL and ISSUER_DB_URL.',
-      exportName: `${this.namePrefix}-${this.environment}-db-endpoint`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-db-endpoint`,
     });
 
     new cdk.CfnOutput(this, 'HmacKeySecretArn', {
       value: this.hmacKeySecret.secretArn,
       description: 'AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET.',
-      exportName: `${this.namePrefix}-${this.environment}-hmac-key-secret-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-hmac-key-secret-arn`,
     });
 
     new cdk.CfnOutput(this, 'AdminApiKeySecretArn', {
       value: this.adminApiKeySecret.secretArn,
       description: 'AWS_SECRETS_ARN_ADMIN_API_KEY.',
-      exportName: `${this.namePrefix}-${this.environment}-admin-api-key-secret-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-admin-api-key-secret-arn`,
     });
   }
 }

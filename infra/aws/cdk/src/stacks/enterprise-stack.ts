@@ -91,7 +91,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
 
     // ── Partner DID registry (DynamoDB) ───────────────────────────────────────
     this.partnerDidRegistry = new dynamodb.Table(this, 'PartnerDidRegistry', {
-      tableName: `${this.namePrefix}-partner-did-registry-${this.environment}`,
+      tableName: `${this.namePrefix}-partner-did-registry-${this.deployEnv}`,
       partitionKey: { name: 'did', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -111,7 +111,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
 
     // ── CloudTrail bucket ─────────────────────────────────────────────────────
     this.cloudTrailBucket = new s3.Bucket(this, 'CloudTrailBucket', {
-      bucketName: `${this.namePrefix}-cloudtrail-${this.environment}-${this.account}`,
+      bucketName: `${this.namePrefix}-cloudtrail-${this.deployEnv}-${this.account}`,
       versioned: true,
       objectLockEnabled: true,
       objectLockDefaultRetention: s3.ObjectLockRetention.governance(
@@ -148,7 +148,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
 
     // ── CloudTrail trail ──────────────────────────────────────────────────────
     this.trail = new cloudtrail.Trail(this, 'Trail', {
-      trailName: `${this.namePrefix}-audit-trail-${this.environment}`,
+      trailName: `${this.namePrefix}-audit-trail-${this.deployEnv}`,
       bucket: this.cloudTrailBucket,
       s3KeyPrefix: props.cloudTrailS3Prefix,
       includeGlobalServiceEvents: true,
@@ -165,7 +165,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
 
     // ── Audit data lake (Kinesis Firehose → S3) ───────────────────────────────
     this.auditLakeBucket = new s3.Bucket(this, 'AuditLakeBucket', {
-      bucketName: `${this.namePrefix}-audit-lake-${this.environment}-${this.account}`,
+      bucketName: `${this.namePrefix}-audit-lake-${this.deployEnv}-${this.account}`,
       versioned: true,
       objectLockEnabled: true,
       objectLockDefaultRetention: s3.ObjectLockRetention.compliance(
@@ -205,7 +205,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     );
 
     this.auditFirehose = new firehose.CfnDeliveryStream(this, 'AuditFirehose', {
-      deliveryStreamName: `${this.namePrefix}-audit-firehose-${this.environment}`,
+      deliveryStreamName: `${this.namePrefix}-audit-firehose-${this.deployEnv}`,
       deliveryStreamType: 'DirectPut',
       s3DestinationConfiguration: {
         bucketArn: this.auditLakeBucket.bucketArn,
@@ -230,15 +230,15 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
         controlFindingGenerator: 'SECURITY_CONTROL',
         tags: {
           product: 'euno',
-          environment: this.environment,
+          environment: this.deployEnv,
         },
       });
     }
 
     // ── SNS alarm topic ───────────────────────────────────────────────────────
     this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
-      topicName: `${this.namePrefix}-alarms-${this.environment}`,
-      displayName: `Euno capability-governance alarms (${this.environment})`,
+      topicName: `${this.namePrefix}-alarms-${this.deployEnv}`,
+      displayName: `Euno capability-governance alarms (${this.deployEnv})`,
     });
 
     if (props.alarmNotificationEmail) {
@@ -251,13 +251,13 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const denialSpikeMetric = new cloudwatch.Metric({
       namespace: 'Euno/Gateway',
       metricName: 'ToolCallDeniedTotal',
-      dimensionsMap: { environment: this.environment },
+      dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
       period: cdk.Duration.minutes(5),
     });
 
     const denialSpikeAlarm = new cloudwatch.Alarm(this, 'DenialSpikeAlarm', {
-      alarmName: `${this.namePrefix}-denial-spike-${this.environment}`,
+      alarmName: `${this.namePrefix}-denial-spike-${this.deployEnv}`,
       alarmDescription:
         'Euno capability-governance: unusual denial spike detected (CC7.3). ' +
         'Check deny-reason histogram in CloudWatch Insights.',
@@ -272,13 +272,13 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const invalidTokenMetric = new cloudwatch.Metric({
       namespace: 'Euno/Gateway',
       metricName: 'InvalidTokenBurst',
-      dimensionsMap: { environment: this.environment },
+      dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
       period: cdk.Duration.minutes(5),
     });
 
     const invalidTokenAlarm = new cloudwatch.Alarm(this, 'InvalidTokenBurstAlarm', {
-      alarmName: `${this.namePrefix}-invalid-token-burst-${this.environment}`,
+      alarmName: `${this.namePrefix}-invalid-token-burst-${this.deployEnv}`,
       alarmDescription:
         'Euno capability-governance: invalid-token burst detected (CC6.8). ' +
         'May indicate a credential leak or misconfigured agent.',
@@ -293,13 +293,13 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const killSwitchMetric = new cloudwatch.Metric({
       namespace: 'Euno/Gateway',
       metricName: 'KillSwitchActivation',
-      dimensionsMap: { environment: this.environment },
+      dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
       period: cdk.Duration.minutes(1),
     });
 
     const killSwitchAlarm = new cloudwatch.Alarm(this, 'KillSwitchActivationAlarm', {
-      alarmName: `${this.namePrefix}-kill-switch-${this.environment}`,
+      alarmName: `${this.namePrefix}-kill-switch-${this.deployEnv}`,
       alarmDescription:
         'Euno capability-governance: kill-switch was activated (CC7.5). ' +
         'All tool-call enforcement is paused — immediate operator attention required.',
@@ -318,26 +318,26 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     new cdk.CfnOutput(this, 'PartnerDidRegistryTableName', {
       value: this.partnerDidRegistry.tableName,
       description: 'PARTNER_DID_REGISTRY_TABLE — partner DID registry for circuit-breaker state.',
-      exportName: `${this.namePrefix}-${this.environment}-partner-did-registry-table`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-partner-did-registry-table`,
     });
 
     new cdk.CfnOutput(this, 'AuditLakeBucketName', {
       value: this.auditLakeBucket.bucketName,
       description: 'S3 data lake bucket for OCSF audit events (SOC 2 CC7.4).',
-      exportName: `${this.namePrefix}-${this.environment}-audit-lake-bucket`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-audit-lake-bucket`,
     });
 
     new cdk.CfnOutput(this, 'AuditFirehoseArn', {
       value: this.auditFirehose.attrArn,
       description:
         'Kinesis Firehose ARN for streaming OCSF audit events from tool-gateway.',
-      exportName: `${this.namePrefix}-${this.environment}-audit-firehose-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-audit-firehose-arn`,
     });
 
     new cdk.CfnOutput(this, 'AlarmTopicArn', {
       value: this.alarmTopic.topicArn,
       description: 'SNS topic ARN for CloudWatch alarm notifications.',
-      exportName: `${this.namePrefix}-${this.environment}-alarm-topic-arn`,
+      exportName: `${this.namePrefix}-${this.deployEnv}-alarm-topic-arn`,
     });
   }
 }

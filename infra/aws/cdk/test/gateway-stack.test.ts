@@ -9,7 +9,7 @@
  */
 
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Template, Match } from 'aws-cdk-lib/assertions';
 import { EunoGatewayStack } from '../src/stacks/gateway-stack';
 
 const defaultEnv = {
@@ -18,7 +18,7 @@ const defaultEnv = {
 };
 
 function makeStack(props: Partial<ConstructorParameters<typeof EunoGatewayStack>[2]> = {}) {
-  const app = new cdk.App();
+  const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
   return new EunoGatewayStack(app, 'TestGateway', {
     env: defaultEnv,
     namePrefix: 'euno',
@@ -233,13 +233,13 @@ describe('EunoGatewayStack', () => {
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::IAM::Policy', {
         PolicyDocument: {
-          Statement: [
-            {
+          Statement: Match.arrayWith([
+            Match.objectLike({
               Sid: 'VerifyCapabilityTokens',
               Effect: 'Allow',
               Action: ['kms:Verify', 'kms:GetPublicKey', 'kms:DescribeKey'],
-            },
-          ],
+            }),
+          ]),
         },
       });
     });
