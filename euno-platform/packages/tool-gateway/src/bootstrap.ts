@@ -439,8 +439,11 @@ export interface LifecycleGatewayDeps {
  *
  * See docs/change-risk-report-2026-05.md § CR-R1.
  */
-export type GatewayDependencies =
-  CoreGatewayDeps & PublicAppDeps & AdminAppDeps & LifecycleGatewayDeps;
+export interface GatewayDependencies
+  extends CoreGatewayDeps,
+    PublicAppDeps,
+    AdminAppDeps,
+    LifecycleGatewayDeps {}
 
 /**
  * Map a validated `GatewayConfig` to the runtime `ServiceConfig` shape

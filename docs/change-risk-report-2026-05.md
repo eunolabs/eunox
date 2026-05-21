@@ -61,7 +61,7 @@ export interface PublicAppDeps { enforcementEngine, metricsRegistry, decisionsCo
   region?, actionResolver, gatewayTelemetry?, sourceIpMode?,
   auditQueryStore?, auditLedgerBackend?, crossChainCommitmentStore?,
   auditSigningPublicKeyPem?, auditSigningKeyId?, auditSigningAlgorithm?,
-  responseRedactionMaxBytes, auditPipelineDrainTimeoutMs }
+  responseRedactionMaxBytes }
 
 // Fields used only by the internal admin Express app (createAdminApp)
 export interface AdminAppDeps { killSwitchManager, epochStore?, partnerResolver?,
@@ -71,10 +71,9 @@ export interface AdminAppDeps { killSwitchManager, epochStore?, partnerResolver?
 
 // Fields used only by the entrypoint (index.ts) for lifecycle/shutdown
 export interface LifecycleGatewayDeps { config, adminPort, adminHost?,
-  revocationStore?, callCounterStore?, evidenceSigner?, auditPipeline?,
-  dpopReplayStore?, ledgerPgPool?, crossChainAnchor?, auditLedgerBackend?,
-  auditQueryStore?, ledgerAclClient?, durablePostureEmitter?,
-  gatewayTelemetry? }
+  auditPipelineDrainTimeoutMs, revocationStore?, callCounterStore?,
+  evidenceSigner?, auditPipeline?, dpopReplayStore?, ledgerPgPool?,
+  crossChainAnchor?, ledgerAclClient?, durablePostureEmitter? }
 
 // Backward-compatible full bag (intersection of all four)
 export type GatewayDependencies =
