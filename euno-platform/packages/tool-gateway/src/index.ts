@@ -326,4 +326,11 @@ if (require.main === module) {
 // Re-export the factory + bootstrap so callers (tests, embedders) can build
 // an in-process gateway without going through the singleton entrypoint.
 export { createApp, createAdminApp } from './app-factory';
-export { initializeServices, type GatewayDependencies } from './bootstrap';
+export {
+  initializeServices,
+  type GatewayDependencies,
+  type CoreGatewayDeps,
+  type PublicAppDeps,
+  type AdminAppDeps,
+  type LifecycleGatewayDeps,
+} from './bootstrap';
