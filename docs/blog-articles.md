@@ -178,3 +178,25 @@ grouped by theme and roughly ordered from introductory to in-depth.
     Explains the two-folder architecture (`public/` Apache-2.0, platform
     BUSL-1.1), why the core policy types must stay open, and what "non-competing
     use" means for your deployment.
+
+---
+
+## Runtime sandboxing and OS-level controls
+
+31. **Locking down the agent runtime: a field guide to sandboxing every tool call**
+    Comprehensive treatment of how to make the Tool Gateway the *structurally
+    unreachable* only egress path for an agent process, across every deployment
+    topology: plain containers, Kubernetes with gVisor or Kata Containers,
+    Firecracker microVMs for bare-metal, and constrained edge environments.
+    Covers seccomp syscall filtering (with a worked minimum-allowlist profile),
+    eBPF runtime enforcement and observability via Cilium/Tetragon, gVisor's
+    user-space kernel isolation and its compatibility tradeoffs, Kata Containers
+    and Firecracker microVMs for full hypervisor-level isolation, network
+    locking patterns per environment (Cilium NetworkPolicy, VPC firewall rules,
+    hypervisor-level iptables, vsock proxying), workload identity (projected
+    service accounts, SPIFFE/SPIRE) to eliminate secret-zero, the sidecar
+    gateway co-location pattern, and an honest accounting of what the
+    architecture doesn't protect against (timing side-channels, supply chain
+    in the base image, gateway compromise). Concludes with a prioritised
+    implementation checklist. Audience: principal engineers and platform
+    security architects deploying agent workloads in production.
