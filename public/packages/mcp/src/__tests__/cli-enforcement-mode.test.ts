@@ -94,11 +94,12 @@ describe('buildPdp — remote mode', () => {
       ignoredCustomConditionModules: [],
       ignoredPolicyBackendPaths: [],
     };
-    const result = await captureStderr(async () => { await buildPdp(mode); }) as unknown as never;
-    void result;
-    const { pdp, conditionPdp } = await buildPdp(mode);
-    expect(pdp).toBeInstanceOf(RemoteEnforcerPDP);
-    expect(conditionPdp).toBeUndefined();
+    // Suppress startup message written to stderr; we only care about pdp type here.
+    await captureStderr(async () => {
+      const { pdp, conditionPdp } = await buildPdp(mode);
+      expect(pdp).toBeInstanceOf(RemoteEnforcerPDP);
+      expect(conditionPdp).toBeUndefined();
+    });
   });
 
   it('prints the remote-enforcer startup message to stderr', async () => {

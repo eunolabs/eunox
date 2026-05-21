@@ -266,31 +266,31 @@ export function validateCondition(condition: unknown): asserts condition is Capa
   }
   switch (c.type) {
     case 'timeWindow':
-      BUILTIN_HANDLERS.timeWindow.validate(condition as unknown as TimeWindowCondition);
+      BUILTIN_HANDLERS.timeWindow.validate(condition as TimeWindowCondition);
       return;
     case 'ipRange':
-      BUILTIN_HANDLERS.ipRange.validate(condition as unknown as IpRangeCondition);
+      BUILTIN_HANDLERS.ipRange.validate(condition as IpRangeCondition);
       return;
     case 'allowedOperations':
-      BUILTIN_HANDLERS.allowedOperations.validate(condition as unknown as AllowedOperationsCondition);
+      BUILTIN_HANDLERS.allowedOperations.validate(condition as AllowedOperationsCondition);
       return;
     case 'allowedExtensions':
-      BUILTIN_HANDLERS.allowedExtensions.validate(condition as unknown as AllowedExtensionsCondition);
+      BUILTIN_HANDLERS.allowedExtensions.validate(condition as AllowedExtensionsCondition);
       return;
     case 'allowedTables':
-      BUILTIN_HANDLERS.allowedTables.validate(condition as unknown as AllowedTablesCondition);
+      BUILTIN_HANDLERS.allowedTables.validate(condition as AllowedTablesCondition);
       return;
     case 'maxCalls':
-      BUILTIN_HANDLERS.maxCalls.validate(condition as unknown as MaxCallsCondition);
+      BUILTIN_HANDLERS.maxCalls.validate(condition as MaxCallsCondition);
       return;
     case 'recipientDomain':
-      BUILTIN_HANDLERS.recipientDomain.validate(condition as unknown as RecipientDomainCondition);
+      BUILTIN_HANDLERS.recipientDomain.validate(condition as RecipientDomainCondition);
       return;
     case 'redactFields':
-      BUILTIN_HANDLERS.redactFields.validate(condition as unknown as RedactFieldsCondition);
+      BUILTIN_HANDLERS.redactFields.validate(condition as RedactFieldsCondition);
       return;
     case 'policy':
-      BUILTIN_HANDLERS.policy.validate(condition as unknown as PolicyCondition);
+      BUILTIN_HANDLERS.policy.validate(condition as PolicyCondition);
       return;
     case 'custom':
       validateCustomCondition(condition as CustomCondition);
