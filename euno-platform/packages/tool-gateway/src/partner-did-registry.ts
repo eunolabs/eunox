@@ -120,6 +120,14 @@ export function verifyPinAttestation(attestation: PinAttestation, secret: string
 
 export type PartnerDidStatus = 'proposed' | 'active' | 'revoked';
 
+/**
+ * Runtime array of all valid {@link PartnerDidStatus} values.
+ *
+ * Use this for membership checks instead of hardcoding the literals, so that
+ * adding a new status to the type automatically propagates to runtime guards.
+ */
+export const PARTNER_DID_STATUSES: readonly PartnerDidStatus[] = ['proposed', 'active', 'revoked'] as const;
+
 /** Optional secondary-resolver spec for cross-check.  See 2C in the plan. */
 export interface SecondaryResolverSpec {
   /** Resolver method tag (informational; only 'web' performs a real fetch today). */
