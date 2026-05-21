@@ -21,13 +21,6 @@ import { createLocalAuditSink, McpAuditSink, NullAuditSink } from './audit';
 import { LocalHmacSigner } from './audit/hmac-signer';
 import { loadOrCreateHmacKey, DEFAULT_KEY_PATH } from './audit/hmac-key';
 import { FilePolicySource } from './policy/source';
-import {
-  loadCustomConditionModules,
-  validateCustomConditionRegistrations,
-} from './policy/custom-handlers';
-import { loadPolicyBackends } from './policy/backends';
-import { ConditionEnforcerPDP, AlwaysAllowPDP, PolicyDecisionPoint } from './pdp';
-import { RemoteEnforcerPDP } from './enforcer/remote';
 import { createTelemetry } from './telemetry';
 import { buildStatsCommand } from './cli/stats';
 import { buildUpgradeToHostedCommand } from './cli/upgrade-to-hosted';
@@ -35,15 +28,19 @@ import {
   runValidateToken,
   DEFAULT_AUDIT_LOG_PATH as VALIDATE_TOKEN_DEFAULT_LOG,
 } from './cli/validate-token';
+import { buildPdp, EnforcementMode } from './cli/pdp-factory';
+
+// Re-export so downstream consumers can import without depending on the path
+// of the internal pdp-factory module.
+export type { EnforcementMode, BuildPdpResult } from './cli/pdp-factory';
+export { buildPdp } from './cli/pdp-factory';
+
+// ---------------------------------------------------------------------------
 
 const program = new Command();
 
 function collectRepeatableOption(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-function isMissingCustomHandlerValidationError(message: string): boolean {
-  return /custom condition '.*' has no registered handler/.test(message);
 }
 
 program
@@ -264,91 +261,28 @@ Examples:
       enforcerTimeoutMs = parsed;
     }
 
-    const isRemoteMode = enforcerUrl !== undefined;
-
     // ── Build PDP ─────────────────────────────────────────────────────────
-    let pdp: PolicyDecisionPoint;
-    let conditionPdp: ConditionEnforcerPDP | undefined;
-
-    if (isRemoteMode) {
-      // ── Stage-3 remote-enforcer mode ──────────────────────────────────
-      // All enforcement is delegated to the hosted gateway.  Local infrastructure
-      // (FilePolicySource, LocalHmacSigner, InMemoryCallCounterStore, kill switch)
-      // is intentionally skipped — the gateway is the sole enforcement authority.
-      //
-      // Custom conditions and policy backends are not loaded in remote mode
-      // because the gateway has its own condition registry.  Warn if the operator
-      // provided conflicting flags.
-      const customConditionModules = options.customCondition as string[];
-      if (customConditionModules.length > 0) {
-        process.stderr.write(
-          `[euno-mcp] WARNING: --custom-condition is ignored in remote-enforcer mode ` +
-            `(--enforcer-url). Custom conditions are registered on the gateway.\n`,
-        );
-      }
-      const policyBackendPaths = options.policyBackend as string[];
-      if (policyBackendPaths.length > 0) {
-        process.stderr.write(
-          `[euno-mcp] WARNING: --policy-backend is ignored in remote-enforcer mode ` +
-            `(--enforcer-url). Policy backends are registered on the gateway.\n`,
-        );
-      }
-
-      pdp = new RemoteEnforcerPDP({
-        url: enforcerUrl,
-        apiKey: enforcerApiKey!,
-        timeoutMs: enforcerTimeoutMs,
-      });
-      process.stderr.write(
-        `[euno-mcp] Remote-enforcer mode: enforcement delegated to ${enforcerUrl}\n`,
-      );
-    } else {
-      // ── Local enforcement mode ────────────────────────────────────────
-      const customConditionModules = options.customCondition as string[];
-
-      if (customConditionModules.length > 0) {
-        try {
-          await loadCustomConditionModules(customConditionModules);
-        } catch (err) {
-          process.stderr.write(
-            `[euno-mcp] ${err instanceof Error ? err.message : String(err)}\n`,
-          );
-          process.exit(1);
+    // Construct the discriminated EnforcementMode union from the validated
+    // CLI options, then delegate all PDP construction to buildPdp().
+    // Adding a third enforcement mode in the future only requires adding a
+    // new EnforcementMode member and a matching arm in buildPdp().
+    const enforcementMode: EnforcementMode = enforcerUrl !== undefined
+      ? {
+          mode: 'remote',
+          url: enforcerUrl,
+          apiKey: enforcerApiKey!,
+          timeoutMs: enforcerTimeoutMs,
+          ignoredCustomConditionModules: options.customCondition as string[],
+          ignoredPolicyBackendPaths: options.policyBackend as string[],
         }
-      }
+      : {
+          mode: 'local',
+          policyPath: options.policy as string | undefined,
+          customConditionModules: options.customCondition as string[],
+          policyBackendPaths: options.policyBackend as string[],
+        };
 
-      if (options.policy) {
-        const policySource = new FilePolicySource({ filePath: options.policy as string });
-        try {
-          const manifest = await policySource.load();
-          validateCustomConditionRegistrations(manifest);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const hint = isMissingCustomHandlerValidationError(message)
-            ? ' Hint: load the handler with --custom-condition <module>.'
-            : '';
-          process.stderr.write(`[euno-mcp] Policy validation failed: ${message}${hint}\n`);
-          process.exit(1);
-        }
-        conditionPdp = new ConditionEnforcerPDP({ policySource });
-        pdp = conditionPdp;
-      } else {
-        pdp = new AlwaysAllowPDP();
-      }
-
-      // ── Load policy backends ────────────────────────────────────────────
-      // Must happen before the proxy starts serving requests so every policy
-      // condition is satisfied by a registered backend.  Errors here are fatal.
-      const policyBackendPaths: string[] = options.policyBackend as string[];
-      if (policyBackendPaths.length > 0) {
-        try {
-          await loadPolicyBackends(policyBackendPaths);
-        } catch {
-          // loadPolicyBackends already wrote a human-readable message to stderr.
-          process.exit(1);
-        }
-      }
-    }
+    const { pdp, conditionPdp } = await buildPdp(enforcementMode);
 
     // ── Create telemetry collector ────────────────────────────────────────
     // Must be called before proxy.start() so the consent prompt (if any) is
@@ -370,7 +304,7 @@ Examples:
       // here are fatal so operators know early if the key or log path is
       // misconfigured.
       let auditSink: McpAuditSink;
-      if (isRemoteMode) {
+      if (enforcementMode.mode === 'remote') {
         auditSink = new NullAuditSink();
       } else {
         try {

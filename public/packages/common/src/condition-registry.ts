@@ -250,6 +250,11 @@ export function getPolicyBackends(): Map<string, PolicyBackend> {
  * Validate a single condition. Throws {@link ConditionValidationError}
  * on a structural problem. Issuers call this for every condition of
  * every capability before signing.
+ *
+ * The `switch` is kept structurally parallel to {@link enforceCondition} so
+ * adding a new condition type requires updating both functions — the
+ * compile-time exhaustiveness guard in `enforceCondition` will catch any
+ * omission in the enforcement path.
  */
 export function validateCondition(condition: unknown): asserts condition is CapabilityCondition {
   if (typeof condition !== 'object' || condition === null) {
@@ -259,17 +264,40 @@ export function validateCondition(condition: unknown): asserts condition is Capa
   if (typeof c.type !== 'string' || c.type.length === 0) {
     throw new ConditionValidationError("condition is missing a 'type' discriminator");
   }
-  const handler = (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[c.type];
-  if (handler) {
-    handler.validate(condition as CapabilityCondition);
-    return;
+  switch (c.type) {
+    case 'timeWindow':
+      BUILTIN_HANDLERS.timeWindow.validate(condition as unknown as TimeWindowCondition);
+      return;
+    case 'ipRange':
+      BUILTIN_HANDLERS.ipRange.validate(condition as unknown as IpRangeCondition);
+      return;
+    case 'allowedOperations':
+      BUILTIN_HANDLERS.allowedOperations.validate(condition as unknown as AllowedOperationsCondition);
+      return;
+    case 'allowedExtensions':
+      BUILTIN_HANDLERS.allowedExtensions.validate(condition as unknown as AllowedExtensionsCondition);
+      return;
+    case 'allowedTables':
+      BUILTIN_HANDLERS.allowedTables.validate(condition as unknown as AllowedTablesCondition);
+      return;
+    case 'maxCalls':
+      BUILTIN_HANDLERS.maxCalls.validate(condition as unknown as MaxCallsCondition);
+      return;
+    case 'recipientDomain':
+      BUILTIN_HANDLERS.recipientDomain.validate(condition as unknown as RecipientDomainCondition);
+      return;
+    case 'redactFields':
+      BUILTIN_HANDLERS.redactFields.validate(condition as unknown as RedactFieldsCondition);
+      return;
+    case 'policy':
+      BUILTIN_HANDLERS.policy.validate(condition as unknown as PolicyCondition);
+      return;
+    case 'custom':
+      validateCustomCondition(condition as CustomCondition);
+      return;
+    default:
+      throw new ConditionValidationError(`unrecognized condition type '${c.type}'`);
   }
-  if (c.type === 'custom') {
-    validateCustomCondition(condition as CustomCondition);
-    return;
-  }
-  // Note: 'policy' is handled by BUILTIN_HANDLERS above (policyHandler).
-  throw new ConditionValidationError(`unrecognized condition type '${c.type}'`);
 }
 
 /** Validate every condition on a capability. */
@@ -308,30 +336,58 @@ function validateCustomCondition(c: CustomCondition): void {
 /**
  * Enforce a single condition against the provided request context.
  * Unknown types resolve to `deny` (deny-by-default).
+ *
+ * The `switch` is exhaustive over {@link CapabilityCondition}: TypeScript
+ * will produce a compile-time error in the `default` branch if a new subtype
+ * is added to the union without a matching `case` here. This prevents a
+ * silently unenforced policy condition — a security regression rather than a
+ * mere bug.
  */
 export async function enforceCondition(
   condition: CapabilityCondition,
   ctx: ConditionContext,
 ): Promise<ConditionResult> {
-  const handler = (BUILTIN_HANDLERS as Record<string, ConditionHandler<any>>)[condition.type];
-  if (handler) {
-    return handler.enforce(condition, ctx);
-  }
-  if (condition.type === 'custom') {
-    const cc = condition as CustomCondition;
-    const map = ctx.customHandlers ?? customHandlers;
-    const ch = map.get(cc.name);
-    if (!ch) {
-      return { allow: false, reason: `unrecognized custom condition '${cc.name}'` };
+  switch (condition.type) {
+    case 'timeWindow':
+      return BUILTIN_HANDLERS.timeWindow.enforce(condition, ctx);
+    case 'ipRange':
+      return BUILTIN_HANDLERS.ipRange.enforce(condition, ctx);
+    case 'allowedOperations':
+      return BUILTIN_HANDLERS.allowedOperations.enforce(condition, ctx);
+    case 'allowedExtensions':
+      return BUILTIN_HANDLERS.allowedExtensions.enforce(condition, ctx);
+    case 'allowedTables':
+      return BUILTIN_HANDLERS.allowedTables.enforce(condition, ctx);
+    case 'maxCalls':
+      return BUILTIN_HANDLERS.maxCalls.enforce(condition, ctx);
+    case 'recipientDomain':
+      return BUILTIN_HANDLERS.recipientDomain.enforce(condition, ctx);
+    case 'redactFields':
+      return BUILTIN_HANDLERS.redactFields.enforce(condition, ctx);
+    case 'policy':
+      // policyHandler honours ctx.policyBackends overrides.
+      return BUILTIN_HANDLERS.policy.enforce(condition, ctx);
+    case 'custom': {
+      const map = ctx.customHandlers ?? customHandlers;
+      const ch = map.get(condition.name);
+      if (!ch) {
+        return { allow: false, reason: `unrecognized custom condition '${condition.name}'` };
+      }
+      return ch.enforce(condition.config, ctx);
     }
-    return ch.enforce(cc.config, ctx);
+    default: {
+      // Compile-time exhaustiveness guard: TypeScript errors here when a new
+      // CapabilityCondition subtype is added without a matching case above.
+      const _exhaustive: never = condition;
+      void _exhaustive;
+      // Runtime guard: tokens from a future issuer may carry unknown types;
+      // deny rather than throw so the request fails closed without crashing.
+      return {
+        allow: false,
+        reason: `unrecognized condition type '${(condition as { type: string }).type}'`,
+      };
+    }
   }
-  // Note: 'policy' is dispatched via BUILTIN_HANDLERS above (policyHandler),
-  // which honours `ctx.policyBackends`.
-  return {
-    allow: false,
-    reason: `unrecognized condition type '${(condition as { type: string }).type}'`,
-  };
 }
 
 /**
