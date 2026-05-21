@@ -1,0 +1,12 @@
+# Cloudflare Pages project configuration.
+# Docs: https://developers.cloudflare.com/pages/configuration/wrangler-configuration/
+#
+# Prerequisites:
+#  1. Create a Cloudflare Pages project named "eunolabs-site" in the
+#     Cloudflare dashboard (https://dash.cloudflare.com → Workers & Pages → Create).
+#  2. Connect the custom domain eunolabs.ai under the project's Custom Domains tab.
+#  3. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as repository secrets
+#     (Settings → Secrets and variables → Actions → Secrets).
+
+name = "eunolabs-site"
+pages_build_output_dir = "dist"

@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import GiscusComments from '../../components/GiscusComments.astro';
 import { getCollection } from 'astro:content';
 
 export async function getStaticPaths() {
@@ -29,6 +30,7 @@ const { Content } = await post.render();
             <time datetime={post.data.pubDate.toISOString().slice(0, 10)}>{post.data.pubDate.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
         </div>
         <Content />
+        <GiscusComments />
     </main>
 
 </BaseLayout>
