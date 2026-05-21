@@ -1,0 +1,116 @@
+name: Cloud Adapter Integration Tests
+
+# Runs the cloud-adapter integration test matrix against local emulators
+# (LocalStack for AWS, fake-gcs-server for GCP, Azurite for Azure).
+# No cloud provider credentials are needed for the default run.
+#
+# Real cloud targets (AWS, GCP, Azure) are opt-in via repository secrets:
+#   AWS_INTEGRATION_TEST_ROLE_ARN  — IAM role ARN for OIDC-based assume-role
+#   GCP_INTEGRATION_TEST_PROJECT   — GCP project for live Secret Manager tests
+#   AZURE_INTEGRATION_TEST_KEYVAULT_URL — Azure Key Vault URL (live tests)
+#
+# These secrets are not required for CI to pass.
+
+on:
+  push:
+    branches: [main, "substage/**", "copilot/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-cloud-adapters:
+    name: Cloud Adapter Tests (Emulators)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      # ── Start LocalStack (AWS S3 + Secrets Manager) ────────────────────────
+      - name: Start LocalStack
+        run: |
+          docker run -d --name localstack \
+            -p 4566:4566 \
+            -e SERVICES=s3,secretsmanager \
+            -e DEFAULT_REGION=us-east-1 \
+            -e AWS_DEFAULT_REGION=us-east-1 \
+            localstack/localstack:latest
+
+      # ── Start fake-gcs-server (GCP Cloud Storage) ─────────────────────────
+      - name: Start fake-gcs-server
+        run: |
+          docker run -d --name fake-gcs-server \
+            -p 4443:4443 \
+            fsouza/fake-gcs-server:latest \
+            -scheme http -port 4443
+
+      # ── Start Azurite (Azure Blob Storage) ─────────────────────────────────
+      - name: Start Azurite
+        run: |
+          docker run -d --name azurite \
+            -p 10000:10000 \
+            mcr.microsoft.com/azure-storage/azurite:latest \
+            azurite-blob --blobHost 0.0.0.0
+
+      # ── Wait for emulators to be healthy ───────────────────────────────────
+      - name: Wait for LocalStack
+        run: |
+          echo "Waiting for LocalStack to be ready..."
+          timeout 120 bash -c \
+            'until curl -sf http://localhost:4566/_localstack/health 2>/dev/null \
+               | grep -q "running\|available\|initialized"; do sleep 3; done'
+          echo "LocalStack is ready."
+
+      - name: Wait for fake-gcs-server
+        run: |
+          echo "Waiting for fake-gcs-server to be ready..."
+          timeout 60 bash -c \
+            'until curl -sf http://localhost:4443/storage/v1/b 2>/dev/null; do sleep 2; done'
+          echo "fake-gcs-server is ready."
+
+      - name: Wait for Azurite
+        run: |
+          echo "Waiting for Azurite to be ready..."
+          timeout 60 bash -c \
+            'until nc -z localhost 10000 2>/dev/null; do sleep 2; done'
+          echo "Azurite is ready."
+
+      # ── Run cloud-adapter integration tests ────────────────────────────────
+      - name: Run cloud-adapter integration tests
+        env:
+          # LocalStack endpoint — consumed by aws-s3-object-store.test.ts
+          # and aws-secrets-adapter.test.ts.
+          LOCALSTACK_ENDPOINT: http://localhost:4566
+          # fake-gcs-server endpoint — consumed by gcs-object-store.test.ts.
+          FAKE_GCS_ENDPOINT: http://localhost:4443
+          # STORAGE_EMULATOR_HOST is set inside gcs-object-store.test.ts from
+          # FAKE_GCS_ENDPOINT, but can also be set here as a belt-and-suspenders
+          # measure for any code that reads it directly on startup.
+          STORAGE_EMULATOR_HOST: localhost:4443
+          # Azurite well-known connection string — consumed by
+          # azure-blob-object-store.test.ts.
+          AZURITE_CONNECTION_STRING: >-
+            DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;
+        run: |
+          npm run test:cloud-adapters -w @euno/integration-tests
+
+      # ── Capture logs on failure ───────────────────────────────────────────
+      - name: Collect emulator logs on failure
+        if: failure()
+        run: |
+          echo "=== LocalStack logs ===" && docker logs localstack 2>&1 || true
+          echo "=== fake-gcs-server logs ===" && docker logs fake-gcs-server 2>&1 || true
+          echo "=== Azurite logs ===" && docker logs azurite 2>&1 || true

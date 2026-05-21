@@ -162,6 +162,13 @@ function makeValidMultiCloudPlan() {
     '',
     '- [x] **AWS KMS signer — additional key specs**',
     '  - EdDSA signing shim (AwsEdDsaSigner) for partner DID.',
+    '',
+    '## GCP ecosystem plan',
+    '',
+    '### Phase 2 — Native SDK integration (medium-term)',
+    '',
+    '- [x] **GCP Secret Manager secrets-store adapter**',
+    '  - GcpSecretManagerSecretStore implemented in @euno/common-core.',
   ].join('\n');
 }
 
@@ -1555,6 +1562,9 @@ function makeValidMultiCloudPlanPhase3() {
     '- [x] **Helm chart — cloud-specific values files**',
     '  - values-azure.yaml, values-aws.yaml, values-gcp.yaml',
     '',
+    '- [x] Integration test matrix across cloud adapters',
+    '  - tests/cloud-adapters/ test suites.',
+    '',
     '- [x] **Multi-cloud runbook index** (`docs/multi-cloud.md`)',
     '  - Quick comparison table.',
   ].join('\n');
@@ -2187,6 +2197,40 @@ test('[Phase 3] fails when multi-cloud-plan.md multi-cloud runbook index is not 
     const result = run(base);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /multi-cloud runbook index item/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[GCP Phase 2] fails when multi-cloud-plan.md GCP Secret Manager item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlanPhase3().replace(
+        '[x] **GCP Secret Manager secrets-store adapter**',
+        '[ ] **GCP Secret Manager secrets-store adapter**',
+      ));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GCP Secret Manager secrets-store adapter/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('[Cross-cloud] fails when multi-cloud-plan.md integration test matrix item is not checked', () => {
+  const base = makeTmpRoot();
+  try {
+    makeValidFixtures(base);
+    writeFileSync(join(base, 'docs', 'multi-cloud-plan.md'),
+      makeValidMultiCloudPlanPhase3().replace(
+        '[x] Integration test matrix across cloud adapters',
+        '[ ] Integration test matrix across cloud adapters',
+      ));
+    const result = run(base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /integration test matrix item/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

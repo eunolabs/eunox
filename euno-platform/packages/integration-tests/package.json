@@ -6,6 +6,7 @@
   "scripts": {
     "build": "echo 'no build step'",
     "test": "jest",
+    "test:cloud-adapters": "jest --testPathPattern=tests/cloud-adapters",
     "lint": "echo 'no lint step'",
     "typecheck:perf": "tsc -p tsconfig.perf.json",
     "perf": "ts-node -r tsconfig-paths/register --project tsconfig.perf.json perf/bin/run-perf.ts",

@@ -41,6 +41,8 @@
  *      [Phase 2] AWS Secrets Manager adapter item is checked off
  *      [Phase 2] S3 endpoint item is checked off
  *      [Phase 2] KMS/EdDSA signer item is checked off
+ *      [GCP Phase 2] GCP Secret Manager secrets-store adapter is checked off
+ *      [Cross-cloud] Integration test matrix item is checked off
  *   6. docs/deploy-gke.md exists and contains required sections:
  *      - Workload Identity Federation section
  *      - iam.gke.io/gcp-service-account annotation
@@ -277,6 +279,10 @@ requireText(multiCloudPlan, '[x] **S3 cross-chain anchor',
   'multi-cloud-plan.md [Phase 2]: S3 endpoint item is checked off');
 requireText(multiCloudPlan, '[x] **AWS KMS signer',
   'multi-cloud-plan.md [Phase 2]: KMS/EdDSA signer item is checked off');
+requireText(multiCloudPlan, '[x] **GCP Secret Manager secrets-store adapter**',
+  'multi-cloud-plan.md [GCP Phase 2]: GCP Secret Manager secrets-store adapter is checked off');
+requireText(multiCloudPlan, '[x] Integration test matrix across cloud adapters',
+  'multi-cloud-plan.md [Cross-cloud]: integration test matrix item is checked off');
 
 // ---------------------------------------------------------------------------
 // Check 6 — docs/deploy-gke.md

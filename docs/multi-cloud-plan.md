@@ -150,12 +150,16 @@ workarounds.
 
 ### Phase 2 — Native SDK integration (medium-term)
 
-- [ ] **GCP Secret Manager secrets-store adapter**
-  - Implement `SecretManagerSecretStore` satisfying the internal `SecretStore`
-    interface
-  - Authenticate via Workload Identity Federation (no JSON key file required)
-  - Fall back to `process.env` when `GCP_SECRET_*` vars are absent
-  - Unit tests with `@google-cloud/secret-manager` mock
+- [x] **GCP Secret Manager secrets-store adapter**
+  - `GcpSecretManagerSecretStore` implemented in `@euno/common-core` (`secret-store.ts`),
+    satisfying the `SecretStore` interface alongside the AWS and Azure implementations
+  - Authenticates via Application Default Credentials (Workload Identity Federation,
+    `GOOGLE_APPLICATION_CREDENTIALS` key file, or `gcloud auth application-default login`)
+  - Falls back to `EnvSecretStore` when `SECRET_STORE_PROVIDER` is unset or `env`
+  - `createSecretStoreFromEnv()` reads `GCP_PROJECT_ID` (or `SECRET_STORE_GCP_PROJECT_ID`)
+    and constructs the client automatically
+  - Unit tests with `@google-cloud/secret-manager` mock in
+    `public/packages/common/src/__tests__/secret-store.test.ts`
 
 - [x] **GCS cross-chain anchor target**
   - Extended `CrossChainAnchor` to support GCS as an alternative or complement
@@ -246,12 +250,19 @@ workarounds.
 
 ### Testing
 
-- [ ] Integration test matrix across cloud adapters
-  - Extend `euno-platform/packages/integration-tests/` with adapter-specific
-    test suites that can run against live cloud resources (guarded by env vars)
-    or against localstack / fake-gcs-server / Azurite in CI
-  - CI workflow step: `test:cloud-adapters` — runs against emulators only by
-    default; real cloud targets are opt-in via repository secrets
+- [x] Integration test matrix across cloud adapters
+  - Adapter-specific test suites in
+    `euno-platform/packages/integration-tests/tests/cloud-adapters/`:
+    - `aws-s3-object-store.test.ts` — `S3ObjectStore` / `AwsSdkS3AnchorClient` against LocalStack
+    - `aws-secrets-adapter.test.ts` — `AwsSecretsManagerSecretStore` against LocalStack
+    - `gcs-object-store.test.ts` — `GcsObjectStore` / `GcsAnchorClientImpl` against fake-gcs-server
+    - `azure-blob-object-store.test.ts` — `AzureBlobObjectStore` against Azurite
+    - `secret-store-factory.test.ts` — `createSecretStoreFromEnv` cross-provider routing
+  - Tests are guarded by env vars (`LOCALSTACK_ENDPOINT`, `FAKE_GCS_ENDPOINT`,
+    `AZURITE_CONNECTION_STRING`) and skip gracefully when emulators are absent
+  - CI workflow `.github/workflows/test-cloud-adapters.yml` starts LocalStack,
+    fake-gcs-server, and Azurite as Docker containers and runs `test:cloud-adapters`;
+    real cloud targets remain opt-in via repository secrets
 
 ### Documentation
 
