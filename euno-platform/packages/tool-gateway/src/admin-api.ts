@@ -713,15 +713,22 @@ export function createAdminRouter(options: AdminApiOptions): Router {
   // from correct-length keys by timing the shorter code path).
   //
   // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars
-  // enforced by the production guard), NOT a user password.  HMAC-SHA256 is
-  // appropriate here; a KDF would add latency without security benefit for
-  // random tokens.  lgtm[js/insufficient-password-hash]
+  // enforced by the production startup guard), NOT a user-chosen password.
+  // HMAC-SHA256 is the correct primitive for comparing random tokens:
+  //   • A random ≥32-char token already has ~190 bits of entropy — it is not
+  //     susceptible to dictionary/brute-force attacks that motivate KDFs.
+  //   • Both sides are digested with the same per-router pepper so the
+  //     comparison is always between two equal-length digests; `timingSafeEqual`
+  //     never sees differing lengths.
+  //   • Using a slow KDF (bcrypt/argon2) here would add hundreds of ms to every
+  //     admin request with zero security gain for a random token.
+  // codeql[js/insufficient-password-hash] - token comparison, not password storage
   let adminKeyHmacKey: Buffer | undefined;
   let expectedAdminKeyHash: Buffer | undefined;
   if (adminApiKey) {
     adminKeyHmacKey = crypto.randomBytes(32);
     expectedAdminKeyHash = crypto
-      .createHmac('sha256', adminKeyHmacKey) // lgtm[js/insufficient-password-hash]
+      .createHmac('sha256', adminKeyHmacKey)
       .update(Buffer.from(adminApiKey, 'utf8'))
       .digest();
   }
@@ -753,6 +760,7 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     // expected hash.  Both values are always HMAC-SHA256 digests (32 bytes),
     // so timingSafeEqual never receives buffers of different lengths — the
     // length-oracle is eliminated entirely.
+    // codeql[js/insufficient-password-hash] - token comparison, not password storage
     const providedHash = crypto
       .createHmac('sha256', adminKeyHmacKey)
       .update(Buffer.from(typeof providedKey === 'string' ? providedKey : '', 'utf8'))
