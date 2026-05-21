@@ -712,8 +712,8 @@ export function createAdminRouter(options: AdminApiOptions): Router {
   // (an attacker who can reach the admin port can distinguish wrong-length keys
   // from correct-length keys by timing the shorter code path).
   //
-  // NOTE: adminApiKey is a high-entropy random bearer credential (≥32 chars
-  // enforced by the production startup guard), NOT a user-chosen password.
+  // NOTE: adminApiKey is expected to be a high-entropy random bearer
+  // credential (operator-generated), NOT a user-chosen password.
   // HMAC-SHA256 is the correct primitive for comparing random tokens:
   //   • A random ≥32-char token already has ~190 bits of entropy — it is not
   //     susceptible to dictionary/brute-force attacks that motivate KDFs.

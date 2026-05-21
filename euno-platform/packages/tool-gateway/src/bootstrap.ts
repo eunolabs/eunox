@@ -821,7 +821,7 @@ export function checkProductionTrustProxy(
         'allowing any caller to spoof their source IP by sending a crafted X-Forwarded-For header. ' +
         'In production, use a numeric hop count (e.g. TRUST_PROXY=1 to trust only the immediate ' +
         'reverse proxy) or a CIDR range (e.g. TRUST_PROXY=10.0.0.0/8). ' +
-        'See docs/DEPLOYMENT.md §"Reverse-proxy trust (TRUST_PROXY)".',
+        'See docs/DEPLOYMENT.md §"Source IP trust (CR-2)".',
     );
   }
 }
