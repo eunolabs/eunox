@@ -96,7 +96,7 @@ What it absolutely does not need:
 
 The Docker default seccomp profile blocks about 44 syscalls. That's a reasonable starting point. For an agent runtime where you've enumerated the actual requirements, you can go further — blocking `ptrace`, `process_vm_readv`, and `perf_event_open` specifically closes several known lateral-movement and side-channel attack vectors.
 
-Here's a minimal example of what a restricted seccomp profile looks like in practice:
+Here's an illustrative starting point (not a minimal profile) for what a restricted seccomp profile can look like in practice:
 
 ```json
 {
@@ -172,7 +172,7 @@ Here's a minimal example of what a restricted seccomp profile looks like in prac
 }
 ```
 
-That's a whitelist approach — everything not explicitly listed is denied with EPERM. The key omissions from this list: `ptrace` and `process_vm_readv` / `process_vm_writev` (cross-process inspection, used in lateral movement and memory-scraping attacks), `perf_event_open` (hardware performance counters, used in side-channel attacks like Spectre), `kexec_load` and `kexec_file_load` (kernel reload — no agent should ever need these), `open_by_handle_at` (involved in several container escape techniques), `setns` (join another namespace — useful for escaping container isolation), and `mount` (filesystem manipulation). You'd tune this further for your specific runtime: a Node.js agent has different syscall requirements than a Python agent.
+That's a whitelist approach — everything not explicitly listed is denied with EPERM. The key omissions from this list: `ptrace` and `process_vm_readv` / `process_vm_writev` (cross-process inspection, used in lateral movement and memory-scraping attacks), `perf_event_open` (hardware performance counters, used in side-channel attacks like Spectre), `kexec_load` and `kexec_file_load` (kernel reload — no agent should ever need these), `open_by_handle_at` (involved in several container escape techniques), `setns` (join another namespace — useful for escaping container isolation), and `mount` (filesystem manipulation). For most agent workloads, this starter list should be tightened further by removing process-spawning and powerful kernel primitives such as `fork`, `vfork`, `execve`, and `bpf` unless you have a documented need for them. You'd tune this further for your specific runtime: a Node.js agent has different syscall requirements than a Python agent.
 
 The overhead of seccomp filtering is low — typically less than 1% in benchmarks that stress system call rate. For an agent that's spending most of its time doing inference or waiting on network I/O, seccomp has essentially zero performance impact.
 
@@ -337,7 +337,7 @@ The approach varies by environment:
 
 ### Kubernetes (non-gVisor)
 
-Cilium NetworkPolicy with a default-deny ingress/egress posture:
+Kubernetes `NetworkPolicy` (enforced by Cilium in clusters that use Cilium) with a default-deny ingress/egress posture:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -374,7 +374,12 @@ spec:
     - protocol: TCP
       port: 8080
   - to:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
     ports:
     - protocol: UDP
       port: 53    # DNS, scoped to cluster DNS only
@@ -382,7 +387,7 @@ spec:
 
 This allows agent pods to reach the gateway and the cluster DNS resolver (for gateway hostname resolution) and nothing else. No public internet. No other cluster services. No databases directly. Backends are only accessible via the gateway, which enforces tool policies before forwarding.
 
-One DNS note: DNS is a common exfiltration channel because UDP/53 is often allowed where TCP/443 is not. An adversarial agent that can make DNS lookups can exfiltrate data by encoding it in the query hostname (e.g., `<base64-of-secret>.attacker.com`). The counter-measure is to scope DNS access to the cluster-internal resolver (CoreDNS at its cluster IP) and have the network policy deny direct UDP/53 to the internet. The cluster DNS resolver only knows about cluster-internal names; it won't resolve external domains.
+One DNS note: DNS is a common exfiltration channel because UDP/53 is often allowed where TCP/443 is not. An adversarial agent that can make DNS lookups can exfiltrate data by encoding it in the query hostname (e.g., `<base64-of-secret>.attacker.com`). The counter-measure is to scope DNS access to the cluster-internal resolver (CoreDNS at its cluster IP) and have the network policy deny direct UDP/53 to the internet. By default, CoreDNS often forwards external queries to upstream resolvers, so this control alone does not prevent external domain resolution; pair it with DNS-layer allowlists/monitoring and explicit CoreDNS upstream restrictions where required.
 
 ### Kubernetes with gVisor
 
@@ -504,7 +509,7 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 
 **Minimum baseline:**
 - Pod security context: `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`
-- Custom seccomp profile (via `seccompProfile.type: Localhost`) blocking `ptrace`, `process_vm_readv`, `perf_event_open`
+- Custom seccomp profile (via `seccompProfile.type: Localhost` and `seccompProfile.localhostProfile: profiles/agent-seccomp.json`) blocking `ptrace`, `process_vm_readv`, `perf_event_open`
 - Cilium NetworkPolicy with default-deny egress, allow only gateway + cluster DNS
 - Resource limits: set CPU and memory limits; enable LimitRange in the agent namespace
 
