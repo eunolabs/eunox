@@ -1,11 +1,8 @@
 ---
 title: "The prompt injection problem: why every AI agent needs a policy layer"
 description: "Why fixing prompt injection inside the model does not work, and why the only reliable defence is a policy layer at the structured tool call."
-pubDate: "2024-10-15"
-audience: "developers new to AI security"
+pubDate: "2026-05-20"
 ---
-
-*Audience: developers new to AI security*
 
 ---
 
@@ -60,25 +57,20 @@ Agent runtime
      │
      │  { name: "execute_sql", args: { query: "DROP TABLE users" } }
      ▼
-┌────────────────────────────────────────────┐
-│              Policy Proxy                   │
-│                                             │
-│  1. Verify capability token                 │
-│     - Signature valid?                      │
-│     - Not expired, not revoked?             │
-│     - Kill-switch not active?               │
-│                                             │
-│  2. Evaluate conditions                     │
-│     - allowedOperations: ["SELECT"]         │
-│     - First word of query: "DROP"           │
-│     - "DROP" not in ["SELECT"] → DENY       │
-│                                             │
-│  3. Write audit record (DENY)               │
-│     - Tool, args, agent identity            │
-│     - Reason: operation-blocked             │
-│                                             │
-│  4. Return error to agent runtime           │
-└────────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│              Policy Proxy              │
+│                                        │
+│  1. Evaluate conditions                │
+│     - allowedOperations: ["SELECT"]    │
+│     - First word of query: "DROP"      │
+│     - "DROP" not in ["SELECT"] → DENY  │
+│                                        │
+│  2. Write audit record (DENY)          │
+│     - Tool, args, agent identity       │
+│     - Reason: operation-blocked        │
+│                                        │
+│  3. Return error to agent runtime      │
+└────────────────────────────────────────┘
      │
      │  (never reaches the database)
      ▼
@@ -89,7 +81,7 @@ The call never gets to the database. The agent gets back an error message — "o
 
 ---
 
-## Token verification: what it checks and why
+<!-- ## Token verification: what it checks and why
 
 Every tool call needs a signed JWT capability token. The token is issued by a capability issuer that has authenticated the agent's identity and compiled the operator's policy into a cryptographically signed grant.
 
@@ -105,7 +97,7 @@ The proxy checks a few things before it looks at the call at all:
 
 All of this happens before the proxy looks at what tool is being called. An unverified token means the caller hasn't established any right to use anything.
 
----
+--- -->
 
 ## Condition evaluation: the part that actually stops injections
 
@@ -181,7 +173,3 @@ A policy proxy is one layer, not all of them. Input sanitisation before content 
 But the proxy is the layer that enforces on structured data at the only moment that truly matters — when the action is about to happen. Everything else is defence in depth around it. You can improve the model's scepticism, you can sanitise inputs, you can add confirmation dialogs — but none of that replaces having something that reads the actual call arguments and says yes or no before they execute.
 
 The prompt injection problem isn't solvable inside the LLM. There's no phrasing you can add to a system prompt, no fine-tuning you can do, no guard model you can stack on top that solves it at the architectural level. The only place it's solvable is outside the model, between the model and the tools it controls, on the structured data the model produces. That's where the enforcement has to live.
-
----
-
-*Next in this series: [Least-privilege for AI: translating a 50-year-old principle to the agent era](./02-least-privilege-agent-era)*
