@@ -155,14 +155,13 @@ Here's a minimal example of what a restricted seccomp profile looks like in prac
         "eventfd", "fallocate", "timerfd_settime", "timerfd_gettime",
         "accept4", "signalfd4", "eventfd2", "epoll_create1",
         "dup3", "pipe2", "inotify_init1", "preadv", "pwritev",
-        "rt_tgsigqueueinfo", "perf_event_open", "recvmmsg",
+        "rt_tgsigqueueinfo", "recvmmsg",
         "prlimit64", "fanotify_init", "fanotify_mark",
-        "name_to_handle_at", "open_by_handle_at", "clock_adjtime",
-        "syncfs", "sendmmsg", "setns", "getcpu",
-        "process_vm_readv", "process_vm_writev", "kcmp",
-        "finit_module", "sched_setattr", "sched_getattr",
+        "name_to_handle_at", "clock_adjtime",
+        "syncfs", "sendmmsg", "getcpu",
+        "kcmp", "finit_module", "sched_setattr", "sched_getattr",
         "renameat2", "seccomp", "getrandom", "memfd_create",
-        "kexec_file_load", "bpf", "execveat", "userfaultfd",
+        "bpf", "execveat", "userfaultfd",
         "membarrier", "mlock2", "copy_file_range", "preadv2",
         "pwritev2", "pkey_mprotect", "pkey_alloc", "pkey_free",
         "statx", "io_pgetevents", "rseq"
@@ -173,7 +172,7 @@ Here's a minimal example of what a restricted seccomp profile looks like in prac
 }
 ```
 
-That's a whitelist approach — everything not explicitly listed is denied with EPERM. The key omissions: `ptrace`, `process_vm_readv`, `process_vm_writev`, `perf_event_open` (all involved in process inspection and side-channel attacks), `kexec_load` and `kexec_file_load` (kernel reload), `mount` (filesystem manipulation). You'd tune this further for your specific runtime: a Node.js agent has different syscall requirements than a Python agent.
+That's a whitelist approach — everything not explicitly listed is denied with EPERM. The key omissions from this list: `ptrace` and `process_vm_readv` / `process_vm_writev` (cross-process inspection, used in lateral movement and memory-scraping attacks), `perf_event_open` (hardware performance counters, used in side-channel attacks like Spectre), `kexec_load` and `kexec_file_load` (kernel reload — no agent should ever need these), `open_by_handle_at` (involved in several container escape techniques), `setns` (join another namespace — useful for escaping container isolation), and `mount` (filesystem manipulation). You'd tune this further for your specific runtime: a Node.js agent has different syscall requirements than a Python agent.
 
 The overhead of seccomp filtering is low — typically less than 1% in benchmarks that stress system call rate. For an agent that's spending most of its time doing inference or waiting on network I/O, seccomp has essentially zero performance impact.
 
@@ -564,7 +563,7 @@ I want to be clear about what this architecture doesn't protect you against.
 
 **Supply chain compromises in the base image**: The agent's base container image is part of your TCB. A compromised base image that pre-installs a rootkit can escape many of the above controls. Image signing (Cosign, Notary v2), admission control (OPA/Gatekeeper, Kyverno), and regular image scanning are your defense here.
 
-**Gateway as single point of trust**: Everything above assumes the gateway is trustworthy. If the gateway itself is compromised, an attacker can grant arbitrary tool permissions. The gateway's security depends on correct deployment (mTLS for gateway-to-backend calls, proper Redis HA configuration as described in the gateway bootstrap, KMS-backed signing keys). [Post 29 on air-gapped deployments](../blog-articles.md) covers the operator controls that protect the gateway itself.
+**Gateway as single point of trust**: Everything above assumes the gateway is trustworthy. If the gateway itself is compromised, an attacker can grant arbitrary tool permissions. The gateway's security depends on correct deployment (mTLS for gateway-to-backend calls, proper Redis HA configuration as described in the gateway bootstrap, KMS-backed signing keys). [Post 29 on air-gapped deployments](../../blogs/29-air-gapped-ai-governance.md) covers the operator controls that protect the gateway itself.
 
 **The agent process's own memory**: If the agent's process is compromised, an attacker has access to everything in that process's memory: in-flight tool arguments, response data, the session token. Seccomp and network controls prevent the attacker from *exfiltrating* that data, but the data is still accessible to the compromised process. Per-invocation tokens with tight TTLs (as opposed to long-lived session tokens) limit the blast radius.
 
