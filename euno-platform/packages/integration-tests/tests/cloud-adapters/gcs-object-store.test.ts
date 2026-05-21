@@ -31,8 +31,12 @@ const describeWithFakeGcs = FAKE_GCS_ENDPOINT ? describe : describe.skip;
 // ── Emulator host wiring ──────────────────────────────────────────────────────
 
 // The @google-cloud/storage SDK reads STORAGE_EMULATOR_HOST before constructing
-// the Storage client.  We set it here so it's available when the lazy require
-// inside GcsAnchorClientImpl runs.
+// the Storage client.  We set it here at module load time so it's available when
+// the lazy require inside GcsAnchorClientImpl runs.  This affects all tests that
+// run in the same Jest worker process; the emulator tests rely on this being set
+// before any Storage instance is constructed, so module-level assignment is
+// intentional.  Other test files that don't use GCS are not affected because
+// they never construct Storage clients.
 if (FAKE_GCS_ENDPOINT) {
   // The SDK expects a host[:port] value (no scheme) when using the env var form.
   // Strip the http:// or https:// prefix if present.

@@ -2202,7 +2202,7 @@ test('[Phase 3] fails when multi-cloud-plan.md multi-cloud runbook index is not 
   }
 });
 
-test('[GCP Phase 2] fails when multi-cloud-plan.md GCP Secret Manager item is not checked', () => {
+test('[GCP Phase 2 Secret Manager] fails when multi-cloud-plan.md GCP Secret Manager item is not checked', () => {
   const base = makeTmpRoot();
   try {
     makeValidFixtures(base);

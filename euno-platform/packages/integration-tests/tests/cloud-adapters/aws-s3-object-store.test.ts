@@ -42,6 +42,12 @@ function localstackConfig() {
  * Creates an S3 bucket with Object Lock enabled and a 1-day COMPLIANCE
  * default retention so that `PutObject` with `ObjectLockMode: COMPLIANCE`
  * is accepted without needing an explicit retain-until date.
+ *
+ * Object Lock must be enabled at bucket creation time (CreateBucketCommand
+ * with `ObjectLockEnabledForBucket: true`).  The default retention
+ * configuration is a separate API call (PutObjectLockConfigurationCommand)
+ * because S3 does not accept a default retention at creation time — it
+ * requires the bucket to exist first.
  */
 async function createTestBucket(bucketName: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports

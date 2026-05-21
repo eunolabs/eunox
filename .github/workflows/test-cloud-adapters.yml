@@ -100,8 +100,11 @@ jobs:
           # FAKE_GCS_ENDPOINT, but can also be set here as a belt-and-suspenders
           # measure for any code that reads it directly on startup.
           STORAGE_EMULATOR_HOST: localhost:4443
-          # Azurite well-known connection string — consumed by
-          # azure-blob-object-store.test.ts.
+          # Azurite standard development connection string.
+          # The account name (devstoreaccount1) and key are the well-known
+          # Azurite defaults documented at
+          # https://learn.microsoft.com/azure/storage/common/storage-use-azurite
+          # — they are not real credentials and are safe to embed in CI config.
           AZURITE_CONNECTION_STRING: >-
             DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;
         run: |

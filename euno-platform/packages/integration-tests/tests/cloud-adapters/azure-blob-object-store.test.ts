@@ -2,11 +2,11 @@
  * Integration tests for AzureBlobObjectStore against Azurite.
  *
  * Guard: `AZURITE_CONNECTION_STRING` env var must be set to the Azurite
- * connection string.  A typical local value is:
- *   DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;
- *   AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;
- *   BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;
- * When absent the entire suite is skipped.
+ * connection string.  A typical local value uses the well-known Azurite
+ * development credentials (accountName=devstoreaccount1, key=Eby8...) that
+ * are publicly documented at
+ * https://learn.microsoft.com/azure/storage/common/storage-use-azurite — they
+ * are not real credentials and are safe to use in local development and CI.
  *
  * How to run locally:
  *   docker run --rm -d -p 10000:10000 \
