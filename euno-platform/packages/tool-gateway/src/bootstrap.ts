@@ -792,6 +792,43 @@ export async function bootstrapPartnerFromDiscoveryUrl(
 }
 
 /**
+ * CR-5: Fail at startup when `TRUST_PROXY=true` is set in production.
+ *
+ * `TRUST_PROXY=true` instructs Express to trust **every** hop in every
+ * `X-Forwarded-For` header from **any** source.  If the gateway is reachable
+ * by any client other than the intended proxy (e.g. direct traffic bypassing
+ * the load balancer) a caller can set `X-Forwarded-For: 10.0.0.1` and spoof:
+ *
+ *   - `req.ip` used for rate-limiting → bypasses per-IP throttling entirely.
+ *   - `req.ip` logged on admin-API auth failures → poisons the audit trail.
+ *   - The `sourceIp` forwarded to policy `ipRange` conditions → bypasses
+ *     source-IP policy checks.
+ *
+ * Production deployments MUST use a numeric hop count (`TRUST_PROXY=1` to
+ * trust only the immediate upstream proxy) or a CIDR allow-list.
+ *
+ * @internal Exported for unit testing only; not part of the public API.
+ */
+export function checkProductionTrustProxy(
+  env: { TRUST_PROXY?: string | undefined },
+  environment: string,
+): void {
+  if (environment !== 'production') return;
+  const value = env.TRUST_PROXY?.trim();
+  if (value !== undefined && value.toLowerCase() === 'true') {
+    throw new Error(
+      'CR-5: Gateway refused to start — TRUST_PROXY=true trusts every X-Forwarded-For hop, ' +
+        'allowing any caller to spoof their source IP by sending a crafted X-Forwarded-For header. ' +
+        'In production, use a numeric hop count (e.g. TRUST_PROXY=1 to trust only the immediate ' +
+        'reverse proxy) or a CIDR range (e.g. TRUST_PROXY=10.0.0.0/8). ' +
+        'See docs/DEPLOYMENT.md §"Source IP trust (CR-2)".',
+    );
+  }
+}
+
+
+
+/**
  * Parse the `TRUST_PROXY` env var into the value Express's
  * `app.set('trust proxy', …)` accepts. Mirrors the Express docs:
  *
@@ -1352,6 +1389,10 @@ export async function initializeServices(
   checkProductionRedisHa(env, config.environment);
   // ── CR-4: Fail when NODE_ENV=production and ADMIN_HOST is a wildcard ────
   checkProductionAdminHost(env, config.environment);
+  // ── CR-5: Fail when NODE_ENV=production and TRUST_PROXY=true ─────────────
+  // TRUST_PROXY=true trusts every hop in X-Forwarded-For, allowing source-IP
+  // spoofing that bypasses rate limiting and ipRange policy conditions.
+  checkProductionTrustProxy(env, config.environment);
 
 
   const deps: GatewayDependencies = {

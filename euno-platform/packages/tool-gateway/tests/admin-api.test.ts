@@ -9,6 +9,14 @@ import { JWTTokenVerifier } from '../src/verifier';
 import { InMemoryRevocationEpochStore } from '../src/revocation-store';
 import { createLogger, DefaultKillSwitchManager } from '@euno/common';
 
+/**
+ * Default API key used by test builder helpers that don't exercise
+ * authentication logic.  All request calls must include this header when
+ * talking to an app built with the default key so the authenticate middleware
+ * (now deny-by-default) does not short-circuit with 503.
+ */
+const TEST_API_KEY = 'test-admin-key-for-testing';
+
 function buildApp(adminApiKey?: string, withVerifier = true): Express {
   const app = express();
   app.use(express.json());
@@ -175,12 +183,13 @@ describe('POST /admin/revoke', () => {
       app = buildApp(undefined, true);
     });
 
-    it('allows requests without authentication', async () => {
+    it('rejects requests with 503 when no API key is configured (deny-by-default)', async () => {
       const res = await request(app)
         .post('/admin/revoke')
         .send({ tokenId: 'tok-unauth' });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe('ADMIN_AUTH_NOT_CONFIGURED');
     });
   });
 
@@ -188,12 +197,14 @@ describe('POST /admin/revoke', () => {
     let app: Express;
 
     beforeEach(() => {
-      app = buildApp(undefined, false);
+      // Supply an API key so requests get past auth and reach the route handler
+      app = buildApp('test-secret-key', false);
     });
 
     it('returns 501 when no verifier is configured', async () => {
       const res = await request(app)
         .post('/admin/revoke')
+        .set('X-Admin-API-Key', 'test-secret-key')
         .send({ tokenId: 'tok-no-verifier' });
 
       expect(res.status).toBe(501);
@@ -207,7 +218,7 @@ describe('POST /admin/revoke', () => {
 describe('POST /admin/revocation/epoch', () => {
   const API_KEY = 'epoch-api-key';
 
-  function buildEpochApp(withEpochStore = true, apiKey?: string): {
+  function buildEpochApp(withEpochStore = true, apiKey: string = TEST_API_KEY): {
     app: Express;
     epochStore: InMemoryRevocationEpochStore;
   } {
@@ -233,6 +244,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp(false);
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore: 1000 });
 
     expect(res.status).toBe(501);
@@ -243,6 +255,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp();
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuedBefore: 1000 });
 
     expect(res.status).toBe(400);
@@ -253,6 +266,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp();
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 42, issuedBefore: 1000 });
 
     expect(res.status).toBe(400);
@@ -263,6 +277,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp();
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com' });
 
     expect(res.status).toBe(400);
@@ -273,6 +288,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp();
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore: 'not-a-number' });
 
     expect(res.status).toBe(400);
@@ -283,6 +299,7 @@ describe('POST /admin/revocation/epoch', () => {
     const { app } = buildEpochApp();
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore: Infinity });
 
     expect(res.status).toBe(400);
@@ -295,6 +312,7 @@ describe('POST /admin/revocation/epoch', () => {
 
     const res = await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore });
 
     expect(res.status).toBe(200);
@@ -336,10 +354,12 @@ describe('POST /admin/revocation/epoch', () => {
 
     await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore: firstEpoch });
 
     await request(app)
       .post('/admin/revocation/epoch')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ issuer: 'did:web:test.com', issuedBefore: secondEpoch });
 
     expect(await epochStore.getEpoch('did:web:test.com')).toBe(secondEpoch);
@@ -351,7 +371,7 @@ describe('POST /admin/revocation/epoch', () => {
 describe('Kill-switch admin endpoints', () => {
   const API_KEY = 'ks-test-key';
 
-  function buildKsApp(apiKey?: string): { app: Express; ksm: DefaultKillSwitchManager } {
+  function buildKsApp(apiKey: string = TEST_API_KEY): { app: Express; ksm: DefaultKillSwitchManager } {
     const app = express();
     app.use(express.json());
     const ksm = new DefaultKillSwitchManager();
@@ -366,7 +386,9 @@ describe('Kill-switch admin endpoints', () => {
   describe('GET /admin/kill-switch/status', () => {
     it('returns the initial status (all inactive)', async () => {
       const { app } = buildKsApp();
-      const res = await request(app).get('/admin/kill-switch/status');
+      const res = await request(app)
+        .get('/admin/kill-switch/status')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.globalKill).toBe(false);
       expect(res.body.killedSessionCount).toBe(0);
@@ -378,7 +400,9 @@ describe('Kill-switch admin endpoints', () => {
       ksm.killSession('s1');
       ksm.killAgent('a1');
 
-      const res = await request(app).get('/admin/kill-switch/status');
+      const res = await request(app)
+        .get('/admin/kill-switch/status')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.killedSessionCount).toBe(1);
       expect(res.body.killedAgentCount).toBe(1);
@@ -406,7 +430,9 @@ describe('Kill-switch admin endpoints', () => {
       const { app, ksm } = buildKsApp();
       expect(ksm.isGlobalKillActive()).toBe(false);
 
-      const res = await request(app).post('/admin/kill-switch/global/activate');
+      const res = await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('activated');
       expect(ksm.isGlobalKillActive()).toBe(true);
@@ -415,8 +441,12 @@ describe('Kill-switch admin endpoints', () => {
 
     it('is idempotent (activating twice returns 200 both times)', async () => {
       const { app } = buildKsApp();
-      await request(app).post('/admin/kill-switch/global/activate');
-      const res = await request(app).post('/admin/kill-switch/global/activate');
+      await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY);
+      const res = await request(app)
+        .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
     });
   });
@@ -429,7 +459,9 @@ describe('Kill-switch admin endpoints', () => {
       ksm.activateGlobalKill();
       expect(ksm.isGlobalKillActive()).toBe(true);
 
-      const res = await request(app).post('/admin/kill-switch/global/deactivate');
+      const res = await request(app)
+        .post('/admin/kill-switch/global/deactivate')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('deactivated');
       expect(ksm.isGlobalKillActive()).toBe(false);
@@ -437,7 +469,9 @@ describe('Kill-switch admin endpoints', () => {
 
     it('is idempotent (deactivating when already inactive returns 200)', async () => {
       const { app } = buildKsApp();
-      const res = await request(app).post('/admin/kill-switch/global/deactivate');
+      const res = await request(app)
+        .post('/admin/kill-switch/global/deactivate')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
     });
   });
@@ -447,7 +481,9 @@ describe('Kill-switch admin endpoints', () => {
   describe('POST /admin/kill-switch/session/:sessionId/kill', () => {
     it('kills the specified session', async () => {
       const { app, ksm } = buildKsApp();
-      const res = await request(app).post('/admin/kill-switch/session/sess-abc/kill');
+      const res = await request(app)
+        .post('/admin/kill-switch/session/sess-abc/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('sess-abc');
       expect(ksm.isSessionKilled('sess-abc')).toBe(true);
@@ -456,7 +492,9 @@ describe('Kill-switch admin endpoints', () => {
 
     it('does not affect other sessions', async () => {
       const { app, ksm } = buildKsApp();
-      await request(app).post('/admin/kill-switch/session/sess-x/kill');
+      await request(app)
+        .post('/admin/kill-switch/session/sess-x/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(ksm.isSessionKilled('sess-y')).toBe(false);
       expect(ksm.shouldBlock('sess-y')).toBe(false);
     });
@@ -469,7 +507,9 @@ describe('Kill-switch admin endpoints', () => {
       const { app, ksm } = buildKsApp();
       ksm.killSession('revive-me');
 
-      const res = await request(app).post('/admin/kill-switch/session/revive-me/revive');
+      const res = await request(app)
+        .post('/admin/kill-switch/session/revive-me/revive')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('revive-me');
       expect(ksm.isSessionKilled('revive-me')).toBe(false);
@@ -477,7 +517,9 @@ describe('Kill-switch admin endpoints', () => {
 
     it('is idempotent (reviving an alive session returns 200)', async () => {
       const { app } = buildKsApp();
-      const res = await request(app).post('/admin/kill-switch/session/alive-sess/revive');
+      const res = await request(app)
+        .post('/admin/kill-switch/session/alive-sess/revive')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
     });
   });
@@ -487,7 +529,9 @@ describe('Kill-switch admin endpoints', () => {
   describe('POST /admin/kill-switch/agent/:agentId/kill', () => {
     it('kills the specified agent', async () => {
       const { app, ksm } = buildKsApp();
-      const res = await request(app).post('/admin/kill-switch/agent/agent-xyz/kill');
+      const res = await request(app)
+        .post('/admin/kill-switch/agent/agent-xyz/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('agent-xyz');
       expect(ksm.isAgentKilled('agent-xyz')).toBe(true);
@@ -496,7 +540,9 @@ describe('Kill-switch admin endpoints', () => {
 
     it('does not affect other agents', async () => {
       const { app, ksm } = buildKsApp();
-      await request(app).post('/admin/kill-switch/agent/agent-a/kill');
+      await request(app)
+        .post('/admin/kill-switch/agent/agent-a/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(ksm.isAgentKilled('agent-b')).toBe(false);
     });
   });
@@ -508,7 +554,9 @@ describe('Kill-switch admin endpoints', () => {
       const { app, ksm } = buildKsApp();
       ksm.killAgent('agent-revive');
 
-      const res = await request(app).post('/admin/kill-switch/agent/agent-revive/revive');
+      const res = await request(app)
+        .post('/admin/kill-switch/agent/agent-revive/revive')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('agent-revive');
       expect(ksm.isAgentKilled('agent-revive')).toBe(false);
@@ -524,7 +572,9 @@ describe('Kill-switch admin endpoints', () => {
       ksm.killSession('s1');
       ksm.killAgent('a1');
 
-      const res = await request(app).post('/admin/kill-switch/reset');
+      const res = await request(app)
+        .post('/admin/kill-switch/reset')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('reset');
       expect(ksm.isGlobalKillActive()).toBe(false);
@@ -534,7 +584,9 @@ describe('Kill-switch admin endpoints', () => {
 
     it('is idempotent (resetting when nothing is active returns 200)', async () => {
       const { app } = buildKsApp();
-      const res = await request(app).post('/admin/kill-switch/reset');
+      const res = await request(app)
+        .post('/admin/kill-switch/reset')
+        .set('X-Admin-API-Key', TEST_API_KEY);
       expect(res.status).toBe(200);
     });
   });
@@ -545,18 +597,18 @@ describe('Kill-switch admin endpoints', () => {
     it('activate → check status → reset → check status', async () => {
       const { app } = buildKsApp();
 
-      await request(app).post('/admin/kill-switch/global/activate');
-      await request(app).post('/admin/kill-switch/session/s1/kill');
-      await request(app).post('/admin/kill-switch/agent/a1/kill');
+      await request(app).post('/admin/kill-switch/global/activate').set('X-Admin-API-Key', TEST_API_KEY);
+      await request(app).post('/admin/kill-switch/session/s1/kill').set('X-Admin-API-Key', TEST_API_KEY);
+      await request(app).post('/admin/kill-switch/agent/a1/kill').set('X-Admin-API-Key', TEST_API_KEY);
 
-      let status = await request(app).get('/admin/kill-switch/status');
+      let status = await request(app).get('/admin/kill-switch/status').set('X-Admin-API-Key', TEST_API_KEY);
       expect(status.body.globalKill).toBe(true);
       expect(status.body.killedSessionCount).toBe(1);
       expect(status.body.killedAgentCount).toBe(1);
 
-      await request(app).post('/admin/kill-switch/reset');
+      await request(app).post('/admin/kill-switch/reset').set('X-Admin-API-Key', TEST_API_KEY);
 
-      status = await request(app).get('/admin/kill-switch/status');
+      status = await request(app).get('/admin/kill-switch/status').set('X-Admin-API-Key', TEST_API_KEY);
       expect(status.body.globalKill).toBe(false);
       expect(status.body.killedSessionCount).toBe(0);
       expect(status.body.killedAgentCount).toBe(0);
@@ -573,13 +625,13 @@ import type { OcsfAuditTransport, OcsfAuthorizationEvent } from '@euno/common';
 
 // ── Shared helpers for Task 8 tests ──────────────────────────────────────────
 
-/** Minimal app with a fresh DefaultKillSwitchManager, no API key. */
+/** Minimal app with a fresh DefaultKillSwitchManager, default test API key. */
 function buildSimpleKsApp(): { app: Express; ksm: DefaultKillSwitchManager } {
   const app = express();
   app.use(express.json());
   const ksm = new DefaultKillSwitchManager();
   const logger = createLogger('test');
-  const adminRouter = createAdminRouter({ killSwitchManager: ksm, logger });
+  const adminRouter = createAdminRouter({ killSwitchManager: ksm, logger, adminApiKey: TEST_API_KEY });
   app.use('/admin', adminRouter);
   return { app, ksm };
 }
@@ -596,6 +648,7 @@ function buildTenantScopedApp(opts: {
   const adminRouter = createAdminRouter({
     killSwitchManager,
     logger,
+    adminApiKey: TEST_API_KEY,
     tenantId: opts.tenantId,
     ocsfTransport: opts.ocsfTransport,
     idempotencyStore: opts.idempotencyStore,
@@ -625,6 +678,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-1/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({});
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('TENANT_ID_REQUIRED');
@@ -634,6 +688,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-1/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: 'tenant-beta' });
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe('TENANT_MISMATCH');
@@ -643,6 +698,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-1/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(200);
     });
@@ -651,6 +707,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/agent/agent-1/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: 'other-tenant' });
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe('TENANT_MISMATCH');
@@ -660,6 +717,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/agent/agent-1/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(200);
     });
@@ -668,6 +726,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-revive/revive')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(200);
     });
@@ -676,6 +735,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/agent/agent-revive/revive')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(200);
     });
@@ -686,6 +746,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({});
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('TENANT_ID_REQUIRED');
@@ -695,6 +756,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
@@ -704,6 +766,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/global/activate')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT, acknowledgesCrossTenantImpact: true });
       expect(res.status).toBe(200);
     });
@@ -712,6 +775,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/global/deactivate')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
@@ -721,6 +785,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/reset')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT });
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('CROSS_TENANT_ACKNOWLEDGEMENT_REQUIRED');
@@ -730,6 +795,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const app = buildTenantScopedApp({ tenantId: TENANT });
       const res = await request(app)
         .post('/admin/kill-switch/reset')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: TENANT, acknowledgesCrossTenantImpact: true });
       expect(res.status).toBe(200);
     });
@@ -740,6 +806,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const { app } = buildSimpleKsApp();
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-no-scope/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({});
       expect(res.status).toBe(200);
     });
@@ -748,6 +815,7 @@ describe('Tenant scoping (ADMIN_TENANT_ID)', () => {
       const { app } = buildSimpleKsApp();
       const res = await request(app)
         .post('/admin/kill-switch/session/sess-no-scope/kill')
+        .set('X-Admin-API-Key', TEST_API_KEY)
         .send({ tenantId: 'whatever' });
       expect(res.status).toBe(200);
     });
@@ -763,12 +831,14 @@ describe('Idempotency-Key header support', () => {
 
     const first = await request(app)
       .post('/admin/kill-switch/session/sess-idem/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
     expect(first.status).toBe(200);
 
     const second = await request(app)
       .post('/admin/kill-switch/session/sess-idem/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
     expect(second.status).toBe(200);
@@ -783,6 +853,7 @@ describe('Idempotency-Key header support', () => {
     const adminRouter = createAdminRouter({
       killSwitchManager: ksm,
       logger: createLogger('test'),
+      adminApiKey: TEST_API_KEY,
       idempotencyStore: store,
     });
     app.use('/admin', adminRouter);
@@ -790,6 +861,7 @@ describe('Idempotency-Key header support', () => {
     const key = `idem-agent-${Date.now()}`;
     await request(app)
       .post('/admin/kill-switch/agent/agent-idem/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
     expect(ksm.isAgentKilled('agent-idem')).toBe(true);
@@ -800,6 +872,7 @@ describe('Idempotency-Key header support', () => {
     // Second call with same key: should return cached response WITHOUT re-killing
     await request(app)
       .post('/admin/kill-switch/agent/agent-idem/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
     expect(ksm.isAgentKilled('agent-idem')).toBe(false); // Not re-executed
@@ -811,11 +884,13 @@ describe('Idempotency-Key header support', () => {
 
     await request(app)
       .post('/admin/kill-switch/session/sess-conflict/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
 
     const conflict = await request(app)
       .post('/admin/kill-switch/session/sess-conflict/revive')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('Idempotency-Key', key)
       .send({});
 
@@ -826,11 +901,17 @@ describe('Idempotency-Key header support', () => {
   it('treats requests without Idempotency-Key as non-idempotent (normal behaviour)', async () => {
     const { app, ksm } = buildSimpleKsApp();
 
-    await request(app).post('/admin/kill-switch/agent/agent-normal/kill').send({});
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-normal/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
     expect(ksm.isAgentKilled('agent-normal')).toBe(true);
     ksm.reviveAgent('agent-normal');
 
-    await request(app).post('/admin/kill-switch/agent/agent-normal/kill').send({});
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-normal/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
     expect(ksm.isAgentKilled('agent-normal')).toBe(true); // Re-executed
   });
 
@@ -852,10 +933,14 @@ describe('OCSF audit trail (ocsfTransport)', () => {
     app.use('/admin', createAdminRouter({
       killSwitchManager: new DefaultKillSwitchManager(),
       logger: createLogger('test'),
+      adminApiKey: TEST_API_KEY,
       ocsfTransport: transport,
     }));
 
-    await request(app).post('/admin/kill-switch/session/sess-ocsf/kill').send({});
+    await request(app)
+      .post('/admin/kill-switch/session/sess-ocsf/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
 
     // Allow any async send() promises to settle
     await transport.flush();
@@ -880,10 +965,14 @@ describe('OCSF audit trail (ocsfTransport)', () => {
     app.use('/admin', createAdminRouter({
       killSwitchManager: ksm,
       logger: createLogger('test'),
+      adminApiKey: TEST_API_KEY,
       ocsfTransport: transport,
     }));
 
-    await request(app).post('/admin/kill-switch/agent/agent-revive-ocsf/revive').send({});
+    await request(app)
+      .post('/admin/kill-switch/agent/agent-revive-ocsf/revive')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
     await transport.flush();
 
     expect(events).toHaveLength(1);
@@ -899,10 +988,14 @@ describe('OCSF audit trail (ocsfTransport)', () => {
     app.use('/admin', createAdminRouter({
       killSwitchManager: new DefaultKillSwitchManager(),
       logger: createLogger('test'),
+      adminApiKey: TEST_API_KEY,
       ocsfTransport: transport,
     }));
 
-    await request(app).post('/admin/kill-switch/global/activate').send({});
+    await request(app)
+      .post('/admin/kill-switch/global/activate')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
     await transport.flush();
 
     expect(events[0]!.severity_id).toBe(5);
@@ -915,6 +1008,7 @@ describe('OCSF audit trail (ocsfTransport)', () => {
 
     await request(app)
       .post('/admin/kill-switch/session/sess-tenant-ocsf/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ tenantId: 'tenant-ocsf' });
     await transport.flush();
 
@@ -928,11 +1022,13 @@ describe('OCSF audit trail (ocsfTransport)', () => {
     app.use('/admin', createAdminRouter({
       killSwitchManager: new DefaultKillSwitchManager(),
       logger: createLogger('test'),
+      adminApiKey: TEST_API_KEY,
       ocsfTransport: transport,
     }));
 
     await request(app)
       .post('/admin/kill-switch/agent/agent-actor/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .set('X-Admin-Operator', 'operator-alice')
       .send({});
     await transport.flush();
@@ -946,6 +1042,7 @@ describe('OCSF audit trail (ocsfTransport)', () => {
 
     await request(app)
       .post('/admin/kill-switch/session/sess-cross/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
       .send({ tenantId: 'tenant-y' });
     await transport.flush();
 
@@ -959,7 +1056,10 @@ describe('OCSF audit trail (ocsfTransport)', () => {
     // Control: without a transport, no events should be emitted (no crash either).
     const { app } = buildSimpleKsApp();
     // Just confirm the endpoint works without error.
-    const res = await request(app).post('/admin/kill-switch/session/sess-no-transport/kill').send({});
+    const res = await request(app)
+      .post('/admin/kill-switch/session/sess-no-transport/kill')
+      .set('X-Admin-API-Key', TEST_API_KEY)
+      .send({});
     expect(res.status).toBe(200);
   });
 });

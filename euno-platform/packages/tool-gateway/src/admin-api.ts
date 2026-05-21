@@ -705,33 +705,81 @@ export function createAdminRouter(options: AdminApiOptions): Router {
     );
   }
 
-  // Authentication middleware for admin endpoints
+  // Pre-compute a per-router-instance HMAC key and the expected digest of the
+  // admin API key so that per-request comparisons are always between two
+  // fixed-length HMAC-SHA256 digests.  This eliminates the length-oracle that
+  // results from an early-exit `length ===` check before `timingSafeEqual`
+  // (an attacker who can reach the admin port can distinguish wrong-length keys
+  // from correct-length keys by timing the shorter code path).
+  //
+  // NOTE: adminApiKey is expected to be a high-entropy random bearer
+  // credential (operator-generated), NOT a user-chosen password.
+  // HMAC-SHA256 is the correct primitive for comparing random tokens:
+  //   • A random ≥32-char token already has ~190 bits of entropy — it is not
+  //     susceptible to dictionary/brute-force attacks that motivate KDFs.
+  //   • Both sides are digested with the same per-router pepper so the
+  //     comparison is always between two equal-length digests; `timingSafeEqual`
+  //     never sees differing lengths.
+  //   • Using a slow KDF (bcrypt/argon2) here would add hundreds of ms to every
+  //     admin request with zero security gain for a random token.
+  // codeql[js/insufficient-password-hash] - token comparison, not password storage
+  let adminKeyHmacKey: Buffer | undefined;
+  let expectedAdminKeyHash: Buffer | undefined;
+  if (adminApiKey) {
+    adminKeyHmacKey = crypto.randomBytes(32);
+    expectedAdminKeyHash = crypto
+      .createHmac('sha256', adminKeyHmacKey)
+      .update(Buffer.from(adminApiKey, 'utf8'))
+      .digest();
+  }
+
+  // Authentication middleware for admin endpoints.
+  //
+  // Fail closed: when no admin API key is configured the endpoint is
+  // completely inoperable — every request is rejected with 503.  This is
+  // preferable to silently allowing unauthenticated access (the previous
+  // behaviour) which would expose kill-switch and revocation endpoints to any
+  // caller who can reach the admin port.
   const authenticateAdmin = (req: Request, res: Response, next: NextFunction): void => {
-    if (adminApiKey) {
-      // Normalise to a single string – Express allows headers to be string[]
-      const rawHeader = req.headers['x-admin-api-key'];
-      const providedKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-
-      // Use timing-safe comparison to prevent key-leakage via timing attacks
-      const isValid =
-        typeof providedKey === 'string' &&
-        providedKey.length === adminApiKey.length &&
-        crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminApiKey));
-
-      if (!isValid) {
-        logger.warn('Unauthorized admin API access attempt', {
-          ip: req.ip,
-          path: req.path,
-        });
-        res.status(401).json({
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'Valid admin API key required',
-          },
-        });
-        return;
-      }
+    if (!adminApiKey || !adminKeyHmacKey || !expectedAdminKeyHash) {
+      res.status(503).json({
+        error: {
+          code: 'ADMIN_AUTH_NOT_CONFIGURED',
+          message:
+            'Admin API not configured — set ADMIN_API_KEY to enable admin endpoints.',
+        },
+      });
+      return;
     }
+
+    // Normalise to a single string – Express allows headers to be string[]
+    const rawHeader = req.headers['x-admin-api-key'];
+    const providedKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+
+    // Compute the HMAC of the provided key and compare it to the pre-computed
+    // expected hash.  Both values are always HMAC-SHA256 digests (32 bytes),
+    // so timingSafeEqual never receives buffers of different lengths — the
+    // length-oracle is eliminated entirely.
+    // codeql[js/insufficient-password-hash] - token comparison, not password storage
+    const providedHash = crypto
+      .createHmac('sha256', adminKeyHmacKey)
+      .update(Buffer.from(typeof providedKey === 'string' ? providedKey : '', 'utf8'))
+      .digest();
+
+    if (!crypto.timingSafeEqual(providedHash, expectedAdminKeyHash)) {
+      logger.warn('Unauthorized admin API access attempt', {
+        ip: req.ip,
+        path: req.path,
+      });
+      res.status(401).json({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Valid admin API key required',
+        },
+      });
+      return;
+    }
+
     next();
   };
 
