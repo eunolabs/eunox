@@ -140,8 +140,7 @@ export function mountPartnerDidRoutes(router: Router, ctx: AdminRouterContext): 
    * GET /admin/partner-dids
    * List registry entries, optionally filtered by ?status=proposed|active|revoked
    *
-   * Uses `Object.values(PartnerDidStatus)` for the guard so adding a new status
-   * to the enum automatically extends the filter without touching this file.
+   * Uses `PARTNER_DID_STATUSES` for the guard.
    */
   router.get('/partner-dids', async (_req: Request, res: Response): Promise<void> => {
     if (!partnerRegistry) {
@@ -228,7 +227,13 @@ export function mountPartnerDidRoutes(router: Router, ctx: AdminRouterContext): 
       return;
     }
     const operator = resolveOperator(req)!;
-    const did = decodeURIComponent(req.params['did'] ?? '');
+    let did: string;
+    try {
+      did = decodeURIComponent(req.params['did'] ?? '');
+    } catch {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'did is not a valid URI-encoded string' } });
+      return;
+    }
     if (!did) {
       res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
       return;
@@ -379,7 +384,13 @@ export function mountPartnerDidRoutes(router: Router, ctx: AdminRouterContext): 
       return;
     }
     const operator = resolveOperator(req)!;
-    const did = decodeURIComponent(req.params['did'] ?? '');
+    let did: string;
+    try {
+      did = decodeURIComponent(req.params['did'] ?? '');
+    } catch {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'did is not a valid URI-encoded string' } });
+      return;
+    }
     if (!did) {
       res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
       return;
@@ -414,7 +425,13 @@ export function mountPartnerDidRoutes(router: Router, ctx: AdminRouterContext): 
    * Requires X-Admin-Operator for audit trail consistency with other mutations.
    */
   router.post('/partner-dids/:did/refresh', requireOperator, async (req: Request, res: Response): Promise<void> => {
-    const did = decodeURIComponent(req.params['did'] ?? '');
+    let did: string;
+    try {
+      did = decodeURIComponent(req.params['did'] ?? '');
+    } catch {
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'did is not a valid URI-encoded string' } });
+      return;
+    }
     if (!did) {
       res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'DID path parameter is required' } });
       return;

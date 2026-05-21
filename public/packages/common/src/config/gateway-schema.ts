@@ -1415,14 +1415,6 @@ export const GatewayConfigSchema = z
     }
 
     // Multi-issuer trust hardening cross-field rules.
-    if (cfg.SECRET_STORE_PROVIDER === 'azure-keyvault' && !cfg.SECRET_STORE_AZURE_VAULT_URL) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['SECRET_STORE_AZURE_VAULT_URL'],
-        message:
-          'SECRET_STORE_AZURE_VAULT_URL is required when SECRET_STORE_PROVIDER=azure-keyvault.',
-      });
-    }
     if (cfg.REQUIRE_COSIGNATURE_COUNT > 0 && !cfg.COSIGNER_JWKS_FILE && !cfg.COSIGNER_JWKS_INLINE) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -377,6 +377,7 @@ curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
 
 # Step 2 — Second-eye approves (different admin key / operator identity)
 # The :did path segment must be URL-encoded.
+# Malformed percent-encoding returns 400 INVALID_REQUEST.
 curl -X POST "https://gateway.internal:3003/admin/partner-dids/proposals/${ENCODED_DID}/approve" \
   -H "X-Admin-Api-Key: <SECOND_ADMIN_API_KEY>" \
   -H "X-Admin-Operator: bob@corp"

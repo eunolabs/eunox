@@ -460,6 +460,17 @@ describe('POST /admin/partner-dids/proposals/:did/approve', () => {
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('CONFLICT');
   });
+
+  it('returns 400 INVALID_REQUEST when :did is malformed percent-encoding', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    const app = buildAdminApp(reg);
+    const res = await request(app)
+      .post('/admin/partner-dids/proposals/%25/approve')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
+      .set('X-Admin-Operator', 'bob');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_REQUEST');
+  });
 });
 
 describe('DELETE /admin/partner-dids/:did', () => {
@@ -505,6 +516,17 @@ describe('DELETE /admin/partner-dids/:did', () => {
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 400 INVALID_REQUEST when :did is malformed percent-encoding', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    const app = buildAdminApp(reg);
+    const res = await request(app)
+      .delete('/admin/partner-dids/%25')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
+      .set('X-Admin-Operator', 'alice');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_REQUEST');
   });
 });
 
@@ -553,6 +575,17 @@ describe('POST /admin/partner-dids/:did/refresh', () => {
       .set('X-Admin-Operator', 'alice');
     expect(res.status).toBe(200);
     expect(res.body.did).toBe('did:web:partner.example.com');
+  });
+
+  it('returns 400 INVALID_REQUEST when :did is malformed percent-encoding', async () => {
+    const reg = new InMemoryPartnerDidRegistry();
+    const app = buildAdminApp(reg);
+    const res = await request(app)
+      .post('/admin/partner-dids/%25/refresh')
+      .set('X-Admin-API-Key', PARTNER_DID_TEST_KEY)
+      .set('X-Admin-Operator', 'alice');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_REQUEST');
   });
 });
 
