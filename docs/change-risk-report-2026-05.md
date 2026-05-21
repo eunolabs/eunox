@@ -75,9 +75,9 @@ export interface LifecycleGatewayDeps { config, adminPort, adminHost?,
   evidenceSigner?, auditPipeline?, dpopReplayStore?, ledgerPgPool?,
   crossChainAnchor?, ledgerAclClient?, durablePostureEmitter? }
 
-// Backward-compatible full bag (intersection of all four)
-export type GatewayDependencies =
-  CoreGatewayDeps & PublicAppDeps & AdminAppDeps & LifecycleGatewayDeps;
+// Backward-compatible full bag (composed from all four)
+export interface GatewayDependencies extends CoreGatewayDeps, PublicAppDeps,
+  AdminAppDeps, LifecycleGatewayDeps {}
 ```
 
 Update the factory signatures:
