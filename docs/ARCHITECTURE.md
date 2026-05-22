@@ -472,7 +472,10 @@ sequenceDiagram
     Cond->>CCS: increment(jti, windowSeconds) for maxCalls
     CCS-->>Cond: under-limit?
     Cond-->>Eng: allow / deny + reason
-    Eng->>Audit: write entry; if crypto-audit, sign(entry)
+    
+    %% Semicolon replaced with "and" below
+    Eng->>Audit: write entry and if crypto-audit, sign(entry)
+    
     Eng-->>GW: { allowed: true }
     GW->>Backend: proxy request (httpProxy)
     Backend-->>GW: response
@@ -525,7 +528,10 @@ sequenceDiagram
     Svc->>IdP: re-verify OIDC + reread roles
     Svc->>Svc: assert roles still cover current capabilities
     Svc->>Svc: assert PIM role still active (if applicable)
-    Svc->>Svc: bump iat / exp; preserve sub, jti chain
+    
+    %% Semicolon replaced with "and" below
+    Svc->>Svc: bump iat / exp and preserve sub, jti chain
+    
     Svc->>KMS: sign renewed payload
     KMS-->>Svc: signature
     Svc-->>API: renewed JWT
@@ -594,7 +600,9 @@ sequenceDiagram
         W->>Q: ack(id)
     else transient failure
         W->>Q: nack(id, nextRetryAt)
-        Note over W: exponential back-off; dead-letter after maxAttempts
+        
+        %% Semicolon replaced with a comma below
+        Note over W: exponential back-off, dead-letter after maxAttempts
     end
 ```
 

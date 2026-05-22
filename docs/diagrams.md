@@ -553,11 +553,17 @@ sequenceDiagram
 
     User->>IdP: Authenticate (OAuth 2.0 / OIDC)
     IdP-->>Issuer: OIDC token (sub, roles, groups)
-    Issuer->>Issuer: Map roles to capability set; mint signed tokens
+    
+    %% Semicolon replaced with a comma below
+    Issuer->>Issuer: Map roles to capability set, mint signed tokens
+    
     Issuer-->>Platform: Capability token set
     Platform->>Sandbox: Provision isolated sandbox (deny-all egress)
     Sandbox-->>Platform: Sandbox ready
-    Platform->>Agent: Start agent; inject tokens; set proxy as sole egress
+    
+    %% Semicolons replaced with commas below
+    Platform->>Agent: Start agent, inject tokens, set proxy as sole egress
+    
     Agent->>Agent: Initialize LLM runtime and AGT policy engine
 ```
 
