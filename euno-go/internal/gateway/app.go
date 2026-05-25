@@ -14,7 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/edgeobs/euno-platform/euno-go/pkg/did"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/enforcement"
+	"github.com/edgeobs/euno-platform/euno-go/pkg/federation"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/killswitch"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/observability"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/revocation"
@@ -34,6 +36,12 @@ type Config struct {
 	TenantID          string
 	TelemetryEnabled  bool
 	TelemetryFlushMS  int
+
+	// AdminJWKSURI is the JWKS endpoint for admin JWT verification.
+	// When set, admin JWT auth is preferred over static key auth.
+	AdminJWKSURI string
+	// AdminJWTAudience is the expected audience in admin JWTs.
+	AdminJWTAudience string
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -46,21 +54,27 @@ type Dependencies struct {
 	Logger      *slog.Logger
 	Metrics     *observability.MetricsRegistry
 	Audit       *AuditDependencies
+
+	// Partner federation (Stage 7).
+	PartnerResolver   *federation.PartnerIssuerResolver
+	IONResolver       *did.IONResolver
+	FederationMetrics *federation.Metrics
 }
 
 // App is the gateway HTTP application.
 type App struct {
-	config       Config
-	deps         Dependencies
-	router       chi.Router
-	adminRouter  chi.Router
-	proxy        *httputil.ReverseProxy
-	metrics      *gatewayMetrics
-	dpopStore    DPoPJTIStore
-	adminAuth    AdminAuthenticator
-	idempotency  *IdempotencyStore
-	usageTracker *UsageTracker
-	adminDeps    AdminDependencies
+	config           Config
+	deps             Dependencies
+	router           chi.Router
+	adminRouter      chi.Router
+	proxy            *httputil.ReverseProxy
+	metrics          *gatewayMetrics
+	dpopStore        DPoPJTIStore
+	adminAuth        AdminAuthenticator
+	idempotency      *IdempotencyStore
+	usageTracker     *UsageTracker
+	adminDeps        AdminDependencies
+	ionHealthChecker *IONHealthChecker
 }
 
 type gatewayMetrics struct {
@@ -82,20 +96,44 @@ func New(cfg Config, deps Dependencies) *App {
 	app.usageTracker = NewUsageTracker()
 	app.idempotency = NewIdempotencyStore()
 
-	// Set up admin authentication if key is configured.
-	if cfg.AdminAPIKey != "" {
+	// Set up admin authentication.
+	if cfg.AdminJWKSURI != "" || cfg.AdminAPIKey != "" {
 		if cfg.TenantID == "" {
 			if deps.Logger != nil {
-				deps.Logger.Error("admin authentication disabled: tenant ID is required when admin key is configured")
+				deps.Logger.Error("admin authentication disabled: tenant ID is required when admin auth is configured")
 			}
 		} else {
-			app.adminAuth = NewStaticKeyAdminAuth(cfg.AdminAPIKey, cfg.TenantID, deps.Logger)
+			app.adminAuth = NewCombinedAdminAuth(CombinedAdminAuthConfig{
+				JWKSURI:     cfg.AdminJWKSURI,
+				JWTAudience: cfg.AdminJWTAudience,
+				AdminKey:    cfg.AdminAPIKey,
+				TenantID:    cfg.TenantID,
+				Logger:      deps.Logger,
+			})
 		}
 	}
 
 	// Initialize partner DID store.
 	app.adminDeps = AdminDependencies{
 		PartnerDIDs: NewInMemoryPartnerDIDStore(),
+	}
+
+	// Initialize partner token verifier if resolver is configured.
+	if deps.PartnerResolver != nil {
+		partnerVerifier := NewPartnerTokenVerifier(PartnerTokenVerifierConfig{
+			Resolver: deps.PartnerResolver,
+			Audience: cfg.GatewayAudience,
+		})
+
+		app.deps.JWTVerifier = NewMultiIssuerVerifier(MultiIssuerVerifierConfig{
+			LocalVerifier:   app.deps.JWTVerifier,
+			PartnerVerifier: partnerVerifier,
+		})
+	}
+
+	// Initialize ION health checker if resolver is configured.
+	if deps.IONResolver != nil {
+		app.ionHealthChecker = NewIONHealthChecker(deps.IONResolver)
 	}
 
 	app.router = app.buildRouter()
@@ -170,6 +208,7 @@ func (app *App) buildRouter() chi.Router {
 	// Health endpoints (no auth required)
 	r.Get("/health/live", app.handleLive)
 	r.Get("/health/ready", app.handleReady)
+	r.Get("/healthz/did-ion", app.handleDIDIONHealth)
 
 	// Public API routes
 	r.Route("/api/v1", func(r chi.Router) {
