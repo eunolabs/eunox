@@ -241,15 +241,16 @@ func (ut *UsageTracker) GetStats(tenantFilter string) map[string]any {
 				"total_tenants": 0,
 			}
 		}
+		snapshot := *s
 		return map[string]any{
-			"tenants":       []*UsageStats{s},
+			"tenants":       []UsageStats{snapshot},
 			"total_tenants": 1,
 		}
 	}
 
-	tenants := make([]*UsageStats, 0, len(ut.stats))
+	tenants := make([]UsageStats, 0, len(ut.stats))
 	for _, s := range ut.stats {
-		tenants = append(tenants, s)
+		tenants = append(tenants, *s)
 	}
 
 	return map[string]any{

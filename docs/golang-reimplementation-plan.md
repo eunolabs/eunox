@@ -420,7 +420,7 @@ euno-go/
 
 ### Exit Criteria
 
-- [x] Kill-switch activations propagate to all gateway replicas within 1s (Redis pub/sub)
+- [ ] Kill-switch activations propagate to all gateway replicas within 1s (Redis pub/sub) — deferred to Stage 7+
 - [x] Admin API rejects requests without valid admin key (timing-safe)
 - [x] Tenant isolation: admin key A cannot access tenant B's data
 - [x] Cross-tenant operations require explicit acknowledgment

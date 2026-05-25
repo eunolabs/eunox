@@ -35,5 +35,5 @@ type GatewayConfig struct {
 
 	// Telemetry
 	TelemetryEnabled bool `env:"EUNO_TELEMETRY" default:"true"`
-	TelemetryFlushMS int  `env:"GATEWAY_TELEMETRY_FLUSH_MS" default:"300000" min:"1000"`
+	TelemetryFlushMS int  `env:"TELEMETRY_FLUSH_MS" default:"300000" min:"1000"`
 }

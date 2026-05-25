@@ -223,7 +223,7 @@ func TestUsageTracker_RecordAndGet(t *testing.T) {
 	// Get filtered stats
 	stats = ut.GetStats("tenant-a")
 	assert.Equal(t, 1, stats["total_tenants"])
-	tenants := stats["tenants"].([]*gateway.UsageStats)
+	tenants := stats["tenants"].([]gateway.UsageStats)
 	require.Len(t, tenants, 1)
 	assert.Equal(t, int64(3), tenants[0].TotalRequests)
 	assert.Equal(t, int64(2), tenants[0].AllowCount)
@@ -252,9 +252,9 @@ func TestUsageTracker_NonexistentTenant(t *testing.T) {
 func TestIdempotencyStore_SetAndGet(t *testing.T) {
 	store := gateway.NewIdempotencyStore()
 
-	store.Set("key-1", []byte(`{"ok":true}`), 200)
+	store.Set("key-1", []byte(`{"ok":true}`), 200, nil)
 
-	body, status, found := store.Get("key-1")
+	body, status, _, found := store.Get("key-1")
 	assert.True(t, found)
 	assert.Equal(t, 200, status)
 	assert.Equal(t, `{"ok":true}`, string(body))
@@ -263,7 +263,7 @@ func TestIdempotencyStore_SetAndGet(t *testing.T) {
 func TestIdempotencyStore_NotFound(t *testing.T) {
 	store := gateway.NewIdempotencyStore()
 
-	_, _, found := store.Get("missing")
+	_, _, _, found := store.Get("missing")
 	assert.False(t, found)
 }
 
@@ -274,16 +274,16 @@ func TestIdempotencyStore_Expiry(t *testing.T) {
 		gateway.WithIdempotencyTimeFunc(func() time.Time { return now }),
 	)
 
-	store.Set("key-1", []byte(`{"ok":true}`), 200)
+	store.Set("key-1", []byte(`{"ok":true}`), 200, nil)
 
 	// Still valid
-	_, _, found := store.Get("key-1")
+	_, _, _, found := store.Get("key-1")
 	assert.True(t, found)
 
 	// Advance time past TTL
 	now = now.Add(2 * time.Hour)
 
-	_, _, found = store.Get("key-1")
+	_, _, _, found = store.Get("key-1")
 	assert.False(t, found)
 }
 
@@ -294,8 +294,8 @@ func TestIdempotencyStore_Cleanup(t *testing.T) {
 		gateway.WithIdempotencyTimeFunc(func() time.Time { return now }),
 	)
 
-	store.Set("key-1", []byte(`{}`), 200)
-	store.Set("key-2", []byte(`{}`), 200)
+	store.Set("key-1", []byte(`{}`), 200, nil)
+	store.Set("key-2", []byte(`{}`), 200, nil)
 	assert.Equal(t, 2, store.Len())
 
 	// Advance and cleanup

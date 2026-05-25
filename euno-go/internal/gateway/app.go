@@ -84,7 +84,13 @@ func New(cfg Config, deps Dependencies) *App {
 
 	// Set up admin authentication if key is configured.
 	if cfg.AdminAPIKey != "" {
-		app.adminAuth = NewStaticKeyAdminAuth(cfg.AdminAPIKey, cfg.TenantID, deps.Logger)
+		if cfg.TenantID == "" {
+			if deps.Logger != nil {
+				deps.Logger.Error("admin authentication disabled: tenant ID is required when admin key is configured")
+			}
+		} else {
+			app.adminAuth = NewStaticKeyAdminAuth(cfg.AdminAPIKey, cfg.TenantID, deps.Logger)
+		}
 	}
 
 	// Initialize partner DID store.

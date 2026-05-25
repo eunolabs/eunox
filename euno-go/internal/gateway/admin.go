@@ -4,11 +4,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -74,7 +77,9 @@ func (a *StaticKeyAdminAuth) Authenticate(_ context.Context, r *http.Request) (*
 		return nil, fmt.Errorf("%w: admin key not configured", ErrAdminUnauthorized)
 	}
 
-	if subtle.ConstantTimeCompare([]byte(apiKey), []byte(a.adminKey)) != 1 {
+	apiKeyDigest := sha256.Sum256([]byte(apiKey))
+	adminKeyDigest := sha256.Sum256([]byte(a.adminKey))
+	if subtle.ConstantTimeCompare(apiKeyDigest[:], adminKeyDigest[:]) != 1 {
 		return nil, fmt.Errorf("%w: invalid admin key", ErrAdminUnauthorized)
 	}
 
@@ -95,6 +100,7 @@ type IdempotencyStore struct {
 type idempotencyEntry struct {
 	response   []byte
 	statusCode int
+	headers    http.Header
 	createdAt  time.Time
 }
 
@@ -129,32 +135,40 @@ func NewIdempotencyStore(opts ...IdempotencyStoreOption) *IdempotencyStore {
 }
 
 // Get retrieves a cached response by idempotency key. Returns nil if not found or expired.
-func (s *IdempotencyStore) Get(key string) ([]byte, int, bool) {
+func (s *IdempotencyStore) Get(key string) ([]byte, int, http.Header, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	e, ok := s.entries[key]
 	if !ok {
-		return nil, 0, false
+		return nil, 0, nil, false
 	}
 
 	if s.now().Sub(e.createdAt) > s.ttl {
 		delete(s.entries, key)
-		return nil, 0, false
+		return nil, 0, nil, false
 	}
 
-	return e.response, e.statusCode, true
+	return e.response, e.statusCode, e.headers.Clone(), true
 }
 
 // Set stores a response for the given idempotency key.
-func (s *IdempotencyStore) Set(key string, response []byte, statusCode int) {
+func (s *IdempotencyStore) Set(key string, response []byte, statusCode int, headers http.Header) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	now := s.now()
+	for existingKey, e := range s.entries {
+		if now.Sub(e.createdAt) > s.ttl {
+			delete(s.entries, existingKey)
+		}
+	}
 
 	s.entries[key] = &idempotencyEntry{
 		response:   response,
 		statusCode: statusCode,
-		createdAt:  s.now(),
+		headers:    headers.Clone(),
+		createdAt:  now,
 	}
 }
 
@@ -189,7 +203,7 @@ func (app *App) adminMiddleware(next http.Handler) http.Handler {
 		identity, err := app.adminAuth.Authenticate(r.Context(), r)
 		if err != nil {
 			if errors.Is(err, ErrAdminUnauthorized) {
-				writeJSON(w, http.StatusUnauthorized, errorResponse(err.Error()))
+				writeJSON(w, http.StatusUnauthorized, errorResponse("unauthorized"))
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, errorResponse("authentication error"))
@@ -216,8 +230,15 @@ func (app *App) idempotencyMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Check for cached response.
-		if cached, status, found := app.idempotency.Get(idemKey); found {
-			w.Header().Set("Content-Type", "application/json")
+		identity := adminIdentityFromContext(r.Context())
+		cacheKey := buildIdempotencyCacheKey(r, identity, idemKey)
+
+		if cached, status, cachedHeaders, found := app.idempotency.Get(cacheKey); found {
+			for headerKey, values := range cachedHeaders {
+				for _, value := range values {
+					w.Header().Add(headerKey, value)
+				}
+			}
 			w.Header().Set("X-Idempotency-Replayed", "true")
 			w.WriteHeader(status)
 			_, _ = w.Write(cached)
@@ -230,9 +251,17 @@ func (app *App) idempotencyMiddleware(next http.Handler) http.Handler {
 
 		// Cache the response.
 		if rw.body != nil {
-			app.idempotency.Set(idemKey, rw.body, rw.statusCode)
+			app.idempotency.Set(cacheKey, rw.body, rw.statusCode, rw.Header().Clone())
 		}
 	})
+}
+
+func buildIdempotencyCacheKey(r *http.Request, identity *AdminIdentity, idempotencyKey string) string {
+	tenantID := ""
+	if identity != nil {
+		tenantID = identity.TenantID
+	}
+	return r.Method + "|" + r.URL.Path + "|" + tenantID + "|" + idempotencyKey
 }
 
 // responseCapture captures the response for idempotency caching.
@@ -273,7 +302,6 @@ func adminIdentityFromContext(ctx context.Context) *AdminIdentity {
 // requireCrossTenantAck checks that the request body contains acknowledgesCrossTenantImpact: true
 // for operations that affect all tenants.
 func requireCrossTenantAck(r *http.Request) error {
-	// Read and restore body.
 	var body struct {
 		AcknowledgesCrossTenantImpact bool `json:"acknowledgesCrossTenantImpact"`
 	}
@@ -282,8 +310,22 @@ func requireCrossTenantAck(r *http.Request) error {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
 
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+	if err != nil {
+		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
+	}
+	if len(raw) > maxBodySize {
+		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
+	}
+
+	if err := json.Unmarshal(trimmed, &body); err != nil {
 		// If body is empty or not JSON, still require acknowledgment.
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}

@@ -4,11 +4,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +19,9 @@ import (
 	"github.com/edgeobs/euno-platform/euno-go/pkg/audit"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/ocsf"
 )
+
+// ErrPartnerDIDNotFound indicates a requested partner DID entry does not exist.
+var ErrPartnerDIDNotFound = errors.New("partner DID not found")
 
 // PartnerDIDStore manages trusted partner DIDs.
 type PartnerDIDStore interface {
@@ -33,16 +39,17 @@ type PartnerDIDStore interface {
 
 // PartnerDID represents a registered partner DID entry.
 type PartnerDID struct {
-	DID         string    `json:"did"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Status      string    `json:"status"`
+	DID          string    `json:"did"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	Status       string    `json:"status"`
 	RegisteredAt time.Time `json:"registeredAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // InMemoryPartnerDIDStore provides an in-memory implementation of PartnerDIDStore.
 type InMemoryPartnerDIDStore struct {
+	mu       sync.RWMutex
 	partners map[string]*PartnerDID
 	now      func() time.Time
 }
@@ -57,12 +64,15 @@ func NewInMemoryPartnerDIDStore() *InMemoryPartnerDIDStore {
 
 // Register adds a new partner DID to the store.
 func (s *InMemoryPartnerDIDStore) Register(did, name, description string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	now := s.now()
 	s.partners[did] = &PartnerDID{
 		DID:          did,
 		Name:         name,
 		Description:  description,
-		Status:       "approved",
+		Status:       "pending",
 		RegisteredAt: now,
 		UpdatedAt:    now,
 	}
@@ -71,12 +81,18 @@ func (s *InMemoryPartnerDIDStore) Register(did, name, description string) error 
 
 // Unregister removes a partner DID from the store.
 func (s *InMemoryPartnerDIDStore) Unregister(did string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	delete(s.partners, did)
 	return nil
 }
 
 // List returns all registered partner DIDs.
 func (s *InMemoryPartnerDIDStore) List() []PartnerDID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make([]PartnerDID, 0, len(s.partners))
 	for _, p := range s.partners {
 		result = append(result, *p)
@@ -86,18 +102,25 @@ func (s *InMemoryPartnerDIDStore) List() []PartnerDID {
 
 // Get retrieves a partner DID by its identifier.
 func (s *InMemoryPartnerDIDStore) Get(did string) (*PartnerDID, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	p, ok := s.partners[did]
 	if !ok {
 		return nil, false
 	}
-	return p, true
+	clone := *p
+	return &clone, true
 }
 
 // SetStatus updates the status of a partner DID.
 func (s *InMemoryPartnerDIDStore) SetStatus(did, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	p, ok := s.partners[did]
 	if !ok {
-		return fmt.Errorf("partner DID not found: %s", did)
+		return fmt.Errorf("%w: %s", ErrPartnerDIDNotFound, did)
 	}
 	p.Status = status
 	p.UpdatedAt = s.now()
@@ -371,7 +394,23 @@ func (app *App) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int `json:"ttlSeconds,omitempty"`
 	}
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
+			return
+		}
+		if len(raw) > maxBodySize {
+			writeJSON(w, http.StatusBadRequest, errorResponse("request body too large"))
+			return
+		}
+
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) > 0 {
+			if err := json.Unmarshal(trimmed, &body); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
+				return
+			}
+		}
 	}
 
 	ttl := 24 * time.Hour
@@ -573,6 +612,10 @@ func (app *App) handlePartnerDIDStatusChange(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := app.adminDeps.PartnerDIDs.SetStatus(did, status); err != nil {
+		if errors.Is(err, ErrPartnerDIDNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse("partner DID not found"))
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errorResponse("failed to update partner DID status"))
 		return
 	}

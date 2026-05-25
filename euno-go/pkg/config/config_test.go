@@ -241,6 +241,7 @@ var gatewayEnvKeys = []string{
 	"EUNO_JWKS_CACHE_TTL_SECONDS",
 	"GATEWAY_AUDIENCE",
 	"HOSTED_MODE",
+	"TENANT_ID",
 	"REDIS_URL",
 	"REVOCATION_REDIS_URL",
 	"KILL_SWITCH_REDIS_URL",
@@ -248,6 +249,8 @@ var gatewayEnvKeys = []string{
 	"RATE_LIMIT_WINDOW_MS",
 	"RATE_LIMIT_MAX_REQUESTS",
 	"ALLOWED_ORIGINS",
+	"EUNO_TELEMETRY",
+	"TELEMETRY_FLUSH_MS",
 }
 
 var minterEnvKeys = []string{

@@ -15,21 +15,14 @@ import (
 	"github.com/edgeobs/euno-platform/euno-go/pkg/ocsf"
 )
 
-// BenchmarkPostgresLedgerBackend_Append benchmarks the audit ledger append operation.
-//
-// This benchmark requires a running PostgreSQL instance with AUDIT_DB_URL set.
-// When no PostgreSQL connection is available, it falls back to a mock implementation
-// to validate that the benchmark harness itself works correctly.
-//
-// Run with a live database:
-//
-//	AUDIT_DB_URL=******localhost:5432/audit_bench go test -bench=BenchmarkPostgresLedgerBackend_Append -benchtime=5s ./pkg/audit/
+// BenchmarkLedgerBackend_Append benchmarks the audit ledger append operation using
+// a lightweight in-memory backend implementation.
 //
 // Metrics reported:
 //   - ns/op: latency per append
 //   - B/op: allocations per append
 //   - allocs/op: number of allocations per append
-func BenchmarkPostgresLedgerBackend_Append(b *testing.B) {
+func BenchmarkLedgerBackend_Append(b *testing.B) {
 	// Generate a signing key for evidence creation.
 	signer, err := crypto.GenerateECDSASigner("bench-key", crypto.ES256)
 	if err != nil {
@@ -37,7 +30,7 @@ func BenchmarkPostgresLedgerBackend_Append(b *testing.B) {
 	}
 	evidenceSigner := audit.NewEvidenceSigner(signer)
 
-	// Use the mock backend for CI — real PostgreSQL benchmarks require AUDIT_DB_URL.
+	// Use the mock backend to benchmark append harness overhead without external DB setup.
 	backend := &benchLedgerBackend{}
 
 	ctx := context.Background()
@@ -115,10 +108,7 @@ func BenchmarkEvidenceSigner_Sign(b *testing.B) {
 	}
 }
 
-// benchLedgerBackend is a mock backend for benchmarking the append path
-// without requiring a live PostgreSQL database. This validates the harness
-// structure. For real performance numbers, set AUDIT_DB_URL and run against
-// a PostgreSQL instance.
+// benchLedgerBackend is a mock backend for benchmarking the append path.
 type benchLedgerBackend struct {
 	count int64
 }

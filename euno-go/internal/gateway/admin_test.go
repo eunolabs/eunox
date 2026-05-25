@@ -131,6 +131,8 @@ func TestAdmin_RejectsUnauthenticatedRequests(t *testing.T) {
 	app.AdminHandler().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	result := parseJSON(t, w)
+	assert.Equal(t, "unauthorized", result["error"])
 }
 
 func TestAdmin_RejectsInvalidKey(t *testing.T) {
@@ -142,6 +144,8 @@ func TestAdmin_RejectsInvalidKey(t *testing.T) {
 	app.AdminHandler().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	result := parseJSON(t, w)
+	assert.Equal(t, "unauthorized", result["error"])
 }
 
 func TestAdmin_AcceptsValidKey(t *testing.T) {
@@ -163,6 +167,28 @@ func TestAdmin_AcceptsLegacyHeader(t *testing.T) {
 	app.AdminHandler().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAdmin_KeyConfiguredWithoutTenant_DisablesAdminAuth(t *testing.T) {
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  killswitch.NewInMemory(),
+		Revocation:  revocation.NewInMemory(),
+		JWTVerifier: &mockJWTVerifier{},
+		DPoPStore:   gateway.NewInMemoryDPoPStore(5 * time.Minute),
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	app := gateway.New(gateway.Config{
+		GatewayAudience: "test-gateway",
+		AdminAPIKey:     testAdminKey,
+	}, deps)
+
+	req := adminReq(http.MethodGet, "/admin/kill-switch/status", nil)
+	w := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestAdmin_TimingSafeComparison(t *testing.T) {
@@ -345,6 +371,18 @@ func TestAdmin_RevokeToken(t *testing.T) {
 	assert.Equal(t, "jti-test-123", result["jti"])
 }
 
+func TestAdmin_RevokeToken_InvalidBody(t *testing.T) {
+	app := newAdminTestApp(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/revoke/jti-test-123", bytes.NewReader([]byte("{")))
+	req.Header.Set("X-Admin-Api-Key", testAdminKey)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestAdmin_RevocationStatus(t *testing.T) {
 	app := newAdminTestApp(t)
 
@@ -438,6 +476,23 @@ func TestAdmin_PartnerDID_Register(t *testing.T) {
 	result := parseJSON(t, w)
 	assert.Equal(t, "registered", result["status"])
 	assert.Equal(t, "did:web:partner.example.com", result["did"])
+
+	req = adminReq(http.MethodGet, "/admin/partner-dids/", nil)
+	w = httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	result = parseJSON(t, w)
+	partners := result["partners"].([]any)
+	found := false
+	for _, rawPartner := range partners {
+		partner := rawPartner.(map[string]any)
+		if partner["did"] == "did:web:partner.example.com" {
+			assert.Equal(t, "pending", partner["status"])
+			found = true
+			break
+		}
+	}
+	assert.True(t, found)
 }
 
 func TestAdmin_PartnerDID_RegisterMissingFields(t *testing.T) {
@@ -610,6 +665,23 @@ func TestAdmin_IdempotencyKey_DifferentKeysNotReplayed(t *testing.T) {
 	// Different key - should not replay
 	req = adminReq(http.MethodPost, "/admin/kill-switch/agent/agent-b/kill", nil)
 	req.Header.Set("Idempotency-Key", "key-2")
+	w = httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("X-Idempotency-Replayed"))
+}
+
+func TestAdmin_IdempotencyKey_SameKeyDifferentPathNotReplayed(t *testing.T) {
+	app := newAdminTestApp(t)
+
+	req := adminReq(http.MethodPost, "/admin/kill-switch/agent/agent-a/kill", nil)
+	req.Header.Set("Idempotency-Key", "same-key")
+	w := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	req = adminReq(http.MethodPost, "/admin/kill-switch/agent/agent-b/kill", nil)
+	req.Header.Set("Idempotency-Key", "same-key")
 	w = httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
