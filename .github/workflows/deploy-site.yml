@@ -1,44 +1,48 @@
-name: Deploy site to GitHub Pages
+name: Deploy to Cloudflare Pages
 
-# Deploys the Astro site in site/ to GitHub Pages whenever changes land on
-# main inside the site/ directory or this workflow file.  The deploy job uses
-# the standard GitHub Pages OIDC token — no extra secrets required.
+# Deploys the Astro site in site/ to Cloudflare Pages (free tier) whenever
+# changes land on main inside the site/ or blogs/ directories, or when this
+# workflow file is modified.
 #
-# Prerequisite: enable GitHub Pages for this repository and set the source to
-# "GitHub Actions" (Settings → Pages → Build and deployment → Source).
-# If you are using a custom domain (eunolabs.ai), add a CNAME file to
-# site/public/ and configure the domain in the Pages settings.
+# Prerequisites:
+#  1. Create a Cloudflare Pages project named "eunolabs-site" in the dashboard
+#     and connect the custom domain eunolabs.ai (see site/wrangler.toml).
+#  2. Add these repository SECRETS (Settings → Secrets and variables → Actions):
+#       CLOUDFLARE_API_TOKEN   — API token with "Cloudflare Pages: Edit" permission
+#       CLOUDFLARE_ACCOUNT_ID  — your Cloudflare account ID
+#  3. Enable GitHub Discussions on this repository, install the Giscus GitHub App
+#     (https://github.com/apps/giscus), then visit https://giscus.app/ to obtain
+#     the repo ID and category ID.  Add these repository VARIABLES:
+#       GISCUS_REPO_ID         — opaque repo ID from giscus.app
+#       GISCUS_CATEGORY_ID     — opaque category ID from giscus.app
 
 on:
   push:
     branches: [main]
     paths:
       - "site/**"
+      - "blogs/**"
       - ".github/workflows/deploy-site.yml"
   # Allow a manual redeploy from the Actions tab without a code push.
   workflow_dispatch:
 
-# Grant the GITHUB_TOKEN the minimum permissions required for Pages OIDC
-# publishing.  The deploy job uses the `id-token: write` permission to obtain
-# a short-lived OIDC token; `pages: write` allows uploading the Pages
-# artifact.  Everything else defaults to read.
+# Least-privilege token — Cloudflare deployment uses its own credentials.
+# `actions: write` is required for actions/upload-artifact (build job) and
+# `actions: read` for actions/download-artifact (deploy job); an explicit
+# permissions block sets all unspecified scopes to none, so we must list both.
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  actions: write
 
-# Prevent concurrent deployments that could leave the site in an inconsistent
-# state.  `cancel-in-progress: false` lets the in-flight deploy finish before
-# queuing the next one.
+# Prevent concurrent deployments.
 concurrency:
-  group: pages
+  group: cloudflare-pages
   cancel-in-progress: false
 
 jobs:
-  # ──────────────────────────────────────────────────────────────────────────
-  # build: install Astro, compile to static HTML, and upload as a Pages
-  #        artifact so the deploy job can pick it up.
-  # ──────────────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
+  # build: install Astro, compile to static HTML.
+  # ────────────────────────────────────────────────────────────────────────────
   build:
     name: Build site
     runs-on: ubuntu-latest
@@ -49,45 +53,59 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: site/package-lock.json
 
       # Install only the site's own dependencies — avoids pulling the entire
-      # platform monorepo (TypeScript, Jest, etc.) for a static site build.
+      # platform monorepo for a static site build.
       - name: Install site dependencies
         run: npm install
         working-directory: site
-
-      # Injects the correct `base` path into the Astro config when the site
-      # is deployed to a subdirectory (e.g. https://edgeobs.github.io/euno-platform/).
-      # If you use a custom domain (eunolabs.ai) the base is "/" and this step
-      # is a no-op.
-      - name: Configure GitHub Pages
-        id: pages
-        uses: actions/configure-pages@v4
 
       - name: Build Astro site
         run: npm run build
         working-directory: site
         env:
-          PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          # Giscus comment widget configuration.
+          # Set GISCUS_REPO_ID and GISCUS_CATEGORY_ID as repository variables
+          # in Settings → Secrets and variables → Actions → Variables.
+          # If either ID is unset, the Giscus widget is suppressed entirely
+          # (no comments section shown) rather than rendering with empty config.
+          PUBLIC_GISCUS_REPO: edgeobs/euno-platform
+          PUBLIC_GISCUS_REPO_ID: ${{ vars.GISCUS_REPO_ID }}
+          PUBLIC_GISCUS_CATEGORY: Blog Comments
+          PUBLIC_GISCUS_CATEGORY_ID: ${{ vars.GISCUS_CATEGORY_ID }}
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4.1.3
         with:
-          # site/dist/ is Astro's default static output directory.
+          name: site-dist
           path: site/dist
+          retention-days: 1
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # deploy: take the uploaded artifact and publish it to GitHub Pages.
-  #         Runs only after a successful build job.
-  # ──────────────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
+  # deploy: publish the built artifact to Cloudflare Pages.
+  # ────────────────────────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to GitHub Pages
+    name: Deploy to Cloudflare Pages
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Download build artifact
+        uses: actions/download-artifact@v4.1.3
+        with:
+          name: site-dist
+          # Download to ./dist so the wrangler command below can reference it
+          # directly without a checkout step.
+          path: dist
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Pass project name and output directory explicitly so this job does
+          # not need a repository checkout.  wrangler.toml in site/ is used for
+          # local development; CI uses these flags instead.
+          command: pages deploy dist --project-name=eunolabs-site
+

@@ -1,0 +1,70 @@
+---
+/**
+ * GiscusComments — embeds Giscus (https://giscus.app) on blog posts.
+ *
+ * Prerequisites (one-time setup):
+ *  1. Enable GitHub Discussions on the target repository.
+ *  2. Install the Giscus GitHub App: https://github.com/apps/giscus
+ *  3. Visit https://giscus.app/, configure your repository, and note the
+ *     generated `data-repo-id` and `data-category-id` values.
+ *  4. Set the following repository variables in GitHub
+ *     (Settings → Secrets and variables → Actions → Variables):
+ *       GISCUS_REPO_ID       — the opaque ID from step 3
+ *       GISCUS_CATEGORY_ID   — the opaque category ID from step 3
+ *     These are passed to the Astro build as PUBLIC_GISCUS_REPO_ID and
+ *     PUBLIC_GISCUS_CATEGORY_ID by the deploy workflow, or can be set
+ *     directly in Cloudflare Pages → Settings → Environment Variables.
+ */
+
+const repo       = import.meta.env.PUBLIC_GISCUS_REPO         ?? 'edgeobs/euno-platform';
+const repoId     = import.meta.env.PUBLIC_GISCUS_REPO_ID      ?? '';
+const category   = import.meta.env.PUBLIC_GISCUS_CATEGORY     ?? 'Blog Comments';
+const categoryId = import.meta.env.PUBLIC_GISCUS_CATEGORY_ID  ?? '';
+const theme      = import.meta.env.PUBLIC_GISCUS_THEME        ?? 'preferred_color_scheme';
+
+// Only embed Giscus when both opaque IDs are configured; otherwise the widget
+// initialises with empty strings and silently breaks the comments section.
+const giscusEnabled = repoId.length > 0 && categoryId.length > 0;
+---
+
+{giscusEnabled && (
+<section class="giscus-section" aria-label="Comments">
+  <h3 class="giscus-heading">Discussion</h3>
+  <!-- is:inline prevents Vite/Astro from bundling this as an ES module,
+       which is required for Giscus: the library locates its config by reading
+       data-* attributes from the <script> tag itself at runtime.  Without
+       is:inline, Astro would strip the tag and emit a module import instead,
+       removing those attributes.  See https://giscus.app for details. -->
+  <script
+    is:inline
+    src="https://giscus.app/client.js"
+    data-repo={repo}
+    data-repo-id={repoId}
+    data-category={category}
+    data-category-id={categoryId}
+    data-mapping="pathname"
+    data-strict="0"
+    data-reactions-enabled="1"
+    data-emit-metadata="0"
+    data-input-position="top"
+    data-theme={theme}
+    data-lang="en"
+    crossorigin="anonymous"
+    async
+  ></script>
+</section>
+)}
+
+<style>
+  .giscus-section {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border, #e5e7eb);
+  }
+  .giscus-heading {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1.25rem;
+    color: var(--text, #111827);
+  }
+</style>
