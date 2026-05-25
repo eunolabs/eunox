@@ -245,6 +245,34 @@ func TestEngine_IPRange_MissingSourceIP(t *testing.T) {
 	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
 }
 
+func TestEngine_IPRange_InvalidCIDR(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Context: capability.EnforceRequestContext{
+			SourceIP: "10.0.0.1",
+		},
+	}
+
+	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.IPRangeCondition{CIDRs: []string{"not-a-valid-cidr"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	assert.Equal(t, capability.ErrCodeConditionFailed, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeIPRange, resp.Denial.ConditionType)
+}
+
 func TestEngine_MaxCalls_Allow(t *testing.T) {
 	counter := callcounter.NewInMemory()
 	engine := enforcement.New(enforcement.WithCallCounter(counter))
