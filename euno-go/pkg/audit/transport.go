@@ -477,8 +477,10 @@ func (t *AzureSentinelTransport) deliver(ctx context.Context, records []SignedAu
 	req.Header.Set("Log-Type", t.config.LogType)
 	req.Header.Set("x-ms-date", time.Now().UTC().Format(time.RFC1123))
 
-	// In production, this would compute the Azure Log Analytics HMAC-SHA256 signature.
-	// For now, use SharedKey header for the authorization.
+	// TODO(audit): Implement proper Azure Log Analytics HMAC-SHA256 signature computation.
+	// See: https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-collector-api
+	// Current implementation passes SharedKey directly; production deployments should use
+	// the full signing algorithm (base64(HMAC-SHA256(SharedKey, StringToSign))).
 	if t.config.SharedKey != "" {
 		req.Header.Set("Authorization", "SharedKey "+t.config.WorkspaceID+":"+t.config.SharedKey)
 	}

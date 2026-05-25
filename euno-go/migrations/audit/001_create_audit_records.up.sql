@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS audit_records (
     tenant_id     TEXT NOT NULL,
     event_type    TEXT NOT NULL,
     actor_user_id TEXT NOT NULL DEFAULT '',
-    actor_tenant  TEXT NOT NULL DEFAULT '',
+    actor_tenant_id TEXT NOT NULL DEFAULT '',
     action        TEXT NOT NULL,
     outcome       TEXT NOT NULL,
     signature     TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS audit_records (
     chain_hash    TEXT NOT NULL,
     previous_hash TEXT NOT NULL DEFAULT '',
     ocsf_event    JSONB,
-    metadata      JSONB NOT NULL DEFAULT '{}',
+    metadata      JSONB NOT NULL DEFAULT '{}', -- Reserved for operator-defined key-value metadata (e.g., correlation IDs, deployment labels).
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

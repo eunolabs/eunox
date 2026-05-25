@@ -192,7 +192,8 @@ func (b *S3AnchorBackend) Anchor(ctx context.Context, anchor *ChainAnchor) (stri
 		return "", fmt.Errorf("audit: create S3 request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// In production, this would use AWS SigV4 signing.
+	// TODO(audit): Implement AWS SigV4 signing for production S3 access.
+	// Current implementation assumes pre-signed URLs or test endpoints.
 
 	resp, err := b.client.Do(req)
 	if err != nil {
