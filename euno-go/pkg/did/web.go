@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -96,7 +97,10 @@ func webDIDToURL(did string) (string, error) {
 	parts := strings.Split(methodSpecific, ":")
 
 	// URL-decode the domain (percent-encoded colons become port separators).
-	domain := strings.ReplaceAll(parts[0], "%3A", ":")
+	domain, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid did:web domain encoding: %w", err)
+	}
 
 	if len(parts) == 1 {
 		// No path: /.well-known/did.json

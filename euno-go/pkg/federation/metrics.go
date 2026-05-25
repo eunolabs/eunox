@@ -21,7 +21,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			Namespace: "euno",
 			Subsystem: "partner_did",
 			Name:      "circuit_breaker_state",
-			Help:      "Current state of the circuit breaker per DID method (0=closed, 1=open, 2=half-open)",
+			Help:      "Current circuit breaker state per DID method as one-hot gauges by state label (1=current state, 0=other states)",
 		}, []string{"did_method", "state"}),
 		ResolutionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "euno",

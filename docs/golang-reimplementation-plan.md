@@ -510,7 +510,7 @@ euno-go/
 - `pkg/did/key.go` — `KeyResolver`: decodes `did:key` URIs (multibase + multicodec), supports Ed25519 (0xed prefix) and P-256 (0x1200 prefix); `ExtractPublicKey` supports both `publicKeyJwk` and `publicKeyMultibase` formats
 - `pkg/federation/federation.go` — `PartnerDIDRegistry` (CRUD with RWMutex), `PartnerIssuerResolver` (resolves partner DIDs to public keys with circuit breaker protection)
 - `pkg/federation/circuit_breaker.go` — Full state machine (closed/open/half-open), configurable failure threshold, cooldown duration, half-open max probes; open→half-open transition counts as first probe
-- `pkg/federation/metrics.go` — Prometheus gauge `euno_partner_did_circuit_breaker_state{did,state}` exposed via `FederationMetrics`
+- `pkg/federation/metrics.go` — Prometheus gauge `euno_partner_did_circuit_breaker_state{did_method,state}` exposed via `FederationMetrics` as one-hot state values (1 for current state, 0 otherwise)
 - `pkg/federation/attenuation.go` — `Attenuator`: cross-org token attenuation with subset invariant enforcement; validates child capabilities ⊆ parent capabilities across trust boundaries
 - `internal/gateway/partner_verifier.go` — `PartnerTokenVerifier` (resolve DID → extract key → verify JWT), `MultiIssuerVerifier` (local-first, partner fallback)
 - `internal/gateway/crossorg.go` — `EmitCrossOrgAuditEvent` (annotates audit with `crossOrg: true`, `partnerDID`), `IONHealthChecker` with `handleDIDIONHealth` HTTP handler

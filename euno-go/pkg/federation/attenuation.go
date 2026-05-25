@@ -12,10 +12,10 @@ import (
 
 // Errors for cross-org attenuation.
 var (
-	ErrSubsetViolation       = errors.New("child capabilities must be a subset of parent capabilities")
-	ErrEmptyParent           = errors.New("parent token has no capabilities")
-	ErrEmptyChild            = errors.New("child capabilities cannot be empty")
-	ErrCrossOrgNotPermitted  = errors.New("cross-org attenuation not permitted by parent token")
+	ErrSubsetViolation      = errors.New("child capabilities must be a subset of parent capabilities")
+	ErrEmptyParent          = errors.New("parent token has no capabilities")
+	ErrEmptyChild           = errors.New("child capabilities cannot be empty")
+	ErrCrossOrgNotPermitted = errors.New("cross-org attenuation not permitted by parent token")
 )
 
 // AttenuationRequest represents a request to attenuate a parent token across org boundaries.
@@ -113,6 +113,34 @@ func isSubsetOf(child, parent capability.Constraint) bool {
 	// If parent has conditions, child must include all of them.
 	if len(parent.Conditions) > 0 && len(child.Conditions) == 0 {
 		return false
+	}
+	if !containsAllConditionTypes(child.Conditions, parent.Conditions) {
+		return false
+	}
+
+	return true
+}
+
+func containsAllConditionTypes(child, parent []capability.Condition) bool {
+	if len(parent) == 0 {
+		return true
+	}
+
+	childTypes := make(map[string]struct{}, len(child))
+	for _, condition := range child {
+		if condition == nil {
+			continue
+		}
+		childTypes[condition.ConditionType()] = struct{}{}
+	}
+
+	for _, condition := range parent {
+		if condition == nil {
+			continue
+		}
+		if _, ok := childTypes[condition.ConditionType()]; !ok {
+			return false
+		}
 	}
 
 	return true

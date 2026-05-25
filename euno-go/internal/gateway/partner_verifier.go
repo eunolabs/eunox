@@ -103,8 +103,13 @@ func (v *PartnerTokenVerifier) VerifyPartnerToken(ctx context.Context, tokenStr 
 		if claims.IssuedAt > 0 && now.Unix() < claims.IssuedAt-300 {
 			return nil, errors.New("partner token issued in the future")
 		}
-		if v.audience != "" && claims.Audience != "" && claims.Audience != v.audience {
-			return nil, fmt.Errorf("partner token audience mismatch: got %q, want %q", claims.Audience, v.audience)
+		if v.audience != "" {
+			if claims.Audience == "" {
+				return nil, errors.New("partner token audience missing")
+			}
+			if claims.Audience != v.audience {
+				return nil, fmt.Errorf("partner token audience mismatch: got %q, want %q", claims.Audience, v.audience)
+			}
 		}
 
 		return &PartnerVerifyResult{
@@ -143,10 +148,16 @@ func NewMultiIssuerVerifier(cfg MultiIssuerVerifierConfig) *MultiIssuerVerifier 
 // VerifyToken attempts local verification first, then falls back to partner verification.
 // Returns the token payload and enriches it with cross-org metadata if from a partner.
 func (v *MultiIssuerVerifier) VerifyToken(ctx context.Context, tokenStr string) (*capability.TokenPayload, error) {
-	// Try local verification first.
-	claims, err := v.local.VerifyToken(ctx, tokenStr)
-	if err == nil {
-		return claims, nil
+	// Try local verification first when configured.
+	var err error
+	if v.local != nil {
+		claims, localErr := v.local.VerifyToken(ctx, tokenStr)
+		if localErr == nil {
+			return claims, nil
+		}
+		err = localErr
+	} else {
+		err = errors.New("local JWT verifier not configured")
 	}
 
 	// If partner verifier is not configured, return the local error.

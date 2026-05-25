@@ -74,13 +74,6 @@ func TestWebResolver_Resolve(t *testing.T) {
 	// Replace "example.com" with test server host in the DID.
 	resolver := NewWebResolver(WithHTTPClient(srv.Client()))
 
-	// Create a test server with known path that responds with the DID document.
-	pathSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/did+json")
-		_ = json.NewEncoder(w).Encode(doc)
-	}))
-	defer pathSrv.Close()
-
 	t.Run("resolves did:web with well-known path", func(t *testing.T) {
 		// We need a custom test because did:web requires HTTPS. Use a mock approach.
 		mockDoc := Document{
@@ -183,6 +176,11 @@ func TestWebDIDToURL(t *testing.T) {
 		{
 			name: "domain with port",
 			did:  "did:web:example.com%3A3000",
+			want: "https://example.com:3000/.well-known/did.json",
+		},
+		{
+			name: "domain with lowercase encoded port separator",
+			did:  "did:web:example.com%3a3000",
 			want: "https://example.com:3000/.well-known/did.json",
 		},
 		{

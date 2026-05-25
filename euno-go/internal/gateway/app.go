@@ -56,9 +56,9 @@ type Dependencies struct {
 	Audit       *AuditDependencies
 
 	// Partner federation (Stage 7).
-	PartnerResolver *federation.PartnerIssuerResolver
-	IONResolver     *did.IONResolver
-	FederationMets  *federation.Metrics
+	PartnerResolver   *federation.PartnerIssuerResolver
+	IONResolver       *did.IONResolver
+	FederationMetrics *federation.Metrics
 }
 
 // App is the gateway HTTP application.
@@ -75,7 +75,6 @@ type App struct {
 	usageTracker     *UsageTracker
 	adminDeps        AdminDependencies
 	ionHealthChecker *IONHealthChecker
-	partnerVerifier  *PartnerTokenVerifier
 }
 
 type gatewayMetrics struct {
@@ -121,9 +120,14 @@ func New(cfg Config, deps Dependencies) *App {
 
 	// Initialize partner token verifier if resolver is configured.
 	if deps.PartnerResolver != nil {
-		app.partnerVerifier = NewPartnerTokenVerifier(PartnerTokenVerifierConfig{
+		partnerVerifier := NewPartnerTokenVerifier(PartnerTokenVerifierConfig{
 			Resolver: deps.PartnerResolver,
 			Audience: cfg.GatewayAudience,
+		})
+
+		app.deps.JWTVerifier = NewMultiIssuerVerifier(MultiIssuerVerifierConfig{
+			LocalVerifier:   app.deps.JWTVerifier,
+			PartnerVerifier: partnerVerifier,
 		})
 	}
 

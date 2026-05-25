@@ -241,8 +241,10 @@ func (a *CombinedAdminAuth) Authenticate(ctx context.Context, r *http.Request) (
 	}
 
 	// Fallback to static key (deprecated).
+	headerName := "X-Admin-Api-Key"
 	apiKey := r.Header.Get("X-Admin-Api-Key")
 	if apiKey == "" {
+		headerName = "X-Admin-Key"
 		apiKey = r.Header.Get("X-Admin-Key")
 	}
 	if apiKey != "" {
@@ -253,7 +255,8 @@ func (a *CombinedAdminAuth) Authenticate(ctx context.Context, r *http.Request) (
 		if err != nil {
 			return nil, err
 		}
-		a.logger.WarnContext(ctx, "admin authenticated via deprecated X-Admin-Key header; migrate to JWT",
+		a.logger.WarnContext(ctx, "admin authenticated via deprecated static admin key; migrate to JWT",
+			"header", headerName,
 			"method", r.Method,
 			"path", r.URL.Path,
 		)

@@ -416,17 +416,41 @@ func TestAttenuate_CrossOrgNotPermitted(t *testing.T) {
 func TestAttenuate_ConditionEnforcement(t *testing.T) {
 	parentCondition := capability.Condition(&mockCondition{condType: "time-window"})
 
-	_, err := Attenuate(AttenuationRequest{
-		ParentCapabilities: []capability.Constraint{
-			{Resource: "tool:x", Actions: []string{"read"}, Conditions: []capability.Condition{parentCondition}},
-		},
-		RequestedCapabilities: []capability.Constraint{
-			{Resource: "tool:x", Actions: []string{"read"}}, // Missing parent conditions.
-		},
-		AllowCrossOrg: true,
-		ParentDID:     "did:web:p.com",
+	t.Run("missing all parent conditions", func(t *testing.T) {
+		_, err := Attenuate(AttenuationRequest{
+			ParentCapabilities: []capability.Constraint{
+				{Resource: "tool:x", Actions: []string{"read"}, Conditions: []capability.Condition{parentCondition}},
+			},
+			RequestedCapabilities: []capability.Constraint{
+				{Resource: "tool:x", Actions: []string{"read"}}, // Missing parent conditions.
+			},
+			AllowCrossOrg: true,
+			ParentDID:     "did:web:p.com",
+		})
+		assert.ErrorIs(t, err, ErrSubsetViolation)
 	})
-	assert.ErrorIs(t, err, ErrSubsetViolation)
+
+	t.Run("missing one parent condition type", func(t *testing.T) {
+		_, err := Attenuate(AttenuationRequest{
+			ParentCapabilities: []capability.Constraint{
+				{
+					Resource:   "tool:x",
+					Actions:    []string{"read"},
+					Conditions: []capability.Condition{parentCondition, &mockCondition{condType: "ip-range"}},
+				},
+			},
+			RequestedCapabilities: []capability.Constraint{
+				{
+					Resource:   "tool:x",
+					Actions:    []string{"read"},
+					Conditions: []capability.Condition{parentCondition},
+				},
+			},
+			AllowCrossOrg: true,
+			ParentDID:     "did:web:p.com",
+		})
+		assert.ErrorIs(t, err, ErrSubsetViolation)
+	})
 }
 
 // --- Metrics Tests ---

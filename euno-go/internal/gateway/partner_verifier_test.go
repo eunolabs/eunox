@@ -102,6 +102,14 @@ func TestPartnerTokenVerifier_VerifyPartnerToken(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "audience mismatch")
 	})
+
+	t.Run("audience missing", func(t *testing.T) {
+		token := signPartnerToken(t, priv, "did:web:partner.example.com", "user-1", "")
+
+		_, err := verifier.VerifyPartnerToken(context.Background(), token)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "audience missing")
+	})
 }
 
 func TestMultiIssuerVerifier_VerifyToken(t *testing.T) {
@@ -261,9 +269,9 @@ func (m *mockPartnerDIDResolver) Resolve(_ context.Context, didURI string) (*did
 	}
 	for i, k := range keys {
 		doc.VerificationMethod = append(doc.VerificationMethod, did.VerificationMethod{
-			ID:         didURI + "#key-" + string(rune('0'+i)),
-			Type:       "Ed25519VerificationKey2020",
-			Controller: didURI,
+			ID:                 didURI + "#key-" + string(rune('0'+i)),
+			Type:               "Ed25519VerificationKey2020",
+			Controller:         didURI,
 			PublicKeyMultibase: encodeEd25519Multibase(k),
 		})
 	}
