@@ -31,6 +31,9 @@ type Config struct {
 	RateLimitRequests int
 	RateLimitWindow   time.Duration
 	AdminAPIKey       string
+	TenantID          string
+	TelemetryEnabled  bool
+	TelemetryFlushMS  int
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -47,12 +50,17 @@ type Dependencies struct {
 
 // App is the gateway HTTP application.
 type App struct {
-	config    Config
-	deps      Dependencies
-	router    chi.Router
-	proxy     *httputil.ReverseProxy
-	metrics   *gatewayMetrics
-	dpopStore DPoPJTIStore
+	config       Config
+	deps         Dependencies
+	router       chi.Router
+	adminRouter  chi.Router
+	proxy        *httputil.ReverseProxy
+	metrics      *gatewayMetrics
+	dpopStore    DPoPJTIStore
+	adminAuth    AdminAuthenticator
+	idempotency  *IdempotencyStore
+	usageTracker *UsageTracker
+	adminDeps    AdminDependencies
 }
 
 type gatewayMetrics struct {
@@ -71,7 +79,27 @@ func New(cfg Config, deps Dependencies) *App {
 
 	app.metrics = app.initMetrics()
 	app.dpopStore = deps.DPoPStore
+	app.usageTracker = NewUsageTracker()
+	app.idempotency = NewIdempotencyStore()
+
+	// Set up admin authentication if key is configured.
+	if cfg.AdminAPIKey != "" {
+		if cfg.TenantID == "" {
+			if deps.Logger != nil {
+				deps.Logger.Error("admin authentication disabled: tenant ID is required when admin key is configured")
+			}
+		} else {
+			app.adminAuth = NewStaticKeyAdminAuth(cfg.AdminAPIKey, cfg.TenantID, deps.Logger)
+		}
+	}
+
+	// Initialize partner DID store.
+	app.adminDeps = AdminDependencies{
+		PartnerDIDs: NewInMemoryPartnerDIDStore(),
+	}
+
 	app.router = app.buildRouter()
+	app.adminRouter = app.buildAdminRouter()
 
 	if cfg.BackendURL != "" {
 		target, err := url.Parse(cfg.BackendURL)
@@ -83,9 +111,14 @@ func New(cfg Config, deps Dependencies) *App {
 	return app
 }
 
-// Handler returns the http.Handler for the gateway.
+// Handler returns the http.Handler for the gateway public API.
 func (app *App) Handler() http.Handler {
 	return app.router
+}
+
+// AdminHandler returns the http.Handler for the admin API (bind to localhost).
+func (app *App) AdminHandler() http.Handler {
+	return app.adminRouter
 }
 
 func (app *App) initMetrics() *gatewayMetrics {

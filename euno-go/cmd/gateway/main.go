@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -93,6 +94,30 @@ func run() error {
 		allowedOrigins = strings.Split(cfg.AllowedOrigins, ",")
 	}
 
+	tenantID := strings.TrimSpace(cfg.TenantID)
+	if tenantID == "" {
+		tenantID = strings.TrimSpace(os.Getenv("TENANT_ID"))
+	}
+	if cfg.AdminAPIKey != "" && tenantID == "" {
+		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin API is enabled")
+	}
+
+	telemetryEnabled := cfg.TelemetryEnabled
+	if raw, ok := os.LookupEnv("EUNO_TELEMETRY"); ok {
+		switch strings.TrimSpace(raw) {
+		case "0":
+			telemetryEnabled = false
+		case "1":
+			telemetryEnabled = true
+		default:
+			parsed, err := strconv.ParseBool(raw)
+			if err != nil {
+				return fmt.Errorf("invalid EUNO_TELEMETRY value: %w", err)
+			}
+			telemetryEnabled = parsed
+		}
+	}
+
 	appCfg := gateway.Config{
 		BackendURL:        cfg.BackendServiceURL,
 		GatewayAudience:   cfg.GatewayAudience,
@@ -102,6 +127,9 @@ func run() error {
 		RateLimitRequests: cfg.RateLimitMaxRequests,
 		RateLimitWindow:   time.Duration(cfg.RateLimitWindowMS) * time.Millisecond,
 		AdminAPIKey:       cfg.AdminAPIKey,
+		TenantID:          tenantID,
+		TelemetryEnabled:  telemetryEnabled,
+		TelemetryFlushMS:  cfg.TelemetryFlushMS,
 	}
 
 	app := gateway.New(appCfg, deps)
@@ -123,7 +151,7 @@ func run() error {
 
 	adminSrv := &http.Server{
 		Addr:         adminAddr,
-		Handler:      app.Handler(), // TODO: separate admin router in Stage 6
+		Handler:      app.AdminHandler(),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
