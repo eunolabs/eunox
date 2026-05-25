@@ -777,6 +777,9 @@ func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capa
 	if header.Algorithm == "" {
 		return nil, errors.New("token header missing alg")
 	}
+	if !isSupportedTokenAlgorithm(header.Algorithm) {
+		return nil, fmt.Errorf("unsupported token algorithm %q", header.Algorithm)
+	}
 	if header.KeyID == "" {
 		return nil, errors.New("token header missing kid")
 	}
@@ -863,6 +866,18 @@ func (app *App) requireAdminAuth(next http.Handler) http.Handler {
 
 func adminAPIKeyHeader() string {
 	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
+}
+
+func isSupportedTokenAlgorithm(alg string) bool {
+	switch crypto.Algorithm(alg) {
+	case crypto.RS256, crypto.RS384, crypto.RS512,
+		crypto.PS256, crypto.PS384, crypto.PS512,
+		crypto.ES256, crypto.ES384, crypto.ES512,
+		crypto.EdDSA:
+		return true
+	default:
+		return false
+	}
 }
 
 func (app *App) logError(msg string, err error) {

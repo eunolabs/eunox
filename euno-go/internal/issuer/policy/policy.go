@@ -109,6 +109,9 @@ func (e *Engine) StartHotReload() {
 
 // Stop stops the hot-reload polling loop.
 func (e *Engine) Stop() {
+	if e.stopCh == nil {
+		return
+	}
 	e.stopOnce.Do(func() {
 		close(e.stopCh)
 	})

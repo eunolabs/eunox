@@ -154,7 +154,7 @@ func NewOIDCProvider(cfg OIDCConfig, httpClient *http.Client) (*OIDCProvider, er
 // NewOIDCProviderWithJWKSClient creates a generic OIDC provider using the supplied JWKS client.
 func NewOIDCProviderWithJWKSClient(cfg OIDCConfig, httpClient *http.Client, jwksClient JWKSClient) (*OIDCProvider, error) {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	if err := validateOIDCConfig(cfg); err != nil {
 		return nil, err

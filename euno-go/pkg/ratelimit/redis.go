@@ -6,6 +6,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -135,7 +136,11 @@ func (l *RedisLimiter) Check(ctx context.Context, key string) (*Result, error) {
 
 	remaining := 0
 	if count < int64(limit) {
-		remaining = limit - int(count)
+		remainingCount, err := safeInt64ToInt(count)
+		if err != nil {
+			return nil, err
+		}
+		remaining = limit - remainingCount
 	}
 
 	result := &Result{
@@ -162,10 +167,22 @@ func parseRedisInt(value interface{}) (int64, error) {
 	case int:
 		return int64(v), nil
 	case float64:
+		if v > math.MaxInt64 || v < math.MinInt64 {
+			return 0, fmt.Errorf("ratelimit: redis float %v out of int64 range", v)
+		}
 		return int64(v), nil
 	case string:
 		return strconv.ParseInt(v, 10, 64)
 	default:
 		return 0, fmt.Errorf("ratelimit: unexpected redis numeric type %T", value)
 	}
+}
+
+func safeInt64ToInt(value int64) (int, error) {
+	maxInt := int64(int(^uint(0) >> 1))
+	minInt := -maxInt - 1
+	if value > maxInt || value < minInt {
+		return 0, fmt.Errorf("ratelimit: integer %d out of int range", value)
+	}
+	return int(value), nil
 }
