@@ -27,7 +27,7 @@ func (e *Engine) registerBuiltins() {
 	e.handlers[capability.ConditionTypeCustom] = e.handleCustom
 }
 
-func (e *Engine) handleTimeWindow(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+func (e *Engine) handleTimeWindow(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
 	tw, ok := asTimeWindow(cond)
 	if !ok {
 		return &ConditionError{
