@@ -42,6 +42,7 @@ type Dependencies struct {
 	DPoPStore   DPoPJTIStore
 	Logger      *slog.Logger
 	Metrics     *observability.MetricsRegistry
+	Audit       *AuditDependencies
 }
 
 // App is the gateway HTTP application.
@@ -141,6 +142,14 @@ func (app *App) buildRouter() chi.Router {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/enforce", app.handleEnforce)
 		r.Post("/validate", app.handleValidate)
+
+		// Audit routes (read-only)
+		r.Route("/audit", func(r chi.Router) {
+			r.Get("/records", app.handleAuditRecords)
+			r.Get("/export", app.handleAuditExport)
+			r.Get("/signing-keys", app.handleAuditSigningKeys)
+			r.Get("/chain-proof", app.handleAuditChainProof)
+		})
 	})
 
 	// Proxy route
