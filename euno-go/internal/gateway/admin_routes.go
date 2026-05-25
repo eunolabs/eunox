@@ -6,6 +6,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -96,7 +97,7 @@ func (s *InMemoryPartnerDIDStore) Get(did string) (*PartnerDID, bool) {
 func (s *InMemoryPartnerDIDStore) SetStatus(did, status string) error {
 	p, ok := s.partners[did]
 	if !ok {
-		return nil
+		return fmt.Errorf("partner DID not found: %s", did)
 	}
 	p.Status = status
 	p.UpdatedAt = s.now()

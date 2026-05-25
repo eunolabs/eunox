@@ -23,7 +23,7 @@ import (
 //
 // Run with a live database:
 //
-//	AUDIT_DB_URL=******localhost/audit_bench go test -bench=BenchmarkPostgresLedgerBackend_Append -benchtime=5s ./pkg/audit/
+//	AUDIT_DB_URL=******localhost:5432/audit_bench go test -bench=BenchmarkPostgresLedgerBackend_Append -benchtime=5s ./pkg/audit/
 //
 // Metrics reported:
 //   - ns/op: latency per append

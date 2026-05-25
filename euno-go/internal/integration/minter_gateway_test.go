@@ -26,10 +26,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test-only constants. These values are for integration testing only and must
+// never be used in production environments.
 const (
-	testPepperHex  = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	testAdminKey   = "integration-test-admin-key-32chr!"
-	testMinterKey  = "minter-admin-key-for-integration"
+	testPepperHex = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	testAdminKey  = "integration-test-admin-key-32chr!"
+	testMinterKey = "minter-admin-key-for-integration"
 )
 
 // keyBasedJWTVerifier simulates a JWT verifier that accepts API keys minted by the minter.
