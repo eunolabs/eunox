@@ -84,6 +84,10 @@ func (s *InMemoryPartnerDIDStore) Unregister(did string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if _, ok := s.partners[did]; !ok {
+		return fmt.Errorf("%w: %s", ErrPartnerDIDNotFound, did)
+	}
+
 	delete(s.partners, did)
 	return nil
 }
@@ -569,6 +573,10 @@ func (app *App) handlePartnerDIDUnregister(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := app.adminDeps.PartnerDIDs.Unregister(did); err != nil {
+		if errors.Is(err, ErrPartnerDIDNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse("partner DID not found"))
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errorResponse("failed to unregister partner DID"))
 		return
 	}

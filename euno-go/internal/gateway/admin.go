@@ -6,7 +6,6 @@ package gateway
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -77,9 +76,17 @@ func (a *StaticKeyAdminAuth) Authenticate(_ context.Context, r *http.Request) (*
 		return nil, fmt.Errorf("%w: admin key not configured", ErrAdminUnauthorized)
 	}
 
-	apiKeyDigest := sha256.Sum256([]byte(apiKey))
-	adminKeyDigest := sha256.Sum256([]byte(a.adminKey))
-	if subtle.ConstantTimeCompare(apiKeyDigest[:], adminKeyDigest[:]) != 1 {
+	expected := []byte(a.adminKey)
+	provided := []byte(apiKey)
+	maxLen := len(expected)
+	if len(provided) > maxLen {
+		maxLen = len(provided)
+	}
+	expectedPadded := make([]byte, maxLen)
+	providedPadded := make([]byte, maxLen)
+	copy(expectedPadded, expected)
+	copy(providedPadded, provided)
+	if subtle.ConstantTimeCompare(providedPadded, expectedPadded) != 1 {
 		return nil, fmt.Errorf("%w: invalid admin key", ErrAdminUnauthorized)
 	}
 

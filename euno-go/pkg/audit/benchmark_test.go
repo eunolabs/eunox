@@ -15,8 +15,8 @@ import (
 	"github.com/edgeobs/euno-platform/euno-go/pkg/ocsf"
 )
 
-// BenchmarkLedgerBackend_Append benchmarks the audit ledger append operation using
-// a lightweight in-memory backend implementation.
+// BenchmarkLedgerBackend_Append benchmarks benchmark-harness append overhead using
+// a lightweight in-memory backend implementation (not PostgreSQL ledger performance).
 //
 // Metrics reported:
 //   - ns/op: latency per append
