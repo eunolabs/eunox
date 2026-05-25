@@ -7,9 +7,30 @@
 
 This is the Go reimplementation of the Euno Platform enterprise services. It targets feature-parity with the TypeScript implementation while providing improved performance, lower memory usage, and simplified deployment.
 
-## Current Status: Stage 1 — Foundation & Shared Libraries
+## Current Status: Stage 4 — API-Key Minter & Credential Services
 
-### Completed Packages
+### Completed Stages
+
+| Stage | Description | Status |
+|-------|-------------|--------|
+| Stage 1 | Foundation & Shared Libraries | ✅ |
+| Stage 2 | Capability Issuer | ✅ |
+| Stage 3 | Enforcement Gateway | ✅ |
+| Stage 4 | API-Key Minter & Credential Services | ✅ |
+
+### Stage 4 Packages
+
+| Package | Description | Status |
+|---------|-------------|--------|
+| `internal/minter` | API-Key Minter: key lifecycle, admin auth, anomaly detection | ✅ |
+| `internal/dbtokensvc` | DB Token Service: short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL) | ✅ |
+| `internal/storagegrantsvc` | Storage Grant Service: presigned URLs (AWS S3, Azure Blob, GCP GCS) | ✅ |
+| `cmd/minter` | Minter binary entry point | ✅ |
+| `cmd/db-token-svc` | DB Token Service binary entry point | ✅ |
+| `cmd/storage-grant-svc` | Storage Grant Service binary entry point | ✅ |
+| `migrations/minter` | SQL migrations for API keys and policies tables | ✅ |
+
+### Foundation Packages (Stage 1)
 
 | Package | Description | Status |
 |---------|-------------|--------|
@@ -19,14 +40,12 @@ This is the Go reimplementation of the Euno Platform enterprise services. It tar
 | `pkg/observability` | Logging (slog), metrics (Prometheus), tracing (OTel), HTTP middleware | ✅ |
 | `pkg/testutil` | Test helpers: in-memory signers, fake clock, HTTP test server | ✅ |
 
-### Deferred to Stage 2+
+### Deferred Work
 
-- `pkg/testutil/containers.go` — Testcontainers helpers (PostgreSQL, Redis) are documented but gated behind `integration` build tag pending dependency resolution
-- `cmd/*` — Service binaries (Stage 2+)
-- `internal/*` — Service domain logic (Stage 2+)
-- `api/` — OpenAPI specs (Stage 2)
-- `migrations/` — SQL migrations (Stage 2+)
-- `deploy/` — Docker/Helm/K8s/Terraform (Stage 7)
+- `pkg/testutil/containers.go` — Testcontainers helpers (PostgreSQL, Redis) gated behind `integration` build tag
+- KMS stubs (AWS/GCP/Azure) — placeholder until cloud SDK integration (Stage 7)
+- Integration test: minter → gateway enforcement (key-based auth flow) — Stage 6
+- Cloud adapter real implementations (currently stub/mock; awaiting cloud SDK wiring in Stage 7)
 
 ## Development
 
@@ -61,17 +80,32 @@ make clean
 
 ```
 euno-go/
-├── cmd/                    # Service entry points (Stage 2+)
-├── internal/               # Private application code (Stage 2+)
+├── cmd/                    # Service entry points
+│   ├── gateway/            # Enforcement Gateway
+│   ├── issuer/             # Capability Issuer
+│   ├── minter/             # API-Key Minter
+│   ├── db-token-svc/       # DB Token Service
+│   └── storage-grant-svc/  # Storage Grant Service
+├── internal/               # Private application code
+│   ├── gateway/            # Gateway domain logic
+│   ├── issuer/             # Issuer domain logic
+│   ├── minter/             # Minter: key store, admin auth, anomaly detection
+│   ├── dbtokensvc/         # DB Token Service: cloud adapters, token verification
+│   └── storagegrantsvc/    # Storage Grant Service: cloud adapters, grant minting
 ├── pkg/                    # Public importable packages
 │   ├── capability/         # Token payload types, constraints, conditions
+│   ├── callcounter/        # Call counting (rate limit tracking)
 │   ├── config/             # Schema-validated config loading
 │   ├── crypto/             # Signing adapters (software, KMS stubs)
+│   ├── enforcement/        # PDP enforcement logic
+│   ├── identity/           # DID/identity resolution
+│   ├── killswitch/         # Kill switch (emergency disable)
 │   ├── observability/      # Logging, metrics, tracing, middleware
+│   ├── ratelimit/          # Rate limiting
+│   ├── revocation/         # Token revocation
 │   └── testutil/           # Shared test helpers
-├── api/                    # OpenAPI specs (Stage 2)
-├── migrations/             # SQL migrations (Stage 2+)
-├── deploy/                 # Deployment artifacts (Stage 7)
+├── migrations/             # SQL migrations
+│   └── minter/             # API keys and policies tables
 ├── .golangci.yml           # Linter configuration
 ├── Makefile                # Build targets
 ├── go.mod                  # Module definition
