@@ -133,9 +133,9 @@ func (l *RedisLimiter) Check(ctx context.Context, key string) (*Result, error) {
 		resetAfter = clampDuration(time.UnixMicro(earliest).Add(l.cfg.Window).Sub(now))
 	}
 
-	remaining := limit - int(count)
-	if remaining < 0 {
-		remaining = 0
+	remaining := 0
+	if count <= int64(limit) {
+		remaining = limit - int(count)
 	}
 
 	result := &Result{
