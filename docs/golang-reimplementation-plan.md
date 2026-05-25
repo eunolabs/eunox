@@ -455,7 +455,7 @@ euno-go/
 
 **Deferred work (tracked for future stages):**
 - Redis pub/sub for cross-replica kill-switch propagation (currently in-memory; Redis store in `pkg/killswitch` handles persistence but pub/sub notification is a Stage 7+ concern for multi-replica deployments)
-- JWT-based admin auth (gateway currently supports static key only; minter already has `CombinedAdminAuth` with JWT support that can be ported)
+- ~~JWT-based admin auth (gateway currently supports static key only; minter already has `CombinedAdminAuth` with JWT support that can be ported)~~ — **Completed in Stage 7** (`internal/gateway/admin_jwt.go`)
 - PostgreSQL benchmark requires live database for meaningful numbers (harness validates structure with mock backend)
 
 ---
@@ -491,16 +491,35 @@ euno-go/
 
 ### Exit Criteria
 
-- [ ] `did:web` resolution fetches and parses a DID document over HTTP
-- [ ] `did:ion` resolution queries ION network with circuit breaker
-- [ ] `did:key` decodes Ed25519/P-256 keys from DID URI
-- [ ] Circuit breaker opens after N consecutive failures, rejects during cooldown
-- [ ] Circuit breaker transitions to half-open and recovers on success
-- [ ] Partner JWT verified end-to-end (register DID → present token → enforcement passes)
-- [ ] Cross-org audit entries correctly annotated
-- [ ] Attenuation across orgs enforces subset invariant
-- [ ] Integration test: partner-issuer-sim → gateway acceptance/rejection cycle
-- [ ] Prometheus metrics expose circuit breaker state
+- [x] `did:web` resolution fetches and parses a DID document over HTTP
+- [x] `did:ion` resolution queries ION network with circuit breaker
+- [x] `did:key` decodes Ed25519/P-256 keys from DID URI
+- [x] Circuit breaker opens after N consecutive failures, rejects during cooldown
+- [x] Circuit breaker transitions to half-open and recovers on success
+- [x] Partner JWT verified end-to-end (register DID → present token → enforcement passes)
+- [x] Cross-org audit entries correctly annotated
+- [x] Attenuation across orgs enforces subset invariant
+- [x] Integration test: partner-issuer-sim → gateway acceptance/rejection cycle
+- [x] Prometheus metrics expose circuit breaker state
+
+### Implementation Notes (Stage 7)
+
+- `pkg/did/resolver.go` — Core types: `Resolver` interface, `Document`, `VerificationMethod`, `JWK`, `Service`; `CachingResolver` (TTL + max-items eviction); `MultiResolver` (composite, tries each method)
+- `pkg/did/web.go` — `WebResolver`: transforms `did:web:domain:path` → `https://domain/path/did.json`, parses response into `Document`
+- `pkg/did/ion.go` — `IONResolver`: queries Microsoft ION network (configurable endpoint, default `https://beta.discover.did.microsoft.com/1.0/identifiers/`), `Healthy()` method for health checks
+- `pkg/did/key.go` — `KeyResolver`: decodes `did:key` URIs (multibase + multicodec), supports Ed25519 (0xed prefix) and P-256 (0x1200 prefix); `ExtractPublicKey` supports both `publicKeyJwk` and `publicKeyMultibase` formats
+- `pkg/federation/federation.go` — `PartnerDIDRegistry` (CRUD with RWMutex), `PartnerIssuerResolver` (resolves partner DIDs to public keys with circuit breaker protection)
+- `pkg/federation/circuit_breaker.go` — Full state machine (closed/open/half-open), configurable failure threshold, cooldown duration, half-open max probes; open→half-open transition counts as first probe
+- `pkg/federation/metrics.go` — Prometheus gauge `euno_partner_did_circuit_breaker_state{did,state}` exposed via `FederationMetrics`
+- `pkg/federation/attenuation.go` — `Attenuator`: cross-org token attenuation with subset invariant enforcement; validates child capabilities ⊆ parent capabilities across trust boundaries
+- `internal/gateway/partner_verifier.go` — `PartnerTokenVerifier` (resolve DID → extract key → verify JWT), `MultiIssuerVerifier` (local-first, partner fallback)
+- `internal/gateway/crossorg.go` — `EmitCrossOrgAuditEvent` (annotates audit with `crossOrg: true`, `partnerDID`), `IONHealthChecker` with `handleDIDIONHealth` HTTP handler
+- `internal/gateway/admin_jwt.go` — `AdminJWTVerifier` (JWKS-based JWT verification), `CombinedAdminAuth` (JWT primary via Authorization: Bearer, static key deprecated fallback via X-Admin-Api-Key) — **completes deferred Stage 6 work**
+
+**Deferred Stage 6 work completed in Stage 7:**
+- JWT-based admin auth for gateway: `CombinedAdminAuth` in `internal/gateway/admin_jwt.go` (ported from minter pattern)
+- Redis pub/sub for kill-switch propagation: remains deferred (in-memory sufficient for single-replica; Redis persistence in `pkg/killswitch` handles durability)
+- PostgreSQL benchmark: harness in `pkg/audit/benchmark_test.go` validates structure; live DB numbers require deployment environment
 
 ---
 
