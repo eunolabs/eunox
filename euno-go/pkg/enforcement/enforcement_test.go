@@ -762,19 +762,23 @@ func TestEngine_AllowedExtensions_FromArguments(t *testing.T) {
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
-func TestEngine_TimeWindow_UsesRequestContextNow(t *testing.T) {
-	// Even with real clock, if request context provides "now", it's used
-	engine := enforcement.New()
+func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
+	// req.Context.Now must be ignored; the server clock is always authoritative
+	fixedTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	engine := enforcement.New(enforcement.WithClock(testutil.NewFakeClock(fixedTime)))
 	ctx := context.Background()
 
 	req := capability.EnforceRequest{
 		SessionID: "sess-1",
 		ToolName:  "tool",
 		Context: capability.EnforceRequestContext{
-			Now: "2025-06-15T12:00:00Z",
+			// Client supplies a different "now" that falls outside the window —
+			// the engine must not use it; it must use the server clock instead.
+			Now: "2020-01-01T00:00:00Z",
 		},
 	}
 
+	// Window is open at the fixed server time (12:00) — should allow
 	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
 		{
 			Resource: "tool",
@@ -790,4 +794,29 @@ func TestEngine_TimeWindow_UsesRequestContextNow(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+
+	// Window is closed at the fixed server time (12:00) — should deny regardless of req.Context.Now
+	req2 := capability.EnforceRequest{
+		SessionID: "sess-2",
+		ToolName:  "tool",
+		Context: capability.EnforceRequestContext{
+			// Client supplies a "now" inside the (future) window — must be ignored
+			Now: "2025-06-15T16:00:00Z",
+		},
+	}
+	resp2, err := engine.ValidateAction(ctx, req2, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.TimeWindowCondition{
+					NotBefore: "2025-06-15T15:00:00Z",
+					NotAfter:  "2025-06-15T17:00:00Z",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp2.Decision)
 }

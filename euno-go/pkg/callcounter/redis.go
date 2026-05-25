@@ -21,9 +21,9 @@ func NewRedis(client redis.Cmdable) *Redis {
 	return &Redis{client: client}
 }
 
-// IncrementAndGet atomically increments the counter for the given key and window,
-// then returns the new count. Uses a Redis sorted set with timestamps as scores
-// for accurate sliding window counting.
+// IncrementAndGet atomically increments the counter for the given key and window
+// using a Redis MULTI/EXEC transaction, then returns the new count. Uses a Redis
+// sorted set with timestamps as scores for accurate sliding window counting.
 func (r *Redis) IncrementAndGet(ctx context.Context, key string, windowSec int) (int64, error) {
 	now := time.Now()
 	windowKey := fmt.Sprintf("callcounter:%s:%d", key, windowSec)
@@ -31,8 +31,8 @@ func (r *Redis) IncrementAndGet(ctx context.Context, key string, windowSec int) 
 	cutoff := float64(now.Add(-time.Duration(windowSec) * time.Second).UnixMicro())
 	member := fmt.Sprintf("%d", now.UnixNano())
 
-	// Use a pipeline for atomicity
-	pipe := r.client.Pipeline()
+	// Use a transactional pipeline (MULTI/EXEC) for atomicity
+	pipe := r.client.TxPipeline()
 
 	// Remove expired entries
 	pipe.ZRemRangeByScore(ctx, windowKey, "-inf", fmt.Sprintf("%f", cutoff))

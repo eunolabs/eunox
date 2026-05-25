@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/edgeobs/euno-platform/euno-go/pkg/capability"
@@ -91,7 +93,12 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	// Check revocation
 	if app.deps.Revocation != nil && claims.JWTID != "" {
 		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr == nil && revoked {
+		if revErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+			app.recordMetric("deny", start)
+			return
+		}
+		if revoked {
 			resp := capability.EnforceResponse{
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
@@ -126,7 +133,12 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	// Check kill switch
 	if app.deps.KillSwitch != nil {
 		blocked, ksErr := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, payload.Request.SessionID)
-		if ksErr == nil && blocked {
+		if ksErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("kill switch check unavailable"))
+			app.recordMetric("deny", start)
+			return
+		}
+		if blocked {
 			resp := capability.EnforceResponse{
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
@@ -143,7 +155,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 
 	// Fill in source IP from request if not provided
 	if payload.Request.Context.SourceIP == "" {
-		payload.Request.Context.SourceIP = r.RemoteAddr
+		payload.Request.Context.SourceIP = extractClientIP(r)
 	}
 
 	// Run enforcement engine
@@ -240,11 +252,21 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check token expiry
+	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+		writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
+		return
+	}
+
 	// Check kill switch
 	if app.deps.KillSwitch != nil {
 		sessionID := r.Header.Get("X-Session-ID")
 		blocked, ksErr := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, sessionID)
-		if ksErr == nil && blocked {
+		if ksErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("kill switch check unavailable"))
+			return
+		}
+		if blocked {
 			writeJSON(w, http.StatusForbidden, errorResponse("kill switch active"))
 			return
 		}
@@ -253,7 +275,11 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Check revocation
 	if app.deps.Revocation != nil && claims.JWTID != "" {
 		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr == nil && revoked {
+		if revErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+			return
+		}
+		if revoked {
 			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
 			return
 		}
@@ -264,7 +290,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.Header.Get("X-Session-ID"),
 		ToolName:  r.Header.Get("X-Tool-Name"),
 		Context: capability.EnforceRequestContext{
-			SourceIP:  r.RemoteAddr,
+			SourceIP:  extractClientIP(r),
 			Operation: r.Method,
 		},
 	}
@@ -314,4 +340,22 @@ func extractBearerToken(r *http.Request) string {
 		return auth[7:]
 	}
 	return ""
+}
+
+// extractClientIP returns the client IP address from the request, stripping the port
+// from r.RemoteAddr. If X-Forwarded-For is present, the first (original client) IP is used.
+func extractClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			xff = xff[:idx]
+		}
+		if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
+			return ip.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

@@ -305,10 +305,10 @@ func TestEnforce_DenyCondition(t *testing.T) {
 
 func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 	claims := &capability.TokenPayload{
-		Subject:      "agent-1",
-		ExpiresAt:    time.Now().Add(time.Hour).Unix(),
-		JWTID:        "jti-1",
-		Confirmation: &capability.Confirmation{JKT: "thumbprint"},
+		Subject:   "agent-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JWTID:     "jti-1",
+		// No Confirmation/JKT — replay detection test does not require DPoP binding
 		Capabilities: []capability.Constraint{
 			{Resource: "*", Actions: []string{"*"}},
 		},
@@ -352,6 +352,45 @@ func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 	var resp2 capability.EnforceResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp2))
 	assert.Equal(t, capability.DecisionDeny, resp2.Decision)
+}
+
+func TestEnforce_DPoP_JKT_FailsClosed(t *testing.T) {
+	// When a token carries a DPoP confirmation JKT, verification must fail closed
+	// because full JWK thumbprint comparison is not yet implemented.
+	claims := &capability.TokenPayload{
+		Subject:      "agent-1",
+		ExpiresAt:    time.Now().Add(time.Hour).Unix(),
+		Confirmation: &capability.Confirmation{JKT: "some-thumbprint"},
+		Capabilities: []capability.Constraint{
+			{Resource: "*", Actions: []string{"*"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	app, _, _ := newTestApp(t, verifier)
+
+	payload := map[string]interface{}{
+		"token": "valid-token",
+		"request": map[string]interface{}{
+			"sessionId": "sess-1",
+			"toolName":  "tool",
+		},
+		"dpop": map[string]interface{}{
+			"proof":      "any-proof",
+			"httpMethod": "POST",
+			"httpUrl":    "https://gateway.example.com/api/v1/enforce",
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enforce", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp capability.EnforceResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 }
 
 func TestValidate_AllowMatchingCapability(t *testing.T) {

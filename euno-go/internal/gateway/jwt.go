@@ -35,15 +35,11 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 		return errors.New("DPoP proof must include httpMethod and httpUrl")
 	}
 
-	// If the token has a confirmation claim with JKT, verify binding
+	// If the token has a confirmation claim with JKT, verify binding.
+	// Full DPoP JWT parsing and JWK thumbprint comparison is required for
+	// proper binding verification; fail closed rather than silently skipping.
 	if claims.Confirmation != nil && claims.Confirmation.JKT != "" {
-		// Compute JKT from the DPoP proof header's JWK (simplified: hash the proof)
-		proofHash := sha256.Sum256([]byte(dpop.Proof))
-		computedJKT := base64.RawURLEncoding.EncodeToString(proofHash[:])
-		_ = computedJKT
-		// In production, this would parse the DPoP JWT, extract the public key,
-		// compute its JWK Thumbprint, and compare with claims.Confirmation.JKT.
-		// For now, we validate that the proof is non-empty and well-formed.
+		return errors.New("DPoP token binding (JKT) verification is not supported; request denied")
 	}
 
 	// Check replay using the DPoP proof as a unique identifier
@@ -62,7 +58,13 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 }
 
 // computeDPoPID generates a unique identifier from the DPoP proof for replay detection.
+// Each field is length-prefixed to avoid hash collisions from field concatenation.
 func computeDPoPID(dpop *capability.DPoPProof) string {
-	h := sha256.Sum256([]byte(dpop.Proof + dpop.HTTPMethod + dpop.HTTPURL))
+	input := fmt.Sprintf("%d:%s|%d:%s|%d:%s",
+		len(dpop.Proof), dpop.Proof,
+		len(dpop.HTTPMethod), dpop.HTTPMethod,
+		len(dpop.HTTPURL), dpop.HTTPURL,
+	)
+	h := sha256.Sum256([]byte(input))
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }

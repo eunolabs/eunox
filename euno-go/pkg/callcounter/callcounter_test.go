@@ -54,11 +54,10 @@ func TestInMemory_SlidingWindow(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Advance time past the window
+	// Advance time past the window using the same counter
 	now = now.Add(61 * time.Second)
-	counter2 := callcounter.NewInMemory(callcounter.WithTimeFunc(func() time.Time { return now }))
 
-	count, err := counter2.IncrementAndGet(ctx, "key1", 60)
+	count, err := counter.IncrementAndGet(ctx, "key1", 60)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count) // Old entries expired
 }

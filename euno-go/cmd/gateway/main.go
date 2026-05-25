@@ -197,5 +197,5 @@ func levelFromEnv(env config.Environment) string {
 type noopVerifier struct{}
 
 func (v *noopVerifier) VerifyToken(_ context.Context, _ string) (*capability.TokenPayload, error) {
-	return nil, fmt.Errorf("JWT verification not configured (set ISSUER_JWKS_URL)")
+	return nil, fmt.Errorf("JWT verification not configured (set GATEWAY_ISSUER_JWKS_URL)")
 }

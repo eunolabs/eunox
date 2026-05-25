@@ -39,14 +39,6 @@ func (e *Engine) handleTimeWindow(_ context.Context, cond capability.Condition, 
 
 	now := e.clock.Now().UTC()
 
-	// Use request context time if provided
-	if req.Context.Now != "" {
-		parsed, err := time.Parse(time.RFC3339, req.Context.Now)
-		if err == nil {
-			now = parsed.UTC()
-		}
-	}
-
 	if tw.NotBefore != "" {
 		notBefore, err := time.Parse(time.RFC3339, tw.NotBefore)
 		if err != nil {
@@ -124,7 +116,11 @@ func (e *Engine) handleIPRange(_ context.Context, cond capability.Condition, req
 	for _, cidr := range ipr.CIDRs {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
-			continue
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeIPRange,
+				Message:       fmt.Sprintf("invalid CIDR in condition: %s", cidr),
+			}
 		}
 		if network.Contains(ip) {
 			return nil
