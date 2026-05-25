@@ -21,6 +21,7 @@ import (
 const (
 	defaultJWKSCacheTTL   = 5 * time.Minute
 	defaultValidationSkew = time.Minute
+	defaultHTTPTimeout    = 10 * time.Second
 )
 
 var supportedSignatureAlgorithms = []jose.SignatureAlgorithm{
@@ -84,7 +85,7 @@ type OIDCProvider struct {
 // NewHTTPJWKSClient creates an HTTP-backed JWKS client with in-memory caching.
 func NewHTTPJWKSClient(httpClient *http.Client, ttl time.Duration) *HTTPJWKSClient {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	if ttl <= 0 {
 		ttl = defaultJWKSCacheTTL

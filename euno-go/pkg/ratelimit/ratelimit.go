@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	errInvalidRate   = errors.New("ratelimit: rate must be greater than zero")
+	errInvalidRate   = errors.New("ratelimit: rate or burst must be greater than zero")
 	errInvalidWindow = errors.New("ratelimit: window must be greater than zero")
 )
 

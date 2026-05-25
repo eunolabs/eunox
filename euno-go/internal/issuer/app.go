@@ -7,6 +7,8 @@ package issuer
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,10 +16,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/google/uuid"
 
 	"github.com/edgeobs/euno-platform/euno-go/internal/issuer/policy"
@@ -36,6 +41,7 @@ type Config struct {
 	DefaultTokenTTL int // seconds
 	MaxTokenTTL     int // seconds
 	Audience        string
+	AdminAPIKey     string
 }
 
 // RateLimiter provides rate-limiting for issuance requests.
@@ -61,12 +67,12 @@ type PublicKeyInfo struct {
 
 // Dependencies holds the injected backends for the issuer.
 type Dependencies struct {
-	PolicyEngine    *policy.Engine
-	Identity        identity.Provider
-	KeyStore        KeyStore
-	RateLimiter     RateLimiter
-	Logger          *slog.Logger
-	Metrics         *observability.MetricsRegistry
+	PolicyEngine *policy.Engine
+	Identity     identity.Provider
+	KeyStore     KeyStore
+	RateLimiter  RateLimiter
+	Logger       *slog.Logger
+	Metrics      *observability.MetricsRegistry
 }
 
 // App is the issuer HTTP application.
@@ -120,6 +126,7 @@ func (app *App) buildRouter() chi.Router {
 
 	// Admin routes
 	r.Route("/admin", func(r chi.Router) {
+		r.Use(app.requireAdminAuth)
 		r.Post("/role-policy/{role}", app.handleSetRolePolicy)
 		r.Get("/role-policy", app.handleListRolePolicies)
 		r.Delete("/role-policy/{role}", app.handleDeleteRolePolicy)
@@ -127,6 +134,7 @@ func (app *App) buildRouter() chi.Router {
 
 	// SCIM provisioning
 	r.Route("/scim/v2", func(r chi.Router) {
+		r.Use(app.requireAdminAuth)
 		r.Post("/Users", app.handleSCIMCreateUser)
 		r.Post("/Groups", app.handleSCIMCreateGroup)
 	})
@@ -499,7 +507,7 @@ func (app *App) handleDIDDocument(w http.ResponseWriter, _ *http.Request) {
 
 func (app *App) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 	discovery := map[string]interface{}{
-		"issuer":                app.config.IssuerDID,
+		"issuer":               app.config.IssuerDID,
 		"issuer_url":           app.config.IssuerURL,
 		"jwks_uri":             app.config.IssuerURL + "/.well-known/jwks.json",
 		"did_document_uri":     app.config.IssuerURL + "/.well-known/did.json",
@@ -697,6 +705,9 @@ func (app *App) effectiveTTL(requested int, role string) int {
 }
 
 func (app *App) effectiveAudience(requested string) string {
+	if app.config.Audience != "" {
+		return app.config.Audience
+	}
 	if requested != "" {
 		return requested
 	}
@@ -730,13 +741,9 @@ func (app *App) signToken(ctx context.Context, payload *capability.TokenPayload)
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadBytes)
 	signingInput := headerB64 + "." + payloadB64
 
-	// For RSA/ECDSA, sign the SHA-256 hash; for EdDSA, sign the raw message
-	var digest []byte
-	if signer.Algorithm() == crypto.EdDSA {
-		digest = []byte(signingInput)
-	} else {
-		h := sha256.Sum256([]byte(signingInput))
-		digest = h[:]
+	digest, err := signingDigest(signer.Algorithm(), signingInput)
+	if err != nil {
+		return "", err
 	}
 
 	sig, err := signer.Sign(ctx, digest)
@@ -755,14 +762,55 @@ func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capa
 		return nil, errors.New("malformed token")
 	}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("decode payload: %w", err)
+		return nil, fmt.Errorf("decode header: %w", err)
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+		KeyID     string `json:"kid"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, fmt.Errorf("parse header: %w", err)
+	}
+	if header.Algorithm == "" {
+		return nil, errors.New("token header missing alg")
+	}
+	if header.KeyID == "" {
+		return nil, errors.New("token header missing kid")
+	}
+
+	parsed, err := jwt.ParseSigned(tokenStr, []jose.SignatureAlgorithm{jose.SignatureAlgorithm(header.Algorithm)})
+	if err != nil {
+		return nil, fmt.Errorf("parse signed token: %w", err)
+	}
+
+	candidateKeys := make([]interface{}, 0, 1)
+	for _, key := range app.deps.KeyStore.PublicKeys() {
+		if key.KeyID != header.KeyID {
+			continue
+		}
+		if header.Algorithm != string(key.Algorithm) {
+			continue
+		}
+		candidateKeys = append(candidateKeys, key.PublicKey)
+	}
+	if len(candidateKeys) == 0 {
+		return nil, errors.New("no matching verification key found")
 	}
 
 	var claims capability.TokenPayload
-	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
-		return nil, fmt.Errorf("parse claims: %w", err)
+	var verifyErr error
+	for _, key := range candidateKeys {
+		if err := parsed.Claims(key, &claims); err == nil {
+			verifyErr = nil
+			break
+		}
+		verifyErr = err
+	}
+	if verifyErr != nil {
+		return nil, fmt.Errorf("verify token signature: %w", verifyErr)
 	}
 
 	// Verify issuer
@@ -776,6 +824,45 @@ func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capa
 	}
 
 	return &claims, nil
+}
+
+func signingDigest(alg crypto.Algorithm, signingInput string) ([]byte, error) {
+	switch alg {
+	case crypto.EdDSA:
+		return []byte(signingInput), nil
+	case crypto.RS256, crypto.PS256, crypto.ES256:
+		h := sha256.Sum256([]byte(signingInput))
+		return h[:], nil
+	case crypto.RS384, crypto.PS384, crypto.ES384:
+		h := sha512.Sum384([]byte(signingInput))
+		return h[:], nil
+	case crypto.RS512, crypto.PS512, crypto.ES512:
+		h := sha512.Sum512([]byte(signingInput))
+		return h[:], nil
+	default:
+		return nil, fmt.Errorf("unsupported signing algorithm: %s", alg)
+	}
+}
+
+func (app *App) requireAdminAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app.config.AdminAPIKey == "" {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("admin API is not configured"))
+			return
+		}
+
+		provided := r.Header.Get(adminAPIKeyHeader())
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(app.config.AdminAPIKey)) != 1 {
+			writeJSON(w, http.StatusUnauthorized, errorResponse("admin authentication failed"))
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func adminAPIKeyHeader() string {
+	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
 }
 
 func (app *App) logError(msg string, err error) {
@@ -841,4 +928,3 @@ type apiError struct {
 func errorResponse(msg string) apiError {
 	return apiError{Error: msg}
 }
-

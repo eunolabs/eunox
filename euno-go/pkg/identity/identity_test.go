@@ -275,6 +275,12 @@ func TestConstructorsValidateConfig(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNewHTTPJWKSClient_DefaultsHTTPTimeout(t *testing.T) {
+	client := NewHTTPJWKSClient(nil, 0)
+	require.NotNil(t, client.httpClient)
+	assert.Equal(t, defaultHTTPTimeout, client.httpClient.Timeout)
+}
+
 func mustRSAJWK(t *testing.T, keyID string) (*rsa.PrivateKey, jose.JSONWebKey) {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)

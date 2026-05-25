@@ -37,10 +37,10 @@ func buildDIDDocument(did string, keys []PublicKeyInfo) map[string]interface{} {
 		methodID := did + "#key-" + itoa(i)
 		verificationIDs = append(verificationIDs, methodID)
 		method := map[string]interface{}{
-			"id":                 methodID,
-			"type":              "JsonWebKey2020",
-			"controller":        did,
-			"publicKeyJwk":      publicKeyToJWK(k),
+			"id":           methodID,
+			"type":         "JsonWebKey2020",
+			"controller":   did,
+			"publicKeyJwk": publicKeyToJWK(k),
 		}
 		verificationMethods = append(verificationMethods, method)
 	}
@@ -70,12 +70,16 @@ func publicKeyToJWK(k PublicKeyInfo) map[string]interface{} {
 	}
 }
 
-func rsaToJWK(kid string, _ crypto.Algorithm, pub *rsa.PublicKey) map[string]interface{} {
+func rsaToJWK(kid string, alg crypto.Algorithm, pub *rsa.PublicKey) map[string]interface{} {
+	algStr := string(alg)
+	if algStr == "" {
+		algStr = "RS256"
+	}
 	return map[string]interface{}{
 		"kty": "RSA",
 		"kid": kid,
 		"use": "sig",
-		"alg": "RS256",
+		"alg": algStr,
 		"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
 		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -43,14 +44,15 @@ type File struct {
 
 // Engine manages role-to-capability policies with hot-reload support.
 type Engine struct {
-	mu             sync.RWMutex
-	policies       map[string]*RoleCapabilityPolicy
-	filePath       string
-	lastModified   time.Time
-	pollInterval   time.Duration
-	stopCh         chan struct{}
-	defaultMaxTTL  int
-	onReloadError  func(error)
+	mu            sync.RWMutex
+	policies      map[string]*RoleCapabilityPolicy
+	filePath      string
+	lastModified  time.Time
+	pollInterval  time.Duration
+	stopCh        chan struct{}
+	stopOnce      sync.Once
+	defaultMaxTTL int
+	onReloadError func(error)
 }
 
 // Option configures the policy Engine.
@@ -107,7 +109,9 @@ func (e *Engine) StartHotReload() {
 
 // Stop stops the hot-reload polling loop.
 func (e *Engine) Stop() {
-	close(e.stopCh)
+	e.stopOnce.Do(func() {
+		close(e.stopCh)
+	})
 }
 
 // GetPolicy returns the policy for the given role.
@@ -348,6 +352,14 @@ func isSubset(child, parent capability.Constraint) bool {
 		}
 	}
 
+	if !isConditionSubset(child.Conditions, parent.Conditions) {
+		return false
+	}
+
+	if parent.ArgumentSchema != nil && !isArgumentSchemaEqual(child.ArgumentSchema, parent.ArgumentSchema) {
+		return false
+	}
+
 	return true
 }
 
@@ -394,4 +406,64 @@ func mergeConditions(a, b []capability.Condition) []capability.Condition {
 	merged = append(merged, a...)
 	merged = append(merged, b...)
 	return merged
+}
+
+func isConditionSubset(child, parent []capability.Condition) bool {
+	if len(parent) == 0 {
+		return true
+	}
+	if len(child) == 0 {
+		return false
+	}
+
+	childDigests := make([]string, 0, len(child))
+	for _, condition := range child {
+		digest, ok := conditionDigest(condition)
+		if !ok {
+			return false
+		}
+		childDigests = append(childDigests, digest)
+	}
+
+	for _, condition := range parent {
+		digest, ok := conditionDigest(condition)
+		if !ok {
+			return false
+		}
+		if !slices.Contains(childDigests, digest) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func conditionDigest(condition capability.Condition) (string, bool) {
+	encoded, err := json.Marshal(condition)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+func isArgumentSchemaEqual(child, parent *capability.ArgumentSchema) bool {
+	if parent == nil {
+		return true
+	}
+	if child == nil {
+		return false
+	}
+	return jsonEqual(child, parent)
+}
+
+func jsonEqual(a, b interface{}) bool {
+	left, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(left) == string(right)
 }

@@ -223,6 +223,12 @@ func TestRedisLimiterPropagatesClientErrors(t *testing.T) {
 	assert.ErrorContains(t, err, "boom")
 }
 
+func TestConfigValidateErrorMessageForBurstOnly(t *testing.T) {
+	err := (Config{Rate: 0, Burst: 0, Window: time.Second}).validate()
+	require.Error(t, err)
+	assert.Equal(t, "ratelimit: rate or burst must be greater than zero", err.Error())
+}
+
 type fakeRedisEvaler struct {
 	mu      sync.Mutex
 	entries map[string][]int64

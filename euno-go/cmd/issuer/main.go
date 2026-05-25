@@ -22,6 +22,7 @@ import (
 	"github.com/edgeobs/euno-platform/euno-go/pkg/identity"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/observability"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/ratelimit"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -97,6 +98,7 @@ func main() {
 		DefaultTokenTTL: cfg.DefaultTokenTTL,
 		MaxTokenTTL:     cfg.MaxTokenTTL,
 		Audience:        cfg.Audience,
+		AdminAPIKey:     cfg.AdminAPIKey,
 	}
 
 	// Build issuer app
@@ -202,9 +204,24 @@ func buildIdentityVerifier(cfg config.IssuerConfig, logger *slog.Logger) (identi
 	}
 }
 
-func buildRateLimiter(cfg config.IssuerConfig, _ *slog.Logger) issuer.RateLimiter {
-	return ratelimit.NewInMemory(ratelimit.Config{
+func buildRateLimiter(cfg config.IssuerConfig, logger *slog.Logger) issuer.RateLimiter {
+	limiterCfg := ratelimit.Config{
 		Rate:   cfg.RateLimitPerMinute,
 		Window: time.Minute,
-	})
+	}
+
+	if cfg.RedisURL != "" {
+		opts, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("invalid redis URL, falling back to in-memory rate limiter",
+					slog.String("error", err.Error()),
+				)
+			}
+		} else {
+			return ratelimit.NewRedis(redis.NewClient(opts), limiterCfg)
+		}
+	}
+
+	return ratelimit.NewInMemory(limiterCfg)
 }

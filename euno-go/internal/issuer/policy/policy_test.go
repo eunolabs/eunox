@@ -256,6 +256,48 @@ func TestValidateSubset_ChildWildcardActions(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSubsetViolation)
 }
 
+func TestValidateSubset_Invalid_DropsParentConditions(t *testing.T) {
+	parent := []capability.Constraint{
+		{
+			Resource: "tool:*",
+			Actions:  []string{"read"},
+			Conditions: []capability.Condition{
+				capability.IPRangeCondition{CIDRs: []string{"10.0.0.0/8"}},
+			},
+		},
+	}
+	child := []capability.Constraint{
+		{
+			Resource: "tool:files",
+			Actions:  []string{"read"},
+		},
+	}
+
+	err := ValidateSubset(child, parent)
+	assert.ErrorIs(t, err, ErrSubsetViolation)
+}
+
+func TestValidateSubset_Invalid_DropsParentArgumentSchema(t *testing.T) {
+	parent := []capability.Constraint{
+		{
+			Resource: "tool:*",
+			Actions:  []string{"read"},
+			ArgumentSchema: &capability.ArgumentSchema{
+				Type: capability.SchemaType{Single: "object"},
+			},
+		},
+	}
+	child := []capability.Constraint{
+		{
+			Resource: "tool:files",
+			Actions:  []string{"read"},
+		},
+	}
+
+	err := ValidateSubset(child, parent)
+	assert.ErrorIs(t, err, ErrSubsetViolation)
+}
+
 func TestEngine_HotReload(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policies.json")
@@ -299,6 +341,12 @@ func TestEngine_HotReload(t *testing.T) {
 
 	_, err = engine.GetPolicy("ops")
 	assert.NoError(t, err)
+}
+
+func TestEngine_StopIsIdempotent(_ *testing.T) {
+	engine := New()
+	engine.Stop()
+	engine.Stop()
 }
 
 func TestResourceCovers(t *testing.T) {

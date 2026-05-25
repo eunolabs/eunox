@@ -6,6 +6,8 @@ package issuer
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -96,6 +98,7 @@ func testApp(t *testing.T, opts ...func(*testAppConfig)) *App {
 		DefaultTokenTTL: 900,
 		MaxTokenTTL:     3600,
 		Audience:        "https://gateway.example.com",
+		AdminAPIKey:     "test-admin-key",
 	}
 
 	deps := Dependencies{
@@ -129,6 +132,9 @@ func doPost(app *App, path string, body interface{}) *httptest.ResponseRecorder 
 	data, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
+	if app.config.AdminAPIKey != "" {
+		req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	}
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	return w
@@ -136,6 +142,9 @@ func doPost(app *App, path string, body interface{}) *httptest.ResponseRecorder 
 
 func doGet(app *App, path string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if app.config.AdminAPIKey != "" {
+		req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	}
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	return w
@@ -210,6 +219,23 @@ func TestIssue_WithRequestedCapabilities(t *testing.T) {
 	var resp IssueResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.Token)
+}
+
+func TestIssue_IgnoresRequestedAudienceOverride(t *testing.T) {
+	app := testApp(t)
+
+	w := doPost(app, "/api/v1/issue", IssueRequest{
+		Token:    "valid-id-token",
+		Audience: "https://attacker.example.com",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp IssueResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	claims, err := app.verifyCapabilityToken(context.Background(), resp.Token)
+	require.NoError(t, err)
+	assert.Equal(t, "https://gateway.example.com", claims.Audience)
 }
 
 func TestIssue_MissingToken(t *testing.T) {
@@ -363,6 +389,33 @@ func TestAttenuate_InvalidParentToken(t *testing.T) {
 	app := testApp(t)
 	w := doPost(app, "/api/v1/attenuate", AttenuateRequest{
 		ParentToken:  "invalid-jwt-token",
+		Capabilities: []capability.Constraint{{Resource: "tool:x", Actions: []string{"read"}}},
+	})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAttenuate_RejectsForgedParentToken(t *testing.T) {
+	app := testApp(t)
+
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 3600})
+	require.Equal(t, http.StatusOK, issueResp.Code)
+	var parentResp IssueResponse
+	require.NoError(t, json.Unmarshal(issueResp.Body.Bytes(), &parentResp))
+
+	parts := splitToken(parentResp.Token)
+	require.NotNil(t, parts)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var payload capability.TokenPayload
+	require.NoError(t, json.Unmarshal(payloadBytes, &payload))
+	payload.Subject = "forged-user"
+	forgedPayload, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	forgedToken := parts[0] + "." + base64.RawURLEncoding.EncodeToString(forgedPayload) + "." + parts[2]
+	w := doPost(app, "/api/v1/attenuate", AttenuateRequest{
+		ParentToken:  forgedToken,
 		Capabilities: []capability.Constraint{{Resource: "tool:x", Actions: []string{"read"}}},
 	})
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -567,12 +620,14 @@ func TestAdminRolePolicy_CRUD(t *testing.T) {
 
 	// Delete
 	req := httptest.NewRequest(http.MethodDelete, "/admin/role-policy/viewer", nil)
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Delete non-existent
 	req = httptest.NewRequest(http.MethodDelete, "/admin/role-policy/nonexistent", nil)
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -629,6 +684,25 @@ func TestSCIM_CreateGroup_MissingName(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAdminEndpoints_RequireAdminAPIKey(t *testing.T) {
+	app := testApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/admin/role-policy", nil)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestSCIMEndpoints_RequireAdminAPIKey(t *testing.T) {
+	app := testApp(t)
+	data, err := json.Marshal(SCIMUserRequest{UserName: "alice", Active: true})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
 // --- Token Signing Tests ---
 
 func TestSignToken_ValidJWT(t *testing.T) {
@@ -658,6 +732,72 @@ func TestSignToken_ValidJWT(t *testing.T) {
 	assert.Equal(t, "JWT", header["typ"])
 	assert.Equal(t, "ES256", header["alg"])
 	assert.Equal(t, "test-key-1", header["kid"])
+}
+
+func TestSignToken_ES384Digest(t *testing.T) {
+	signer, err := crypto.GenerateECDSASigner("test-key-384", crypto.ES384)
+	require.NoError(t, err)
+
+	pe := policy.New()
+	pe.SetPolicy(&policy.RoleCapabilityPolicy{
+		Role:          "admin",
+		MaxTTLSeconds: 3600,
+		Capabilities:  []capability.Constraint{{Resource: "tool:*", Actions: []string{"read"}}},
+	})
+
+	app := New(
+		Config{
+			IssuerDID:       "did:web:test.example.com",
+			IssuerURL:       "https://issuer.example.com",
+			DefaultTokenTTL: 900,
+			MaxTokenTTL:     3600,
+			Audience:        "https://gateway.example.com",
+			AdminAPIKey:     "test-admin-key",
+		},
+		Dependencies{
+			PolicyEngine: pe,
+			Identity: &mockIdentity{verifyFunc: func(_ context.Context, _ string) (*identity.UserContext, error) {
+				return &identity.UserContext{Subject: "user-123", Roles: []string{"admin"}}, nil
+			}},
+			KeyStore:    NewSingleKeyStore(signer),
+			RateLimiter: &mockRateLimiter{allowFunc: func(_ context.Context, _ string) (bool, error) { return true, nil }},
+		},
+	)
+
+	resp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token"})
+	require.Equal(t, http.StatusOK, resp.Code)
+	var issueResp IssueResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &issueResp))
+	_, err = app.verifyCapabilityToken(context.Background(), issueResp.Token)
+	require.NoError(t, err)
+}
+
+func TestJWKS_RSAUsesConfiguredAlgorithm(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	jwks := buildJWKS([]PublicKeyInfo{
+		{
+			KeyID:     "rsa-key",
+			Algorithm: crypto.PS256,
+			PublicKey: &privateKey.PublicKey,
+			Use:       "sig",
+		},
+	})
+
+	keys, ok := jwks["keys"].([]map[string]interface{})
+	if !ok {
+		rawKeys, rawOK := jwks["keys"].([]interface{})
+		require.True(t, rawOK)
+		require.Len(t, rawKeys, 1)
+		key, keyOK := rawKeys[0].(map[string]interface{})
+		require.True(t, keyOK)
+		assert.Equal(t, "PS256", key["alg"])
+		return
+	}
+
+	require.Len(t, keys, 1)
+	assert.Equal(t, "PS256", keys[0]["alg"])
 }
 
 // --- Edge Cases ---

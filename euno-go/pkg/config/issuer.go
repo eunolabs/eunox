@@ -14,6 +14,7 @@ type IssuerConfig struct {
 	IssuerDID        string           `env:"ISSUER_DID"`
 	IssuerURL        string           `env:"ISSUER_URL"`
 	Audience         string           `env:"AUDIENCE"`
+	AdminAPIKey      string           `env:"ADMIN_API_KEY" production:"required"`
 	DefaultTokenTTL  int              `env:"DEFAULT_TOKEN_TTL" default:"900" min:"1"`
 	MaxTokenTTL      int              `env:"MAX_TOKEN_TTL" default:"86400" min:"1"`
 	RolePolicyFile   string           `env:"ROLE_POLICY_FILE"`
