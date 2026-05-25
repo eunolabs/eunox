@@ -153,8 +153,16 @@ func buildVerificationMethod(did, keyType string, keyBytes []byte) (Verification
 		if xCoord == nil {
 			return VerificationMethod{}, errors.New("invalid P-256 compressed point")
 		}
-		xEnc := base64.RawURLEncoding.EncodeToString(xCoord.Bytes())
-		yEnc := base64.RawURLEncoding.EncodeToString(yCoord.Bytes())
+		// Zero-pad coordinates to 32 bytes (P-256 field size) for consistent JWK encoding.
+		byteLen := (curve.Params().BitSize + 7) / 8
+		xBytes := make([]byte, byteLen)
+		yBytes := make([]byte, byteLen)
+		xRaw := xCoord.Bytes()
+		yRaw := yCoord.Bytes()
+		copy(xBytes[byteLen-len(xRaw):], xRaw)
+		copy(yBytes[byteLen-len(yRaw):], yRaw)
+		xEnc := base64.RawURLEncoding.EncodeToString(xBytes)
+		yEnc := base64.RawURLEncoding.EncodeToString(yBytes)
 		return VerificationMethod{
 			ID:         vmID,
 			Type:       "JsonWebKey2020",

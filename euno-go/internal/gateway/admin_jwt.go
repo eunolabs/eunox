@@ -220,7 +220,8 @@ func NewCombinedAdminAuth(cfg CombinedAdminAuthConfig) *CombinedAdminAuth {
 	return auth
 }
 
-// Authenticate checks Authorization: ****** (JWT), then X-Admin-Api-Key fallback.
+// Authenticate checks the Authorization header for a Bearer <token> (JWT) first,
+// then falls back to X-Admin-Api-Key (deprecated static key).
 func (a *CombinedAdminAuth) Authenticate(ctx context.Context, r *http.Request) (*AdminIdentity, error) {
 	// Try JWT first (primary path).
 	authHeader := r.Header.Get("Authorization")
