@@ -123,7 +123,7 @@ func run() error {
 
 	adminSrv := &http.Server{
 		Addr:         adminAddr,
-		Handler:      app.Handler(), // TODO: separate admin router in Stage 6
+		Handler:      app.AdminHandler(),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,

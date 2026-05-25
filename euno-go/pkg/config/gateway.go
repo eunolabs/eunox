@@ -18,6 +18,7 @@ type GatewayConfig struct {
 	JWKSCacheTTL      int            `env:"EUNO_JWKS_CACHE_TTL_SECONDS" default:"300" min:"0"`
 	GatewayAudience   string         `env:"GATEWAY_AUDIENCE" default:"tool-gateway"`
 	HostedMode        bool           `env:"HOSTED_MODE" default:"false"`
+	TenantID          string         `env:"TENANT_ID"`
 
 	// Redis
 	RedisURL            string `env:"REDIS_URL"`
@@ -31,4 +32,8 @@ type GatewayConfig struct {
 
 	// CORS
 	AllowedOrigins string `env:"ALLOWED_ORIGINS"`
+
+	// Telemetry
+	TelemetryEnabled bool `env:"EUNO_TELEMETRY" default:"true"`
+	TelemetryFlushMS int  `env:"GATEWAY_TELEMETRY_FLUSH_MS" default:"300000" min:"1000"`
 }
