@@ -27,15 +27,17 @@ func (m *mockVerifier) VerifyAndExtractCaps(_ context.Context, _ string) (*Token
 
 // mockDBAdapter implements CloudDBAdapter for tests.
 type mockDBAdapter struct {
-	cred *DBCredential
-	err  error
+	cred    *DBCredential
+	err     error
+	lastReq MintDBCredentialRequest
 }
 
 // Name implements CloudDBAdapter.
 func (m *mockDBAdapter) Name() string { return "mock-db" }
 
 // MintCredential implements CloudDBAdapter.
-func (m *mockDBAdapter) MintCredential(_ context.Context, _ MintDBCredentialRequest) (*DBCredential, error) {
+func (m *mockDBAdapter) MintCredential(_ context.Context, req MintDBCredentialRequest) (*DBCredential, error) {
+	m.lastReq = req
 	return m.cred, m.err
 }
 
@@ -151,6 +153,47 @@ func TestDBTokenSvc_MintToken_WithTTL(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if adapter.lastReq.TTL != 5*time.Minute {
+		t.Fatalf("expected TTL=5m, got %s", adapter.lastReq.TTL)
+	}
+}
+
+func TestDBTokenSvc_MintToken_ParsesChunkedBody(t *testing.T) {
+	t.Parallel()
+	verifier := &mockVerifier{
+		claims: &TokenClaims{
+			Subject:      "user-1",
+			TenantID:     "tenant-1",
+			DBResources:  []string{"db://host/mydb"},
+			PolicyUserID: "app_user",
+		},
+	}
+	adapter := &mockDBAdapter{
+		cred: &DBCredential{
+			Username: "app_user",
+			Host:     "mydb.rds.amazonaws.com",
+			Port:     5432,
+			Database: "override",
+		},
+	}
+	app := newTestDBTokenApp(t, verifier, adapter)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", bytes.NewBufferString(`{"database":"override","ttlSeconds":120}`))
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+"test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if adapter.lastReq.Database != "override" {
+		t.Fatalf("expected database override from chunked body, got %q", adapter.lastReq.Database)
+	}
+	if adapter.lastReq.TTL != 2*time.Minute {
+		t.Fatalf("expected TTL=2m, got %s", adapter.lastReq.TTL)
+	}
 }
 
 func TestDBTokenSvc_MintToken_MissingAuth(t *testing.T) {
@@ -255,6 +298,28 @@ func TestDBTokenSvc_MintToken_AdapterError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDBTokenSvc_MintToken_RequiresDatabase(t *testing.T) {
+	t.Parallel()
+	verifier := &mockVerifier{
+		claims: &TokenClaims{
+			Subject:      "user-1",
+			TenantID:     "tenant-1",
+			DBResources:  []string{"db://host"},
+			PolicyUserID: "app_user",
+		},
+	}
+	app := newTestDBTokenApp(t, verifier, &mockDBAdapter{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req.Header.Set("Authorization", "Bearer "+"test-token")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

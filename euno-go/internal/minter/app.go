@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,17 +27,16 @@ const maxBodySize = 1 << 20 // 1 MB
 type Config struct {
 	Pepper          *Pepper
 	DefaultTenantID string
-	AdminAPIKey     string
 }
 
 // Dependencies holds the injected backends for the minter.
 type Dependencies struct {
-	Store         KeyStore
-	Auth          AdminAuthenticator
-	Anomaly       AnomalyDetector
-	PingLimiter   ratelimit.Limiter
-	Logger        *slog.Logger
-	Metrics       *observability.MetricsRegistry
+	Store       KeyStore
+	Auth        AdminAuthenticator
+	Anomaly     AnomalyDetector
+	PingLimiter ratelimit.Limiter
+	Logger      *slog.Logger
+	Metrics     *observability.MetricsRegistry
 }
 
 // App is the API-Key Minter HTTP application.
@@ -180,9 +178,9 @@ func (app *App) handlePing(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Key string `json:"key"`
 	}
-	if err := app.readJSON(r, &req); err != nil {
+	if err := app.readJSON(w, r, &req); err != nil {
 		app.recordPingMetric("invalid_request", start)
-		app.writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		app.writeReadJSONError(w, err)
 		return
 	}
 
@@ -242,8 +240,8 @@ func (app *App) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn   int               `json:"expiresInSeconds"`
 		Metadata    map[string]string `json:"metadata"`
 	}
-	if err := app.readJSON(r, &req); err != nil {
-		app.writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+	if err := app.readJSON(w, r, &req); err != nil {
+		app.writeReadJSONError(w, err)
 		return
 	}
 	if req.TenantID != "" {
@@ -288,7 +286,12 @@ func (app *App) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record for anomaly detection.
-	_ = app.deps.Anomaly.RecordMint(r.Context(), tenantID)
+	if err := app.deps.Anomaly.RecordMint(r.Context(), tenantID); err != nil && app.deps.Logger != nil {
+		app.deps.Logger.WarnContext(r.Context(), "failed to record mint anomaly event",
+			"tenantId", tenantID,
+			"error", err.Error(),
+		)
+	}
 
 	if app.metrics != nil {
 		app.metrics.keysCreated.WithLabelValues(tenantID).Inc()
@@ -386,8 +389,8 @@ func (app *App) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		Description string     `json:"description"`
 		Rules       PolicyRule `json:"rules"`
 	}
-	if err := app.readJSON(r, &req); err != nil {
-		app.writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+	if err := app.readJSON(w, r, &req); err != nil {
+		app.writeReadJSONError(w, err)
 		return
 	}
 	if req.Name == "" {
@@ -400,9 +403,15 @@ func (app *App) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		tenantID = app.config.DefaultTenantID
 	}
 
+	shortID, err := generateShortID()
+	if err != nil {
+		app.writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate policy ID")
+		return
+	}
+
 	now := time.Now()
 	p := &Policy{
-		PolicyID:    fmt.Sprintf("pol_%s", generateShortID()),
+		PolicyID:    fmt.Sprintf("pol_%s", shortID),
 		TenantID:    tenantID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -470,11 +479,20 @@ func (app *App) writeError(w http.ResponseWriter, status int, code, message stri
 	})
 }
 
-func (app *App) readJSON(r *http.Request, v interface{}) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
+func (app *App) readJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+func (app *App) writeReadJSONError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		app.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body too large")
+		return
+	}
+	app.writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 }
 
 func (app *App) recordPingMetric(status string, start time.Time) {
@@ -486,12 +504,6 @@ func (app *App) recordPingMetric(status string, start time.Time) {
 }
 
 func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For first.
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
-	}
-	// Fall back to RemoteAddr.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -499,8 +511,10 @@ func extractClientIP(r *http.Request) string {
 	return host
 }
 
-func generateShortID() string {
+func generateShortID() (string, error) {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate short id: %w", err)
+	}
+	return fmt.Sprintf("%x", b), nil
 }

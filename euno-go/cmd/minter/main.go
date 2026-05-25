@@ -67,7 +67,6 @@ func main() {
 	appCfg := minter.Config{
 		Pepper:          pepper,
 		DefaultTenantID: "default",
-		AdminAPIKey:     cfg.AdminAPIKey,
 	}
 
 	deps := minter.Dependencies{

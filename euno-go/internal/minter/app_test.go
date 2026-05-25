@@ -479,3 +479,15 @@ func TestApp_ListPolicies_Empty(t *testing.T) {
 		t.Fatalf("expected 0 policies, got %d", len(policies))
 	}
 }
+
+func TestExtractClientIP_IgnoresForwardedHeaders(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "198.51.100.25:443"
+	req.Header.Set("X-Forwarded-For", "203.0.113.77")
+
+	if got := extractClientIP(req); got != "198.51.100.25" {
+		t.Fatalf("expected remote addr IP, got %q", got)
+	}
+}

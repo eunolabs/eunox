@@ -36,10 +36,18 @@ func main() {
 	)
 
 	// Build cloud adapter.
-	cloudAdapter := buildAdapter(adapter)
+	cloudAdapter, err := buildAdapter(adapter)
+	if err != nil {
+		logger.Error("failed to build cloud adapter", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
-	// Build token verifier (stub for now; production would use JWKS-based verifier).
-	verifier := &stubTokenVerifier{}
+	// Require a concrete JWT verifier before starting the service.
+	verifier, err := buildVerifier()
+	if err != nil {
+		logger.Error("failed to configure JWT verification", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	// Build capability mapping.
 	mapping := &dbtokensvc.CapabilityMapping{
@@ -99,27 +107,34 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func buildAdapter(name string) dbtokensvc.CloudDBAdapter {
+func buildAdapter(name string) (dbtokensvc.CloudDBAdapter, error) {
 	switch name {
 	case "aws-rds":
 		return dbtokensvc.NewAWSRDSAdapter(
 			envOrDefault("AWS_REGION", "us-east-1"),
 			envOrDefault("DB_TOKEN_SVC_RDS_ENDPOINT", "localhost"),
 			5432,
-		)
+		), nil
 	case "azure-sql":
 		return dbtokensvc.NewAzureSQLAdapter(
 			envOrDefault("DB_TOKEN_SVC_AZURE_SERVER", "localhost.database.windows.net"),
 			1433,
-		)
+		), nil
 	case "gcp-cloudsql":
 		return dbtokensvc.NewGCPCloudSQLAdapter(
 			envOrDefault("DB_TOKEN_SVC_GCP_INSTANCE", "project:region:instance"),
 			5432,
-		)
+		), nil
 	default:
-		return dbtokensvc.NewAWSRDSAdapter("us-east-1", "localhost", 5432)
+		return nil, fmt.Errorf("unsupported DB_TOKEN_SVC_ADAPTER %q", name)
 	}
+}
+
+func buildVerifier() (dbtokensvc.TokenVerifier, error) {
+	if os.Getenv("ISSUER_JWKS_URL") == "" {
+		return nil, errors.New("ISSUER_JWKS_URL must be set")
+	}
+	return nil, errors.New("JWT verification via ISSUER_JWKS_URL is not implemented yet")
 }
 
 func envOrDefault(key, fallback string) string {
@@ -127,12 +142,4 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// stubTokenVerifier is a development-mode verifier that extracts claims without cryptographic verification.
-type stubTokenVerifier struct{}
-
-func (s *stubTokenVerifier) VerifyAndExtractCaps(_ context.Context, _ string) (*dbtokensvc.TokenClaims, error) {
-	// In production, this would verify the JWT against the issuer's JWKS.
-	return nil, fmt.Errorf("JWT verification not configured: use ISSUER_JWKS_URL env var")
 }

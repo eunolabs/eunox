@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -25,10 +26,10 @@ const maxBodySize = 1 << 20 // 1 MB
 
 // Errors returned by the storage grant service.
 var (
-	ErrInvalidToken         = errors.New("storagegrantsvc: invalid token")
-	ErrNoStorageCapability  = errors.New("storagegrantsvc: no storage:// capability in token")
-	ErrUnsupportedAdapter   = errors.New("storagegrantsvc: unsupported cloud adapter")
-	ErrMintFailed           = errors.New("storagegrantsvc: credential mint failed")
+	ErrInvalidToken        = errors.New("storagegrantsvc: invalid token")
+	ErrNoStorageCapability = errors.New("storagegrantsvc: no storage:// capability in token")
+	ErrUnsupportedAdapter  = errors.New("storagegrantsvc: unsupported cloud adapter")
+	ErrMintFailed          = errors.New("storagegrantsvc: credential mint failed")
 )
 
 // StorageGrant represents a minted short-lived storage credential.
@@ -202,10 +203,19 @@ func (app *App) handleMintStorageGrant(w http.ResponseWriter, r *http.Request) {
 		Permission string `json:"permission"`
 		TTL        int    `json:"ttlSeconds"`
 	}
-	if r.ContentLength > 0 {
-		if err := readJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
-			return
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := readJSON(w, r, &req); err != nil {
+			if errors.Is(err, io.EOF) {
+				// Treat an empty body as "no body".
+			} else {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
+					writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body too large")
+					return
+				}
+				writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+				return
+			}
 		}
 	}
 
@@ -227,6 +237,14 @@ func (app *App) handleMintStorageGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	if permission == "" {
 		permission = "read"
+	}
+	if bucket == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "bucket is required")
+		return
+	}
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		return
 	}
 
 	// Validate permission matches capability.
@@ -277,15 +295,7 @@ func extractStorageFromURI(uri string) (bucket, path string) {
 }
 
 func isPermissionAllowed(requested string, resources []string) bool {
-	// Simple check: any storage:// capability implicitly allows the requested permission.
-	// In production, capabilities would encode specific permissions.
-	_ = resources
-	switch requested {
-	case "read", "write", "readwrite":
-		return true
-	default:
-		return false
-	}
+	return requested == "read" && len(resources) > 0
 }
 
 func extractBearerToken(r *http.Request) string {
@@ -309,8 +319,8 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func readJSON(r *http.Request, v interface{}) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
+func readJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 

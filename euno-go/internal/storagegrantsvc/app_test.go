@@ -27,15 +27,17 @@ func (m *mockVerifier) VerifyAndExtractCaps(_ context.Context, _ string) (*Token
 
 // mockStorageAdapter implements CloudStorageAdapter for tests.
 type mockStorageAdapter struct {
-	grant *StorageGrant
-	err   error
+	grant   *StorageGrant
+	err     error
+	lastReq MintStorageGrantRequest
 }
 
 // Name implements CloudStorageAdapter.
 func (m *mockStorageAdapter) Name() string { return "mock-storage" }
 
 // MintGrant implements CloudStorageAdapter.
-func (m *mockStorageAdapter) MintGrant(_ context.Context, _ MintStorageGrantRequest) (*StorageGrant, error) {
+func (m *mockStorageAdapter) MintGrant(_ context.Context, req MintStorageGrantRequest) (*StorageGrant, error) {
+	m.lastReq = req
 	return m.grant, m.err
 }
 
@@ -133,7 +135,7 @@ func TestStorageGrantSvc_MintGrant_WithBody(t *testing.T) {
 	}
 	app := newTestStorageApp(t, verifier, adapter)
 
-	body := `{"bucket":"custom-bucket","path":"custom/path","permission":"write","ttlSeconds":600}`
+	body := `{"bucket":"custom-bucket","path":"custom/path","permission":"read","ttlSeconds":600}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", bytes.NewBufferString(body))
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -142,6 +144,47 @@ func TestStorageGrantSvc_MintGrant_WithBody(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if adapter.lastReq.Permission != "read" {
+		t.Fatalf("expected read permission, got %q", adapter.lastReq.Permission)
+	}
+}
+
+func TestStorageGrantSvc_MintGrant_ParsesChunkedBody(t *testing.T) {
+	t.Parallel()
+	verifier := &mockVerifier{
+		claims: &TokenClaims{
+			Subject:          "user-1",
+			TenantID:         "tenant-1",
+			StorageResources: []string{"storage://bucket/path"},
+		},
+	}
+	adapter := &mockStorageAdapter{
+		grant: &StorageGrant{
+			URL:        "https://presigned",
+			Bucket:     "custom-bucket",
+			Path:       "custom/path",
+			Permission: "read",
+			Adapter:    "mock",
+		},
+	}
+	app := newTestStorageApp(t, verifier, adapter)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", bytes.NewBufferString(`{"bucket":"custom-bucket","path":"custom/path","permission":"read","ttlSeconds":120}`))
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+"test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if adapter.lastReq.Bucket != "custom-bucket" || adapter.lastReq.Path != "custom/path" {
+		t.Fatalf("expected chunked body overrides to be parsed, got bucket=%q path=%q", adapter.lastReq.Bucket, adapter.lastReq.Path)
+	}
+	if adapter.lastReq.TTL != 2*time.Minute {
+		t.Fatalf("expected TTL=2m, got %s", adapter.lastReq.TTL)
 	}
 }
 
@@ -217,6 +260,28 @@ func TestStorageGrantSvc_MintGrant_InvalidPermission(t *testing.T) {
 	}
 }
 
+func TestStorageGrantSvc_MintGrant_DeniesWritePermission(t *testing.T) {
+	t.Parallel()
+	verifier := &mockVerifier{
+		claims: &TokenClaims{
+			Subject:          "user-1",
+			TenantID:         "tenant-1",
+			StorageResources: []string{"storage://bucket/path"},
+		},
+	}
+	app := newTestStorageApp(t, verifier, &mockStorageAdapter{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", bytes.NewBufferString(`{"permission":"write","bucket":"bucket","path":"path"}`))
+	req.Header.Set("Authorization", "Bearer "+"test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestStorageGrantSvc_MintGrant_AdapterError(t *testing.T) {
 	t.Parallel()
 	verifier := &mockVerifier{
@@ -236,6 +301,27 @@ func TestStorageGrantSvc_MintGrant_AdapterError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestStorageGrantSvc_MintGrant_RequiresPath(t *testing.T) {
+	t.Parallel()
+	verifier := &mockVerifier{
+		claims: &TokenClaims{
+			Subject:          "user-1",
+			TenantID:         "tenant-1",
+			StorageResources: []string{"storage://bucket"},
+		},
+	}
+	app := newTestStorageApp(t, verifier, &mockStorageAdapter{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req.Header.Set("Authorization", "Bearer "+"test-token")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -269,8 +355,8 @@ func TestIsPermissionAllowed(t *testing.T) {
 		want bool
 	}{
 		{"read", true},
-		{"write", true},
-		{"readwrite", true},
+		{"write", false},
+		{"readwrite", false},
 		{"delete", false},
 		{"admin", false},
 		{"", false},

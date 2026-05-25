@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -209,10 +210,19 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 		Database string `json:"database"`
 		TTL      int    `json:"ttlSeconds"`
 	}
-	if r.ContentLength > 0 {
-		if err := readJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
-			return
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := readJSON(w, r, &req); err != nil {
+			if errors.Is(err, io.EOF) {
+				// Treat an empty body as "no body".
+			} else {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
+					writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body too large")
+					return
+				}
+				writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+				return
+			}
 		}
 	}
 
@@ -237,6 +247,10 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 	database := req.Database
 	if database == "" && len(claims.DBResources) > 0 {
 		database = extractDatabaseFromURI(claims.DBResources[0])
+	}
+	if database == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "database is required")
+		return
 	}
 
 	// Mint credential.
@@ -310,8 +324,8 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func readJSON(r *http.Request, v interface{}) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
+func readJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 

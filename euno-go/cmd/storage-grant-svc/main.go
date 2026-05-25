@@ -36,10 +36,18 @@ func main() {
 	)
 
 	// Build cloud adapter.
-	cloudAdapter := buildAdapter(adapter)
+	cloudAdapter, err := buildAdapter(adapter)
+	if err != nil {
+		logger.Error("failed to build cloud adapter", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
-	// Build token verifier (stub for now; production would use JWKS-based verifier).
-	verifier := &stubTokenVerifier{}
+	// Require a concrete JWT verifier before starting the service.
+	verifier, err := buildVerifier()
+	if err != nil {
+		logger.Error("failed to configure JWT verification", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	// Build metrics.
 	metrics := observability.NewMetricsRegistry("storagegrantsvc", "http")
@@ -91,26 +99,33 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func buildAdapter(name string) storagegrantsvc.CloudStorageAdapter {
+func buildAdapter(name string) (storagegrantsvc.CloudStorageAdapter, error) {
 	switch name {
 	case "aws-s3":
 		return storagegrantsvc.NewAWSS3Adapter(
 			envOrDefault("AWS_REGION", "us-east-1"),
 			envOrDefault("STORAGE_GRANT_SVC_BUCKET", "my-bucket"),
-		)
+		), nil
 	case "azure-blob":
 		return storagegrantsvc.NewAzureBlobAdapter(
 			envOrDefault("STORAGE_GRANT_SVC_AZURE_ACCOUNT", "myaccount"),
 			envOrDefault("STORAGE_GRANT_SVC_AZURE_CONTAINER", "mycontainer"),
-		)
+		), nil
 	case "gcp-gcs":
 		return storagegrantsvc.NewGCPGCSAdapter(
 			envOrDefault("GCP_PROJECT_ID", "my-project"),
 			envOrDefault("STORAGE_GRANT_SVC_GCP_BUCKET", "my-bucket"),
-		)
+		), nil
 	default:
-		return storagegrantsvc.NewAWSS3Adapter("us-east-1", "my-bucket")
+		return nil, fmt.Errorf("unsupported STORAGE_GRANT_SVC_ADAPTER %q", name)
 	}
+}
+
+func buildVerifier() (storagegrantsvc.TokenVerifier, error) {
+	if os.Getenv("ISSUER_JWKS_URL") == "" {
+		return nil, errors.New("ISSUER_JWKS_URL must be set")
+	}
+	return nil, errors.New("JWT verification via ISSUER_JWKS_URL is not implemented yet")
 }
 
 func envOrDefault(key, fallback string) string {
@@ -118,12 +133,4 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// stubTokenVerifier is a development-mode verifier that extracts claims without cryptographic verification.
-type stubTokenVerifier struct{}
-
-func (s *stubTokenVerifier) VerifyAndExtractCaps(_ context.Context, _ string) (*storagegrantsvc.TokenClaims, error) {
-	// In production, this would verify the JWT against the issuer's JWKS.
-	return nil, fmt.Errorf("JWT verification not configured: use ISSUER_JWKS_URL env var")
 }

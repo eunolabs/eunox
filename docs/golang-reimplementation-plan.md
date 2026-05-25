@@ -309,8 +309,8 @@ euno-go/
 - [x] Revoked keys return 403 on verify
 - [x] Anomaly detector flags velocity spikes (>N mints per window)
 - [x] Admin JWT auth validates against JWKS; X-Admin-Key works as fallback
-- [x] DB token service mints AWS RDS IAM token from a valid capability JWT (mock STS)
-- [x] Storage grant service generates valid S3 presigned URL structure (mock)
+- [ ] DB token service mints AWS RDS IAM token from a valid capability JWT (mock STS)
+- [ ] Storage grant service generates valid S3 presigned URL structure (mock)
 - [x] All services reject tokens without matching capabilities (fail-closed)
 - [x] Pepper rotation: old keys still verify during transition period
 - [ ] Integration test: minter → gateway enforcement (key-based auth flow) — deferred to Stage 6
