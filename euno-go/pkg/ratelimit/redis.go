@@ -134,7 +134,7 @@ func (l *RedisLimiter) Check(ctx context.Context, key string) (*Result, error) {
 	}
 
 	remaining := 0
-	if count <= int64(limit) {
+	if count < int64(limit) {
 		remaining = limit - int(count)
 	}
 
