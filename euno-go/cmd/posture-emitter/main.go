@@ -157,37 +157,27 @@ func buildPlugins(cfg config.EmitterConfig, logger *slog.Logger) ([]posture.Plug
 			if cfg.DefenderSubscriptionID == "" {
 				return nil, fmt.Errorf("defender plugin requires DEFENDER_SUBSCRIPTION_ID")
 			}
-			plugins = append(plugins, posture.NewDefenderPlugin(posture.DefenderPluginConfig{
-				SubscriptionID:       cfg.DefenderSubscriptionID,
-				AssessmentNamePrefix: cfg.DefenderAssessmentNamePrefix,
-			}))
-			logger.Info("registered plugin", slog.String("name", "defender"))
+			return nil, fmt.Errorf("defender plugin selected but no SDK client is configured in this build")
 
 		case "security-hub":
 			if cfg.AWSAccountID == "" || cfg.AWSRegion == "" || cfg.SecurityHubArn == "" {
 				return nil, fmt.Errorf("security-hub plugin requires AWS_ACCOUNT_ID, AWS_REGION, and SECURITY_HUB_PRODUCT_ARN")
 			}
-			plugins = append(plugins, posture.NewSecurityHubPlugin(posture.SecurityHubPluginConfig{
-				AWSAccountID:  cfg.AWSAccountID,
-				Region:        cfg.AWSRegion,
-				ProductArn:    cfg.SecurityHubArn,
-				GeneratorID:   cfg.SecurityHubGenID,
-			}))
-			logger.Info("registered plugin", slog.String("name", "security-hub"))
+			return nil, fmt.Errorf("security-hub plugin selected but no SDK client is configured in this build")
 
 		case "scc":
 			if cfg.GCPSourceName == "" || cfg.GCPProjectID == "" {
 				return nil, fmt.Errorf("scc plugin requires GCP_SCC_SOURCE_NAME and GCP_PROJECT_ID")
 			}
-			plugins = append(plugins, posture.NewSccPlugin(posture.SccPluginConfig{
-				SourceName: cfg.GCPSourceName,
-				ProjectID:  cfg.GCPProjectID,
-			}))
-			logger.Info("registered plugin", slog.String("name", "scc"))
+			return nil, fmt.Errorf("scc plugin selected but no SDK client is configured in this build")
 
 		default:
 			return nil, fmt.Errorf("unknown plugin: %s", name)
 		}
+	}
+
+	if len(plugins) == 0 {
+		return nil, fmt.Errorf("at least one posture emitter plugin must be configured")
 	}
 
 	return plugins, nil

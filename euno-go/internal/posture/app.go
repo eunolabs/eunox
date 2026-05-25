@@ -6,6 +6,7 @@ package posture
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -84,6 +85,8 @@ type emitterMetrics struct {
 	deadLettered  *prometheus.CounterVec
 	enqueued      *prometheus.CounterVec
 }
+
+const maxJSONBodyBytes = 1 << 20
 
 // New creates a new posture emitter App with the given configuration, plugins, and dependencies.
 func New(cfg Config, plugins []Plugin, deps Dependencies) (*App, error) {
@@ -210,9 +213,15 @@ func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
 }
 
 // QueueDepth returns the current number of events in the queue.
-func (app *App) QueueDepth() int64 {
-	depth, _ := app.queue.Depth()
-	return depth
+func (app *App) QueueDepth() (int64, error) {
+	depth, err := app.queue.Depth()
+	if err != nil {
+		return 0, err
+	}
+	if app.metrics != nil {
+		app.metrics.queueDepth.Set(float64(depth))
+	}
+	return depth, nil
 }
 
 // --- DeliveryMetrics implementation ---
@@ -269,7 +278,14 @@ func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
-	depth := app.QueueDepth()
+	depth, err := app.QueueDepth()
+	if err != nil {
+		if app.deps.Logger != nil {
+			app.deps.Logger.Error("posture emitter: failed to read queue depth", slog.String("error", err.Error()))
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "error": "queue unavailable"})
+		return
+	}
 
 	if depth > app.config.HealthMaxQueueDepth {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -287,16 +303,23 @@ func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (app *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	depth := app.QueueDepth()
+	depth, err := app.QueueDepth()
+	if err != nil {
+		if app.deps.Logger != nil {
+			app.deps.Logger.Error("posture emitter: failed to read queue depth", slog.String("error", err.Error()))
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "queue unavailable"})
+		return
+	}
 	activeRecords := app.recordStore.ListActive()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enabled":       app.config.Enabled,
-		"queueDepth":    depth,
-		"activeAgents":  len(activeRecords),
-		"plugins":       pluginNames(app.plugins),
-		"started":       app.started.Load(),
-		"totalTracked":  app.recordStore.Size(),
+		"enabled":      app.config.Enabled,
+		"queueDepth":   depth,
+		"activeAgents": len(activeRecords),
+		"plugins":      pluginNames(app.plugins),
+		"started":      app.started.Load(),
+		"totalTracked": app.recordStore.Size(),
 	})
 }
 
@@ -312,7 +335,7 @@ type EmitRequest struct {
 
 func (app *App) handleEmit(w http.ResponseWriter, r *http.Request) {
 	var req EmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONRequest(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -349,7 +372,7 @@ type RevokeRequest struct {
 
 func (app *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	var req RevokeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONRequest(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -418,7 +441,13 @@ func (app *App) UpdateMetrics() {
 	if app.metrics == nil {
 		return
 	}
-	depth, _ := app.queue.Depth()
+	depth, err := app.queue.Depth()
+	if err != nil {
+		if app.deps.Logger != nil {
+			app.deps.Logger.Error("posture emitter: failed to update queue depth metric", slog.String("error", err.Error()))
+		}
+		return
+	}
 	app.metrics.queueDepth.Set(float64(depth))
 }
 
@@ -428,6 +457,19 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func decodeJSONRequest(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body must contain a single JSON object")
+	}
+	return nil
 }
 
 func pluginNames(plugins []Plugin) []string {

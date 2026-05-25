@@ -90,9 +90,12 @@ func TestSQLiteQueue_MultiplePushAndOrdering(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	id1, _ := q.Push(EventObserved, []byte(`{"n":1}`))
-	id2, _ := q.Push(EventObserved, []byte(`{"n":2}`))
-	id3, _ := q.Push(EventRevoked, []byte(`{"n":3}`))
+	id1, err := q.Push(EventObserved, []byte(`{"n":1}`))
+	require.NoError(t, err)
+	id2, err := q.Push(EventObserved, []byte(`{"n":2}`))
+	require.NoError(t, err)
+	id3, err := q.Push(EventRevoked, []byte(`{"n":3}`))
+	require.NoError(t, err)
 
 	events, err := q.Peek(2)
 	require.NoError(t, err)

@@ -552,7 +552,7 @@ euno-go/
 - [x] Posture records durably queued (survive process restart)
 - [x] Each CSPM plugin correctly formats and delivers records
 - [x] Retry logic handles transient cloud API failures
-- [x] Dead-letter captures records after max retries
+- [x] Dead-letter logs and drops records after max retries
 - [x] Queue depth exposed as Prometheus metric
 - [x] Single-writer invariant enforced (second instance fails to start)
 - [x] Integration test: issue token → posture record in queue → plugin delivery
@@ -586,8 +586,8 @@ euno-go/
 
 **Testing:**
 - `queue_test.go` — 7 tests (push/peek/ack/nack/depth/ordering/durability)
-- `record_store_test.go` — 4 tests (upsert/dedupe-window/revoke/list-active)
-- `delivery_test.go` — 5 tests (delivery/revoke/retry/dead-letter/multi-plugin/drain)
+- `record_store_test.go` — 8 tests (upsert/dedupe-window/revoke/list-active)
+- `delivery_test.go` — 6 tests (delivery/revoke/retry/dead-letter/multi-plugin/drain)
 - `app_test.go` — 18 tests (emit/revoke/disabled/dedup/depth/HTTP handlers/plugins/helpers)
 - `internal/integration/posture_test.go` — 4 integration tests (end-to-end emit→delivery, revoke flow, health endpoints, multi-plugin)
 - 79.1% statement coverage, 0 lint issues

@@ -84,7 +84,8 @@ func TestApp_EmitObserved_Disabled(t *testing.T) {
 	err = app.EmitObserved(AgentInventoryRecord{AgentID: "agent-1", FirstSeen: time.Now(), LastSeen: time.Now()})
 	assert.NoError(t, err)
 
-	depth := app.QueueDepth()
+	depth, err := app.QueueDepth()
+	require.NoError(t, err)
 	assert.Equal(t, int64(0), depth)
 }
 
@@ -103,7 +104,7 @@ func TestApp_EmitObserved_Deduplication(t *testing.T) {
 
 	now := time.Now().UTC()
 	record := AgentInventoryRecord{
-		AgentID:  "agent-dup",
+		AgentID:   "agent-dup",
 		FirstSeen: now,
 		LastSeen:  now,
 	}
@@ -141,13 +142,15 @@ func TestApp_QueueDepth(t *testing.T) {
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
 		_ = app.EmitObserved(AgentInventoryRecord{
-			AgentID:  fmt.Sprintf("agent-%d", i),
+			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,
 		})
 	}
 
-	assert.Equal(t, int64(3), app.QueueDepth())
+	depth, err := app.QueueDepth()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), depth)
 }
 
 // --- HTTP Handler Tests ---
@@ -200,11 +203,26 @@ func TestApp_HandleReady_Degraded(t *testing.T) {
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
 		_ = app.EmitObserved(AgentInventoryRecord{
-			AgentID:  fmt.Sprintf("agent-%d", i),
+			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,
 		})
 	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestApp_HandleReady_QueueError(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QueuePath = ":memory:"
+
+	app, err := New(cfg, nil, Dependencies{})
+	require.NoError(t, err)
+	app.Stop()
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
 	rec := httptest.NewRecorder()
@@ -236,6 +254,21 @@ func TestApp_HandleStatus(t *testing.T) {
 	plugins := body["plugins"].([]interface{})
 	assert.Len(t, plugins, 1)
 	assert.Equal(t, "test-plugin", plugins[0])
+}
+
+func TestApp_HandleStatus_QueueError(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QueuePath = ":memory:"
+
+	app, err := New(cfg, nil, Dependencies{})
+	require.NoError(t, err)
+	app.Stop()
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/status", nil)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 func TestApp_HandleEmit(t *testing.T) {
@@ -291,6 +324,22 @@ func TestApp_HandleEmit_MissingAgentID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestApp_HandleEmit_UnknownField(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QueuePath = ":memory:"
+
+	app, err := New(cfg, nil, Dependencies{})
+	require.NoError(t, err)
+	defer app.Stop()
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/emit", bytes.NewBufferString(`{"agentId":"a","unexpected":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestApp_HandleRevoke(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
@@ -330,6 +379,22 @@ func TestApp_HandleRevoke_MissingAgentID(t *testing.T) {
 	bodyBytes, _ := json.Marshal(body)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/revoke", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestApp_HandleRevoke_UnknownField(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.QueuePath = ":memory:"
+
+	app, err := New(cfg, nil, Dependencies{})
+	require.NoError(t, err)
+	defer app.Stop()
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/revoke", bytes.NewBufferString(`{"agentId":"a","unexpected":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
@@ -517,7 +582,7 @@ func TestSccPlugin_EmitObserved_AlreadyExists(t *testing.T) {
 	})
 
 	record := AgentInventoryRecord{
-		AgentID:  "scc-agent",
+		AgentID:   "scc-agent",
 		FirstSeen: time.Now(),
 		LastSeen:  time.Now(),
 	}

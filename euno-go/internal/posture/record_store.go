@@ -21,7 +21,7 @@ type InMemoryRecordStore struct {
 
 // NewRecordStore creates a new InMemoryRecordStore with the given deduplication window.
 func NewRecordStore(dedupeWindow time.Duration) *InMemoryRecordStore {
-	if dedupeWindow <= 0 {
+	if dedupeWindow < 0 {
 		dedupeWindow = DefaultDedupeWindow
 	}
 	return &InMemoryRecordStore{
@@ -48,7 +48,7 @@ func (s *InMemoryRecordStore) Upsert(record AgentInventoryRecord) bool {
 	}
 
 	// Deduplicate within window.
-	if record.LastSeen.Sub(existing.LastSeen) < s.dedupeWindow {
+	if s.dedupeWindow > 0 && record.LastSeen.Sub(existing.LastSeen) < s.dedupeWindow {
 		// Update lastSeen but suppress emission.
 		existing.LastSeen = record.LastSeen
 		s.records[record.AgentID] = existing

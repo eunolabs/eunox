@@ -150,12 +150,11 @@ func (w *DeliveryWorker) deliverEvent(event QueuedEvent) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), w.config.PluginTimeout)
-	defer cancel()
-
 	var deliveryErr error
 	for _, plugin := range w.plugins {
+		ctx, cancel := context.WithTimeout(context.Background(), w.config.PluginTimeout)
 		err := w.deliverToPlugin(ctx, plugin, event)
+		cancel()
 		if err != nil {
 			deliveryErr = err
 			if w.metrics != nil {
