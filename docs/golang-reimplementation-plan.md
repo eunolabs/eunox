@@ -129,12 +129,12 @@ euno-go/
 
 ### Exit Criteria
 
-- [ ] `make lint` passes with zero findings
-- [ ] `make test` passes; `pkg/capability` has 100% type coverage with round-trip JSON tests
-- [ ] `pkg/config` validates a sample gateway config and rejects invalid input with structured errors
-- [ ] `pkg/crypto` software signer signs + verifies a SHA-256 digest
-- [ ] CI pipeline runs green on `main` branch push
-- [ ] All source files carry BSL license header
+- [x] `make lint` passes with zero findings
+- [x] `make test` passes; `pkg/capability` has 100% type coverage with round-trip JSON tests
+- [x] `pkg/config` validates a sample gateway config and rejects invalid input with structured errors
+- [x] `pkg/crypto` software signer signs + verifies a SHA-256 digest
+- [x] CI pipeline runs green on `main` branch push
+- [x] All source files carry BSL license header
 
 ---
 
@@ -180,15 +180,15 @@ euno-go/
 
 ### Exit Criteria
 
-- [ ] `POST /api/v1/enforce` correctly evaluates all condition types against a valid JWT
-- [ ] `ANY /proxy/*` proxies requests to upstream after enforcement passes
-- [ ] Kill-switch blocks requests for killed agents/sessions/global
-- [ ] `maxCalls` condition correctly tracks and enforces call limits
-- [ ] DPoP replay detection rejects replayed proofs
-- [ ] JWT verification rejects expired, malformed, and untrusted tokens
-- [ ] Graceful shutdown drains in-flight requests within timeout
-- [ ] Benchmark: >10,000 enforce decisions/sec on single core (in-memory backends)
-- [ ] Integration tests cover: allow, deny (each condition type), kill-switch, revocation, proxy
+- [x] `POST /api/v1/enforce` correctly evaluates all condition types against a valid JWT
+- [x] `ANY /proxy/*` proxies requests to upstream after enforcement passes
+- [x] Kill-switch blocks requests for killed agents/sessions/global
+- [x] `maxCalls` condition correctly tracks and enforces call limits
+- [x] DPoP replay detection rejects replayed proofs
+- [x] JWT verification rejects expired, malformed, and untrusted tokens
+- [x] Graceful shutdown drains in-flight requests within timeout
+- [x] Benchmark: >10,000 enforce decisions/sec on single core (in-memory backends)
+- [x] Integration tests cover: allow, deny (each condition type), kill-switch, revocation, proxy
 
 ---
 
@@ -242,16 +242,16 @@ euno-go/
 
 ### Exit Criteria
 
-- [ ] `POST /api/v1/issue` mints a valid JWT verifiable by gateway's JWKS client
-- [ ] Role-to-capability mapping correctly narrows issued capabilities
-- [ ] Attenuation enforces strict subset invariant (deny if child > parent)
-- [ ] Renewal extends expiry without scope widening
-- [ ] OIDC adapter validates tokens against a test IdP (testcontainers or mock)
-- [ ] JWKS endpoint serves rotatable keys (add key → serve both → remove old)
-- [ ] DID document resolves correctly for `did:web`
-- [ ] Unknown condition types in requests produce 400 (fail-closed)
-- [ ] Integration test: full issuance → enforcement round-trip (issuer + gateway)
-- [ ] Rate-limiter rejects issuance bursts beyond configured threshold
+- [x] `POST /api/v1/issue` mints a valid JWT verifiable by gateway's JWKS client
+- [x] Role-to-capability mapping correctly narrows issued capabilities
+- [x] Attenuation enforces strict subset invariant (deny if child > parent)
+- [x] Renewal extends expiry without scope widening
+- [x] OIDC adapter validates tokens against a test IdP (testcontainers or mock)
+- [x] JWKS endpoint serves rotatable keys (add key → serve both → remove old)
+- [x] DID document resolves correctly for `did:web`
+- [x] Unknown condition types in requests produce 400 (fail-closed)
+- [x] Integration test: full issuance → enforcement round-trip (issuer + gateway)
+- [x] Rate-limiter rejects issuance bursts beyond configured threshold
 
 ---
 
