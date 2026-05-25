@@ -16,6 +16,7 @@ import (
 	"github.com/edgeobs/euno-platform/euno-go/internal/gateway"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/audit"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/callcounter"
+	"github.com/edgeobs/euno-platform/euno-go/pkg/capability"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/enforcement"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/killswitch"
 	"github.com/edgeobs/euno-platform/euno-go/pkg/ocsf"
@@ -30,12 +31,18 @@ type mockQueryStore struct {
 	records      []audit.SignedAuditEvidence
 	chainSegment []audit.SignedAuditEvidence
 	queryErr     error
+	lastFilter   audit.QueryFilter
+	lastPage     audit.PageParams
+	queryCount   int
 }
 
-func (s *mockQueryStore) Query(_ context.Context, _ audit.QueryFilter, _ audit.PageParams) (*audit.QueryResult, error) {
+func (s *mockQueryStore) Query(_ context.Context, filter audit.QueryFilter, page audit.PageParams) (*audit.QueryResult, error) {
 	if s.queryErr != nil {
 		return nil, s.queryErr
 	}
+	s.lastFilter = filter
+	s.lastPage = page
+	s.queryCount++
 	return &audit.QueryResult{
 		Records:    s.records,
 		TotalCount: int64(len(s.records)),
@@ -59,7 +66,20 @@ func (s *mockQueryStore) GetChainSegment(_ context.Context, _ string, _, _ int64
 	return s.chainSegment, nil
 }
 
+type mockAuditJWTVerifier struct {
+	claims *capability.TokenPayload
+	err    error
+}
+
+func (m *mockAuditJWTVerifier) VerifyToken(_ context.Context, _ string) (*capability.TokenPayload, error) {
+	return m.claims, m.err
+}
+
 func newAuditTestApp(t *testing.T, auditDeps *gateway.AuditDependencies) *gateway.App {
+	return newAuditTestAppWithConfig(t, auditDeps, nil, gateway.Config{AdminAPIKey: "test-admin-key"})
+}
+
+func newAuditTestAppWithConfig(t *testing.T, auditDeps *gateway.AuditDependencies, verifier gateway.JWTVerifier, cfg gateway.Config) *gateway.App {
 	t.Helper()
 
 	counter := callcounter.NewInMemory()
@@ -70,16 +90,22 @@ func newAuditTestApp(t *testing.T, auditDeps *gateway.AuditDependencies) *gatewa
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	deps := gateway.Dependencies{
-		Engine:     engine,
-		KillSwitch: ks,
-		Revocation: revStore,
-		DPoPStore:  dpopStore,
-		Logger:     logger,
-		Audit:      auditDeps,
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		DPoPStore:   dpopStore,
+		JWTVerifier: verifier,
+		Logger:      logger,
+		Audit:       auditDeps,
 	}
 
-	app := gateway.New(gateway.Config{}, deps)
+	app := gateway.New(cfg, deps)
 	return app
+}
+
+func withAuditAdminAuth(req *http.Request) *http.Request {
+	req.Header.Set("X-Admin-Api-Key", "test-admin-key")
+	return req
 }
 
 func TestAuditRecords_NoAuditConfigured(t *testing.T) {
@@ -112,7 +138,7 @@ func TestAuditRecords_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=t1", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=t1", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -129,11 +155,12 @@ func TestAuditRecords_WithPagination(t *testing.T) {
 	store := &mockQueryStore{records: []audit.SignedAuditEvidence{}}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?page=2&page_size=25", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?page=2&page_size=25", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, audit.PageParams{Offset: 25, Limit: 25}, store.lastPage)
 }
 
 func TestAuditExport_Success(t *testing.T) {
@@ -157,7 +184,7 @@ func TestAuditExport_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/export?tenant_id=t1", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export?tenant_id=t1", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -190,7 +217,7 @@ func TestAuditExport_NoOCSFEvent(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/export", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -213,7 +240,7 @@ func TestAuditSigningKeys_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{SigningKeys: keys})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -268,7 +295,7 @@ func TestAuditChainProof_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=replica-1&from_seq=1&to_seq=2", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=replica-1&from_seq=1&to_seq=2", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -285,7 +312,7 @@ func TestAuditChainProof_MissingReplicaID(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?from_seq=1&to_seq=5", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?from_seq=1&to_seq=5", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -297,7 +324,7 @@ func TestAuditChainProof_InvalidFromSeq(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=abc&to_seq=5", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=abc&to_seq=5", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -309,7 +336,7 @@ func TestAuditChainProof_InvalidToSeq(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=5&to_seq=2", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=5&to_seq=2", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -339,7 +366,7 @@ func TestAuditChainProof_BrokenChain(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", nil)
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", nil))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -348,4 +375,101 @@ func TestAuditChainProof_BrokenChain(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
 	assert.Equal(t, false, result["valid"])
+}
+
+func TestAuditRecords_RequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, nil, gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", nil)
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Zero(t, store.queryCount)
+}
+
+func TestAuditRecords_JWTScopesTenantFilter(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	verifier := &mockAuditJWTVerifier{
+		claims: &capability.TokenPayload{
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			AuthorizedBy: &capability.AuthorizedBy{
+				TenantID: "tenant-jwt",
+			},
+		},
+	}
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "tenant-jwt", store.lastFilter.TenantID)
+}
+
+func TestAuditRecords_JWTRejectsTenantMismatch(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	verifier := &mockAuditJWTVerifier{
+		claims: &capability.TokenPayload{
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			AuthorizedBy: &capability.AuthorizedBy{
+				TenantID: "tenant-jwt",
+			},
+		},
+	}
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=other-tenant", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Zero(t, store.queryCount)
+}
+
+func TestAuditChainProof_BrokenLinkage(t *testing.T) {
+	t.Parallel()
+
+	ts1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2025, 1, 1, 0, 0, 1, 0, time.UTC)
+	hash1 := audit.ComputeChainHash("", "rec-1", ts1, "sig-1")
+	hash2 := audit.ComputeChainHash("different-previous-hash", "rec-2", ts2, "sig-2")
+
+	store := &mockQueryStore{
+		chainSegment: []audit.SignedAuditEvidence{
+			{
+				Record:       audit.LogEntry{ID: "rec-1", Timestamp: ts1},
+				Signature:    "sig-1",
+				ChainHash:    hash1,
+				PreviousHash: "",
+				SequenceNum:  1,
+			},
+			{
+				Record:       audit.LogEntry{ID: "rec-2", Timestamp: ts2},
+				Signature:    "sig-2",
+				ChainHash:    hash2,
+				PreviousHash: "different-previous-hash",
+				SequenceNum:  2,
+			},
+		},
+	}
+
+	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", nil))
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Equal(t, false, result["valid"])
+	assert.Equal(t, float64(2), result["broken_at_seq"])
 }

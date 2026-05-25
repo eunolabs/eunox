@@ -231,6 +231,8 @@ func (b *PerReplicaPostgresLedgerBackend) Append(ctx context.Context, evidence *
 		ocsfJSON = []byte("null")
 	}
 
+	evidence.ReplicaID = b.replicaID
+
 	const query = `INSERT INTO audit_records (
 		id, tenant_id, timestamp, event_type, actor_user_id, actor_tenant_id,
 		action, resource_uid, resource_type, outcome, detail, ocsf_event,
@@ -256,7 +258,7 @@ func (b *PerReplicaPostgresLedgerBackend) Append(ctx context.Context, evidence *
 		evidence.KeyID,
 		evidence.ChainHash,
 		evidence.PreviousHash,
-		evidence.ReplicaID,
+		b.replicaID,
 		evidence.SequenceNum,
 	)
 	if err != nil {
@@ -394,7 +396,7 @@ func (s *PostgresQueryStore) Query(ctx context.Context, filter QueryFilter, page
 		action, resource_uid, resource_type, outcome, detail, ocsf_event,
 		signature, algorithm, key_id, chain_hash, previous_hash,
 		replica_id, sequence_num
-		FROM audit_records` + where + ` ORDER BY sequence_num DESC LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
+		FROM audit_records` + where + ` ORDER BY timestamp DESC, replica_id DESC, sequence_num DESC LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	args = append(args, page.Limit, page.Offset)
 
 	rows, err := s.db.QueryContext(ctx, selectQuery, args...)

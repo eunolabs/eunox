@@ -5,11 +5,15 @@ package audit
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -276,13 +280,21 @@ func TestAzureSentinelTransport_Send_Success(t *testing.T) {
 
 	var receivedLogType string
 	var receivedAuth string
+	var receivedDate string
+	var receivedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedLogType = r.Header.Get("Log-Type")
 		receivedAuth = r.Header.Get("Authorization")
+		receivedDate = r.Header.Get("x-ms-date")
+		receivedPath = r.URL.EscapedPath()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
+	records := []SignedAuditEvidence{
+		{Record: LogEntry{ID: "rec-1", EventType: "test"}},
+	}
+	sharedKey := base64.StdEncoding.EncodeToString([]byte("key-456"))
 	transport := NewAzureSentinelTransport(AzureSentinelConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
@@ -291,18 +303,19 @@ func TestAzureSentinelTransport_Send_Success(t *testing.T) {
 			BufferSize:    100,
 		},
 		WorkspaceID: "ws-123",
-		SharedKey:   "key-456",
+		SharedKey:   sharedKey,
 		LogType:     "EunoAudit",
 		Endpoint:    server.URL,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer func() { _ = transport.Close() }()
 
-	err := transport.Send(context.Background(), []SignedAuditEvidence{
-		{Record: LogEntry{ID: "rec-1", EventType: "test"}},
-	})
+	err := transport.Send(context.Background(), records)
 	require.NoError(t, err)
 	assert.Equal(t, "EunoAudit", receivedLogType)
+	assert.NotEmpty(t, receivedDate)
+	assert.Equal(t, "/", receivedPath)
 	assert.Contains(t, receivedAuth, "SharedKey ws-123:")
+	assert.NotContains(t, receivedAuth, sharedKey)
 }
 
 func TestAzureSentinelTransport_Enqueue_AfterClose(t *testing.T) {
@@ -346,6 +359,19 @@ func TestAzureSentinelTransport_DefaultLogType(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "EunoAudit", receivedLogType)
+}
+
+func TestBuildAzureSentinelAuthorization(t *testing.T) {
+	t.Parallel()
+
+	authHeader, err := buildAzureSentinelAuthorization("ws-123", base64.StdEncoding.EncodeToString([]byte("key-456")), 34, "application/json", "Mon, 01 Jan 2024 00:00:00 GMT", "/api/logs")
+	require.NoError(t, err)
+
+	stringToSign := "POST\n" + strconv.Itoa(34) + "\napplication/json\nx-ms-date:Mon, 01 Jan 2024 00:00:00 GMT\n/api/logs"
+	mac := hmac.New(sha256.New, []byte("key-456"))
+	mac.Write([]byte(stringToSign))
+	expectedAuth := "SharedKey ws-123:" + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	assert.Equal(t, expectedAuth, authHeader)
 }
 
 // --- Anchor Tests ---

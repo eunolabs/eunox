@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -36,8 +37,18 @@ func (app *App) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	principal, ok := app.authenticateAuditRequest(w, r)
+	if !ok {
+		return
+	}
+
+	tenantID, ok := principal.scopedTenantID(w, r.URL.Query().Get("tenant_id"))
+	if !ok {
+		return
+	}
+
 	filter := audit.QueryFilter{
-		TenantID:  r.URL.Query().Get("tenant_id"),
+		TenantID:  tenantID,
 		EventType: r.URL.Query().Get("event_type"),
 		ActorID:   r.URL.Query().Get("actor_id"),
 	}
@@ -76,8 +87,18 @@ func (app *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	principal, ok := app.authenticateAuditRequest(w, r)
+	if !ok {
+		return
+	}
+
+	tenantID, ok := principal.scopedTenantID(w, r.URL.Query().Get("tenant_id"))
+	if !ok {
+		return
+	}
+
 	filter := audit.QueryFilter{
-		TenantID:  r.URL.Query().Get("tenant_id"),
+		TenantID:  tenantID,
 		EventType: r.URL.Query().Get("event_type"),
 	}
 
@@ -123,9 +144,13 @@ func (app *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 
 // handleAuditSigningKeys handles GET /api/v1/audit/signing-keys.
 // Returns the public signing keys used to sign audit evidence (for offline verification).
-func (app *App) handleAuditSigningKeys(w http.ResponseWriter, _ *http.Request) {
+func (app *App) handleAuditSigningKeys(w http.ResponseWriter, r *http.Request) {
 	if app.deps.Audit == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse("audit pipeline not configured"))
+		return
+	}
+
+	if _, ok := app.authenticateAuditRequest(w, r); !ok {
 		return
 	}
 
@@ -139,6 +164,10 @@ func (app *App) handleAuditSigningKeys(w http.ResponseWriter, _ *http.Request) {
 func (app *App) handleAuditChainProof(w http.ResponseWriter, r *http.Request) {
 	if app.deps.Audit == nil || app.deps.Audit.QueryStore == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse("audit query store not configured"))
+		return
+	}
+
+	if _, ok := app.authenticateAuditRequest(w, r); !ok {
 		return
 	}
 
@@ -175,6 +204,11 @@ func (app *App) handleAuditChainProof(w http.ResponseWriter, r *http.Request) {
 			brokenAt = segment[i].SequenceNum
 			break
 		}
+		if i > 0 && (segment[i].PreviousHash != segment[i-1].ChainHash || segment[i].SequenceNum != segment[i-1].SequenceNum+1) {
+			valid = false
+			brokenAt = segment[i].SequenceNum
+			break
+		}
 	}
 
 	proof := map[string]any{
@@ -205,15 +239,15 @@ func parsePageParams(r *http.Request) audit.PageParams {
 		Limit:  50,
 	}
 
-	if p := r.URL.Query().Get("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 1 {
-			page.Offset = (v - 1) * page.Limit
-		}
-	}
-
 	if ps := r.URL.Query().Get("page_size"); ps != "" {
 		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 1000 {
 			page.Limit = v
+		}
+	}
+
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 1 {
+			page.Offset = (v - 1) * page.Limit
 		}
 	}
 
@@ -226,4 +260,66 @@ func parsePageParams(r *http.Request) audit.PageParams {
 	}
 
 	return page
+}
+
+type auditPrincipal struct {
+	admin    bool
+	tenantID string
+}
+
+func (app *App) authenticateAuditRequest(w http.ResponseWriter, r *http.Request) (*auditPrincipal, bool) {
+	if app.config.AdminAPIKey != "" {
+		if provided := r.Header.Get(auditAdminAPIKeyHeader()); provided != "" {
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(app.config.AdminAPIKey)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, errorResponse("audit authentication failed"))
+				return nil, false
+			}
+			return &auditPrincipal{admin: true}, true
+		}
+	}
+
+	token := extractBearerToken(r)
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, errorResponse("missing audit credentials"))
+		return nil, false
+	}
+	if app.deps.JWTVerifier == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("audit JWT verification not configured"))
+		return nil, false
+	}
+
+	claims, err := app.deps.JWTVerifier.VerifyToken(r.Context(), token)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid audit token"))
+		return nil, false
+	}
+	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+		writeJSON(w, http.StatusUnauthorized, errorResponse("audit token has expired"))
+		return nil, false
+	}
+
+	principal := &auditPrincipal{}
+	if claims.AuthorizedBy != nil {
+		principal.tenantID = claims.AuthorizedBy.TenantID
+	}
+	return principal, true
+}
+
+func (p *auditPrincipal) scopedTenantID(w http.ResponseWriter, requestedTenantID string) (string, bool) {
+	if p.admin {
+		return requestedTenantID, true
+	}
+	if p.tenantID == "" {
+		writeJSON(w, http.StatusForbidden, errorResponse("audit token is not tenant-scoped"))
+		return "", false
+	}
+	if requestedTenantID != "" && requestedTenantID != p.tenantID {
+		writeJSON(w, http.StatusForbidden, errorResponse("tenant scope mismatch"))
+		return "", false
+	}
+	return p.tenantID, true
+}
+
+func auditAdminAPIKeyHeader() string {
+	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
 }

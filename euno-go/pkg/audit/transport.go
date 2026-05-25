@@ -6,6 +6,9 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -475,14 +478,14 @@ func (t *AzureSentinelTransport) deliver(ctx context.Context, records []SignedAu
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Log-Type", t.config.LogType)
-	req.Header.Set("x-ms-date", time.Now().UTC().Format(time.RFC1123))
-
-	// TODO(audit): Implement proper Azure Log Analytics HMAC-SHA256 signature computation.
-	// See: https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-collector-api
-	// Current implementation passes SharedKey directly; production deployments should use
-	// the full signing algorithm (base64(HMAC-SHA256(SharedKey, StringToSign))).
+	dateHeader := time.Now().UTC().Format(http.TimeFormat)
+	req.Header.Set("x-ms-date", dateHeader)
 	if t.config.SharedKey != "" {
-		req.Header.Set("Authorization", "SharedKey "+t.config.WorkspaceID+":"+t.config.SharedKey)
+		authHeader, err := buildAzureSentinelAuthorization(t.config.WorkspaceID, t.config.SharedKey, len(body), req.Header.Get("Content-Type"), dateHeader, req.URL.EscapedPath())
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", authHeader)
 	}
 
 	resp, err := t.client.Do(req)
@@ -499,4 +502,21 @@ func (t *AzureSentinelTransport) deliver(ctx context.Context, records []SignedAu
 	}
 
 	return fmt.Errorf("audit: sentinel returned status %d", resp.StatusCode)
+}
+
+func buildAzureSentinelAuthorization(workspaceID, sharedKey string, contentLength int, contentType, dateHeader, resourcePath string) (string, error) {
+	if workspaceID == "" {
+		return "", errors.New("audit: azure sentinel workspace ID is required when shared key authentication is enabled")
+	}
+	decodedKey, err := base64.StdEncoding.DecodeString(sharedKey)
+	if err != nil {
+		return "", fmt.Errorf("audit: decode azure sentinel shared key: %w", err)
+	}
+
+	stringToSign := fmt.Sprintf("POST\n%d\n%s\nx-ms-date:%s\n%s", contentLength, contentType, dateHeader, resourcePath)
+	mac := hmac.New(sha256.New, decodedKey)
+	mac.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	return "SharedKey " + workspaceID + ":" + signature, nil
 }

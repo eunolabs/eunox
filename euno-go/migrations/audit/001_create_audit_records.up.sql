@@ -7,11 +7,15 @@ CREATE TABLE IF NOT EXISTS audit_records (
     sequence_num  BIGINT NOT NULL,
     replica_id    TEXT NOT NULL,
     tenant_id     TEXT NOT NULL,
+    timestamp     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     event_type    TEXT NOT NULL,
     actor_user_id TEXT NOT NULL DEFAULT '',
     actor_tenant_id TEXT NOT NULL DEFAULT '',
     action        TEXT NOT NULL,
+    resource_uid  TEXT NOT NULL DEFAULT '',
+    resource_type TEXT NOT NULL DEFAULT '',
     outcome       TEXT NOT NULL,
+    detail        JSONB,
     signature     TEXT NOT NULL,
     algorithm     TEXT NOT NULL,
     key_id        TEXT NOT NULL,
@@ -23,7 +27,7 @@ CREATE TABLE IF NOT EXISTS audit_records (
 );
 
 -- Index for chronological queries per tenant.
-CREATE INDEX idx_audit_records_tenant_created ON audit_records (tenant_id, created_at DESC);
+CREATE INDEX idx_audit_records_tenant_timestamp ON audit_records (tenant_id, timestamp DESC);
 
 -- Index for event type filtering.
 CREATE INDEX idx_audit_records_event_type ON audit_records (event_type);

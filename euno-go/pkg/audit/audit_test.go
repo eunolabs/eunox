@@ -144,6 +144,18 @@ func TestPipeline_Append_Success(t *testing.T) {
 	assert.Equal(t, int64(1), rec.SequenceNum)
 }
 
+func TestPipeline_Append_RequiresInitialize(t *testing.T) {
+	t.Parallel()
+
+	signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
+	backend := newInMemoryLedgerBackend()
+	pipeline, err := NewPipeline(signer, backend, PipelineConfig{})
+	require.NoError(t, err)
+
+	err = pipeline.Append(context.Background(), &LogEntry{EventType: "test", Action: "action", Outcome: "success"})
+	assert.ErrorIs(t, err, ErrNotInitialized)
+}
+
 func TestPipeline_Append_ChainIntegrity(t *testing.T) {
 	t.Parallel()
 
@@ -535,29 +547,39 @@ func (m *mockRows) Next() bool {
 
 func (m *mockRows) Scan(_ ...any) error { return nil }
 func (m *mockRows) Close() error        { return nil }
-func (m *mockRows) Err() error           { return m.err }
+func (m *mockRows) Err() error          { return m.err }
 
 type mockDB struct {
-	execErr  error
-	queryRow *mockRow
-	rows     *mockRows
+	execErr       error
+	execQuery     string
+	execArgs      []any
+	queryRow      *mockRow
+	queryRowQuery string
+	queryQuery    string
+	queryArgs     []any
+	rows          *mockRows
 }
 
-func (m *mockDB) ExecContext(_ context.Context, _ string, _ ...any) (Result, error) {
+func (m *mockDB) ExecContext(_ context.Context, query string, args ...any) (Result, error) {
+	m.execQuery = query
+	m.execArgs = append([]any(nil), args...)
 	if m.execErr != nil {
 		return nil, m.execErr
 	}
 	return &mockResult{rowsAffected: 1}, nil
 }
 
-func (m *mockDB) QueryRowContext(_ context.Context, _ string, _ ...any) Row {
+func (m *mockDB) QueryRowContext(_ context.Context, query string, _ ...any) Row {
+	m.queryRowQuery = query
 	if m.queryRow != nil {
 		return m.queryRow
 	}
 	return &mockRow{err: errNoRows}
 }
 
-func (m *mockDB) QueryContext(_ context.Context, _ string, _ ...any) (Rows, error) {
+func (m *mockDB) QueryContext(_ context.Context, query string, args ...any) (Rows, error) {
+	m.queryQuery = query
+	m.queryArgs = append([]any(nil), args...)
 	if m.rows != nil {
 		return m.rows, nil
 	}
@@ -724,6 +746,9 @@ func TestPerReplicaBackend_Append(t *testing.T) {
 
 	err := backend.Append(context.Background(), evidence)
 	require.NoError(t, err)
+	assert.Equal(t, "replica-1", evidence.ReplicaID)
+	require.Len(t, db.execArgs, 19)
+	assert.Equal(t, "replica-1", db.execArgs[17])
 }
 
 func TestPerReplicaBackend_Close(t *testing.T) {
@@ -763,6 +788,19 @@ func TestPostgresQueryStore_Query_InvalidPage(t *testing.T) {
 
 	_, err := store.Query(context.Background(), QueryFilter{}, PageParams{Offset: -1})
 	assert.ErrorIs(t, err, ErrInvalidPage)
+}
+
+func TestPostgresQueryStore_Query_OrdersByTimestamp(t *testing.T) {
+	t.Parallel()
+
+	db := &mockDB{
+		queryRow: &mockRow{values: []any{int64(0)}},
+	}
+	store := NewPostgresQueryStore(db)
+
+	_, err := store.Query(context.Background(), QueryFilter{}, PageParams{Limit: 10})
+	require.NoError(t, err)
+	assert.Contains(t, db.queryQuery, "ORDER BY timestamp DESC, replica_id DESC, sequence_num DESC")
 }
 
 // --- Integration-style pipeline test ---
@@ -863,7 +901,7 @@ type failingBackend struct {
 }
 
 func (b *failingBackend) Append(ctx context.Context, evidence *SignedAuditEvidence) error {
-	*b.count++
+	(*b.count)++
 	if *b.count > *b.failAfter {
 		return errors.New("simulated backend failure")
 	}

@@ -23,14 +23,15 @@ import (
 
 // Errors returned by the audit package.
 var (
-	ErrNilEntry        = errors.New("audit: nil entry")
-	ErrNoSigner        = errors.New("audit: no evidence signer configured")
-	ErrNoBackend       = errors.New("audit: no ledger backend configured")
-	ErrChainBroken     = errors.New("audit: HMAC chain integrity violation")
-	ErrRecordNotFound  = errors.New("audit: record not found")
-	ErrInvalidPage     = errors.New("audit: invalid page parameters")
-	ErrBackendClosed   = errors.New("audit: backend is closed")
-	ErrLockContention  = errors.New("audit: advisory lock contention")
+	ErrNilEntry       = errors.New("audit: nil entry")
+	ErrNoSigner       = errors.New("audit: no evidence signer configured")
+	ErrNoBackend      = errors.New("audit: no ledger backend configured")
+	ErrNotInitialized = errors.New("audit: pipeline is not initialized")
+	ErrChainBroken    = errors.New("audit: HMAC chain integrity violation")
+	ErrRecordNotFound = errors.New("audit: record not found")
+	ErrInvalidPage    = errors.New("audit: invalid page parameters")
+	ErrBackendClosed  = errors.New("audit: backend is closed")
+	ErrLockContention = errors.New("audit: advisory lock contention")
 )
 
 // LogEntry represents a single audit event before signing.
@@ -177,6 +178,7 @@ type DefaultPipeline struct {
 	mu            sync.Mutex
 	lastChainHash string
 	lastSeqNum    int64
+	initialized   bool
 	closed        bool
 }
 
@@ -220,6 +222,7 @@ func (p *DefaultPipeline) Initialize(ctx context.Context) error {
 	p.mu.Lock()
 	p.lastChainHash = hash
 	p.lastSeqNum = seq
+	p.initialized = true
 	p.mu.Unlock()
 	return nil
 }
@@ -235,6 +238,9 @@ func (p *DefaultPipeline) Append(ctx context.Context, entry *LogEntry) error {
 
 	if p.closed {
 		return ErrBackendClosed
+	}
+	if !p.initialized {
+		return ErrNotInitialized
 	}
 
 	// Assign ID if not set.

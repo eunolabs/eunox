@@ -4,8 +4,12 @@
 package ocsf
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewAuthorizationEvent(t *testing.T) {
@@ -236,4 +240,74 @@ func TestActivityIDs(t *testing.T) {
 		}
 		seen[id] = true
 	}
+}
+
+func TestAuthorizationEvent_MarshalJSON_UsesNestedObjects(t *testing.T) {
+	t.Parallel()
+
+	event := NewAuthorizationEvent(ActivityAuthGrant, Actor{
+		UserID:    "user-123",
+		UserName:  "alice",
+		TenantID:  "tenant-1",
+		SessionID: "sess-1",
+		AgentID:   "agent-1",
+	}).WithSOC2Controls(SOC2CC61)
+	event.TokenID = "token-1"
+
+	data, err := json.Marshal(event)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	metadata := decoded["metadata"].(map[string]any)
+	assert.Equal(t, SchemaVersion, metadata["version"])
+
+	actor := decoded["actor"].(map[string]any)
+	user := actor["user"].(map[string]any)
+	assert.Equal(t, "user-123", user["uid"])
+	org := user["org"].(map[string]any)
+	assert.Equal(t, "tenant-1", org["uid"])
+	session := actor["session"].(map[string]any)
+	assert.Equal(t, "sess-1", session["uid"])
+
+	unmapped := decoded["unmapped"].(map[string]any)
+	assert.Equal(t, "token-1", unmapped["token_id"])
+}
+
+func TestAPIActivityEvent_MarshalJSON_UsesNestedObjects(t *testing.T) {
+	t.Parallel()
+
+	event := NewAPIActivityEvent(ActivityAPIAllow, Actor{UserID: "user-1", TenantID: "tenant-1"})
+	event.APIOperation = "enforce"
+	event.APIService = "gateway"
+	event.APIVersion = "v1"
+	event.HTTPMethod = "POST"
+	event.HTTPURL = "/api/v1/enforce"
+	event.HTTPStatus = 200
+	event.SrcIP = "10.0.0.1"
+	event.SrcPort = 443
+	event.ToolName = "code-search"
+
+	data, err := json.Marshal(event)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	api := decoded["api"].(map[string]any)
+	assert.Equal(t, "enforce", api["operation"])
+	assert.Equal(t, "v1", api["version"])
+	service := api["service"].(map[string]any)
+	assert.Equal(t, "gateway", service["name"])
+
+	httpRequest := decoded["http_request"].(map[string]any)
+	assert.Equal(t, "POST", httpRequest["http_method"])
+	url := httpRequest["url"].(map[string]any)
+	assert.Equal(t, "/api/v1/enforce", url["path"])
+
+	src := decoded["src_endpoint"].(map[string]any)
+	assert.Equal(t, "10.0.0.1", src["ip"])
+	assert.Equal(t, float64(443), src["port"])
+
+	unmapped := decoded["unmapped"].(map[string]any)
+	assert.Equal(t, "code-search", unmapped["tool_name"])
 }

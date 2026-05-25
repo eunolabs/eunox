@@ -6,7 +6,10 @@
 // events (class_uid 6003) with SOC2 control mapping metadata.
 package ocsf
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // SchemaVersion is the OCSF schema version implemented by this package.
 const SchemaVersion = "1.1.0"
@@ -26,12 +29,12 @@ type ActivityID int
 
 // Authorization activity IDs.
 const (
-	ActivityAuthGrant      ActivityID = 1
-	ActivityAuthDeny       ActivityID = 2
-	ActivityAuthRevoke     ActivityID = 3
-	ActivityAuthAttenuate  ActivityID = 4
-	ActivityAuthRenew      ActivityID = 5
-	ActivityAuthOther      ActivityID = 99
+	ActivityAuthGrant     ActivityID = 1
+	ActivityAuthDeny      ActivityID = 2
+	ActivityAuthRevoke    ActivityID = 3
+	ActivityAuthAttenuate ActivityID = 4
+	ActivityAuthRenew     ActivityID = 5
+	ActivityAuthOther     ActivityID = 99
 )
 
 // API Activity activity IDs.
@@ -281,4 +284,190 @@ func (e *APIActivityEvent) WithSeverity(severityID SeverityID, severity string) 
 func (e *APIActivityEvent) WithSOC2Controls(controls ...SOC2Control) *APIActivityEvent {
 	e.SOC2Controls = controls
 	return e
+}
+
+// MarshalJSON emits Actor using nested OCSF user/session/process objects.
+func (a Actor) MarshalJSON() ([]byte, error) {
+	type org struct {
+		UID string `json:"uid,omitempty"`
+	}
+	type user struct {
+		UID  string `json:"uid,omitempty"`
+		Name string `json:"name,omitempty"`
+		Org  *org   `json:"org,omitempty"`
+	}
+	type session struct {
+		UID string `json:"uid,omitempty"`
+	}
+	type process struct {
+		UID string `json:"uid,omitempty"`
+	}
+
+	var payload struct {
+		User    *user    `json:"user,omitempty"`
+		Session *session `json:"session,omitempty"`
+		Process *process `json:"process,omitempty"`
+	}
+
+	if a.UserID != "" || a.UserName != "" || a.TenantID != "" {
+		payload.User = &user{
+			UID:  a.UserID,
+			Name: a.UserName,
+		}
+		if a.TenantID != "" {
+			payload.User.Org = &org{UID: a.TenantID}
+		}
+	}
+	if a.SessionID != "" {
+		payload.Session = &session{UID: a.SessionID}
+	}
+	if a.AgentID != "" {
+		payload.Process = &process{UID: a.AgentID}
+	}
+
+	return json.Marshal(payload)
+}
+
+// MarshalJSON emits nested OCSF metadata/unmapped fields for authorization events.
+func (e AuthorizationEvent) MarshalJSON() ([]byte, error) {
+	payload, unmapped := buildBaseEventPayload(e.BaseEvent)
+	payload["actor"] = e.Actor
+	if e.Resource != (Resource{}) {
+		payload["dst_endpoint"] = e.Resource
+	}
+	if e.Decision != "" {
+		payload["disposition"] = e.Decision
+	}
+	if len(e.Privileges) > 0 {
+		payload["privileges"] = e.Privileges
+	}
+	if e.TokenID != "" {
+		unmapped["token_id"] = e.TokenID
+	}
+	if e.ParentToken != "" {
+		unmapped["parent_token_id"] = e.ParentToken
+	}
+	if e.OperatorID != "" {
+		unmapped["operator_id"] = e.OperatorID
+	}
+	if e.CrossOrg {
+		unmapped["cross_org"] = e.CrossOrg
+	}
+	if e.PartnerDID != "" {
+		unmapped["partner_did"] = e.PartnerDID
+	}
+	if len(unmapped) > 0 {
+		payload["unmapped"] = unmapped
+	}
+	return json.Marshal(payload)
+}
+
+// MarshalJSON emits nested OCSF metadata/unmapped fields for API activity events.
+func (e APIActivityEvent) MarshalJSON() ([]byte, error) {
+	payload, unmapped := buildBaseEventPayload(e.BaseEvent)
+	payload["actor"] = e.Actor
+
+	if api := buildAPIObject(e); len(api) > 0 {
+		payload["api"] = api
+	}
+	if httpRequest := buildHTTPRequestObject(e); len(httpRequest) > 0 {
+		payload["http_request"] = httpRequest
+	}
+	if e.HTTPStatus != 0 {
+		payload["http_response"] = map[string]any{"code": e.HTTPStatus}
+	}
+	if src := buildEndpointObject(e.SrcIP, e.SrcPort); len(src) > 0 {
+		payload["src_endpoint"] = src
+	}
+	if dst := buildEndpointObject(e.DstIP, e.DstPort); len(dst) > 0 {
+		payload["dst_endpoint"] = dst
+	}
+	if e.ToolName != "" {
+		unmapped["tool_name"] = e.ToolName
+	}
+	if e.ToolAction != "" {
+		unmapped["tool_action"] = e.ToolAction
+	}
+	if e.SessionID != "" {
+		unmapped["session_id"] = e.SessionID
+	}
+	if e.RequestID != "" {
+		unmapped["request_id"] = e.RequestID
+	}
+	if e.Duration != 0 {
+		payload["duration"] = e.Duration
+	}
+	if len(unmapped) > 0 {
+		payload["unmapped"] = unmapped
+	}
+	return json.Marshal(payload)
+}
+
+func buildBaseEventPayload(e BaseEvent) (map[string]any, map[string]any) {
+	payload := map[string]any{
+		"class_uid":    e.ClassUID,
+		"activity_id":  e.ActivityID,
+		"category_uid": e.CategoryUID,
+		"type_uid":     e.TypeUID,
+		"time":         e.Time,
+		"severity_id":  e.SeverityID,
+		"status_id":    e.StatusID,
+	}
+	if e.SchemaVersion != "" {
+		payload["metadata"] = map[string]any{"version": e.SchemaVersion}
+	}
+	if e.Severity != "" {
+		payload["severity"] = e.Severity
+	}
+	if e.Status != "" {
+		payload["status"] = e.Status
+	}
+	if e.Message != "" {
+		payload["message"] = e.Message
+	}
+	if len(e.Observables) > 0 {
+		payload["observables"] = e.Observables
+	}
+
+	unmapped := map[string]any{}
+	if len(e.SOC2Controls) > 0 {
+		unmapped["soc2_controls"] = e.SOC2Controls
+	}
+	return payload, unmapped
+}
+
+func buildAPIObject(e APIActivityEvent) map[string]any {
+	api := map[string]any{}
+	if e.APIOperation != "" {
+		api["operation"] = e.APIOperation
+	}
+	if e.APIVersion != "" {
+		api["version"] = e.APIVersion
+	}
+	if e.APIService != "" {
+		api["service"] = map[string]any{"name": e.APIService}
+	}
+	return api
+}
+
+func buildHTTPRequestObject(e APIActivityEvent) map[string]any {
+	request := map[string]any{}
+	if e.HTTPMethod != "" {
+		request["http_method"] = e.HTTPMethod
+	}
+	if e.HTTPURL != "" {
+		request["url"] = map[string]any{"path": e.HTTPURL}
+	}
+	return request
+}
+
+func buildEndpointObject(ip string, port int) map[string]any {
+	endpoint := map[string]any{}
+	if ip != "" {
+		endpoint["ip"] = ip
+	}
+	if port != 0 {
+		endpoint["port"] = port
+	}
+	return endpoint
 }
