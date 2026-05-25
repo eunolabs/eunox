@@ -117,10 +117,14 @@ func hasLeafTags(field reflect.StructField) bool {
 	return false
 }
 
-func envName(_ string, tag string) string {
+func envName(prefix string, tag string) string {
+	prefix = strings.TrimSpace(prefix)
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
 		return ""
 	}
-	return tag
+	if prefix == "" {
+		return tag
+	}
+	return prefix + "_" + tag
 }

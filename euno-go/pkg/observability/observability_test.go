@@ -286,6 +286,12 @@ func TestInitTracerNoEndpoint(t *testing.T) {
 	if err := shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown returned error: %v", err)
 	}
+
+	_, span := otel.Tracer("test").Start(context.Background(), "noop")
+	if span.IsRecording() {
+		t.Fatal("expected noop tracer provider when endpoint is empty")
+	}
+	span.End()
 }
 
 func TestResponseWriterCapturesStatus(t *testing.T) {

@@ -43,6 +43,14 @@ func TestConstraintUnmarshalJSONErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot unmarshal number into Go struct field")
 }
 
+func TestSchemaTypeUnmarshalJSONInvalidValue(t *testing.T) {
+	var schemaType SchemaType
+
+	err := json.Unmarshal([]byte(`123`), &schemaType)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema type must be string, array of strings, or null")
+}
+
 func TestObligationAnnotateAndUnknownType(t *testing.T) {
 	data, err := json.Marshal(Obligation{Type: "annotate", Key: "classification", Value: "restricted"})
 	require.NoError(t, err)

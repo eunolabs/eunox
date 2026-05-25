@@ -68,8 +68,8 @@ func inferProductionMode(prefix string, value reflect.Value) bool {
 		}
 
 		tags, err := parseFieldTags(field)
-		if err == nil && envName(prefix, tags.Env) == "NODE_ENV" {
-			if raw, ok := os.LookupEnv("NODE_ENV"); ok {
+		if err == nil && tags.Env == "NODE_ENV" {
+			if raw, ok := os.LookupEnv(envName(prefix, tags.Env)); ok {
 				return strings.EqualFold(strings.TrimSpace(raw), string(EnvProduction))
 			}
 			if tags.HasDefault {

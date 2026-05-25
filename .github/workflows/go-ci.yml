@@ -8,10 +8,12 @@ on:
     branches: [main]
     paths:
       - 'euno-go/**'
+      - '.github/workflows/go-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'euno-go/**'
+      - '.github/workflows/go-ci.yml'
 
 defaults:
   run:

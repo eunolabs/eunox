@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // TracingConfig configures the OpenTelemetry tracer provider.
@@ -25,7 +26,7 @@ type TracingConfig struct {
 	Endpoint string
 	// Insecure disables TLS for the OTLP connection.
 	Insecure bool
-	// SampleRatio is the trace sampling ratio (0.0 to 1.0). Default: 1.0.
+	// SampleRatio is the trace sampling ratio (0.0 to 1.0). Set 0.0 to disable sampling.
 	SampleRatio float64
 }
 
@@ -33,16 +34,12 @@ type TracingConfig struct {
 // Returns a shutdown function that should be called on application exit.
 func InitTracer(ctx context.Context, cfg TracingConfig) (func(context.Context) error, error) {
 	if cfg.Endpoint == "" {
-		otel.SetTracerProvider(sdktrace.NewTracerProvider())
+		otel.SetTracerProvider(noop.NewTracerProvider())
 		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 			propagation.TraceContext{},
 			propagation.Baggage{},
 		))
 		return func(context.Context) error { return nil }, nil
-	}
-
-	if cfg.SampleRatio == 0 {
-		cfg.SampleRatio = 1.0
 	}
 
 	opts := []otlptracegrpc.Option{

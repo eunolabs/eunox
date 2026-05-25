@@ -27,8 +27,13 @@ coverage:
 
 ## Run linter
 lint: vet
-	@which golangci-lint > /dev/null 2>&1 || { echo "Installing golangci-lint..."; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); }
-	golangci-lint run ./...
+	@GOLANGCI_LINT=$$(command -v golangci-lint 2>/dev/null || true); \
+	if [ -z "$$GOLANGCI_LINT" ]; then \
+		echo "Installing golangci-lint..."; \
+		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+		GOLANGCI_LINT="$$($(GO) env GOPATH)/bin/golangci-lint"; \
+	fi; \
+	"$$GOLANGCI_LINT" run ./...
 
 ## Run go vet
 vet:

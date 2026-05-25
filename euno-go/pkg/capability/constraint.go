@@ -3,7 +3,10 @@
 
 package capability
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Constraint describes the resource, actions, schema, and conditions granted by a capability.
 type Constraint struct {
@@ -123,5 +126,5 @@ func (s *SchemaType) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return &json.UnmarshalTypeError{Value: string(data), Type: nil}
+	return fmt.Errorf("schema type must be string, array of strings, or null: %s", string(data))
 }

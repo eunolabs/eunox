@@ -82,15 +82,15 @@ euno-go/
 
 | Concern | Choice |
 |---------|--------|
-| HTTP framework | `net/http` + `chi` router |
+| HTTP framework | `net/http` (`chi` router planned for Stage 2+) |
 | Config | Struct-tag-based validation (custom, Zod-equivalent) |
-| JWT/JWS | `go-jose/v4` |
-| Database | `pgx/v5` (PostgreSQL), `go-redis/v9` |
-| Migrations | `github.com/golang-migrate/migrate/v4` |
+| JWT/JWS | Planned for Stage 2+: `go-jose/v4` |
+| Database | Planned for Stage 2+: `pgx/v5` (PostgreSQL), `go-redis/v9` |
+| Migrations | Planned for Stage 2+: `github.com/golang-migrate/migrate/v4` |
 | Metrics | `prometheus/client_golang` |
 | Tracing | `go.opentelemetry.io/otel` |
 | Logging | `log/slog` (stdlib) |
-| Testing | `testing` + `testify` + `testcontainers-go` |
+| Testing | `testing` + `testify` (`testcontainers-go` planned for Stage 2+) |
 | Linting | `golangci-lint` v2 |
 
 ## License

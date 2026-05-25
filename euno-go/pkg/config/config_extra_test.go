@@ -92,6 +92,24 @@ func TestInferProductionMode(t *testing.T) {
 	assert.False(t, inferProductionMode("", reflect.ValueOf(root{})))
 }
 
+func TestLoadWithPrefix(t *testing.T) {
+	unsetEnv(t, "NODE_ENV", "PREFIX_NODE_ENV", "PREFIX_NAME")
+	t.Setenv("PREFIX_NODE_ENV", "production")
+	t.Setenv("PREFIX_NAME", "prefixed")
+
+	type prefixedConfig struct {
+		NodeEnv Environment `env:"NODE_ENV" default:"development"`
+		Name    string      `env:"NAME" required:"true"`
+	}
+
+	var cfg prefixedConfig
+	errs := Load("PREFIX", &cfg)
+	require.Empty(t, errs)
+	assert.Equal(t, EnvProduction, cfg.NodeEnv)
+	assert.Equal(t, "prefixed", cfg.Name)
+	assert.True(t, inferProductionMode("PREFIX", reflect.ValueOf(prefixedConfig{})))
+}
+
 func TestLoadStructUnsupportedFieldType(t *testing.T) {
 	unsetEnv(t, "RATE")
 	t.Setenv("RATE", "1.5")
