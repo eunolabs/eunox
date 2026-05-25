@@ -1,0 +1,503 @@
+// Copyright 2024-2025 Euno Platform Authors
+// SPDX-License-Identifier: BUSL-1.1
+
+package enforcement
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/edgeobs/euno-platform/euno-go/pkg/capability"
+)
+
+// registerBuiltins registers all built-in condition handlers.
+func (e *Engine) registerBuiltins() {
+	e.handlers[capability.ConditionTypeTimeWindow] = e.handleTimeWindow
+	e.handlers[capability.ConditionTypeIPRange] = e.handleIPRange
+	e.handlers[capability.ConditionTypeMaxCalls] = e.handleMaxCalls
+	e.handlers[capability.ConditionTypeAllowedOperations] = e.handleAllowedOperations
+	e.handlers[capability.ConditionTypeAllowedExtensions] = e.handleAllowedExtensions
+	e.handlers[capability.ConditionTypeAllowedTables] = e.handleAllowedTables
+	e.handlers[capability.ConditionTypeRecipientDomain] = e.handleRecipientDomain
+	e.handlers[capability.ConditionTypePolicy] = e.handlePolicy
+	e.handlers[capability.ConditionTypeCustom] = e.handleCustom
+}
+
+func (e *Engine) handleTimeWindow(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	tw, ok := asTimeWindow(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeTimeWindow,
+			Message:       "invalid timeWindow condition type",
+		}
+	}
+
+	now := e.clock.Now().UTC()
+
+	if tw.NotBefore != "" {
+		notBefore, err := time.Parse(time.RFC3339, tw.NotBefore)
+		if err != nil {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeTimeWindow,
+				Message:       fmt.Sprintf("invalid notBefore time: %s", tw.NotBefore),
+			}
+		}
+		if now.Before(notBefore.UTC()) {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeTimeWindow,
+				Message:       "request is before the allowed time window",
+				Details: map[string]interface{}{
+					"notBefore": tw.NotBefore,
+					"now":       now.Format(time.RFC3339),
+				},
+			}
+		}
+	}
+
+	if tw.NotAfter != "" {
+		notAfter, err := time.Parse(time.RFC3339, tw.NotAfter)
+		if err != nil {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeTimeWindow,
+				Message:       fmt.Sprintf("invalid notAfter time: %s", tw.NotAfter),
+			}
+		}
+		if now.After(notAfter.UTC()) {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeTimeWindow,
+				Message:       "request is after the allowed time window",
+				Details: map[string]interface{}{
+					"notAfter": tw.NotAfter,
+					"now":      now.Format(time.RFC3339),
+				},
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *Engine) handleIPRange(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	ipr, ok := asIPRange(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeIPRange,
+			Message:       "invalid ipRange condition type",
+		}
+	}
+
+	if req.Context.SourceIP == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeIPRange,
+			Message:       "sourceIp is required for ipRange condition",
+		}
+	}
+
+	ip := net.ParseIP(req.Context.SourceIP)
+	if ip == nil {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeIPRange,
+			Message:       fmt.Sprintf("invalid source IP: %s", req.Context.SourceIP),
+		}
+	}
+
+	for _, cidr := range ipr.CIDRs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeIPRange,
+				Message:       fmt.Sprintf("invalid CIDR in condition: %s", cidr),
+			}
+		}
+		if network.Contains(ip) {
+			return nil
+		}
+	}
+
+	return &ConditionError{
+		Code:          capability.ErrCodeConditionFailed,
+		ConditionType: capability.ConditionTypeIPRange,
+		Message:       "source IP is not in allowed ranges",
+		Details: map[string]interface{}{
+			"sourceIp":     req.Context.SourceIP,
+			"allowedCIDRs": ipr.CIDRs,
+		},
+	}
+}
+
+func (e *Engine) handleMaxCalls(ctx context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	mc, ok := asMaxCalls(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeMaxCalls,
+			Message:       "invalid maxCalls condition type",
+		}
+	}
+
+	if e.counter == nil {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeMaxCalls,
+			Message:       "call counter not configured",
+		}
+	}
+
+	// Build a unique key from session + tool
+	key := fmt.Sprintf("maxcalls:%s:%s", req.SessionID, req.ToolName)
+	count, err := e.counter.IncrementAndGet(ctx, key, mc.WindowSeconds)
+	if err != nil {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeMaxCalls,
+			Message:       fmt.Sprintf("call counter error: %v", err),
+		}
+	}
+
+	if count > int64(mc.Count) {
+		return &ConditionError{
+			Code:          capability.ErrCodeRateLimited,
+			ConditionType: capability.ConditionTypeMaxCalls,
+			Message:       "call limit exceeded",
+			Details: map[string]interface{}{
+				"limit":   mc.Count,
+				"current": count,
+				"window":  mc.WindowSeconds,
+			},
+		}
+	}
+
+	return nil
+}
+
+func (e *Engine) handleAllowedOperations(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	ao, ok := asAllowedOperations(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedOperations,
+			Message:       "invalid allowedOperations condition type",
+		}
+	}
+
+	operation := req.Context.Operation
+	if operation == "" {
+		operation = req.ToolName
+	}
+
+	for _, allowed := range ao.Operations {
+		if allowed == operation || allowed == "*" {
+			return nil
+		}
+	}
+
+	return &ConditionError{
+		Code:          capability.ErrCodeConditionFailed,
+		ConditionType: capability.ConditionTypeAllowedOperations,
+		Message:       fmt.Sprintf("operation %q is not allowed", operation),
+		Details: map[string]interface{}{
+			"operation":         operation,
+			"allowedOperations": ao.Operations,
+		},
+	}
+}
+
+func (e *Engine) handleAllowedExtensions(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	ae, ok := asAllowedExtensions(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedExtensions,
+			Message:       "invalid allowedExtensions condition type",
+		}
+	}
+
+	filePath := req.Context.FilePath
+	if filePath == "" {
+		// If no file path in context, check arguments
+		if fp, ok := req.Arguments["filePath"]; ok {
+			if s, ok := fp.(string); ok {
+				filePath = s
+			}
+		}
+	}
+
+	if filePath == "" {
+		// No file path to validate — pass through
+		return nil
+	}
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedExtensions,
+			Message:       "file has no extension",
+			Details: map[string]interface{}{
+				"filePath":          filePath,
+				"allowedExtensions": ae.Extensions,
+			},
+		}
+	}
+
+	// Normalize: remove leading dot for comparison
+	extNoDot := ext[1:]
+
+	for _, allowed := range ae.Extensions {
+		normalized := strings.TrimPrefix(strings.ToLower(allowed), ".")
+		if normalized == extNoDot {
+			return nil
+		}
+	}
+
+	return &ConditionError{
+		Code:          capability.ErrCodeConditionFailed,
+		ConditionType: capability.ConditionTypeAllowedExtensions,
+		Message:       fmt.Sprintf("file extension %q is not allowed", ext),
+		Details: map[string]interface{}{
+			"filePath":          filePath,
+			"extension":         ext,
+			"allowedExtensions": ae.Extensions,
+		},
+	}
+}
+
+func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	at, ok := asAllowedTables(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedTables,
+			Message:       "invalid allowedTables condition type",
+		}
+	}
+
+	if len(req.Context.Tables) == 0 {
+		return nil
+	}
+
+	allowedTableSet := make(map[string]bool, len(at.Tables))
+	for _, t := range at.Tables {
+		allowedTableSet[t] = true
+	}
+
+	for _, access := range req.Context.Tables {
+		if !allowedTableSet[access.Table] {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeAllowedTables,
+				Message:       fmt.Sprintf("table %q is not allowed", access.Table),
+				Details: map[string]interface{}{
+					"table":         access.Table,
+					"allowedTables": at.Tables,
+				},
+			}
+		}
+
+		// Check column restrictions if specified
+		if at.Columns != nil {
+			allowedCols, hasColumnRestriction := at.Columns[access.Table]
+			if hasColumnRestriction && len(access.Columns) > 0 {
+				colSet := make(map[string]bool, len(allowedCols))
+				for _, c := range allowedCols {
+					colSet[c] = true
+				}
+				for _, col := range access.Columns {
+					if !colSet[col] {
+						return &ConditionError{
+							Code:          capability.ErrCodeConditionFailed,
+							ConditionType: capability.ConditionTypeAllowedTables,
+							Message:       fmt.Sprintf("column %q on table %q is not allowed", col, access.Table),
+							Details: map[string]interface{}{
+								"table":          access.Table,
+								"column":         col,
+								"allowedColumns": allowedCols,
+							},
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	rd, ok := asRecipientDomain(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeRecipientDomain,
+			Message:       "invalid recipientDomain condition type",
+		}
+	}
+
+	if len(req.Context.Recipients) == 0 {
+		return nil
+	}
+
+	domainSet := make(map[string]bool, len(rd.Domains))
+	for _, d := range rd.Domains {
+		domainSet[strings.ToLower(d)] = true
+	}
+
+	for _, recipient := range req.Context.Recipients {
+		parts := strings.SplitN(recipient, "@", 2)
+		if len(parts) != 2 {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeRecipientDomain,
+				Message:       fmt.Sprintf("invalid recipient email: %s", recipient),
+			}
+		}
+		domain := strings.ToLower(parts[1])
+		if !domainSet[domain] {
+			return &ConditionError{
+				Code:          capability.ErrCodeConditionFailed,
+				ConditionType: capability.ConditionTypeRecipientDomain,
+				Message:       fmt.Sprintf("recipient domain %q is not allowed", domain),
+				Details: map[string]interface{}{
+					"recipient":      recipient,
+					"domain":         domain,
+					"allowedDomains": rd.Domains,
+				},
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *Engine) handlePolicy(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
+	_, ok := asPolicy(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypePolicy,
+			Message:       "invalid policy condition type",
+		}
+	}
+
+	// Policy conditions are evaluated externally (OPA, Cedar, etc.)
+	// In-process evaluation is a no-op; the gateway routes to an external PDP.
+	return nil
+}
+
+func (e *Engine) handleCustom(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
+	_, ok := asCustom(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeCustom,
+			Message:       "invalid custom condition type",
+		}
+	}
+
+	// Custom conditions are pass-through by default.
+	// Register a custom handler via RegisterCondition to override.
+	return nil
+}
+
+func asTimeWindow(cond capability.Condition) (*capability.TimeWindowCondition, bool) {
+	if t, ok := cond.(*capability.TimeWindowCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.TimeWindowCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asIPRange(cond capability.Condition) (*capability.IPRangeCondition, bool) {
+	if t, ok := cond.(*capability.IPRangeCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.IPRangeCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asMaxCalls(cond capability.Condition) (*capability.MaxCallsCondition, bool) {
+	if t, ok := cond.(*capability.MaxCallsCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.MaxCallsCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asAllowedOperations(cond capability.Condition) (*capability.AllowedOperationsCondition, bool) {
+	if t, ok := cond.(*capability.AllowedOperationsCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.AllowedOperationsCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asAllowedExtensions(cond capability.Condition) (*capability.AllowedExtensionsCondition, bool) {
+	if t, ok := cond.(*capability.AllowedExtensionsCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.AllowedExtensionsCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asAllowedTables(cond capability.Condition) (*capability.AllowedTablesCondition, bool) {
+	if t, ok := cond.(*capability.AllowedTablesCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.AllowedTablesCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asRecipientDomain(cond capability.Condition) (*capability.RecipientDomainCondition, bool) {
+	if t, ok := cond.(*capability.RecipientDomainCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.RecipientDomainCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asPolicy(cond capability.Condition) (*capability.PolicyCondition, bool) {
+	if t, ok := cond.(*capability.PolicyCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.PolicyCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
+
+func asCustom(cond capability.Condition) (*capability.CustomCondition, bool) {
+	if t, ok := cond.(*capability.CustomCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.CustomCondition); ok {
+		return &t, true
+	}
+	return nil, false
+}
