@@ -46,7 +46,7 @@ euno-go/
 │   ├── gateway.yaml
 │   ├── issuer.yaml
 │   └── minter.yaml
-├── migrations/                   # SQL migrations (golang-migrate)
+├── migrations/                   # SQL migrations (github.com/golang-migrate/migrate/v4)
 │   ├── audit/
 │   └── minter/
 ├── deploy/                       # Deployment artifacts
@@ -72,7 +72,7 @@ euno-go/
 | JWT/JWS | `go-jose/v4` (Square) | Full JOSE stack, KMS integration, JWK Sets |
 | DID resolution | Custom (`pkg/did`) | Minimal dep surface; did:web is HTTP GET, did:key is decode |
 | Database | `pgx/v5` (PostgreSQL), `go-redis/v9` | High-performance, connection pool, pipeline support |
-| Migrations | `golang-migrate/migrate` | SQL-first, embeddable, multi-source |
+| Migrations | `github.com/golang-migrate/migrate/v4` | SQL-first, embeddable, multi-source |
 | Metrics | `prometheus/client_golang` | Industry standard, direct Prometheus exposition |
 | Tracing | `go.opentelemetry.io/otel` | Vendor-neutral, W3C Trace Context propagation |
 | Logging | `log/slog` (stdlib) | Structured, zero-alloc, handler composable |
@@ -264,7 +264,7 @@ euno-go/
 1. **`internal/minter`** — API-Key Minter HTTP application:
    - `POST /admin/v1/keys` — Mint new API key:
      - Generate random `keyId` + `secret`
-     - HMAC(secret + pepper) → `secretHash`
+     - Compute `secretHash` = base64url(HMAC-SHA256(key: pepper, message: secret))
      - Persist to store (PostgreSQL)
      - Return `sk-{keyId}.{secret}` (never stored in plaintext)
    - `DELETE /admin/v1/keys/{keyId}` — Revoke API key
@@ -394,7 +394,7 @@ euno-go/
      - `GET /admin/partner-dids` — List partners
      - `POST /admin/partner-dids/{did}/approve|revoke|refresh`
 2. **Admin authentication & authorization**:
-   - `X-Admin-API-Key` header (timing-safe comparison)
+   - `X-Admin-Api-Key` header (timing-safe comparison)
    - Per-tenant isolation (`tenantId` from key → scope all reads)
    - `acknowledgesCrossTenantImpact: true` required for global kill
    - Idempotency store (`Idempotency-Key` header, 24h cache)
