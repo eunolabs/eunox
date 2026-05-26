@@ -24,6 +24,9 @@ type EmitterConfig struct {
 	// Health
 	HealthMaxQueueDepth int `env:"POSTURE_HEALTH_MAX_QUEUE_DEPTH" default:"10000" min:"1"`
 
+	// Request body limits
+	MaxRequestBodySize int `env:"POSTURE_MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024"`
+
 	// Plugin selection (comma-separated: "defender,security-hub,scc,stdout")
 	Plugins string `env:"POSTURE_EMITTER_PLUGINS" default:"stdout"`
 

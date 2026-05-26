@@ -87,6 +87,20 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: go build ./...
 
+  migration-validation:
+    name: Migration Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: go.sum
+
+      - name: Validate migration files
+        run: go test -run TestMigration ./internal/integration/ -v -count=1
+
   vulnerability-scan:
     name: Trivy Vulnerability Scan
     runs-on: ubuntu-latest

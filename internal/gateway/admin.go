@@ -313,11 +313,11 @@ func requireCrossTenantAck(r *http.Request) error {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+	raw, err := io.ReadAll(io.LimitReader(r.Body, defaultMaxBodySize+1))
 	if err != nil {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
-	if len(raw) > maxBodySize {
+	if int64(len(raw)) > defaultMaxBodySize {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
 

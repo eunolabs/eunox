@@ -16,7 +16,15 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxBodySize = 1 << 20 // 1 MB
+const defaultMaxBodySize int64 = 1 << 20 // 1 MB
+
+// maxBodySizeFor returns the configured or default max body size.
+func (app *App) maxBodySizeFor() int64 {
+	if app.config.MaxRequestBodySize > 0 {
+		return app.config.MaxRequestBodySize
+	}
+	return defaultMaxBodySize
+}
 
 // handleLive returns 200 if the service is alive.
 func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
@@ -47,7 +55,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.NewString()
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("failed to read request body"))
 		return
@@ -183,7 +191,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 
 // handleValidate handles POST /api/v1/validate.
 func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("failed to read request body"))
 		return

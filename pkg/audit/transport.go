@@ -82,6 +82,8 @@ type HTTPTransport struct {
 	config          HTTPTransportConfig
 	client          *http.Client
 	logger          *slog.Logger
+	metrics         *TransportMetrics
+	transportName   string
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
@@ -92,8 +94,18 @@ type HTTPTransport struct {
 	mu     sync.Mutex
 }
 
+// HTTPTransportOption configures optional behaviour for HTTPTransport.
+type HTTPTransportOption func(*HTTPTransport)
+
+// WithHTTPTransportMetrics attaches Prometheus metrics to the transport.
+func WithHTTPTransportMetrics(m *TransportMetrics) HTTPTransportOption {
+	return func(t *HTTPTransport) {
+		t.metrics = m
+	}
+}
+
 // NewHTTPTransport creates a new HTTP-based OCSF transport.
-func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger) *HTTPTransport {
+func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger, opts ...HTTPTransportOption) *HTTPTransport {
 	resolvedCfg := HTTPTransportConfig{}
 	if cfg != nil {
 		resolvedCfg = *cfg
@@ -127,10 +139,15 @@ func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger) *HTTPTransp
 		config:          *cfg,
 		client:          &http.Client{Timeout: defaultDeliveryTimeout},
 		logger:          logger,
+		transportName:   "http",
 		lifecycleCtx:    ctx,
 		lifecycleCancel: cancel,
 		buffer:          make(chan *SignedAuditEvidence, cfg.BufferSize),
 		done:            make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(t)
 	}
 
 	t.wg.Add(1)
@@ -150,8 +167,11 @@ func (t *HTTPTransport) Enqueue(evidence *SignedAuditEvidence) error {
 
 	select {
 	case t.buffer <- evidence:
+		t.metrics.observeEnqueue(t.transportName, "success")
+		t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 		return nil
 	default:
+		t.metrics.observeEnqueue(t.transportName, "dropped")
 		return ErrBatchFull
 	}
 }
@@ -211,6 +231,7 @@ func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
 		case ev := <-t.buffer:
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
+				t.metrics.observeFlushBatch(t.transportName, len(batch))
 				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("audit transport: delivery failed",
@@ -222,6 +243,7 @@ func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
 		default:
 			// No more buffered events.
 			if len(batch) > 0 {
+				t.metrics.observeFlushBatch(t.transportName, len(batch))
 				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("audit transport: delivery failed",
@@ -229,6 +251,7 @@ func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
 				}
 				cancel()
 			}
+			t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 			return
 		}
 	}
@@ -237,11 +260,13 @@ func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
 func (t *HTTPTransport) deliverWithRetry(ctx context.Context, records []SignedAuditEvidence) error {
 	var lastErr error
 	backoff := t.config.RetryBackoff
+	start := time.Now()
 
 	for attempt := 0; attempt <= t.config.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				t.metrics.observeDelivery(t.transportName, "failure", time.Since(start).Seconds())
 				return fmt.Errorf("audit: transport context cancelled: %w", ctx.Err())
 			case <-time.After(backoff):
 				backoff *= 2
@@ -250,6 +275,7 @@ func (t *HTTPTransport) deliverWithRetry(ctx context.Context, records []SignedAu
 
 		err := t.deliver(ctx, records)
 		if err == nil {
+			t.metrics.observeDelivery(t.transportName, "success", time.Since(start).Seconds())
 			return nil
 		}
 		lastErr = err
@@ -257,6 +283,7 @@ func (t *HTTPTransport) deliverWithRetry(ctx context.Context, records []SignedAu
 			"attempt", attempt+1, "error", err)
 	}
 
+	t.metrics.observeDelivery(t.transportName, "failure", time.Since(start).Seconds())
 	return fmt.Errorf("audit: transport delivery failed after %d retries: %w",
 		t.config.MaxRetries+1, lastErr)
 }
@@ -316,6 +343,8 @@ type AzureSentinelTransport struct {
 	config          AzureSentinelConfig
 	client          *http.Client
 	logger          *slog.Logger
+	metrics         *TransportMetrics
+	transportName   string
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
@@ -326,8 +355,18 @@ type AzureSentinelTransport struct {
 	mu     sync.Mutex
 }
 
+// AzureSentinelTransportOption configures optional behaviour for AzureSentinelTransport.
+type AzureSentinelTransportOption func(*AzureSentinelTransport)
+
+// WithAzureSentinelTransportMetrics attaches Prometheus metrics to the transport.
+func WithAzureSentinelTransportMetrics(m *TransportMetrics) AzureSentinelTransportOption {
+	return func(t *AzureSentinelTransport) {
+		t.metrics = m
+	}
+}
+
 // NewAzureSentinelTransport creates a new Azure Sentinel transport.
-func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger) *AzureSentinelTransport {
+func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger, opts ...AzureSentinelTransportOption) *AzureSentinelTransport {
 	resolvedCfg := AzureSentinelConfig{}
 	if cfg != nil {
 		resolvedCfg = *cfg
@@ -367,10 +406,15 @@ func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger) *A
 		config:          *cfg,
 		client:          &http.Client{Timeout: defaultDeliveryTimeout},
 		logger:          logger,
+		transportName:   "azure_sentinel",
 		lifecycleCtx:    ctx,
 		lifecycleCancel: cancel,
 		buffer:          make(chan *SignedAuditEvidence, cfg.BufferSize),
 		done:            make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(t)
 	}
 
 	t.wg.Add(1)
@@ -390,8 +434,11 @@ func (t *AzureSentinelTransport) Enqueue(evidence *SignedAuditEvidence) error {
 
 	select {
 	case t.buffer <- evidence:
+		t.metrics.observeEnqueue(t.transportName, "success")
+		t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 		return nil
 	default:
+		t.metrics.observeEnqueue(t.transportName, "dropped")
 		return ErrBatchFull
 	}
 }
@@ -451,6 +498,7 @@ func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
 		case ev := <-t.buffer:
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
+				t.metrics.observeFlushBatch(t.transportName, len(batch))
 				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("azure sentinel transport: delivery failed",
@@ -461,6 +509,7 @@ func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
 			}
 		default:
 			if len(batch) > 0 {
+				t.metrics.observeFlushBatch(t.transportName, len(batch))
 				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("azure sentinel transport: delivery failed",
@@ -468,6 +517,7 @@ func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
 				}
 				cancel()
 			}
+			t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 			return
 		}
 	}
@@ -476,11 +526,13 @@ func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
 func (t *AzureSentinelTransport) deliverWithRetry(ctx context.Context, records []SignedAuditEvidence) error {
 	var lastErr error
 	backoff := t.config.RetryBackoff
+	start := time.Now()
 
 	for attempt := 0; attempt <= t.config.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
+				t.metrics.observeDelivery(t.transportName, "failure", time.Since(start).Seconds())
 				return fmt.Errorf("audit: sentinel context cancelled: %w", ctx.Err())
 			case <-time.After(backoff):
 				backoff *= 2
@@ -489,6 +541,7 @@ func (t *AzureSentinelTransport) deliverWithRetry(ctx context.Context, records [
 
 		err := t.deliver(ctx, records)
 		if err == nil {
+			t.metrics.observeDelivery(t.transportName, "success", time.Since(start).Seconds())
 			return nil
 		}
 		lastErr = err
@@ -496,6 +549,7 @@ func (t *AzureSentinelTransport) deliverWithRetry(ctx context.Context, records [
 			"attempt", attempt+1, "error", err)
 	}
 
+	t.metrics.observeDelivery(t.transportName, "failure", time.Since(start).Seconds())
 	return fmt.Errorf("audit: sentinel delivery failed after %d retries: %w",
 		t.config.MaxRetries+1, lastErr)
 }

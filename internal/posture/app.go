@@ -87,7 +87,7 @@ type emitterMetrics struct {
 	enqueued      *prometheus.CounterVec
 }
 
-const maxJSONBodyBytes = 1 << 20
+const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 
 // New creates a new posture emitter App with the given configuration, plugins, and dependencies.
 func New(cfg *Config, plugins []Plugin, deps *Dependencies) (*App, error) {
@@ -500,7 +500,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 func decodeJSONRequest(w http.ResponseWriter, r *http.Request, dst interface{}) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, defaultMaxBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {

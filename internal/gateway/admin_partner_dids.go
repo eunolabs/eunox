@@ -26,7 +26,7 @@ func (app *App) handlePartnerDIDRegister(w http.ResponseWriter, r *http.Request)
 		Description string `json:"description,omitempty"`
 	}
 
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodySize)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, app.maxBodySizeFor())).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
 		return
 	}

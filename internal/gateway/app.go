@@ -49,6 +49,10 @@ type Config struct {
 	// AdminRateLimitPerMinute is the maximum number of admin requests per source IP per minute.
 	// Defaults to 10 if not set.
 	AdminRateLimitPerMinute int
+
+	// MaxRequestBodySize is the maximum size of request bodies in bytes.
+	// Defaults to 1 MB (1048576) if not set.
+	MaxRequestBodySize int64
 }
 
 // Dependencies holds the injected backends for the gateway.

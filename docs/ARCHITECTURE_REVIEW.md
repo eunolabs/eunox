@@ -339,7 +339,7 @@ Ordered by priority and dependency:
 - **DI-4**: Created `docs/HEALTH_CHECKS.md` documenting the `/health/live` and `/health/ready` convention, Kubernetes probe config, circuit breaker integration, and per-service behavior. Added `Content-Type: application/json` headers to `pkg/lifecycle` handlers.
 - **DI-5**: Extracted generic `pkg/circuitbreaker` package from `pkg/federation`: `Breaker` (3-state: closed/open/half-open), `Do`/`DoVoid` generic wrappers, `ProtectedSigner` (KMS), `Transport` (HTTP/IdP/JWKS), `ProtectedRedis` (Redis commands). Federation package refactored to delegate via type aliases (backward-compatible). 87.7% test coverage.
 
-### Phase 3: Scalability & Maintainability (Week 3–4)
+### Phase 3: Scalability & Maintainability (Week 3–4) ✅ COMPLETE
 
 | # | Item | Depends On | Effort | Owner |
 |---|------|-----------|--------|-------|
@@ -347,6 +347,13 @@ Ordered by priority and dependency:
 | 8 | DI-2: Schema documentation & CI validation | — | 3 days | Database team |
 | 9 | DI-3: Extract hard-coded limits to config | — | 1 day | Platform team |
 | 10 | IF-3: Audit flush backpressure metrics | — | 2 days | Observability team |
+
+**Implementation Notes (Phase 3):**
+
+- **DI-1**: Created `docs/AUDIT_CHAIN_ARCHITECTURE.md` — comprehensive documentation covering single-writer vs per-replica trade-offs, cross-chain anchoring protocol, consistency guarantees, decision matrix, and migration guidance.
+- **DI-2**: Created `docs/SCHEMA_MIGRATIONS.md` — full ER-style schema reference for all tables, migration conventions, runner internals, and CI validation. Added `migration-validation` job to `go-ci.yml` that runs migration integration tests.
+- **DI-3**: Extracted hard-coded `maxBodySize` constants from all services (gateway, issuer, minter, dbtokensvc, posture, storagegrantsvc) into configurable values. Added `MaxRequestBodySize` fields to `pkg/config` structs with env-driven override (`MAX_REQUEST_BODY_SIZE`). Gateway wires config to handlers via `maxBodySizeFor()` method; other services use `defaultMaxBodySize` constant with config plumbing ready.
+- **IF-3**: Created `pkg/audit/transport_metrics.go` with `TransportMetrics` struct exposing buffer utilization gauge, enqueue counter (success/dropped), flush batch size histogram, delivery counter (success/failure), and delivery duration histogram. Instrumented both `HTTPTransport` and `AzureSentinelTransport` via functional options (`WithHTTPTransportMetrics`, `WithAzureSentinelTransportMetrics`). All metrics are nil-safe — no-ops when not wired. 14 dedicated tests.
 
 ### Phase 4: Documentation & Open Questions (Week 4–5)
 

@@ -32,7 +32,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/observability"
 )
 
-const maxBodySize = 1 << 20 // 1 MB
+const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 
 // Config holds the issuer application configuration.
 type Config struct {
@@ -42,6 +42,10 @@ type Config struct {
 	MaxTokenTTL     int // seconds
 	Audience        string
 	AdminAPIKey     string
+
+	// MaxRequestBodySize is the maximum size of request bodies in bytes.
+	// Defaults to 1 MB (1048576) if not set.
+	MaxRequestBodySize int64
 }
 
 // RateLimiter provides rate-limiting for issuance requests.
@@ -858,7 +862,7 @@ func computePolicyHash(caps []capability.Constraint) string {
 }
 
 func readJSON(r *http.Request, v interface{}) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	body, err := io.ReadAll(io.LimitReader(r.Body, defaultMaxBodySize))
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}
