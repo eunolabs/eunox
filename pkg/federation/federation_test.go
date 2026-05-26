@@ -54,12 +54,11 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	now := time.Now()
-	cb := NewCircuitBreaker(CircuitBreakerConfig{
+	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	})
-	cb.now = func() time.Time { return now }
+	}, func() time.Time { return now })
 
 	// Trip the breaker.
 	cb.RecordFailure()
@@ -76,12 +75,11 @@ func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 	now := time.Now()
-	cb := NewCircuitBreaker(CircuitBreakerConfig{
+	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	})
-	cb.now = func() time.Time { return now }
+	}, func() time.Time { return now })
 
 	// Trip.
 	cb.RecordFailure()
@@ -99,12 +97,11 @@ func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	now := time.Now()
-	cb := NewCircuitBreaker(CircuitBreakerConfig{
+	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	})
-	cb.now = func() time.Time { return now }
+	}, func() time.Time { return now })
 
 	// Trip.
 	cb.RecordFailure()
