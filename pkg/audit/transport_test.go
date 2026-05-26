@@ -481,7 +481,7 @@ func TestAnchorService_SubmitAnchor(t *testing.T) {
 
 func TestS3AnchorBackend_Name(t *testing.T) {
 	t.Parallel()
-	backend := NewS3AnchorBackend(S3AnchorConfig{})
+	backend := NewS3AnchorBackend(&S3AnchorConfig{})
 	assert.Equal(t, "s3", backend.Name())
 }
 
@@ -501,7 +501,7 @@ func TestS3AnchorBackend_Anchor(t *testing.T) {
 	}))
 	defer server.Close()
 
-	backend := NewS3AnchorBackend(S3AnchorConfig{
+	backend := NewS3AnchorBackend(&S3AnchorConfig{
 		Bucket:   "test-bucket",
 		Prefix:   "anchors/",
 		Endpoint: server.URL,
@@ -530,7 +530,7 @@ func TestS3AnchorBackend_Verify(t *testing.T) {
 	}))
 	defer server.Close()
 
-	backend := NewS3AnchorBackend(S3AnchorConfig{
+	backend := NewS3AnchorBackend(&S3AnchorConfig{
 		Bucket:   "test-bucket",
 		Prefix:   "anchors/",
 		Endpoint: server.URL,

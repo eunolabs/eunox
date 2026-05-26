@@ -281,9 +281,42 @@ func (r *Redis) listenPubSub(ctx context.Context, pubsub *redis.PubSub) {
 			if !ok {
 				return
 			}
-			_ = msg
-			// On any event, refresh state from Redis for consistency
-			_ = r.refreshState(ctx)
+			r.handlePubSubMessage(msg.Payload)
 		}
+	}
+}
+
+// handlePubSubMessage processes a kill-switch event and updates local cache immediately.
+// Message format: "global:activate", "global:deactivate", "agent:kill:<id>",
+// "agent:revive:<id>", "session:kill:<id>", "session:revive:<id>", "reset".
+func (r *Redis) handlePubSubMessage(payload string) {
+	r.mu.Lock()
+	shouldRefresh := false
+
+	switch {
+	case payload == "global:activate":
+		r.globalActive = true
+	case payload == "global:deactivate":
+		r.globalActive = false
+	case payload == "reset":
+		r.globalActive = false
+		r.killedAgents = make(map[string]bool)
+		r.killedSessions = make(map[string]bool)
+	case len(payload) > len("agent:kill:") && payload[:len("agent:kill:")] == "agent:kill:":
+		r.killedAgents[payload[len("agent:kill:"):]] = true
+	case len(payload) > len("agent:revive:") && payload[:len("agent:revive:")] == "agent:revive:":
+		delete(r.killedAgents, payload[len("agent:revive:"):])
+	case len(payload) > len("session:kill:") && payload[:len("session:kill:")] == "session:kill:":
+		r.killedSessions[payload[len("session:kill:"):]] = true
+	case len(payload) > len("session:revive:") && payload[:len("session:revive:")] == "session:revive:":
+		delete(r.killedSessions, payload[len("session:revive:"):])
+	default:
+		// Unknown message — trigger a full refresh from Redis.
+		shouldRefresh = true
+	}
+	r.mu.Unlock()
+
+	if shouldRefresh && r.client != nil {
+		_ = r.refreshState(context.Background())
 	}
 }
