@@ -38,7 +38,9 @@ The eunox capability governance system implements a clean adapter pattern for id
 | Type          | Implementation                                                 | Package                         |
 | ------------- | -------------------------------------------------------------- | ------------------------------- |
 | Software keys | In-memory private key signing (RSA, ECDSA, EdDSA)              | `pkg/crypto` (`SoftwareSigner`) |
-| KMS stubs     | Placeholder for future Azure Key Vault, AWS KMS, GCP Cloud KMS | `pkg/crypto` (`KMSSigner`)      |
+| AWS KMS       | Remote signing via AWS KMS asymmetric keys                     | `pkg/crypto` (`RealAWSKMSSigner`) |
+| Azure Key Vault | Remote signing via Azure Key Vault keys                      | `pkg/crypto` (`RealAzureKeyVaultSigner`) |
+| GCP Cloud KMS | Remote signing via GCP Cloud KMS asymmetric keys               | `pkg/crypto` (`RealGCPCloudKMSSigner`) |
 
 ---
 
@@ -500,15 +502,182 @@ func main() {
 
 ---
 
-## Future: KMS-Backed Signers
+## KMS-Backed Signers
 
-The `pkg/crypto` package includes `KMSSigner` stubs for future integration with cloud KMS services:
+The `pkg/crypto` package provides production-ready KMS signer implementations that delegate all cryptographic operations to cloud KMS services. Private key material never leaves the KMS boundary.
 
-- **Azure Key Vault**: Sign with keys stored in Azure Key Vault
-- **AWS KMS**: Sign with AWS KMS asymmetric keys
-- **GCP Cloud KMS**: Sign with Cloud KMS asymmetric keys
+### Architecture
 
-These will be implemented in future releases. For now, use `crypto.GenerateSoftwareKeyPair()` for in-memory signing.
+Each KMS signer follows the same provider/client interface pattern used throughout eunox:
+
+1. **Client interface** — abstracts the cloud SDK's signing API (e.g., `AWSKMSClient`, `AzureKeyVaultClient`, `GCPCloudKMSClient`)
+2. **Configuration struct** — holds key identifiers, region/location, algorithm, and client reference
+3. **Signer implementation** — implements `crypto.Signer`, delegates to client, handles signature format normalization
+
+This design enables:
+- Unit testing with mock clients (no cloud connectivity required)
+- Swapping SDK implementations without changing business logic
+- Supporting multiple KMS providers in the same deployment
+
+### Supported Algorithms
+
+| Algorithm Family | JOSE IDs | AWS KMS | Azure Key Vault | GCP Cloud KMS |
+|-----------------|----------|---------|-----------------|---------------|
+| RSA PKCS#1 v1.5 | RS256, RS384, RS512 | ✅ | ✅ | ✅ |
+| RSA-PSS | PS256, PS384, PS512 | ✅ | ✅ | ✅ |
+| ECDSA | ES256, ES384, ES512 | ✅ | ✅ | ✅ |
+
+> **Note:** EdDSA (Ed25519) and ES256K (secp256k1) are not supported by cloud KMS services. Use `SoftwareSigner` for these algorithms.
+
+### AWS KMS
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
+
+func main() {
+    // Create your AWS KMS client (wraps aws-sdk-go-v2/service/kms)
+    client := NewMyAWSKMSClient(region, credentials)
+
+    signer, err := crypto.NewRealAWSKMSSigner(crypto.RealAWSKMSSignerConfig{
+        KeyID:     "arn:aws:kms:us-east-1:123456789:key/mrk-1234abcd",
+        Region:    "us-east-1",
+        Algorithm: crypto.ES256,
+        Client:    client,
+    })
+    if err != nil {
+        log.Fatalf("Failed to create AWS KMS signer: %v", err)
+    }
+
+    // Sign a pre-hashed digest
+    ctx := context.Background()
+    signature, err := signer.Sign(ctx, sha256Digest)
+    if err != nil {
+        log.Fatalf("Signing failed: %v", err)
+    }
+
+    log.Printf("Signed with key %s using %s", signer.KeyID(), signer.Algorithm())
+    _ = signature
+}
+```
+
+### Azure Key Vault
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
+
+func main() {
+    // Create your Azure Key Vault client (wraps azkeys.Client)
+    client := NewMyAzureKeyVaultClient(credential)
+
+    signer, err := crypto.NewRealAzureKeyVaultSigner(&crypto.RealAzureKeyVaultSignerConfig{
+        VaultURL:   "https://my-vault.vault.azure.net",
+        KeyName:    "signing-key",
+        KeyVersion: "abc123", // optional; empty = latest
+        Algorithm:  crypto.RS256,
+        Client:     client,
+    })
+    if err != nil {
+        log.Fatalf("Failed to create Azure Key Vault signer: %v", err)
+    }
+
+    ctx := context.Background()
+    signature, err := signer.Sign(ctx, sha256Digest)
+    if err != nil {
+        log.Fatalf("Signing failed: %v", err)
+    }
+
+    log.Printf("Signed with key %s", signer.KeyID())
+    _ = signature
+}
+```
+
+### GCP Cloud KMS
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
+
+func main() {
+    // Create your GCP Cloud KMS client (wraps kms.KeyManagementClient)
+    client := NewMyGCPCloudKMSClient(ctx)
+
+    signer, err := crypto.NewRealGCPCloudKMSSigner(&crypto.RealGCPCloudKMSSignerConfig{
+        ProjectID:        "my-project",
+        LocationID:       "us-east1",
+        KeyRingID:        "my-keyring",
+        CryptoKeyID:      "signing-key",
+        CryptoKeyVersion: "1",
+        Algorithm:        crypto.PS256,
+        Client:           client,
+    })
+    if err != nil {
+        log.Fatalf("Failed to create GCP Cloud KMS signer: %v", err)
+    }
+
+    ctx := context.Background()
+    signature, err := signer.Sign(ctx, sha256Digest)
+    if err != nil {
+        log.Fatalf("Signing failed: %v", err)
+    }
+
+    log.Printf("Signed with key %s", signer.KeyID())
+    _ = signature
+}
+```
+
+### Implementing a KMS Client
+
+To integrate with a specific cloud SDK, implement the corresponding client interface:
+
+```go
+// For AWS KMS:
+type AWSKMSClient interface {
+    Sign(ctx context.Context, input *AWSKMSSignInput) (*AWSKMSSignOutput, error)
+}
+
+// For Azure Key Vault:
+type AzureKeyVaultClient interface {
+    Sign(ctx context.Context, input *AzureKeyVaultSignInput) (*AzureKeyVaultSignOutput, error)
+}
+
+// For GCP Cloud KMS:
+type GCPCloudKMSClient interface {
+    AsymmetricSign(ctx context.Context, input *GCPCloudKMSSignInput) (*GCPCloudKMSSignOutput, error)
+}
+```
+
+### ECDSA Signature Normalization
+
+Cloud KMS services return ECDSA signatures in different formats:
+- **AWS KMS** returns DER/ASN.1 encoded signatures
+- **Azure Key Vault** returns JOSE R||S concatenated format
+- **GCP Cloud KMS** returns DER/ASN.1 encoded signatures
+
+The signer implementations automatically normalize all ECDSA signatures to the JOSE R||S format (RFC 7518 §3.4) expected by JWT/JOSE consumers. RSA signatures pass through unchanged.
+
+### Legacy Stubs
+
+The original stub signers (`NewAWSKMSSigner`, `NewAzureKeyVaultSigner`, `NewGCPCloudKMSSigner` in `kms_stub.go`) remain available for environments where KMS is not yet configured. They return `ErrKMSNotImplemented` on Sign() calls.
 
 ---
 
