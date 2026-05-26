@@ -171,7 +171,7 @@ func New(cfg *Config, deps *Dependencies) *App {
 		for _, origin := range app.config.AllowedOrigins {
 			if origin == "*" {
 				if deps.Logger != nil {
-					deps.Logger.Warn("CORS wildcard origin '*' is configured in production; this disables cross-origin protection entirely. Use explicit origins for production deployments")
+					deps.Logger.Warn("CORS wildcard (*) detected in production environment. This disables cross-origin protection. Configure explicit AllowedOrigins for production.")
 				}
 				break
 			}

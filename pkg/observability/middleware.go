@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// RequestIDKey is the context key used to store the request ID for outbound propagation.
+// requestIDKey is the context key used to store the request ID for outbound propagation.
 // This is compatible with chi's middleware.RequestID; use GetRequestID to extract it.
 type requestIDKey struct{}
 

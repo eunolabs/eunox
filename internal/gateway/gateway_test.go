@@ -646,7 +646,7 @@ func TestCORS_WildcardProductionWarning(t *testing.T) {
 	_ = gateway.New(&cfg, &deps)
 
 	logOutput := buf.String()
-	assert.Contains(t, logOutput, "CORS wildcard origin '*' is configured in production")
+	assert.Contains(t, logOutput, "CORS wildcard (*) detected in production environment")
 }
 
 func TestCORS_WildcardNoWarningInDevelopment(t *testing.T) {
