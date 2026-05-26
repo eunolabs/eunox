@@ -45,6 +45,9 @@ func main() {
 
 	logger.Info("starting capability issuer",
 		slog.Int("port", cfg.Port),
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.String("issuer_did", cfg.IssuerDID),
 		slog.String("signing_provider", string(cfg.SigningProvider)),
 		slog.String("identity_provider", string(cfg.IdentityProvider)),

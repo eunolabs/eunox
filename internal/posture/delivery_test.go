@@ -97,7 +97,7 @@ func TestDeliveryWorker_DeliversObservedEvent(t *testing.T) {
 		LastSeen:   time.Now().UTC(),
 	}
 	payload, _ := json.Marshal(record)
-	_, err = q.Push(EventObserved, payload)
+	_, err = q.Push(context.Background(), EventObserved, payload)
 	require.NoError(t, err)
 
 	cfg := DeliveryWorkerConfig{
@@ -123,7 +123,7 @@ func TestDeliveryWorker_DeliversObservedEvent(t *testing.T) {
 	assert.Equal(t, "agent-1", plugin.observed[0].AgentID)
 
 	// Queue should be empty.
-	depth, _ := q.Depth()
+	depth, _ := q.Depth(context.Background())
 	assert.Equal(t, int64(0), depth)
 }
 
@@ -139,7 +139,7 @@ func TestDeliveryWorker_DeliversRevokedEvent(t *testing.T) {
 		AgentID:   "agent-revoke",
 		RevokedAt: revokedAt,
 	})
-	_, err = q.Push(EventRevoked, payload)
+	_, err = q.Push(context.Background(), EventRevoked, payload)
 	require.NoError(t, err)
 
 	cfg := DeliveryWorkerConfig{
@@ -175,7 +175,7 @@ func TestDeliveryWorker_RetriesOnFailure(t *testing.T) {
 
 	record := AgentInventoryRecord{AgentID: "agent-retry", FirstSeen: time.Now().UTC(), LastSeen: time.Now().UTC()}
 	payload, _ := json.Marshal(record)
-	_, err = q.Push(EventObserved, payload)
+	_, err = q.Push(context.Background(), EventObserved, payload)
 	require.NoError(t, err)
 
 	cfg := DeliveryWorkerConfig{
@@ -214,7 +214,7 @@ func TestDeliveryWorker_DeadLettersAfterMaxAttempts(t *testing.T) {
 	payload, _ := json.Marshal(record)
 
 	// Manually push with enough attempts to trigger dead-letter on next tick.
-	id, err := q.Push(EventObserved, payload)
+	id, err := q.Push(context.Background(), EventObserved, payload)
 	require.NoError(t, err)
 
 	// Set attempts to maxAttempts to trigger dead-letter immediately.
@@ -255,7 +255,7 @@ func TestDeliveryWorker_MultiplePlugins(t *testing.T) {
 
 	record := AgentInventoryRecord{AgentID: "agent-multi", FirstSeen: time.Now().UTC(), LastSeen: time.Now().UTC()}
 	payload, _ := json.Marshal(record)
-	_, err = q.Push(EventObserved, payload)
+	_, err = q.Push(context.Background(), EventObserved, payload)
 	require.NoError(t, err)
 
 	cfg := DeliveryWorkerConfig{
@@ -288,7 +288,7 @@ func TestDeliveryWorker_StopDrainsInFlight(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		record := AgentInventoryRecord{AgentID: fmt.Sprintf("agent-%d", i), FirstSeen: time.Now().UTC(), LastSeen: time.Now().UTC()}
 		payload, _ := json.Marshal(record)
-		_, _ = q.Push(EventObserved, payload)
+		_, _ = q.Push(context.Background(), EventObserved, payload)
 	}
 
 	cfg := DeliveryWorkerConfig{

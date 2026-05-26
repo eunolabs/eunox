@@ -59,6 +59,8 @@ func run() error {
 		slog.String("commit", commit),
 		slog.String("date", date),
 		slog.Int("port", cfg.Port),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.Bool("enabled", cfg.Enabled),
 		slog.String("plugins", cfg.Plugins),
 		slog.String("queuePath", cfg.QueuePath),

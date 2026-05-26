@@ -42,6 +42,9 @@ func main() {
 		slog.String("commit", commit),
 		slog.String("date", date),
 		slog.Int("port", cfg.Port),
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.String("environment", string(cfg.NodeEnv)),
 	)
 

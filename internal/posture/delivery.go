@@ -64,6 +64,8 @@ type DeliveryWorker struct {
 	logger  *slog.Logger
 	metrics DeliveryMetrics
 
+	ctx    context.Context
+	cancel context.CancelFunc
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
@@ -89,12 +91,15 @@ func NewDeliveryWorker(queue Queue, plugins []Plugin, cfg DeliveryWorkerConfig, 
 		cfg.PluginTimeout = DefaultPluginTimeout
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	return &DeliveryWorker{
 		queue:   queue,
 		plugins: plugins,
 		config:  cfg,
 		logger:  logger,
 		metrics: metrics,
+		ctx:     ctx,
+		cancel:  cancel,
 		stopCh:  make(chan struct{}),
 	}
 }
@@ -109,6 +114,7 @@ func (w *DeliveryWorker) Start() {
 func (w *DeliveryWorker) Stop() {
 	close(w.stopCh)
 	w.wg.Wait()
+	w.cancel()
 }
 
 func (w *DeliveryWorker) pollLoop() {
@@ -130,7 +136,7 @@ func (w *DeliveryWorker) pollLoop() {
 }
 
 func (w *DeliveryWorker) tick() {
-	events, err := w.queue.Peek(w.config.BatchSize)
+	events, err := w.queue.Peek(w.ctx, w.config.BatchSize)
 	if err != nil {
 		if w.logger != nil {
 			w.logger.Error("delivery worker: peek failed", slog.String("error", err.Error()))
@@ -152,7 +158,7 @@ func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 
 	var deliveryErr error
 	for _, plugin := range w.plugins {
-		ctx, cancel := context.WithTimeout(context.Background(), w.config.PluginTimeout)
+		ctx, cancel := context.WithTimeout(w.ctx, w.config.PluginTimeout)
 		err := w.deliverToPlugin(ctx, plugin, event)
 		cancel()
 		if err != nil {
@@ -176,7 +182,7 @@ func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 	if deliveryErr != nil {
 		// Nack with exponential backoff.
 		nextAttempt := w.computeNextAttempt(event.Attempts)
-		if err := w.queue.Nack(event.ID, nextAttempt, deliveryErr.Error()); err != nil && w.logger != nil {
+		if err := w.queue.Nack(w.ctx, event.ID, nextAttempt, deliveryErr.Error()); err != nil && w.logger != nil {
 			w.logger.Error("delivery worker: nack failed",
 				slog.Int64("eventID", event.ID),
 				slog.String("error", err.Error()),
@@ -184,7 +190,7 @@ func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 		}
 	} else {
 		// All plugins succeeded: ack.
-		if err := w.queue.Ack(event.ID); err != nil && w.logger != nil {
+		if err := w.queue.Ack(w.ctx, event.ID); err != nil && w.logger != nil {
 			w.logger.Error("delivery worker: ack failed",
 				slog.Int64("eventID", event.ID),
 				slog.String("error", err.Error()),
@@ -226,9 +232,9 @@ func (w *DeliveryWorker) deadLetter(event *QueuedEvent) {
 	if w.metrics != nil {
 		w.metrics.OnDeadLettered(event.Type)
 	}
-	// Remove from active queue; in production, this would move to a dead-letter table.
-	if err := w.queue.Ack(event.ID); err != nil && w.logger != nil {
-		w.logger.Error("delivery worker: dead-letter ack failed",
+	// Move to dead-letter table for operator inspection and replay.
+	if err := w.queue.DeadLetter(w.ctx, event); err != nil && w.logger != nil {
+		w.logger.Error("delivery worker: dead-letter failed",
 			slog.Int64("eventID", event.ID),
 			slog.String("error", err.Error()),
 		)

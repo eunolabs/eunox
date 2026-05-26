@@ -4,6 +4,7 @@
 package posture
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,12 +17,12 @@ func TestSQLiteQueue_PushAndPeek(t *testing.T) {
 	defer func() { _ = q.Close() }()
 
 	// Push an event.
-	id, err := q.Push(EventObserved, []byte(`{"agentId":"agent-1"}`))
+	id, err := q.Push(context.Background(), EventObserved, []byte(`{"agentId":"agent-1"}`))
 	require.NoError(t, err)
 	assert.Greater(t, id, int64(0))
 
 	// Peek should return the event.
-	events, err := q.Peek(10)
+	events, err := q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, id, events[0].ID)
@@ -35,14 +36,14 @@ func TestSQLiteQueue_Ack(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	id, err := q.Push(EventObserved, []byte(`{}`))
+	id, err := q.Push(context.Background(), EventObserved, []byte(`{}`))
 	require.NoError(t, err)
 
 	// Ack removes the event.
-	err = q.Ack(id)
+	err = q.Ack(context.Background(), id)
 	require.NoError(t, err)
 
-	events, err := q.Peek(10)
+	events, err := q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	assert.Empty(t, events)
 }
@@ -52,16 +53,16 @@ func TestSQLiteQueue_Nack(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	id, err := q.Push(EventObserved, []byte(`{}`))
+	id, err := q.Push(context.Background(), EventObserved, []byte(`{}`))
 	require.NoError(t, err)
 
 	// Nack with a far-future next attempt.
 	futureMs := int64(99999999999999)
-	err = q.Nack(id, futureMs, "transient failure")
+	err = q.Nack(context.Background(), id, futureMs, "transient failure")
 	require.NoError(t, err)
 
 	// Peek should return nothing (not yet ready).
-	events, err := q.Peek(10)
+	events, err := q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	assert.Empty(t, events)
 }
@@ -71,16 +72,16 @@ func TestSQLiteQueue_Depth(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	depth, err := q.Depth()
+	depth, err := q.Depth(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), depth)
 
-	_, err = q.Push(EventObserved, []byte(`{}`))
+	_, err = q.Push(context.Background(), EventObserved, []byte(`{}`))
 	require.NoError(t, err)
-	_, err = q.Push(EventRevoked, []byte(`{}`))
+	_, err = q.Push(context.Background(), EventRevoked, []byte(`{}`))
 	require.NoError(t, err)
 
-	depth, err = q.Depth()
+	depth, err = q.Depth(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), depth)
 }
@@ -90,24 +91,24 @@ func TestSQLiteQueue_MultiplePushAndOrdering(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	id1, err := q.Push(EventObserved, []byte(`{"n":1}`))
+	id1, err := q.Push(context.Background(), EventObserved, []byte(`{"n":1}`))
 	require.NoError(t, err)
-	id2, err := q.Push(EventObserved, []byte(`{"n":2}`))
+	id2, err := q.Push(context.Background(), EventObserved, []byte(`{"n":2}`))
 	require.NoError(t, err)
-	id3, err := q.Push(EventRevoked, []byte(`{"n":3}`))
+	id3, err := q.Push(context.Background(), EventRevoked, []byte(`{"n":3}`))
 	require.NoError(t, err)
 
-	events, err := q.Peek(2)
+	events, err := q.Peek(context.Background(), 2)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
 	assert.Equal(t, id1, events[0].ID)
 	assert.Equal(t, id2, events[1].ID)
 
 	// Ack first, peek again.
-	require.NoError(t, q.Ack(id1))
-	require.NoError(t, q.Ack(id2))
+	require.NoError(t, q.Ack(context.Background(), id1))
+	require.NoError(t, q.Ack(context.Background(), id2))
 
-	events, err = q.Peek(10)
+	events, err = q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, id3, events[0].ID)
@@ -119,21 +120,21 @@ func TestSQLiteQueue_NackIncrementsAttempts(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q.Close() }()
 
-	id, _ := q.Push(EventObserved, []byte(`{}`))
+	id, _ := q.Push(context.Background(), EventObserved, []byte(`{}`))
 
 	// Nack with immediate retry (nextAttemptAt = 0).
-	require.NoError(t, q.Nack(id, 0, "fail 1"))
+	require.NoError(t, q.Nack(context.Background(), id, 0, "fail 1"))
 
-	events, err := q.Peek(10)
+	events, err := q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, 1, events[0].Attempts)
 	assert.Equal(t, "fail 1", events[0].LastError)
 
 	// Nack again.
-	require.NoError(t, q.Nack(id, 0, "fail 2"))
+	require.NoError(t, q.Nack(context.Background(), id, 0, "fail 2"))
 
-	events, err = q.Peek(10)
+	events, err = q.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, 2, events[0].Attempts)
@@ -147,7 +148,7 @@ func TestSQLiteQueue_DurabilityAfterReopen(t *testing.T) {
 	q, err := NewSQLiteQueue(path)
 	require.NoError(t, err)
 
-	_, err = q.Push(EventObserved, []byte(`{"durable":true}`))
+	_, err = q.Push(context.Background(), EventObserved, []byte(`{"durable":true}`))
 	require.NoError(t, err)
 
 	// Close and reopen.
@@ -157,8 +158,88 @@ func TestSQLiteQueue_DurabilityAfterReopen(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = q2.Close() }()
 
-	events, err := q2.Peek(10)
+	events, err := q2.Peek(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, `{"durable":true}`, string(events[0].Payload))
+}
+
+func TestSQLiteQueue_DeadLetter(t *testing.T) {
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	ctx := context.Background()
+
+	// Push an event and dead-letter it.
+	id, err := q.Push(ctx, EventObserved, []byte(`{"agent":"a1"}`))
+	require.NoError(t, err)
+
+	events, err := q.Peek(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	err = q.DeadLetter(ctx, &events[0])
+	require.NoError(t, err)
+
+	// Queue should be empty.
+	depth, err := q.Depth(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), depth)
+
+	// Dead-letter queue should have 1 item.
+	dlDepth, err := q.DeadLetterDepth(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), dlDepth)
+
+	// List dead letters.
+	dls, err := q.ListDeadLetters(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, dls, 1)
+	assert.Equal(t, id, dls[0].OriginalID)
+	assert.Equal(t, EventObserved, dls[0].Type)
+	assert.Equal(t, `{"agent":"a1"}`, string(dls[0].Payload))
+	assert.Greater(t, dls[0].DeadLetteredAt, int64(0))
+}
+
+func TestSQLiteQueue_DeadLetter_NotFound(t *testing.T) {
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	ctx := context.Background()
+
+	// Dead-lettering a non-existent event should return an error.
+	err = q.DeadLetter(ctx, &QueuedEvent{ID: 9999, Type: EventObserved, Payload: []byte(`{}`)})
+	assert.Error(t, err)
+}
+
+func TestSQLiteQueue_DeadLetterDepth_Empty(t *testing.T) {
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	ctx := context.Background()
+
+	depth, err := q.DeadLetterDepth(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), depth)
+}
+
+func TestSQLiteQueue_ContextCancelled(t *testing.T) {
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err = q.Push(ctx, EventObserved, []byte(`{}`))
+	assert.ErrorIs(t, err, context.Canceled)
+
+	_, err = q.Peek(ctx, 10)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	_, err = q.Depth(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
 }
