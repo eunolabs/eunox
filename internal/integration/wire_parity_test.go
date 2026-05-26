@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -156,6 +157,100 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWireParity_RequestIDPropagation verifies requestId echoes X-Request-Id
+// and remains populated across early-deny paths.
+func TestWireParity_RequestIDPropagation(t *testing.T) {
+	makeHandler := func(claims *capability.TokenPayload, ks killswitch.Manager, revStore *revocation.InMemory) http.Handler {
+		dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+		app := gateway.New(gateway.Config{
+			GatewayAudience: "wire-test",
+			AdminAPIKey:     testAdminKey,
+		}, gateway.Dependencies{
+			Engine:      enforcement.New(),
+			KillSwitch:  ks,
+			Revocation:  revStore,
+			JWTVerifier: &staticClaimsVerifier{claims: claims},
+			DPoPStore:   dpopStore,
+		})
+		return app.Handler()
+	}
+
+	baseRequest := map[string]any{
+		"token": "test-token",
+		"request": map[string]any{
+			"sessionId": "wire-request-id",
+			"toolName":  "tool",
+			"context":   map[string]any{"sourceIp": "10.0.0.1"},
+		},
+	}
+
+	t.Run("echoes_x_request_id_when_provided", func(t *testing.T) {
+		claims := &capability.TokenPayload{
+			Subject: "wire-user", JWTID: "wire-jti-echo",
+			ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+			Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
+		}
+		handler := makeHandler(claims, killswitch.NewInMemory(), revocation.NewInMemory())
+
+		body, err := json.Marshal(baseRequest)
+		require.NoError(t, err)
+		req := newJSONRequest(t, http.MethodPost, "/api/v1/enforce", body)
+		req.Header.Set("X-Request-Id", "wire-request-id-123")
+
+		w := doRequest(handler, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		err = json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "wire-request-id-123", resp["requestId"])
+		assert.Equal(t, "allow", resp["decision"])
+	})
+
+	t.Run("request_id_present_on_global_killswitch_deny", func(t *testing.T) {
+		claims := &capability.TokenPayload{
+			Subject: "wire-user", JWTID: "wire-jti-kill",
+			ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+			Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
+		}
+		ks := killswitch.NewInMemory()
+		require.NoError(t, ks.ActivateGlobal(context.Background()))
+		handler := makeHandler(claims, ks, revocation.NewInMemory())
+
+		resp := enforceAndGetResponse(t, handler, baseRequest)
+		assert.Equal(t, "deny", resp["decision"])
+		assert.NotEmpty(t, resp["requestId"])
+	})
+
+	t.Run("request_id_present_on_revoked_token_deny", func(t *testing.T) {
+		claims := &capability.TokenPayload{
+			Subject: "wire-user", JWTID: "wire-jti-revoked",
+			ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+			Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
+		}
+		revStore := revocation.NewInMemory()
+		require.NoError(t, revStore.Revoke(context.Background(), claims.JWTID, time.Hour))
+		handler := makeHandler(claims, killswitch.NewInMemory(), revStore)
+
+		resp := enforceAndGetResponse(t, handler, baseRequest)
+		assert.Equal(t, "deny", resp["decision"])
+		assert.NotEmpty(t, resp["requestId"])
+	})
+
+	t.Run("request_id_present_on_expired_token_deny", func(t *testing.T) {
+		claims := &capability.TokenPayload{
+			Subject: "wire-user", JWTID: "wire-jti-expired",
+			ExpiresAt:    time.Now().Add(-1 * time.Hour).Unix(),
+			Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
+		}
+		handler := makeHandler(claims, killswitch.NewInMemory(), revocation.NewInMemory())
+
+		resp := enforceAndGetResponse(t, handler, baseRequest)
+		assert.Equal(t, "deny", resp["decision"])
+		assert.NotEmpty(t, resp["requestId"])
+	})
 }
 
 // TestWireParity_EnforceRequestValidation verifies request validation matches TypeScript behavior.

@@ -771,7 +771,7 @@ Known limitation:
 4. **Upgrade/migration tests** (`migration_test.go`):
    - Config format compatibility (env vars identical to TypeScript version)
    - Migration file existence verification
-   - API key format validation (euno_ prefix + base64url)
+   - API key format validation (`sk-<keyId>.<secret>` with base64url components)
    - Environment variable name parity check
 
 ### Exit Criteria

@@ -275,7 +275,8 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	w := httptest.NewRecorder()
 	gwApp.Handler().ServeHTTP(w, req)
 	var enforceResp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &enforceResp)
+	err = json.Unmarshal(w.Body.Bytes(), &enforceResp)
+	require.NoError(t, err)
 	assert.Equal(t, "allow", enforceResp["decision"])
 
 	// Other tool denied (no matching capability in the attenuated set)
@@ -291,7 +292,8 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	gwApp.Handler().ServeHTTP(w, req)
-	_ = json.Unmarshal(w.Body.Bytes(), &enforceResp)
+	err = json.Unmarshal(w.Body.Bytes(), &enforceResp)
+	require.NoError(t, err)
 	assert.Equal(t, "deny", enforceResp["decision"])
 }
 
@@ -382,7 +384,8 @@ func TestIssuance_KeyRotation(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var tokenV1 issuer.IssueResponse
-	_ = json.NewDecoder(resp.Body).Decode(&tokenV1)
+	err = json.NewDecoder(resp.Body).Decode(&tokenV1)
+	require.NoError(t, err)
 	assert.NotEmpty(t, tokenV1.Token)
 
 	// Issue token with key2
@@ -405,7 +408,8 @@ func TestIssuance_KeyRotation(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var tokenV2 issuer.IssueResponse
-	_ = json.NewDecoder(resp.Body).Decode(&tokenV2)
+	err = json.NewDecoder(resp.Body).Decode(&tokenV2)
+	require.NoError(t, err)
 	assert.NotEmpty(t, tokenV2.Token)
 	assert.NotEqual(t, tokenV1.Token, tokenV2.Token)
 
@@ -584,7 +588,8 @@ func TestIssuance_TokenRenewal(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var originalToken issuer.IssueResponse
-	_ = json.NewDecoder(resp.Body).Decode(&originalToken)
+	err = json.NewDecoder(resp.Body).Decode(&originalToken)
+	require.NoError(t, err)
 
 	// Renew the token (requires fresh idToken for re-auth)
 	renewBody, _ := json.Marshal(map[string]any{"token": originalToken.Token, "idToken": idToken, "ttl": 300})
@@ -594,7 +599,8 @@ func TestIssuance_TokenRenewal(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var renewed issuer.RenewResponse
-	_ = json.NewDecoder(resp.Body).Decode(&renewed)
+	err = json.NewDecoder(resp.Body).Decode(&renewed)
+	require.NoError(t, err)
 	assert.NotEmpty(t, renewed.Token)
 	assert.True(t, renewed.ExpiresAt > originalToken.ExpiresAt)
 }

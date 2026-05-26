@@ -705,8 +705,8 @@ func TestCondition_MultipleConditions_AllMustPass(t *testing.T) {
 	assert.Equal(t, "deny", resp["decision"])
 }
 
-// TestCondition_UnknownType_FailsClosed verifies unknown condition types produce denial (fail-closed).
-func TestCondition_UnknownType_FailsClosed(t *testing.T) {
+// TestCondition_CustomCondition_PassThrough verifies custom conditions are pass-through by default.
+func TestCondition_CustomCondition_PassThrough(t *testing.T) {
 	claims := &capability.TokenPayload{
 		Subject:   "user-1",
 		JWTID:     "jti-1",

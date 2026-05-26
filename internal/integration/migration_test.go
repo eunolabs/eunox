@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigration_ConfigCompatibility verifies that old configuration formats
-// are still accepted by the current configuration parsers.
-func TestMigration_ConfigCompatibility(t *testing.T) {
+// TestMigration_ConfigJSONRoundTrip verifies representative config payloads
+// round-trip through JSON encoding without field loss.
+func TestMigration_ConfigJSONRoundTrip(t *testing.T) {
 	// Test that the gateway config schema accepts all required fields
 	configs := []struct {
 		name   string
@@ -107,9 +107,9 @@ func TestMigration_MigrationFilesExist(t *testing.T) {
 	}
 }
 
-// TestMigration_EnvVarCompatibility verifies that all documented environment variables
-// are recognized and properly validated.
-func TestMigration_EnvVarCompatibility(t *testing.T) {
+// TestMigration_EnvVarIsolation verifies expected environment variables are not
+// pre-set in the test process and won't interfere with integration tests.
+func TestMigration_EnvVarIsolation(t *testing.T) {
 	// Document the expected env vars for each service
 	gatewayEnvVars := []string{
 		"GATEWAY_AUDIENCE",
@@ -146,7 +146,7 @@ func TestMigration_EnvVarCompatibility(t *testing.T) {
 // with the documented format: sk-{id}.{secret}
 func TestMigration_APIKeyFormat(t *testing.T) {
 	// Import the minter to test key format
-	// The format is: sk-{base62-id}.{base62-secret}
+	// The format is: sk-{base64url-keyId}.{base64url-secret}
 	tests := []struct {
 		name    string
 		key     string
