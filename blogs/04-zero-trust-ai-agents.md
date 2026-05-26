@@ -1,6 +1,6 @@
 # Zero trust for AI agents: a practitioner's guide
 
-*Audience: security architects and platform engineers deploying AI agent infrastructure*
+_Audience: security architects and platform engineers deploying AI agent infrastructure_
 
 ---
 

@@ -350,3 +350,58 @@ type staticTestHints struct {
 func (h *staticTestHints) GetHints(_ context.Context) (*IssuanceHints, error) {
 	return h.hints, nil
 }
+
+func TestAuthTokenProvider_StopCancelsBackgroundRefresh(t *testing.T) {
+	// Verify that calling Stop() cancels in-flight background refresh via lifecycle context.
+	refreshStarted := make(chan struct{})
+	refreshCtxCancelled := make(chan struct{})
+
+	client := NewMockHTTPClient(func(req *HTTPRequest) (*HTTPResponse, error) {
+		select {
+		case refreshStarted <- struct{}{}:
+		default:
+		}
+		// Block until context is cancelled (simulating slow network).
+		<-req.Context.Done()
+		close(refreshCtxCancelled)
+		return nil, req.Context.Err()
+	})
+
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
+		IssuerURL:     "https://issuer.example.com",
+		HTTPClient:    client,
+		IdentityToken: "test-identity-token",
+		RefreshBefore: 30 * time.Second,
+		RetryConfig:   RetryConfig{MaxRetries: 0, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	})
+
+	// Manually set a token that will trigger background refresh in ~1s.
+	// ExpiresAt = now + 32s means refreshAt = now + 2s (since refreshBefore = 30s).
+	// Unix() truncation may subtract up to 1s, leaving ~1s of real delay.
+	provider.mu.Lock()
+	provider.cachedToken = &TokenResponse{
+		Token:     "old-token",
+		ExpiresAt: time.Now().Unix() + 32,
+		IssuedAt:  time.Now().Unix(),
+		TokenID:   "old-id",
+	}
+	provider.scheduleRefreshLocked(provider.cachedToken)
+	provider.mu.Unlock()
+
+	// Wait for the refresh to start.
+	select {
+	case <-refreshStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background refresh did not start within 2s")
+	}
+
+	// Stop the provider — this should cancel the lifecycle context.
+	provider.Stop()
+
+	// The refresh context should be cancelled.
+	select {
+	case <-refreshCtxCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background refresh context was not cancelled after Stop()")
+	}
+}

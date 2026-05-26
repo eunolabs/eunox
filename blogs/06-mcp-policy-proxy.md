@@ -1,12 +1,12 @@
 # Building a policy proxy for MCP: design choices and trade-offs
 
-*Audience: platform engineers and security architects building MCP infrastructure*
+_Audience: platform engineers and security architects building MCP infrastructure_
 
 ---
 
 You've read [the MCP post](./05-mcp-explained.md). You're convinced the protocol is the right abstraction — one server works with any client, the integration matrix collapses, your tools are composable. So you start wiring things up, and somewhere around the point where your agent successfully queries your production database and emails the results to a user, you notice something uncomfortable: there's nothing between the model and the backend except a JSON-RPC message.
 
-The model decides what to call. The protocol delivers the call. The tool executes it. No authentication at the call level, no policy evaluation, no rate limiting, no audit log. The agent that just retrieved a customer record and formatted it into an email — could it have retrieved *any* customer record? Could it send the email to *any* address? How would you know if it did? How would you stop it if it tried?
+The model decides what to call. The protocol delivers the call. The tool executes it. No authentication at the call level, no policy evaluation, no rate limiting, no audit log. The agent that just retrieved a customer record and formatted it into an email — could it have retrieved _any_ customer record? Could it send the email to _any_ address? How would you know if it did? How would you stop it if it tried?
 
 This is the governance gap that MCP doesn't close. The protocol is plumbing. Governance is a different layer, and if you're running agents with any kind of real access, you need to build it.
 

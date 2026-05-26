@@ -82,6 +82,7 @@ eunox/
 ## CI
 
 The GitHub Actions workflow (`.github/workflows/go-ci.yml`) runs:
+
 - `go vet` + `golangci-lint`
 - Tests with race detector and 80% coverage threshold for `pkg/`
 - BSL license header check

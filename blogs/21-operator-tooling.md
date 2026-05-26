@@ -1,6 +1,6 @@
 # Operator Tooling: Kill Switches, Revocation, and SCIM Provisioning
 
-*Third post in the "User experience and developer ergonomics" series. [Post 9](./09-capability-tokens.md) covered capability tokens — the JWTs that this post's revocation machinery controls. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit chain that records every action described here. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index, including the upcoming post on the Redis substrate that makes the kill switch and revocation checks fast and distributed.*
+_Third post in the "User experience and developer ergonomics" series. [Post 9](./09-capability-tokens.md) covered capability tokens — the JWTs that this post's revocation machinery controls. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit chain that records every action described here. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index, including the upcoming post on the Redis substrate that makes the kill switch and revocation checks fast and distributed._
 
 ---
 
@@ -344,4 +344,4 @@ The operator JWT authentication (`MINTER_ADMIN_JWKS_URI`) is the recommended alt
 
 ---
 
-*Previous: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). Next: [post 22 — Reference policies: copy-paste guardrails for common MCP servers](./22-reference-policies.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). Next: [post 22 — Reference policies: copy-paste guardrails for common MCP servers](./22-reference-policies.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

@@ -1,6 +1,6 @@
 # The Tool Gateway as a reference monitor: implementing PDP in practice
 
-*Audience: security engineers and platform architects who want to understand how enforcement is actually implemented*
+_Audience: security engineers and platform architects who want to understand how enforcement is actually implemented_
 
 ---
 
@@ -190,6 +190,7 @@ The reference monitor concept is demanding not just about the design but about t
 When I explain this pipeline to teams that are new to agent governance, the reaction is sometimes: "that's a lot for a chat tool." And I understand the reaction — this is enterprise security infrastructure, not something you throw together in an afternoon.
 
 But consider what we're actually protecting against. An agent with database access, file system access, and email access has the capability to:
+
 - Read any database table the service account can access
 - Read any file the OS allows the process to read
 - Email anything to anyone
@@ -202,4 +203,4 @@ That's the right architecture for a system where the principal doing the request
 
 ---
 
-*Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+_Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)_

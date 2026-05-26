@@ -1,6 +1,6 @@
 # AI laws and acts around the globe: what every AI platform builder needs to know
 
-*Audience: platform engineers, architects, and compliance teams building or deploying AI systems that operate across jurisdictions*
+_Audience: platform engineers, architects, and compliance teams building or deploying AI systems that operate across jurisdictions_
 
 ---
 
@@ -79,6 +79,7 @@ China has been an active AI regulator and has moved faster than any other jurisd
 **Deep Synthesis Regulations (2023).** Covers AI-generated synthetic content — deepfakes, voice synthesis, generated images and video. Mandatory watermarking and disclosure requirements for synthetic content. Applicable to any system that generates or outputs synthetic media.
 
 **Generative AI Regulations (August 2023).** This is the most directly relevant for LLM-based systems. Any service providing generative AI to users in China must:
+
 - Register with the Cyberspace Administration of China (CAC) and conduct a security assessment
 - Ensure training data quality and legitimacy (IP clearance for training data)
 - Label AI-generated content
@@ -96,6 +97,7 @@ The registration and security assessment requirement is significant. It's not ju
 Canada has been working on the Artificial Intelligence and Data Act (AIDA), which was introduced as part of Bill C-27 alongside updates to its privacy law. The legislative process has been slower than anticipated, but the framework's direction is clear.
 
 AIDA would create a risk-based framework similar in structure to the EU AI Act, with:
+
 - High-impact systems defined around contexts where decisions significantly affect individuals
 - Obligations around mitigation measures, record-keeping, and human oversight for high-impact systems
 - A prohibition on systems that "pose a serious risk of imminent harm"
@@ -120,6 +122,7 @@ For multinational deployments: the DPDPA's consent and data fiduciary obligation
 ## Brazil: the AI Bill and LGPD
 
 Brazil's AI Bill (PL 2338/2023) has been working through the legislative process, modelled in part on the EU AI Act. It would establish:
+
 - A risk-based classification (minimum, limited, high, excessive risk)
 - Requirements for transparency, human oversight, and impact assessments for high-risk systems
 - Data protection requirements referencing the existing LGPD (Brazil's GDPR-equivalent)

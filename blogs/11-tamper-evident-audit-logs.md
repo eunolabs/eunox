@@ -1,10 +1,10 @@
 # Tamper-Evident Audit Logs: OCSF, HMAC Chaining, and KMS-Signed Evidence
 
-*Published in the "Architecture deep-dives" series. Read post 10 ("The Tool Gateway as a reference monitor") first if you haven't seen the enforcement pipeline yet — understanding how the gateway evaluates a tool call is a prerequisite for understanding why the audit record for that call looks the way it does. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Published in the "Architecture deep-dives" series. Read post 10 ("The Tool Gateway as a reference monitor") first if you haven't seen the enforcement pipeline yet — understanding how the gateway evaluates a tool call is a prerequisite for understanding why the audit record for that call looks the way it does. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-Every time a security audit comes up in a conversation with a potential enterprise customer, the same question surfaces within the first ten minutes: *"Can you prove that those audit logs haven't been tampered with?"* It's a fair question. A log file that an attacker — or a disgruntled admin with database access — can silently modify is not evidence. It's a story.
+Every time a security audit comes up in a conversation with a potential enterprise customer, the same question surfaces within the first ten minutes: _"Can you prove that those audit logs haven't been tampered with?"_ It's a fair question. A log file that an attacker — or a disgruntled admin with database access — can silently modify is not evidence. It's a story.
 
 Building something that can actually answer that question cleanly took longer than I expected. Here's what I learned.
 
@@ -14,7 +14,7 @@ Building something that can actually answer that question cleanly took longer th
 
 Most systems log events by appending rows to a database table or writing lines to a file. Both approaches share the same weakness: anyone with write access to the store can modify or delete records without leaving a trace. In a traditional relational database, `UPDATE` and `DELETE` are first-class operations. There's no structural barrier to "fixing" an inconvenient record.
 
-For a system whose entire value proposition is governance — *your AI agents don't do things they're not supposed to do, and we can prove it* — this is not a theoretical concern. If an attacker compromises the gateway host, or if a rogue operator wants to cover their tracks, a mutable audit log gives them a clean exit. The absence of evidence becomes the evidence of absence.
+For a system whose entire value proposition is governance — _your AI agents don't do things they're not supposed to do, and we can prove it_ — this is not a theoretical concern. If an attacker compromises the gateway host, or if a rogue operator wants to cover their tracks, a mutable audit log gives them a clean exit. The absence of evidence becomes the evidence of absence.
 
 The classic answer from the security world is an append-only log with a cryptographic chain. Each entry hashes the previous one; modifying any entry breaks the chain for every entry that follows. This is how certificate transparency logs work, how blockchain systems work at their core, and how we built the euno audit ledger.
 
@@ -30,10 +30,10 @@ The first time an enterprise customer's security team asked whether they could i
 
 The two event classes we emit:
 
-| Class | `class_uid` | When it fires |
-|---|---|---|
-| **Authorization** | `3003` | Token issuance, attenuation, renewal, revocation |
-| **API Activity** | `6003` | Every enforcement decision (allow or deny) at the gateway |
+| Class             | `class_uid` | When it fires                                             |
+| ----------------- | ----------- | --------------------------------------------------------- |
+| **Authorization** | `3003`      | Token issuance, attenuation, renewal, revocation          |
+| **API Activity**  | `6003`      | Every enforcement decision (allow or deny) at the gateway |
 
 A typical allowed tool call produces a record that looks roughly like this:
 
@@ -76,13 +76,14 @@ HMAC-SHA256(hmacSecret, seq || ":" || previousHash || ":" || recordHash || ":" |
 ```
 
 Where:
+
 - `seq` is a monotonically increasing per-replica sequence number
-- `previousHash` is the SHA-256 of the *previous* row's canonical JSON in the same replica chain
+- `previousHash` is the SHA-256 of the _previous_ row's canonical JSON in the same replica chain
 - `recordHash` is the SHA-256 of this row's canonical JSON
 - `replicaId` identifies which gateway instance wrote the row (important in a multi-replica deployment)
 - `hmacSecret` is a 256-bit secret provisioned at deployment time, stored in your KMS (Key Vault, AWS Secrets Manager, etc.) — not in the database itself
 
-This is the key design choice: the `hmacSecret` is *separate* from the database. A database admin who can run arbitrary SQL does not automatically have the HMAC secret. Modifying a row without the secret produces a detectable mismatch. To forge a record, an attacker needs both database write access *and* the HMAC secret *and* to recompute the entire chain from the modified record forward — all three simultaneously, under time pressure.
+This is the key design choice: the `hmacSecret` is _separate_ from the database. A database admin who can run arbitrary SQL does not automatically have the HMAC secret. Modifying a row without the secret produces a detectable mismatch. To forge a record, an attacker needs both database write access _and_ the HMAC secret _and_ to recompute the entire chain from the modified record forward — all three simultaneously, under time pressure.
 
 That's not an impenetrable barrier, but it raises the bar substantially. And because we also emit KMS-signed JWTs (more on that below), there's a second, independent layer that doesn't depend on the HMAC secret at all.
 
@@ -102,17 +103,18 @@ The `replicaId` is set at gateway startup — typically derived from the pod nam
 
 ## KMS-signed JWTs: the second layer
 
-HMAC is fast and easy to verify, but it has a property that some auditors push back on: it's symmetric. The same key that was used to *write* the HMAC can be used to *forge* it. If an attacker has the `hmacSecret`, they can rewrite history without leaving a trace at the HMAC layer.
+HMAC is fast and easy to verify, but it has a property that some auditors push back on: it's symmetric. The same key that was used to _write_ the HMAC can be used to _forge_ it. If an attacker has the `hmacSecret`, they can rewrite history without leaving a trace at the HMAC layer.
 
 This is where the KMS-signed JWT layer comes in. Every audit record in the export bundle includes an `evidenceJwt` field — a JWT signed by the gateway's asymmetric signing key (the same key that signs capability tokens, managed by Key Vault / AWS KMS / GCP Cloud KMS). The JWT payload contains the full OCSF record plus the chain metadata (`seq`, `previousHash`, `replicaId`).
 
-Crucially, this is an *asymmetric* signature. The private key never leaves the HSM. An auditor can verify the `evidenceJwt` offline using the issuer's published JWKS endpoint — the same verification path they'd use for any JWT issued by the platform — without any access to internal secrets.
+Crucially, this is an _asymmetric_ signature. The private key never leaves the HSM. An auditor can verify the `evidenceJwt` offline using the issuer's published JWKS endpoint — the same verification path they'd use for any JWT issued by the platform — without any access to internal secrets.
 
 This gives you two independent tamper-evidence mechanisms:
+
 1. HMAC chain verification (fast, symmetric, requires secret)
 2. KMS JWT verification (asymmetric, offline-verifiable, key never leaves HSM)
 
-To forge a record while defeating both layers, an attacker would need to simultaneously compromise the HMAC secret *and* the KMS private key. The KMS key never leaves the hardware boundary; compromising it is a different class of attack from SQL injection or database admin access.
+To forge a record while defeating both layers, an attacker would need to simultaneously compromise the HMAC secret _and_ the KMS private key. The KMS key never leaves the hardware boundary; compromising it is a different class of attack from SQL injection or database admin access.
 
 ---
 
@@ -137,6 +139,7 @@ The practical purpose of all this machinery is producing audit evidence for SOC 
 **CC7 (System Operations):** every enforcement decision — every allowed and denied tool call — maps here. This is the evidence that your access control policies are actually being enforced in real time (CC6.6), and that anomalies are being detected and logged (CC7.1, CC7.2). The `scope=soc2-cc7` query parameter returns this set.
 
 An auditor can:
+
 1. Export records for the audit period via `GET /api/v1/audit/export?since=...&until=...`
 2. Verify each `evidenceJwt` signature offline using the published JWKS
 3. Verify chain continuity across all replica chains
@@ -172,4 +175,4 @@ But for a governance layer over AI agent tool calls, where the threat model is "
 
 ---
 
-*Next in this series: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md), which covers how euno swaps between Azure AD + Key Vault, AWS Cognito + KMS, and GCP Cloud Identity + Cloud KMS without touching the enforcement core.*
+_Next in this series: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md), which covers how euno swaps between Azure AD + Key Vault, AWS Cognito + KMS, and GCP Cloud Identity + Cloud KMS without touching the enforcement core._

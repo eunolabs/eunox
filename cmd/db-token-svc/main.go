@@ -38,6 +38,9 @@ func main() {
 	})
 
 	logger.Info("starting DB token service",
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.String("port", port),
 		slog.String("version", version),
 		slog.String("commit", commit),

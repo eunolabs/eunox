@@ -1,6 +1,6 @@
 # The BUSL / Apache split: open-source AI security with a sustainable license model
 
-*Audience: developers evaluating euno for integration or deployment, and anyone curious about how AI infrastructure companies think about licensing*
+_Audience: developers evaluating euno for integration or deployment, and anyone curious about how AI infrastructure companies think about licensing_
 
 ---
 
@@ -36,10 +36,12 @@ eunox/   ← BUSL-1.1
 ```
 
 Everything in `public/` is Apache 2.0. This includes:
+
 - `public/packages/mcp/` — the `@euno/mcp` client library (the thing you install in your application)
 - `public/packages/common/` — the `@euno/common-core` types library (policy schema, capability manifest types, condition interfaces)
 
 Everything in `eunox/` is BUSL-1.1. This includes:
+
 - The tool gateway (`packages/tool-gateway/`)
 - The capability issuer (`packages/capability-issuer/`)
 - The API key minter (`packages/api-key-minter/`)
@@ -59,6 +61,7 @@ This package contains the types that define the capability manifest schema — `
 If `@euno/common-core` were BUSL, the entire ecosystem would be hamstrung. Every tool that needed to parse a capability manifest would need either a BUSL commercial license or would have to reverse-engineer the schema from documentation. That's a terrible outcome for interoperability, and it would mean euno becomes the only entity that can build things that understand euno policies. That's not a healthy ecosystem, and it would kill adoption.
 
 The Apache 2.0 license on the types package means:
+
 - Any developer can import `@euno/common-core` in their agent code with no restrictions
 - Third parties can build compatible policy authoring tools that understand the manifest format
 - Academic researchers can work with the schema for analysis and experimentation
@@ -75,11 +78,13 @@ Let me be specific about what BUSL-1.1 prohibits, because the vague term "compet
 The BUSL production use grant reads (paraphrased): you may use this software for production purposes as long as you are not offering a commercial product or service to third parties where the substantial value is derived from this software.
 
 What this prohibits:
+
 - Running euno's gateway, capability issuer, or minter as a hosted service and charging customers for access to it
 - Packaging euno's platform components as a managed product that you sell to enterprises
 - Integrating the BUSL components into a competing hosted AI governance platform
 
 What this does NOT prohibit:
+
 - Deploying euno in your own organisation's infrastructure to govern your own AI agents
 - Self-hosting the complete stack on-premises or in your own cloud account
 - Using euno to build your own AI products and services (the governance is for your use)

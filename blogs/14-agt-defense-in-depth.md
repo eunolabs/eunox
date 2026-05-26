@@ -1,12 +1,12 @@
 # AGT: Defense in Depth Inside the Agent Process
 
-*The final post in the "Architecture deep-dives" series. The previous posts covered capability tokens (post 9, "Capability tokens: a cryptographic contract between agent and operator") and the enforcement pipeline (post 10, "The Tool Gateway as a reference monitor"). Both describe defenses at the gateway — the external reference monitor. This post covers the other enforcement layer: the one that runs inside the agent process, before any tool call reaches the network. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_The final post in the "Architecture deep-dives" series. The previous posts covered capability tokens (post 9, "Capability tokens: a cryptographic contract between agent and operator") and the enforcement pipeline (post 10, "The Tool Gateway as a reference monitor"). Both describe defenses at the gateway — the external reference monitor. This post covers the other enforcement layer: the one that runs inside the agent process, before any tool call reaches the network. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
 One of the architectural tensions I've wrestled with throughout building euno is this: the gateway is the correct enforcement boundary. It's cryptographic, audited, and impossible for the agent to bypass as long as network controls are in place. It is, in the security architecture sense, the right place to enforce policy.
 
-But "the gateway will catch it" is not the same as "we checked it." There's a real gap between a system where the agent tries to call a tool, the call hits the network, the gateway rejects it, the rejection propagates back to the agent, and the agent recovers — and a system where the agent checks whether a call is permitted *before* invoking any of that machinery. Both enforce the policy. They have different latency, cost, and observability properties.
+But "the gateway will catch it" is not the same as "we checked it." There's a real gap between a system where the agent tries to call a tool, the call hits the network, the gateway rejects it, the rejection propagates back to the agent, and the agent recovers — and a system where the agent checks whether a call is permitted _before_ invoking any of that machinery. Both enforce the policy. They have different latency, cost, and observability properties.
 
 The in-process guard (`createAgtGuard()`, part of `@euno/agent-runtime`) is the answer to that gap. It's not a replacement for the gateway. It's an additional layer that runs earlier, cheaper, and with different failure modes.
 
@@ -35,6 +35,7 @@ The inner layer can fail — a bug in the guard implementation, a null dereferen
 This is the most important thing to understand about `createAgtGuard()`, and it's stated explicitly in the code and documentation: **the guard is a soft guard**. Passing the in-process check does not guarantee the outer gateway will also allow the call.
 
 The gateway performs:
+
 - Cryptographic JWT signature verification
 - Token expiry check
 - Revocation list lookup
@@ -42,11 +43,12 @@ The gateway performs:
 - Kill-switch check
 
 The guard performs:
+
 - A lookup of the tool name against the capability manifest's `requiredCapabilities` and `optionalCapabilities` arrays
 
 That's it. The guard doesn't verify JWT signatures (the token comes from a `tokenSupplier` callback that the caller is responsible for refreshing). It doesn't check revocation. It doesn't evaluate conditions — it doesn't know whether the specific SQL query in the `query_db` call passes the `allowedOperations` condition; it only knows whether `query_db` appears in the manifest at all.
 
-This distinction matters for threat modelling. If you're thinking "does the guard prevent prompt injection?" — it helps, but not completely. A prompt injection attack that causes the agent to call a tool that's declared in the manifest but with arguments that violate a condition will pass the guard and be caught by the gateway. A prompt injection attack that causes the agent to call a tool that's *not* in the manifest at all will be caught by the guard.
+This distinction matters for threat modelling. If you're thinking "does the guard prevent prompt injection?" — it helps, but not completely. A prompt injection attack that causes the agent to call a tool that's declared in the manifest but with arguments that violate a condition will pass the guard and be caught by the gateway. A prompt injection attack that causes the agent to call a tool that's _not_ in the manifest at all will be caught by the guard.
 
 The guard is a first line of defense against the most obvious violations, optimized for the common case.
 
@@ -55,22 +57,27 @@ The guard is a first line of defense against the most obvious violations, optimi
 ## The API
 
 ```typescript
-import { createAgtGuard, HttpToolTransport } from '@euno/agent-runtime';
+import { createAgtGuard, HttpToolTransport } from "@euno/agent-runtime";
 
 const guard = createAgtGuard(
   {
     tokenSupplier: () => tokenStore.currentToken(),
     policy: manifest,
-    onDeny: (tool, reason) => logger.warn('guard deny', { tool, reason }),
-    onGatewayDeny: (tool, code) => metrics.increment('gateway_deny', { tool, code }),
+    onDeny: (tool, reason) => logger.warn("guard deny", { tool, reason }),
+    onGatewayDeny: (tool, code) =>
+      metrics.increment("gateway_deny", { tool, code }),
   },
   new HttpToolTransport(gatewayUrl),
 );
 
-const response = await guard.invokeTool({ tool: 'db:read', args: { table: 'users' } });
+const response = await guard.invokeTool({
+  tool: "db:read",
+  args: { table: "users" },
+});
 ```
 
 The returned `AgtGuardInvokeResponse` has two fields beyond the standard transport response:
+
 - `guardResult: 'allow' | 'deny'` — the guard's own verdict
 - `denyReason?: AgtGuardDenyReason` — set when the guard itself blocked the call
 
@@ -110,7 +117,7 @@ This sounds obvious but has a subtle implication. When the guard blocks a call (
 
 This is a deliberate design decision, and it's occasionally surprising to people who expect the audit log to be a complete record of every policy evaluation. The reasoning:
 
-The audit log is the source of truth for SOC 2 evidence. It records what the gateway decided about what the agent actually tried to do at the enforcement boundary. Guard denials are *not* enforcement decisions — they're pre-screening that happened before the enforcement boundary was reached. Including them in the OCSF audit log would muddy the evidence record.
+The audit log is the source of truth for SOC 2 evidence. It records what the gateway decided about what the agent actually tried to do at the enforcement boundary. Guard denials are _not_ enforcement decisions — they're pre-screening that happened before the enforcement boundary was reached. Including them in the OCSF audit log would muddy the evidence record.
 
 More practically: the guard runs in the agent process, which is inside the agent's trust domain. If you want tamper-evident audit evidence, you want it from the enforcement boundary, not from the agent process. An agent process can, in principle, be compromised. The gateway cannot be trivially compromised from inside the agent's sandbox (network policies prevent direct agent-to-backend communication; the gateway is the only egress path).
 
@@ -123,10 +130,17 @@ The `onDeny` callback is where guard denials land — in your application's logg
 `createAgtGuard()` takes a `ToolTransport` as its second argument. In production, this is an `HttpToolTransport` configured with the gateway URL. In tests, it's an `InProcessToolTransport` backed by a mock handler — this means you can write unit tests for your agent's tool-calling behavior, including guard behavior, without a live gateway instance.
 
 ```typescript
-import { createAgtGuard, HttpToolTransport, InProcessToolTransport } from '@euno/agent-runtime';
+import {
+  createAgtGuard,
+  HttpToolTransport,
+  InProcessToolTransport,
+} from "@euno/agent-runtime";
 
 // In production
-const guard = createAgtGuard(options, new HttpToolTransport('https://gateway.example.com'));
+const guard = createAgtGuard(
+  options,
+  new HttpToolTransport("https://gateway.example.com"),
+);
 
 // In tests
 const guard = createAgtGuard(options, new InProcessToolTransport(mockHandler));
@@ -163,6 +177,7 @@ Defense in depth means that every layer assumes the layers inside it might fail.
 I want to be specific about the limits because I've seen architectural diagrams where the guard is presented as equivalent to the gateway, which it's not.
 
 The guard **does not**:
+
 - Verify JWT signatures
 - Check token expiry
 - Consult the revocation list
@@ -181,7 +196,7 @@ If the gateway is unreachable (network partition, gateway restart, misconfigured
 
 The manifest has two capability arrays: `requiredCapabilities` and `optionalCapabilities`. Both are checked by the guard — if a tool is listed in either array, the guard allows it. The distinction between required and optional is semantic at the manifest level (required capabilities must be present in the token for the agent to start; optional ones may or may not be present) but at the guard level, both arrays are treated as the allowable tool set.
 
-This means the guard's check is: *is this tool listed in the manifest at all?* Not: *does the current token include this capability?* Token coverage is the gateway's job. The guard trusts that the token from `tokenSupplier` is the agent's current valid token; what capabilities it actually contains is verified by the gateway's cryptographic check.
+This means the guard's check is: _is this tool listed in the manifest at all?_ Not: _does the current token include this capability?_ Token coverage is the gateway's job. The guard trusts that the token from `tokenSupplier` is the agent's current valid token; what capabilities it actually contains is verified by the gateway's cryptographic check.
 
 ---
 
@@ -209,6 +224,6 @@ The better path, if latency is a real concern for condition evaluation, is proba
 
 ---
 
-*This post concludes the "Architecture deep-dives" series. If you're building an enterprise AI governance platform and want to understand the design choices that led here, I'd suggest reading them in order: post 9 (capability tokens) → post 10 (enforcement pipeline) → [post 11 (audit logs)](./11-tamper-evident-audit-logs.md) → [post 12 (pluggable adapters)](./12-pluggable-adapters.md) → [post 13 (partner federation)](./13-partner-did-federation.md) → this post. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_This post concludes the "Architecture deep-dives" series. If you're building an enterprise AI governance platform and want to understand the design choices that led here, I'd suggest reading them in order: post 9 (capability tokens) → post 10 (enforcement pipeline) → [post 11 (audit logs)](./11-tamper-evident-audit-logs.md) → [post 12 (pluggable adapters)](./12-pluggable-adapters.md) → [post 13 (partner federation)](./13-partner-did-federation.md) → this post. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
-*The next series covers design principles: why the system fails closed, how the YAML policy format stays honest across deployment tiers, and how we think about defense in depth for SQL injection through an LLM.*
+_The next series covers design principles: why the system fails closed, how the YAML policy format stays honest across deployment tiers, and how we think about defense in depth for SQL injection through an LLM._

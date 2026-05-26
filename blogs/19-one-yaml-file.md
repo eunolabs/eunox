@@ -1,6 +1,6 @@
 # One YAML File: The Design Philosophy Behind euno's Policy Format
 
-*First post in the "User experience and developer ergonomics" series. [Post 16](./16-schema-parity-over-version-drift.md) in the "Design principles" series explains why the schema behind this YAML is defined exactly once and shared by every component that processes it. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that reads these files at runtime. This post is about the deliberate design choices in the format itself — why it looks the way it does, and what that makes possible for the teams writing and reviewing it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_First post in the "User experience and developer ergonomics" series. [Post 16](./16-schema-parity-over-version-drift.md) in the "Design principles" series explains why the schema behind this YAML is defined exactly once and shared by every component that processes it. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that reads these files at runtime. This post is about the deliberate design choices in the format itself — why it looks the way it does, and what that makes possible for the teams writing and reviewing it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -29,16 +29,16 @@ A YAML file that says `allowedOperations: [SELECT, EXPLAIN, SHOW]` communicates 
 The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in `@euno/common-core`. The required fields at the top level are:
 
 ```yaml
-agentId: "sales-research-bot"       # stable, kebab-case, machine-readable identifier
-name: "Sales Research Bot"          # human-readable display name
-version: "0.1.0"                    # semver — bump this when the manifest changes
-requiredCapabilities: []            # the actual policy — what this agent can do
+agentId: "sales-research-bot" # stable, kebab-case, machine-readable identifier
+name: "Sales Research Bot" # human-readable display name
+version: "0.1.0" # semver — bump this when the manifest changes
+requiredCapabilities: [] # the actual policy — what this agent can do
 ```
 
 Then the optional fields:
 
 ```yaml
-optionalCapabilities: []            # capabilities the agent will use if available
+optionalCapabilities: [] # capabilities the agent will use if available
 metadata:
   description: "Synthesizes account-research briefings."
   owner: "revops-oncall@example.com"
@@ -91,7 +91,7 @@ The conditions that ship with euno cover the situations that come up repeatedly 
 ```yaml
 - type: timeWindow
   notBefore: "2026-04-01T00:00:00Z"
-  notAfter:  "2026-12-31T23:59:59Z"
+  notAfter: "2026-12-31T23:59:59Z"
 ```
 
 **`ipRange`** — source IP allowlist. Useful when your agent runs from a known infrastructure range. In HTTP proxy mode, works with `--trust-forwarded-for` when a reverse proxy sits in front of euno. In production, this should be a backup defense, not your primary access control — but it adds meaningful defense in depth.
@@ -188,6 +188,7 @@ I want to be direct about this: if your policy manifest isn't in version control
 The audit log (covered in [post 11](./11-tamper-evident-audit-logs.md)) records which `agentId` and manifest `version` was in effect for each session. That's useful for forensics and compliance. But it's only useful if you can look up version `0.3.1` in your git history and see exactly what that version permitted. If the YAML is living in a shared S3 bucket or in a database without change tracking, you've lost the ability to answer "what was this agent allowed to do?" with any confidence.
 
 The intended workflow is:
+
 1. Developer writes or modifies `euno.policy.yaml` in the agent's repo.
 2. PR is submitted. Security team reviews the diff.
 3. On merge and deploy, the manifest is loaded by `euno-mcp proxy --policy ./euno.policy.yaml` (local mode) or uploaded to the hosted policy store (hosted mode). Either way, the `version` field in the file records which commit this corresponds to.
@@ -232,4 +233,4 @@ The YAML file is boring on purpose. Boring is what scales.
 
 ---
 
-*Previous: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). Next: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). Next: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

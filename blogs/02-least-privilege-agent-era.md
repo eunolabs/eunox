@@ -1,6 +1,6 @@
 # Least-privilege for AI: translating a 50-year-old principle to the agent era
 
-*Audience: security architects and developers building multi-tool agent systems*
+_Audience: security architects and developers building multi-tool agent systems_
 
 ---
 
@@ -107,7 +107,7 @@ The token model gives you two much faster levers.
 
 **Token revocation.** Every capability token has a JTI (JWT ID). Push that ID to a Redis revocation list and every subsequent call from that agent using that token is denied within milliseconds. No redeploy. No config change. One write to Redis.
 
-**Kill-switch.** One flag in Redis that suspends all agent activity for a deployment instantly. Set it and every call fails until it's cleared, regardless of which tokens are in flight. That's your emergency stop when something is actively wrong and you need agents to stop *now*.
+**Kill-switch.** One flag in Redis that suspends all agent activity for a deployment instantly. Set it and every call fails until it's cleared, regardless of which tokens are in flight. That's your emergency stop when something is actively wrong and you need agents to stop _now_.
 
 These are operational controls that matter more than they might sound. Agents operate at machine speed. Between "we see something wrong in the audit log" and "we need this to stop," there might be seconds. The difference between a control that takes effect in milliseconds and one that takes minutes can be the difference between an incident and a significant breach.
 
@@ -173,4 +173,4 @@ For the full picture of how the token interacts with the gateway's enforcement p
 
 ---
 
-*Previous: [The prompt injection problem: why every AI agent needs a policy layer](./01-prompt-injection-policy-layer.md)*
+_Previous: [The prompt injection problem: why every AI agent needs a policy layer](./01-prompt-injection-policy-layer.md)_

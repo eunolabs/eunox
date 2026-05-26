@@ -244,14 +244,14 @@ Content-Type: application/json
 
 ## HTTP Error Reference
 
-| Status | Meaning | Action |
-|--------|---------|--------|
-| 200 | Success | Use response token/result |
-| 401 | Invalid/expired bearer token | Re-authenticate, get new identity token |
-| 403 | Token lacks permission | Check capabilities or request broader scope |
-| 422 | Invalid request body | Fix capability format or tool arguments |
-| 429 | Rate limited | Wait `Retry-After` seconds (runtime handles automatically) |
-| 500 | Service internal error | Retry with exponential backoff (runtime handles automatically) |
+| Status | Meaning                      | Action                                                         |
+| ------ | ---------------------------- | -------------------------------------------------------------- |
+| 200    | Success                      | Use response token/result                                      |
+| 401    | Invalid/expired bearer token | Re-authenticate, get new identity token                        |
+| 403    | Token lacks permission       | Check capabilities or request broader scope                    |
+| 422    | Invalid request body         | Fix capability format or tool arguments                        |
+| 429    | Rate limited                 | Wait `Retry-After` seconds (runtime handles automatically)     |
+| 500    | Service internal error       | Retry with exponential backoff (runtime handles automatically) |
 
 ---
 

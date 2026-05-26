@@ -1,6 +1,6 @@
 # MCP explained: the USB-C moment for AI tooling
 
-*Audience: developers and technical leads evaluating AI agent infrastructure*
+_Audience: developers and technical leads evaluating AI agent infrastructure_
 
 ---
 

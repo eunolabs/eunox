@@ -1,6 +1,6 @@
 # Drop-in governance: adding `@euno/mcp` to Claude Desktop in 5 minutes
 
-*Audience: individual developers who want agent security without a DevOps project*
+_Audience: individual developers who want agent security without a DevOps project_
 
 ---
 
@@ -82,7 +82,8 @@ requiredCapabilities:
     actions: [call]
     conditions:
       - type: allowedExtensions
-        extensions: [".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".go"]
+        extensions:
+          [".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".go"]
       - type: maxCalls
         count: 200
         windowSeconds: 3600
@@ -112,14 +113,14 @@ Let me walk through the decisions in here.
 If you're using multiple MCP servers, you add more capabilities here. For a Postgres server, it might look like:
 
 ```yaml
-  - resource: "execute_sql"
-    actions: [call]
-    conditions:
-      - type: allowedOperations
-        operations: ["SELECT"]
-      - type: maxCalls
-        count: 50
-        windowSeconds: 3600
+- resource: "execute_sql"
+  actions: [call]
+  conditions:
+    - type: allowedOperations
+      operations: ["SELECT"]
+    - type: maxCalls
+      count: 50
+      windowSeconds: 3600
 ```
 
 That `allowedOperations: ["SELECT"]` is the condition that blocks the `DROP TABLE` attack from [the prompt injection post](./01-prompt-injection-policy-layer.md). It checks the first keyword of any SQL query and rejects anything that isn't `SELECT`. One condition, one line in YAML, enormous blast radius reduction.
@@ -139,9 +140,12 @@ Now we wire up the proxy. Here's the updated config:
         "-y",
         "@euno/mcp",
         "proxy",
-        "--policy", "/Users/you/.euno/euno.policy.yaml",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
         "/Users/you/Documents"
       ]
     }
@@ -152,6 +156,7 @@ Now we wire up the proxy. Here's the updated config:
 The key change: instead of calling the filesystem server directly, we're calling `@euno/mcp proxy` with the path to our policy file, and then passing the original server command as arguments after the `--` separator.
 
 The proxy will:
+
 1. Start the filesystem server as a subprocess
 2. Register itself as an MCP server to Claude (advertising the same tools the filesystem server exposes)
 3. Intercept every tool call from Claude
@@ -166,19 +171,33 @@ If you have multiple MCP servers, you wrap each one the same way — separate co
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/Users/you/.euno/euno.policy.yaml",
-               "--",
-               "npx", "-y", "@modelcontextprotocol/server-filesystem",
-               "/Users/you/Documents"]
+      "args": [
+        "-y",
+        "@euno/mcp",
+        "proxy",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/you/Documents"
+      ]
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/Users/you/.euno/euno.policy.yaml",
-               "--",
-               "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
+      "args": [
+        "-y",
+        "@euno/mcp",
+        "proxy",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics"
+      ]
     }
   }
 }
@@ -248,6 +267,6 @@ The principle of "start with the policy in a YAML file, enforce at the tool call
 
 ---
 
-*Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md)*
+_Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md)_
 
-*Next: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)*
+_Next: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)_

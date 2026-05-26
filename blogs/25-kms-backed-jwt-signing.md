@@ -1,6 +1,6 @@
 # KMS-Backed JWT Signing: Trade-offs Between Azure Key Vault, AWS KMS, and GCP Cloud KMS
 
-*Third post in the "Technology choices" series. [Post 12](./12-pluggable-adapters.md) covers the `SigningAdapter` interface and the adapter pattern that makes cloud-swappable signing possible. [Post 9](./09-capability-tokens.md) explains what these signed JWTs contain and why they're the security primitive the entire system is built on. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Third post in the "Technology choices" series. [Post 12](./12-pluggable-adapters.md) covers the `SigningAdapter` interface and the adapter pattern that makes cloud-swappable signing possible. [Post 9](./09-capability-tokens.md) explains what these signed JWTs contain and why they're the security primitive the entire system is built on. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -39,8 +39,8 @@ The Azure SDK handles the Key Vault authentication via Managed Identity when the
 
 **Latency profile:** I've measured Key Vault signing latency extensively across Azure regions. In the same region as the gateway deployment:
 
-| Key type | p50 | p95 | p99 |
-|---|---|---|---|
+| Key type | p50 | p95  | p99  |
+| -------- | --- | ---- | ---- |
 | RSA-4096 | 8ms | 18ms | 35ms |
 | EC P-256 | 5ms | 12ms | 22ms |
 
@@ -62,10 +62,10 @@ Authentication in AWS uses IAM roles. In EKS (Kubernetes on AWS), IRSA (IAM Role
 
 **Latency profile:** AWS KMS in the same region as the gateway:
 
-| Key type | p50 | p95 | p99 |
-|---|---|---|---|
+| Key type | p50 | p95  | p99  |
+| -------- | --- | ---- | ---- |
 | RSA-4096 | 6ms | 14ms | 28ms |
-| EC P-256 | 4ms | 9ms | 18ms |
+| EC P-256 | 4ms | 9ms  | 18ms |
 
 Marginally faster than Azure Key Vault in my benchmarks, but within the same order of magnitude. The difference is not meaningful for the typical euno deployment where signing happens during token issuance (a relatively infrequent operation compared to token verification, which is local and fast).
 
@@ -89,8 +89,8 @@ Authentication in GCP uses Workload Identity Federation on GKE. The model is sim
 
 **Latency profile:** Cloud KMS in the same region as the gateway:
 
-| Key type | p50 | p95 | p99 |
-|---|---|---|---|
+| Key type | p50 | p95  | p99  |
+| -------- | --- | ---- | ---- |
 | RSA-4096 | 7ms | 16ms | 32ms |
 | EC P-256 | 4ms | 11ms | 20ms |
 
@@ -150,4 +150,4 @@ My honest recommendation:
 
 ---
 
-*Previous: [post 24 — W3C DIDs in production](./24-w3c-dids-in-production.md). Next: [post 26 — Redis as a shared enforcement substrate: call counters, kill-switch, and DPoP replay](./26-redis-enforcement-substrate.md).*
+_Previous: [post 24 — W3C DIDs in production](./24-w3c-dids-in-production.md). Next: [post 26 — Redis as a shared enforcement substrate: call counters, kill-switch, and DPoP replay](./26-redis-enforcement-substrate.md)._
