@@ -326,13 +326,23 @@ Ordered by priority and dependency:
 
 ### Phase 1: Reliability Hardening (Priority: Critical, Effort: 1 week)
 
-| # | Item | Depends On | Effort | Owner |
-|---|------|-----------|--------|-------|
-| 1 | CR-1: Enforce non-nil context in agent runtime | — | 1 day | Platform |
-| 2 | CR-2: Document SQLite throughput limits; evaluate read/write connection split | — | 1 day | Platform |
-| 3 | CR-3: Add circuit breaker to token provider refresh | DI-2 pattern | 1 day | Platform |
-| 4 | DI-1: Configure PostgreSQL connection pool | — | 1 day | Database |
-| 5 | DI-2: Define Redis failure mode policies | — | 2 days | Platform |
+> **Status: ✅ COMPLETED** (2026-05-26)
+
+| # | Item | Depends On | Effort | Status |
+|---|------|-----------|--------|--------|
+| 1 | CR-1: Enforce non-nil context in agent runtime | — | 1 day | ✅ Done |
+| 2 | CR-2: Document SQLite throughput limits; evaluate read/write connection split | — | 1 day | ✅ Done |
+| 3 | CR-3: Add circuit breaker to token provider refresh | DI-2 pattern | 1 day | ✅ Done |
+| 4 | DI-1: Configure PostgreSQL connection pool | — | 1 day | ✅ Done |
+| 5 | DI-2: Define Redis failure mode policies | — | 2 days | ✅ Done |
+
+**Implementation Summary:**
+
+- **CR-1:** Removed `context.Background()` fallback in `internal/agentruntime/httpclient.go`; added `ErrNilContext` sentinel error. Added `contextcheck` linter to `.golangci.yml`. All HTTP calls now require explicit non-nil context.
+- **CR-2:** Added doc comment to `SQLiteQueue` explaining throughput limits. Created `docs/POSTURE_SCALING.md` with PostgreSQL migration path, recommended schema, and monitoring guidance.
+- **CR-3:** Token provider now uses `circuitbreaker.Do[T]()` for refresh calls with stale-token grace period (serves cached token for up to 60s during failures). Added jitter (0–10% of delay) to prevent thundering herd. Exposed `RefreshFailures()` and `CircuitBreakerState()` for metrics.
+- **DI-1:** Created `pkg/config.DatabasePoolConfig` (env-tag driven, defaults: 25 open, 5 idle, 5m lifetime, 60s idle time). Created `pkg/database.OpenPool()` and `pkg/database.ConfigurePool()` helpers. Added `PoolMetrics()` for Prometheus `db_pool_*` gauges.
+- **DI-2:** Created `pkg/redisfailover` package with `Monitor`, `Reporter`, `FallbackCache[K,V]`, `HealthChecker`, and `Pinger` interface. Added resilient wrappers: `killswitch.ResilientRedis` (fail-closed), `revocation.ResilientRedis` (fail-closed with TTL cache), `ratelimit.ResilientRedisLimiter` (fail-open with in-memory fallback), `callcounter.ResilientRedis` (fail-open). Created `docs/REDIS_FAILURE_MODES.md`.
 
 ### Phase 2: Observability & Resilience (Priority: High, Effort: 1 week)
 

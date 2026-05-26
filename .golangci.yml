@@ -16,6 +16,7 @@ linters:
     - unconvert
     - unparam
     - noctx
+    - contextcheck
 
   settings:
     gocritic:
@@ -39,7 +40,20 @@ linters:
           - gosec
           - unparam
           - noctx
+          - contextcheck
       - path: kms_stub\.go
         linters:
           - unparam
           - noctx
+      # Pre-existing contextcheck suppressions for background/lifecycle patterns
+      # where context is intentionally created from lifecycle ctx rather than passed.
+      - path: pkg/audit/transport\.go
+        linters:
+          - contextcheck
+      - path: pkg/killswitch/redis\.go
+        text: "handlePubSubMessage"
+        linters:
+          - contextcheck
+      - path: pkg/lifecycle/lifecycle\.go
+        linters:
+          - contextcheck

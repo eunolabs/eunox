@@ -5,12 +5,17 @@ package agentruntime
 
 import (
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
+
+// ErrNilContext is returned when an HTTPRequest is submitted with a nil Context.
+// Callers must always provide a non-nil context to ensure proper cancellation,
+// timeout propagation, and distributed tracing linkage.
+var ErrNilContext = errors.New("agentruntime: HTTPRequest.Context must not be nil")
 
 // DefaultHTTPClient wraps a standard net/http.Client to implement HTTPClient.
 type DefaultHTTPClient struct {
@@ -26,19 +31,20 @@ func NewDefaultHTTPClient() *DefaultHTTPClient {
 	}
 }
 
-// Do executes an HTTP request.
+// Do executes an HTTP request. The request's Context field must be non-nil;
+// a nil context results in ErrNilContext to prevent silent loss of cancellation,
+// timeout inheritance, and distributed tracing linkage.
 func (c *DefaultHTTPClient) Do(req *HTTPRequest) (*HTTPResponse, error) {
+	if req.Context == nil {
+		return nil, ErrNilContext
+	}
+
 	var body io.Reader
 	if req.Body != nil {
 		body = bytes.NewReader(req.Body)
 	}
 
-	reqCtx := req.Context
-	if reqCtx == nil {
-		reqCtx = context.Background()
-	}
-
-	httpReq, err := http.NewRequestWithContext(reqCtx, req.Method, req.URL, body)
+	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, req.URL, body)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
