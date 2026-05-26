@@ -10,6 +10,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | --- | ---------- |
 | [../README.md](../README.md) | Project README — value prop, quick start, links. |
 | [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup. |
+| [agent-sdk.md](./agent-sdk.md) | Agent Runtime SDK: token management, tool invocation, attenuate/renew endpoints. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 | [golang-reimplementation-plan.md](./golang-reimplementation-plan.md) | Go re-implementation execution plan (all stages). |
 
@@ -27,6 +28,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 
 | Doc | What it is |
 | --- | ---------- |
+| [ADAPTERS.md](./ADAPTERS.md) | Pluggable identity provider and token signer adapter pattern (Go implementation). |
 | [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns. |
 | [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md) | Schema versioning, deployment ordering. |
 | [sandboxing.md](./sandboxing.md) | Sandbox reference architecture. |
