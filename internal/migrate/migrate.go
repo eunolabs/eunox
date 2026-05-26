@@ -28,6 +28,10 @@ var (
 	ErrBackupFailed    = errors.New("migrate: pre-migration backup hook failed")
 	ErrNoMigrations    = errors.New("migrate: no migration files found")
 	ErrInvalidVersion  = errors.New("migrate: invalid migration version number")
+	ErrInvalidConfig   = errors.New("migrate: invalid runner config")
+	ErrMissingStore    = errors.New("migrate: state store is required")
+	ErrMissingExecutor = errors.New("migrate: sql executor is required")
+	ErrDuplicatePair   = errors.New("migrate: duplicate migration version/direction")
 )
 
 // Direction represents the migration direction.
@@ -107,6 +111,15 @@ type Config struct {
 // NewRunner creates a migration runner from the given configuration.
 // It parses all SQL migration files from Source and validates rollback safety.
 func NewRunner(cfg *Config) (*Runner, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: config is nil", ErrInvalidConfig)
+	}
+	if cfg.Store == nil {
+		return nil, ErrMissingStore
+	}
+	if cfg.Executor == nil {
+		return nil, ErrMissingExecutor
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -273,7 +286,10 @@ func (r *Runner) MigrateDownTo(ctx context.Context, target int) error {
 	// Get down migrations in reverse order.
 	pending := r.pendingDown(current, target)
 	if len(pending) == 0 {
-		return nil
+		if current == 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: version %d", ErrNoDownMigration, current)
 	}
 
 	// Run backup hook before rollback.
@@ -291,9 +307,9 @@ func (r *Runner) MigrateDownTo(ctx context.Context, target int) error {
 			"description", m.Description,
 		)
 
-		// Mark dirty.
+		// Mark the migration currently being executed as dirty.
 		newVersion := m.Version - 1
-		if err := r.store.SetVersion(ctx, newVersion, true); err != nil {
+		if err := r.store.SetVersion(ctx, m.Version, true); err != nil {
 			return fmt.Errorf("migrate: mark dirty rollback v%d: %w", m.Version, err)
 		}
 
@@ -391,7 +407,7 @@ func (r *Runner) releaseLock(ctx context.Context) {
 // execSQL delegates SQL execution to the configured SQLExecutor.
 func (r *Runner) execSQL(ctx context.Context, sql string) error {
 	if r.executor == nil {
-		return nil
+		return ErrMissingExecutor
 	}
 	return r.executor.ExecMigration(ctx, sql)
 }
@@ -409,6 +425,7 @@ func parseMigrations(source fs.FS, dir string) ([]Migration, error) {
 	}
 
 	var migrations []Migration
+	seen := map[string]struct{}{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -428,6 +445,11 @@ func parseMigrations(source fs.FS, dir string) ([]Migration, error) {
 			return nil, fmt.Errorf("migrate: read file %s: %w", name, err)
 		}
 		m.SQL = string(content)
+		key := fmt.Sprintf("%d:%s", m.Version, m.Direction)
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("%w: version %d direction %s", ErrDuplicatePair, m.Version, m.Direction)
+		}
+		seen[key] = struct{}{}
 		migrations = append(migrations, m)
 	}
 

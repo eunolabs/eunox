@@ -55,9 +55,10 @@ Production-grade testcontainers helpers are now implemented, gated behind `//go:
 | Unit + Integration (in-memory) | (none) | In-memory implementations | No | `make test` |
 | Docker integration | `integration` | Real PostgreSQL/Redis containers | Yes | `go test -tags=integration ./...` |
 
-**Prerequisites to enable Docker tests:**
-- Add `testcontainers-go` to `go.mod` (`go get github.com/testcontainers/testcontainers-go@v0.38.0`)
+**Prerequisites to run Docker tests:**
 - Docker available in CI runner
+- Run integration-tagged tests: `go test -tags=integration ./...`
+- `testcontainers-go` dependencies are already committed in `go.mod`/`go.sum` (v0.42.0)
 - See `docs/OPEN_QUESTIONS.md` §6
 
 ## ~~Partner Federation Circuit Breaker Metrics~~ ✅ Completed
@@ -96,4 +97,3 @@ Production-grade migration runner implemented with:
 - PostgreSQL advisory lock implementation (`pg_advisory_lock(key)`)
 - CLI wrapper (`cmd/migrate/main.go`) for operator use
 - Embedded migration filesystem in service binaries
-

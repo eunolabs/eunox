@@ -571,18 +571,25 @@ func TestPartnerIssuerResolver_MetricsWired_Failure(t *testing.T) {
 	families, err := promReg.Gather()
 	require.NoError(t, err)
 
+	foundErrorOutcome := false
 	for _, f := range families {
 		if f.GetName() == "euno_partner_did_resolution_total" {
 			require.NotEmpty(t, f.GetMetric())
 			for _, m := range f.GetMetric() {
+				metricHasError := false
 				for _, lp := range m.GetLabel() {
-					if lp.GetName() == "outcome" {
-						assert.Equal(t, "error", lp.GetValue())
+					if lp.GetName() == "outcome" && lp.GetValue() == "error" {
+						metricHasError = true
+						foundErrorOutcome = true
 					}
+				}
+				if metricHasError {
+					assert.Equal(t, float64(1), m.GetCounter().GetValue())
 				}
 			}
 		}
 	}
+	assert.True(t, foundErrorOutcome, "should record error outcome")
 }
 
 func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
@@ -632,6 +639,7 @@ func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
 	assert.True(t, hasCircuitOpen, "should record circuit_open outcome")
 
 	// Verify circuit_breaker_state gauge shows "open" for ion.
+	foundIonOpen := false
 	for _, f := range families {
 		if f.GetName() == "euno_partner_did_circuit_breaker_state" {
 			for _, m := range f.GetMetric() {
@@ -646,11 +654,13 @@ func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
 					}
 				}
 				if method == "ion" && state == "open" {
+					foundIonOpen = true
 					assert.Equal(t, float64(1), m.GetGauge().GetValue())
 				}
 			}
 		}
 	}
+	assert.True(t, foundIonOpen, "should emit ion/open circuit breaker gauge")
 }
 
 func TestPartnerIssuerResolver_NoMetrics_NoPanic(t *testing.T) {

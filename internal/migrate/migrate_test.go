@@ -41,6 +41,9 @@ func testFSWithSubdir() fs.FS {
 
 func newTestRunner(t *testing.T, source fs.FS, dir string, executor SQLExecutor, locker AdvisoryLocker, backup BackupHook) *Runner {
 	t.Helper()
+	if executor == nil {
+		executor = NewMemoryExecutor()
+	}
 	r, err := NewRunner(&Config{
 		Source:     source,
 		Dir:        dir,
@@ -57,8 +60,9 @@ func newTestRunner(t *testing.T, source fs.FS, dir string, executor SQLExecutor,
 
 func TestNewRunner_Success(t *testing.T) {
 	r, err := NewRunner(&Config{
-		Source: testFS(),
-		Store:  NewMemoryStateStore(),
+		Source:   testFS(),
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, r)
@@ -67,9 +71,10 @@ func TestNewRunner_Success(t *testing.T) {
 
 func TestNewRunner_WithSubdir(t *testing.T) {
 	r, err := NewRunner(&Config{
-		Source: testFSWithSubdir(),
-		Dir:    "minter",
-		Store:  NewMemoryStateStore(),
+		Source:   testFSWithSubdir(),
+		Dir:      "minter",
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, r.LatestVersion())
@@ -77,10 +82,32 @@ func TestNewRunner_WithSubdir(t *testing.T) {
 
 func TestNewRunner_NilSource(t *testing.T) {
 	_, err := NewRunner(&Config{
-		Source: nil,
-		Store:  NewMemoryStateStore(),
+		Source:   nil,
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	assert.Error(t, err)
+}
+
+func TestNewRunner_NilConfig(t *testing.T) {
+	_, err := NewRunner(nil)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
+func TestNewRunner_NilStore(t *testing.T) {
+	_, err := NewRunner(&Config{
+		Source:   testFS(),
+		Executor: NewMemoryExecutor(),
+	})
+	assert.ErrorIs(t, err, ErrMissingStore)
+}
+
+func TestNewRunner_NilExecutor(t *testing.T) {
+	_, err := NewRunner(&Config{
+		Source: testFS(),
+		Store:  NewMemoryStateStore(),
+	})
+	assert.ErrorIs(t, err, ErrMissingExecutor)
 }
 
 func TestNewRunner_EmptyDir(t *testing.T) {
@@ -88,8 +115,9 @@ func TestNewRunner_EmptyDir(t *testing.T) {
 		"readme.txt": {Data: []byte("no migrations here")},
 	}
 	_, err := NewRunner(&Config{
-		Source: emptyFS,
-		Store:  NewMemoryStateStore(),
+		Source:   emptyFS,
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	assert.ErrorIs(t, err, ErrNoMigrations)
 }
@@ -99,8 +127,9 @@ func TestNewRunner_InvalidFilename(t *testing.T) {
 		"abc_bad.up.sql": {Data: []byte("SELECT 1;")},
 	}
 	_, err := NewRunner(&Config{
-		Source: badFS,
-		Store:  NewMemoryStateStore(),
+		Source:   badFS,
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	assert.ErrorIs(t, err, ErrInvalidVersion)
 }
@@ -110,8 +139,9 @@ func TestNewRunner_ZeroVersion(t *testing.T) {
 		"000_bad.up.sql": {Data: []byte("SELECT 1;")},
 	}
 	_, err := NewRunner(&Config{
-		Source: badFS,
-		Store:  NewMemoryStateStore(),
+		Source:   badFS,
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
 	})
 	assert.ErrorIs(t, err, ErrInvalidVersion)
 }
@@ -175,8 +205,9 @@ func TestMigrateUp_DirtyState(t *testing.T) {
 	_ = store.SetVersion(context.Background(), 1, true) // Dirty!
 
 	r, err := NewRunner(&Config{
-		Source: testFS(),
-		Store:  store,
+		Source:   testFS(),
+		Store:    store,
+		Executor: NewMemoryExecutor(),
 	})
 	require.NoError(t, err)
 
@@ -187,8 +218,9 @@ func TestMigrateUp_DirtyState(t *testing.T) {
 func TestMigrateUp_RollbackSafetyFails(t *testing.T) {
 	store := NewMemoryStateStore()
 	r, err := NewRunner(&Config{
-		Source: testFSNoDown(),
-		Store:  store,
+		Source:   testFSNoDown(),
+		Store:    store,
+		Executor: NewMemoryExecutor(),
 	})
 	require.NoError(t, err)
 
@@ -316,14 +348,34 @@ func TestMigrateDown_NothingToRollback(t *testing.T) {
 	assert.Empty(t, exec.Executed)
 }
 
+func TestMigrateDown_NoDownMigrationForCurrentVersion(t *testing.T) {
+	store := NewMemoryStateStore()
+	require.NoError(t, store.Init(context.Background()))
+	require.NoError(t, store.SetVersion(context.Background(), 1, false))
+	onlyUp := fstest.MapFS{
+		"001_create_users.up.sql": {Data: []byte("CREATE TABLE users (id TEXT);")},
+	}
+
+	r, err := NewRunner(&Config{
+		Source:   onlyUp,
+		Store:    store,
+		Executor: NewMemoryExecutor(),
+	})
+	require.NoError(t, err)
+
+	err = r.MigrateDown(context.Background())
+	assert.ErrorIs(t, err, ErrNoDownMigration)
+}
+
 func TestMigrateDown_DirtyState(t *testing.T) {
 	store := NewMemoryStateStore()
 	_ = store.Init(context.Background())
 	_ = store.SetVersion(context.Background(), 2, true)
 
 	r, err := NewRunner(&Config{
-		Source: testFS(),
-		Store:  store,
+		Source:   testFS(),
+		Store:    store,
+		Executor: NewMemoryExecutor(),
 	})
 	require.NoError(t, err)
 
@@ -349,6 +401,29 @@ func TestMigrateDown_WithBackupHook(t *testing.T) {
 	require.Len(t, backupVersions, 2)
 	assert.Equal(t, 0, backupVersions[0]) // Before up.
 	assert.Equal(t, 3, backupVersions[1]) // Before down.
+}
+
+func TestMigrateDown_FailedDownLeavesCurrentVersionDirty(t *testing.T) {
+	exec := NewMemoryExecutor()
+	exec.FailOnSQL = "DROP INDEX idx_users_email;"
+	exec.FailError = errors.New("rollback failed")
+	store := NewMemoryStateStore()
+	r, err := NewRunner(&Config{
+		Source:   testFS(),
+		Store:    store,
+		Executor: exec,
+	})
+	require.NoError(t, err)
+	_, err = r.MigrateUp(context.Background())
+	require.NoError(t, err)
+
+	err = r.MigrateDown(context.Background())
+	require.Error(t, err)
+
+	version, dirty, err := r.CurrentVersion(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, version)
+	assert.True(t, dirty)
 }
 
 // --- CurrentVersion & Pending tests ---
@@ -428,6 +503,20 @@ func TestParseFilename_Invalid(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestNewRunner_DuplicateVersionDirectionRejected(t *testing.T) {
+	dup := fstest.MapFS{
+		"001_create_users.up.sql":   {Data: []byte("CREATE TABLE users (id TEXT);")},
+		"001_create_users2.up.sql":  {Data: []byte("CREATE TABLE users2 (id TEXT);")},
+		"001_create_users.down.sql": {Data: []byte("DROP TABLE users;")},
+	}
+	_, err := NewRunner(&Config{
+		Source:   dup,
+		Store:    NewMemoryStateStore(),
+		Executor: NewMemoryExecutor(),
+	})
+	assert.ErrorIs(t, err, ErrDuplicatePair)
 }
 
 // --- MemoryLocker tests ---
