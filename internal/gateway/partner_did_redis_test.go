@@ -60,20 +60,14 @@ func TestRedisPartnerDIDStore_ConcurrentAccess(t *testing.T) {
 
 	// Register multiple DIDs concurrently.
 	errs := make(chan error, 10)
-	done := make(chan struct{}, 10)
 	for i := 0; i < 10; i++ {
 		go func(i int) {
-			defer func() { done <- struct{}{} }()
 			did := fmt.Sprintf("did:web:concurrent-%d", i)
 			errs <- store.Register(did, "Partner", "")
 		}(i)
 	}
 	for i := 0; i < 10; i++ {
-		<-done
-	}
-	close(errs)
-	for err := range errs {
-		require.NoError(t, err)
+		require.NoError(t, <-errs)
 	}
 
 	partners := store.List()
