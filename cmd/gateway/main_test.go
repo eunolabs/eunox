@@ -4,6 +4,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/edgeobs/eunox/pkg/config"
@@ -48,4 +49,75 @@ func TestRun_MissingConfig(t *testing.T) {
 	// config.LoadOrExit calls os.Exit on missing required config, so we
 	// test at a higher level that the binary compiles and is wired correctly.
 	// The unit-testable parts (levelFromEnv, noopVerifier) are tested above.
+}
+
+func TestValidateAdminAuth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		cfg       config.GatewayConfig
+		expectErr bool
+		errMsg    string
+	}{
+		{
+			name: "development_no_jwks_allowed",
+			cfg: config.GatewayConfig{
+				NodeEnv:     config.EnvDevelopment,
+				AdminAPIKey: "some-key",
+			},
+			expectErr: false,
+		},
+		{
+			name: "staging_no_jwks_allowed",
+			cfg: config.GatewayConfig{
+				NodeEnv:     config.EnvStaging,
+				AdminAPIKey: "some-key",
+			},
+			expectErr: false,
+		},
+		{
+			name: "production_missing_jwks_uri",
+			cfg: config.GatewayConfig{
+				NodeEnv:     config.EnvProduction,
+				AdminAPIKey: "some-key",
+			},
+			expectErr: true,
+			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in production",
+		},
+		{
+			name: "production_with_jwks_uri",
+			cfg: config.GatewayConfig{
+				NodeEnv:      config.EnvProduction,
+				AdminAPIKey:  "some-key",
+				AdminJWKSURI: "https://auth.example.com/.well-known/jwks.json",
+			},
+			expectErr: false,
+		},
+		{
+			name: "production_jwks_only_no_static_key",
+			cfg: config.GatewayConfig{
+				NodeEnv:      config.EnvProduction,
+				AdminJWKSURI: "https://auth.example.com/.well-known/jwks.json",
+			},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateAdminAuth(&tt.cfg)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errMsg)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
 }

@@ -4,16 +4,25 @@
 package issuer
 
 import (
+	stdcrypto "crypto"
+
 	"github.com/edgeobs/eunox/pkg/crypto"
 )
 
-// SingleKeyStore wraps a SoftwareSigner as a KeyStore.
-type SingleKeyStore struct {
-	signer *crypto.SoftwareSigner
+// PublicKeyExporter is an optional interface for signers that can export their public key.
+// Software signers implement this; KMS signers typically do not hold public key material locally.
+type PublicKeyExporter interface {
+	PublicKey() stdcrypto.PublicKey
 }
 
-// NewSingleKeyStore creates a KeyStore backed by a single SoftwareSigner.
-func NewSingleKeyStore(signer *crypto.SoftwareSigner) *SingleKeyStore {
+// SingleKeyStore wraps a crypto.Signer as a KeyStore.
+type SingleKeyStore struct {
+	signer crypto.Signer
+}
+
+// NewSingleKeyStore creates a KeyStore backed by a single crypto.Signer.
+// The signer may optionally implement PublicKeyExporter for JWKS publication.
+func NewSingleKeyStore(signer crypto.Signer) *SingleKeyStore {
 	return &SingleKeyStore{signer: signer}
 }
 
@@ -23,8 +32,13 @@ func (ks *SingleKeyStore) CurrentSigner() crypto.Signer {
 }
 
 // PublicKeys returns the public key info for JWKS endpoints.
+// Returns nil if the signer does not implement PublicKeyExporter (e.g., KMS signers).
 func (ks *SingleKeyStore) PublicKeys() []PublicKeyInfo {
-	pub := ks.signer.PublicKey()
+	exporter, ok := ks.signer.(PublicKeyExporter)
+	if !ok {
+		return nil
+	}
+	pub := exporter.PublicKey()
 	if pub == nil {
 		return nil
 	}

@@ -140,8 +140,9 @@ func (app *App) buildAdminRouter() chi.Router {
 	r.Get("/health/live", app.handleLive)
 	r.Get("/health/ready", app.handleReady)
 
-	// All admin routes require authentication.
+	// All admin routes require authentication and are rate-limited (CR-4).
 	r.Group(func(r chi.Router) {
+		r.Use(app.adminRateLimitMiddleware)
 		r.Use(app.adminMiddleware)
 		r.Use(app.idempotencyMiddleware)
 

@@ -157,20 +157,75 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func buildSigner(cfg *config.IssuerConfig) (*crypto.SoftwareSigner, error) {
+func buildSigner(cfg *config.IssuerConfig) (crypto.Signer, error) {
 	switch cfg.SigningProvider {
 	case "software", "":
+		if cfg.NodeEnv == config.EnvProduction {
+			return nil, fmt.Errorf("signing provider %q is not allowed in production; use aws-kms, azure-keyvault, or gcp-cloudkms", cfg.SigningProvider)
+		}
 		return crypto.GenerateECDSASigner("issuer-key-1", crypto.ES256)
 	case "azure-keyvault":
-		// KMS stubs: in production, wire Azure Key Vault SDK here.
-		return crypto.GenerateECDSASigner("azure-"+cfg.AzureKeyVaultKeyName, crypto.ES256)
+		if cfg.AzureKeyVaultURL == "" {
+			return nil, fmt.Errorf("AZURE_KEYVAULT_URL is required for azure-keyvault signing provider")
+		}
+		if cfg.AzureKeyVaultKeyName == "" {
+			return nil, fmt.Errorf("AZURE_KEYVAULT_KEY_NAME is required for azure-keyvault signing provider")
+		}
+		return crypto.NewRealAzureKeyVaultSigner(&crypto.RealAzureKeyVaultSignerConfig{
+			VaultURL:  cfg.AzureKeyVaultURL,
+			KeyName:   cfg.AzureKeyVaultKeyName,
+			Algorithm: crypto.ES256,
+			Client:    crypto.NewEnvAzureKeyVaultClient(),
+		})
 	case "aws-kms":
-		return crypto.GenerateECDSASigner("aws-"+cfg.AWSKMSKeyID, crypto.ES256)
+		if cfg.AWSKMSKeyID == "" {
+			return nil, fmt.Errorf("AWS_KMS_KEY_ID is required for aws-kms signing provider")
+		}
+		if cfg.AWSKMSRegion == "" {
+			return nil, fmt.Errorf("AWS_KMS_REGION is required for aws-kms signing provider")
+		}
+		return crypto.NewRealAWSKMSSigner(crypto.RealAWSKMSSignerConfig{
+			KeyID:     cfg.AWSKMSKeyID,
+			Region:    cfg.AWSKMSRegion,
+			Algorithm: crypto.ES256,
+			Client:    crypto.NewEnvAWSKMSClient(cfg.AWSKMSRegion),
+		})
 	case "gcp-cloudkms":
-		return crypto.GenerateECDSASigner("gcp-"+cfg.GCPCryptoKeyID, crypto.ES256)
+		if cfg.GCPProjectID == "" {
+			return nil, fmt.Errorf("GCP_PROJECT_ID is required for gcp-cloudkms signing provider")
+		}
+		if cfg.GCPKeyringID == "" {
+			return nil, fmt.Errorf("GCP_KEYRING_ID is required for gcp-cloudkms signing provider")
+		}
+		if cfg.GCPCryptoKeyID == "" {
+			return nil, fmt.Errorf("GCP_CRYPTOKEY_ID is required for gcp-cloudkms signing provider")
+		}
+		return crypto.NewRealGCPCloudKMSSigner(&crypto.RealGCPCloudKMSSignerConfig{
+			ProjectID:        cfg.GCPProjectID,
+			LocationID:       gcpLocationOrDefault(cfg),
+			KeyRingID:        cfg.GCPKeyringID,
+			CryptoKeyID:      cfg.GCPCryptoKeyID,
+			CryptoKeyVersion: gcpKeyVersionOrDefault(cfg),
+			Algorithm:        crypto.ES256,
+			Client:           crypto.NewEnvGCPCloudKMSClient(),
+		})
 	default:
 		return nil, fmt.Errorf("unknown signing provider: %s", cfg.SigningProvider)
 	}
+}
+
+func gcpLocationOrDefault(cfg *config.IssuerConfig) string {
+	if cfg.GCPLocationID != "" {
+		return cfg.GCPLocationID
+	}
+	return "global"
+}
+
+func gcpKeyVersionOrDefault(cfg *config.IssuerConfig) string {
+	if cfg.GCPCryptoKeyVersion != "" {
+		return cfg.GCPCryptoKeyVersion
+	}
+	return "1"
 }
 
 func buildIdentityVerifier(cfg *config.IssuerConfig, logger *slog.Logger) (identity.Provider, error) {
