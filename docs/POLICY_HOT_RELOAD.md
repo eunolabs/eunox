@@ -115,7 +115,7 @@ Policies are defined in a JSON file referenced by `ISSUER_ROLE_POLICY_FILE`:
 | `allowedOperations` | `operations` (array) | Restrict to specific operation names |
 | `allowedExtensions` | `extensions` (array) | Restrict file extensions |
 | `allowedTables` | `tables` (array) | Restrict database table access |
-| `maxCalls` | `limit` (int) | Maximum invocations per token |
+| `maxCalls` | `limit` (int) | Maximum invocations per token (enforcement-time check; distinct from the policy-level `maxCalls` field which sets the default limit at issuance) |
 | `recipientDomain` | `domains` (array) | Restrict email/messaging recipients |
 | `redactFields` | `fields` (array) | Fields that must be redacted in responses |
 | `policy` | `policyId` (string) | Reference to named policy |

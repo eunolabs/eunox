@@ -122,7 +122,7 @@ Redis keys are namespaced by tenant where applicable:
 
 | Key Pattern                         | Purpose                    |
 |-------------------------------------|----------------------------|
-| `killswitch:{tenant_id}`            | Per-tenant kill switch     |
+| `kill_switch:{tenant_id}`           | Per-tenant kill switch     |
 | `revocations:{tenant_id}:{jti}`     | Token revocation entries   |
 | `callcounter:{tenant_id}:{key_id}`  | API call counting          |
 | `partner_dids`                      | Global (cross-tenant)      |

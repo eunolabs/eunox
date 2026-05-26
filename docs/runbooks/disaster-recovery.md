@@ -162,19 +162,19 @@ UPDATES: Every [15/30/60] minutes until resolved
 
 ```bash
 # 1. Identify the break point
-curl https://gateway.internal:3003/admin/v1/audit/chain-proof \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY" | jq '.first_invalid_sequence'
+BREAK_POINT=$(curl -s https://gateway.internal:3003/admin/v1/audit/chain-proof \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" | jq '.first_invalid_sequence')
 
 # 2. Inspect the corrupted record
 psql -c "SELECT id, sequence_num, chain_hash, previous_hash
          FROM audit_records
-         WHERE sequence_num = <break_point>
+         WHERE sequence_num = $BREAK_POINT
          ORDER BY sequence_num;"
 
 # 3. Check if corruption is in a single record or a range
 psql -c "SELECT sequence_num, chain_hash
          FROM audit_records
-         WHERE sequence_num BETWEEN <break_point - 5> AND <break_point + 5>
+         WHERE sequence_num BETWEEN $((BREAK_POINT - 5)) AND $((BREAK_POINT + 5))
          ORDER BY sequence_num;"
 ```
 
@@ -184,7 +184,7 @@ psql -c "SELECT sequence_num, chain_hash
 
 ```bash
 # 1. Identify the timestamp before corruption
-CORRUPTION_TIME=$(psql -t -c "SELECT timestamp FROM audit_records WHERE sequence_num = <break_point>")
+CORRUPTION_TIME=$(psql -t -c "SELECT timestamp FROM audit_records WHERE sequence_num = $BREAK_POINT")
 
 # 2. Restore to point-in-time before corruption (see Scenario 2)
 # Use recovery_target_time slightly before $CORRUPTION_TIME
