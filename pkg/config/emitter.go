@@ -6,9 +6,9 @@ package config
 
 // EmitterConfig holds the Posture Emitter configuration.
 type EmitterConfig struct {
-	NodeEnv        Environment `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
+	NodeEnv        Environment    `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
 	DeploymentTier DeploymentTier `env:"EUNO_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
-	Port           int         `env:"PORT" default:"3008" min:"1" max:"65535"`
+	Port           int            `env:"PORT" default:"3008" min:"1" max:"65535"`
 
 	// Emitter core
 	Enabled         bool   `env:"POSTURE_EMITTER_ENABLED" default:"true"`
@@ -23,6 +23,9 @@ type EmitterConfig struct {
 
 	// Health
 	HealthMaxQueueDepth int `env:"POSTURE_HEALTH_MAX_QUEUE_DEPTH" default:"10000" min:"1"`
+
+	// Request body limits
+	MaxRequestBodySize int `env:"POSTURE_MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
 
 	// Plugin selection (comma-separated: "defender,security-hub,scc,stdout")
 	Plugins string `env:"POSTURE_EMITTER_PLUGINS" default:"stdout"`

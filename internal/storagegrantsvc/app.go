@@ -22,7 +22,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/observability"
 )
 
-const maxBodySize = 1 << 20 // 1 MB
+const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 
 // Errors returned by the storage grant service.
 var (
@@ -337,7 +337,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	r.Body = http.MaxBytesReader(w, r.Body, defaultMaxBodySize)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 

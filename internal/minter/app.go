@@ -21,12 +21,16 @@ import (
 	"github.com/edgeobs/eunox/pkg/ratelimit"
 )
 
-const maxBodySize = 1 << 20 // 1 MB
+const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 
 // Config holds the minter application configuration.
 type Config struct {
 	Pepper          *Pepper
 	DefaultTenantID string
+
+	// MaxRequestBodySize is the maximum size of request bodies in bytes.
+	// Defaults to 1 MB (1048576) if not set.
+	MaxRequestBodySize int64
 }
 
 // Dependencies holds the injected backends for the minter.
@@ -480,7 +484,11 @@ func (app *App) writeError(w http.ResponseWriter, status int, code, message stri
 }
 
 func (app *App) readJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	limit := app.config.MaxRequestBodySize
+	if limit <= 0 {
+		limit = defaultMaxBodySize
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

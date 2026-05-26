@@ -304,7 +304,7 @@ func adminIdentityFromContext(ctx context.Context) *AdminIdentity {
 
 // requireCrossTenantAck checks that the request body contains acknowledgesCrossTenantImpact: true
 // for operations that affect all tenants.
-func requireCrossTenantAck(r *http.Request) error {
+func (app *App) requireCrossTenantAck(r *http.Request) error {
 	var body struct {
 		AcknowledgesCrossTenantImpact bool `json:"acknowledgesCrossTenantImpact"`
 	}
@@ -313,11 +313,12 @@ func requireCrossTenantAck(r *http.Request) error {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
 
+	maxBodySize := app.maxBodySizeFor()
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
 	if err != nil {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
-	if len(raw) > maxBodySize {
+	if int64(len(raw)) > maxBodySize {
 		return fmt.Errorf("%w: global operations require acknowledgesCrossTenantImpact: true", ErrAdminForbidden)
 	}
 

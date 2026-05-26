@@ -104,12 +104,13 @@ func main() {
 
 	// Build app config
 	appCfg := issuer.Config{
-		IssuerDID:       cfg.IssuerDID,
-		IssuerURL:       issuerURL,
-		DefaultTokenTTL: cfg.DefaultTokenTTL,
-		MaxTokenTTL:     cfg.MaxTokenTTL,
-		Audience:        cfg.Audience,
-		AdminAPIKey:     cfg.AdminAPIKey,
+		IssuerDID:          cfg.IssuerDID,
+		IssuerURL:          issuerURL,
+		DefaultTokenTTL:    cfg.DefaultTokenTTL,
+		MaxTokenTTL:        cfg.MaxTokenTTL,
+		Audience:           cfg.Audience,
+		AdminAPIKey:        cfg.AdminAPIKey,
+		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
 	}
 
 	// Build issuer app

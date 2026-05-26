@@ -51,4 +51,7 @@ type IssuerConfig struct {
 
 	// GCP Identity
 	GCPIdentityAudience string `env:"GCP_IDENTITY_AUDIENCE"`
+
+	// Request body limits
+	MaxRequestBodySize int `env:"MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
 }

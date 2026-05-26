@@ -32,12 +32,12 @@ func (app *App) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int `json:"ttlSeconds,omitempty"`
 	}
 	if r.Body != nil {
-		raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+		raw, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()+1))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse("invalid request body"))
 			return
 		}
-		if len(raw) > maxBodySize {
+		if int64(len(raw)) > app.maxBodySizeFor() {
 			writeJSON(w, http.StatusBadRequest, errorResponse("request body too large"))
 			return
 		}
@@ -121,7 +121,7 @@ func (app *App) handleAdminUsageReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := requireCrossTenantAck(r); err != nil {
+	if err := app.requireCrossTenantAck(r); err != nil {
 		writeJSON(w, http.StatusForbidden, errorResponse(err.Error()))
 		return
 	}

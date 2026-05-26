@@ -33,14 +33,14 @@ func NewSCIMStore() *SCIMStore {
 
 // SCIMUser is the internal representation of a SCIM 2.0 user resource.
 type SCIMUser struct {
-	ID         string        `json:"id"`
-	Schemas    []string      `json:"schemas"`
-	UserName   string        `json:"userName"`
-	Name       SCIMName      `json:"name,omitempty"`
-	Emails     []SCIMEmail   `json:"emails,omitempty"`
-	Active     bool          `json:"active"`
-	ExternalID string        `json:"externalId,omitempty"`
-	Meta       SCIMMetadata  `json:"meta"`
+	ID         string         `json:"id"`
+	Schemas    []string       `json:"schemas"`
+	UserName   string         `json:"userName"`
+	Name       SCIMName       `json:"name,omitempty"`
+	Emails     []SCIMEmail    `json:"emails,omitempty"`
+	Active     bool           `json:"active"`
+	ExternalID string         `json:"externalId,omitempty"`
+	Meta       SCIMMetadata   `json:"meta"`
 	Groups     []SCIMGroupRef `json:"groups,omitempty"`
 }
 
@@ -60,12 +60,12 @@ type SCIMEmail struct {
 
 // SCIMGroup is the internal representation of a SCIM 2.0 group resource.
 type SCIMGroup struct {
-	ID          string         `json:"id"`
-	Schemas     []string       `json:"schemas"`
-	DisplayName string         `json:"displayName"`
-	Members     []SCIMMember   `json:"members,omitempty"`
-	ExternalID  string         `json:"externalId,omitempty"`
-	Meta        SCIMMetadata   `json:"meta"`
+	ID          string       `json:"id"`
+	Schemas     []string     `json:"schemas"`
+	DisplayName string       `json:"displayName"`
+	Members     []SCIMMember `json:"members,omitempty"`
+	ExternalID  string       `json:"externalId,omitempty"`
+	Meta        SCIMMetadata `json:"meta"`
 }
 
 // SCIMMember represents a group member reference.
@@ -391,7 +391,7 @@ func scimAdminAPIKeyHeader() string {
 
 func (app *App) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req SCIMUserRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
@@ -472,7 +472,7 @@ func (app *App) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patch SCIMPatchOp
-	if err := readJSON(r, &patch); err != nil {
+	if err := app.readJSON(r, &patch); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
@@ -499,7 +499,7 @@ func (app *App) handleSCIMReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SCIMUserRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
@@ -554,7 +554,7 @@ func (app *App) handleSCIMDeleteUser(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 	var req SCIMGroupRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
@@ -630,7 +630,7 @@ func (app *App) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patch SCIMPatchOp
-	if err := readJSON(r, &patch); err != nil {
+	if err := app.readJSON(r, &patch); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
@@ -657,7 +657,7 @@ func (app *App) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SCIMGroupRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, err.Error(), "invalidValue")
 		return
 	}
