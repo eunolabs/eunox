@@ -94,6 +94,7 @@ type Config struct {
 	IdentityToken string
 	// IdentityTokenProvider optionally provides fresh identity tokens.
 	// If set, this is called when acquiring a new token (not when returning a cached token).
+	// If not set, IdentityToken is used.
 	IdentityTokenProvider func(ctx context.Context) (string, error)
 	// RefreshBeforeExpiry is the duration before token expiry to trigger proactive refresh.
 	// Default is 30 seconds.
