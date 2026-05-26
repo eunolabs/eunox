@@ -41,6 +41,32 @@ CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_lett
 
 // SQLiteQueue is a durable event queue backed by SQLite in WAL mode.
 // It enforces a single-writer invariant via an exclusive lock on open.
+//
+// # Throughput Limitations
+//
+// The queue serializes all operations (Push, Peek, Ack, Nack, DeadLetter) through
+// a single mutex-guarded database connection with EXCLUSIVE locking mode. This
+// design provides strong data-integrity guarantees and simple crash recovery but
+// imposes the following throughput constraints:
+//
+//   - Maximum sustained throughput: ~100–500 events/s (hardware-dependent)
+//   - Under burst load, enqueue callers contend with the delivery worker's Ack/Nack
+//     writes, causing latency spikes rather than back-pressure signals
+//   - The exclusive lock prevents concurrent readers, including diagnostic queries
+//
+// # When to Use PostgreSQL
+//
+// For deployments exceeding ~100 events/s sustained posture throughput, switch to a
+// PostgreSQL-backed queue implementation (see docs/POSTURE_SCALING.md). PostgreSQL
+// provides row-level locking, connection pooling, and horizontal read scaling.
+//
+// # Read/Write Split Evaluation
+//
+// A potential optimization is splitting the read path (Peek) to a separate read-only
+// connection under WAL mode (removing _locking_mode=EXCLUSIVE). This would allow
+// concurrent diagnostic reads but adds complexity (coordinating two connections,
+// potential snapshot isolation issues). This optimization is deferred until
+// profiling demonstrates it as the bottleneck vs. write contention.
 type SQLiteQueue struct {
 	mu sync.Mutex
 	db *sql.DB

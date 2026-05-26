@@ -8,12 +8,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
+
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 )
 
 // AuthTokenProvider acquires and refreshes capability tokens from the issuer.
 // It implements proactive token refresh before expiry and caches the current token.
+//
+// Resilience features (CR-3):
+//   - Circuit breaker protection against failing token endpoints
+//   - Jitter on refresh intervals to prevent thundering herd on restart
+//   - Stale-token grace period: serves last-known-good token during transient refresh failures
 type AuthTokenProvider struct {
 	mu sync.RWMutex
 
@@ -25,6 +33,12 @@ type AuthTokenProvider struct {
 	refreshBefore time.Duration
 	logger        *slog.Logger
 
+	// Circuit breaker for token refresh (CR-3).
+	breaker *circuitbreaker.Breaker
+	// StaleGracePeriod is how long to serve a cached token after refresh failure.
+	// Default: 60s.
+	staleGracePeriod time.Duration
+
 	// Mutable state
 	identityToken         string
 	identityTokenProvider func(ctx context.Context) (string, error)
@@ -35,8 +49,14 @@ type AuthTokenProvider struct {
 	lifecycleCtx          context.Context
 	lifecycleCancel       context.CancelFunc
 
+	// Metrics counters (CR-3).
+	refreshFailures int64
+	refreshSuccess  int64
+
 	// nowFunc for testing
 	nowFunc func() time.Time
+	// jitterFunc for testing (returns jitter to add to refresh delay)
+	jitterFunc func(base time.Duration) time.Duration
 }
 
 // AuthTokenProviderConfig configures the AuthTokenProvider.
@@ -50,6 +70,12 @@ type AuthTokenProviderConfig struct {
 	IdentityToken         string
 	IdentityTokenProvider func(ctx context.Context) (string, error)
 	Logger                *slog.Logger
+	// CircuitBreakerConfig configures the circuit breaker for token refresh.
+	// If nil, a default config is used (5 failures, 30s cooldown).
+	CircuitBreakerConfig *circuitbreaker.Config
+	// StaleGracePeriod is how long to serve a stale cached token when refresh fails.
+	// Default is 60 seconds.
+	StaleGracePeriod time.Duration
 }
 
 // NewAuthTokenProvider creates a new AuthTokenProvider.
@@ -62,6 +88,14 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 	}
 	if cfg.RetryConfig == (RetryConfig{}) {
 		cfg.RetryConfig = DefaultRetryConfig()
+	}
+	if cfg.StaleGracePeriod == 0 {
+		cfg.StaleGracePeriod = 60 * time.Second
+	}
+
+	cbCfg := circuitbreaker.DefaultConfig()
+	if cfg.CircuitBreakerConfig != nil {
+		cbCfg = *cfg.CircuitBreakerConfig
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -76,15 +110,42 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 		identityToken:         cfg.IdentityToken,
 		identityTokenProvider: cfg.IdentityTokenProvider,
 		logger:                cfg.Logger,
+		breaker:               circuitbreaker.New(cbCfg),
+		staleGracePeriod:      cfg.StaleGracePeriod,
 		stopCh:                make(chan struct{}),
 		lifecycleCtx:          ctx,
 		lifecycleCancel:       cancel,
 		nowFunc:               time.Now,
+		jitterFunc:            defaultJitter,
 	}
+}
+
+// defaultJitter adds 0-10% jitter to a duration to prevent thundering herd.
+func defaultJitter(base time.Duration) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	// Add 0-10% jitter
+	jitter := time.Duration(rand.Int64N(int64(base) / 10))
+	return jitter
+}
+
+// RefreshFailures returns the total number of background token refresh failures (for metrics/testing).
+func (p *AuthTokenProvider) RefreshFailures() int64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.refreshFailures
+}
+
+// CircuitBreakerState returns the current circuit breaker state (for metrics/testing).
+func (p *AuthTokenProvider) CircuitBreakerState() circuitbreaker.State {
+	return p.breaker.State()
 }
 
 // GetToken returns a valid capability token, acquiring or refreshing as needed.
 // It returns a cached token if still valid, or acquires a new one.
+// If refresh fails but a cached token exists within the stale grace period,
+// the stale token is returned to provide graceful degradation (CR-3).
 func (p *AuthTokenProvider) GetToken(ctx context.Context) (*TokenResponse, error) {
 	p.mu.RLock()
 	cached := p.cachedToken
@@ -94,7 +155,20 @@ func (p *AuthTokenProvider) GetToken(ctx context.Context) (*TokenResponse, error
 		return cached, nil
 	}
 
-	return p.refreshToken(ctx)
+	token, err := p.refreshToken(ctx)
+	if err != nil {
+		// Stale-token grace: if we have a cached token that hasn't fully expired
+		// plus the grace period, serve it rather than failing the caller.
+		if cached != nil && p.isWithinGracePeriod(cached) {
+			p.logger.Warn("serving stale token during refresh failure",
+				"error", err,
+				"token_expires_at", time.Unix(cached.ExpiresAt, 0).Format(time.RFC3339),
+			)
+			return cached, nil
+		}
+		return nil, err
+	}
+	return token, nil
 }
 
 // Stop cancels any pending background refresh and releases resources.
@@ -124,6 +198,15 @@ func (p *AuthTokenProvider) isExpiringSoon(token *TokenResponse) bool {
 	return now.Add(p.refreshBefore).After(expiresAt)
 }
 
+// isWithinGracePeriod returns true if the token is within the stale grace period
+// (i.e., expired less than staleGracePeriod ago).
+func (p *AuthTokenProvider) isWithinGracePeriod(token *TokenResponse) bool {
+	now := p.nowFunc()
+	expiresAt := time.Unix(token.ExpiresAt, 0)
+	graceDeadline := expiresAt.Add(p.staleGracePeriod)
+	return now.Before(graceDeadline)
+}
+
 func (p *AuthTokenProvider) refreshToken(ctx context.Context) (*TokenResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -133,19 +216,25 @@ func (p *AuthTokenProvider) refreshToken(ctx context.Context) (*TokenResponse, e
 		return p.cachedToken, nil
 	}
 
-	token, err := RetryFunc(ctx, p.retryConfig, func(ctx context.Context) (*TokenResponse, error) {
-		return p.acquireToken(ctx)
+	// Wrap token acquisition in circuit breaker (CR-3).
+	token, err := circuitbreaker.Do(ctx, p.breaker, func(ctx context.Context) (*TokenResponse, error) {
+		return RetryFunc(ctx, p.retryConfig, func(ctx context.Context) (*TokenResponse, error) {
+			return p.acquireToken(ctx)
+		})
 	})
 	if err != nil {
+		p.refreshFailures++
 		return nil, fmt.Errorf("acquire capability token: %w", err)
 	}
 
+	p.refreshSuccess++
 	p.cachedToken = token
 	p.scheduleRefreshLocked(token)
 
 	return token, nil
 }
 
+//nolint:contextcheck // scheduleRefreshLocked creates its own context from lifecycleCtx when the timer fires; passing a caller context is inappropriate for deferred async work.
 func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 	if p.refreshTimer != nil {
 		p.refreshTimer.Stop()
@@ -159,6 +248,9 @@ func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 	if delay <= 0 {
 		return // Already needs refresh
 	}
+
+	// Add jitter to prevent thundering herd on synchronized restarts (CR-3).
+	delay += p.jitterFunc(delay)
 
 	p.refreshTimer = time.AfterFunc(delay, func() {
 		select {
@@ -175,7 +267,10 @@ func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 		if _, err := p.refreshToken(ctx); err != nil {
 			// Only log if we weren't stopped (context cancellation during shutdown is expected).
 			if p.lifecycleCtx.Err() == nil {
-				p.logger.Warn("background token refresh failed", "error", err)
+				p.logger.Warn("background token refresh failed",
+					"error", err,
+					"circuit_breaker_state", string(p.breaker.State()),
+				)
 			}
 		}
 	})
