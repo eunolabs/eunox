@@ -98,25 +98,26 @@ OIDC provider initialization during service startup uses background context. If 
    The RegisterCondition pattern in pkg/enforcement allows runtime extension of the condition registry without modifying engine code. This is a good open-closed principle application.
 
 6. Opportunities for Improvement
-   Area Suggestion
-   internal/posture/queue.go Accept context.Context in Push/Peek/Ack methods
-   pkg/audit/transport.go 4 identical context.WithTimeout(context.Background(), 30s) patterns — extract a helper
-   internal/gateway/admin_routes.go 697 lines — consider splitting into separate files per domain (kill-switch, partner-dids, usage)
-   Migrations Only 2 migration sets (audit, minter). Missing: issuer role-policies, partner-DIDs, rate-limit state
-   Config validation pkg/config production rules are string-based ("min_length:32"). Consider typed validators for compile-time safety
-   Helm values No resource requests/limits in values.yaml — critical for production scheduling
-   [?] Open Questions
-   Multi-tenancy model: The admin API supports tenantID isolation, but there's no documentation on how tenants are provisioned. Is there a tenant management API, or is each deployment single-tenant?
+   Area Suggestion Status
+   internal/posture/queue.go Accept context.Context in Push/Peek/Ack methods ✅ Done (P1 #5)
+   pkg/audit/transport.go 4 identical context.WithTimeout(context.Background(), 30s) patterns — extract a helper ✅ Done — transports now use lifecycle context
+   internal/gateway/admin_routes.go 697 lines — consider splitting into separate files per domain (kill-switch, partner-dids, usage) ✅ Done (P3 #15)
+   Migrations Only 2 migration sets (audit, minter). Missing: issuer role-policies, partner-DIDs, rate-limit state ⚠️ Deferred — requires schema design for federated partner-DID persistence
+   Config validation pkg/config production rules are string-based ("min_length:32"). Consider typed validators for compile-time safety ⚠️ Deferred — current approach works; typed validators would require generics refactoring
+   Helm values No resource requests/limits in values.yaml — critical for production scheduling ✅ Done (P1 #9)
+   [?] Open Questions — ✅ ALL RESOLVED
 
-KMS key rotation: The crypto package has KMS stubs but no key rotation mechanism. How are signing keys rotated without service interruption? The JWKS endpoint serves keys, but there's no documented rotation procedure for the issuer's signing key.
+See [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) for detailed answers.
 
-Database connection pooling: pgx/v5 is listed as the driver but the audit PostgresLedgerBackend accepts \*sql.DB. Is there a reason for not using pgxpool directly? This affects connection pool observability and prepared statement caching.
+| # | Question | Resolution |
+|---|----------|-----------|
+| 1 | Multi-tenancy model | Single-tenant-per-deployment by design. `GATEWAY_TENANT_ID` binds deployment to org. No provisioning API needed — isolation at infrastructure level. |
+| 2 | KMS key rotation | `RotatingKeyStore` (internal/issuer/rotating_keystore.go) supports active + retired keys in JWKS. Zero-downtime rotation: Rotate() → wait max TTL → Prune(). |
+| 3 | Database connection pooling | Intentional minimal `DB` interface for driver independence. pgx not a dependency — standard `database/sql` with pool settings is sufficient. pgx/stdlib adapter works if needed. |
+| 4 | Rate limiting state persistence | Redis backend (sorted sets with `PEXPIRE`) is fully persistent across restarts. In-memory is development-only. |
+| 5 | SCIM provisioning completeness | Full SCIM 2.0 implemented (P3 #17): Users + Groups with POST/GET/PATCH/PUT/DELETE, filtering, proper error responses. |
+| 6 | Testcontainers | Two-tier testing: in-memory backends for fast CI (`make test`), Docker-based testcontainers gated by `integration` build tag for real-infra validation. |
 
-Rate limiting state persistence: The Redis rate limiter exists, but is rate-limit state preserved across gateway restarts? If using in-memory for development, what's the production expectation?
-
-SCIM provisioning completeness: The issuer has POST /scim/v2/Users and POST /scim/v2/Groups but no GET/PATCH/DELETE. Is this intentional (write-only provisioning), or is full SCIM 2.0 compliance planned?
-
-Testcontainers gated by build tag: pkg/testutil/containers.go has a TODO for Stage 2 and the helpers are commented out. How are integration tests (internal/integration/) running against real PostgreSQL/Redis?
 
 Execution Plan (Priority × Dependency)
 
@@ -181,13 +182,13 @@ Stage Completion Matrix
 Stage	Status	Gaps
 1 — Foundation	✅ Complete	KMS stubs only (by design)
 2 — Gateway Core	✅ Complete	None
-3 — Capability Issuer	✅ Complete	None
+3 — Capability Issuer	✅ Complete	Key rotation via RotatingKeyStore
 4 — Minter & Credentials	✅ Complete	Real cloud adapters implemented (P2 #10–12)
-5 — Audit Pipeline	✅ Complete	S3 anchor now authenticated via SigV4 (P0 #3)
+5 — Audit Pipeline	✅ Complete	S3 anchor SigV4 (P0 #3); transport lifecycle contexts
 6 — Admin API	✅ Complete	Kill-switch pub/sub implemented (P0 #1)
 7 — Federation & DID	✅ Complete	None
 8 — Posture Emitter	✅ Complete	Dead-letter table deferred
 9 — Agent Runtime	✅ Complete	None
 10 — Deployment & Hardening	✅ Complete	Trivy scanning added (P2 #14); chaos test suite added (P3 #18)
 11 — Integration Testing	✅ Complete	DB migration tests need live PG
-Overall: All P0, P2, and P3 items resolved. 11/11 stages fully complete. Remaining deferrals: live PG for migration tests (does not block deployments), live-cluster chaos (requires staging k8s).
+Overall: All P0, P1, P2, P3 items and open questions resolved. 11/11 stages fully complete. All open questions answered in OPEN_QUESTIONS.md. Remaining deferrals: live PG for migration tests (does not block deployments), live-cluster chaos (requires staging k8s), typed config validators, issuer/partner-DID migrations.
