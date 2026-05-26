@@ -12,7 +12,7 @@ policy enforcement via the [Model Context Protocol](https://spec.modelcontextpro
 ## Prerequisites
 
 - Go 1.25+
-- golangci-lint v2.1.6+
+- golangci-lint v2.12+
 - Docker (for integration tests and local deployment)
 
 ## Build & Test
@@ -85,7 +85,7 @@ The GitHub Actions workflow (`.github/workflows/go-ci.yml`) runs:
 - `go vet` + `golangci-lint`
 - Tests with race detector and 80% coverage threshold for `pkg/`
 - BSL license header check
-- Cross-compilation (linux/amd64, linux/arm64)
+- Cross-compilation (linux/amd64, linux/arm64, windows/amd64, windows/arm64)
 
 ## Local Development Stack
 

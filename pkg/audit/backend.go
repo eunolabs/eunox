@@ -352,7 +352,7 @@ type QueryResult struct {
 // QueryStore provides read-only access to audit records.
 type QueryStore interface {
 	// Query returns paginated audit records matching the filter.
-	Query(ctx context.Context, filter QueryFilter, page PageParams) (*QueryResult, error)
+	Query(ctx context.Context, filter *QueryFilter, page PageParams) (*QueryResult, error)
 	// GetByID retrieves a single audit record by ID.
 	GetByID(ctx context.Context, id string) (*SignedAuditEvidence, error)
 	// GetChainSegment retrieves a contiguous chain segment for verification.
@@ -370,7 +370,10 @@ func NewPostgresQueryStore(db DB) *PostgresQueryStore {
 }
 
 // Query returns paginated audit records matching the filter.
-func (s *PostgresQueryStore) Query(ctx context.Context, filter QueryFilter, page PageParams) (*QueryResult, error) {
+func (s *PostgresQueryStore) Query(ctx context.Context, filter *QueryFilter, page PageParams) (*QueryResult, error) {
+	if filter == nil {
+		filter = &QueryFilter{}
+	}
 	if page.Limit <= 0 {
 		page.Limit = 50
 	}
@@ -510,9 +513,8 @@ func (s *PostgresQueryStore) GetChainSegment(ctx context.Context, replicaID stri
 	return records, nil
 }
 
-func buildWhereClause(filter QueryFilter) (string, []any) {
+func buildWhereClause(filter *QueryFilter) (where string, args []any) {
 	var conditions []string
-	var args []any
 	argIdx := 1
 
 	if filter.TenantID != "" {
@@ -549,7 +551,7 @@ func buildWhereClause(filter QueryFilter) (string, []any) {
 		return "", nil
 	}
 
-	where := " WHERE "
+	where = " WHERE "
 	for i, c := range conditions {
 		if i > 0 {
 			where += " AND "

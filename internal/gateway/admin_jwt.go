@@ -141,12 +141,12 @@ func (v *AdminJWTVerifier) refreshKeys(ctx context.Context) (*jose.JSONWebKeySet
 		return v.jwks, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURI, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURI, http.NoBody) //nolint:gosec // G704: JWKS URI is operator-configured, not user-controlled
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := v.client.Do(req)
+	resp, err := v.client.Do(req) //nolint:gosec // G704: JWKS URI is operator-configured, not user-controlled
 	if err != nil {
 		return nil, err
 	}

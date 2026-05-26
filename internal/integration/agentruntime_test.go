@@ -123,22 +123,19 @@ func setupTestIssuer(t *testing.T, signingKey *eunocrypto.SoftwareSigner, idKey 
 	metrics := observability.NewMetricsRegistry("test", "integration")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	app := issuer.New(
-		issuer.Config{
-			IssuerDID:       "did:web:issuer.test",
-			IssuerURL:       "https://issuer.test",
-			DefaultTokenTTL: 300,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine,
-			Identity:     idProvider,
-			KeyStore:     keyStore,
-			Logger:       logger,
-			Metrics:      metrics,
-		},
-	)
+	app := issuer.New(&issuer.Config{
+		IssuerDID:       "did:web:issuer.test",
+		IssuerURL:       "https://issuer.test",
+		DefaultTokenTTL: 300,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine,
+		Identity:     idProvider,
+		KeyStore:     keyStore,
+		Logger:       logger,
+		Metrics:      metrics,
+	})
 
 	return httptest.NewServer(app.Handler())
 }
@@ -152,19 +149,16 @@ func setupTestGateway(t *testing.T, signingKey *eunocrypto.SoftwareSigner) *http
 	metrics := observability.NewMetricsRegistry("test", "integration")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	app := gateway.New(
-		gateway.Config{
-			AdminAPIKey:     "test-admin-key",
-			GatewayAudience: "https://gateway.test",
-		},
-		gateway.Dependencies{
-			Engine:      engine,
-			JWTVerifier: &testJWTVerifier{signingKey: signingKey},
-			DPoPStore:   dpopStore,
-			Logger:      logger,
-			Metrics:     metrics,
-		},
-	)
+	app := gateway.New(&gateway.Config{
+		AdminAPIKey:     "test-admin-key",
+		GatewayAudience: "https://gateway.test",
+	}, &gateway.Dependencies{
+		Engine:      engine,
+		JWTVerifier: &testJWTVerifier{signingKey: signingKey},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+		Metrics:     metrics,
+	})
 
 	return httptest.NewServer(app.Handler())
 }
@@ -230,12 +224,13 @@ func TestAgentRuntime_FullLoop(t *testing.T) {
 
 	// --- Create agent runtime ---
 	dpopDisabled := false
-	rt, err := agentruntime.New(agentruntime.Config{
+	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    gatewayServer.URL,
 		IdentityToken: idTokenStr,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -291,11 +286,12 @@ func TestAgentRuntime_DPoPEndToEnd(t *testing.T) {
 	defer issuerServer.Close()
 
 	// Create runtime with DPoP enabled (default)
-	rt, err := agentruntime.New(agentruntime.Config{
+	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    "https://gateway.test",
 		IdentityToken: idTokenStr,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -350,15 +346,14 @@ func TestAgentRuntime_ManifestDrivenIssuance(t *testing.T) {
 
 	// Create runtime with manifest-driven hints
 	dpopDisabled := false
-	rt, err := agentruntime.New(
-		agentruntime.Config{
-			IssuerURL:     issuerServer.URL,
-			GatewayURL:    "https://gateway.test",
-			IdentityToken: idTokenStr,
-			DPoPEnabled:   &dpopDisabled,
-		},
-		agentruntime.WithHintsProvider(agentruntime.NewStaticHintsProvider(manifest)),
-	)
+	rt, err := agentruntime.New(&agentruntime.Config{
+		IssuerURL:     issuerServer.URL,
+		GatewayURL:    "https://gateway.test",
+		IdentityToken: idTokenStr,
+		DPoPEnabled:   &dpopDisabled,
+	},
+		agentruntime.WithHintsProvider(agentruntime.NewStaticHintsProvider(manifest)))
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -395,12 +390,13 @@ func TestAgentRuntime_HTTPAdapterFullLoop(t *testing.T) {
 
 	// Runtime
 	dpopDisabled := false
-	rt, err := agentruntime.New(agentruntime.Config{
+	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    gatewayServer.URL,
 		IdentityToken: idTokenStr,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -408,12 +404,13 @@ func TestAgentRuntime_HTTPAdapterFullLoop(t *testing.T) {
 	httpAdapter := adapters.NewHTTPAdapter(rt, upstreamServer.URL, "session-adapter")
 
 	var result map[string]interface{}
-	err = httpAdapter.CallJSON(ctx, adapters.HTTPToolCall{
+	err = httpAdapter.CallJSON(ctx, &adapters.HTTPToolCall{
 		ToolName:  "list_items",
 		Method:    "GET",
 		Path:      "/api/items",
 		Arguments: map[string]interface{}{"limit": 10},
 	}, &result)
+
 	require.NoError(t, err)
 
 	items, ok := result["items"].([]interface{})

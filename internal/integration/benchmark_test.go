@@ -34,16 +34,17 @@ func BenchmarkEnforce_SimpleAllow(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{
@@ -88,16 +89,17 @@ func BenchmarkEnforce_WithConditions(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{
@@ -135,16 +137,17 @@ func BenchmarkEnforce_Deny(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{
@@ -188,16 +191,17 @@ func BenchmarkEnforce_WithKillSwitchCheck(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{
@@ -241,16 +245,17 @@ func BenchmarkEnforce_WithRevocationCheck(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revStore,
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{
@@ -288,16 +293,17 @@ func BenchmarkEnforce_P99Threshold(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "perf-gateway",
 		AdminAPIKey:     "perf-admin-key",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload, _ := json.Marshal(map[string]any{

@@ -28,37 +28,41 @@ type LogConfig struct {
 }
 
 // NewLogger creates a configured slog.Logger.
-func NewLogger(cfg LogConfig) *slog.Logger {
-	if cfg.Output == nil {
-		cfg.Output = os.Stderr
+func NewLogger(cfg *LogConfig) *slog.Logger {
+	resolvedCfg := &LogConfig{}
+	if cfg != nil {
+		resolvedCfg = cfg
 	}
-	if cfg.Format == "" {
-		cfg.Format = "json"
+	if resolvedCfg.Output == nil {
+		resolvedCfg.Output = os.Stderr
 	}
-	if cfg.Level == "" {
-		cfg.Level = "info"
+	if resolvedCfg.Format == "" {
+		resolvedCfg.Format = "json"
+	}
+	if resolvedCfg.Level == "" {
+		resolvedCfg.Level = "info"
 	}
 
-	level := parseLevel(cfg.Level)
+	level := parseLevel(resolvedCfg.Level)
 	opts := &slog.HandlerOptions{
 		Level:     level,
-		AddSource: cfg.AddSource,
+		AddSource: resolvedCfg.AddSource,
 	}
 
 	var handler slog.Handler
-	switch strings.ToLower(cfg.Format) {
+	switch strings.ToLower(resolvedCfg.Format) {
 	case "text":
-		handler = slog.NewTextHandler(cfg.Output, opts)
+		handler = slog.NewTextHandler(resolvedCfg.Output, opts)
 	default:
-		handler = slog.NewJSONHandler(cfg.Output, opts)
+		handler = slog.NewJSONHandler(resolvedCfg.Output, opts)
 	}
 
 	attrs := []slog.Attr{}
-	if cfg.ServiceName != "" {
-		attrs = append(attrs, slog.String("service", cfg.ServiceName))
+	if resolvedCfg.ServiceName != "" {
+		attrs = append(attrs, slog.String("service", resolvedCfg.ServiceName))
 	}
-	if cfg.Version != "" {
-		attrs = append(attrs, slog.String("version", cfg.Version))
+	if resolvedCfg.Version != "" {
+		attrs = append(attrs, slog.String("version", resolvedCfg.Version))
 	}
 	if len(attrs) > 0 {
 		handler = handler.WithAttrs(attrs)

@@ -36,13 +36,13 @@ func TestManager_HealthHandler(t *testing.T) {
 	m := New()
 
 	rec := httptest.NewRecorder()
-	m.HealthHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
+	m.HealthHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", http.NoBody))
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "healthy")
 
 	m.SetUnhealthy()
 	rec = httptest.NewRecorder()
-	m.HealthHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
+	m.HealthHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", http.NoBody))
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
@@ -50,12 +50,12 @@ func TestManager_ReadyHandler(t *testing.T) {
 	m := New()
 
 	rec := httptest.NewRecorder()
-	m.ReadyHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
+	m.ReadyHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	m.SetReady()
 	rec = httptest.NewRecorder()
-	m.ReadyHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
+	m.ReadyHandler()(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 

@@ -25,7 +25,7 @@ func main() {
 	port := envOrDefault("DB_TOKEN_SVC_PORT", "3005")
 	adapter := envOrDefault("DB_TOKEN_SVC_ADAPTER", "aws-rds")
 
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
 		ServiceName: "db-token-svc",
 	})
@@ -130,6 +130,7 @@ func buildAdapter(name string) (dbtokensvc.CloudDBAdapter, error) {
 	}
 }
 
+//nolint:unparam // placeholder until external verifier is configured
 func buildVerifier() (dbtokensvc.TokenVerifier, error) {
 	if os.Getenv("ISSUER_JWKS_URL") == "" {
 		return nil, errors.New("ISSUER_JWKS_URL must be set")

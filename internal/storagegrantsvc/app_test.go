@@ -36,8 +36,8 @@ type mockStorageAdapter struct {
 func (m *mockStorageAdapter) Name() string { return "mock-storage" }
 
 // MintGrant implements CloudStorageAdapter.
-func (m *mockStorageAdapter) MintGrant(_ context.Context, req MintStorageGrantRequest) (*StorageGrant, error) {
-	m.lastReq = req
+func (m *mockStorageAdapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
+	m.lastReq = *req
 	return m.grant, m.err
 }
 
@@ -60,7 +60,7 @@ func newTestStorageApp(t *testing.T, verifier TokenVerifier, adapter CloudStorag
 func TestStorageGrantSvc_HealthLive(t *testing.T) {
 	t.Parallel()
 	app := newTestStorageApp(t, &mockVerifier{}, &mockStorageAdapter{})
-	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/live", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -71,7 +71,7 @@ func TestStorageGrantSvc_HealthLive(t *testing.T) {
 func TestStorageGrantSvc_HealthReady(t *testing.T) {
 	t.Parallel()
 	app := newTestStorageApp(t, &mockVerifier{}, &mockStorageAdapter{})
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -100,7 +100,7 @@ func TestStorageGrantSvc_MintGrant_Success(t *testing.T) {
 	}
 	app := newTestStorageApp(t, verifier, adapter)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -192,7 +192,7 @@ func TestStorageGrantSvc_MintGrant_MissingAuth(t *testing.T) {
 	t.Parallel()
 	app := newTestStorageApp(t, &mockVerifier{}, &mockStorageAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -206,7 +206,7 @@ func TestStorageGrantSvc_MintGrant_InvalidToken(t *testing.T) {
 	verifier := &mockVerifier{err: ErrInvalidToken}
 	app := newTestStorageApp(t, verifier, &mockStorageAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -227,7 +227,7 @@ func TestStorageGrantSvc_MintGrant_NoCapability(t *testing.T) {
 	}
 	app := newTestStorageApp(t, verifier, &mockStorageAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -294,7 +294,7 @@ func TestStorageGrantSvc_MintGrant_AdapterError(t *testing.T) {
 	adapter := &mockStorageAdapter{err: ErrMintFailed}
 	app := newTestStorageApp(t, verifier, adapter)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -315,7 +315,7 @@ func TestStorageGrantSvc_MintGrant_RequiresPath(t *testing.T) {
 	}
 	app := newTestStorageApp(t, verifier, &mockStorageAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-grants", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+"test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)

@@ -35,7 +35,7 @@ func TestHTTPTransport_Send_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			BatchSize:     10,
 			FlushInterval: 1 * time.Hour, // Large to avoid flush loop interference.
@@ -77,7 +77,7 @@ func TestHTTPTransport_Send_WithAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -104,7 +104,7 @@ func TestHTTPTransport_Send_WithHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -135,7 +135,7 @@ func TestHTTPTransport_Send_RetryOnFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			MaxRetries:    3,
@@ -161,7 +161,7 @@ func TestHTTPTransport_Send_MaxRetriesExhausted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			MaxRetries:    2,
@@ -182,7 +182,7 @@ func TestHTTPTransport_Send_MaxRetriesExhausted(t *testing.T) {
 func TestHTTPTransport_Send_EmptyBatch(t *testing.T) {
 	t.Parallel()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -198,7 +198,7 @@ func TestHTTPTransport_Send_EmptyBatch(t *testing.T) {
 func TestHTTPTransport_Enqueue_AfterClose(t *testing.T) {
 	t.Parallel()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -215,7 +215,7 @@ func TestHTTPTransport_Enqueue_AfterClose(t *testing.T) {
 func TestHTTPTransport_Enqueue_BufferFull(t *testing.T) {
 	t.Parallel()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    1, // Tiny buffer.
@@ -246,7 +246,7 @@ func TestHTTPTransport_FlushLoop(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(HTTPTransportConfig{
+	transport := NewHTTPTransport(&HTTPTransportConfig{
 		TransportConfig: TransportConfig{
 			BatchSize:     10,
 			FlushInterval: 50 * time.Millisecond,
@@ -295,7 +295,7 @@ func TestAzureSentinelTransport_Send_Success(t *testing.T) {
 		{Record: LogEntry{ID: "rec-1", EventType: "test"}},
 	}
 	sharedKey := base64.StdEncoding.EncodeToString([]byte("key-456"))
-	transport := NewAzureSentinelTransport(AzureSentinelConfig{
+	transport := NewAzureSentinelTransport(&AzureSentinelConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			MaxRetries:    1,
@@ -321,7 +321,7 @@ func TestAzureSentinelTransport_Send_Success(t *testing.T) {
 func TestAzureSentinelTransport_Enqueue_AfterClose(t *testing.T) {
 	t.Parallel()
 
-	transport := NewAzureSentinelTransport(AzureSentinelConfig{
+	transport := NewAzureSentinelTransport(&AzureSentinelConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -345,7 +345,7 @@ func TestAzureSentinelTransport_DefaultLogType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewAzureSentinelTransport(AzureSentinelConfig{
+	transport := NewAzureSentinelTransport(&AzureSentinelConfig{
 		TransportConfig: TransportConfig{
 			FlushInterval: 1 * time.Hour,
 			BufferSize:    100,
@@ -610,7 +610,7 @@ type mockQueryStore struct {
 	chainSegment []SignedAuditEvidence
 }
 
-func (s *mockQueryStore) Query(_ context.Context, _ QueryFilter, _ PageParams) (*QueryResult, error) {
+func (s *mockQueryStore) Query(_ context.Context, _ *QueryFilter, _ PageParams) (*QueryResult, error) {
 	return &QueryResult{Records: s.chainSegment, TotalCount: int64(len(s.chainSegment))}, nil
 }
 
@@ -654,7 +654,7 @@ func TestIntegration_EnforcementDecision_AuditRecord_ExportVerify(t *testing.T) 
 	require.NoError(t, pipeline.Initialize(context.Background()))
 
 	// 4. Simulate enforcement decision → audit record.
-	ocsfEvent := ocsf.NewAPIActivityEvent(ocsf.ActivityAPIAllow, ocsf.Actor{
+	ocsfEvent := ocsf.NewAPIActivityEvent(ocsf.ActivityAPIAllow, &ocsf.Actor{
 		UserID:    "agent-123",
 		TenantID:  "tenant-org-1",
 		SessionID: "session-abc",

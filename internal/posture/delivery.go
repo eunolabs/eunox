@@ -138,12 +138,12 @@ func (w *DeliveryWorker) tick() {
 		return
 	}
 
-	for _, event := range events {
-		w.deliverEvent(event)
+	for i := range events {
+		w.deliverEvent(&events[i])
 	}
 }
 
-func (w *DeliveryWorker) deliverEvent(event QueuedEvent) {
+func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 	// Check if we've exceeded max attempts (dead-letter).
 	if event.Attempts >= w.config.MaxAttempts {
 		w.deadLetter(event)
@@ -193,14 +193,14 @@ func (w *DeliveryWorker) deliverEvent(event QueuedEvent) {
 	}
 }
 
-func (w *DeliveryWorker) deliverToPlugin(ctx context.Context, plugin Plugin, event QueuedEvent) error {
+func (w *DeliveryWorker) deliverToPlugin(ctx context.Context, plugin Plugin, event *QueuedEvent) error {
 	switch event.Type {
 	case EventObserved:
 		var record AgentInventoryRecord
 		if err := json.Unmarshal(event.Payload, &record); err != nil {
 			return fmt.Errorf("unmarshal observed record: %w", err)
 		}
-		return plugin.EmitObserved(ctx, record)
+		return plugin.EmitObserved(ctx, &record)
 
 	case EventRevoked:
 		var revocation RevokedPayload
@@ -214,7 +214,7 @@ func (w *DeliveryWorker) deliverToPlugin(ctx context.Context, plugin Plugin, eve
 	}
 }
 
-func (w *DeliveryWorker) deadLetter(event QueuedEvent) {
+func (w *DeliveryWorker) deadLetter(event *QueuedEvent) {
 	if w.logger != nil {
 		w.logger.Error("dead-lettered event",
 			slog.Int64("eventID", event.ID),

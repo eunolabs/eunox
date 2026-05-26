@@ -46,7 +46,7 @@ func generateTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, []byte)
 	return cert, key, certPEM
 }
 
-func generateTestCert(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, cn string) ([]byte, []byte) {
+func generateTestCert(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, cn string) (certPEM, keyPEM []byte) {
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -64,11 +64,11 @@ func generateTestCert(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKe
 	certDER, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
 	require.NoError(t, err)
 
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	require.NoError(t, err)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	return certPEM, keyPEM
 }
@@ -89,7 +89,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 	keyFile := writeTempFile(t, dir, "server.key", keyPEM)
 	caFile := writeTempFile(t, dir, "ca.crt", caPEM)
 
-	tlsCfg, err := NewServerTLSConfig(Config{
+	tlsCfg, err := NewServerTLSConfig(&Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,
@@ -109,7 +109,7 @@ func TestNewServerTLSConfig_NoCA(t *testing.T) {
 	certFile := writeTempFile(t, dir, "server.crt", certPEM)
 	keyFile := writeTempFile(t, dir, "server.key", keyPEM)
 
-	tlsCfg, err := NewServerTLSConfig(Config{
+	tlsCfg, err := NewServerTLSConfig(&Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	})
@@ -127,7 +127,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 	keyFile := writeTempFile(t, dir, "client.key", keyPEM)
 	caFile := writeTempFile(t, dir, "ca.crt", caPEM)
 
-	tlsCfg, err := NewClientTLSConfig(Config{
+	tlsCfg, err := NewClientTLSConfig(&Config{
 		CertFile:   certFile,
 		KeyFile:    keyFile,
 		CAFile:     caFile,
@@ -146,7 +146,7 @@ func TestNewClientTLSConfig_NoClientCert(t *testing.T) {
 	dir := t.TempDir()
 	caFile := writeTempFile(t, dir, "ca.crt", caPEM)
 
-	tlsCfg, err := NewClientTLSConfig(Config{
+	tlsCfg, err := NewClientTLSConfig(&Config{
 		CAFile:     caFile,
 		ServerName: "server.test",
 	})
@@ -234,7 +234,7 @@ func TestCertReloader_ReloadWhenOnlyKeyChanges(t *testing.T) {
 }
 
 func TestNewServerTLSConfig_InvalidCert(t *testing.T) {
-	_, err := NewServerTLSConfig(Config{
+	_, err := NewServerTLSConfig(&Config{
 		CertFile: "/nonexistent/cert.pem",
 		KeyFile:  "/nonexistent/key.pem",
 	})
@@ -242,7 +242,7 @@ func TestNewServerTLSConfig_InvalidCert(t *testing.T) {
 }
 
 func TestNewClientTLSConfig_InvalidCA(t *testing.T) {
-	_, err := NewClientTLSConfig(Config{
+	_, err := NewClientTLSConfig(&Config{
 		CAFile: "/nonexistent/ca.pem",
 	})
 	assert.Error(t, err)
@@ -272,7 +272,7 @@ func TestNewServerTLSConfigWithReloader(t *testing.T) {
 	keyFile := writeTempFile(t, dir, "server.key", keyPEM)
 	caFile := writeTempFile(t, dir, "ca.crt", caPEM)
 
-	tlsCfg, reloader, err := NewServerTLSConfigWithReloader(Config{
+	tlsCfg, reloader, err := NewServerTLSConfigWithReloader(&Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,

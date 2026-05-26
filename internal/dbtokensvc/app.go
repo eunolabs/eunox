@@ -59,7 +59,7 @@ type CloudDBAdapter interface {
 	// Name returns the adapter name (e.g., "aws-rds", "azure-sql", "gcp-cloudsql").
 	Name() string
 	// MintCredential mints a short-lived database credential.
-	MintCredential(ctx context.Context, req MintDBCredentialRequest) (*DBCredential, error)
+	MintCredential(ctx context.Context, req *MintDBCredentialRequest) (*DBCredential, error)
 }
 
 // TokenVerifier verifies JWTs and extracts claims.
@@ -262,7 +262,7 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 		TTL:        ttl,
 	}
 
-	cred, err := app.deps.Adapter.MintCredential(r.Context(), mintReq)
+	cred, err := app.deps.Adapter.MintCredential(r.Context(), &mintReq)
 	if err != nil {
 		if app.metrics != nil {
 			app.metrics.mintTotal.WithLabelValues(app.deps.Adapter.Name(), "error").Inc()
@@ -295,7 +295,7 @@ func (app *App) mapToDBUsername(claims *TokenClaims) string {
 }
 
 func extractDatabaseFromURI(uri string) string {
-	// db://host/database → "database"
+	// Extract the database name from a db URI such as db://host/database.
 	parts := strings.SplitN(uri, "/", 4)
 	if len(parts) >= 4 {
 		return parts[3]
@@ -350,7 +350,7 @@ func NewAWSRDSAdapter(region, endpoint string, port int) *AWSRDSAdapter {
 func (a *AWSRDSAdapter) Name() string { return "aws-rds" }
 
 // MintCredential implements CloudDBAdapter.
-func (a *AWSRDSAdapter) MintCredential(_ context.Context, req MintDBCredentialRequest) (*DBCredential, error) {
+func (a *AWSRDSAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	// In production, this would use AWS STS AssumeRole + RDS IAM auth token generation.
 	// For now, we generate the token structure that would be returned.
 	token := fmt.Sprintf("rds-iam-token:%s:%s:%s:%d",
@@ -385,7 +385,7 @@ func NewAzureSQLAdapter(serverName string, port int) *AzureSQLAdapter {
 func (a *AzureSQLAdapter) Name() string { return "azure-sql" }
 
 // MintCredential implements CloudDBAdapter.
-func (a *AzureSQLAdapter) MintCredential(_ context.Context, req MintDBCredentialRequest) (*DBCredential, error) {
+func (a *AzureSQLAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	// In production, this would use Azure managed identity to acquire an access token
 	// for the Azure SQL resource (https://database.windows.net/).
 	token := fmt.Sprintf("azure-sql-token:%s:%s:%d",
@@ -420,7 +420,7 @@ func NewGCPCloudSQLAdapter(instanceConnection string, port int) *GCPCloudSQLAdap
 func (a *GCPCloudSQLAdapter) Name() string { return "gcp-cloudsql" }
 
 // MintCredential implements CloudDBAdapter.
-func (a *GCPCloudSQLAdapter) MintCredential(_ context.Context, req MintDBCredentialRequest) (*DBCredential, error) {
+func (a *GCPCloudSQLAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	// In production, this would use GCP OAuth2 to mint an IAM access token
 	// for Cloud SQL IAM authentication.
 	token := fmt.Sprintf("gcp-cloudsql-token:%s:%s:%d",

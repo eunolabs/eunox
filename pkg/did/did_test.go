@@ -131,7 +131,7 @@ type testWebResolver struct {
 
 func (r *testWebResolver) Resolve(ctx context.Context, did string) (*Document, error) {
 	url := r.baseURL + "/.well-known/did.json"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (r *testWebResolver) Resolve(ctx context.Context, did string) (*Document, e
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck // Best-effort close for test response body.
 	if resp.StatusCode != http.StatusOK {
 		return nil, &resolveError{status: resp.StatusCode}
 	}

@@ -1,0 +1,103 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Gateway",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/gateway",
+      "env": {
+        "GATEWAY_AUDIENCE": "http://localhost:8080",
+        "ADMIN_API_KEY": "dev-admin-key-for-local-testing-only",
+        "JWKS_URI": "http://localhost:8081/.well-known/jwks.json",
+        "LISTEN_ADDR": ":8080",
+        "ADMIN_LISTEN_ADDR": "127.0.0.1:3003",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Launch Issuer",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/issuer",
+      "env": {
+        "ISSUER_DID": "did:web:localhost",
+        "ISSUER_URL": "http://localhost:8081",
+        "LISTEN_ADDR": ":8081",
+        "SIGNING_KEY_PATH": "${workspaceFolder}/testdata/test-key.pem",
+        "DEFAULT_TOKEN_TTL": "300",
+        "MAX_TOKEN_TTL": "3600",
+        "AUDIENCE": "http://localhost:8080",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Launch Minter",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/minter",
+      "env": {
+        "MINTER_LISTEN_ADDR": ":8082",
+        "MINTER_ADMIN_KEY": "dev-admin-key-for-local-testing-only",
+        "MINTER_PEPPER_HEX": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "MINTER_DB_URL": "sqlite://minter.db",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Launch Posture Emitter",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/posture-emitter",
+      "env": {
+        "EMITTER_LISTEN_ADDR": ":8083",
+        "EMITTER_ADMIN_KEY": "dev-admin-key-for-local-testing-only",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Launch DB Token Service",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/db-token-svc",
+      "env": {
+        "DB_TOKEN_LISTEN_ADDR": ":8084",
+        "JWKS_URI": "http://localhost:8081/.well-known/jwks.json",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Launch Storage Grant Service",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/storage-grant-svc",
+      "env": {
+        "STORAGE_GRANT_LISTEN_ADDR": ":8085",
+        "JWKS_URI": "http://localhost:8081/.well-known/jwks.json",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "name": "Debug Current Test File",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-test.v", "-test.run", "${selectedText}"]
+    },
+    {
+      "name": "Debug Current Package Tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-test.v"]
+    }
+  ]
+}

@@ -13,7 +13,7 @@ import (
 )
 
 func TestBuildRateLimiter_UsesRedisWhenConfigured(t *testing.T) {
-	limiter := buildRateLimiter(config.IssuerConfig{
+	limiter := buildRateLimiter(&config.IssuerConfig{
 		RateLimitPerMinute: 60,
 		RedisURL:           "redis://localhost:6379/0",
 	}, nil)
@@ -23,7 +23,7 @@ func TestBuildRateLimiter_UsesRedisWhenConfigured(t *testing.T) {
 }
 
 func TestBuildRateLimiter_FallsBackToInMemoryOnInvalidRedisURL(t *testing.T) {
-	limiter := buildRateLimiter(config.IssuerConfig{
+	limiter := buildRateLimiter(&config.IssuerConfig{
 		RateLimitPerMinute: 60,
 		RedisURL:           "://not-a-valid-redis-url",
 	}, nil)

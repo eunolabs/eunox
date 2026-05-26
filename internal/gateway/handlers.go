@@ -169,7 +169,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run enforcement engine
-	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), payload.Request, claims.Capabilities)
+	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), &payload.Request, claims.Capabilities)
 	if engineErr != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("enforcement engine error"))
 		return
@@ -307,7 +307,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run enforcement
-	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), enforceReq, claims.Capabilities)
+	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), &enforceReq, claims.Capabilities)
 	if engineErr != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("enforcement error"))
 		return

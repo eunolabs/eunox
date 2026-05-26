@@ -30,10 +30,10 @@ type testPlugin struct {
 
 func (p *testPlugin) Name() string { return p.name }
 
-func (p *testPlugin) EmitObserved(_ context.Context, record posture.AgentInventoryRecord) error {
+func (p *testPlugin) EmitObserved(_ context.Context, record *posture.AgentInventoryRecord) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.observed = append(p.observed, record)
+	p.observed = append(p.observed, *record)
 	p.count.Add(1)
 	return nil
 }
@@ -60,7 +60,7 @@ func TestPostureEmitter_EndToEnd_EmitAndDelivery(t *testing.T) {
 	cfg.FlushIntervalMS = 50
 	cfg.DedupeWindowMS = 0 // Disable dedup for test clarity.
 
-	app, err := posture.New(cfg, []posture.Plugin{plugin}, posture.Dependencies{})
+	app, err := posture.New(&cfg, []posture.Plugin{plugin}, &posture.Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -110,7 +110,7 @@ func TestPostureEmitter_EndToEnd_RevokeFlow(t *testing.T) {
 	cfg.FlushIntervalMS = 50
 	cfg.DedupeWindowMS = 0
 
-	app, err := posture.New(cfg, []posture.Plugin{plugin}, posture.Dependencies{})
+	app, err := posture.New(&cfg, []posture.Plugin{plugin}, &posture.Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -162,18 +162,18 @@ func TestPostureEmitter_EndToEnd_HealthEndpoints(t *testing.T) {
 	cfg.QueuePath = ":memory:"
 	cfg.HealthMaxQueueDepth = 100
 
-	app, err := posture.New(cfg, nil, posture.Dependencies{})
+	app, err := posture.New(&cfg, nil, &posture.Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
 	// Liveness.
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/live", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	// Readiness (healthy - empty queue).
-	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", http.NoBody)
 	rec = httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -195,7 +195,7 @@ func TestPostureEmitter_EndToEnd_MultiplePlugins(t *testing.T) {
 	cfg.FlushIntervalMS = 50
 	cfg.DedupeWindowMS = 0
 
-	app, err := posture.New(cfg, []posture.Plugin{plugin1, plugin2, plugin3}, posture.Dependencies{})
+	app, err := posture.New(&cfg, []posture.Plugin{plugin1, plugin2, plugin3}, &posture.Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 

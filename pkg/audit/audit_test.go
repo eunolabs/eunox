@@ -320,7 +320,7 @@ func TestPipeline_Append_WithOCSFEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, pipeline.Initialize(context.Background()))
 
-	ocsfEvent := ocsf.NewAuthorizationEvent(ocsf.ActivityAuthGrant, ocsf.Actor{
+	ocsfEvent := ocsf.NewAuthorizationEvent(ocsf.ActivityAuthGrant, &ocsf.Actor{
 		UserID:   "user-1",
 		TenantID: "tenant-1",
 	})
@@ -786,7 +786,7 @@ func TestPostgresQueryStore_Query_InvalidPage(t *testing.T) {
 	}
 	store := NewPostgresQueryStore(db)
 
-	_, err := store.Query(context.Background(), QueryFilter{}, PageParams{Offset: -1})
+	_, err := store.Query(context.Background(), &QueryFilter{}, PageParams{Offset: -1})
 	assert.ErrorIs(t, err, ErrInvalidPage)
 }
 
@@ -798,7 +798,7 @@ func TestPostgresQueryStore_Query_OrdersByTimestamp(t *testing.T) {
 	}
 	store := NewPostgresQueryStore(db)
 
-	_, err := store.Query(context.Background(), QueryFilter{}, PageParams{Limit: 10})
+	_, err := store.Query(context.Background(), &QueryFilter{}, PageParams{Limit: 10})
 	require.NoError(t, err)
 	assert.Contains(t, db.queryQuery, "ORDER BY timestamp DESC, replica_id DESC, sequence_num DESC")
 }

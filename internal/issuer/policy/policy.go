@@ -5,6 +5,7 @@
 package policy
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,7 +287,7 @@ func resourceCovers(policyResource, requestedResource string) bool {
 		return true
 	}
 	// Glob-style prefix: "tool:*" covers "tool:read"
-	if len(policyResource) > 0 && policyResource[len(policyResource)-1] == '*' {
+	if policyResource != "" && policyResource[len(policyResource)-1] == '*' {
 		prefix := policyResource[:len(policyResource)-1]
 		return len(requestedResource) >= len(prefix) && requestedResource[:len(prefix)] == prefix
 	}
@@ -468,5 +469,5 @@ func jsonEqual(a, b interface{}) bool {
 	if err != nil {
 		return false
 	}
-	return string(left) == string(right)
+	return bytes.Equal(left, right)
 }

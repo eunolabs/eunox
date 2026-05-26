@@ -108,7 +108,7 @@ func testApp(t *testing.T, opts ...func(*testAppConfig)) *App {
 		RateLimiter:  &mockRateLimiter{allowFunc: cfg.rateLimitFunc},
 	}
 
-	return New(appCfg, deps)
+	return New(&appCfg, &deps)
 }
 
 type testAppConfig struct {
@@ -141,7 +141,7 @@ func doPost(app *App, path string, body interface{}) *httptest.ResponseRecorder 
 }
 
 func doGet(app *App, path string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 	if app.config.AdminAPIKey != "" {
 		req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
 	}
@@ -326,7 +326,7 @@ func TestIssue_TTLCapping(t *testing.T) {
 
 func TestIssue_EmptyBody(t *testing.T) {
 	app := testApp(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/issue", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/issue", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -619,14 +619,14 @@ func TestAdminRolePolicy_CRUD(t *testing.T) {
 	assert.GreaterOrEqual(t, len(policies), 3) // admin + default + viewer
 
 	// Delete
-	req := httptest.NewRequest(http.MethodDelete, "/admin/role-policy/viewer", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/role-policy/viewer", http.NoBody)
 	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Delete non-existent
-	req = httptest.NewRequest(http.MethodDelete, "/admin/role-policy/nonexistent", nil)
+	req = httptest.NewRequest(http.MethodDelete, "/admin/role-policy/nonexistent", http.NoBody)
 	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -686,7 +686,7 @@ func TestSCIM_CreateGroup_MissingName(t *testing.T) {
 
 func TestAdminEndpoints_RequireAdminAPIKey(t *testing.T) {
 	app := testApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/admin/role-policy", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/role-policy", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -745,24 +745,21 @@ func TestSignToken_ES384Digest(t *testing.T) {
 		Capabilities:  []capability.Constraint{{Resource: "tool:*", Actions: []string{"read"}}},
 	})
 
-	app := New(
-		Config{
-			IssuerDID:       "did:web:test.example.com",
-			IssuerURL:       "https://issuer.example.com",
-			DefaultTokenTTL: 900,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.example.com",
-			AdminAPIKey:     "test-admin-key",
-		},
-		Dependencies{
-			PolicyEngine: pe,
-			Identity: &mockIdentity{verifyFunc: func(_ context.Context, _ string) (*identity.UserContext, error) {
-				return &identity.UserContext{Subject: "user-123", Roles: []string{"admin"}}, nil
-			}},
-			KeyStore:    NewSingleKeyStore(signer),
-			RateLimiter: &mockRateLimiter{allowFunc: func(_ context.Context, _ string) (bool, error) { return true, nil }},
-		},
-	)
+	app := New(&Config{
+		IssuerDID:       "did:web:test.example.com",
+		IssuerURL:       "https://issuer.example.com",
+		DefaultTokenTTL: 900,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.example.com",
+		AdminAPIKey:     "test-admin-key",
+	}, &Dependencies{
+		PolicyEngine: pe,
+		Identity: &mockIdentity{verifyFunc: func(_ context.Context, _ string) (*identity.UserContext, error) {
+			return &identity.UserContext{Subject: "user-123", Roles: []string{"admin"}}, nil
+		}},
+		KeyStore:    NewSingleKeyStore(signer),
+		RateLimiter: &mockRateLimiter{allowFunc: func(_ context.Context, _ string) (bool, error) { return true, nil }},
+	})
 
 	resp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token"})
 	require.Equal(t, http.StatusOK, resp.Code)

@@ -88,7 +88,12 @@ type HTTPTransport struct {
 }
 
 // NewHTTPTransport creates a new HTTP-based OCSF transport.
-func NewHTTPTransport(cfg HTTPTransportConfig, logger *slog.Logger) *HTTPTransport {
+func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger) *HTTPTransport {
+	resolvedCfg := HTTPTransportConfig{}
+	if cfg != nil {
+		resolvedCfg = *cfg
+	}
+	cfg = &resolvedCfg
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = DefaultTransportConfig().BatchSize
 	}
@@ -112,7 +117,7 @@ func NewHTTPTransport(cfg HTTPTransportConfig, logger *slog.Logger) *HTTPTranspo
 	}
 
 	t := &HTTPTransport{
-		config: cfg,
+		config: *cfg,
 		client: &http.Client{Timeout: 30 * time.Second},
 		logger: logger,
 		buffer: make(chan *SignedAuditEvidence, cfg.BufferSize),
@@ -306,7 +311,12 @@ type AzureSentinelTransport struct {
 }
 
 // NewAzureSentinelTransport creates a new Azure Sentinel transport.
-func NewAzureSentinelTransport(cfg AzureSentinelConfig, logger *slog.Logger) *AzureSentinelTransport {
+func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger) *AzureSentinelTransport {
+	resolvedCfg := AzureSentinelConfig{}
+	if cfg != nil {
+		resolvedCfg = *cfg
+	}
+	cfg = &resolvedCfg
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = DefaultTransportConfig().BatchSize
 	}
@@ -336,7 +346,7 @@ func NewAzureSentinelTransport(cfg AzureSentinelConfig, logger *slog.Logger) *Az
 	}
 
 	t := &AzureSentinelTransport{
-		config: cfg,
+		config: *cfg,
 		client: &http.Client{Timeout: 30 * time.Second},
 		logger: logger,
 		buffer: make(chan *SignedAuditEvidence, cfg.BufferSize),

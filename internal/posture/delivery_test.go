@@ -36,14 +36,14 @@ func newMockPlugin(name string) *mockPlugin {
 
 func (p *mockPlugin) Name() string { return p.name }
 
-func (p *mockPlugin) EmitObserved(_ context.Context, record AgentInventoryRecord) error {
+func (p *mockPlugin) EmitObserved(_ context.Context, record *AgentInventoryRecord) error {
 	if p.failsLeft.Load() > 0 {
 		p.failsLeft.Add(-1)
 		return fmt.Errorf("mock transient failure")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.observed = append(p.observed, record)
+	p.observed = append(p.observed, *record)
 	return nil
 }
 
@@ -77,9 +77,9 @@ type mockMetrics struct {
 	deadLettered atomic.Int32
 }
 
-func (m *mockMetrics) OnDelivered(_ EventType, _ string)      { m.delivered.Add(1) }
-func (m *mockMetrics) OnDeliveryError(_ EventType, _ string)  { m.errors.Add(1) }
-func (m *mockMetrics) OnDeadLettered(_ EventType)             { m.deadLettered.Add(1) }
+func (m *mockMetrics) OnDelivered(_ EventType, _ string)     { m.delivered.Add(1) }
+func (m *mockMetrics) OnDeliveryError(_ EventType, _ string) { m.errors.Add(1) }
+func (m *mockMetrics) OnDeadLettered(_ EventType)            { m.deadLettered.Add(1) }
 
 func TestDeliveryWorker_DeliversObservedEvent(t *testing.T) {
 	q, err := NewSQLiteQueue(":memory:")

@@ -116,8 +116,9 @@ func computeMerkleRoot(records []SignedAuditEvidence) string {
 
 	// Start with leaf hashes.
 	hashes := make([][]byte, len(records))
-	for i, r := range records {
-		h := sha256.Sum256([]byte(r.ChainHash))
+	for i := range records {
+		record := &records[i]
+		h := sha256.Sum256([]byte(record.ChainHash))
 		hashes[i] = h[:]
 	}
 
@@ -220,7 +221,7 @@ func (b *S3AnchorBackend) Verify(ctx context.Context, anchor *ChainAnchor) (bool
 	}
 	url := fmt.Sprintf("%s/%s", endpoint, key)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, http.NoBody)
 	if err != nil {
 		return false, fmt.Errorf("audit: create S3 HEAD request: %w", err)
 	}
@@ -320,7 +321,7 @@ func (b *AzureConfidentialLedgerBackend) Verify(ctx context.Context, anchor *Cha
 	url := fmt.Sprintf("%s/app/transactions/%s?api-version=2022-05-13",
 		b.config.Endpoint, anchor.ExternalRef)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return false, fmt.Errorf("audit: create ACL GET request: %w", err)
 	}

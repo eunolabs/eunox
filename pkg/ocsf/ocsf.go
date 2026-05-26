@@ -213,7 +213,12 @@ type APIActivityEvent struct {
 }
 
 // NewAuthorizationEvent creates a new AuthorizationEvent with standard fields pre-populated.
-func NewAuthorizationEvent(activityID ActivityID, actor Actor) *AuthorizationEvent {
+func NewAuthorizationEvent(activityID ActivityID, actor *Actor) *AuthorizationEvent {
+	actorValue := Actor{}
+	if actor != nil {
+		actorValue = *actor
+	}
+
 	typeUID := int(ClassAuthorization)*100 + int(activityID)
 	return &AuthorizationEvent{
 		BaseEvent: BaseEvent{
@@ -225,12 +230,17 @@ func NewAuthorizationEvent(activityID ActivityID, actor Actor) *AuthorizationEve
 			Time:          time.Now().UTC(),
 			SeverityID:    SeverityInformational,
 		},
-		Actor: actor,
+		Actor: actorValue,
 	}
 }
 
 // NewAPIActivityEvent creates a new APIActivityEvent with standard fields pre-populated.
-func NewAPIActivityEvent(activityID ActivityID, actor Actor) *APIActivityEvent {
+func NewAPIActivityEvent(activityID ActivityID, actor *Actor) *APIActivityEvent {
+	actorValue := Actor{}
+	if actor != nil {
+		actorValue = *actor
+	}
+
 	typeUID := int(ClassAPIActivity)*100 + int(activityID)
 	return &APIActivityEvent{
 		BaseEvent: BaseEvent{
@@ -242,7 +252,7 @@ func NewAPIActivityEvent(activityID ActivityID, actor Actor) *APIActivityEvent {
 			Time:          time.Now().UTC(),
 			SeverityID:    SeverityInformational,
 		},
-		Actor: actor,
+		Actor: actorValue,
 	}
 }
 
@@ -287,7 +297,7 @@ func (e *APIActivityEvent) WithSOC2Controls(controls ...SOC2Control) *APIActivit
 }
 
 // MarshalJSON emits Actor using nested OCSF user/session/process objects.
-func (a Actor) MarshalJSON() ([]byte, error) {
+func (a *Actor) MarshalJSON() ([]byte, error) {
 	type org struct {
 		UID string `json:"uid,omitempty"`
 	}
@@ -329,9 +339,9 @@ func (a Actor) MarshalJSON() ([]byte, error) {
 }
 
 // MarshalJSON emits nested OCSF metadata/unmapped fields for authorization events.
-func (e AuthorizationEvent) MarshalJSON() ([]byte, error) {
-	payload, unmapped := buildBaseEventPayload(e.BaseEvent)
-	payload["actor"] = e.Actor
+func (e *AuthorizationEvent) MarshalJSON() ([]byte, error) {
+	payload, unmapped := buildBaseEventPayload(&e.BaseEvent)
+	payload["actor"] = &e.Actor
 	if e.Resource != (Resource{}) {
 		payload["dst_endpoint"] = e.Resource
 	}
@@ -363,9 +373,9 @@ func (e AuthorizationEvent) MarshalJSON() ([]byte, error) {
 }
 
 // MarshalJSON emits nested OCSF metadata/unmapped fields for API activity events.
-func (e APIActivityEvent) MarshalJSON() ([]byte, error) {
-	payload, unmapped := buildBaseEventPayload(e.BaseEvent)
-	payload["actor"] = e.Actor
+func (e *APIActivityEvent) MarshalJSON() ([]byte, error) {
+	payload, unmapped := buildBaseEventPayload(&e.BaseEvent)
+	payload["actor"] = &e.Actor
 
 	if api := buildAPIObject(e); len(api) > 0 {
 		payload["api"] = api
@@ -403,8 +413,8 @@ func (e APIActivityEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-func buildBaseEventPayload(e BaseEvent) (map[string]any, map[string]any) {
-	payload := map[string]any{
+func buildBaseEventPayload(e *BaseEvent) (payload, unmapped map[string]any) {
+	payload = map[string]any{
 		"class_uid":    e.ClassUID,
 		"activity_id":  e.ActivityID,
 		"category_uid": e.CategoryUID,
@@ -429,14 +439,14 @@ func buildBaseEventPayload(e BaseEvent) (map[string]any, map[string]any) {
 		payload["observables"] = e.Observables
 	}
 
-	unmapped := map[string]any{}
+	unmapped = map[string]any{}
 	if len(e.SOC2Controls) > 0 {
 		unmapped["soc2_controls"] = e.SOC2Controls
 	}
 	return payload, unmapped
 }
 
-func buildAPIObject(e APIActivityEvent) map[string]any {
+func buildAPIObject(e *APIActivityEvent) map[string]any {
 	api := map[string]any{}
 	if e.APIOperation != "" {
 		api["operation"] = e.APIOperation
@@ -450,7 +460,7 @@ func buildAPIObject(e APIActivityEvent) map[string]any {
 	return api
 }
 
-func buildHTTPRequestObject(e APIActivityEvent) map[string]any {
+func buildHTTPRequestObject(e *APIActivityEvent) map[string]any {
 	request := map[string]any{}
 	if e.HTTPMethod != "" {
 		request["http_method"] = e.HTTPMethod

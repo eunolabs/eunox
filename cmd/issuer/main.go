@@ -31,7 +31,7 @@ const (
 
 func main() {
 	cfg := config.LoadOrExit[config.IssuerConfig]("")
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
 		ServiceName: "issuer",
 	})
@@ -44,21 +44,21 @@ func main() {
 	)
 
 	// Build signing key
-	signer, err := buildSigner(cfg)
+	signer, err := buildSigner(&cfg)
 	if err != nil {
 		logger.Error("failed to build signer", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 
 	// Build identity verifier
-	idVerifier, err := buildIdentityVerifier(cfg, logger)
+	idVerifier, err := buildIdentityVerifier(&cfg, logger)
 	if err != nil {
 		logger.Error("failed to build identity verifier", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 
 	// Build rate limiter
-	limiter := buildRateLimiter(cfg, logger)
+	limiter := buildRateLimiter(&cfg, logger)
 
 	// Build policy engine
 	policyEngine := policy.New(
@@ -111,7 +111,7 @@ func main() {
 		Metrics:      metrics,
 	}
 
-	app := issuer.New(appCfg, deps)
+	app := issuer.New(&appCfg, &deps)
 
 	// Start HTTP server
 	srv := &http.Server{
@@ -147,7 +147,7 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func buildSigner(cfg config.IssuerConfig) (*crypto.SoftwareSigner, error) {
+func buildSigner(cfg *config.IssuerConfig) (*crypto.SoftwareSigner, error) {
 	switch cfg.SigningProvider {
 	case "software", "":
 		return crypto.GenerateECDSASigner("issuer-key-1", crypto.ES256)
@@ -163,10 +163,10 @@ func buildSigner(cfg config.IssuerConfig) (*crypto.SoftwareSigner, error) {
 	}
 }
 
-func buildIdentityVerifier(cfg config.IssuerConfig, logger *slog.Logger) (identity.Provider, error) {
+func buildIdentityVerifier(cfg *config.IssuerConfig, logger *slog.Logger) (identity.Provider, error) {
 	switch cfg.IdentityProvider {
 	case "oidc", "":
-		return identity.NewOIDCProvider(identity.OIDCConfig{
+		return identity.NewOIDCProvider(&identity.OIDCConfig{
 			IssuerURL: cfg.OIDCIssuerURL,
 			Audience:  cfg.Audience,
 		}, nil)
@@ -197,14 +197,14 @@ func buildIdentityVerifier(cfg config.IssuerConfig, logger *slog.Logger) (identi
 		logger.Warn("unknown identity provider, using OIDC",
 			slog.String("provider", string(cfg.IdentityProvider)),
 		)
-		return identity.NewOIDCProvider(identity.OIDCConfig{
+		return identity.NewOIDCProvider(&identity.OIDCConfig{
 			IssuerURL: cfg.OIDCIssuerURL,
 			Audience:  cfg.Audience,
 		}, nil)
 	}
 }
 
-func buildRateLimiter(cfg config.IssuerConfig, logger *slog.Logger) issuer.RateLimiter {
+func buildRateLimiter(cfg *config.IssuerConfig, logger *slog.Logger) issuer.RateLimiter {
 	limiterCfg := ratelimit.Config{
 		Rate:   cfg.RateLimitPerMinute,
 		Window: time.Minute,

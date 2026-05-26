@@ -1,13 +1,14 @@
 # OpenAPI Specifications
 
-This directory contains OpenAPI 3.0 specifications for euno's HTTP services.
+This directory contains OpenAPI 3.0 specifications for eunox's HTTP services.
 The specs are hand-maintained; keep them in sync when changing the routes in
-the corresponding `src/index.ts` / `src/admin-api.ts` files.
+the corresponding Go source files under `internal/`.
 
 | File | Service | Source |
 | ---- | ------- | ------ |
-| [`capability-issuer.yaml`](./capability-issuer.yaml) | Capability Issuer (default port 3001) | `internal/issuer/src/index.ts` |
-| [`tool-gateway.yaml`](./tool-gateway.yaml)           | Tool Gateway (default port 3002)      | `internal/gateway/src/index.ts` and `src/admin-api.ts` |
+| [`capability-issuer.yaml`](./capability-issuer.yaml) | Capability Issuer (default port 3001) | `internal/issuer/app.go` |
+| [`capability-issuer-discovery.yaml`](./capability-issuer-discovery.yaml) | Issuer JWKS/Discovery | `internal/issuer/app.go` |
+| [`tool-gateway.yaml`](./tool-gateway.yaml)           | Tool Gateway (default port 3002)      | `internal/gateway/app.go` and `internal/gateway/admin.go` |
 
 ## Viewing the specs
 

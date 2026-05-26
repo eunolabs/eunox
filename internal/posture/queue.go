@@ -138,7 +138,7 @@ func (q *SQLiteQueue) Ack(id int64) error {
 }
 
 // Nack reschedules a failed event for later retry.
-func (q *SQLiteQueue) Nack(id int64, nextAttemptAt int64, errMsg string) error {
+func (q *SQLiteQueue) Nack(id, nextAttemptAt int64, errMsg string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

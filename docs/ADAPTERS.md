@@ -1,586 +1,520 @@
 # Pluggable Adapters: Identity Providers and Token Signers
 
-The euno capability governance system implements a clean adapter pattern for
-identity providers and token signers. This establishes extensible contracts
-that enable support for multiple implementations — Azure AD + Azure Key Vault,
-AWS Cognito + AWS KMS, GCP Cloud Identity + GCP Cloud KMS, and W3C
-Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
-`SigningAdapter` contracts.
+The eunox capability governance system implements a clean adapter pattern for identity providers and token signers. This establishes extensible contracts that enable support for multiple implementations — Azure AD + Azure Key Vault, AWS Cognito + AWS KMS, GCP Cloud Identity + GCP Cloud KMS, and W3C Decentralized Identifiers (DIDs) — all behind the same `identity.Provider` / `crypto.Signer` contracts.
 
 ---
 
 ## Architecture
 
-### Core components (`pkg//src/adapters.ts`)
+### Core Components
 
-- `IdentityAdapter` — abstract base class for identity providers
-- `SigningAdapter` — abstract base class for token signers
-- `IdentityAdapterRegistry` — factory for creating identity adapters
-- `SigningAdapterRegistry` — factory for creating signing adapters
+**Identity Providers** (`pkg/identity/`)
 
-### Built-in implementations
+- `identity.Provider` — interface for identity token verification
+- `identity.UserContext` — normalized user identity with subject, email, roles, tenant ID
+- `identity.ProviderType` — enum for provider types (oidc, cognito, azure-ad, gcp-identity, did)
 
-**Identity providers**
+**Token Signers** (`pkg/crypto/`)
 
-| Key | Implementation | Location |
-|-----|---------------|----------|
-| `azure-ad` | Azure Active Directory / Microsoft Entra ID | `azure-identity-provider.ts` |
-| `aws-cognito` | Amazon Cognito user pools / compatible OIDC issuers | `aws-cognito-identity-provider.ts` |
-| `gcp-identity` | Google identity tokens / Workforce Identity Federation | `gcp-identity-provider.ts` |
-| `did` | W3C DID Documents (`did:web`, `did:ion`, `did:key`) | `did-identity-provider.ts` |
+- `crypto.Signer` — interface for signing digests with private keys
+- `crypto.Verifier` — interface for verifying signatures with public keys
+- `crypto.KeyPair` — combines Signer and Verifier for the same key
+- `crypto.Algorithm` — enum for signing algorithms (RS256, ES256, EdDSA, etc.)
 
-**Token signers**
+### Built-in Implementations
 
-| Key | Implementation | Location |
-|-----|---------------|----------|
-| `azure-keyvault` | Azure Key Vault asymmetric key signing | `azure-signer.ts` |
-| `aws-kms` | AWS KMS asymmetric key signing | `aws-kms-signer.ts` |
-| `gcp-cloudkms` | Google Cloud KMS asymmetric key signing | `gcp-cloudkms-signer.ts` |
-| `did` | DID-bound local/private-key signing; public key via `/.well-known/did.json` | `did-signer.ts` |
+**Identity Providers**
 
-**Implementation references:** the built-in registry is in
-`internal/issuer/src/default-registries.ts`.
+| Type | Implementation | Package |
+|------|---------------|---------|
+| `oidc` | Generic OIDC provider with JWKS discovery | `pkg/identity` (`OIDCProvider`) |
+| `azure-ad` | Azure Active Directory / Microsoft Entra ID | `pkg/identity` (`AzureADProvider`) |
+| `cognito` | Amazon Cognito user pools | `pkg/identity` (`CognitoProvider`) |
+| `gcp-identity` | Google Cloud Identity / Workforce Identity Federation | `pkg/identity` (`GCPProvider`) |
+| `did` | W3C DID Documents (`did:web`, `did:ion`, `did:key`) | `pkg/identity` (`DIDProvider`) |
 
-### Registry system
+**Token Signers**
 
-Two registries manage providers:
-- `defaultIdentityRegistry` — manages identity provider adapters
-- `defaultSigningRegistry` — manages token signing adapters
-
-Both registries come pre-loaded with built-in providers and support dynamic
-registration.
+| Type | Implementation | Package |
+|------|---------------|---------|
+| Software keys | In-memory private key signing (RSA, ECDSA, EdDSA) | `pkg/crypto` (`SoftwareSigner`) |
+| KMS stubs | Placeholder for future Azure Key Vault, AWS KMS, GCP Cloud KMS | `pkg/crypto` (`KMSSigner`) |
 
 ---
 
-## Using built-in providers
+## Using Built-in Providers
 
-### Azure AD identity provider
+### Generic OIDC Identity Provider
 
-```typescript
-import { AzureADIdentityProvider, AzureADAdapterConfig } from '@euno/capability-issuer/adapters';
+The `OIDCProvider` works with any OIDC-compliant identity provider. It performs automatic JWKS discovery and caches keys for performance.
 
-const config: AzureADAdapterConfig = {
-  type: 'azure-ad',
-  name: 'Azure AD Identity Provider',
-  azureAD: {
-    tenantId: process.env.AZURE_AD_TENANT_ID!,
-    clientId: process.env.AZURE_AD_CLIENT_ID!,
-    clientSecret: process.env.AZURE_AD_CLIENT_SECRET,
-  },
-};
+```go
+package main
 
-const identityProvider = new AzureADIdentityProvider(config);
-await identityProvider.initialize();
-const userContext = await identityProvider.validateToken(token);
-```
+import (
+    "context"
+    "log"
+    "net/http"
+    "time"
 
-### Azure Key Vault signer
+    "github.com/edgeobs/eunox/pkg/identity"
+)
 
-```typescript
-import { AzureKeyVaultSigner, AzureKeyVaultAdapterConfig } from '@euno/capability-issuer/adapters';
-
-const config: AzureKeyVaultAdapterConfig = {
-  type: 'azure-keyvault',
-  name: 'Azure Key Vault Signer',
-  keyVault: {
-    vaultUrl: process.env.AZURE_KEYVAULT_URL!,
-    keyName: 'capability-signing-key',
-    credentialType: 'managed-identity',
-  },
-};
-
-const signer = new AzureKeyVaultSigner(config);
-await signer.initialize();
-const token = await signer.sign(payload);
-```
-
-### AWS KMS signer
-
-```typescript
-const awsSigner = await defaultSigningRegistry.createSigningAdapter({
-  type: 'aws-kms',
-  name: 'AWS KMS Production Signer',
-  algorithm: 'RS256',
-  awsKMS: {
-    region: 'us-east-1',
-    keyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012',
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
-```
-
-### GCP Cloud KMS signer
-
-```typescript
-const gcpSigner = await defaultSigningRegistry.createSigningAdapter({
-  type: 'gcp-cloudkms',
-  name: 'GCP Cloud KMS Production Signer',
-  algorithm: 'RS256',
-  gcpKMS: {
-    projectId: 'my-project-id',
-    locationId: 'us-central1',
-    keyRingId: 'my-key-ring',
-    cryptoKeyId: 'my-crypto-key',
-    cryptoKeyVersion: '1',         // optional; uses primary if omitted
-    keyFilePath: '/path/to/sa.json', // optional; uses ADC if omitted
-  },
-});
-```
-
-### Registry pattern (advanced)
-
-```typescript
-import { IdentityAdapterRegistry, SigningAdapterRegistry } from '@euno/common';
-
-const identityRegistry = new IdentityAdapterRegistry();
-const signingRegistry  = new SigningAdapterRegistry();
-
-identityRegistry.register('azure-ad', AzureADIdentityProvider);
-identityRegistry.register('did', DIDIdentityProvider);
-
-const identityProvider = await identityRegistry.createIdentityAdapter({
-  type: 'azure-ad',
-  name: 'Production Identity Provider',
-  azureAD: { tenantId: '...', clientId: '...' },
-});
-```
-
----
-
-## Creating custom adapters
-
-### Custom identity provider
-
-```typescript
-import { IdentityAdapter, IdentityAdapterConfig, UserContext, CapabilityError, ErrorCode } from '@euno/common';
-
-export interface OktaIdentityConfig extends IdentityAdapterConfig {
-  type: 'okta';
-  domain: string;
-  clientId: string;
-  clientSecret?: string;
-  authorizationServerId?: string;
-}
-
-export class OktaIdentityProvider extends IdentityAdapter {
-  public readonly name = 'okta';
-  private oktaConfig: OktaIdentityConfig;
-  private verifier?: OktaJwtVerifier;
-
-  constructor(config: OktaIdentityConfig) {
-    super(config);
-    this.oktaConfig = config;
-  }
-
-  async initialize(): Promise<void> {
-    this.verifier = new OktaJwtVerifier({
-      issuer: `https://${this.oktaConfig.domain}/oauth2/${this.oktaConfig.authorizationServerId ?? 'default'}`,
-      clientId: this.oktaConfig.clientId,
-    });
-  }
-
-  async validateToken(token: string): Promise<UserContext> {
-    if (!this.verifier) await this.initialize();
-    try {
-      const jwt = await this.verifier!.verifyAccessToken(token, 'api://default');
-      return {
-        userId: jwt.claims.sub as string,
-        email: jwt.claims.email as string,
-        roles: (jwt.claims.groups as string[]) ?? [],
-        claims: jwt.claims as Record<string, unknown>,
-      };
-    } catch (error) {
-      throw new CapabilityError(
-        ErrorCode.AUTHENTICATION_FAILED,
-        `Failed to validate Okta token: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        401
-      );
+func main() {
+    // Configure OIDC provider
+    cfg := &identity.OIDCConfig{
+        IssuerURL:      "https://auth.example.com",
+        Audience:       "my-service-client-id",
+        RequiredScopes: []string{"openid", "profile"},
+        RolesClaimPath: "roles", // or "realm_access.roles" for Keycloak
+        CacheTTL:       5 * time.Minute,
     }
-  }
 
-  async getUserRoles(userId: string): Promise<string[]> {
-    throw new Error('Not implemented');
-  }
+    // Create provider
+    provider, err := identity.NewOIDCProvider(cfg, &http.Client{Timeout: 10 * time.Second})
+    if err != nil {
+        log.Fatalf("Failed to create OIDC provider: %v", err)
+    }
 
-  async dispose(): Promise<void> {
-    this.verifier = undefined;
-  }
+    // Verify a token
+    ctx := context.Background()
+    userCtx, err := provider.VerifyToken(ctx, idToken)
+    if err != nil {
+        log.Fatalf("Token verification failed: %v", err)
+    }
+
+    log.Printf("Authenticated user: %s (%s)", userCtx.Name, userCtx.Email)
+    log.Printf("Roles: %v", userCtx.Roles)
 }
 ```
 
-### Custom token signer (HSM example)
+### Azure AD Identity Provider
 
-```typescript
-import { SigningAdapter, SigningAdapterConfig, CapabilityTokenPayload } from '@euno/common';
+The `AzureADProvider` is a specialized wrapper around the OIDC provider with Azure AD-specific claim mappings.
 
-export interface HSMSignerConfig extends SigningAdapterConfig {
-  type: 'hsm';
-  hsmEndpoint: string;
-  keyId: string;
-  pin?: string;
-  slot?: number;
-}
+```go
+package main
 
-export class HSMSigner extends SigningAdapter {
-  private hsmConfig: HSMSignerConfig;
+import (
+    "context"
+    "log"
+    "net/http"
+    "os"
 
-  constructor(config: HSMSignerConfig) {
-    super(config);
-    this.hsmConfig = config;
-  }
+    "github.com/edgeobs/eunox/pkg/identity"
+)
 
-  async sign(payload: CapabilityTokenPayload): Promise<string> {
-    // Hash locally, sign with HSM — only the digest crosses the boundary.
-    // ...your HSM signing implementation...
-  }
+func main() {
+    cfg := identity.AzureADConfig{
+        TenantID: os.Getenv("AZURE_AD_TENANT_ID"), // e.g., "common" or a specific tenant GUID
+        ClientID: os.Getenv("AZURE_AD_CLIENT_ID"),
+    }
 
-  async getPublicKey(): Promise<string> {
-    // Retrieve public key from HSM
-  }
+    provider, err := identity.NewAzureADProvider(cfg, &http.Client{})
+    if err != nil {
+        log.Fatalf("Failed to create Azure AD provider: %v", err)
+    }
 
-  async getKeyId(): Promise<string> {
-    return this.hsmConfig.keyId;
-  }
+    ctx := context.Background()
+    userCtx, err := provider.VerifyToken(ctx, idToken)
+    if err != nil {
+        log.Fatalf("Token verification failed: %v", err)
+    }
 
-  async initialize(): Promise<void> { /* open HSM session */ }
-  async dispose(): Promise<void>    { /* close HSM session */ }
+    log.Printf("Subject: %s, TenantID: %s", userCtx.Subject, userCtx.TenantID)
+    log.Printf("Roles: %v, Groups: extracted from 'roles' and 'groups' claims", userCtx.Roles)
 }
 ```
 
-### Registering and using a custom provider
+### AWS Cognito Identity Provider
 
-```typescript
-import { defaultIdentityRegistry, defaultSigningRegistry } from '@euno/capability-issuer/adapters';
+The `CognitoProvider` handles Cognito user pools with automatic JWKS discovery.
 
-defaultIdentityRegistry.register('okta', OktaIdentityProvider);
-defaultSigningRegistry.register('hsm', HSMSigner);
+```go
+package main
 
-const provider = await defaultIdentityRegistry.createIdentityAdapter({
-  type: 'okta',
-  name: 'Okta Identity Provider',
-  domain: 'dev-12345.okta.com',
-  clientId: process.env.OKTA_CLIENT_ID,
-  clientSecret: process.env.OKTA_CLIENT_SECRET,
-});
+import (
+    "context"
+    "log"
+    "net/http"
+    "os"
+
+    "github.com/edgeobs/eunox/pkg/identity"
+)
+
+func main() {
+    cfg := identity.CognitoConfig{
+        Region:     os.Getenv("AWS_REGION"),     // e.g., "us-east-1"
+        UserPoolID: os.Getenv("USER_POOL_ID"),   // e.g., "us-east-1_ABC123"
+        ClientID:   os.Getenv("CLIENT_ID"),      // Cognito app client ID
+    }
+
+    provider, err := identity.NewCognitoProvider(cfg, &http.Client{})
+    if err != nil {
+        log.Fatalf("Failed to create Cognito provider: %v", err)
+    }
+
+    ctx := context.Background()
+    userCtx, err := provider.VerifyToken(ctx, idToken)
+    if err != nil {
+        log.Fatalf("Token verification failed: %v", err)
+    }
+
+    log.Printf("Cognito user: %s", userCtx.Subject)
+    log.Printf("Groups: %v", userCtx.Roles) // Cognito groups mapped to Roles
+}
 ```
 
-### Dynamic loading from configuration
+### GCP Cloud Identity Provider
 
-```typescript
-async function initializeProviders(config: { identity: any; signing: any }) {
-  const identityProvider = await defaultIdentityRegistry.createIdentityAdapter(config.identity);
-  const signingProvider  = await defaultSigningRegistry.createSigningAdapter(config.signing);
-  return { identityProvider, signingProvider };
+The `GCPProvider` verifies Google identity tokens.
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+    "os"
+
+    "github.com/edgeobs/eunox/pkg/identity"
+)
+
+func main() {
+    cfg := identity.GCPConfig{
+        Audience: os.Getenv("GCP_CLIENT_ID"), // Google OAuth 2.0 client ID
+    }
+
+    provider, err := identity.NewGCPProvider(cfg, &http.Client{})
+    if err != nil {
+        log.Fatalf("Failed to create GCP provider: %v", err)
+    }
+
+    ctx := context.Background()
+    userCtx, err := provider.VerifyToken(ctx, idToken)
+    if err != nil {
+        log.Fatalf("Token verification failed: %v", err)
+    }
+
+    log.Printf("Google user: %s (%s)", userCtx.Name, userCtx.Email)
+}
+```
+
+### Software Signing Keys
+
+For development and testing, use in-memory software keys. In production, use KMS-backed signers (Azure Key Vault, AWS KMS, GCP Cloud KMS).
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
+
+func main() {
+    // Generate a new EdDSA key pair
+    keyPair, err := crypto.GenerateEdDSAKeyPair("issuer-key-1")
+    if err != nil {
+        log.Fatalf("Failed to generate key pair: %v", err)
+    }
+
+    // Sign a digest
+    ctx := context.Background()
+    digest := []byte("message to sign")
+    signature, err := keyPair.Sign(ctx, digest)
+    if err != nil {
+        log.Fatalf("Failed to sign: %v", err)
+    }
+
+    // Verify the signature
+    if err := keyPair.Verify(ctx, digest, signature); err != nil {
+        log.Fatalf("Signature verification failed: %v", err)
+    }
+
+    log.Printf("Signature verified successfully")
+    log.Printf("Algorithm: %s, KeyID: %s", keyPair.Algorithm(), keyPair.KeyID())
+}
+```
+
+### Generating Keys for Different Algorithms
+
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
+
+func main() {
+    // RSA 2048-bit with RS256
+    rsaKey, err := crypto.GenerateRSAKeyPair("rsa-key", 2048)
+    if err != nil {
+        log.Fatalf("Failed to generate RSA key: %v", err)
+    }
+    log.Printf("RSA: Algorithm=%s, KeyID=%s", rsaKey.Algorithm(), rsaKey.KeyID())
+
+    // ECDSA P-256 with ES256
+    ecdsaKey, err := crypto.GenerateECDSAKeyPair("ecdsa-key", "P-256")
+    if err != nil {
+        log.Fatalf("Failed to generate ECDSA key: %v", err)
+    }
+    log.Printf("ECDSA: Algorithm=%s, KeyID=%s", ecdsaKey.Algorithm(), ecdsaKey.KeyID())
+
+    // EdDSA (Ed25519)
+    eddsaKey, err := crypto.GenerateEdDSAKeyPair("eddsa-key")
+    if err != nil {
+        log.Fatalf("Failed to generate EdDSA key: %v", err)
+    }
+    log.Printf("EdDSA: Algorithm=%s, KeyID=%s", eddsaKey.Algorithm(), eddsaKey.KeyID())
 }
 ```
 
 ---
 
-## Best practices
+## Creating Custom Adapters
 
-### Error handling
+### Custom Identity Provider
 
-Always use `CapabilityError` for consistent error propagation:
+Implement the `identity.Provider` interface:
 
-```typescript
-throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, 'Descriptive message', 401);
+```go
+package customidentity
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/edgeobs/eunox/pkg/identity"
+)
+
+// CustomProvider implements identity.Provider for a custom identity system.
+type CustomProvider struct {
+    apiKey string
+    apiURL string
+}
+
+func NewCustomProvider(apiURL, apiKey string) (*CustomProvider, error) {
+    if apiURL == "" || apiKey == "" {
+        return nil, fmt.Errorf("apiURL and apiKey are required")
+    }
+    return &CustomProvider{
+        apiKey: apiKey,
+        apiURL: apiURL,
+    }, nil
+}
+
+// VerifyToken validates a custom token format and returns a UserContext.
+func (p *CustomProvider) VerifyToken(ctx context.Context, token string) (*identity.UserContext, error) {
+    // 1. Call your custom identity API
+    // 2. Validate the token
+    // 3. Extract user attributes
+    // 4. Return a normalized UserContext
+
+    // Example:
+    return &identity.UserContext{
+        Subject:  "user-123",
+        Email:    "user@example.com",
+        Name:     "Custom User",
+        Roles:    []string{"admin", "viewer"},
+        TenantID: "tenant-1",
+        Provider: "custom",
+        Claims:   map[string]interface{}{"custom_claim": "value"},
+    }, nil
+}
 ```
 
-### Lifecycle management
+### Custom Token Signer (HSM Example)
 
-Implement `initialize()` and `dispose()` — the service container calls both:
+Implement the `crypto.Signer` interface:
 
-```typescript
-async initialize(): Promise<void> { this.client = await createClient(this.config); }
-async dispose():    Promise<void> { await this.client?.close(); this.client = undefined; }
-```
+```go
+package customcrypto
 
-### Configuration validation
+import (
+    "context"
+    "fmt"
 
-Fail fast in the constructor rather than at runtime:
+    "github.com/edgeobs/eunox/pkg/crypto"
+)
 
-```typescript
-constructor(config: CustomConfig) {
-  super(config);
-  if (!config.requiredField) throw new Error('requiredField is required');
-  this.customConfig = config;
+// HSMSigner implements crypto.Signer backed by a hardware security module.
+type HSMSigner struct {
+    hsmClient HSMClient // your HSM SDK client
+    keyID     string
+    algorithm crypto.Algorithm
+}
+
+func NewHSMSigner(client HSMClient, keyID string, algorithm crypto.Algorithm) (*HSMSigner, error) {
+    if client == nil || keyID == "" {
+        return nil, fmt.Errorf("hsmClient and keyID are required")
+    }
+    return &HSMSigner{
+        hsmClient: client,
+        keyID:     keyID,
+        algorithm: algorithm,
+    }, nil
+}
+
+func (s *HSMSigner) Sign(ctx context.Context, digest []byte) ([]byte, error) {
+    // Call your HSM to sign the digest
+    signature, err := s.hsmClient.SignDigest(ctx, s.keyID, digest)
+    if err != nil {
+        return nil, fmt.Errorf("HSM sign failed: %w", err)
+    }
+    return signature, nil
+}
+
+func (s *HSMSigner) Algorithm() crypto.Algorithm {
+    return s.algorithm
+}
+
+func (s *HSMSigner) KeyID() string {
+    return s.keyID
+}
+
+// HSMClient is your HSM SDK interface
+type HSMClient interface {
+    SignDigest(ctx context.Context, keyID string, digest []byte) ([]byte, error)
 }
 ```
 
 ---
 
-## Publishing a third-party provider package
+## Best Practices
 
-Create a separate npm package:
+### Error Handling
 
-```
-my-euno-provider/
-├── package.json          # peerDependencies: { "@euno/common": "^0.1.0" }
-├── tsconfig.json
-├── src/
-│   ├── index.ts
-│   └── my-provider.ts
-└── tests/
-    └── my-provider.test.ts
+All providers return structured errors. Wrap errors with context when propagating:
+
+```go
+userCtx, err := provider.VerifyToken(ctx, token)
+if err != nil {
+    return fmt.Errorf("verify identity token: %w", err)
+}
 ```
 
-Name it `@<scope>/euno-<provider-name>` and export the provider class from
-`index.ts`. Consumers import it, call `defaultIdentityRegistry.register(...)`,
-and configure it the same way as any built-in provider.
+### Lifecycle Management
+
+Providers are stateless and can be reused across requests. Create providers once during application bootstrap and share them:
+
+```go
+// In your application setup
+var identityProvider identity.Provider
+
+func InitializeApp() error {
+    cfg := &identity.OIDCConfig{
+        IssuerURL: os.Getenv("OIDC_ISSUER_URL"),
+        Audience:  os.Getenv("OIDC_AUDIENCE"),
+    }
+
+    var err error
+    identityProvider, err = identity.NewOIDCProvider(cfg, &http.Client{})
+    if err != nil {
+        return fmt.Errorf("create identity provider: %w", err)
+    }
+
+    return nil
+}
+
+// In your HTTP handler
+func HandleRequest(w http.ResponseWriter, r *http.Request) {
+    token := extractBearerToken(r)
+    userCtx, err := identityProvider.VerifyToken(r.Context(), token)
+    if err != nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    // Use userCtx...
+}
+```
+
+### Configuration Validation
+
+All providers validate configuration at creation time. If configuration is invalid, the constructor returns an error immediately (fail-fast). Never skip error checking during provider creation.
+
+```go
+// Good: error is checked
+provider, err := identity.NewAzureADProvider(cfg, httpClient)
+if err != nil {
+    log.Fatalf("Invalid Azure AD configuration: %v", err)
+}
+
+// Bad: error ignored (will panic later)
+provider, _ := identity.NewAzureADProvider(cfg, httpClient)
+```
 
 ---
 
 ## Partner Federation
 
-Partner federation lets a remote organization issue capability tokens from
-their own W3C DID-backed signing key. The euno gateway accepts and
-cryptographically verifies those tokens without sharing key material.
+Partner federation enables eunox to accept capability tokens issued by external partner organizations using W3C DIDs (`did:web`, `did:ion`, `did:key`). See [docs/stage-5-design.md](./stage-5-design.md) §Partner Federation for the full architecture.
 
-This is a **Stage 5 GA feature** (Task 3). The integration test harness lives
-in `internal/partner-issuer-sim/`. See also
-`docs/self-host.md` §12.2 "Partner DID federation" for the operator
-self-host runbook.
+### Trust Model
 
-### Trust model
+1. **DID Registration**: Partner submits DID document URL + attestation pin (two-eye approval required)
+2. **Verification**: Operator validates DID document structure and public keys
+3. **Circuit Breaker**: Per-partner circuit breaker tracks failure rates and opens/closes based on health
+4. **Revocation**: Single-operator revocation for incident response
 
-Euno partner federation is **declarative, not transitive**:
+### DID Provider Usage
 
-1. The gateway operator opts a partner DID into trust via the admin API's
-   two-eyes approval workflow (`POST /admin/partner-dids/proposals` →
-   `POST /admin/partner-dids/proposals/:did/approve`).  A second operator
-   must approve — the proposer cannot approve their own entry.
-2. When the gateway receives a token whose `iss` claim is a partner DID, the
-   `PartnerIssuerResolver` resolves the DID document via `did:web`, `did:ion`,
-   or `did:key`, extracts the verification method matching the JWT `kid`, and
-   verifies the signature.  No partner key material is ever stored locally.
-3. A per-DID `RedisCircuitBreaker` wraps the DID-document resolution step.
-   Pin-mismatch and key-validation errors do **not** count as circuit failures
-   (they indicate data problems, not network outages) — an attacker with a
-   malformed DID document cannot force the circuit open against a reachable
-   partner.
+```go
+package main
 
-### DID registration workflow
+import (
+    "context"
+    "log"
+    "net/http"
 
-```bash
-DID="did:web:partner.example.com"
-ENCODED_DID="did%3Aweb%3Apartner.example.com"
+    "github.com/edgeobs/eunox/pkg/identity"
+)
 
-# Step 1 — First-eye submits a proposal
-# The operator identity is taken from the X-Admin-Operator header,
-# not from the request body.
-curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
-  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
-  -H "X-Admin-Operator: alice@corp" \
-  -H "Content-Type: application/json" \
-  -d '{"did":"'"$DID"'","notes":"Acme Corp onboarding"}'
+func main() {
+    cfg := identity.DIDConfig{
+        AllowedDIDMethods: []string{"did:web", "did:key"},
+        HTTPClient:        &http.Client{},
+    }
 
-# Step 2 — Second-eye approves (different admin key / operator identity)
-# The :did path segment must be URL-encoded.
-# Malformed percent-encoding returns 400 INVALID_REQUEST.
-curl -X POST "https://gateway.internal:3003/admin/partner-dids/proposals/${ENCODED_DID}/approve" \
-  -H "X-Admin-Api-Key: <SECOND_ADMIN_API_KEY>" \
-  -H "X-Admin-Operator: bob@corp"
+    provider, err := identity.NewDIDProvider(cfg)
+    if err != nil {
+        log.Fatalf("Failed to create DID provider: %v", err)
+    }
 
-# Step 3 — Verify the DID is active
-curl https://gateway.internal:3003/admin/partner-dids \
-  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>"
-```
+    // Verify a token issued by a partner with did:web:partner.example.com
+    ctx := context.Background()
+    userCtx, err := provider.VerifyToken(ctx, partnerToken)
+    if err != nil {
+        log.Fatalf("Partner token verification failed: %v", err)
+    }
 
-### Pin attestation (production)
-
-Pin attestation binds the JCS-SHA-256 fingerprint of the partner's DID
-document to the approval event via an HMAC-SHA-256 (keyed by
-`PARTNER_DID_PIN_SECRET`).  If the Redis store is tampered with (pin swapped)
-or `PARTNER_DID_PIN_SECRET` is rotated, the gateway **fails closed** — the
-entry must be re-approved to generate a fresh attestation.
-
-```env
-# Required for pin attestation — minimum 32 characters
-PARTNER_DID_PIN_SECRET=<at-least-32-char-random-secret>
-# Enforce that every registration must include a pin (production hardening)
-PARTNER_DID_REQUIRE_PIN=true
-```
-
-When `PARTNER_DID_AUTO_FETCH_PIN=true` the gateway automatically fetches the
-live DID document at approval time and stores its SHA-256 fingerprint — no
-out-of-band pin distribution required.
-
-### Circuit-breaker tuning
-
-| Variable | Default | Description |
-|---|---|---|
-| `PARTNER_DID_CB_FAILURE_THRESHOLD` | `3` | DID-resolution failures within the window that open the circuit. |
-| `PARTNER_DID_CB_WINDOW_SECONDS` | `30` | Sliding window (seconds) for failure counting. |
-| `PARTNER_DID_CB_COOLDOWN_SECONDS` | `60` | Cooldown (seconds) before the circuit enters half-open and allows a single probe. |
-| `PARTNER_DID_CACHE_TTL_SECONDS` | `300` | Positive-resolution DID cache TTL (seconds). |
-| `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` | `30` | Negative-resolution (NXDID) cache TTL (seconds). |
-
-Tune aggressively for production: a flapping partner should open the circuit
-quickly so its latency tail does not bleed into unrelated cross-org requests
-sharing the same gateway worker pool.
-
-### Prometheus metrics
-
-```
-# Current circuit-breaker state per partner DID.
-# Value is 1 when {did, state} is the active combination, 0 otherwise.
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="closed"} 1
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="open"} 0
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com",state="half-open"} 0
-
-# Total circuit-breaker state transitions per DID.
-euno_gateway_partner_did_circuit_transitions_total{did="...",from="closed",to="open"}
-```
-
-**Recommended alert:**
-
-```yaml
-- alert: PartnerDIDCircuitOpen
-  expr: euno_partner_did_circuit_breaker_state{state="open"} == 1
-  for: 2m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Partner DID circuit breaker open"
-    description: "DID {{ $labels.did }} is unreachable; all tokens from this partner are being denied."
-```
-
-### Revocation (off-boarding a partner)
-
-```bash
-# Mark the DID as revoked — single-operator, no second-eye required
-# (incident response is intentionally fast).
-# The :did path segment must be URL-encoded.
-ENCODED_DID="did%3Aweb%3Apartner.example.com"
-curl -X DELETE "https://gateway.internal:3003/admin/partner-dids/${ENCODED_DID}" \
-  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" \
-  -H "X-Admin-Operator: alice@corp" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"partner off-boarded 2026-05-19"}'
-```
-
-The `PartnerIssuerResolver` checks `registry.trusts(did)` on every `getKey`
-call, so revocation takes effect within one positive-cache TTL
-(`PARTNER_DID_CACHE_TTL_SECONDS`, default 5 minutes).  Tokens already in
-flight that have passed verification will complete normally; new tokens are
-denied immediately after the cache expires.
-
-### Discovery-URL auto-bootstrap (dev / staging)
-
-When `PARTNER_ISSUER_DISCOVERY_URL` is set, the gateway fetches the partner's
-`/.well-known/capability-issuer` document at startup, extracts the `issuer`
-DID, and seeds it directly (bypassing two-eyes approval).  This is equivalent
-to `TRUSTED_PARTNER_DIDS` but driven by a discovery document rather than a
-hard-coded DID string.
-
-```env
-PARTNER_ISSUER_DISCOVERY_URL=https://partner-staging.example.com/.well-known/capability-issuer
-```
-
-> **Production restriction:** `PARTNER_DID_REGISTRY_REQUIRED` defaults to
-> `true` in production (`NODE_ENV=production`), which blocks the discovery
-> shortcut.  Set `PARTNER_DID_REGISTRY_REQUIRED=false` only in staging or
-> during initial rollout.
-
----
-
-## Secrets abstraction layer (`SecretStore`)
-
-Services can read sensitive runtime values (e.g. `AUDIT_LEDGER_HMAC_SECRET`,
-`GATEWAY_ADMIN_API_KEY`) from a cloud-native secret manager instead of
-environment variables.  The `SecretStore` interface is exported from
-`@euno/common-core`:
-
-```typescript
-import { createSecretStoreFromEnv, getSecretOrThrow, SecretNotFoundError, SecretStore } from '@euno/common-core';
-
-const store: SecretStore = createSecretStoreFromEnv(process.env);
-const hmacSecret = await store.getSecret('AUDIT_LEDGER_HMAC_SECRET');         // undefined if absent
-const adminKey   = await getSecretOrThrow(store, 'GATEWAY_ADMIN_API_KEY');    // throws SecretNotFoundError
-```
-
-### Interface
-
-```typescript
-interface SecretStore {
-  getSecret(name: string): Promise<string | undefined>;
-}
-```
-
-- Returns `undefined` (never throws) for a missing secret.
-- May throw for transient I/O or authentication errors.
-- Implementations cache fetched values in memory for the process lifetime.
-
-Use `getSecretOrThrow(store, name)` (exported from `@euno/common-core`) when
-the secret is required and its absence should be a hard error.
-
-### Built-in implementations
-
-| Provider key            | Class                            | SDK required                                     |
-|-------------------------|----------------------------------|--------------------------------------------------|
-| `env` **(default)**     | `EnvSecretStore`                 | none — reads `process.env`                       |
-| `azure-keyvault`        | `AzureKeyVaultSecretStore`       | `@azure/keyvault-secrets`, `@azure/identity`     |
-| `aws-secretsmanager`    | `AwsSecretsManagerSecretStore`   | `@aws-sdk/client-secrets-manager`                |
-| `gcp-secretmanager`     | `GcpSecretManagerSecretStore`    | `@google-cloud/secret-manager`                   |
-
-Cloud SDKs are **not** hard dependencies of `@euno/common-core`; they are
-dynamically `require()`d lazily on the first `getSecret()` call (inside
-`buildClient()`), not at construction time.  Install whichever SDK your
-deployment uses; a clear error is thrown if the SDK is absent when the first
-secret fetch is attempted.
-
-### Selection via environment variables
-
-Set `SECRET_STORE_PROVIDER` in the service environment to select the backend:
-
-```env
-# Default — read directly from process.env
-SECRET_STORE_PROVIDER=env
-
-# Azure Key Vault
-SECRET_STORE_PROVIDER=azure-keyvault
-SECRET_STORE_AZURE_VAULT_URL=https://my-secrets-vault.vault.azure.net/
-SECRET_STORE_AZURE_CREDENTIAL_TYPE=managed-identity   # or default / client-secret
-
-# Azure Key Vault with explicit client-secret credentials
-SECRET_STORE_AZURE_CREDENTIAL_TYPE=client-secret
-SECRET_STORE_AZURE_CLIENT_ID=<client-id>
-SECRET_STORE_AZURE_CLIENT_SECRET=<client-secret>
-SECRET_STORE_AZURE_TENANT_ID=<tenant-id>
-
-# AWS Secrets Manager — uses the standard credential chain (IRSA, instance profile, etc.)
-SECRET_STORE_PROVIDER=aws-secretsmanager
-SECRET_STORE_AWS_REGION=us-east-1          # optional; falls back to AWS_REGION
-
-# GCP Secret Manager — uses Application Default Credentials
-SECRET_STORE_PROVIDER=gcp-secretmanager
-SECRET_STORE_GCP_PROJECT_ID=my-project-123   # or GCP_PROJECT_ID (fallback)
-SECRET_STORE_GCP_KEY_FILE_PATH=/etc/gcp/sa-key.json   # optional; uses ADC when unset
-```
-
-`createSecretStoreFromEnv(process.env)` reads these variables and returns the
-appropriate implementation.  Alternatively, use `createSecretStore(provider,
-config)` to construct an instance programmatically.
-
-### Implementing a custom `SecretStore`
-
-Any object that satisfies the `SecretStore` interface can be used:
-
-```typescript
-import { SecretStore } from '@euno/common-core';
-
-class VaultSecretStore implements SecretStore {
-  async getSecret(name: string): Promise<string | undefined> {
-    // fetch from HashiCorp Vault, Infisical, etc.
-  }
+    log.Printf("Partner user: %s, DID: %s", userCtx.Subject, userCtx.Claims["iss"])
 }
 ```
 
 ---
 
-## References
+## Future: KMS-Backed Signers
 
-- [W3C Decentralized Identifiers (DIDs)](https://www.w3.org/TR/did-core/)
-- [W3C Verifiable Credentials](https://www.w3.org/TR/vc-data-model/)
-- [Microsoft Entra Verified ID Architecture](https://learn.microsoft.com/en-us/entra/verified-id/introduction-to-verifiable-credentials-architecture)
+The `pkg/crypto` package includes `KMSSigner` stubs for future integration with cloud KMS services:
+
+- **Azure Key Vault**: Sign with keys stored in Azure Key Vault
+- **AWS KMS**: Sign with AWS KMS asymmetric keys
+- **GCP Cloud KMS**: Sign with Cloud KMS asymmetric keys
+
+These will be implemented in future releases. For now, use `crypto.GenerateSoftwareKeyPair()` for in-memory signing.
+
+---
+
+## See Also
+
+- [golang-reimplementation-plan.md](./golang-reimplementation-plan.md) — Go re-implementation plan and technology choices
+- [stage-5-design.md](./stage-5-design.md) — Partner federation architecture
+- [issuer-idp-setup.md](./issuer-idp-setup.md) — Setting up Azure AD, Cognito, GCP for issuance
+- [docs/openapi/capability-issuer.yaml](./openapi/capability-issuer.yaml) — Issuer API specification

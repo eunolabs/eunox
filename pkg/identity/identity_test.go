@@ -24,10 +24,10 @@ import (
 
 func TestOIDCProviderVerifyToken(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "oidc-key")
-	server, issuerURL, jwksHits := newOIDCServer(t, "", publicJWK)
+	server, issuerURL, jwksHits := newOIDCServer(t, "", &publicJWK)
 	defer server.Close()
 
-	provider, err := NewOIDCProvider(OIDCConfig{
+	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL:      issuerURL,
 		Audience:       "api://euno",
 		RequiredScopes: []string{"openid", "profile"},
@@ -36,7 +36,7 @@ func TestOIDCProviderVerifyToken(t *testing.T) {
 	}, server.Client())
 	require.NoError(t, err)
 
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 		Issuer:   issuerURL,
 		Subject:  "user-123",
 		Audience: jwt.Audience{"api://euno"},
@@ -68,7 +68,7 @@ func TestOIDCProviderVerifyToken(t *testing.T) {
 
 func TestCognitoClaimMapping(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "cognito-key")
-	server, _, _ := newOIDCServer(t, "/pool-1", publicJWK)
+	server, _, _ := newOIDCServer(t, "/pool-1", &publicJWK)
 	defer server.Close()
 
 	client := newRewriteClient(t, server)
@@ -80,7 +80,7 @@ func TestCognitoClaimMapping(t *testing.T) {
 	require.NoError(t, err)
 
 	issuerURL := "https://cognito-idp.us-east-1.amazonaws.com/pool-1"
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 		Issuer:   issuerURL,
 		Subject:  "cognito-user",
 		Audience: jwt.Audience{"app-client"},
@@ -103,14 +103,14 @@ func TestCognitoClaimMapping(t *testing.T) {
 
 func TestAzureADClaimMapping(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "azure-key")
-	server, _, _ := newOIDCServer(t, "/tenant-1/v2.0", publicJWK)
+	server, _, _ := newOIDCServer(t, "/tenant-1/v2.0", &publicJWK)
 	defer server.Close()
 
 	provider, err := NewAzureADProvider(AzureADConfig{TenantID: "tenant-1", ClientID: "client-id"}, newRewriteClient(t, server))
 	require.NoError(t, err)
 
 	issuerURL := "https://login.microsoftonline.com/tenant-1/v2.0"
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 		Issuer:   issuerURL,
 		Subject:  "azure-user",
 		Audience: jwt.Audience{"client-id"},
@@ -134,13 +134,13 @@ func TestAzureADClaimMapping(t *testing.T) {
 
 func TestGCPClaimMapping(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "gcp-key")
-	server, _, _ := newOIDCServer(t, "", publicJWK)
+	server, _, _ := newOIDCServer(t, "", &publicJWK)
 	defer server.Close()
 
 	provider, err := NewGCPProvider(GCPConfig{Audience: "gcp-audience"}, newRewriteClient(t, server))
 	require.NoError(t, err)
 
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 		Issuer:   "https://accounts.google.com",
 		Subject:  "google-user",
 		Audience: jwt.Audience{"gcp-audience"},
@@ -163,7 +163,7 @@ func TestDIDProviderVerifyToken(t *testing.T) {
 	provider, err := NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:123"}})
 	require.NoError(t, err)
 
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("jwk"), publicJWK.Public()), jwt.Claims{
+	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("jwk"), publicJWK.Public()), &jwt.Claims{
 		Issuer:   "did:example:123",
 		Subject:  "did:example:123",
 		Audience: jwt.Audience{"did:example:verifier"},
@@ -181,10 +181,10 @@ func TestDIDProviderVerifyToken(t *testing.T) {
 
 func TestProviderErrors(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "oidc-key")
-	server, issuerURL, _ := newOIDCServer(t, "", publicJWK)
+	server, issuerURL, _ := newOIDCServer(t, "", &publicJWK)
 	defer server.Close()
 
-	provider, err := NewOIDCProvider(OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno"}, server.Client())
+	provider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno"}, server.Client())
 	require.NoError(t, err)
 
 	validClaims := jwt.Claims{
@@ -196,7 +196,7 @@ func TestProviderErrors(t *testing.T) {
 	}
 
 	t.Run("expired token", func(t *testing.T) {
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-123",
 			Audience: jwt.Audience{"api://euno"},
@@ -210,7 +210,7 @@ func TestProviderErrors(t *testing.T) {
 
 	t.Run("invalid signature", func(t *testing.T) {
 		otherPrivateKey, _ := mustRSAJWK(t, "other-key")
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: otherPrivateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), validClaims, nil)
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: otherPrivateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &validClaims, nil)
 		_, err := provider.VerifyToken(context.Background(), token)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "verify token signature")
@@ -223,7 +223,7 @@ func TestProviderErrors(t *testing.T) {
 	})
 
 	t.Run("missing required claims", func(t *testing.T) {
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), jwt.Claims{
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 			Issuer:   issuerURL,
 			Audience: jwt.Audience{"api://euno"},
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
@@ -234,9 +234,9 @@ func TestProviderErrors(t *testing.T) {
 	})
 
 	t.Run("missing required scopes", func(t *testing.T) {
-		scopedProvider, err := NewOIDCProvider(OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno", RequiredScopes: []string{"openid"}}, server.Client())
+		scopedProvider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno", RequiredScopes: []string{"openid"}}, server.Client())
 		require.NoError(t, err)
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), validClaims, map[string]interface{}{"scope": "email"})
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &validClaims, map[string]interface{}{"scope": "email"})
 		_, err = scopedProvider.VerifyToken(context.Background(), token)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "required scopes")
@@ -245,7 +245,7 @@ func TestProviderErrors(t *testing.T) {
 	t.Run("did missing embedded key", func(t *testing.T) {
 		didProvider, err := NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:123"}})
 		require.NoError(t, err)
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT"), jwt.Claims{
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT"), &jwt.Claims{
 			Issuer:   "did:example:123",
 			Subject:  "did:example:123",
 			Audience: jwt.Audience{"did:example:verifier"},
@@ -259,7 +259,7 @@ func TestProviderErrors(t *testing.T) {
 }
 
 func TestConstructorsValidateConfig(t *testing.T) {
-	_, err := NewOIDCProvider(OIDCConfig{}, nil)
+	_, err := NewOIDCProvider(&OIDCConfig{}, nil)
 	require.Error(t, err)
 
 	_, err = NewCognitoProvider(CognitoConfig{}, nil)
@@ -288,12 +288,12 @@ func mustRSAJWK(t *testing.T, keyID string) (*rsa.PrivateKey, jose.JSONWebKey) {
 	return privateKey, jose.JSONWebKey{Key: &privateKey.PublicKey, KeyID: keyID, Use: "sig", Algorithm: string(jose.RS256)}
 }
 
-func mustSignedToken(t *testing.T, signingKey jose.SigningKey, options *jose.SignerOptions, registered jwt.Claims, privateClaims map[string]interface{}) string {
+func mustSignedToken(t *testing.T, signingKey jose.SigningKey, options *jose.SignerOptions, registered *jwt.Claims, privateClaims map[string]interface{}) string {
 	t.Helper()
 	signer, err := jose.NewSigner(signingKey, options)
 	require.NoError(t, err)
 
-	builder := jwt.Signed(signer).Claims(registered)
+	builder := jwt.Signed(signer).Claims(*registered)
 	if privateClaims != nil {
 		builder = builder.Claims(privateClaims)
 	}
@@ -302,29 +302,28 @@ func mustSignedToken(t *testing.T, signingKey jose.SigningKey, options *jose.Sig
 	return token
 }
 
-func newOIDCServer(t *testing.T, issuerPath string, key jose.JSONWebKey) (*httptest.Server, string, *int32) {
+func newOIDCServer(t *testing.T, issuerPath string, key *jose.JSONWebKey) (server *httptest.Server, issuerURL string, jwksHitCount *int32) {
 	t.Helper()
-	var jwksHits int32
+	var hitCount int32
 	issuerPath = trimTrailingSlash(issuerPath)
 	if issuerPath == "" {
 		issuerPath = ""
 	}
 
-	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case issuerPath + "/.well-known/openid-configuration":
 			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"jwks_uri": server.URL + issuerPath + "/jwks"}))
 		case issuerPath + "/jwks":
-			atomic.AddInt32(&jwksHits, 1)
-			require.NoError(t, json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{key}}))
+			atomic.AddInt32(&hitCount, 1)
+			require.NoError(t, json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{*key}}))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 
-	issuerURL := server.URL + issuerPath
-	return server, trimTrailingSlash(issuerURL), &jwksHits
+	issuerURL = server.URL + issuerPath
+	return server, trimTrailingSlash(issuerURL), &hitCount
 }
 
 func newRewriteClient(t *testing.T, server *httptest.Server) *http.Client {

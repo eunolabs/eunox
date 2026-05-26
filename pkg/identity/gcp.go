@@ -28,7 +28,7 @@ func NewGCPProvider(cfg GCPConfig, httpClient *http.Client) (*GCPProvider, error
 		return nil, fmt.Errorf("audience is required")
 	}
 
-	oidcProvider, err := newOIDCProvider(OIDCConfig{
+	oidcProvider, err := newOIDCProvider(&OIDCConfig{
 		IssuerURL: "https://accounts.google.com",
 		Audience:  strings.TrimSpace(cfg.Audience),
 	}, httpClient, ProviderTypeGCP, func(registered jwt.Claims, raw map[string]interface{}) (*UserContext, error) {

@@ -1,16 +1,148 @@
-# Agent SDK — Calling `/attenuate` and `/renew`
+# Agent Runtime — Token Management and Enforcement
 
-This guide explains how to call the capability issuer's attenuation and renewal endpoints from any HTTP client (non-CLI).
+This guide explains how to use the eunox Agent Runtime (`internal/agentruntime`) to manage capability tokens and invoke tools through the enforcement gateway.
 
-## Prerequisites
+---
 
-You have a valid capability token (JWT) issued by the capability issuer. Obtain one via `euno request` or directly via `POST /api/v1/oidc/token`.
+## Overview
 
-## Attenuate a Token
+The **Agent Runtime** provides:
+
+1. **Token Lifecycle Management**: Automatic token acquisition, caching, and proactive refresh
+2. **DPoP Binding**: Proof-of-possession key generation and management
+3. **Tool Invocation**: HTTP transport for calling tools through the gateway
+4. **Retry Logic**: Automatic retry with exponential backoff for transient failures
+
+The runtime is the primary entry point for embedding eunox capability governance into Go-based AI agents.
+
+---
+
+## Quick Start
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/edgeobs/eunox/internal/agentruntime"
+)
+
+func main() {
+    // Configure the runtime
+    cfg := &agentruntime.Config{
+        IssuerURL:   "https://issuer.example.com",
+        GatewayURL:  "https://gateway.example.com",
+        IdentityToken: getIdentityToken(), // Your OIDC/Azure AD token
+    }
+
+    // Create runtime instance
+    runtime, err := agentruntime.New(cfg)
+    if err != nil {
+        log.Fatalf("Failed to create runtime: %v", err)
+    }
+
+    // Invoke a tool
+    ctx := context.Background()
+    result, err := runtime.InvokeTool(ctx, &agentruntime.ToolRequest{
+        Tool: "database:read",
+        Args: map[string]interface{}{
+            "table": "users",
+            "limit": 100,
+        },
+    })
+    if err != nil {
+        log.Fatalf("Tool invocation failed: %v", err)
+    }
+
+    log.Printf("Tool result: %+v", result)
+}
+```
+
+### Configuration Options
+
+```go
+cfg := &agentruntime.Config{
+    // Required
+    IssuerURL:   "https://issuer.example.com",   // Capability issuer endpoint
+    GatewayURL:  "https://gateway.example.com",  // Tool gateway endpoint
+    IdentityToken: "your-oidc-token",            // OR use IdentityTokenProvider
+
+    // Optional: Dynamic token provider (recommended for long-running agents)
+    IdentityTokenProvider: func(ctx context.Context) (string, error) {
+        // Refresh your identity token from your IdP
+        return getLatestIdentityToken(ctx)
+    },
+
+    // Optional: Token refresh behavior
+    RefreshBeforeExpiry: 30 * time.Second, // Start refresh 30s before expiry
+
+    // Optional: Retry configuration
+    MaxRetries:      3,
+    RetryBaseDelay:  100 * time.Millisecond,
+    RetryMaxDelay:   5 * time.Second,
+
+    // Optional: HTTP client (default: 30s timeout)
+    HTTPClient: &http.Client{Timeout: 60 * time.Second},
+
+    // Optional: Disable DPoP (not recommended for production)
+    DPoPEnabled: boolPtr(false),
+}
+```
+
+---
+
+## Token Management
+
+### Automatic Token Acquisition
+
+The runtime automatically acquires a capability token from the issuer on first use:
+
+```go
+runtime, _ := agentruntime.New(cfg)
+
+// First tool invocation triggers token acquisition
+result, err := runtime.InvokeTool(ctx, toolReq)
+```
+
+### Proactive Token Refresh
+
+The runtime monitors token expiry and proactively refreshes tokens before they expire:
+
+```go
+cfg := &agentruntime.Config{
+    // ... other config
+    RefreshBeforeExpiry: 30 * time.Second, // Refresh 30s before expiry
+}
+```
+
+When the token is within 30 seconds of expiry, the runtime automatically calls `/api/v1/renew` to get a fresh token.
+
+### Manual Token Management
+
+For advanced use cases, you can manually control token lifecycle:
+
+```go
+// Get current token
+token, err := runtime.GetToken(ctx)
+
+// Force token refresh
+newToken, err := runtime.RefreshToken(ctx)
+```
+
+---
+
+## Calling Issuer Endpoints Directly
+
+If you need to call the issuer endpoints (`/api/v1/attenuate`, `/api/v1/renew`) directly without the runtime, use standard HTTP clients:
+
+### Attenuate a Token
 
 Attenuation produces a child token scoped to a narrower set of capabilities. The `cnf.jkt` (DPoP binding) and `region` claims are preserved from the parent.
 
-### curl
 ```bash
 curl -X POST https://issuer.example.com/api/v1/attenuate \
   -H "Authorization: Bearer <parent-token>" \
@@ -22,50 +154,20 @@ curl -X POST https://issuer.example.com/api/v1/attenuate \
   }'
 ```
 
-### fetch (Node.js / browser)
-```typescript
-const response = await fetch('https://issuer.example.com/api/v1/attenuate', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${parentToken}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    requestedCapabilities: [
-      { resource: 'api://myservice/readonly', actions: ['read'] }
-    ]
-  }),
-});
+Response:
 
-if (!response.ok) {
-  if (response.status === 429) {
-    const retryAfter = response.headers.get('Retry-After');
-    throw new Error(`Rate limited. Retry after ${retryAfter}s`);
-  }
-  const err = await response.json();
-  throw new Error(err.message);
+```json
+{
+  "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...",
+  "tokenID": "cap_abc123",
+  "expiresAt": 1735689600
 }
-
-const { token } = await response.json();
 ```
 
-### axios
-```typescript
-import axios from 'axios';
-
-const { data } = await axios.post(
-  'https://issuer.example.com/api/v1/attenuate',
-  { requestedCapabilities: [{ resource: 'api://myservice/readonly', actions: ['read'] }] },
-  { headers: { Authorization: `Bearer ${parentToken}` } }
-);
-const childToken: string = data.token;
-```
-
-## Renew a Token
+### Renew a Token
 
 Renewal extends the expiry of an existing token without changing its capabilities. `cnf.jkt`, `region`, and `policyHash` are preserved.
 
-### curl
 ```bash
 curl -X POST https://issuer.example.com/api/v1/renew \
   -H "Authorization: Bearer <current-token>" \
@@ -73,199 +175,201 @@ curl -X POST https://issuer.example.com/api/v1/renew \
   -d '{}'
 ```
 
-### fetch
-```typescript
-const response = await fetch('https://issuer.example.com/api/v1/renew', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${currentToken}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({}),
-});
+Response:
 
-if (!response.ok) {
-  if (response.status === 429) {
-    const retryAfter = response.headers.get('Retry-After');
-    throw new Error(`Rate limited. Retry after ${retryAfter}s`);
-  }
-  throw new Error(`Renewal failed: ${response.status}`);
+```json
+{
+  "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...",
+  "tokenID": "cap_xyz789",
+  "expiresAt": 1735693200
 }
-const { token: renewedToken } = await response.json();
 ```
-
-## Error Handling
-
-| Status | Meaning | Action |
-|--------|---------|--------|
-| 200 | Success | Use `response.token` |
-| 401 | Invalid/expired bearer token | Re-authenticate, get new token |
-| 403 | Token lacks permission to attenuate | Check parent token capabilities |
-| 422 | Invalid request body | Fix capability format |
-| 429 | Rate limited | Wait `Retry-After` seconds |
-| 500 | Issuer internal error | Retry with exponential backoff |
-
-## Rate Limiting
-
-Both `/attenuate` and `/renew` use the same rate limiter as `/issue`, but are keyed by a different subject: fresh `/issue` requests are keyed by `(tenantId, userId, agentId, ip)`, while `/attenuate` and `/renew` include the parent token `jti` in the bucket key. This means each parent token has its own rate-limit counter, independent of fresh issuance. The default hosted limit is 20 requests per 60-second window per subject. On 429, read the `Retry-After` response header and back off accordingly.
 
 ---
 
-## AGT in-process guard
+## Error Handling
 
-The `@euno/agent-runtime` package ships `createAgtGuard()` — an in-process capability pre-screen that sits between your agent logic and the outer tool gateway. It implements the Set-D architecture described in [`docs/diagrams.md`](./diagrams.md) (Set D, diagrams D1–D4).
+The runtime returns structured errors. Common error scenarios:
 
-### Architecture overview
+### Token Acquisition Failures
 
-```
-Agent logic
-    │
-    ▼
-┌──────────────────────────────────────────┐
-│  AgtGuard (soft inner guard)             │
-│  • checks tool name against policy       │
-│  • calls tokenSupplier() per invocation  │
-│  • forwards allowed calls to transport   │
-└──────────────────────────────────────────┘
-    │ allowed calls only
-    ▼
-Tool Gateway (hard outer guard)
-    │ validated, signed, scope-checked
-    ▼
-External API / Tool
-```
+```go
+runtime, err := agentruntime.New(cfg)
+if err != nil {
+    // Configuration validation failed
+    log.Fatalf("Invalid config: %v", err)
+}
 
-See the full sequence diagram in [`docs/diagrams.md`](./diagrams.md) §D2 ("Runtime Action Enforcement Flow").
-
-### Installation
-
-`createAgtGuard` is exported from `@euno/agent-runtime` (BSL-1.1). The three
-configuration types — `AgtGuardOptions`, `AgtGuardResult`, and
-`AgtGuardDenyReason` — are exported from both `@euno/agent-runtime` and
-`@euno/common-core` (Apache-2.0), so consumers that only need the type
-declarations can take a lighter dependency.
-
-### Quick-start wiring
-
-```typescript
-import {
-  createAgtGuard,
-  HttpToolTransport,
-  type AgtGuardOptions,
-} from '@euno/agent-runtime';
-import type { AgentCapabilityManifest } from '@euno/common-core';
-
-// 1. Declare the agent's capability manifest (or load it from a file / registry).
-const manifest: AgentCapabilityManifest = {
-  agentId: 'my-data-agent',
-  name: 'Data Analysis Agent',
-  version: '1.0.0',
-  requiredCapabilities: [
-    { resource: 'db:read',      actions: ['read'] },
-    { resource: 'storage:read', actions: ['read'] },
-  ],
-  optionalCapabilities: [
-    { resource: 'cache:read', actions: ['read'] },
-  ],
-};
-
-// 2. Create the guard, wrapping the outer HTTP transport.
-const guard = createAgtGuard(
-  {
-    // Called once per outbound tool invocation; must return the current token.
-    tokenSupplier: () => tokenStore.currentToken(),
-    policy: manifest,
-
-    // Observation callbacks — use these for metrics / structured logs.
-    onDeny: (toolName, reason) => {
-      logger.warn('AGT guard blocked tool call', { toolName, reason });
-      metrics.increment('agt.guard.deny', { reason });
-    },
-    onGatewayDeny: (toolName, gatewayErrorCode) => {
-      // The guard allowed the call, but the gateway rejected it.
-      // The gateway audit log is the authoritative denial record;
-      // this callback provides the agent-side signal only.
-      logger.warn('Gateway denied guard-allowed call', { toolName, gatewayErrorCode });
-      metrics.increment('agt.gateway.deny', { code: gatewayErrorCode });
-    },
-  } satisfies AgtGuardOptions,
-  new HttpToolTransport(process.env.GATEWAY_URL!),
-);
-
-// 3. Route all tool calls through the guard.
-const response = await guard.invokeTool({
-  tool: 'db:read',
-  args: { table: 'analytics_events', limit: 100 },
-});
-
-if (!response.success) {
-  if (response.guardResult === 'deny') {
-    // The guard blocked the call in-process; no gateway request was made.
-    console.error('Guard deny:', response.denyReason, response.error);
-  } else {
-    // The guard allowed it but the gateway denied it.
-    console.error('Gateway deny:', response.errorCode, response.error);
-  }
+result, err := runtime.InvokeTool(ctx, toolReq)
+if err != nil {
+    // Check error type
+    if errors.Is(err, agentruntime.ErrUnauthorized) {
+        log.Println("Identity token invalid or expired")
+    } else if errors.Is(err, agentruntime.ErrForbidden) {
+        log.Println("Identity lacks permission for requested capabilities")
+    } else {
+        log.Printf("Tool invocation failed: %v", err)
+    }
 }
 ```
 
-### Response shape
+### Rate Limiting
 
-`guard.invokeTool()` returns an `AgtGuardInvokeResponse` which extends the
-standard `ToolTransportResponse` with two additional fields:
+When rate limited (HTTP 429), the runtime automatically retries with exponential backoff (if `MaxRetries > 0`):
 
-| Field | Type | Description |
-|---|---|---|
-| `guardResult` | `'allow' \| 'deny'` | The guard's own verdict. `'allow'` means the call was forwarded to the gateway (even if the gateway subsequently denied it). `'deny'` means the guard blocked it before the transport was called. |
-| `denyReason` | `AgtGuardDenyReason \| undefined` | Set only when `guardResult === 'deny'`. One of `'capability_not_found'`, `'constraint_violated'`, or `'policy_evaluation_error'`. |
+```go
+cfg := &agentruntime.Config{
+    // ... other config
+    MaxRetries:     3,
+    RetryBaseDelay: 100 * time.Millisecond,
+    RetryMaxDelay:  5 * time.Second,
+}
+```
 
-### Policy evaluation
+For manual handling:
 
-The guard matches each tool call by the `resource` field of the capability
-constraints in `policy.requiredCapabilities` and `policy.optionalCapabilities`.
-A tool whose name is not found in either array is denied with
-`'capability_not_found'`.
+```bash
+# Rate limit response includes Retry-After header
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+Content-Type: application/json
 
-The guard intentionally does **not** replicate every constraint type enforced
-by the gateway (for example, `maxCalls` counters, `ipRange` checks, or policy
-backend calls). The gateway is the authoritative enforcer for those. The
-guard's role is to catch obviously out-of-scope calls early and to provide an
-agent-side observability signal.
+{
+  "error": "rate_limit_exceeded",
+  "message": "Too many requests. Retry after 42 seconds."
+}
+```
 
-### Token supplier contract
+---
 
-`tokenSupplier` is called once per outbound tool invocation (i.e., per call
-that passes the in-process policy check). The guard does **not** cache the
-returned token between calls, so a supplier that maintains a refresh loop will
-automatically surface fresh tokens on every forwarded call. The supplier must
-be safe for concurrent invocations if multiple tool calls can be in-flight
-simultaneously.
+## HTTP Error Reference
 
-### Why two guards?
+| Status | Meaning | Action |
+|--------|---------|--------|
+| 200 | Success | Use response token/result |
+| 401 | Invalid/expired bearer token | Re-authenticate, get new identity token |
+| 403 | Token lacks permission | Check capabilities or request broader scope |
+| 422 | Invalid request body | Fix capability format or tool arguments |
+| 429 | Rate limited | Wait `Retry-After` seconds (runtime handles automatically) |
+| 500 | Service internal error | Retry with exponential backoff (runtime handles automatically) |
 
-The defense-in-depth rationale is:
+---
 
-| Layer | Who runs it | What it enforces | Auditable? |
-|---|---|---|---|
-| AGT in-process guard (soft) | Inside the agent process | Capability manifest — "should this agent ever call this tool?" | No (agent-side only) |
-| Tool gateway (hard) | Outside the agent process, controlled by the platform | Cryptographic token validity, scope, expiry, revocation, rate limits | **Yes** — every decision is written to the audit log |
+## DPoP (Proof-of-Possession)
 
-The in-process guard adds defense-in-depth: it reduces noise in the gateway
-audit log by pre-screening obviously invalid calls, and it gives the agent's
-own observability stack (metrics, logs, traces) a signal before any network
-round-trip. It **does not** replace the gateway — an operator MUST NOT rely
-on the in-process guard as a security boundary. A compromised or misbehaving
-agent process can bypass its own guard entirely; the gateway is the sole
-enforceable trust boundary from the platform's perspective.
+The runtime automatically generates an ephemeral DPoP key pair and includes proof-of-possession proofs in all requests to the issuer and gateway.
 
-### Security caveat
+### What is DPoP?
 
-The guard runs inside the agent process. If the agent process is compromised,
-an attacker can bypass the guard by calling the transport directly. This is
-expected and by design — the guard is a soft guard, not a security boundary.
-The gateway (which runs outside the agent's trust domain, controlled by the
-platform operator) is the hard boundary and is the sole authoritative denial
-record. See `docs/diagrams.md` Set D and the enterprise threat model addendum
-(`docs/security/enterprise-federation-threat-model.md` §"In-process guard
-bypass") for the full threat-model treatment.
+DPoP binds capability tokens to a specific client key pair. Even if a token is stolen, it cannot be used without the corresponding private key.
 
+### Disabling DPoP (Not Recommended)
+
+```go
+cfg := &agentruntime.Config{
+    // ... other config
+    DPoPEnabled: boolPtr(false), // Only for testing/debugging
+}
+```
+
+**Security Warning**: Disabling DPoP removes proof-of-possession binding. Only disable for local testing.
+
+---
+
+## Adapters for Tool Invocation
+
+The runtime supports different tool invocation patterns through adapters:
+
+### HTTP Adapter (Default)
+
+Calls tools via HTTP POST to the gateway:
+
+```go
+result, err := runtime.InvokeTool(ctx, &agentruntime.ToolRequest{
+    Tool: "http:post:api.example.com/data",
+    Args: map[string]interface{}{"query": "users"},
+})
+```
+
+### Function Call Adapter
+
+For tools that are function calls (e.g., OpenAI function calling, Anthropic tool use):
+
+```go
+// The runtime can be extended with custom adapters
+// See internal/agentruntime/adapters/ for examples
+```
+
+---
+
+## Issuance Hints
+
+Provide hints to the issuer for policy evaluation:
+
+```go
+cfg := &agentruntime.Config{
+    // ... other config
+}
+
+runtime, _ := agentruntime.New(
+    cfg,
+    agentruntime.WithHintsProvider(func(ctx context.Context) (map[string]interface{}, error) {
+        return map[string]interface{}{
+            "environment": "production",
+            "region":      "us-west-2",
+            "agentVersion": "1.2.3",
+        }, nil
+    }),
+)
+```
+
+These hints are included in the `/api/v1/issue` request and can be used by custom policy engines for authorization decisions.
+
+---
+
+## Advanced: Custom HTTP Client
+
+Provide a custom HTTP client for mTLS, custom timeouts, or proxy support:
+
+```go
+import (
+    "crypto/tls"
+    "net/http"
+)
+
+// Configure mTLS
+tlsConfig := &tls.Config{
+    Certificates: []tls.Certificate{clientCert},
+    RootCAs:      rootCAs,
+}
+
+cfg := &agentruntime.Config{
+    // ... other config
+    HTTPClient: &http.Client{
+        Timeout: 60 * time.Second,
+        Transport: &http.Transport{
+            TLSClientConfig: tlsConfig,
+        },
+    },
+}
+```
+
+---
+
+## See Also
+
+- [docs/ARCHITECTURE.md](./ARCHITECTURE.md) — System architecture overview
+- [docs/openapi/capability-issuer.yaml](./openapi/capability-issuer.yaml) — Issuer API specification
+- [docs/openapi/tool-gateway.yaml](./openapi/tool-gateway.yaml) — Gateway API specification
+- [docs/enforcement.md](./enforcement.md) — Policy enforcement guarantees
+- [internal/agentruntime/runtime.go](/internal/agentruntime/runtime.go) — Runtime implementation
+
+---
+
+## Helper Function
+
+```go
+func boolPtr(b bool) *bool {
+    return &b
+}
+```

@@ -86,7 +86,7 @@ func (e *Engine) RegisterCondition(name string, handler ConditionHandler) {
 
 // ValidateAction evaluates an enforce request against the provided capabilities.
 // It returns an EnforceResponse with the decision and any obligations.
-func (e *Engine) ValidateAction(ctx context.Context, req capability.EnforceRequest, capabilities []capability.Constraint) (capability.EnforceResponse, error) {
+func (e *Engine) ValidateAction(ctx context.Context, req *capability.EnforceRequest, capabilities []capability.Constraint) (capability.EnforceResponse, error) {
 	requestID := uuid.New().String()
 	now := e.clock.Now().UTC().Format(time.RFC3339)
 
@@ -145,7 +145,7 @@ func (e *Engine) ValidateAction(ctx context.Context, req capability.EnforceReque
 			}, nil
 		}
 
-		if condErr := handler(ctx, cond, &req); condErr != nil {
+		if condErr := handler(ctx, cond, req); condErr != nil {
 			return capability.EnforceResponse{
 				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
@@ -169,7 +169,7 @@ func (e *Engine) ValidateAction(ctx context.Context, req capability.EnforceReque
 }
 
 // findMatchingCapability finds the first capability that matches the request's tool/action.
-func (e *Engine) findMatchingCapability(req capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint {
+func (e *Engine) findMatchingCapability(req *capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint {
 	for i := range capabilities {
 		constraint := &capabilities[i]
 		if matchesResource(constraint.Resource, req.ToolName) && matchesAction(constraint.Actions, req) {
@@ -185,7 +185,7 @@ func matchesResource(resource, toolName string) bool {
 		return true
 	}
 	// Glob-style prefix match: "tool:*" matches any tool
-	if len(resource) > 0 && resource[len(resource)-1] == '*' {
+	if resource != "" && resource[len(resource)-1] == '*' {
 		prefix := resource[:len(resource)-1]
 		return len(toolName) >= len(prefix) && toolName[:len(prefix)] == prefix
 	}
@@ -193,7 +193,7 @@ func matchesResource(resource, toolName string) bool {
 }
 
 // matchesAction checks if the capability grants the requested action/operation.
-func matchesAction(actions []string, req capability.EnforceRequest) bool {
+func matchesAction(actions []string, req *capability.EnforceRequest) bool {
 	if len(actions) == 0 {
 		return true
 	}

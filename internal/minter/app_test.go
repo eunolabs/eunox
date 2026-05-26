@@ -47,20 +47,19 @@ func newTestApp(t *testing.T) *App {
 		Config{
 			Pepper:          pepper,
 			DefaultTenantID: "test-tenant",
-		},
-		Dependencies{
+		}, &Dependencies{
 			Store:   NewInMemoryStore(),
 			Auth:    &mockAuth{operatorID: "test-operator"},
 			Anomaly: &mockAnomalyDetector{},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		},
-	)
+		})
+
 }
 
 func TestApp_HealthLive(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/live", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -77,7 +76,7 @@ func TestApp_HealthLive(t *testing.T) {
 func TestApp_HealthReady(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(t)
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -137,14 +136,12 @@ func TestApp_CreateKey_VelocityExceeded(t *testing.T) {
 	t.Parallel()
 	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	app := New(
-		Config{Pepper: pepper, DefaultTenantID: "t"},
-		Dependencies{
+		Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
 			Store:   NewInMemoryStore(),
 			Auth:    &mockAuth{operatorID: "op"},
 			Anomaly: &mockAnomalyDetector{velocityErr: ErrVelocityExceeded},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		},
-	)
+		})
 
 	body := `{"description": "test"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/keys", bytes.NewBufferString(body))
@@ -161,14 +158,12 @@ func TestApp_CreateKey_Unauthorized(t *testing.T) {
 	t.Parallel()
 	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	app := New(
-		Config{Pepper: pepper, DefaultTenantID: "t"},
-		Dependencies{
+		Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
 			Store:   NewInMemoryStore(),
 			Auth:    &mockAuth{err: ErrUnauthorized},
 			Anomaly: &mockAnomalyDetector{},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		},
-	)
+		})
 
 	body := `{"description": "test"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/keys", bytes.NewBufferString(body))
@@ -196,7 +191,7 @@ func TestApp_ListKeys(t *testing.T) {
 	}
 
 	// List.
-	req = httptest.NewRequest(http.MethodGet, "/admin/v1/keys?tenantId=test-tenant", nil)
+	req = httptest.NewRequest(http.MethodGet, "/admin/v1/keys?tenantId=test-tenant", http.NoBody)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -226,7 +221,7 @@ func TestApp_RevokeKey(t *testing.T) {
 	keyID := createResp["keyId"].(string)
 
 	// Revoke.
-	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, nil)
+	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, http.NoBody)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -239,7 +234,7 @@ func TestApp_RevokeKey_NotFound(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(t)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/nonexistent", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -263,12 +258,12 @@ func TestApp_RevokeKey_AlreadyRevoked(t *testing.T) {
 	keyID := resp["keyId"].(string)
 
 	// First revoke.
-	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, nil)
+	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, http.NoBody)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
 	// Second revoke should conflict.
-	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, nil)
+	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, http.NoBody)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -354,7 +349,7 @@ func TestApp_Ping_RevokedKey(t *testing.T) {
 	keyID := createResp["keyId"].(string)
 
 	// Revoke.
-	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, nil)
+	req = httptest.NewRequest(http.MethodDelete, "/admin/v1/keys/"+keyID, http.NoBody)
 	w = httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -446,7 +441,7 @@ func TestApp_ListPolicies(t *testing.T) {
 	}
 
 	// List.
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/policies?tenantId=test-tenant", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/policies?tenantId=test-tenant", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -465,7 +460,7 @@ func TestApp_ListPolicies_Empty(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/policies", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/policies", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -483,7 +478,7 @@ func TestApp_ListPolicies_Empty(t *testing.T) {
 func TestExtractClientIP_IgnoresForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.RemoteAddr = "198.51.100.25:443"
 	req.Header.Set("X-Forwarded-For", "203.0.113.77")
 

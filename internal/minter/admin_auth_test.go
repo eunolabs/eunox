@@ -17,7 +17,7 @@ func TestCombinedAdminAuth_APIKeyFallback(t *testing.T) {
 		AdminKey: "test-admin-key",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", "test-admin-key")
 
 	opID, err := combined.Authenticate(context.Background(), req)
@@ -36,7 +36,7 @@ func TestCombinedAdminAuth_APIKeyFallback_XAdminKey(t *testing.T) {
 		AdminKey: "test-admin-key",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("X-Admin-Key", "test-admin-key")
 
 	opID, err := combined.Authenticate(context.Background(), req)
@@ -55,7 +55,7 @@ func TestCombinedAdminAuth_InvalidAPIKey(t *testing.T) {
 		AdminKey: "correct-key",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", "wrong-key")
 
 	_, err := combined.Authenticate(context.Background(), req)
@@ -71,7 +71,7 @@ func TestCombinedAdminAuth_NoCredentials(t *testing.T) {
 		AdminKey: "key",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	_, err := combined.Authenticate(context.Background(), req)
 	if err == nil {
 		t.Error("expected error when no credentials provided")
@@ -86,7 +86,7 @@ func TestCombinedAdminAuth_BearerWithNoJWT(t *testing.T) {
 		AdminKey: "key",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("Authorization", "******")
 
 	_, err := combined.Authenticate(context.Background(), req)
@@ -100,7 +100,7 @@ func TestCombinedAdminAuth_AdminKeyNotConfigured(t *testing.T) {
 
 	combined := NewCombinedAdminAuth(CombinedAdminAuthConfig{})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", "some-key")
 
 	_, err := combined.Authenticate(context.Background(), req)

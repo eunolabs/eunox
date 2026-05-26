@@ -103,6 +103,7 @@ func MustGenerateEdDSASigner(keyID string) (eunocrypto.Signer, eunocrypto.Verifi
 		}
 }
 
+// Sign signs the digest using the in-memory private key.
 func (s *inMemorySigner) Sign(ctx context.Context, digest []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -110,14 +111,17 @@ func (s *inMemorySigner) Sign(ctx context.Context, digest []byte) ([]byte, error
 	return s.signFunc(digest)
 }
 
+// Algorithm returns the signer algorithm.
 func (s *inMemorySigner) Algorithm() eunocrypto.Algorithm {
 	return s.algorithm
 }
 
+// KeyID returns the signer key identifier.
 func (s *inMemorySigner) KeyID() string {
 	return s.keyID
 }
 
+// Verify checks the signature against the digest using the in-memory public key.
 func (v *inMemoryVerifier) Verify(ctx context.Context, digest, signature []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -125,10 +129,12 @@ func (v *inMemoryVerifier) Verify(ctx context.Context, digest, signature []byte)
 	return v.verifyFunc(digest, signature)
 }
 
+// Algorithm returns the verifier algorithm.
 func (v *inMemoryVerifier) Algorithm() eunocrypto.Algorithm {
 	return v.algorithm
 }
 
+// KeyID returns the verifier key identifier.
 func (v *inMemoryVerifier) KeyID() string {
 	return v.keyID
 }

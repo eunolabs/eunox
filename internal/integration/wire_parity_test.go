@@ -114,10 +114,10 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 	for _, fx := range fixtures {
 		t.Run(fx.Name, func(t *testing.T) {
 			dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-			app := gateway.New(gateway.Config{
+			app := gateway.New(&gateway.Config{
 				GatewayAudience: "wire-test",
 				AdminAPIKey:     testAdminKey,
-			}, gateway.Dependencies{
+			}, &gateway.Dependencies{
 				Engine:      enforcement.New(),
 				KillSwitch:  killswitch.NewInMemory(),
 				Revocation:  revocation.NewInMemory(),
@@ -164,16 +164,17 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 func TestWireParity_RequestIDPropagation(t *testing.T) {
 	makeHandler := func(claims *capability.TokenPayload, ks killswitch.Manager, revStore *revocation.InMemory) http.Handler {
 		dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-		app := gateway.New(gateway.Config{
+		app := gateway.New(&gateway.Config{
 			GatewayAudience: "wire-test",
 			AdminAPIKey:     testAdminKey,
-		}, gateway.Dependencies{
+		}, &gateway.Dependencies{
 			Engine:      enforcement.New(),
 			KillSwitch:  ks,
 			Revocation:  revStore,
 			JWTVerifier: &staticClaimsVerifier{claims: claims},
 			DPoPStore:   dpopStore,
 		})
+
 		return app.Handler()
 	}
 
@@ -261,16 +262,17 @@ func TestWireParity_EnforceRequestValidation(t *testing.T) {
 		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
 		Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
 	}
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	tests := []struct {
@@ -328,10 +330,10 @@ func TestWireParity_ObligationsFormat(t *testing.T) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
@@ -365,10 +367,10 @@ func TestWireParity_ObligationsFormat(t *testing.T) {
 // TestWireParity_HealthEndpoint verifies the health endpoint response format.
 func TestWireParity_HealthEndpoint(t *testing.T) {
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),

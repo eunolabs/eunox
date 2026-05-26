@@ -56,7 +56,7 @@ type ToolResult struct {
 // Call invokes a tool by name with the given JSON input.
 // This matches the LangChain tool-calling convention where tools accept
 // a string input (typically JSON) and return a string output.
-func (a *LangChainAdapter) Call(ctx context.Context, toolName string, input string) ToolResult {
+func (a *LangChainAdapter) Call(ctx context.Context, toolName, input string) ToolResult {
 	var arguments map[string]interface{}
 	if input != "" {
 		if err := json.Unmarshal([]byte(input), &arguments); err != nil {

@@ -24,14 +24,14 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s (%s): %s", e.Field, e.Env, e.Message)
 }
 
-func shouldRecurse(field reflect.StructField, value reflect.Value) bool {
+func shouldRecurse(field *reflect.StructField, value reflect.Value) bool {
 	if hasLeafTags(field) {
 		return false
 	}
 	if value.Kind() == reflect.Struct {
 		return true
 	}
-	return value.Kind() == reflect.Ptr && value.Type().Elem().Kind() == reflect.Struct
+	return value.Kind() == reflect.Pointer && value.Type().Elem().Kind() == reflect.Struct
 }
 
 func joinFieldPath(path, field string) string {
@@ -42,7 +42,7 @@ func joinFieldPath(path, field string) string {
 }
 
 func assignValue(field reflect.Value, raw string) error {
-	if field.Kind() == reflect.Ptr {
+	if field.Kind() == reflect.Pointer {
 		elem := reflect.New(field.Type().Elem()).Elem()
 		if err := assignValue(elem, raw); err != nil {
 			return err
@@ -91,7 +91,7 @@ func assignValue(field reflect.Value, raw string) error {
 	}
 }
 
-func validateField(fieldPath, envVar string, value reflect.Value, tags fieldTags, raw string) []ValidationError {
+func validateField(fieldPath, envVar string, value reflect.Value, tags *fieldTags, raw string) []ValidationError {
 	var errs []ValidationError
 
 	if tags.Min != nil {
@@ -156,7 +156,7 @@ func validateField(fieldPath, envVar string, value reflect.Value, tags fieldTags
 	return errs
 }
 
-func validateProductionRules(fieldPath, envVar string, value reflect.Value, tags fieldTags, found bool, raw string) []ValidationError {
+func validateProductionRules(fieldPath, envVar string, value reflect.Value, tags *fieldTags, found bool, raw string) []ValidationError {
 	var errs []ValidationError
 
 	for _, rule := range tags.Production {
@@ -215,7 +215,7 @@ func intValueOf(value reflect.Value) (int64, bool) {
 }
 
 func indirectValue(value reflect.Value) reflect.Value {
-	for value.IsValid() && value.Kind() == reflect.Ptr {
+	for value.IsValid() && value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return reflect.Value{}
 		}

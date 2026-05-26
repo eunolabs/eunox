@@ -34,13 +34,13 @@ func (m *mockJWTVerifier) VerifyToken(_ context.Context, _ string) (*capability.
 	return m.claims, m.err
 }
 
-func newTestApp(t *testing.T, verifier gateway.JWTVerifier) (*gateway.App, *killswitch.InMemory, *revocation.InMemory) {
+func newTestApp(t *testing.T, verifier gateway.JWTVerifier) (app *gateway.App, ks *killswitch.InMemory, revStore *revocation.InMemory) {
 	t.Helper()
 
 	counter := callcounter.NewInMemory()
 	engine := enforcement.New(enforcement.WithCallCounter(counter))
-	ks := killswitch.NewInMemory()
-	revStore := revocation.NewInMemory()
+	ks = killswitch.NewInMemory()
+	revStore = revocation.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -58,7 +58,7 @@ func newTestApp(t *testing.T, verifier gateway.JWTVerifier) (*gateway.App, *kill
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	app := gateway.New(cfg, deps)
+	app = gateway.New(&cfg, &deps)
 	return app, ks, revStore
 }
 
@@ -66,7 +66,7 @@ func TestHealthLive(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _, _ := newTestApp(t, verifier)
 
-	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/live", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -78,7 +78,7 @@ func TestHealthReady(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _, _ := newTestApp(t, verifier)
 
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -480,7 +480,7 @@ func newTestAppWithBackend(t *testing.T, verifier gateway.JWTVerifier, backendUR
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	app := gateway.New(cfg, deps)
+	app := gateway.New(&cfg, &deps)
 	return app, ks
 }
 
@@ -494,7 +494,7 @@ func TestProxy_MissingAuth(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _ := newTestAppWithBackend(t, verifier, backend.URL)
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -510,7 +510,7 @@ func TestProxy_InvalidToken(t *testing.T) {
 	verifier := &mockJWTVerifier{err: assert.AnError}
 	app, _ := newTestAppWithBackend(t, verifier, backend.URL)
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -537,7 +537,7 @@ func TestProxy_KillSwitchBlocks(t *testing.T) {
 
 	require.NoError(t, ks.ActivateGlobal(context.Background()))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -557,7 +557,7 @@ func TestProxy_NoBackend(t *testing.T) {
 	verifier := &mockJWTVerifier{claims: claims}
 	app, _, _ := newTestApp(t, verifier)
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -583,7 +583,7 @@ func TestProxy_SuccessWithBackend(t *testing.T) {
 	verifier := &mockJWTVerifier{claims: claims}
 	app, _ := newTestAppWithBackend(t, verifier, backend.URL)
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -596,7 +596,7 @@ func TestCORS_AllowedOrigin(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _, _ := newTestApp(t, verifier)
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/enforce", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/enforce", http.NoBody)
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -609,7 +609,7 @@ func TestCORS_DisallowedOrigin(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _, _ := newTestApp(t, verifier)
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/enforce", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/enforce", http.NoBody)
 	req.Header.Set("Origin", "http://evil.com")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)

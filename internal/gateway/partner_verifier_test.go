@@ -142,7 +142,7 @@ func TestMultiIssuerVerifier_VerifyToken(t *testing.T) {
 func TestIONHealthEndpoint(t *testing.T) {
 	t.Run("unconfigured", func(t *testing.T) {
 		app, _, _ := newTestApp(t, &mockLocalJWTVerifier{claims: &capability.TokenPayload{}})
-		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", nil)
+		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", http.NoBody)
 		rr := httptest.NewRecorder()
 		app.Handler().ServeHTTP(rr, req)
 
@@ -163,7 +163,7 @@ func TestIONHealthEndpoint(t *testing.T) {
 		ionResolver := did.NewIONResolver(did.WithIONEndpoint(srv.URL + "/"))
 		app := newTestAppWithION(t, ionResolver)
 
-		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", nil)
+		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", http.NoBody)
 		rr := httptest.NewRecorder()
 		app.Handler().ServeHTTP(rr, req)
 
@@ -182,7 +182,7 @@ func TestIONHealthEndpoint(t *testing.T) {
 		ionResolver := did.NewIONResolver(did.WithIONEndpoint(srv.URL + "/"))
 		app := newTestAppWithION(t, ionResolver)
 
-		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", nil)
+		req := httptest.NewRequest(http.MethodGet, "/healthz/did-ion", http.NoBody)
 		rr := httptest.NewRecorder()
 		app.Handler().ServeHTTP(rr, req)
 
@@ -217,7 +217,7 @@ func newTestAppWithION(t *testing.T, ionResolver *did.IONResolver) *gateway.App 
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	return gateway.New(cfg, deps)
+	return gateway.New(&cfg, &deps)
 }
 
 // --- Test Helpers ---

@@ -32,13 +32,17 @@ func NewRecordStore(dedupeWindow time.Duration) *InMemoryRecordStore {
 
 // Upsert adds or updates a record. Returns true if the record should be emitted
 // (new record or outside dedupe window).
-func (s *InMemoryRecordStore) Upsert(record AgentInventoryRecord) bool {
+func (s *InMemoryRecordStore) Upsert(record *AgentInventoryRecord) bool {
+	if record == nil {
+		return false
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	existing, found := s.records[record.AgentID]
 	if !found {
-		s.records[record.AgentID] = record
+		s.records[record.AgentID] = *record
 		return true
 	}
 
@@ -57,7 +61,7 @@ func (s *InMemoryRecordStore) Upsert(record AgentInventoryRecord) bool {
 
 	// Outside dedupe window: emit.
 	record.FirstSeen = existing.FirstSeen // preserve original firstSeen
-	s.records[record.AgentID] = record
+	s.records[record.AgentID] = *record
 	return true
 }
 
@@ -82,7 +86,8 @@ func (s *InMemoryRecordStore) ListActive() []AgentInventoryRecord {
 	defer s.mu.RUnlock()
 
 	var active []AgentInventoryRecord
-	for _, rec := range s.records {
+	for agentID := range s.records {
+		rec := s.records[agentID]
 		if rec.RevokedAt == nil {
 			active = append(active, rec)
 		}

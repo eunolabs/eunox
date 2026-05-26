@@ -23,7 +23,7 @@ func TestApp_EmitObserved(t *testing.T) {
 	cfg.DedupeWindowMS = 0 // Disable deduplication for test clarity.
 
 	plugin := newMockPlugin("test")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -38,7 +38,7 @@ func TestApp_EmitObserved(t *testing.T) {
 		LastSeen:   time.Now().UTC(),
 	}
 
-	err = app.EmitObserved(record)
+	err = app.EmitObserved(&record)
 	require.NoError(t, err)
 
 	// Wait for delivery.
@@ -55,7 +55,7 @@ func TestApp_EmitRevoked(t *testing.T) {
 	cfg.QueuePath = ":memory:"
 
 	plugin := newMockPlugin("test")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -77,11 +77,11 @@ func TestApp_EmitObserved_Disabled(t *testing.T) {
 	cfg.QueuePath = ":memory:"
 	cfg.Enabled = false
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
-	err = app.EmitObserved(AgentInventoryRecord{AgentID: "agent-1", FirstSeen: time.Now(), LastSeen: time.Now()})
+	err = app.EmitObserved(&AgentInventoryRecord{AgentID: "agent-1", FirstSeen: time.Now(), LastSeen: time.Now()})
 	assert.NoError(t, err)
 
 	depth, err := app.QueueDepth()
@@ -96,7 +96,7 @@ func TestApp_EmitObserved_Deduplication(t *testing.T) {
 	cfg.FlushIntervalMS = 50    // Fast polling for test.
 
 	plugin := newMockPlugin("test")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -110,12 +110,12 @@ func TestApp_EmitObserved_Deduplication(t *testing.T) {
 	}
 
 	// First emit should enqueue.
-	err = app.EmitObserved(record)
+	err = app.EmitObserved(&record)
 	require.NoError(t, err)
 
 	// Second emit within window should be deduplicated.
 	record.LastSeen = now.Add(1 * time.Minute)
-	err = app.EmitObserved(record)
+	err = app.EmitObserved(&record)
 	require.NoError(t, err)
 
 	// Wait for delivery of the single event.
@@ -135,17 +135,18 @@ func TestApp_QueueDepth(t *testing.T) {
 	cfg.DedupeWindowMS = 0
 
 	// Don't start the worker so events accumulate.
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_ = app.EmitObserved(AgentInventoryRecord{
+		_ = app.EmitObserved(&AgentInventoryRecord{
 			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,
 		})
+
 	}
 
 	depth, err := app.QueueDepth()
@@ -159,11 +160,11 @@ func TestApp_HandleLive(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/live", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -178,11 +179,11 @@ func TestApp_HandleReady_Healthy(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -195,21 +196,22 @@ func TestApp_HandleReady_Degraded(t *testing.T) {
 	cfg.HealthMaxQueueDepth = 2
 	cfg.DedupeWindowMS = 0
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
 	// Push enough events to exceed threshold.
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_ = app.EmitObserved(AgentInventoryRecord{
+		_ = app.EmitObserved(&AgentInventoryRecord{
 			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,
 		})
+
 	}
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -220,11 +222,11 @@ func TestApp_HandleReady_QueueError(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	app.Stop()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health/ready", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -236,11 +238,11 @@ func TestApp_HandleStatus(t *testing.T) {
 	cfg.QueuePath = ":memory:"
 
 	plugin := newMockPlugin("test-plugin")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -260,11 +262,11 @@ func TestApp_HandleStatus_QueueError(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	app.Stop()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/status", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
 
@@ -277,7 +279,7 @@ func TestApp_HandleEmit(t *testing.T) {
 	cfg.DedupeWindowMS = 0
 
 	plugin := newMockPlugin("test")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 	app.Start()
@@ -309,7 +311,7 @@ func TestApp_HandleEmit_MissingAgentID(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -328,7 +330,7 @@ func TestApp_HandleEmit_UnknownField(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -345,7 +347,7 @@ func TestApp_HandleRevoke(t *testing.T) {
 	cfg.QueuePath = ":memory:"
 
 	plugin := newMockPlugin("test")
-	app, err := New(cfg, []Plugin{plugin}, Dependencies{})
+	app, err := New(&cfg, []Plugin{plugin}, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 	app.Start()
@@ -371,7 +373,7 @@ func TestApp_HandleRevoke_MissingAgentID(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -390,7 +392,7 @@ func TestApp_HandleRevoke_UnknownField(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QueuePath = ":memory:"
 
-	app, err := New(cfg, nil, Dependencies{})
+	app, err := New(&cfg, nil, &Dependencies{})
 	require.NoError(t, err)
 	defer app.Stop()
 
@@ -432,7 +434,7 @@ func TestDefenderPlugin_EmitObserved(t *testing.T) {
 		LastSeen:               time.Date(2024, 6, 2, 0, 0, 0, 0, time.UTC),
 	}
 
-	err := plugin.EmitObserved(context.Background(), record)
+	err := plugin.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/subscriptions/sub-123", capturedResourceID)
@@ -491,7 +493,7 @@ func TestSecurityHubPlugin_EmitObserved(t *testing.T) {
 		LastSeen:   time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 
-	err := plugin.EmitObserved(context.Background(), record)
+	err := plugin.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	require.Len(t, capturedFindings, 1)
@@ -531,8 +533,8 @@ func TestSccPlugin_EmitObserved(t *testing.T) {
 	var capturedReq SccCreateFindingRequest
 
 	client := &mockSccClient{
-		createFinding: func(_ context.Context, req SccCreateFindingRequest) error {
-			capturedReq = req
+		createFinding: func(_ context.Context, req *SccCreateFindingRequest) error {
+			capturedReq = *req
 			return nil
 		},
 	}
@@ -552,7 +554,7 @@ func TestSccPlugin_EmitObserved(t *testing.T) {
 		LastSeen:   time.Date(2024, 3, 2, 0, 0, 0, 0, time.UTC),
 	}
 
-	err := plugin.EmitObserved(context.Background(), record)
+	err := plugin.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	assert.Equal(t, "organizations/123/sources/456", capturedReq.Parent)
@@ -566,10 +568,10 @@ func TestSccPlugin_EmitObserved_AlreadyExists(t *testing.T) {
 	var updateCalled bool
 
 	client := &mockSccClient{
-		createFinding: func(_ context.Context, _ SccCreateFindingRequest) error {
+		createFinding: func(_ context.Context, _ *SccCreateFindingRequest) error {
 			return fmt.Errorf("rpc error: code = AlreadyExists desc = already exists")
 		},
-		updateFinding: func(_ context.Context, _ SccUpdateFindingRequest) error {
+		updateFinding: func(_ context.Context, _ *SccUpdateFindingRequest) error {
 			updateCalled = true
 			return nil
 		},
@@ -587,7 +589,7 @@ func TestSccPlugin_EmitObserved_AlreadyExists(t *testing.T) {
 		LastSeen:  time.Now(),
 	}
 
-	err := plugin.EmitObserved(context.Background(), record)
+	err := plugin.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 	assert.True(t, updateCalled)
 }
@@ -596,8 +598,8 @@ func TestSccPlugin_EmitRevoked(t *testing.T) {
 	var capturedReq SccUpdateFindingRequest
 
 	client := &mockSccClient{
-		updateFinding: func(_ context.Context, req SccUpdateFindingRequest) error {
-			capturedReq = req
+		updateFinding: func(_ context.Context, req *SccUpdateFindingRequest) error {
+			capturedReq = *req
 			return nil
 		},
 	}
@@ -626,7 +628,7 @@ func TestStdoutPlugin_EmitObserved(t *testing.T) {
 		LastSeen:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 
-	err := plugin.EmitObserved(context.Background(), record)
+	err := plugin.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	var output map[string]interface{}
@@ -729,18 +731,18 @@ func (m *mockSecurityHubClient) BatchUpdateFindings(ctx context.Context, identif
 }
 
 type mockSccClient struct {
-	createFinding func(ctx context.Context, req SccCreateFindingRequest) error
-	updateFinding func(ctx context.Context, req SccUpdateFindingRequest) error
+	createFinding func(ctx context.Context, req *SccCreateFindingRequest) error
+	updateFinding func(ctx context.Context, req *SccUpdateFindingRequest) error
 }
 
-func (m *mockSccClient) CreateFinding(ctx context.Context, req SccCreateFindingRequest) error {
+func (m *mockSccClient) CreateFinding(ctx context.Context, req *SccCreateFindingRequest) error {
 	if m.createFinding != nil {
 		return m.createFinding(ctx, req)
 	}
 	return nil
 }
 
-func (m *mockSccClient) UpdateFinding(ctx context.Context, req SccUpdateFindingRequest) error {
+func (m *mockSccClient) UpdateFinding(ctx context.Context, req *SccUpdateFindingRequest) error {
 	if m.updateFinding != nil {
 		return m.updateFinding(ctx, req)
 	}

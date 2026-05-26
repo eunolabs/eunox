@@ -142,7 +142,7 @@ func NewIdempotencyStore(opts ...IdempotencyStoreOption) *IdempotencyStore {
 }
 
 // Get retrieves a cached response by idempotency key. Returns nil if not found or expired.
-func (s *IdempotencyStore) Get(key string) ([]byte, int, http.Header, bool) {
+func (s *IdempotencyStore) Get(key string) (response []byte, statusCode int, headers http.Header, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -279,6 +279,7 @@ type responseCapture struct {
 	written    bool
 }
 
+// WriteHeader records the status code before forwarding it to the wrapped writer.
 func (rc *responseCapture) WriteHeader(code int) {
 	rc.statusCode = code
 	rc.ResponseWriter.WriteHeader(code)

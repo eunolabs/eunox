@@ -55,10 +55,10 @@ type minterMetrics struct {
 }
 
 // New creates a new minter App.
-func New(cfg Config, deps Dependencies) *App {
+func New(cfg Config, deps *Dependencies) *App {
 	app := &App{
 		config: cfg,
-		deps:   deps,
+		deps:   *deps,
 	}
 	app.metrics = app.initMetrics()
 	app.router = app.buildRouter()

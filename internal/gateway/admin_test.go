@@ -52,7 +52,7 @@ func newAdminTestApp(t *testing.T) *gateway.App {
 		TenantID:        "tenant-1",
 	}
 
-	return gateway.New(cfg, deps)
+	return gateway.New(&cfg, &deps)
 }
 
 func newAdminTestAppWithAudit(t *testing.T) *gateway.App {
@@ -83,7 +83,7 @@ func newAdminTestAppWithAudit(t *testing.T) *gateway.App {
 		TenantID:        "tenant-1",
 	}
 
-	return gateway.New(cfg, deps)
+	return gateway.New(&cfg, &deps)
 }
 
 type mockAuditPipeline struct {
@@ -126,7 +126,7 @@ func parseJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 func TestAdmin_RejectsUnauthenticatedRequests(t *testing.T) {
 	app := newAdminTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", http.NoBody)
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
 
@@ -138,7 +138,7 @@ func TestAdmin_RejectsUnauthenticatedRequests(t *testing.T) {
 func TestAdmin_RejectsInvalidKey(t *testing.T) {
 	app := newAdminTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", "wrong-key")
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
@@ -161,7 +161,7 @@ func TestAdmin_AcceptsValidKey(t *testing.T) {
 func TestAdmin_AcceptsLegacyHeader(t *testing.T) {
 	app := newAdminTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", http.NoBody)
 	req.Header.Set("X-Admin-Key", testAdminKey)
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
@@ -180,10 +180,10 @@ func TestAdmin_KeyConfiguredWithoutTenant_DisablesAdminAuth(t *testing.T) {
 		DPoPStore:   gateway.NewInMemoryDPoPStore(5 * time.Minute),
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, deps)
+	}, &deps)
 
 	req := adminReq(http.MethodGet, "/admin/kill-switch/status", nil)
 	w := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestAdmin_TimingSafeComparison(t *testing.T) {
 	// Ensure keys of different lengths are still rejected
 	keys := []string{"", "short", testAdminKey + "extra", "x"}
 	for _, key := range keys {
-		req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/kill-switch/status", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", key)
 		w := httptest.NewRecorder()
 		app.AdminHandler().ServeHTTP(w, req)
@@ -775,7 +775,7 @@ func TestAdmin_Integration_KillAgentEnforcementFlow(t *testing.T) {
 		TenantID:        "tenant-1",
 	}
 
-	intApp := gateway.New(cfg, deps)
+	intApp := gateway.New(&cfg, &deps)
 
 	// 1. Enforce request succeeds
 	enforceBody := map[string]any{
@@ -830,7 +830,7 @@ func TestAdmin_Integration_KillAgentEnforcementFlow(t *testing.T) {
 func TestAdmin_HealthLive(t *testing.T) {
 	app := newAdminTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/live", http.NoBody)
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -839,7 +839,7 @@ func TestAdmin_HealthLive(t *testing.T) {
 func TestAdmin_HealthReady(t *testing.T) {
 	app := newAdminTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
