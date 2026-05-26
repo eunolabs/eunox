@@ -26,7 +26,7 @@
 ### Single-node (development / pilot)
 
 ```bash
-# Build all services
+# Build all services (posture-emitter requires CGO_ENABLED=1 for SQLite)
 make build
 
 # Run gateway with minimal config
@@ -60,7 +60,7 @@ cloud-specific guides.
 | Minter | 3004 | `cmd/minter` | API-key lifecycle management |
 | DB Token Service | 3005 | `cmd/db-token-svc` | Short-lived database credentials |
 | Storage Grant Service | 3006 | `cmd/storage-grant-svc` | Presigned URL generation |
-| Posture Emitter | 3008 | `cmd/posture-emitter` | Security posture reporting |
+| Posture Emitter | 3008 | `cmd/posture-emitter` | Security posture reporting (requires CGO for SQLite) |
 
 ---
 
