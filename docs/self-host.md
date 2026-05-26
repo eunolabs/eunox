@@ -3,21 +3,18 @@
 > **Target audience:** Platform engineers and security teams running eunox
 > infrastructure on their own cloud or on-premises.
 >
-> **Status:** Stage 5 (Enterprise) documentation. Self-hosting is available under the
+> **Status:** Current. Self-hosting is available under the
 > [BSL 1.1](../LICENSE) license (non-competing use; the gateway source converts to
 > Apache-2.0 four years after each release). Review the license before deploying
 > in a competing product.
 >
 > **Related documents:**
 >
-> - [`docs/stage-3-design.md`](./stage-3-design.md) — authoritative Stage 3 architecture decisions
-> - [`docs/stage-4-design.md`](./stage-4-design.md) — Stage 4 hosted-identity architecture
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — build and configuration reference
 > - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — system context and component map
 > - [`docs/capability-model.md`](./capability-model.md) — enforcement invariants
 > - [`docs/security/minter-threat-model.md`](./security/minter-threat-model.md) — minter threat model
-> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — Stage 5 enterprise threat model
-> - [`docs/migrating-from-local.md`](./migrating-from-local.md) — upgrading from `@eunox/mcp` local mode
+> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — enterprise threat model
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP wiring recipes (including SCIM §8)
 > - [`docs/ADAPTERS.md`](./ADAPTERS.md) — identity and signing adapter reference
 > - [`docs/agent-sdk.md`](./agent-sdk.md) — AGT in-process guard SDK reference
@@ -54,7 +51,7 @@ below maps every Cloud feature to its self-host equivalent.
 | ------------------------------------------ | ----------------------- | -------------------------------------------------------- |
 | Local enforcement (`@eunox/mcp` only)      | ✅                      | ✅                                                       |
 | stdio + HTTP proxy transports              | ✅                      | ✅                                                       |
-| All condition types (Stage 1–2)            | ✅                      | ✅                                                       |
+| All condition types                        | ✅                      | ✅                                                       |
 | Local HMAC audit log                       | ✅                      | ✅                                                       |
 | `eunox-mcp validate-token` / `stats`       | ✅                      | ✅                                                       |
 | Remote enforcer mode (`enforcer: url`)     | ✅                      | ✅                                                       |
@@ -199,7 +196,7 @@ aws kms create-key \
 > **Production note:** Use an HSM-backed key in production (AWS CloudHSM-origin
 > CMK, Azure Managed HSM key, or GCP HSM protection level). For the Azure
 > Managed HSM provisioning procedure and non-exportability verification steps,
-> see `docs/stage-3-design.md` §1.3. Other KMS providers are described in §5.1.
+> see `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for details on KMS providers.
 
 #### Step 2 — Write a capability policy manifest
 
@@ -494,7 +491,7 @@ AUDIT_SIGNING_KMS_PROVIDER=aws-kms   # or azure-keyvault / gcp-cloudkms
 AUDIT_SIGNING_AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
 ```
 
-See `docs/stage-3-design.md` §1.3 for the Azure Managed HSM
+See `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for the Azure Managed HSM
 provisioning procedure and the non-exportability verification steps.
 
 ### 5.2 Add Redis and Postgres
@@ -528,7 +525,7 @@ AUDIT_LEDGER_RUN_MIGRATIONS=true   # set to false after first run; manage schema
 ```
 
 The gateway creates the following tables automatically when
-`AUDIT_LEDGER_RUN_MIGRATIONS=true` (see `docs/stage-3-design.md` §2 for the full
+`AUDIT_LEDGER_RUN_MIGRATIONS=true` (see `migrations/audit/` for the full
 schema):
 
 ```sql
@@ -806,7 +803,7 @@ item in this checklist:
       `aws-kms`, or `gcp-cloudkms`. A local PEM key is not acceptable in production.
 - [ ] **Key is non-exportable.** Confirm at the KMS level (not just IAM policy).
       For Azure Managed HSM, follow the non-exportability verification procedure in
-      `docs/stage-3-design.md` §1.3.
+      `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider".
 - [ ] **Admin port is not publicly reachable.** `ADMIN_HOST=127.0.0.1` and the
       admin port (3003) is not in the public-facing load-balancer ingress rules.
 - [ ] **`REDIS_CIRCUIT_OPEN_MODE` is set explicitly.** The gateway logs an error
@@ -836,9 +833,9 @@ item in this checklist:
 
 ## 10. Upgrading from @eunox/mcp local mode
 
-See [`docs/migrating-from-local.md`](./migrating-from-local.md) (Task 18) for
+See [`docs/upgrade-to-hosted.md`](./upgrade-to-hosted.md) for
 the step-by-step upgrade path, including the manual policy migration and the
-interactive `eunox-mcp upgrade-to-hosted` command (Task 15) that automates the
+interactive `eunox-mcp upgrade-to-hosted` command that automates the
 config change.
 
 The short version:
@@ -855,9 +852,9 @@ no policy rewrite is required.
 
 ---
 
-## 11. Stage 4 — hosted identity and manifest templates
+## 11. Capability Issuer and manifest templates
 
-Stage 4 ships the **capability issuer** as a first-class component of the
+The **capability issuer** is a first-class component of the
 self-host bundle. The issuer handles token minting from real user identities
 (Entra ID / AWS Cognito), role-to-capability policy management, and
 manifest-template authoring. This section explains how to configure the issuer
@@ -865,8 +862,7 @@ in a self-hosted deployment and how it differs from the managed cloud product.
 
 ### 11.1 Updated feature matrix
 
-The following rows have changed since Stage 3. Rows not listed here are
-unchanged from §2.
+The following rows supplement the base feature matrix in §2.
 
 | Feature                                    | Cloud (Managed)        | Self-host (BSL)                           |
 | ------------------------------------------ | ---------------------- | ----------------------------------------- |
@@ -886,8 +882,9 @@ unchanged from §2.
 ### 11.2 Issuer configuration reference
 
 The issuer is configured entirely via environment variables validated on startup
-by the same `loadConfigOrExit` mechanism used by the gateway. The full schema
-is in `pkg//src/config/schema.ts` (`IssuerConfigSchema`).
+by the same environment-variable validation flow used by the gateway. The issuer config
+struct and validation rules are defined in `pkg/config/issuer.go` and
+`pkg/config/validation.go`.
 The table below covers the variables a self-host operator must review before
 going to production.
 
@@ -1222,15 +1219,15 @@ curl -X PUT https://issuer.internal:4000/api/v1/admin/role-policy \
   }'
 ```
 
-### 11.8 Full Stage-4 docker-compose additions
+### 11.8 Full docker-compose additions (capability issuer)
 
 Add the following services to the base docker-compose from §4.4 / §5.3 to
-bring up the complete Stage-4 stack:
+bring up the complete stack with the capability issuer:
 
 ```yaml
 services:
   capability-issuer:
-    image: ghcr.io/eunox/capability-issuer:stage4
+    image: ghcr.io/eunox/capability-issuer:latest
     depends_on:
       - db
       - mock-oidc # Remove in production; use real IdP
@@ -1251,8 +1248,10 @@ services:
 
   # Minimal OIDC mock for local development / smoke tests.
   # Remove from production deployments and replace with a real IdP.
+  # Note: :latest is intentionally used here for dev/smoke-test convenience only;
+  # do NOT use :latest in production — pin a specific tag for reproducible deployments.
   mock-oidc:
-    image: ghcr.io/eunox/mock-oidc:stage4
+    image: ghcr.io/eunox/mock-oidc:latest
     environment:
       PORT: "4100"
     ports:
@@ -1262,7 +1261,7 @@ services:
 See `infra/docker-compose.yml` (smoke profile) for the full working example
 including gateway wiring and the seed policy bind-mount.
 
-### 11.9 Stage-4 security checklist
+### 11.9 Capability issuer security checklist
 
 In addition to the items in §9, review the following before going to production:
 
@@ -1277,32 +1276,30 @@ In addition to the items in §9, review the following before going to production
 
 ---
 
-## 12. Stage 5 — Enterprise Deployment
+## 12. Enterprise Deployment
 
-Stage 5 graduates eunox from an enterprise-IdP-integrated issuance platform
-(Stage 4) to a **compliance-signed, fully air-gappable enterprise deployment**
-targeting the CISO and external auditor as primary buyers. Four previously
-quarantined packages are promoted to stable (`1.0.0`), six capabilities are
-added to existing packages, and all Stage-5 features ship in both the hosted
-product and the self-host bundle at parity.
+The enterprise deployment extends eunox to a **compliance-signed, fully
+air-gappable** configuration targeting the CISO and external auditor as primary
+buyers. Four additional packages are available as GA releases, and several
+capabilities are added to the core packages. All enterprise features are
+available in both the hosted product and the self-host bundle at parity.
 
 > **Key documents for this section**
 >
-> - [`docs/stage5executionplan.md`](./stage5executionplan.md) — full Stage-5 execution plan (Tasks 0–13)
-> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — approved threat model (BLOCKING gate for Tasks 3, 6, 10)
+> - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — approved threat model (BLOCKING gate for partner federation, SOC2 export, SCIM)
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) §8 — SCIM 2.0 provisioning (Okta, Entra ID, Ping Identity)
 > - [`docs/ADAPTERS.md`](./ADAPTERS.md) §"Partner Federation" — DID adapter reference
 > - [`docs/agent-sdk.md`](./agent-sdk.md) §"AGT in-process guard" — defense-in-depth SDK guide
 > - [`docs/openapi/capability-issuer-discovery.yaml`](./openapi/capability-issuer-discovery.yaml) — discovery v1.0.0 contract
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — Stage-5 on-prem deployment and Helm guide
+> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — on-prem deployment and Helm guide
 
 ### 12.1 Updated service topology
 
-The Stage-5 self-host stack adds four services to the Stage-4 base:
+The enterprise self-host stack includes four additional services beyond the base:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Your infrastructure (self-hosted — Stage 5 full stack)                      │
+│  Your infrastructure (self-hosted — full stack)                              │
 │                                                                              │
 │  ┌────────────────┐ sign ┌─────────────────────────────────────────────┐     │
 │  │  Capability    │────► │  KMS / signing key                          │     │
@@ -1354,17 +1351,17 @@ The Stage-5 self-host stack adds four services to the Stage-4 base:
 
 #### Updated service list
 
-| Service                   | Package                 | Stage | Purpose                                                                                                        |
-| ------------------------- | ----------------------- | ----- | -------------------------------------------------------------------------------------------------------------- |
-| **Capability Issuer**     | `capability-issuer`     | 4+    | Issues JWT capability tokens; Stage-5 adds SCIM endpoints, OIDC discovery v1.0.0                               |
-| **Tool Gateway**          | `tool-gateway`          | 3+    | Enforces capability tokens; Stage-5 adds partner-DID verification, audit-export endpoint, chain-proof endpoint |
-| **DB Token Service**      | `db-token-service`      | **5** | Exchanges a capability token for short-lived scoped database credentials                                       |
-| **Storage Grant Service** | `storage-grant-service` | **5** | Exchanges a capability token for short-lived presigned URLs or SAS tokens                                      |
-| **Posture Emitter**       | `posture-emitter`       | **5** | Durable WAL-queue that fans OCSF evidence records to compliance sinks                                          |
-| **Partner Issuer Sim**    | `partner-issuer-sim`    | **5** | Reference simulator for partner-org DID-backed issuers (integration harness)                                   |
-| **Redis**                 | BYO (>= 6.2)            | 3+    | Revocation, kill-switch, call-counter, partner-DID circuit-breaker                                             |
-| **Postgres**              | BYO (>= 14)             | 3+    | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`)         |
-| **KMS**                   | BYO                     | 3+    | Signs capability tokens (issuer) and audit evidence (gateway)                                                  |
+| Service                   | Package                 | Purpose                                                                                                      |
+| ------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Capability Issuer**     | `capability-issuer`     | Issues JWT capability tokens; includes SCIM endpoints and OIDC discovery v1.0.0                              |
+| **Tool Gateway**          | `tool-gateway`          | Enforces capability tokens; includes partner-DID verification, audit-export endpoint, chain-proof endpoint   |
+| **DB Token Service**      | `db-token-service`      | Exchanges a capability token for short-lived scoped database credentials                                     |
+| **Storage Grant Service** | `storage-grant-service` | Exchanges a capability token for short-lived presigned URLs or SAS tokens                                    |
+| **Posture Emitter**       | `posture-emitter`       | Durable WAL-queue that fans OCSF evidence records to compliance sinks                                        |
+| **Partner Issuer Sim**    | `partner-issuer-sim`    | Reference simulator for partner-org DID-backed issuers (integration harness)                                 |
+| **Redis**                 | BYO (>= 6.2)            | Revocation, kill-switch, call-counter, partner-DID circuit-breaker                                           |
+| **Postgres**              | BYO (>= 14)             | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`)       |
+| **KMS**                   | BYO                     | Signs capability tokens (issuer) and audit evidence (gateway)                                                |
 
 ---
 
@@ -1375,7 +1372,7 @@ The Stage-5 self-host stack adds four services to the Stage-4 base:
 > to production. See §1 and §2 of that document for partner-DID-compromise and
 > DID-document-spoofing mitigations.
 >
-> **Reference:** `docs/ADAPTERS.md` §"Partner Federation"; Stage-5 Task 3.
+> **Reference:** `docs/ADAPTERS.md` §"Partner Federation".
 
 Partner federation lets a remote organization issue capability tokens from
 their own W3C DID-backed signing key. The eunox gateway accepts and
@@ -1468,7 +1465,7 @@ detect a partner resolver outage within minutes.
 > §§3–4 ("SCIM bearer token exposure" and "SCIM privilege escalation") must be
 > reviewed before enabling SCIM in production.
 >
-> **Reference:** `docs/issuer-idp-setup.md` §8; Stage-5 Task 10.
+> **Reference:** `docs/issuer-idp-setup.md` §8.
 
 SCIM 2.0 provisioning lets enterprise identity teams push users and group
 memberships directly from **Okta**, **Microsoft Entra ID**, or **Ping
@@ -1536,7 +1533,7 @@ escalation" for the full treatment.
 ### 12.4 Cross-chain audit anchor
 
 > **Reference:** `docs/issuer-operator-runbook.md` §"Cross-chain anchor";
-> `docs/runbooks/ledger-hmac-rotation.md`; Stage-5 Task 5.
+> `docs/runbooks/ledger-hmac-rotation.md`.
 
 The cross-chain anchor binds per-replica audit chains together with a periodic
 Merkle commitment stored in S3 Object-Lock (or Azure Confidential Ledger). An
@@ -1602,7 +1599,7 @@ tampering between checkpoints. For HMAC rotation procedure see
 > §"SOC2 export endpoint exposure" must be reviewed before enabling the export
 > endpoint.
 >
-> **Reference:** `docs/security/soc2-mapping.md`; Stage-5 Task 6.
+> **Reference:** `docs/security/soc2-mapping.md`.
 
 The `GET /api/v1/audit/export` endpoint returns a paginated, cursor-based OCSF
 evidence bundle that a compliance team can hand directly to an auditor. Every
@@ -1667,7 +1664,7 @@ full HA topology diagram.
 
 ### 12.6 DB Token Service
 
-> **Reference:** `internal/db-token-service/`; Stage-5 Task 7.
+> **Reference:** `internal/db-token-service/`.
 > **Status:** GA (v1.0.0)
 
 The `db-token-service` exchanges a capability token for short-lived scoped
@@ -1762,7 +1759,7 @@ curl -X POST https://db-token-service.internal:5050/api/v1/db-tokens \
 
 ### 12.7 Storage Grant Service
 
-> **Reference:** `internal/storage-grant-service/`; Stage-5 Task 7.
+> **Reference:** `internal/storage-grant-service/`.
 > **Status:** GA (v1.0.0)
 
 The `storage-grant-service` exchanges a capability token for short-lived
@@ -1825,7 +1822,7 @@ curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
 ### 12.8 AGT in-process guard
 
 > **Reference:** `docs/agent-sdk.md` §"AGT in-process guard";
-> `docs/diagrams.md` Set D; Stage-5 Task 8.
+> `docs/diagrams.md` Set D.
 
 The AGT guard (`createAgtGuard()` from `@eunox/agent-runtime`) is an in-process
 capability pre-screen that sits between the agent logic and the outer gateway.
@@ -1840,7 +1837,7 @@ layer only — the outer gateway remains the sole hard enforcement boundary.
 
 #### 12.8.1 Quick-start wiring
 
-```typescript
+```
 import { createAgtGuard, type AgtGuardOptions } from "@eunox/agent-runtime";
 
 const guard = createAgtGuard({
@@ -1873,8 +1870,7 @@ response shape, and token-supplier contract.
 
 ### 12.9 Discovery endpoint v1.0.0
 
-> **Reference:** `docs/openapi/capability-issuer-discovery.yaml`;
-> Stage-5 Task 9.
+> **Reference:** `docs/openapi/capability-issuer-discovery.yaml`.
 
 The `/.well-known/capability-issuer` endpoint is promoted to a **stable,
 versioned contract** (`schemaVersion: "1.0.0"`). Fields published under
@@ -1930,8 +1926,7 @@ resolution.
 
 ### 12.10 On-prem deployment bundle (Helm + air-gap)
 
-> **Reference:** `docs/DEPLOYMENT.md` §"Stage-5 on-prem deployment";
-> Stage-5 Task 11.
+> **Reference:** `docs/DEPLOYMENT.md` §"Deployment Targets".
 
 The `k8s/helm/` directory contains per-service Helm chart values schemas for
 `tool-gateway`, `capability-issuer`, `db-token-service`, `storage-grant-service`,
@@ -1965,8 +1960,7 @@ helm install eunox-issuer ./k8s/helm/issuer \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
 ```
 
-Values schemas are auto-generated from `pkg//src/config/schema.ts`.
-Regenerate with `npm run gen:helm-schema` from the repository root.
+Values schemas are located at `k8s/helm/*/values.schema.json`.
 
 #### 12.10.2 Minimum viable air-gapped setup
 
@@ -2029,10 +2023,10 @@ production clusters.**
 
 ---
 
-### 12.11 Stage-5 docker-compose additions (`full` profile)
+### 12.11 Enterprise docker-compose additions (`full` profile)
 
-Add the following services to the Stage-4 base docker-compose (§11.8) to
-bring up the complete Stage-5 stack. See `infra/docker-compose.yml` (`full`
+Add the following services to the docker-compose from §11.8 to
+bring up the complete enterprise stack. See `infra/docker-compose.yml` (`full`
 profile) for the full working example.
 
 ```yaml
@@ -2092,8 +2086,7 @@ volumes:
 
 ### 12.12 `did:ion` productionization
 
-> **Reference:** `docs/issuer-idp-setup.md` §"DID-based partner issuers";
-> Stage-5 Task 2.
+> **Reference:** `docs/issuer-idp-setup.md` §"DID-based partner issuers".
 
 The `resolveDidIon()` function is wrapped with a `RedisCircuitBreaker`. A
 `/healthz/did-ion` endpoint resolves a known ION document and returns
@@ -2153,7 +2146,7 @@ Use when preparing a SOC2 Type II audit package.
 - [ ] `AUDIT_LEDGER_RETENTION_DAYS` set to match contractual retention tier
       (minimum 365 for SOC2 Type II).
 
-Items from Stage-4 §11.9 (signing-key, admin-auth, IdP hygiene, tenant
+Items from §11.9 (signing-key, admin-auth, IdP hygiene, tenant
 isolation, template versioning, role-policy audit, SIGHUP, threat-model
 sign-off) also apply.
 
@@ -2216,10 +2209,10 @@ Use before enabling SCIM in production.
 
 ---
 
-### 12.14 Stage-5 security checklist
+### 12.14 Enterprise security checklist
 
-In addition to §9 (Stage-3) and §11.9 (Stage-4), review the following before
-routing production traffic through a Stage-5 deployment:
+In addition to §9 and §11.9, review the following before
+routing production traffic through an enterprise deployment:
 
 - [ ] **Enterprise threat model approved.** `docs/security/enterprise-federation-threat-model.md`
       signed off by >= 2 engineers + 1 security reviewer before partner
@@ -2243,12 +2236,12 @@ routing production traffic through a Stage-5 deployment:
 - [ ] **DB credential blast radius documented.** If `db-token-service` is
       deployed, the minimum-privilege DB role is provisioned and credential TTL
       is <= capability token TTL.
-- [ ] **Full Stage-5 threat model reviewed.**
+- [ ] **Full enterprise threat model reviewed.**
       `docs/security/enterprise-federation-threat-model.md` sign-off obtained.
 
 ---
 
-## 13. Stage 5 — Posture Emitter Reference
+## 13. Posture Emitter Reference
 
 The **durable posture emitter** feeds AI-posture inventory records to cloud
 security management surfaces (Azure Defender CSPM, AWS Security Hub,
@@ -2293,7 +2286,7 @@ carry the following values:
 | `capabilityManifestHash`     | `SignedAuditEvidence.capabilityId` (token JTI — proxy)     |
 | `runtime`                    | `'unknown'` — not available in enforcement evidence        |
 | `region`                     | `'unknown'` — not available in enforcement evidence        |
-| `firstSeen`, `lastSeen`      | `SignedAuditEvidence.ts`                                   |
+| `firstSeen`, `lastSeen`      | `SignedAuditEvidence.timestamp`                            |
 
 For accurate `runtime`, `region`, and the real `capabilityManifestHash`,
 correlate enforcement records (keyed by `agentId`) with issuance records

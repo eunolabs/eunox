@@ -8,12 +8,11 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 
 | Doc                                                                  | What it is                                                                       |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| [../README.md](../README.md)                                         | Project README — value prop, quick start, links.                                 |
-| [repo-guide.md](./repo-guide.md)                                     | Repository structure, build / lint / test, contributor setup.                    |
-| [agent-sdk.md](./agent-sdk.md)                                       | Agent Runtime SDK: token management, tool invocation, attenuate/renew endpoints. |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)                                 | Current package map and architecture overview.                                   |
-| [golang-reimplementation-plan.md](./golang-reimplementation-plan.md) | Go re-implementation execution plan (all stages).                                |
-| [pricing.md](./pricing.md)                                           | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).         |
+| [../README.md](../README.md)     | Project README — value prop, quick start, links.                                 |
+| [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup.                    |
+| [agent-sdk.md](./agent-sdk.md)   | Agent Runtime SDK: token management, tool invocation, attenuate/renew endpoints. |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview.                               |
+| [pricing.md](./pricing.md)       | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).         |
 
 ## 2. Architecture
 
@@ -27,16 +26,12 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 
 ## 3. Design references
 
-| Doc                                                            | What it is                                                                           |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [ADAPTERS.md](./ADAPTERS.md)                                   | Pluggable identity provider and token signer adapter pattern (Go implementation).    |
-| [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns.                            |
-| [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md)                 | Schema versioning, deployment ordering.                                              |
-| [sandboxing.md](./sandboxing.md)                               | Sandbox reference architecture.                                                      |
-| [stage-3-design.md](./stage-3-design.md)                       | Hosted gateway design: KMS, Postgres, Redis, API-key scheme, enforcer wire protocol. |
-| [stage-4-design.md](./stage-4-design.md)                       | Capability issuer + identity federation design.                                      |
-| [stage-5-design.md](./stage-5-design.md)                       | Enterprise platform and full-vision design.                                          |
-| [stage-3-gateway-protocol.md](./stage-3-gateway-protocol.md)   | Gateway enforcement wire protocol specification.                                     |
+| Doc                                                            | What it is                                                                        |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [ADAPTERS.md](./ADAPTERS.md)                                   | Pluggable identity provider and token signer adapter pattern (Go implementation). |
+| [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns.                         |
+| [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md)                 | Schema versioning, deployment ordering.                                           |
+| [sandboxing.md](./sandboxing.md)                               | Sandbox reference architecture.                                                   |
 
 ## 4. Deployment and operations
 
@@ -59,30 +54,6 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | ------------------------ | ------------------------------------------------------ |
 | [security/](./security/) | Threat models, SOC2 mapping, sandbox architecture.     |
 | [runbooks/](./runbooks/) | Operational runbooks (pepper rotation, HMAC rotation). |
-
-## 6. Architecture reviews
-
-| Doc                                                                                        | What it is                   |
-| ------------------------------------------------------------------------------------------ | ---------------------------- |
-| [architecture-review-2026-05.md](./architecture-review-2026-05.md)                         | Stage 3 architecture review. |
-| [architecture-review-2026-05-v2.md](./architecture-review-2026-05-v2.md)                   | Post-hardening review.       |
-| [architecture-review-2026-05-stage4.md](./architecture-review-2026-05-stage4.md)           | Stage 4 review.              |
-| [architecture-follow-up-tasks-2026-05.md](./architecture-follow-up-tasks-2026-05.md)       | Follow-up task list.         |
-| [architecture-follow-up-tasks-2026-05-v2.md](./architecture-follow-up-tasks-2026-05-v2.md) | Follow-up task list v2.      |
-| [change-risk-report-2026-05.md](./change-risk-report-2026-05.md)                           | Change risk assessment.      |
-| [release-readiness-report-stage5.md](./release-readiness-report-stage5.md)                 | Stage 5 release readiness.   |
-
-## 7. Planning and roadmap
-
-| Doc                                                | What it is                      |
-| -------------------------------------------------- | ------------------------------- |
-| [multi-cloud-plan.md](./multi-cloud-plan.md)       | Multi-cloud support plan.       |
-| [DEFERRED.md](./DEFERRED.md)                       | Intentionally deferred work tracker (KMS, cloud adapters, integration tests). |
-| [OPEN_QUESTIONS.md](./OPEN_QUESTIONS.md)           | Open design questions.          |
-| [stage-0-freeze.md](./stage-0-freeze.md)           | Platform package freeze policy. |
-| [stage3executionplan.md](./stage3executionplan.md) | Stage 3 execution plan.         |
-| [stage4executionplan.md](./stage4executionplan.md) | Stage 4 execution plan.         |
-| [stage5executionplan.md](./stage5executionplan.md) | Stage 5 execution plan.         |
 
 ## 8. API specifications
 

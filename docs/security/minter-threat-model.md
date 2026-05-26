@@ -1,7 +1,7 @@
 # API-Key Minter Threat Model
 
 > **Status:** Pending sign-off (requires ≥ 2 engineers + 1 security reviewer outside the
-> implementer before minter code merges to `main` — see [stage3executionplan.md §Task 1](../stage3executionplan.md).
+> implementer before minter code merges to `main`).
 >
 > **Last updated:** 2026-05-10
 >
@@ -19,10 +19,10 @@ token, so that developers can upgrade from local enforcement to the hosted gatew
 single config change:
 
 ```jsonc
-// Stage 1–2: local enforcement
+// Local enforcement
 { "enforcer": "local" }
 
-// Stage 3: hosted gateway
+// Hosted gateway
 { "enforcer": "https://gateway.eunox.example", "apiKey": "sk-..." }
 ```
 
@@ -33,9 +33,7 @@ signatures for many tenants, so it remains the highest-value service in the syst
 equivalent in sensitivity to a managed certificate authority or an OAuth authorization
 server whose tokens directly authorize real-world actions.
 
-This document answers the seven questions required by
-[mvp.md §"Minter threat model"](../mvp.md#minter-threat-model-required-before-stage-3-ships)
-(required before Stage 3 ships) before the minter may ship to a paying customer.
+This document answers the seven questions required before the minter may ship to a paying customer.
 
 ---
 
@@ -235,8 +233,8 @@ The damage depends on which credential is compromised:
 
 ### Testing requirement
 
-The rotation procedure is tested end-to-end in `internal/integration-tests/`
-before Stage 3 ships. The test:
+The rotation procedure is tested end-to-end in `internal/integration-tests/`.
+The test:
 
 - Mints a token with the old key (with a TTL long enough for the test to complete, e.g. 5 minutes).
 - Rotates to a new key (adds new `kid` to JWKS, switches minter, then removes old `kid`).
@@ -506,7 +504,7 @@ in `pkg//src/metrics.ts`):
 
 A **low-activity tenant** is defined as one with fewer than 10 successful mints in the
 previous 7 days. The following rules are defined in the minter's alert configuration and
-are tested against a synthetic test tenant before Stage 3 ships.
+are tested against a synthetic test tenant.
 
 #### Rule 1 — Mint-rate spike per tenant
 
@@ -637,8 +635,6 @@ annotations:
 >    per-replica in-memory `AnomalyDetector` so anomaly detection is never
 >    completely disabled by a Redis outage — it just reverts to per-replica
 >    behaviour.
->
-> See `docs/architecture-review-2026-05.md §CR-4` for the full analysis.
 
 #### Rule 7 — HSM sign/audit mismatch
 
@@ -673,7 +669,7 @@ All `critical` alerts page the on-call security engineer immediately (PagerDuty 
 integration). `warning` alerts post to the `#security-alerts` Slack channel and are
 reviewed at the next business-day stand-up. SRE runbooks for each alert are maintained at
 `docs/runbooks/minter-*.md` (see stub files created alongside this document; fully
-populated before Stage 3 ships to the first paying customer).
+populated before the minter ships to the first paying customer).
 
 ---
 
@@ -689,21 +685,18 @@ did not author it before any minter code merges to `main`.
 | Engineer reviewer 2 | _(name)_ | _(date)_ |       |
 | Security reviewer   | _(name)_ | _(date)_ |       |
 
-Until all four rows are filled, the minter is **blocked from merging**. The CI gate
-enforcing this is tracked in the Stage 3 task checklist in `docs/mvp.md`.
+Until all four rows are filled, the minter is **blocked from merging**.
 
 ---
 
 ## Cross-references
 
-| Document                                                                                         | Relevant section                                                                                                                     |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| [`docs/mvp.md`](../mvp.md)                                                                       | [§"Minter threat model"](../mvp.md#minter-threat-model-required-before-stage-3-ships), [§"Critical risks"](../mvp.md#critical-risks) |
-| [`docs/stage3executionplan.md`](../stage3executionplan.md)                                       | Task 1 (this document), Task 10–12 (minter implementation)                                                                           |
-| [`docs/enforcement.md`](../enforcement.md)                                                       | Cryptographic-token invariant                                                                                                        |
-| [`docs/capability-model.md`](../capability-model.md)                                             | §6 — unknown types are denied by default                                                                                             |
-| [`pkg/src/ledger-signer.ts`](../../pkg/src/ledger-signer.ts)                                     | Per-row HMAC ledger pattern reused for mint-audit                                                                                    |
-| [`internal/gateway/src/revocation-store.ts`](../../internal/gateway/src/revocation-store.ts)     | Token revocation used in key rotation (§3)                                                                                           |
-| [`internal/issuer/src/azure-signer.ts`](../../internal/issuer/src/azure-signer.ts)               | Azure Key Vault signing driver                                                                                                       |
-| [`internal/issuer/src/aws-kms-signer.ts`](../../internal/issuer/src/aws-kms-signer.ts)           | AWS KMS signing driver                                                                                                               |
-| [`internal/issuer/src/gcp-cloudkms-signer.ts`](../../internal/issuer/src/gcp-cloudkms-signer.ts) | GCP Cloud KMS signing driver                                                                                                         |
+| Document                                                                                         | Relevant section                                                             |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [`docs/enforcement.md`](../enforcement.md)                                                       | Cryptographic-token invariant                                                |
+| [`docs/capability-model.md`](../capability-model.md)                                             | §6 — unknown types are denied by default                                     |
+| [`pkg/audit/audit.go`](../../pkg/audit/audit.go)                                                 | Per-row HMAC ledger pattern reused for mint-audit                            |
+| [`pkg/revocation/revocation.go`](../../pkg/revocation/revocation.go)                             | Token revocation used in key rotation (§3)                                   |
+| [`pkg/crypto/kms_azure.go`](../../pkg/crypto/kms_azure.go)                                       | Azure Key Vault signing driver                                               |
+| [`pkg/crypto/kms_aws.go`](../../pkg/crypto/kms_aws.go)                                           | AWS KMS signing driver                                                       |
+| [`pkg/crypto/kms_gcp.go`](../../pkg/crypto/kms_gcp.go)                                           | GCP Cloud KMS signing driver                                                 |

@@ -1,6 +1,6 @@
 # eunox Pricing
 
-> **Status:** Current as of the Go re-implementation (Stage 5).
+> **Status:** Current as of the Go re-implementation.
 > This document is the authoritative reference for the eunox pricing tiers and
 > the feature boundaries between them.
 >
@@ -8,9 +8,6 @@
 >
 > - [`docs/self-host.md`](./self-host.md) — BYO-GW guide (what self-hosting means in practice)
 > - [`docs/upgrade-to-hosted.md`](./upgrade-to-hosted.md) — migrate from local to hosted enforcement
-> - [`docs/golang-reimplementation-plan.md`](./golang-reimplementation-plan.md) — implementation plan and stage status
-> - [`docs/stage-3-design.md`](./stage-3-design.md) — hosted-gateway design (Stage 3)
-> - [`docs/stage-5-design.md`](./stage-5-design.md) — enterprise platform design (Stage 5)
 
 ---
 
@@ -38,10 +35,10 @@ The table below maps every platform feature to the tier that gates it.
 | **Core enforcement**                                         |     |                   |                 |                  |
 | Local enforcement (in-process PDP)                           | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
 | stdio + HTTP proxy transports                                | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
-| All condition types (Stage 1–2)                              | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
+| All condition types                                          | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
 | Local HMAC audit log                                         | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
 | `eunox-mcp validate-token` / `stats`                         | ✅  |        ✅         |       ✅        |        ✅        |        ✅        |
-| **Hosted gateway (Stage 3+)**                                |     |                   |                 |                  |
+| **Hosted gateway**                                           |     |                   |                 |                  |
 | Remote enforcer mode (`enforcer: url`)                       |  —  |        ✅         |       ✅        |        ✅        |        ✅        |
 | KMS-backed audit signer                                      |  —  |   ✅ (BYO KMS)    |       ✅        |        ✅        |        ✅        |
 | Redis call-counter store                                     |  —  |  ✅ (BYO Redis)   |       ✅        |        ✅        |        ✅        |
@@ -51,10 +48,10 @@ The table below maps every platform feature to the tier that gates it.
 | Kill-switch admin API                                        |  —  |        ✅         | Session-scoped  |        ✅        |        ✅        |
 | API-key minter façade (`sk-…` → JWT)                         |  —  |         —         |       ✅        |        ✅        |        ✅        |
 | `eunox-mcp upgrade-to-hosted` CLI                            |  —  |         —         |       ✅        |        ✅        |        ✅        |
-| **Identity (Stage 4+)**                                      |     |                   |                 |                  |
+| **Identity**                                                 |     |                   |                 |                  |
 | SSO via OIDC (Entra ID, Cognito, GCP)                        |  —  |   ✅ (BYO IdP)    |        —        |        ✅        |        ✅        |
 | DID-based agent identity (did:web, did:key)                  |  —  |        ✅         |       ✅        |        ✅        |        ✅        |
-| **Enterprise (Stage 5+)**                                    |     |                   |                 |                  |
+| **Enterprise**                                               |     |                   |                 |                  |
 | Evidence export (signed OCSF, `GET /api/v1/audit/export`)    |  —  |        ✅         |        —        |        —         |        ✅        |
 | On-prem / BYO HSM signing key                                |  —  |        ✅         |        —        |        —         |        ✅        |
 | SOC2 attestation documentation                               |  —  |        ✅         |        —        |        —         |        ✅        |
@@ -95,7 +92,7 @@ See the [project README](../README.md) for quick-start instructions.
 ### Self-Host — BSL 1.1
 
 The self-hosted option ships the full gateway stack (capability issuer, tool
-gateway, API-key minter, posture emitter, and all Stage 5 services) as BSL 1.1
+gateway, API-key minter, posture emitter, and all enterprise services) as BSL 1.1
 Docker images. Self-hosters manage their own Redis, Postgres, and KMS.
 
 **License:** BSL 1.1 (non-competing use; converts to Apache-2.0 four years

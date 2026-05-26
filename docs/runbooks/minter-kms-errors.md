@@ -36,4 +36,4 @@
 ## Escalation
 
 Page the infrastructure on-call immediately if the HSM is unreachable and you cannot
-identify the cause within 5 minutes. This blocks all Stage 3 token issuance.
+identify the cause within 5 minutes. This blocks all token issuance.

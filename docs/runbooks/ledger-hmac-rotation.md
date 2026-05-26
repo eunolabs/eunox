@@ -185,7 +185,5 @@ env:
 
 ### Cross-references
 
-- `pkg/src/ledger-signer.ts` — backend implementation, `verifyRowHmac()` method
+- `pkg/audit/audit.go` — backend implementation, `verifyRowHmac()` function
 - `docs/ARCHITECTURE.md §7` — audit ledger design
-- `docs/stage-3-design.md §3.2` — HMAC tamper-evidence model
-- `docs/architecture-review-2026-05.md §CI-7, §OQ-1` — architecture review findings

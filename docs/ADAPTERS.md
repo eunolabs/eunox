@@ -456,7 +456,7 @@ provider, _ := identity.NewAzureADProvider(cfg, httpClient)
 
 ## Partner Federation
 
-Partner federation enables eunox to accept capability tokens issued by external partner organizations using W3C DIDs (`did:web`, `did:ion`, `did:key`). See [docs/stage-5-design.md](./stage-5-design.md) §Partner Federation for the full architecture.
+Partner federation enables eunox to accept capability tokens issued by external partner organizations using W3C DIDs (`did:web`, `did:ion`, `did:key`). See [docs/ARCHITECTURE.md](./ARCHITECTURE.md) for the full architecture overview.
 
 ### Trust Model
 
@@ -683,7 +683,5 @@ The original stub signers (`NewAWSKMSSigner`, `NewAzureKeyVaultSigner`, `NewGCPC
 
 ## See Also
 
-- [golang-reimplementation-plan.md](./golang-reimplementation-plan.md) — Go re-implementation plan and technology choices
-- [stage-5-design.md](./stage-5-design.md) — Partner federation architecture
 - [issuer-idp-setup.md](./issuer-idp-setup.md) — Setting up Azure AD, Cognito, GCP for issuance
 - [docs/openapi/capability-issuer.yaml](./openapi/capability-issuer.yaml) — Issuer API specification

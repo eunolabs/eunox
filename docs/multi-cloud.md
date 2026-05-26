@@ -34,7 +34,7 @@ multi-cloud architecture.
 | ------------------------------------------------------------------------- | --------------------------------------------------------- |
 | [`infra/bicep/main.bicep`](../infra/bicep/main.bicep)                     | Azure Bicep template — AKS, Key Vault, ACR, Log Analytics |
 | [`k8s/helm/eunox/values-azure.yaml`](../k8s/helm/eunox/values-azure.yaml) | Helm overrides for AKS                                    |
-| [`docs/DEPLOYMENT.md §Stage-5`](DEPLOYMENT.md)                            | Full on-premises and AKS deployment guide                 |
+| [`docs/DEPLOYMENT.md`](DEPLOYMENT.md)                                     | Full on-premises and AKS deployment guide                 |
 | [`docs/issuer-idp-setup.md §1`](issuer-idp-setup.md)                      | Azure AD / Entra ID setup                                 |
 | [`docs/issuer-idp-setup.md §9`](issuer-idp-setup.md)                      | Entra ID SCIM bridge                                      |
 
@@ -147,7 +147,6 @@ guide (`docs/deploy-eks.md §7`, `docs/deploy-gke.md §7`).
 
 ## See also
 
-- [`docs/multi-cloud-plan.md`](multi-cloud-plan.md) — implementation plan and progress
 - [`docs/ADAPTERS.md`](ADAPTERS.md) — adapter interface documentation
 - [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — on-premises and self-hosted guide
-- [`docs/self-host.md`](self-host.md) — self-hosted deployment guide (Stage 5)
+- [`docs/self-host.md`](self-host.md) — self-hosted deployment guide

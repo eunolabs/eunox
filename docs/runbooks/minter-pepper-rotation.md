@@ -202,8 +202,7 @@ curl -s -X POST https://minter.eunox.example/api/v1/mint \
 
 ## Cross-references
 
-- `internal/minter/src/api-key-verifier.ts` — `ApiKeyVerifier`, `PepperEntry`
-- `internal/minter/src/bootstrap.ts` — pepper provisioning at startup
+- `internal/minter/store.go` — `ApiKeyStore`, pepper-based key hashing
+- `internal/minter/app.go` — pepper provisioning at startup
 - `docs/runbooks/minter-key-rotation.md` — signing key (JWT) rotation procedure
 - `docs/security/minter-threat-model.md §4` — pepper threat model
-- `docs/architecture-review-2026-05.md §CR-5` — pepper rotation requirement

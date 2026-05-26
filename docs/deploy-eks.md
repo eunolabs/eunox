@@ -10,7 +10,6 @@
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
 > - [`docs/secrets-aws.md`](./secrets-aws.md) — AWS Secrets Manager integration
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP setup (Cognito SCIM §10)
-> - [`docs/multi-cloud-plan.md`](./multi-cloud-plan.md) — multi-cloud runbook index
 > - [`docs/self-host.md`](./self-host.md) — self-host overview
 
 ---
