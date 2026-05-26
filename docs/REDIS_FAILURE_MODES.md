@@ -100,14 +100,21 @@ and correlate any degraded periods with audit logs to identify under-counted usa
 ## Health Check Integration
 
 The `redisfailover.Monitor` aggregates health state from all Redis-dependent
-components. When any component is in a degraded state:
+components. It can be wired into the application's readiness handler to surface
+Redis degradation to Kubernetes. When any component is in a degraded state, the
+recommended pattern causes:
 
-- `/health/ready` returns HTTP 503 with a JSON body listing degraded components.
-- `/health/live` is **not affected** (the process is still alive and functional).
-- Kubernetes will stop routing traffic to the instance, allowing healthy instances
+- `/health/ready` to return HTTP 503 with a JSON body listing degraded components.
+- `/health/live` to be **unaffected** (the process is still alive and functional).
+- Kubernetes to stop routing traffic to the instance, allowing healthy instances
   to handle load until Redis recovers.
 
-### Usage in Application Startup
+> **Note:** This integration is opt-in. It must be explicitly wired during
+> application startup as shown below. The gateway's built-in `/health/ready`
+> handler does not consult the monitor unless a `RedisMonitor` dependency is
+> provided.
+
+### Wiring the Monitor in Application Startup
 
 ```go
 monitor := redisfailover.NewMonitor()

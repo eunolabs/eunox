@@ -5,6 +5,7 @@ package killswitch
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -210,26 +211,30 @@ func (r *Redis) refreshState(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Check global
+	// Check global key. redis.Nil means the key doesn't exist (expected);
+	// any other error is a real connectivity failure.
 	val, err := r.client.Get(ctx, redisGlobalKey).Result()
-	if err == nil && val == "1" {
-		r.globalActive = true
-	} else {
-		r.globalActive = false
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
 	}
+	r.globalActive = err == nil && val == "1"
 
 	// Scan agents
 	r.killedAgents = make(map[string]bool)
-	r.scanPrefix(ctx, redisAgentPrefix, r.killedAgents)
+	if err := r.scanPrefix(ctx, redisAgentPrefix, r.killedAgents); err != nil {
+		return err
+	}
 
 	// Scan sessions
 	r.killedSessions = make(map[string]bool)
-	r.scanPrefix(ctx, redisSessionPfx, r.killedSessions)
+	if err := r.scanPrefix(ctx, redisSessionPfx, r.killedSessions); err != nil {
+		return err
+	}
 
 	return nil
 }
 
-func (r *Redis) scanPrefix(ctx context.Context, prefix string, target map[string]bool) {
+func (r *Redis) scanPrefix(ctx context.Context, prefix string, target map[string]bool) error {
 	if scanner, ok := r.client.(interface {
 		Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
 	}); ok {
@@ -237,7 +242,7 @@ func (r *Redis) scanPrefix(ctx context.Context, prefix string, target map[string
 		for {
 			keys, next, err := scanner.Scan(ctx, cursor, prefix+"*", 100).Result()
 			if err != nil {
-				break
+				return err
 			}
 			for _, key := range keys {
 				id := key[len(prefix):]
@@ -249,6 +254,7 @@ func (r *Redis) scanPrefix(ctx context.Context, prefix string, target map[string
 			}
 		}
 	}
+	return nil
 }
 
 func (r *Redis) deleteByPrefix(ctx context.Context, prefix string) {

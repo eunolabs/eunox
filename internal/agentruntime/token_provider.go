@@ -120,7 +120,8 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 	}
 }
 
-// defaultJitter adds 0-10% jitter to a duration to prevent thundering herd.
+// defaultJitter returns a random duration in [0, 10%) of base to add to a
+// refresh delay, spreading out synchronized restarts to prevent thundering herd.
 func defaultJitter(base time.Duration) time.Duration {
 	if base <= 0 {
 		return 0
@@ -254,7 +255,13 @@ func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 	}
 
 	// Add jitter to prevent thundering herd on synchronized restarts (CR-3).
+	// Cap the total delay to stay before token expiry: positive jitter that
+	// exceeds refreshBefore would push the timer past expiresAt, causing a
+	// background refresh to arrive after the token has already expired.
 	delay += p.jitterFunc(delay)
+	if limit := expiresAt.Sub(now); delay > limit {
+		delay = limit
+	}
 
 	p.refreshTimer = time.AfterFunc(delay, func() {
 		select {

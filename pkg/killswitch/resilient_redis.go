@@ -37,9 +37,9 @@ func (r *ResilientRedis) Start(ctx context.Context) {
 	r.inner.Start(ctx)
 	r.started = true
 
-	// Check if the initial refresh succeeded by attempting a status read.
-	// The Redis impl's refreshState ignores errors, so we can't tell directly.
-	// Instead, do a quick health ping via context.
+	// Verify that the initial state load succeeded. refreshState now propagates
+	// real connectivity errors (distinct from redis.Nil / key-not-found), so a
+	// non-nil return here means Redis is unreachable and we must stay degraded.
 	if err := r.inner.refreshState(ctx); err != nil {
 		r.reporter.MarkDegraded()
 	} else {
