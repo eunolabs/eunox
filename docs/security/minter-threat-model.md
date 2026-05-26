@@ -633,8 +633,6 @@ annotations:
 >    per-replica in-memory `AnomalyDetector` so anomaly detection is never
 >    completely disabled by a Redis outage — it just reverts to per-replica
 >    behaviour.
->
-> See `docs/security/minter-threat-model.md §Rule-7` for the full analysis.
 
 #### Rule 7 — HSM sign/audit mismatch
 
