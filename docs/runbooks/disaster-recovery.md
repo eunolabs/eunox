@@ -202,7 +202,7 @@ curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&fro
 
 ```bash
 # 1. Create anchor metadata via an offline anchoring job
-# (there is no HTTP /admin audit anchor endpoint in gateway)
+# Note: there is no HTTP /admin audit anchor endpoint in gateway.
 # Use tooling around pkg/audit/anchor.go to persist the checkpoint.
 
 # 2. Document the gap as a known integrity exception

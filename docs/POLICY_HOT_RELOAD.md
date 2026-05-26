@@ -220,7 +220,7 @@ Before replacing the active policy set, the engine validates:
 1. **JSON syntax:** File must be valid JSON
 2. **Parseability into policy structures:** Data must unmarshal into the policy file types
 
-Additional semantic constraints (for example role uniqueness, non-empty capabilities, or strict version enforcement) are not currently enforced in `reload()`.
+Additional semantic constraints (e.g., role uniqueness, non-empty capabilities, or strict version enforcement) are not currently enforced in `reload()`.
 
 ### Failure Modes
 
