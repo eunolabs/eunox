@@ -38,10 +38,12 @@ ghcr.io/edgeobs/eunox/posture-emitter:1.0.0@sha256:00000000000000000000000000000
 ghcr.io/edgeobs/eunox/partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
 
 # ── Base images used at build time (needed only for air-gapped builds) ───────
-# golang:1.25-alpine is the base for all Eunox service images.
+# golang:1.25 is the builder stage for all Eunox service images.
+# gcr.io/distroless/static-debian12:nonroot is the runtime base (no shell, no package manager).
 # alpine/curl is used by the smoke-test container.
 # Digests below are examples; pin to the exact digest used in the Dockerfiles.
-golang:1.25-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
+golang:1.25@sha256:0000000000000000000000000000000000000000000000000000000000000010
+gcr.io/distroless/static-debian12:nonroot@sha256:0000000000000000000000000000000000000000000000000000000000000012
 alpine/curl:latest@sha256:0000000000000000000000000000000000000000000000000000000000000011
 
 # ── Optional dependencies (bitnami — disabled by default in Helm chart) ──────

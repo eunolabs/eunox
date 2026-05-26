@@ -1,0 +1,17 @@
+# Copyright 2026 Eunox Authors
+# SPDX-License-Identifier: BUSL-1.1
+
+.git
+.github
+.gitignore
+*.md
+!README.md
+docs/
+blogs/
+site/
+web/
+k8s/
+infra/
+coverage.out
+deploy/
+.golangci.yml

@@ -61,6 +61,14 @@ func run() error {
 		slog.String("env", string(cfg.NodeEnv)),
 	)
 
+	// Production Redis HA validation
+	if cfg.NodeEnv == config.EnvProduction {
+		if err := config.CheckGatewayRedisHA(cfg); err != nil {
+			return fmt.Errorf("redis HA validation: %w", err)
+		}
+		logger.Info("redis HA validation passed")
+	}
+
 	// Initialize metrics
 	metrics := observability.NewMetricsRegistry("euno", "gateway")
 
