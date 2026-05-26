@@ -39,9 +39,8 @@ euno config dump-template --service gateway > internal/gateway/.env.example
 
 Production deployments need an issuer signing key, a gateway verifier
 configuration, a protected backend URL, and the selected optional backing stores
-(Redis/Postgres/KMS) configured through the typed config schema in
-`pkg//src/config/schema.ts` and the implementations in
-`pkg`.
+(Redis/Postgres/KMS) configured through the Go config package in
+`pkg/config/` (for example `pkg/config/issuer.go` and `pkg/config/gateway.go`).
 
 ## Containerization
 

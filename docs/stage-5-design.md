@@ -237,8 +237,8 @@ ION_RESOLVER_URL=https://ion.msidentity.com/api/v1.0/identifiers
 ION_RESOLVER_URL=https://ion.internal.corp.example.com/api/v1.0/identifiers
 ```
 
-The `ION_RESOLVER_URL` env var already exists in `IssuerConfigSchema` (see
-`pkg//src/config/schema.ts`). Stage 5 promotes it to a documented,
+The `ION_RESOLVER_URL` env var is part of issuer configuration (see
+`pkg/config/issuer.go`). Stage 5 promotes it to a documented,
 operator-facing configuration point.
 
 ### 4.2 Rationale
@@ -286,15 +286,15 @@ A new `GET /healthz/did-ion` endpoint (Task 12) resolves a known stable ION docu
 
 | Type | Module | Description |
 |---|---|---|
-| `AgtGuardOptions` | `@euno/common-core` (`pkg//src/agt-guard.ts`) | Construction options for `createAgtGuard()` |
+| `AgtGuardOptions` | `internal/agentruntime` (`internal/agentruntime/types.go`) | Runtime construction options and related types |
 | `AgtGuardResult` | same | Verdict returned by an in-process guard evaluation (`'allow' \| 'deny'`) |
 | `AgtGuardDenyReason` | same | Reason codes passed to `AgtGuardOptions.onDeny` |
 
-These types are implemented and exported in this PR (Task 0). Tests for all three are
-in `pkg//src/__tests__/agt-guard.test.ts`.
+These types are implemented and exported in this PR (Task 0). Tests for the runtime
+guard path are under `internal/agentruntime/`.
 
-The `createAgtGuard()` factory implementation lives in the **BSL-licensed**
-`internal/agent-runtime/src/agt-guard.ts` (added in Task 8).
+The guard/runtime implementation lives in the **BSL-licensed**
+`internal/agentruntime/` package.
 
 ### 5.2 Type definitions (canonical)
 

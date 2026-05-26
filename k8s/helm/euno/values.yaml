@@ -92,7 +92,7 @@ issuer:
 minter:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/euno/minter
+    repository: ghcr.io/edgeobs/eunox/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:

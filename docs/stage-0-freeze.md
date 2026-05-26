@@ -14,9 +14,7 @@ The following packages are **feature-frozen** during Stages 1–2:
 | `internal/gateway` | `@edgeobs/euno-dp` |
 | `internal/issuer` | `@edgeobs/euno-cp` |
 | `pkg` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
-| `pkg` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
-| `internal/agent-runtime` | `@edgeobs/euno-dp` |
-| `internal/framework-adapters` | `@edgeobs/euno-dx` |
+| `internal/agentruntime` | `@edgeobs/euno-dp` |
 
 ## What the freeze means
 
@@ -66,13 +64,12 @@ confirm all of the following before approving:
 ## Quarantined packages
 
 Four packages are additionally quarantined — they are kept building in CI
-but receive no further investment until a Stage-4 customer pays for them.
-Each carries a `STATUS.md` explaining this.  See:
+but receive no further investment until a Stage-4 customer pays for them:
 
-- [`internal/partner-issuer-sim/STATUS.md`](../internal/partner-issuer-sim/STATUS.md)
-- [`internal/db-token-service/STATUS.md`](../internal/db-token-service/STATUS.md)
-- [`internal/storage-grant-service/STATUS.md`](../internal/storage-grant-service/STATUS.md)
-- [`internal/posture-emitter/STATUS.md`](../internal/posture-emitter/STATUS.md)
+- `internal/dbtokensvc`
+- `internal/storagegrantsvc`
+- `internal/posture`
+- `internal/agentruntime`
 
 ## MCP SDK pin
 

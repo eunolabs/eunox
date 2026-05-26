@@ -15,11 +15,9 @@ endpoint and applies the returned obligations locally. This document is the
 authoritative specification of that HTTP contract.
 
 The canonical type definitions live in
-`pkg//src/wire.ts` — `EnforceRequest`, `EnforceRequestContext`,
-`EnforceResponse`, `Obligation`, `DenialInfo` — so both the gateway
-(`tool-gateway`) and the client (`@euno/mcp`) compile against the same types
-without duplication. Any change to those types MUST land in `@euno/common-core`
-first (per the cross-cutting obligation in `docs/stage3executionplan.md`).
+`pkg/capability/enforce.go` and `pkg/capability/obligation.go` —
+`EnforceRequest`, `EnforceRequestContext`, `EnforceResponse`, `Obligation`,
+`DenialInfo`.
 
 ---
 
@@ -94,7 +92,7 @@ X-Request-Id: <uuid>   (optional; reflected verbatim in the response)
 
 ```typescript
 /**
- * Defined in pkg//src/wire.ts — EnforceRequest
+ * Defined in pkg/capability/enforce.go — EnforceRequest
  */
 interface EnforceRequest {
   /** MCP session ID from the initialize handshake. */
@@ -154,7 +152,7 @@ interface EnforceRequestContext {
 
 ```typescript
 /**
- * Defined in pkg//src/wire.ts — EnforceResponse
+ * Defined in pkg/capability/enforce.go — EnforceResponse
  */
 interface EnforceResponse {
   /**

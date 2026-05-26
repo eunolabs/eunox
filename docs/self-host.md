@@ -202,8 +202,8 @@ aws kms create-key \
 
 #### Step 2 — Write a capability policy manifest
 
-Create `/srv/euno/policies/agent.yaml` following the pattern from
-[`pkg//policies/filesystem.policy.yaml`](../pkg//policies/filesystem.policy.yaml):
+Create `/srv/euno/policies/agent.yaml` following the pattern in
+[`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md):
 
 ```yaml
 agentId: "my-agent"
@@ -399,10 +399,7 @@ version: "3.9"
 
 services:
   capability-issuer:
-    build:
-      context: /path/to/eunox    # root of the eunox monorepo
-      dockerfile: internal/issuer/Dockerfile
-    image: euno/capability-issuer:local
+    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
     container_name: euno-issuer
     env_file: /srv/euno/issuer.env
     volumes:
@@ -416,10 +413,7 @@ services:
       retries: 5
 
   tool-gateway:
-    build:
-      context: /path/to/eunox
-      dockerfile: internal/gateway/Dockerfile
-    image: euno/tool-gateway:local
+    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
     container_name: euno-gateway
     env_file: /srv/euno/gateway.env
     volumes:
@@ -611,10 +605,7 @@ services:
     restart: unless-stopped
 
   capability-issuer:
-    build:
-      context: /path/to/eunox
-      dockerfile: internal/issuer/Dockerfile
-    image: euno/capability-issuer:latest
+    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
     container_name: euno-issuer
     env_file: ./issuer.env
     environment:
@@ -632,10 +623,7 @@ services:
     restart: unless-stopped
 
   tool-gateway:
-    build:
-      context: /path/to/eunox
-      dockerfile: internal/gateway/Dockerfile
-    image: euno/tool-gateway:latest
+    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
     container_name: euno-gateway
     env_file: ./gateway.env
     environment:
@@ -2301,4 +2289,3 @@ produced by the capability issuer's own `PostureEmitter`.
   is never called.
 - [ ] Confirm the gateway's Prometheus scrape includes
   `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.
-

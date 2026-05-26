@@ -79,28 +79,28 @@ flowchart LR
 
 ## 3. C4 Level 2 — Container / package view
 
-The repository is a TypeScript monorepo with two workspace roots:
-`public/packages/*` for Apache-2.0 developer-facing packages and
-`internal/*` for BUSL-1.1 platform packages.
+The repository is a Go codebase rooted at:
+`cmd/` (service entrypoints), `internal/` (service implementations),
+`pkg/` (shared libraries), and `migrations/` (database migrations).
 
 ```mermaid
 flowchart TB
     subgraph ControlPlane["Control plane (issuance & policy)"]
-        Issuer["capability-issuer<br/>Express service<br/>:3001"]
-        PostureEmitter["posture-emitter<br/>(library)"]
+        Issuer["issuer service<br/>Go HTTP service<br/>:3001"]
+        PostureEmitter["posture emitter<br/>Go service"]
     end
 
     subgraph DataPlane["Data plane (every agent action passes here)"]
-        Gateway["tool-gateway<br/>Express service<br/>:3002"]
-        Runtime["agent-runtime<br/>(library + main)"]
-        Adapters["framework-adapters<br/>LangChain / MAF / CrewAI"]
+        Gateway["gateway service<br/>Go HTTP service<br/>:3002"]
+        Runtime["agentruntime<br/>(library)"]
+        Adapters["SDK/tool adapters"]
     end
 
     subgraph Shared["Shared platform"]
-        CommonCore["common (common-core)<br/>types, conditions,<br/>in-memory seams"]
-        CommonInfra["common-infra/common<br/>Redis/Postgres/KMS + compat shim"]
-        CLI["cli<br/>euno init / validate / request / ..."]
-        MCP["mcp<br/>MCP proxy"]
+        CommonCore["pkg/* shared libs<br/>capability, config,<br/>audit, identity"]
+        CommonInfra["internal/* services<br/>gateway, issuer,<br/>minter, posture"]
+        CLI["cmd/* binaries"]
+        MCP["client integrations"]
     end
 
     subgraph External["External (per env)"]
@@ -144,18 +144,16 @@ flowchart TB
 
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `pkg/` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
-| `pkg/` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
-| `cmd/` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
-| `pkg` | platform shared | BUSL Redis/Postgres/KMS implementations for the interfaces exported by `common-core`. |
-| `pkg` | compat shim | BUSL back-compat package re-exporting `common-core` and `common-infra`. New public code must not depend on it. |
-| `internal/issuer` | service | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services. |
-| `internal/gateway` | service | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store. |
-| `internal/agent-runtime` | library | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway. |
-| `internal/framework-adapters` | library | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape. |
-| `internal/posture-emitter` | library | Emits `AgentInventoryRecord`s on issuance / revocation for SIEM-side posture inventory. |
-| `internal/integration-tests` | tests | E2E issuer ↔ gateway ↔ runtime harness. |
-| `internal/partner-issuer-sim` | tests | Stand-in foreign issuer for cross-org tests. |
+| `pkg/` | shared libraries | Capability contracts and enforcement types, config loading/validation, audit helpers, identity/signing support, and common utilities. |
+| `cmd/` | service entrypoints | Executable entrypoints for gateway, issuer, minter, DB token service, storage grant service, and posture emitter. |
+| `internal/issuer` | service package | Issuer HTTP handlers and issuance logic. |
+| `internal/gateway` | service package | Gateway HTTP handlers, enforcement path, and admin APIs. |
+| `internal/agentruntime` | runtime library | Runtime-side request types and tool invocation plumbing. |
+| `internal/minter` | service package | API key minter admin/user APIs and persistence integration. |
+| `internal/dbtokensvc` | service package | Database token service handlers and auth flow. |
+| `internal/storagegrantsvc` | service package | Storage grant service handlers and provider integrations. |
+| `internal/posture` | service package | Posture emitter and plugin integrations. |
+| `migrations/` | schema migrations | Database migration files used by services that own SQL backends. |
 
 The root `package.json` declares both workspace globs and the
 `scripts/check-license-boundary.mjs` lint step prevents Apache-2.0 packages

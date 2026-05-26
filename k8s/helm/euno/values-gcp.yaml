@@ -115,7 +115,7 @@ issuer:
 # ── minter ────────────────────────────────────────────────────────────
 minter:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/minter
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

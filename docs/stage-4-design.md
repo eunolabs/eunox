@@ -54,10 +54,10 @@ written, not discovered during code review.
 ### 1.1 Decision
 
 **Primary (hosted service):** Microsoft Entra ID (Azure AD), using the already-implemented
-`AzureADIdentityProvider` (`internal/issuer/src/azure-identity-provider.ts`).
+Azure identity provider (`pkg/identity/azure_ad.go`).
 
 **Second IdP (hosted service + self-host bundle):** **AWS Cognito**, using the already-implemented
-`AWSCognitoIdentityProvider` (`internal/issuer/src/aws-cognito-identity-provider.ts`).
+AWS Cognito identity provider (`pkg/identity/cognito.go`).
 
 GCP Cloud Identity is explicitly **not** selected as the second IdP for Stage 4. The GCP
 provider implementation (`gcp-identity-provider.ts`) remains in place and fully usable by

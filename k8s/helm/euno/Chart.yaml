@@ -1,7 +1,7 @@
 apiVersion: v2
 name: eunox
 description: |
-  Umbrella Helm chart for the full Eunoxx platform — on-prem deployment.
+  Umbrella Helm chart for the full Eunox platform — on-prem deployment.
 
   Renders Kubernetes Deployment, Service, and ConfigMap (+ Secret) resources
   for the following services directly from templates in this chart:
@@ -37,7 +37,7 @@ home: https://github.com/edgeobs/eunox
 sources:
   - https://github.com/edgeobs/eunox
 maintainers:
-  - name: Eunoxx Team
+  - name: Eunox Team
 
 dependencies:
   # ── Optional Postgres (bitnami) ────────────────────────────────────────────
