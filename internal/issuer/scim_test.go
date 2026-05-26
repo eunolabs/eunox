@@ -125,6 +125,160 @@ func TestSCIM_ListUsers_Filter(t *testing.T) {
 	assert.Equal(t, 1, resp.TotalResults)
 }
 
+func TestSCIM_ListUsers_FilterByExternalId(t *testing.T) {
+	app := testApp(t)
+
+	// Create user with externalId
+	w := doPost(app, "/scim/v2/Users", SCIMUserRequest{
+		Schemas:    []string{scimUserSchema},
+		UserName:   "alice",
+		ExternalID: "ext-123",
+		Active:     true,
+	})
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	createTestUser(t, app, "bob")
+
+	req := httptest.NewRequest(http.MethodGet, "/scim/v2/Users", http.NoBody)
+	q := req.URL.Query()
+	q.Set("filter", `externalId eq "ext-123"`)
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	w = httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp SCIMListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.TotalResults)
+
+	// Re-unmarshal to get the actual users
+	var fullResp struct {
+		Schemas      []string   `json:"schemas"`
+		TotalResults int        `json:"totalResults"`
+		StartIndex   int        `json:"startIndex"`
+		ItemsPerPage int        `json:"itemsPerPage"`
+		Resources    []SCIMUser `json:"Resources"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fullResp))
+	assert.Equal(t, "alice", fullResp.Resources[0].UserName)
+	assert.Equal(t, "ext-123", fullResp.Resources[0].ExternalID)
+}
+
+func TestSCIM_ListGroups_FilterByExternalId(t *testing.T) {
+	app := testApp(t)
+
+	// Create group with externalId
+	w := doPost(app, "/scim/v2/Groups", SCIMGroupRequest{
+		Schemas:     []string{scimGroupSchema},
+		DisplayName: "Engineering",
+		ExternalID:  "ext-grp-456",
+	})
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	createTestGroup(t, app, "Security")
+
+	req := httptest.NewRequest(http.MethodGet, "/scim/v2/Groups", http.NoBody)
+	q := req.URL.Query()
+	q.Set("filter", `externalId eq "ext-grp-456"`)
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	w = httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp SCIMListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.TotalResults)
+
+	// Re-unmarshal to get the actual groups
+	var fullResp struct {
+		Schemas      []string    `json:"schemas"`
+		TotalResults int         `json:"totalResults"`
+		StartIndex   int         `json:"startIndex"`
+		ItemsPerPage int         `json:"itemsPerPage"`
+		Resources    []SCIMGroup `json:"Resources"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fullResp))
+	assert.Equal(t, "Engineering", fullResp.Resources[0].DisplayName)
+	assert.Equal(t, "ext-grp-456", fullResp.Resources[0].ExternalID)
+}
+
+func TestSCIM_UserGroupsSynchronization(t *testing.T) {
+	app := testApp(t)
+
+	// Create users
+	userID1 := createTestUser(t, app, "alice")
+	userID2 := createTestUser(t, app, "bob")
+
+	// Create group with members
+	w := doPost(app, "/scim/v2/Groups", SCIMGroupRequest{
+		Schemas:     []string{scimGroupSchema},
+		DisplayName: "Engineering",
+		Members: []struct {
+			Value   string `json:"value"`
+			Display string `json:"display"`
+		}{
+			{Value: userID1, Display: "Alice"},
+		},
+	})
+	require.Equal(t, http.StatusCreated, w.Code)
+	var group SCIMGroup
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &group))
+
+	// Verify alice has the group
+	w = doGet(app, "/scim/v2/Users/"+userID1)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var alice SCIMUser
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &alice))
+	assert.Len(t, alice.Groups, 1)
+	assert.Equal(t, group.ID, alice.Groups[0].Value)
+	assert.Equal(t, "Engineering", alice.Groups[0].Display)
+
+	// Verify bob doesn't have the group
+	w = doGet(app, "/scim/v2/Users/"+userID2)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var bob SCIMUser
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bob))
+	assert.Empty(t, bob.Groups)
+
+	// Add bob to the group via PATCH
+	patch := SCIMPatchOp{
+		Schemas: []string{scimPatchSchema},
+		Operations: []SCIMPatchOpEntry{
+			{Op: "add", Path: "members", Value: []map[string]interface{}{
+				{"value": userID2, "display": "Bob"},
+			}},
+		},
+	}
+	w = doPatch(app, "/scim/v2/Groups/"+group.ID, patch)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify bob now has the group
+	w = doGet(app, "/scim/v2/Users/"+userID2)
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bob))
+	assert.Len(t, bob.Groups, 1)
+	assert.Equal(t, group.ID, bob.Groups[0].Value)
+
+	// Delete the group
+	w = doDelete(app, "/scim/v2/Groups/"+group.ID)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	// Verify users no longer have the group
+	w = doGet(app, "/scim/v2/Users/"+userID1)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var aliceAfterDelete SCIMUser
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &aliceAfterDelete))
+	assert.Empty(t, aliceAfterDelete.Groups, "alice should have no groups after group deletion")
+
+	w = doGet(app, "/scim/v2/Users/"+userID2)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var bobAfterDelete SCIMUser
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bobAfterDelete))
+	assert.Empty(t, bobAfterDelete.Groups, "bob should have no groups after group deletion")
+}
+
 func TestSCIM_PatchUser_ReplaceActive(t *testing.T) {
 	app := testApp(t)
 	id := createTestUser(t, app, "alice")

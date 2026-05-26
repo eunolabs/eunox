@@ -4,6 +4,7 @@
 package issuer
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -144,13 +145,13 @@ func (s *SCIMStore) GetUser(id string) (*SCIMUser, bool) {
 	return u, ok
 }
 
-// ListUsers returns all users, optionally filtered by userName.
+// ListUsers returns all users, optionally filtered by SCIM filter expression.
 func (s *SCIMStore) ListUsers(filter string) []*SCIMUser {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*SCIMUser, 0, len(s.users))
 	for _, u := range s.users {
-		if filter != "" && !matchesFilter(u.UserName, filter) {
+		if filter != "" && !matchesUserFilter(u, filter) {
 			continue
 		}
 		result = append(result, u)
@@ -176,11 +177,12 @@ func (s *SCIMStore) DeleteUser(id string) bool {
 	return true
 }
 
-// CreateGroup adds a group to the store.
+// CreateGroup adds a group to the store and synchronizes user.groups.
 func (s *SCIMStore) CreateGroup(group *SCIMGroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groups[group.ID] = group
+	s.syncUserGroupsForGroup(group.ID)
 }
 
 // GetGroup retrieves a group by ID.
@@ -191,13 +193,13 @@ func (s *SCIMStore) GetGroup(id string) (*SCIMGroup, bool) {
 	return g, ok
 }
 
-// ListGroups returns all groups, optionally filtered by displayName.
+// ListGroups returns all groups, optionally filtered by SCIM filter expression.
 func (s *SCIMStore) ListGroups(filter string) []*SCIMGroup {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*SCIMGroup, 0, len(s.groups))
 	for _, g := range s.groups {
-		if filter != "" && !matchesFilter(g.DisplayName, filter) {
+		if filter != "" && !matchesGroupFilter(g, filter) {
 			continue
 		}
 		result = append(result, g)
@@ -205,14 +207,15 @@ func (s *SCIMStore) ListGroups(filter string) []*SCIMGroup {
 	return result
 }
 
-// UpdateGroup replaces group attributes.
+// UpdateGroup replaces group attributes and synchronizes user.groups.
 func (s *SCIMStore) UpdateGroup(group *SCIMGroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groups[group.ID] = group
+	s.syncUserGroupsForGroup(group.ID)
 }
 
-// DeleteGroup removes a group by ID.
+// DeleteGroup removes a group by ID and clears user.groups references.
 func (s *SCIMStore) DeleteGroup(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -220,28 +223,127 @@ func (s *SCIMStore) DeleteGroup(id string) bool {
 		return false
 	}
 	delete(s.groups, id)
+	s.removeGroupFromAllUsers(id)
 	return true
 }
 
-// matchesFilter performs a simple case-insensitive substring match for SCIM filter support.
-// Full SCIM filter parsing is complex; this supports the common eq filter pattern.
-func matchesFilter(value, filter string) bool {
-	// Support: userName eq "value" / displayName eq "value"
-	filter = strings.TrimSpace(filter)
-	if idx := strings.Index(strings.ToLower(filter), " eq "); idx >= 0 {
-		filterVal := strings.TrimSpace(filter[idx+4:])
-		filterVal = strings.Trim(filterVal, `"`)
-		return strings.EqualFold(value, filterVal)
+// syncUserGroupsForGroup updates the groups field on all users referenced by this group.
+// Must be called with mu held.
+func (s *SCIMStore) syncUserGroupsForGroup(groupID string) {
+	group, ok := s.groups[groupID]
+	if !ok {
+		return
 	}
-	// Fallback: substring match
-	return strings.Contains(strings.ToLower(value), strings.ToLower(filter))
+
+	// Build a map of user IDs that should have this group
+	memberIDs := make(map[string]bool, len(group.Members))
+	for _, m := range group.Members {
+		memberIDs[m.Value] = true
+	}
+
+	// Update all users: add or remove group reference as needed
+	for userID, user := range s.users {
+		shouldHaveGroup := memberIDs[userID]
+		hasGroup := false
+		groupIdx := -1
+
+		// Check if user already has this group
+		for i, gr := range user.Groups {
+			if gr.Value == groupID {
+				hasGroup = true
+				groupIdx = i
+				break
+			}
+		}
+
+		if shouldHaveGroup && !hasGroup {
+			// Add group to user
+			user.Groups = append(user.Groups, SCIMGroupRef{
+				Value:   groupID,
+				Display: group.DisplayName,
+			})
+		} else if !shouldHaveGroup && hasGroup {
+			// Remove group from user
+			user.Groups = append(user.Groups[:groupIdx], user.Groups[groupIdx+1:]...)
+		} else if shouldHaveGroup && hasGroup {
+			// Update display name if changed
+			user.Groups[groupIdx].Display = group.DisplayName
+		}
+	}
+}
+
+// removeGroupFromAllUsers clears references to a deleted group from all users.
+// Must be called with mu held.
+func (s *SCIMStore) removeGroupFromAllUsers(groupID string) {
+	for _, user := range s.users {
+		for i, gr := range user.Groups {
+			if gr.Value == groupID {
+				user.Groups = append(user.Groups[:i], user.Groups[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// matchesUserFilter applies a SCIM filter to a user resource.
+// Supports eq operator on userName, displayName (formatted name), and externalId.
+func matchesUserFilter(user *SCIMUser, filter string) bool {
+	filter = strings.TrimSpace(filter)
+	parts := strings.SplitN(filter, " eq ", 2)
+	if len(parts) == 2 {
+		attr := strings.TrimSpace(strings.ToLower(parts[0]))
+		filterVal := strings.TrimSpace(parts[1])
+		filterVal = strings.Trim(filterVal, `"`)
+
+		switch attr {
+		case "username":
+			return strings.EqualFold(user.UserName, filterVal)
+		case "displayname":
+			formatted := user.Name.Formatted
+			if formatted == "" && (user.Name.GivenName != "" || user.Name.FamilyName != "") {
+				formatted = strings.TrimSpace(user.Name.GivenName + " " + user.Name.FamilyName)
+			}
+			return strings.EqualFold(formatted, filterVal)
+		case "externalid":
+			return strings.EqualFold(user.ExternalID, filterVal)
+		default:
+			// Unsupported attribute
+			return false
+		}
+	}
+	// Fallback: substring match on userName (for backward compatibility)
+	return strings.Contains(strings.ToLower(user.UserName), strings.ToLower(filter))
+}
+
+// matchesGroupFilter applies a SCIM filter to a group resource.
+// Supports eq operator on displayName and externalId.
+func matchesGroupFilter(group *SCIMGroup, filter string) bool {
+	filter = strings.TrimSpace(filter)
+	parts := strings.SplitN(filter, " eq ", 2)
+	if len(parts) == 2 {
+		attr := strings.TrimSpace(strings.ToLower(parts[0]))
+		filterVal := strings.TrimSpace(parts[1])
+		filterVal = strings.Trim(filterVal, `"`)
+
+		switch attr {
+		case "displayname":
+			return strings.EqualFold(group.DisplayName, filterVal)
+		case "externalid":
+			return strings.EqualFold(group.ExternalID, filterVal)
+		default:
+			// Unsupported attribute
+			return false
+		}
+	}
+	// Fallback: substring match on displayName (for backward compatibility)
+	return strings.Contains(strings.ToLower(group.DisplayName), strings.ToLower(filter))
 }
 
 // --- SCIM Route Registration ---
 
 func (app *App) registerSCIMRoutes(r chi.Router) {
 	r.Route("/scim/v2", func(r chi.Router) {
-		r.Use(app.requireAdminAuth)
+		r.Use(app.requireSCIMAuth)
 
 		// Users
 		r.Post("/Users", app.handleSCIMCreateUser)
@@ -259,6 +361,29 @@ func (app *App) registerSCIMRoutes(r chi.Router) {
 		r.Put("/Groups/{id}", app.handleSCIMReplaceGroup)
 		r.Delete("/Groups/{id}", app.handleSCIMDeleteGroup)
 	})
+}
+
+// requireSCIMAuth is a middleware that enforces admin authentication for SCIM endpoints
+// and returns SCIM-formatted error responses.
+func (app *App) requireSCIMAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app.config.AdminAPIKey == "" {
+			writeSCIMError(w, http.StatusServiceUnavailable, "SCIM API is not configured", "")
+			return
+		}
+
+		provided := r.Header.Get(scimAdminAPIKeyHeader())
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(app.config.AdminAPIKey)) != 1 {
+			writeSCIMError(w, http.StatusUnauthorized, "authentication failed", "")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func scimAdminAPIKeyHeader() string {
+	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
 }
 
 // --- User Handlers ---

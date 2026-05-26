@@ -159,12 +159,14 @@ P3 Implementation Notes:
   Core file retains types, interfaces, router setup, and audit helper (~230 LOC, down from 698).
 - #16: k8s/helm/euno/templates/ingress.yaml with per-service Ingress resources (gateway, issuer, minter).
   Configurable via values.yaml ingress section (className, hosts, TLS, annotations).
+  Per-service annotations and TLS overrides supported via ingress.gateway.annotations, ingress.issuer.tls, etc.
 - #17: Full SCIM 2.0 implementation in internal/issuer/scim.go:
   - Users: POST, GET (single+list), PATCH, PUT, DELETE
   - Groups: POST, GET (single+list), PATCH, PUT, DELETE
   - SCIM PATCH operations: add/replace/remove with path support
-  - Filtering: eq operator on userName/displayName/externalId
-  - Proper SCIM error responses (urn:ietf:params:scim:api:messages:2.0:Error)
+  - Filtering: eq operator on userName/displayName/externalId (Users), displayName/externalId (Groups)
+  - User.groups field synchronized automatically when group membership changes
+  - Proper SCIM error responses (urn:ietf:params:scim:api:messages:2.0:Error) via dedicated requireSCIMAuth middleware
   - 40+ new tests in scim_test.go
 - #18: Chaos engineering test suite in internal/chaos/:
   - Fault injector (latency, error, timeout, partition) with probability control
@@ -188,4 +190,4 @@ Stage	Status	Gaps
 9 — Agent Runtime	✅ Complete	None
 10 — Deployment & Hardening	✅ Complete	Trivy scanning added (P2 #14); chaos test suite added (P3 #18)
 11 — Integration Testing	✅ Complete	DB migration tests need live PG
-Overall: All P0, P2, and P3 items resolved. 11/11 stages fully complete. Remaining deferral: live PG for migration tests (does not block deployments), live-cluster chaos (requires staging k8s).
+Overall: All P0, P2, and P3 items resolved. 11/11 stages fully complete. Remaining deferrals: live PG for migration tests (does not block deployments), live-cluster chaos (requires staging k8s).

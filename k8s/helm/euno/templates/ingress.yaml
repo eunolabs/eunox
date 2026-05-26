@@ -10,7 +10,7 @@ metadata:
   labels:
     {{- include "euno.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
-  {{- with .Values.ingress.annotations }}
+  {{- with (merge (.Values.ingress.gateway.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -18,9 +18,9 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- if or .Values.ingress.gateway.tls .Values.ingress.tls }}
   tls:
-    {{- range .Values.ingress.tls }}
+    {{- range (default .Values.ingress.tls .Values.ingress.gateway.tls) }}
     - hosts:
         {{- range .hosts }}
         - {{ . | quote }}
@@ -47,7 +47,7 @@ metadata:
   labels:
     {{- include "euno.labels" . | nindent 4 }}
     app.kubernetes.io/component: issuer
-  {{- with .Values.ingress.annotations }}
+  {{- with (merge (.Values.ingress.issuer.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -55,9 +55,9 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- if or .Values.ingress.issuer.tls .Values.ingress.tls }}
   tls:
-    {{- range .Values.ingress.tls }}
+    {{- range (default .Values.ingress.tls .Values.ingress.issuer.tls) }}
     - hosts:
         {{- range .hosts }}
         - {{ . | quote }}
@@ -84,7 +84,7 @@ metadata:
   labels:
     {{- include "euno.labels" . | nindent 4 }}
     app.kubernetes.io/component: minter
-  {{- with .Values.ingress.annotations }}
+  {{- with (merge (.Values.ingress.minter.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -92,9 +92,9 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- if or .Values.ingress.minter.tls .Values.ingress.tls }}
   tls:
-    {{- range .Values.ingress.tls }}
+    {{- range (default .Values.ingress.tls .Values.ingress.minter.tls) }}
     - hosts:
         {{- range .hosts }}
         - {{ . | quote }}
