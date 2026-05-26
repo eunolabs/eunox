@@ -144,25 +144,25 @@ func run() error {
 	}
 
 	// Production admin auth validation: JWT must be configured in production (CR-3).
-	if err := validateAdminAuth(&cfg); err != nil {
+	if err := validateAdminAuth(&cfg, tenantID); err != nil {
 		return err
 	}
 	if cfg.NodeEnv == config.EnvProduction && cfg.AdminAPIKey != "" {
-		logger.Warn("static ADMIN_API_KEY is deprecated in production; use JWT admin auth (ADMIN_JWKS_URI) exclusively. The static key will be removed in a future release")
+		logger.Warn("static ADMIN_API_KEY is deprecated in production; use JWT admin auth (GATEWAY_ADMIN_JWKS_URI) exclusively. The static key will be removed in a future release")
 	}
 
 	appCfg := gateway.Config{
-		BackendURL:        cfg.BackendServiceURL,
-		GatewayAudience:   cfg.GatewayAudience,
-		IssuerJWKSURL:     cfg.IssuerJWKSURL,
-		RequireKID:        cfg.RequireKID,
-		AllowedOrigins:    allowedOrigins,
-		RateLimitRequests: cfg.RateLimitMaxRequests,
-		RateLimitWindow:   time.Duration(cfg.RateLimitWindowMS) * time.Millisecond,
-		AdminAPIKey:       cfg.AdminAPIKey,
-		AdminJWKSURI:      cfg.AdminJWKSURI,
-		AdminJWTAudience:  cfg.AdminJWTAudience,
-		TenantID:          tenantID,
+		BackendURL:              cfg.BackendServiceURL,
+		GatewayAudience:         cfg.GatewayAudience,
+		IssuerJWKSURL:           cfg.IssuerJWKSURL,
+		RequireKID:              cfg.RequireKID,
+		AllowedOrigins:          allowedOrigins,
+		RateLimitRequests:       cfg.RateLimitMaxRequests,
+		RateLimitWindow:         time.Duration(cfg.RateLimitWindowMS) * time.Millisecond,
+		AdminAPIKey:             cfg.AdminAPIKey,
+		AdminJWKSURI:            cfg.AdminJWKSURI,
+		AdminJWTAudience:        cfg.AdminJWTAudience,
+		TenantID:                tenantID,
 		TelemetryEnabled:        telemetryEnabled,
 		TelemetryFlushMS:        cfg.TelemetryFlushMS,
 		AdminRateLimitPerMinute: cfg.AdminRateLimitPerMinute,
@@ -268,12 +268,26 @@ func (v *noopVerifier) VerifyToken(_ context.Context, _ string) (*capability.Tok
 
 // validateAdminAuth checks that admin authentication is properly configured for the
 // deployment environment. In production, JWT auth via JWKS is required (CR-3).
-func validateAdminAuth(cfg *config.GatewayConfig) error {
+func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
+	adminJWKSURI := strings.TrimSpace(cfg.AdminJWKSURI)
+	adminJWTAudience := strings.TrimSpace(cfg.AdminJWTAudience)
+	tenantID = strings.TrimSpace(tenantID)
+
+	if adminJWKSURI != "" && tenantID == "" {
+		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled")
+	}
+
 	if cfg.NodeEnv != config.EnvProduction {
 		return nil
 	}
-	if cfg.AdminJWKSURI == "" {
+	if adminJWKSURI == "" {
 		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in production; static admin key alone is insecure (see CR-3 in ARCHITECTURE_REVIEW.md)")
+	}
+	if adminJWTAudience == "" {
+		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in production when admin JWT auth is enabled")
+	}
+	if tenantID == "" {
+		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required in production when admin JWT auth is enabled")
 	}
 	return nil
 }

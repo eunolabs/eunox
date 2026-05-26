@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,7 +18,7 @@ func (app *App) adminRateLimitMiddleware(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := extractClientIP(r)
+		key := adminRateLimitKey(r)
 
 		result, err := app.adminRateLimiter.Check(r.Context(), key)
 		if err != nil {
@@ -37,4 +38,12 @@ func (app *App) adminRateLimitMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func adminRateLimitKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

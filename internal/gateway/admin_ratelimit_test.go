@@ -111,26 +111,35 @@ func TestAdminRateLimitMiddleware_PerIPIsolation(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestAdminRateLimitMiddleware_XForwardedFor(t *testing.T) {
+func TestAdminRateLimitMiddleware_IgnoresXForwardedFor(t *testing.T) {
 	app := newRateLimitTestApp(t, 2)
 
-	// Exhaust limit using X-Forwarded-For header.
+	// Exhaust limit for remote address A.
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/admin/usage", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", testAdminKey)
-		req.Header.Set("X-Forwarded-For", "3.3.3.3, 4.4.4.4")
+		req.Header.Set("X-Forwarded-For", "9.9.9.9, 8.8.8.8")
 		req.RemoteAddr = "127.0.0.1:5555"
 		w := httptest.NewRecorder()
 		app.AdminHandler().ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	// Same XFF should be blocked.
+	// Different remote address with same XFF should still be allowed.
 	req := httptest.NewRequest(http.MethodGet, "/admin/usage", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", testAdminKey)
-	req.Header.Set("X-Forwarded-For", "3.3.3.3, 4.4.4.4")
-	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Set("X-Forwarded-For", "9.9.9.9, 8.8.8.8")
+	req.RemoteAddr = "127.0.0.2:5555"
 	w := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Same remote address should be blocked regardless of XFF value.
+	req = httptest.NewRequest(http.MethodGet, "/admin/usage", http.NoBody)
+	req.Header.Set("X-Admin-Api-Key", testAdminKey)
+	req.Header.Set("X-Forwarded-For", "1.1.1.1, 2.2.2.2")
+	req.RemoteAddr = "127.0.0.1:5555"
+	w = httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }

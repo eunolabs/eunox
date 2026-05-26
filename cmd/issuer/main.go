@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	stdcrypto "crypto"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -171,12 +172,23 @@ func buildSigner(cfg *config.IssuerConfig) (crypto.Signer, error) {
 		if cfg.AzureKeyVaultKeyName == "" {
 			return nil, fmt.Errorf("AZURE_KEYVAULT_KEY_NAME is required for azure-keyvault signing provider")
 		}
-		return crypto.NewRealAzureKeyVaultSigner(&crypto.RealAzureKeyVaultSignerConfig{
+		client, err := crypto.NewEnvAzureKeyVaultClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Azure Key Vault client: %w", err)
+		}
+		signer, err := crypto.NewRealAzureKeyVaultSigner(&crypto.RealAzureKeyVaultSignerConfig{
 			VaultURL:  cfg.AzureKeyVaultURL,
 			KeyName:   cfg.AzureKeyVaultKeyName,
 			Algorithm: crypto.ES256,
-			Client:    crypto.NewEnvAzureKeyVaultClient(),
+			Client:    client,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if err := ensureProductionSignerPublishesPublicKey(cfg, signer); err != nil {
+			return nil, err
+		}
+		return signer, nil
 	case "aws-kms":
 		if cfg.AWSKMSKeyID == "" {
 			return nil, fmt.Errorf("AWS_KMS_KEY_ID is required for aws-kms signing provider")
@@ -184,12 +196,23 @@ func buildSigner(cfg *config.IssuerConfig) (crypto.Signer, error) {
 		if cfg.AWSKMSRegion == "" {
 			return nil, fmt.Errorf("AWS_KMS_REGION is required for aws-kms signing provider")
 		}
-		return crypto.NewRealAWSKMSSigner(crypto.RealAWSKMSSignerConfig{
+		client, err := crypto.NewEnvAWSKMSClient(cfg.AWSKMSRegion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize AWS KMS client: %w", err)
+		}
+		signer, err := crypto.NewRealAWSKMSSigner(crypto.RealAWSKMSSignerConfig{
 			KeyID:     cfg.AWSKMSKeyID,
 			Region:    cfg.AWSKMSRegion,
 			Algorithm: crypto.ES256,
-			Client:    crypto.NewEnvAWSKMSClient(cfg.AWSKMSRegion),
+			Client:    client,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if err := ensureProductionSignerPublishesPublicKey(cfg, signer); err != nil {
+			return nil, err
+		}
+		return signer, nil
 	case "gcp-cloudkms":
 		if cfg.GCPProjectID == "" {
 			return nil, fmt.Errorf("GCP_PROJECT_ID is required for gcp-cloudkms signing provider")
@@ -200,18 +223,44 @@ func buildSigner(cfg *config.IssuerConfig) (crypto.Signer, error) {
 		if cfg.GCPCryptoKeyID == "" {
 			return nil, fmt.Errorf("GCP_CRYPTOKEY_ID is required for gcp-cloudkms signing provider")
 		}
-		return crypto.NewRealGCPCloudKMSSigner(&crypto.RealGCPCloudKMSSignerConfig{
+		client, err := crypto.NewEnvGCPCloudKMSClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize GCP Cloud KMS client: %w", err)
+		}
+		signer, err := crypto.NewRealGCPCloudKMSSigner(&crypto.RealGCPCloudKMSSignerConfig{
 			ProjectID:        cfg.GCPProjectID,
 			LocationID:       gcpLocationOrDefault(cfg),
 			KeyRingID:        cfg.GCPKeyringID,
 			CryptoKeyID:      cfg.GCPCryptoKeyID,
 			CryptoKeyVersion: gcpKeyVersionOrDefault(cfg),
 			Algorithm:        crypto.ES256,
-			Client:           crypto.NewEnvGCPCloudKMSClient(),
+			Client:           client,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if err := ensureProductionSignerPublishesPublicKey(cfg, signer); err != nil {
+			return nil, err
+		}
+		return signer, nil
 	default:
 		return nil, fmt.Errorf("unknown signing provider: %s", cfg.SigningProvider)
 	}
+}
+
+type publicKeyExporter interface {
+	PublicKey() stdcrypto.PublicKey
+}
+
+func ensureProductionSignerPublishesPublicKey(cfg *config.IssuerConfig, signer crypto.Signer) error {
+	if cfg.NodeEnv != config.EnvProduction {
+		return nil
+	}
+	exporter, ok := signer.(publicKeyExporter)
+	if !ok || exporter.PublicKey() == nil {
+		return fmt.Errorf("signing provider %q must expose a public key in production for JWKS publication", cfg.SigningProvider)
+	}
+	return nil
 }
 
 func gcpLocationOrDefault(cfg *config.IssuerConfig) string {
