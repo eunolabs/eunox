@@ -882,7 +882,7 @@ The following rows supplement the base feature matrix in §2.
 ### 11.2 Issuer configuration reference
 
 The issuer is configured entirely via environment variables validated on startup
-by the same config-loading mechanism used by the gateway. The issuer config
+by the same environment-variable validation flow used by the gateway. The issuer config
 struct and validation rules are defined in `pkg/config/issuer.go` and
 `pkg/config/validation.go`.
 The table below covers the variables a self-host operator must review before
@@ -1958,7 +1958,7 @@ helm install eunox-issuer ./k8s/helm/issuer \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
 ```
 
-Values schemas are checked in under `k8s/helm/*/values.schema.json`.
+Values schemas are located at `k8s/helm/*/values.schema.json`.
 
 #### 12.10.2 Minimum viable air-gapped setup
 
