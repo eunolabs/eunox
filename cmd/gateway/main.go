@@ -28,6 +28,13 @@ import (
 	"github.com/edgeobs/eunox/pkg/revocation"
 )
 
+// These variables are set by GoReleaser via -X ldflags at build time.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 const (
 	shutdownTimeout = 30 * time.Second
 	readTimeout     = 10 * time.Second
@@ -51,7 +58,7 @@ func run() error {
 		Level:       levelFromEnv(cfg.NodeEnv),
 		Format:      "json",
 		ServiceName: "gateway",
-		Version:     "0.1.0",
+		Version:     version,
 	})
 
 	slog.SetDefault(logger)

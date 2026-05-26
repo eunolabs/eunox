@@ -1,0 +1,19 @@
+# Copyright 2026 Eunox Authors
+# SPDX-License-Identifier: BUSL-1.1
+#
+# GoReleaser Dockerfile.
+# GoReleaser pre-builds the binary and passes it in the build context;
+# this file copies it into a minimal distroless image.
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG BINARY
+COPY ${BINARY} /usr/local/bin/service
+
+USER 65534:65534
+
+LABEL org.opencontainers.image.source="https://github.com/edgeobs/eunox"
+LABEL org.opencontainers.image.licenses="BUSL-1.1"
+LABEL org.opencontainers.image.vendor="Eunox"
+
+ENTRYPOINT ["/usr/local/bin/service"]
