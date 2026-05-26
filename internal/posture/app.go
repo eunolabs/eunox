@@ -166,7 +166,7 @@ func (app *App) Handler() http.Handler {
 
 // EmitObserved enqueues an observed agent record for delivery to CSPM plugins.
 // This is called synchronously by the issuer during token issuance/renewal.
-func (app *App) EmitObserved(record *AgentInventoryRecord) error {
+func (app *App) EmitObserved(ctx context.Context, record *AgentInventoryRecord) error {
 	if !app.config.Enabled {
 		return nil
 	}
@@ -181,7 +181,7 @@ func (app *App) EmitObserved(record *AgentInventoryRecord) error {
 		return fmt.Errorf("posture emitter: marshal record: %w", err)
 	}
 
-	if _, err := app.queue.Push(context.Background(), EventObserved, payload); err != nil {
+	if _, err := app.queue.Push(ctx, EventObserved, payload); err != nil {
 		return fmt.Errorf("posture emitter: enqueue observed: %w", err)
 	}
 
@@ -193,7 +193,7 @@ func (app *App) EmitObserved(record *AgentInventoryRecord) error {
 }
 
 // EmitRevoked enqueues a revocation event for delivery to CSPM plugins.
-func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
+func (app *App) EmitRevoked(ctx context.Context, agentID string, revokedAt time.Time) error {
 	if !app.config.Enabled {
 		return nil
 	}
@@ -209,7 +209,7 @@ func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
 		return fmt.Errorf("posture emitter: marshal revocation: %w", err)
 	}
 
-	if _, err := app.queue.Push(context.Background(), EventRevoked, payload); err != nil {
+	if _, err := app.queue.Push(ctx, EventRevoked, payload); err != nil {
 		return fmt.Errorf("posture emitter: enqueue revoked: %w", err)
 	}
 
@@ -221,8 +221,8 @@ func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
 }
 
 // QueueDepth returns the current number of events in the queue.
-func (app *App) QueueDepth() (int64, error) {
-	depth, err := app.queue.Depth(context.Background())
+func (app *App) QueueDepth(ctx context.Context) (int64, error) {
+	depth, err := app.queue.Depth(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -286,8 +286,8 @@ func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
-	depth, err := app.QueueDepth()
+func (app *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	depth, err := app.QueueDepth(r.Context())
 	if err != nil {
 		if app.deps.Logger != nil {
 			app.deps.Logger.Error("posture emitter: failed to read queue depth", slog.String("error", err.Error()))
@@ -312,7 +312,7 @@ func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (app *App) handleStatus(w http.ResponseWriter, r *http.Request) {
-	depth, err := app.QueueDepth()
+	depth, err := app.QueueDepth(r.Context())
 	if err != nil {
 		if app.deps.Logger != nil {
 			app.deps.Logger.Error("posture emitter: failed to read queue depth", slog.String("error", err.Error()))
@@ -373,7 +373,7 @@ func (app *App) handleEmit(w http.ResponseWriter, r *http.Request) {
 		LastSeen:               now,
 	}
 
-	if err := app.EmitObserved(&record); err != nil {
+	if err := app.EmitObserved(r.Context(), &record); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -398,7 +398,7 @@ func (app *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := app.EmitRevoked(req.AgentID, time.Now().UTC()); err != nil {
+	if err := app.EmitRevoked(r.Context(), req.AgentID, time.Now().UTC()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -477,11 +477,11 @@ func (app *App) initMetrics() *emitterMetrics {
 }
 
 // UpdateMetrics refreshes the queue depth gauge from the current queue state.
-func (app *App) UpdateMetrics() {
+func (app *App) UpdateMetrics(ctx context.Context) {
 	if app.metrics == nil {
 		return
 	}
-	depth, err := app.queue.Depth(context.Background())
+	depth, err := app.queue.Depth(ctx)
 	if err != nil {
 		if app.deps.Logger != nil {
 			app.deps.Logger.Error("posture emitter: failed to update queue depth metric", slog.String("error", err.Error()))
