@@ -80,8 +80,8 @@ func TestMigration_ConfigJSONRoundTrip(t *testing.T) {
 func TestMigration_MigrationFilesExist(t *testing.T) {
 	// Check that migration directories exist
 	migrationDirs := []string{
-		"internal/minter/migrations",
-		"internal/issuer/migrations",
+		"migrations/minter",
+		"migrations/audit",
 	}
 
 	for _, dir := range migrationDirs {

@@ -4,7 +4,7 @@
 VERSION ?= 0.1.0
 GO ?= go
 GOFLAGS ?= -race
-GOLANGCI_LINT_VERSION ?= v2.1.6
+GOLANGCI_LINT_VERSION ?= v2.12.2
 
 .PHONY: all build test lint generate clean coverage check-license vet
 
