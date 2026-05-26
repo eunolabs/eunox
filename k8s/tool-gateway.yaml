@@ -1,7 +1,7 @@
 # Tool Gateway — StatefulSet for horizontal sharding (H-1).
 #
 # Using a StatefulSet instead of a Deployment gives every pod a stable
-# ordinal suffix in the form `tool-gateway-<N>`.  The init container below
+# ordinal suffix in the form `gateway-<N>`.  The init container below
 # extracts that ordinal and writes it to GATEWAY_SHARD_INDEX so each replica
 # knows its position in the consistent-hash ring without any external
 # coordination service.
@@ -15,27 +15,27 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: tool-gateway
+  name: gateway
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
     component: data-plane
 spec:
   # Keep in sync with GATEWAY_SHARD_COUNT and with the envoy-shard-router
   # configmap (SHARD_COUNT).  A mismatch between replica count and
   # GATEWAY_SHARD_COUNT causes counter drift until the slower end catches up.
   replicas: 3
-  serviceName: tool-gateway-headless
+  serviceName: gateway-headless
   selector:
     matchLabels:
-      app: tool-gateway
+      app: gateway
   template:
     metadata:
       labels:
-        app: tool-gateway
+        app: gateway
         component: data-plane
     spec:
-      serviceAccountName: tool-gateway
+      serviceAccountName: gateway
       # Task 7: Topology spread + anti-affinity so replica count translates into
       # real failure-domain redundancy.
       #
@@ -49,13 +49,13 @@ spec:
         whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app: tool-gateway
+            app: gateway
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
-            app: tool-gateway
+            app: gateway
 
       affinity:
         podAntiAffinity:
@@ -65,11 +65,11 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchLabels:
-                app: tool-gateway
+                app: gateway
             topologyKey: kubernetes.io/hostname
 
       # Init container: extract the pod ordinal from $POD_NAME
-      # (e.g. "tool-gateway-2" → "2") and write it to a shared volume as
+      # (e.g. "gateway-2" → "2") and write it to a shared volume as
       # GATEWAY_SHARD_INDEX so the main container can read it via envFrom.
       # We use a tiny busybox rather than a custom image to keep the
       # dependency footprint minimal.
@@ -93,8 +93,8 @@ spec:
         - name: shard-env
           mountPath: /env
       containers:
-      - name: tool-gateway
-        image: eunoacr.azurecr.io/tool-gateway:v1.0.0
+      - name: gateway
+        image: eunoacr.azurecr.io/gateway:v1.0.0
         imagePullPolicy: Always
         # Source the shard index written by the init container before
         # starting Node. The init container writes:
@@ -134,7 +134,7 @@ spec:
         # Used by the audit pipeline to tag each SignedBatchCommitment with
         # the originating pod so replay/verification tooling can attribute
         # events to a specific replica.  Matches the pod's stable ordinal
-        # DNS name (e.g. "tool-gateway-0").
+        # DNS name (e.g. "gateway-0").
         - name: AUDIT_REPLICA_ID
           valueFrom:
             fieldRef:
@@ -151,7 +151,7 @@ spec:
         # /env/shard.env file via the container command wrapper above.
         # The default (0) applies when running outside a StatefulSet.
         - name: ISSUER_JWKS_URL
-          value: "http://capability-issuer:3001/.well-known/jwks.json"
+          value: "http://issuer:3001/.well-known/jwks.json"
         - name: BACKEND_SERVICE_URL
           valueFrom:
             configMapKeyRef:
@@ -228,16 +228,16 @@ spec:
       - name: shard-env
         emptyDir: {}
 ---
-# Headless Service required by StatefulSet for pod DNS (tool-gateway-0,
-# tool-gateway-1, …).  The Envoy shard router targets individual pods by
+# Headless Service required by StatefulSet for pod DNS (gateway-0,
+# gateway-1, …).  The Envoy shard router targets individual pods by
 # their ordinal-stable DNS name; this service makes those names resolvable.
 apiVersion: v1
 kind: Service
 metadata:
-  name: tool-gateway-headless
+  name: gateway-headless
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
 spec:
   clusterIP: None
   ports:
@@ -246,17 +246,17 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: tool-gateway
+    app: gateway
 ---
 # ClusterIP Service for non-sharded consumers (health checks, metrics
 # scrapers, admin API clients) that do not need pod affinity.
 apiVersion: v1
 kind: Service
 metadata:
-  name: tool-gateway
+  name: gateway
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
 spec:
   type: ClusterIP
   ports:
@@ -265,16 +265,16 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: tool-gateway
+    app: gateway
 ---
 # Admin API Service — internal ClusterIP only.
 apiVersion: v1
 kind: Service
 metadata:
-  name: tool-gateway-admin
+  name: gateway-admin
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
 spec:
   type: ClusterIP
   ports:
@@ -283,10 +283,10 @@ spec:
     protocol: TCP
     name: admin
   selector:
-    app: tool-gateway
+    app: gateway
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: tool-gateway
+  name: gateway
   namespace: euno-system

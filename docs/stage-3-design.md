@@ -12,7 +12,7 @@
 
 ## 0. Purpose and Scope
 
-This document is the Stage 3 design freeze for `euno-platform`. It captures
+This document is the Stage 3 design freeze for `eunox`. It captures
 every architectural decision that Tasks 2–12 must implement — and nothing else.
 The goal is to make implementation choices explicit, reviewable, and traceable
 before code is written, not discovered during code review.
@@ -51,14 +51,14 @@ before code is written, not discovered during code review.
 
 **Supported (self-host and hosted fallback):**
 
-| Backend              | Protection level          | Config type in `@euno/common-core` (`public/packages/common/src/runtime.ts`) |
+| Backend              | Protection level          | Config type in `@euno/common-core` (`pkg//src/runtime.ts`) |
 |----------------------|---------------------------|-------------------------------------------------------------------------------|
 | Azure Managed HSM    | FIPS 140-2 Level 3 (HSM)  | `AzureKeyVaultConfig`                                                         |
 | AWS CloudHSM via KMS | FIPS 140-2 Level 3 (HSM)  | `AWSKMSConfig`                                                                |
 | GCP Cloud KMS (HSM)  | FIPS 140-2 Level 3 (HSM)  | `GCPCloudKMSConfig`                                                           |
 
 All three config types already exist in
-`public/packages/common/src/runtime.ts` and are implemented as signing
+`pkg//src/runtime.ts` and are implemented as signing
 backends in the capability issuer. The minter's `KmsEvidenceSigner`
 (stage3executionplan.md §Task 5) reuses the same abstractions.
 
@@ -168,7 +168,7 @@ Key rotation therefore requires:
 
 **Implementation:** `PostgresLedgerBackend` (or the lock-free
 `PerReplicaPostgresLedgerBackend` recommended in `docs/mvp.md` line 648) — both
-implemented in `euno-platform/packages/common-infra/src/ledger-signer.ts`.
+implemented in `pkg/src/ledger-signer.ts`.
 
 Stage 3 uses the **existing table schema** managed by
 `PostgresLedgerBackend.migrate()` (see `ledger-signer.ts` lines 730–742 for
@@ -272,7 +272,7 @@ CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
 ### 2.3 Kill-Switch Persistence
 
 **Implementation:** `PostgresKillSwitchBackend` — already implemented in
-`euno-platform/packages/common-infra/src/redis-kill-switch.ts` via the
+`pkg/src/redis-kill-switch.ts` via the
 `KillSwitchPersistenceBackend` seam.
 
 The existing table schema is preserved unchanged in Stage 3. Row *presence* is
@@ -345,7 +345,7 @@ own key namespace, configurable via a dedicated environment variable:
 
 Each prefix default is defined in the corresponding module (see
 `common-infra/src/redis-kill-switch.ts`, `common-infra/src/call-counter-store.ts`,
-`tool-gateway/src/revocation-store.ts`, `public/packages/common/src/dpop.ts`).
+`tool-gateway/src/revocation-store.ts`, `pkg//src/dpop.ts`).
 There is **no global `REDIS_KEY_PREFIX`** environment variable — each store's
 prefix is independently configurable to allow sharing a Redis instance across
 multiple environments without key collisions.
@@ -416,7 +416,7 @@ capabilities land in which tier.
 code (BSL 1.1). The API-key minter is **not** in the self-host bundle initially
 (per `docs/mvp.md` line 646: "not part of the self-host bundle initially —
 that decision can flip later based on demand"). Self-hosters must issue their
-own JWT capability tokens via `euno-platform/packages/capability-issuer` or a
+own JWT capability tokens via `internal/issuer` or a
 compatible issuer.
 
 ---
@@ -859,7 +859,7 @@ it. Reviewers should verify each cross-link before approving.
 | Decision | This document § | `docs/mvp.md` anchor |
 |---|---|---|
 | KMS provider: Azure Managed HSM primary | §1.1 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
-| Config types in `@euno/common-core` | §1.1 | `public/packages/common/src/runtime.ts` |
+| Config types in `@euno/common-core` | §1.1 | `pkg//src/runtime.ts` |
 | Non-exportability verification procedure | §1.3 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
 | Key rotation via JWKS kid | §1.4 | `docs/mvp.md` §["Minter threat model"](mvp.md#minter-threat-model-required-before-stage-3-ships) |
 | Audit signer: KMS-backed → OCSF | §1 | Line 525 (parity table row "Audit signer") |

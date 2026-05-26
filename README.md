@@ -1,281 +1,109 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="euno" height="96">
+  <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="eunox" height="96">
 </p>
 
-<h1 align="center">euno</h1>
+<h1 align="center">eunox</h1>
 
 <p align="center">
-  <strong>Policy proxy for AI agents.</strong><br>
+  <strong>Policy proxy for AI agents — Go implementation.</strong><br>
   One YAML file enforces what every agent is allowed to do —
   <em>before</em> the tool call reaches your backend.
 </p>
 
 <p align="center">
-  <a href="https://github.com/edgeobs/euno/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <a href="https://nodejs.org/"><img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A518-339933"></a>
+  <a href="https://github.com/edgeobs/eunox/blob/main/LICENSE"><img alt="License: BUSL-1.1" src="https://img.shields.io/badge/license-BUSL--1.1-blue.svg"></a>
+  <a href="https://go.dev/"><img alt="Go 1.25+" src="https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8"></a>
   <a href="https://spec.modelcontextprotocol.io/"><img alt="MCP" src="https://img.shields.io/badge/MCP-supported-7c3aed"></a>
-  <a href="https://github.com/edgeobs/euno/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/edgeobs/euno?style=social"></a>
-</p>
-
-<p align="center">
-  <a href="./web/index.html"><strong>Website</strong></a> •
-  <a href="./web/quickstart.html"><strong>Quick start</strong></a> •
-  <a href="./web/features.html"><strong>Features</strong></a> •
-  <a href="./web/how-it-works.html"><strong>How it works</strong></a> •
-  <a href="./public/packages/mcp/README.md"><strong>@euno/mcp docs</strong></a>
 </p>
 
 ---
 
-## What is euno?
+## What is eunox?
 
-euno is an **open-source policy proxy** for AI agents that speak the
-[Model Context Protocol](https://spec.modelcontextprotocol.io/). It sits
-between your MCP host (Claude Desktop, Cursor, Windsurf, LangChain.js, …)
-and your upstream MCP server, and enforces a declarative capability policy
-on every `tools/call` — **before** the upstream is ever contacted.
+eunox is the **Go reimplementation** of the Euno Platform enterprise services.
+It provides a policy proxy for AI agents that speak the
+[Model Context Protocol](https://spec.modelcontextprotocol.io/), delivering
+improved performance, lower memory usage, and simplified deployment.
+
+## Services
+
+| Service | Path | Description |
+|---------|------|-------------|
+| Gateway | `cmd/gateway/` | Enforcement gateway — policy evaluation, rate limiting, kill switch |
+| Issuer | `cmd/issuer/` | Capability token issuance, IdP integration |
+| Minter | `cmd/minter/` | API-key lifecycle, admin auth, anomaly detection |
+| DB Token Service | `cmd/db-token-svc/` | Short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL) |
+| Storage Grant Service | `cmd/storage-grant-svc/` | Presigned URLs (AWS S3, Azure Blob, GCP GCS) |
+| Posture Emitter | `cmd/posture-emitter/` | Security posture reporting |
+
+## Project Structure
 
 ```
-Agent  →  tools/call: query_db { sql: "DROP TABLE users" }
-                                    ↓
-                       @euno/mcp: policy says SELECT only
-                       upstream never called
-                                    ↓
-Agent  ←  CapabilityDenied: operation DROP not in [SELECT]
+eunox/
+├── cmd/                    # Service entry points
+│   ├── gateway/
+│   ├── issuer/
+│   ├── minter/
+│   ├── db-token-svc/
+│   ├── storage-grant-svc/
+│   └── posture-emitter/
+├── internal/               # Private application code
+├── pkg/                    # Public importable packages
+├── migrations/             # SQL migrations
+├── k8s/                    # Kubernetes manifests & Helm charts
+├── infra/                  # Infrastructure (Docker Compose, Terraform, etc.)
+├── docs/                   # Documentation
+├── web/                    # Static website
+├── site/                   # Astro blog/site
+├── blogs/                  # Blog content
+├── Makefile
+├── go.mod
+└── go.sum
 ```
 
-One YAML file. No code changes to your agent or your server. No cloud
-account. No telemetry. Apache-2.0.
+## Development
 
-## Quick start
+### Prerequisites
 
-Run the proxy in front of any MCP server:
+- Go 1.25+
+- golangci-lint v2.1.6+
+
+### Commands
 
 ```bash
-npx -y @euno/mcp proxy \
-  --policy ./euno.policy.yaml \
-  -- npx -y @modelcontextprotocol/server-filesystem /data
+# Run all tests with race detector
+make test
+
+# Run linter (go vet + golangci-lint)
+make lint
+
+# Build all packages
+make build
+
+# Generate coverage report
+make coverage
+
+# Check BSL license headers
+make check-license
+
+# Clean build artifacts
+make clean
 ```
 
-A minimal `euno.policy.yaml`:
+## Deployment
 
-```yaml
-agentId: filesystem-agent
-name:    Filesystem Agent
-version: 0.1.0
+See [`k8s/`](./k8s/) for Kubernetes manifests and Helm charts,
+and [`infra/`](./infra/) for Docker Compose and Terraform configurations.
 
-requiredCapabilities:
-  - resource: read_file
-    actions: [call]
-    conditions:
-      - type: allowedExtensions
-        extensions: [".csv", ".json", ".txt", ".md"]
-      - type: maxCalls
-        count: 50
-        windowSeconds: 60
-```
-
-That's it. Read the [full quick start](./web/quickstart.html) for the
-Claude Desktop / Cursor / Windsurf / LangChain.js / HTTP-transport setups.
-
-## What you get
-
-- 🛡️  **Full condition matrix.** `maxCalls`, `allowedOperations`,
-  `allowedExtensions`, `allowedTables`, `argumentSchema`,
-  `timeWindow`, `ipRange`, `recipientDomain`, `redactFields`, `policy`,
-  and `custom` — all enforced before the upstream is contacted.
-- 📋 **OCSF audit log.** Every decision is recorded as a
-  cryptographically signed OCSF API Activity event in
-  `~/.euno/audit.jsonl`. Aggregate denials with `euno-mcp stats`.
-- 🔌 **Drop-in for every host.** stdio for Claude Desktop / Cursor /
-  Windsurf, HTTP for LangChain.js and other in-process clients.
-- 🪢 **`@euno/langchain` companion.** The same engine inside the
-  LangChain.js tool wrapper — no proxy process, same YAML.
-- 📦 **Reference policies.** Drop-in YAML for filesystem, Postgres,
-  GitHub, Slack, and fetch (with a lexical SSRF guard).
-- 🧩 **Custom backends.** Plug in OPA, Cedar, or your own engine via
-  `--policy-backend`. Domain-specific guards via `--custom-condition`.
-- 🔒 **Zero infra. Zero cloud.** Runs entirely on your machine.
-
-### Hosted gateway
-
-When your team outgrows a single process, one config change routes
-enforcement through the hosted Euno gateway — shared call counters, a
-global kill switch, and a persistent queryable audit ledger, all backed
-by KMS-signed JWT tokens and a Postgres ledger:
-
-```diff
-- euno-mcp proxy --policy ./euno.policy.yaml -- node ./my-mcp-server.js
-+ euno-mcp proxy --enforcer-url https://gateway.euno.example \
-+                --enforcer-api-key sk-... \
-+                -- node ./my-mcp-server.js
-```
-
-The policy file format is unchanged — the same YAML you wrote for local
-mode uploads verbatim to the hosted policy store.
-See [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) for the
-step-by-step guide, the cryptographic story behind the `sk-...` key, and the
-explicit data-boundary analysis (what leaves your network in hosted mode).
-
-### Identity-bound capability tokens
-
-Euno's **Capability Issuer** ties agent capabilities to real user identities
-through your existing identity provider (Entra ID, AWS Cognito, or GCP
-Cloud Identity). Instead of a shared API key, each agent token is bound to
-the user who requested it:
-
-```bash
-# Request a capability token via your IdP (PKCE flow)
-euno request \
-  --agent my-agent \
-  --idp-auth-url  https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize \
-  --idp-token-url https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token \
-  --idp-client-id <client-id>
-
-# Validate the issued token
-euno validate-token --agent-id my-agent
-```
-
-The resulting token carries the user's IdP identity (`authorizedBy.userId`),
-a role-to-capability mapping from the admin role-policy store, and optional
-capability manifest templates that a tech lead authors once and assigns to
-many agents.
-
-See [`docs/quickstart-stage-4.md`](./docs/quickstart-stage-4.md) for the
-full flow, [`docs/issuer-idp-setup.md`](./docs/issuer-idp-setup.md) for IdP
-configuration, and [`docs/self-host.md`](./docs/self-host.md) for
-self-hosting the issuer alongside the gateway.
-
-### Enterprise compliance and federation
-
-Euno's enterprise tier adds full compliance and cross-organization federation. All
-enterprise packages are generally available:
-
-```bash
-# Verify a partner-issued capability token (EdDSA, did:web or did:ion)
-euno validate-token eyJ... \
-  --iss did:web:partner.example.com \
-  --jwks-url https://partner.example.com/.well-known/jwks.json
-
-# Export a SOC 2 audit bundle (CC7 controls, signed OCSF evidence)
-euno audit export \
-  --gateway-url https://gateway.euno.example \
-  --admin-key $EUNO_ADMIN_API_KEY \
-  --scope soc2-cc7 \
-  --out ./audit-bundle.jsonl
-
-# Check the service discovery document
-euno discover --issuer-url https://issuer.euno.example
-```
-
-Key capabilities in the enterprise tier:
-
-- 🏛️  **Partner DID federation.** Cross-org trust via W3C DIDs (`did:web`,
-  `did:ion`) with per-DID circuit breakers, two-eyes approval workflow, and
-  pin attestation.  See [`docs/ADAPTERS.md §Partner Federation`](./docs/ADAPTERS.md).
-- ⛓️  **Cross-chain audit anchor.** `CrossChainAnchor` commits an HMAC root
-  hash of every N audit records to S3 Object-Lock, giving you a tamper-evident
-  ledger even across Postgres replicas.
-- 📋 **SOC 2 audit export.** `GET /api/v1/audit/export` returns a
-  cursor-paginated, cryptographically signed OCSF evidence bundle filterable
-  by SOC 2 CC6/CC7 controls.
-- 🛡️  **AGT in-process guard.** `createAgtGuard()` adds a defense-in-depth
-  layer inside the agent process — policy is checked *before* the gateway
-  is ever called.
-- 👤 **SCIM 2.0 provisioning.** Automatic role-to-capability mapping from
-  your enterprise IdP directory via the SCIM 2.0 protocol.
-- 🔍 **Discovery endpoint.** `/.well-known/capability-issuer` returns
-  federation, SCIM, audit-export, and capabilities metadata with ETag caching.
-- 📦 **On-prem Helm bundle.** A single umbrella chart deploys all six
-  services; `k8s/air-gap-images.txt` + `scripts/pull-air-gap-images.sh`
-  support fully air-gapped installations.
-
-See [`docs/self-host.md`](./docs/self-host.md) for the complete
-self-hosting runbook and [`docs/security/soc2-mapping.md`](./docs/security/soc2-mapping.md)
-for the SOC 2 control mapping.
-
-See [the website](./web/features.html) for worked demos of every
-condition type.
-
-## Platform capabilities
-
-euno is production-ready across all capability tiers:
-
-| Capability tier | What's included | Status |
-|-----------------|-----------------|--------|
-| **Local proxy** | `@euno/mcp` proxy, policy engine, OCSF audit log, full condition matrix, `@euno/langchain` companion, reference policies | ✅ GA |
-| **Hosted gateway** | Tool Gateway, API-key façade, signed JWT capability tokens, shared Redis state, Postgres audit ledger | ✅ GA |
-| **Identity-bound tokens** | Capability Issuer, IdP integration (Entra ID, Cognito, Cloud Identity), PKCE flow, role-to-capability mapping | ✅ GA |
-| **Enterprise** | DID federation, KMS signing, SOC 2 audit export, SCIM 2.0, cross-chain anchor, AGT guard, on-prem Helm bundle | ✅ GA |
-
-### Enterprise deployment (Stage 5)
-
-The enterprise tier is complete and generally available. See the enterprise
-compliance and federation section above for capabilities and CLI examples.
-
-### Development stage history
-
-| Stage | What was delivered | Status |
-|---|---|---|
-| 1 | `@euno/mcp` local proxy, policy engine, OCSF audit log | ✅ Done |
-| 2 | Tool Gateway, API-key façade, signed JWT tokens | ✅ Done |
-| 3 | Capability Issuer, IdP integration (Entra ID), PKCE flow | ✅ Done |
-| 4 | Multi-tenant policies, SCIM 2.0, advanced conditions, AGT guard | ✅ Done |
-| 5 | DID federation, KMS signing, SOC 2 audit export, cross-chain anchor, on-prem Helm bundle | ✅ Done |
-
-See [`docs/mvp.md`](./docs/mvp.md) for the full implementation history.
-
-The platform packages (`tool-gateway`, `capability-issuer`, `agent-runtime`,
-`framework-adapters`) accept security fixes and dependency bumps at all times.
-
-## Packages
-
-| Package | Path | What it does |
-|---------|------|--------------|
-| [`@euno/mcp`](./public/packages/mcp/README.md) | `public/packages/mcp/` | MCP policy proxy (stdio + HTTP) — the wedge product. |
-| [`@euno/langchain`](./public/packages/langchain/README.md) | `public/packages/langchain/` | In-process LangChain.js companion, same YAML. |
-| [`@euno/cli`](./public/packages/cli/README.md) | `public/packages/cli/` | Developer CLI (`euno` binary). |
-| [`@euno/common-core`](./public/packages/common/) | `public/packages/common/` | Shared types, validators, in-memory implementations. |
-
-`public/` ships under **Apache-2.0**. The `euno-platform/` packages
-(self-host and hosted product) ship under **BUSL-1.1**. The
-`lint:license-boundary` CI step enforces that Apache packages depend only
-on Apache packages — see [`docs/repo-split.md`](./docs/repo-split.md).
+For detailed deployment instructions, see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
 ## Documentation
 
-- 🌐 **Website:** [`web/`](./web/) — landing page, quick start,
-  features, how-it-works, reference policies.
-- 📦 **Package docs:** [`@euno/mcp`](./public/packages/mcp/README.md) ·
-  [`@euno/langchain`](./public/packages/langchain/README.md).
-- 🏗  **Architecture:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) ·
-  [`docs/capability-model.md`](./docs/capability-model.md) ·
-  [`docs/enforcement.md`](./docs/enforcement.md).
-- 🔀 **Hosted mode:** [`docs/migrating-from-local.md`](./docs/migrating-from-local.md) ·
-  [`docs/self-host.md`](./docs/self-host.md).
-- 🗺️ **Roadmap:** [`docs/mvp.md`](./docs/mvp.md).
-- 🔧 **Repository guide (build, lint, test, structure):**
-  [`docs/repo-guide.md`](./docs/repo-guide.md).
-- 📚 **Full doc index:** [`docs/README.md`](./docs/README.md).
-
-## Contributing
-
-Issues and pull requests are welcome on
-[github.com/edgeobs/euno](https://github.com/edgeobs/euno). See
-[`docs/repo-guide.md`](./docs/repo-guide.md) for build, lint, and test
-instructions, and [`CODEOWNERS`](./CODEOWNERS) for area ownership.
+- 🌐 **Website:** [`web/`](./web/) — landing page, quick start, features
+- 🏗 **Architecture:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- 🚀 **Deployment:** [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
+- 🔧 **Self-hosting:** [`docs/self-host.md`](./docs/self-host.md)
 
 ## License
 
-- `public/` (public surface): **Apache-2.0**
-- `euno-platform/` (platform surface): **BUSL-1.1**
-
-See [`LICENSE`](./LICENSE) and [`docs/repo-split.md`](./docs/repo-split.md)
-for the full boundary.
-
-## References
-
-- [Model Context Protocol specification](https://spec.modelcontextprotocol.io/)
-- [OCSF — Open Cybersecurity Schema Framework](https://schema.ocsf.io/)
-- [Building an Auditable Security Layer for Agentic AI](https://azurefeeds.com/2026/04/22/building-an-auditable-security-layer-for-agentic-ai/)
-- [Zero-Trust Agents: Adding Identity and Access to Multi-Agent Workflows](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/zero-trust-agents-adding-identity-and-access-to-multi-agent-workflows/4427790)
+Business Source License 1.1 — See [LICENSE](./LICENSE) for details.

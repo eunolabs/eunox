@@ -81,7 +81,7 @@ flowchart LR
 
 The repository is a TypeScript monorepo with two workspace roots:
 `public/packages/*` for Apache-2.0 developer-facing packages and
-`euno-platform/packages/*` for BUSL-1.1 platform packages.
+`internal/*` for BUSL-1.1 platform packages.
 
 ```mermaid
 flowchart TB
@@ -144,18 +144,18 @@ flowchart TB
 
 | Package                              | LOC (approx) | Public surface                                                                                          |
 | ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `public/packages/common` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
-| `public/packages/mcp` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
-| `public/packages/cli` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
-| `euno-platform/packages/common-infra` | platform shared | BUSL Redis/Postgres/KMS implementations for the interfaces exported by `common-core`. |
-| `euno-platform/packages/common` | compat shim | BUSL back-compat package re-exporting `common-core` and `common-infra`. New public code must not depend on it. |
-| `euno-platform/packages/capability-issuer` | service | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services. |
-| `euno-platform/packages/tool-gateway` | service | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store. |
-| `euno-platform/packages/agent-runtime` | library | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway. |
-| `euno-platform/packages/framework-adapters` | library | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape. |
-| `euno-platform/packages/posture-emitter` | library | Emits `AgentInventoryRecord`s on issuance / revocation for SIEM-side posture inventory. |
-| `euno-platform/packages/integration-tests` | tests | E2E issuer ↔ gateway ↔ runtime harness. |
-| `euno-platform/packages/partner-issuer-sim` | tests | Stand-in foreign issuer for cross-org tests. |
+| `pkg/` | shared | Apache-2.0 contract: capability types, manifest validation, condition registry, validators, in-memory call counters, in-memory kill switch, evidence/runtime interfaces. |
+| `pkg/` | Stage 1 product | `@euno/mcp` stdio/HTTP MCP proxy, local policy enforcement, OCSF-shaped HMAC audit log, opt-in telemetry, `euno-mcp proxy/validate/kill` CLI. |
+| `cmd/` | developer CLI | `euno init`, `validate`, `request`, `config`, `schema-version`, `check`, `plan`, `validate-token`; depends only on `@euno/common-core`. |
+| `pkg` | platform shared | BUSL Redis/Postgres/KMS implementations for the interfaces exported by `common-core`. |
+| `pkg` | compat shim | BUSL back-compat package re-exporting `common-core` and `common-infra`. New public code must not depend on it. |
+| `internal/issuer` | service | HTTP service: `/api/v1/issue`, `/api/v1/attenuate`, `/api/v1/renew`, `/api/v1/public-key`, `/.well-known/did.json`, `/.well-known/capability-issuer`; pluggable identity & signer registries; storage-grant + DB-token side services. |
+| `internal/gateway` | service | HTTP service: `/proxy/*`, `/api/v1/validate`, `/admin/*`; JWT verifier, enforcement engine, partner-issuer resolver, revocation store. |
+| `internal/agent-runtime` | library | `EunoAgentRuntime` class + `main.ts` entry point; transparent token mint / refresh; routes every tool call through the gateway. |
+| `internal/framework-adapters` | library | LangChain / MAF / CrewAI middleware preserving correlation IDs and error shape. |
+| `internal/posture-emitter` | library | Emits `AgentInventoryRecord`s on issuance / revocation for SIEM-side posture inventory. |
+| `internal/integration-tests` | tests | E2E issuer ↔ gateway ↔ runtime harness. |
+| `internal/partner-issuer-sim` | tests | Stand-in foreign issuer for cross-org tests. |
 
 The root `package.json` declares both workspace globs and the
 `scripts/check-license-boundary.mjs` lint step prevents Apache-2.0 packages
@@ -165,7 +165,7 @@ from depending on BUSL-1.1 packages.
 
 ## 4. C4 Level 3 — Internal structure of the two services
 
-### 4.1 Capability Issuer (`euno-platform/packages/capability-issuer/src/`)
+### 4.1 Capability Issuer (`internal/issuer/src/`)
 
 ```mermaid
 flowchart LR
@@ -232,7 +232,7 @@ Notable design choices visible in the code:
   endpoint remains operational (returns the active key's SPKI PEM with
   a `Deprecation` response header) for one deprecation cycle.
 
-### 4.2 Tool Gateway (`euno-platform/packages/tool-gateway/src/`)
+### 4.2 Tool Gateway (`internal/gateway/src/`)
 
 ```mermaid
 flowchart LR
@@ -702,7 +702,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Rate limiting       | Issuer: `IssuanceRateLimiter` backed by the shared call-counter store. Gateway: `CallCounterBackedGatewayQuotaEngine` per token/action/resource when `GATEWAY_QUOTA_ENABLED=true`. | The issuer and gateway share counter abstractions from `@euno/common-core`; Redis-backed production implementations live in `@euno/common-infra`. |
 | Schema evolution    | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`| Fail-closed on unknown versions                                      |
 | Configuration       | `dotenv` + typed `EunoConfig` (Zod) in `@euno/common-core`         | Single schema per service drives boot validation and the regenerated `.env.example` (`euno config dump-template --service <name>`) |
-| Tests               | Per-package `tests/` + `euno-platform/packages/integration-tests` | Workspace tests exercise package and cross-service behaviour.        |
+| Tests               | Per-package `tests/` + `internal/integration-tests` | Workspace tests exercise package and cross-service behaviour.        |
 
 ---
 
@@ -740,6 +740,6 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Understand *why* the design looks like this               | [`capability-model.md`](./capability-model.md), [`enforcement.md`](./enforcement.md)        |
 | See abstract / executive-friendly diagrams                | [`diagrams.md`](./diagrams.md)                                                              |
-| Use the MCP proxy (Stage 1)                               | [`../public/packages/mcp/README.md`](../public/packages/mcp/README.md)       |
+| Use the MCP proxy (Stage 1)                               | [`../pkg//README.md`](../pkg//README.md)       |
 | Deploy Stage 5 infrastructure                             | [`DEPLOYMENT.md`](./DEPLOYMENT.md)                                                         |
 | Find the gaps and the proposed work to close them         | [`capability-model.md`](./capability-model.md)                                                              |

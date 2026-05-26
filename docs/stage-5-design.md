@@ -18,7 +18,7 @@
 
 ## 0. Purpose and Scope
 
-This document is the Stage 5 design freeze for `euno-platform`. It captures every
+This document is the Stage 5 design freeze for `eunox`. It captures every
 architectural decision that Tasks 2–13 must implement — and nothing else. The goal is
 to make implementation choices explicit, reviewable, and traceable before code is
 written, not discovered during code review.
@@ -238,7 +238,7 @@ ION_RESOLVER_URL=https://ion.internal.corp.example.com/api/v1.0/identifiers
 ```
 
 The `ION_RESOLVER_URL` env var already exists in `IssuerConfigSchema` (see
-`public/packages/common/src/config/schema.ts`). Stage 5 promotes it to a documented,
+`pkg//src/config/schema.ts`). Stage 5 promotes it to a documented,
 operator-facing configuration point.
 
 ### 4.2 Rationale
@@ -286,15 +286,15 @@ A new `GET /healthz/did-ion` endpoint (Task 12) resolves a known stable ION docu
 
 | Type | Module | Description |
 |---|---|---|
-| `AgtGuardOptions` | `@euno/common-core` (`public/packages/common/src/agt-guard.ts`) | Construction options for `createAgtGuard()` |
+| `AgtGuardOptions` | `@euno/common-core` (`pkg//src/agt-guard.ts`) | Construction options for `createAgtGuard()` |
 | `AgtGuardResult` | same | Verdict returned by an in-process guard evaluation (`'allow' \| 'deny'`) |
 | `AgtGuardDenyReason` | same | Reason codes passed to `AgtGuardOptions.onDeny` |
 
 These types are implemented and exported in this PR (Task 0). Tests for all three are
-in `public/packages/common/src/__tests__/agt-guard.test.ts`.
+in `pkg//src/__tests__/agt-guard.test.ts`.
 
 The `createAgtGuard()` factory implementation lives in the **BSL-licensed**
-`euno-platform/packages/agent-runtime/src/agt-guard.ts` (added in Task 8).
+`internal/agent-runtime/src/agt-guard.ts` (added in Task 8).
 
 ### 5.2 Type definitions (canonical)
 
@@ -319,7 +319,7 @@ export interface AgtGuardOptions {
 
 ### 5.3 License boundary
 
-These three types are Apache-2.0 (`public/packages/common/`). All other Stage-5
+These three types are Apache-2.0 (`pkg//`). All other Stage-5
 types are extensions of existing `@euno/common-core` types and do not require new
 seam additions. The Stage 0 Substage 0.4 CI dependency-direction gate enforces that
 BSL packages import from `@euno/common-core`, never the reverse.
@@ -383,7 +383,7 @@ Each reviewer should verify:
   (Task 1 — placeholder exists; full document to be completed in Task 1) must be
   approved before Tasks 3, 6, or 10 merge. This RFC does not substitute for the
   threat model.
-- [ ] **`@euno/common-core` tests green:** `npm test` in `public/packages/common`
+- [ ] **`@euno/common-core` tests green:** `npm test` in `pkg/`
   passes with the three new type tests.
 
 | Reviewer | Role | Date | Notes |

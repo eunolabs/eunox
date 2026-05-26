@@ -11,10 +11,10 @@ use the current workspace paths:
 
 | Service | Workspace | Default port |
 | --- | --- | --- |
-| Capability Issuer | `euno-platform/packages/capability-issuer` | 3001 |
-| Tool Gateway | `euno-platform/packages/tool-gateway` | 3002 |
-| Shared infra implementations | `euno-platform/packages/common-infra` | n/a |
-| Public shared contract | `public/packages/common` | n/a |
+| Capability Issuer | `internal/issuer` | 3001 |
+| Tool Gateway | `internal/gateway` | 3002 |
+| Shared infra implementations | `pkg` | n/a |
+| Public shared contract | `pkg/` | n/a |
 
 ## Build and validation
 
@@ -33,15 +33,15 @@ Generate service-specific environment templates with the CLI:
 
 ```bash
 npm run build -w @euno/cli
-euno config dump-template --service issuer > euno-platform/packages/capability-issuer/.env.example
-euno config dump-template --service gateway > euno-platform/packages/tool-gateway/.env.example
+euno config dump-template --service issuer > internal/issuer/.env.example
+euno config dump-template --service gateway > internal/gateway/.env.example
 ```
 
 Production deployments need an issuer signing key, a gateway verifier
 configuration, a protected backend URL, and the selected optional backing stores
 (Redis/Postgres/KMS) configured through the typed config schema in
-`public/packages/common/src/config/schema.ts` and the implementations in
-`euno-platform/packages/common-infra`.
+`pkg//src/config/schema.ts` and the implementations in
+`pkg`.
 
 ## Containerization
 
@@ -239,7 +239,7 @@ for more than 1 minute:
       All capability token issuance is blocked until the audit store recovers.
 ```
 
-Load this rule alongside `euno-platform/packages/api-key-minter/prometheus/minter-alert-rules.yaml`.
+Load this rule alongside `internal/minter/prometheus/minter-alert-rules.yaml`.
 
 ---
 
@@ -420,7 +420,7 @@ may continue to use single-node Redis (`redis://` scheme) by setting
 
 ### Alerting
 
-Load `euno-platform/packages/tool-gateway/prometheus/gateway-alert-rules.yaml`
+Load `internal/gateway/prometheus/gateway-alert-rules.yaml`
 into your Prometheus instance.  The `EunoGatewayRevocationStoreUnavailable`
 alert fires when `euno_gateway_revocation_unavailable_total` increments for
 2 consecutive minutes, which under fail-closed mode means all traffic is
@@ -638,7 +638,7 @@ The recommended HA topology is a **dedicated queue-drainer sidecar**:
 - The drainer is not on the critical path for issuance latency; issuer replicas
   return HTTP 201 as soon as the `XADD` to the stream completes.
 
-See `euno-platform/packages/capability-issuer/src/issuance/posture.ts` for the
+See `internal/issuer/src/issuance/posture.ts` for the
 `DurablePostureEmitter` implementation and the JSDoc single-writer constraint
 warning.
 

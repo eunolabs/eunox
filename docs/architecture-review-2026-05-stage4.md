@@ -1,4 +1,4 @@
-# Architecture Review — euno-platform Stage 4 ("Capability Issuer + Identity")
+# Architecture Review — eunox Stage 4 ("Capability Issuer + Identity")
 
 > **Reviewer role:** Principal Software Architect
 > **Date:** 2026-05-18
@@ -14,7 +14,7 @@
 
 All 14 tasks (0–13) are checked off in `docs/mvp.md`. The static CI/documentation
 gates for E1/E3/E5/E6/E7/E8 are confirmed green, and E4 now has integration-test
-coverage in `euno-platform/packages/integration-tests/`. The remaining release
+coverage in `internal/integration-tests/`. The remaining release
 readiness gaps are operational/process gates: live hosted verification for E2 and
 the named-signatory portion of E9.
 
@@ -25,8 +25,8 @@ the named-signatory portion of E9.
 ### CR-1 — `OidcStateStore` is in-memory only: multi-replica OIDC replay prevention is silently broken ✅ FIXED
 
 **Severity:** High
-**Files:** `euno-platform/packages/capability-issuer/src/oidc-state-store.ts`,
-`euno-platform/packages/capability-issuer/src/index.ts`
+**Files:** `internal/issuer/src/oidc-state-store.ts`,
+`internal/issuer/src/index.ts`
 
 **Original finding:**
 `OidcStateStore` (nonce tracking + ID-token-hash replay prevention) is
@@ -81,10 +81,10 @@ sign-off ownership.
 ### CR-3 — `euno request` PKCE flow has no integration tests against a live issuer
 
 **Severity:** High (exit criterion E3)
-**Files:** `public/packages/cli/tests/cli.test.ts:369-393, 895-942`,
-`euno-platform/packages/integration-tests/tests/`
+**Files:** `cmd//tests/cli.test.ts:369-393, 895-942`,
+`internal/integration-tests/tests/`
 
-**Status: ✅ Fixed** — Added `euno-platform/packages/integration-tests/tests/cli-issuer.test.ts`
+**Status: ✅ Fixed** — Added `internal/integration-tests/tests/cli-issuer.test.ts`
 (17 tests). The test file wires an in-process mock-IdP server (ES256) and a minimal issuer HTTP
 server backed by `CapabilityIssuerService` + `OidcStateStore`, exercises the full loopback
 exchange programmatically, and asserts:
@@ -98,10 +98,10 @@ exchange programmatically, and asserts:
 - JWKS and discovery endpoints.
 
 The `euno request` CLI tests cover only input-validation errors. No file in
-`euno-platform/packages/integration-tests/tests/` exercises the full PKCE
+`internal/integration-tests/tests/` exercises the full PKCE
 browser-redirect → loopback → code-exchange → issuer-POST → token-write path.
 Exit criterion E3 explicitly requires happy-path + error-path integration tests
-in `euno-platform/packages/integration-tests/`.
+in `internal/integration-tests/`.
 
 ---
 
@@ -125,8 +125,8 @@ CI fallback.
 ### DI-1 — Template-assignment fallback to `RoleCapabilityPolicy` is silent
 
 **Severity:** Medium
-**Files:** `euno-platform/packages/capability-issuer/src/manifest-template-store.ts`,
-`euno-platform/packages/capability-issuer/src/issuance/issue-controller.ts`
+**Files:** `internal/issuer/src/manifest-template-store.ts`,
+`internal/issuer/src/issuance/issue-controller.ts`
 
 When a template is soft-deleted, existing assignments continue to work but the
 issuer silently falls back to `RoleCapabilityPolicy`. This silent regression is
@@ -141,7 +141,7 @@ path is taken.
 ### DI-2 — Admin UI serves auth token via `?token=` query parameter
 
 **Severity:** Medium
-**File:** `euno-platform/packages/capability-issuer/src/routes/admin-ui.ts`
+**File:** `internal/issuer/src/routes/admin-ui.ts`
 
 The `?token=` redirect pattern writes the bearer token to proxy access logs and
 browser history even though the page strips it via `history.replaceState`.
@@ -169,13 +169,13 @@ each store requires Redis. Update this entry to note CR-1 is now resolved.
 ### DI-4 — `IssuerTelemetryEvent` is a manual structural copy of `GatewayTelemetryEvent`
 
 **Severity:** Low-Medium
-**File:** `euno-platform/packages/capability-issuer/src/issuer-telemetry.ts:75-78`
+**File:** `internal/issuer/src/issuer-telemetry.ts:75-78`
 
 The comment says "schema changes to `GatewayTelemetryEvent` MUST be reflected
 here." Manual-sync comments are the canonical source of technical debt. The shared
 type belongs in `@euno/common` where both sides can import it.
 
-**Recommendation:** Move to `public/packages/common/src/` as a Stage-5 prep task.
+**Recommendation:** Move to `pkg//src/` as a Stage-5 prep task.
 
 ---
 
@@ -197,7 +197,7 @@ well-known default alias.
 
 ### CI-1 — Telemetry `distinctIssuingUsers` silently saturates at 10 000
 
-**File:** `euno-platform/packages/capability-issuer/src/issuer-telemetry.ts:62`
+**File:** `internal/issuer/src/issuer-telemetry.ts:62`
 
 Once the 10 000-user cap is hit, `distinctIssuingUsers=10000` is indistinguishable
 from exactly 10 000 users. Add a `distinctIssuingUsersCapped: true` companion
@@ -207,7 +207,7 @@ field so dashboards can flag saturation.
 
 ### CI-2 — Verify `requireAdminAuth` is not called twice on the same admin-templates request
 
-**File:** `euno-platform/packages/capability-issuer/src/routes/admin-templates.ts`
+**File:** `internal/issuer/src/routes/admin-templates.ts`
 
 The middleware is mounted at router level and potentially called in handler bodies.
 Double-call is harmless but adds unnecessary JWKS deserialization latency.
@@ -216,7 +216,7 @@ Double-call is harmless but adds unnecessary JWKS deserialization latency.
 
 ### CI-3 — `OidcStateStore` O(N) TTL sweep (resolved when CR-1 Redis migration is complete)
 
-**File:** `euno-platform/packages/capability-issuer/src/oidc-state-store.ts`
+**File:** `internal/issuer/src/oidc-state-store.ts`
 
 The sweep-on-write TTL cleanup iterates both maps in full. Under a replay-style
 DoS the maps grow proportionally to the attack volume. **Moot once CR-1's Redis
@@ -226,7 +226,7 @@ implementation is in use** (Redis handles TTL natively).
 
 ### CI-4 — Admin UI HTML templates must HTML-escape dynamic values
 
-**File:** `euno-platform/packages/capability-issuer/src/routes/admin-ui.ts`
+**File:** `internal/issuer/src/routes/admin-ui.ts`
 
 Dynamic values (template names, agent IDs) interpolated into server-rendered HTML
 are not HTML-escaped. An operator-level stored XSS via a malicious template name
@@ -237,7 +237,7 @@ is a meaningful risk. Confirm all dynamic values are escaped (e.g. via a shared
 
 ### CI-5 — Confirm single canonical revocation source for OIDC-path tokens
 
-**Files:** `public/packages/cli/src/index.ts`, `docs/quickstart-stage-4.md:66-69`
+**Files:** `cmd//src/index.ts`, `docs/quickstart-stage-4.md:66-69`
 
 `euno revoke` targets the gateway admin API. Confirm the issuer maintains no
 separate revocation list and document this in `docs/issuer-operator-runbook.md`.
@@ -246,7 +246,7 @@ separate revocation list and document this in `docs/issuer-operator-runbook.md`.
 
 ### CI-6 — Stage-4 parity test signs tokens in-process, not via `IssueController`
 
-**File:** `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts:877-962`
+**File:** `internal/integration-tests/tests/cross-stage-parity.test.ts:877-962`
 
 **Status: ✅ Fixed** — Added a new `"IssueController parity (CI-6)"` describe block at the end of
 `cross-stage-parity.test.ts` (10 tests). The block exercises `CapabilityIssuerService.issueCapability()`
@@ -285,7 +285,7 @@ Playwright dependency is not required for this gate.
 
 **Q5 — CLI↔issuer integration tests in `integration-tests/` — RESOLVED:**
 Exit criterion E3 is satisfied by
-`euno-platform/packages/integration-tests/tests/cli-issuer.test.ts`.
+`internal/integration-tests/tests/cli-issuer.test.ts`.
 
 ---
 

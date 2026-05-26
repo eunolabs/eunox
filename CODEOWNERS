@@ -1,78 +1,42 @@
-# CODEOWNERS — package ownership
-#
-# This file is the canonical source of code ownership for the current
-# two-folder workspace layout. GitHub will request reviews from the matching
-# team(s) automatically on every PR.
-#
-# Team handles below are placeholders — replace `@edgeobs/<team>` with
-# the actual GitHub team slugs in your organization before merging.
+# CODEOWNERS — eunox package ownership
 
-# ---------------------------------------------------------------------------
-# Default owners — any path not matched below requires a review from the
-# pilot leads.
-# ---------------------------------------------------------------------------
+# Default owners
 *                                       @edgeobs/euno-leads
 
-# ---------------------------------------------------------------------------
-# Control Plane (CP) — capability issuance, signing, identity adapters
-# ---------------------------------------------------------------------------
-/euno-platform/packages/capability-issuer/            @edgeobs/euno-cp
-/euno-platform/packages/partner-issuer-sim/           @edgeobs/euno-cp
+# Go services
+/cmd/gateway/                           @edgeobs/euno-dp
+/cmd/issuer/                            @edgeobs/euno-cp
+/cmd/minter/                            @edgeobs/euno-cp
+/cmd/db-token-svc/                      @edgeobs/euno-cp
+/cmd/storage-grant-svc/                 @edgeobs/euno-cp
+/cmd/posture-emitter/                   @edgeobs/euno-obs
 
-# ---------------------------------------------------------------------------
-# Data Plane (DP) — gateway enforcement, agent runtime, kill switch,
-# revocation
-# ---------------------------------------------------------------------------
-/euno-platform/packages/tool-gateway/                 @edgeobs/euno-dp
-/euno-platform/packages/agent-runtime/                @edgeobs/euno-dp
+# Internal packages
+/internal/gateway/                      @edgeobs/euno-dp
+/internal/issuer/                       @edgeobs/euno-cp
+/internal/minter/                       @edgeobs/euno-cp
+/internal/dbtokensvc/                   @edgeobs/euno-cp
+/internal/storagegrantsvc/              @edgeobs/euno-cp
+/internal/agentruntime/                 @edgeobs/euno-dp
+/internal/posture/                      @edgeobs/euno-obs
 
-# ---------------------------------------------------------------------------
-# Observability & Compliance (OBS) — posture, audit, infra, k8s
-# ---------------------------------------------------------------------------
-/euno-platform/packages/posture-emitter/              @edgeobs/euno-obs
+# Public packages — shared across teams
+/pkg/                                   @edgeobs/euno-cp @edgeobs/euno-dp
+
+# Infrastructure & deployment
 /infra/                                 @edgeobs/euno-obs
 /k8s/                                   @edgeobs/euno-obs
 
-# ---------------------------------------------------------------------------
-# Developer Experience (DX) — CLI, framework adapters, web UI
-# ---------------------------------------------------------------------------
-/public/packages/cli/                                @edgeobs/euno-dx
-/public/packages/mcp/                                @edgeobs/euno-dx
-/public/packages/langchain/                          @edgeobs/euno-dx
-/euno-platform/packages/framework-adapters/           @edgeobs/euno-dx
-/web/                                   @edgeobs/euno-dx
-
-# ---------------------------------------------------------------------------
-# Shared code — both CP and DP must approve because behaviour changes
-# can affect either side of the trust boundary.
-# ---------------------------------------------------------------------------
-/public/packages/common/                              @edgeobs/euno-cp @edgeobs/euno-dp @edgeobs/euno-dx
-/euno-platform/packages/common/                       @edgeobs/euno-cp @edgeobs/euno-dp
-/euno-platform/packages/common-infra/                 @edgeobs/euno-cp @edgeobs/euno-dp
-
-# ---------------------------------------------------------------------------
-# Integration tests — owned by both DP and DX (DX writes them, DP runs
-# them in CI).
-# ---------------------------------------------------------------------------
-/euno-platform/packages/integration-tests/            @edgeobs/euno-dp @edgeobs/euno-dx
-
-# ---------------------------------------------------------------------------
-# Documentation — owned by the pilot leads. Doc-only changes still
-# require lead approval; substantive changes to architecture or
-# security docs should additionally loop in the relevant team's
-# subject-matter reviewers on a per-PR basis.
-# ---------------------------------------------------------------------------
+# Documentation
 /docs/                                  @edgeobs/euno-leads
-/docs/capability-model.md               @edgeobs/euno-leads
-/docs/enforcement.md                    @edgeobs/euno-leads
-/docs/sandboxing.md                     @edgeobs/euno-leads
-/docs/SPRINT_*.md                       @edgeobs/euno-leads
 /README.md                              @edgeobs/euno-leads
 
-# ---------------------------------------------------------------------------
-# Repository-wide configuration — pilot leads only.
-# ---------------------------------------------------------------------------
+# Website
+/web/                                   @edgeobs/euno-dx
+/site/                                  @edgeobs/euno-dx
+
+# Repository configuration
 /CODEOWNERS                             @edgeobs/euno-leads
-/package.json                           @edgeobs/euno-leads
-/tsconfig.json                          @edgeobs/euno-leads
-/.eslintrc.json                         @edgeobs/euno-leads
+/Makefile                               @edgeobs/euno-leads
+/go.mod                                 @edgeobs/euno-leads
+/.github/                               @edgeobs/euno-leads

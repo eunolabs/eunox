@@ -11,7 +11,7 @@ Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
 
 ## Architecture
 
-### Core components (`public/packages/common/src/adapters.ts`)
+### Core components (`pkg//src/adapters.ts`)
 
 - `IdentityAdapter` — abstract base class for identity providers
 - `SigningAdapter` — abstract base class for token signers
@@ -39,7 +39,7 @@ Decentralized Identifiers (DIDs) — all behind the same `IdentityAdapter` /
 | `did` | DID-bound local/private-key signing; public key via `/.well-known/did.json` | `did-signer.ts` |
 
 **Implementation references:** the built-in registry is in
-`euno-platform/packages/capability-issuer/src/default-registries.ts`.
+`internal/issuer/src/default-registries.ts`.
 
 ### Registry system
 
@@ -338,7 +338,7 @@ their own W3C DID-backed signing key. The euno gateway accepts and
 cryptographically verifies those tokens without sharing key material.
 
 This is a **Stage 5 GA feature** (Task 3). The integration test harness lives
-in `euno-platform/packages/partner-issuer-sim/`. See also
+in `internal/partner-issuer-sim/`. See also
 `docs/self-host.md` §12.2 "Partner DID federation" for the operator
 self-host runbook.
 

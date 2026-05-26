@@ -159,7 +159,7 @@ workarounds.
   - `createSecretStoreFromEnv()` reads `GCP_PROJECT_ID` (or `SECRET_STORE_GCP_PROJECT_ID`)
     and constructs the client automatically
   - Unit tests with `@google-cloud/secret-manager` mock in
-    `public/packages/common/src/__tests__/secret-store.test.ts`
+    `pkg//src/__tests__/secret-store.test.ts`
 
 - [x] **GCS cross-chain anchor target**
   - Extended `CrossChainAnchor` to support GCS as an alternative or complement
@@ -215,8 +215,8 @@ workarounds.
   - `createSecretStoreFromEnv()` factory in `@euno/common-core` wired to env config
   - `SECRET_STORE_PROVIDER` and provider-specific vars added to `IssuerConfigSchema`
     and `GatewayConfigSchema` with cross-field validation
-  - Unit tests in `public/packages/common/src/__tests__/secret-store.test.ts`
-  - Config schema tests in `euno-platform/packages/common/tests/config.test.ts`
+  - Unit tests in `pkg//src/__tests__/secret-store.test.ts`
+  - Config schema tests in `pkg/tests/config.test.ts`
   - `docs/ADAPTERS.md` §"Secret Store" added
 
 - [x] **Cloud-agnostic object storage anchor**
@@ -252,7 +252,7 @@ workarounds.
 
 - [x] Integration test matrix across cloud adapters
   - Adapter-specific test suites in
-    `euno-platform/packages/integration-tests/tests/cloud-adapters/`:
+    `internal/integration-tests/tests/cloud-adapters/`:
     - `aws-s3-object-store.test.ts` — `S3ObjectStore` / `AwsSdkS3AnchorClient` against LocalStack
     - `aws-secrets-adapter.test.ts` — `AwsSecretsManagerSecretStore` against LocalStack
     - `gcs-object-store.test.ts` — `GcsObjectStore` / `GcsAnchorClientImpl` against fake-gcs-server

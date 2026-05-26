@@ -31,8 +31,8 @@ Self-hosting means you run **all** of the following infrastructure yourself, usi
 
 | Component | Package | Purpose |
 |---|---|---|
-| **Capability Issuer** | `euno-platform/packages/capability-issuer` | Issues signed JWT capability tokens from your identity store and KMS |
-| **Tool Gateway** | `euno-platform/packages/tool-gateway` | Enforces capability tokens on every agent tool call |
+| **Capability Issuer** | `internal/issuer` | Issues signed JWT capability tokens from your identity store and KMS |
+| **Tool Gateway** | `internal/gateway` | Enforces capability tokens on every agent tool call |
 | **Redis** | BYO (≥ 6.2) | Shared state: call counters, kill-switch, revocation list, DPoP replay cache |
 | **Postgres** | BYO (≥ 14) | Durable truth: audit ledger, kill-switch persistence, revocation durability |
 | **KMS / signing key** | BYO (Azure Key Vault, AWS KMS, GCP Cloud KMS, or local for dev) | Signs capability tokens (issuer) and audit evidence (gateway) |
@@ -203,7 +203,7 @@ aws kms create-key \
 #### Step 2 — Write a capability policy manifest
 
 Create `/srv/euno/policies/agent.yaml` following the pattern from
-[`public/packages/mcp/policies/filesystem.policy.yaml`](../public/packages/mcp/policies/filesystem.policy.yaml):
+[`pkg//policies/filesystem.policy.yaml`](../pkg//policies/filesystem.policy.yaml):
 
 ```yaml
 agentId: "my-agent"
@@ -400,8 +400,8 @@ version: "3.9"
 services:
   capability-issuer:
     build:
-      context: /path/to/euno-platform    # root of the euno-platform monorepo
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
+      context: /path/to/eunox    # root of the eunox monorepo
+      dockerfile: internal/issuer/Dockerfile
     image: euno/capability-issuer:local
     container_name: euno-issuer
     env_file: /srv/euno/issuer.env
@@ -417,8 +417,8 @@ services:
 
   tool-gateway:
     build:
-      context: /path/to/euno-platform
-      dockerfile: euno-platform/packages/tool-gateway/Dockerfile
+      context: /path/to/eunox
+      dockerfile: internal/gateway/Dockerfile
     image: euno/tool-gateway:local
     container_name: euno-gateway
     env_file: /srv/euno/gateway.env
@@ -612,8 +612,8 @@ services:
 
   capability-issuer:
     build:
-      context: /path/to/euno-platform
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
+      context: /path/to/eunox
+      dockerfile: internal/issuer/Dockerfile
     image: euno/capability-issuer:latest
     container_name: euno-issuer
     env_file: ./issuer.env
@@ -633,8 +633,8 @@ services:
 
   tool-gateway:
     build:
-      context: /path/to/euno-platform
-      dockerfile: euno-platform/packages/tool-gateway/Dockerfile
+      context: /path/to/eunox
+      dockerfile: internal/gateway/Dockerfile
     image: euno/tool-gateway:latest
     container_name: euno-gateway
     env_file: ./gateway.env
@@ -883,7 +883,7 @@ unchanged from §2.
 
 The issuer is configured entirely via environment variables validated on startup
 by the same `loadConfigOrExit` mechanism used by the gateway. The full schema
-is in `public/packages/common/src/config/schema.ts` (`IssuerConfigSchema`).
+is in `pkg//src/config/schema.ts` (`IssuerConfigSchema`).
 The table below covers the variables a self-host operator must review before
 going to production.
 
@@ -1662,7 +1662,7 @@ full HA topology diagram.
 
 ### 12.6 DB Token Service
 
-> **Reference:** `euno-platform/packages/db-token-service/`; Stage-5 Task 7.
+> **Reference:** `internal/db-token-service/`; Stage-5 Task 7.
 > **Status:** GA (v1.0.0)
 
 The `db-token-service` exchanges a capability token for short-lived scoped
@@ -1757,7 +1757,7 @@ curl -X POST https://db-token-service.internal:5050/api/v1/db-tokens \
 
 ### 12.7 Storage Grant Service
 
-> **Reference:** `euno-platform/packages/storage-grant-service/`; Stage-5 Task 7.
+> **Reference:** `internal/storage-grant-service/`; Stage-5 Task 7.
 > **Status:** GA (v1.0.0)
 
 The `storage-grant-service` exchanges a capability token for short-lived
@@ -1955,7 +1955,7 @@ helm install euno-issuer ./k8s/helm/issuer \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
 ```
 
-Values schemas are auto-generated from `public/packages/common/src/config/schema.ts`.
+Values schemas are auto-generated from `pkg//src/config/schema.ts`.
 Regenerate with `npm run gen:helm-schema` from the repository root.
 
 #### 12.10.2 Minimum viable air-gapped setup

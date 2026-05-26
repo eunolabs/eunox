@@ -2,7 +2,7 @@
 
 > **Applies to:** `ApiKeyVerifier`, `PostgresApiKeyStore`  
 > **Environment variables:** `MINTER_PEPPER_HEX`, `MINTER_PEPPER_VERSION`  
-> **Related code:** `euno-platform/packages/api-key-minter/src/api-key-verifier.ts`
+> **Related code:** `internal/minter/src/api-key-verifier.ts`
 
 ---
 
@@ -198,8 +198,8 @@ curl -s -X POST https://minter.euno.example/api/v1/mint \
 
 ## Cross-references
 
-- `euno-platform/packages/api-key-minter/src/api-key-verifier.ts` — `ApiKeyVerifier`, `PepperEntry`
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` — pepper provisioning at startup
+- `internal/minter/src/api-key-verifier.ts` — `ApiKeyVerifier`, `PepperEntry`
+- `internal/minter/src/bootstrap.ts` — pepper provisioning at startup
 - `docs/runbooks/minter-key-rotation.md` — signing key (JWT) rotation procedure
 - `docs/security/minter-threat-model.md §4` — pepper threat model
 - `docs/architecture-review-2026-05.md §CR-5` — pepper rotation requirement

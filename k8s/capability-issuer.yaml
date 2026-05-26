@@ -1,39 +1,39 @@
 # Capability Issuer — minimal Deployment (LEGACY / reference only).
 #
-# ⚠  USE capability-issuer-deployment.yaml INSTEAD.
+# ⚠  USE issuer-deployment.yaml INSTEAD.
 #
 # This file is the original simple manifest and lacks Sprint 3 sandbox
 # hardening (AppArmor, SELinux, seccomp, resource limits, secret scrubbing,
 # read-only root filesystem).  It is retained as a reference baseline.
 #
-# Both this file and capability-issuer-deployment.yaml define the same
+# Both this file and issuer-deployment.yaml define the same
 # Deployment and Service names.  If you apply this file after
-# capability-issuer-deployment.yaml, kubectl apply will update the same
+# issuer-deployment.yaml, kubectl apply will update the same
 # objects in-place, silently removing all Sprint 3 security hardening.
 # Always apply exactly one of the two.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: capability-issuer
+  name: issuer
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
     component: control-plane
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: capability-issuer
+      app: issuer
   template:
     metadata:
       labels:
-        app: capability-issuer
+        app: issuer
         component: control-plane
     spec:
-      serviceAccountName: capability-issuer
+      serviceAccountName: issuer
       containers:
-      - name: capability-issuer
-        image: eunoacr.azurecr.io/capability-issuer:v1.0.0
+      - name: issuer
+        image: eunoacr.azurecr.io/issuer:v1.0.0
         imagePullPolicy: Always
         ports:
         - name: http
@@ -130,10 +130,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: capability-issuer
+  name: issuer
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
 spec:
   type: ClusterIP
   ports:
@@ -142,12 +142,12 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: capability-issuer
+    app: issuer
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: capability-issuer
+  name: issuer
   namespace: euno-system
   annotations:
     azure.workload.identity/client-id: "<AZURE_CLIENT_ID>"

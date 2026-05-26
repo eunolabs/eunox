@@ -90,13 +90,13 @@ spec:
 
   # Allow traffic to Tool Gateway directly.
   # This permits direct-to-gateway calls (e.g. if GATEWAY_URL is changed to
-  # tool-gateway:3002 to bypass the Envoy router) and health-check traffic.
+  # gateway:3002 to bypass the Envoy router) and health-check traffic.
   # It does not provide automatic failover — the application must be
   # reconfigured to use this path.
   - to:
     - podSelector:
         matchLabels:
-          app: tool-gateway
+          app: gateway
     ports:
     - protocol: TCP
       port: 3002
@@ -105,7 +105,7 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          app: capability-issuer
+          app: issuer
     ports:
     - protocol: TCP
       port: 3001
@@ -128,7 +128,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: tool-gateway
+      app: gateway
   policyTypes:
   - Egress
   - Ingress
@@ -149,7 +149,7 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          app: capability-issuer
+          app: issuer
     ports:
     - protocol: TCP
       port: 3001
@@ -222,7 +222,7 @@ spec:
       port: 3002
 
   # Allow admin API traffic on port 3003 from pods labelled role=ops.
-  # The admin Service (tool-gateway-admin) is ClusterIP-only and requires
+  # The admin Service (gateway-admin) is ClusterIP-only and requires
   # ADMIN_API_KEY, so this rule is defence-in-depth: it narrows which pods
   # can even attempt a connection.  Label ops pods with role=ops to grant access.
   - from:
@@ -243,7 +243,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: capability-issuer
+      app: issuer
   policyTypes:
   - Egress
   - Ingress
@@ -313,7 +313,7 @@ spec:
   - from:
     - podSelector:
         matchLabels:
-          app: tool-gateway
+          app: gateway
     ports:
     - protocol: TCP
       port: 3001
@@ -363,11 +363,11 @@ spec:
     - protocol: TCP
       port: 53
 
-  # Allow forwarding to tool-gateway shard pods (port 3002).
+  # Allow forwarding to gateway shard pods (port 3002).
   - to:
     - podSelector:
         matchLabels:
-          app: tool-gateway
+          app: gateway
     ports:
     - protocol: TCP
       port: 3002
@@ -392,10 +392,10 @@ spec:
   - from:
     - podSelector:
         matchLabels:
-          app: tool-gateway
+          app: gateway
     - podSelector:
         matchLabels:
-          app: capability-issuer
+          app: issuer
     ports:
     - protocol: TCP
       port: 6379

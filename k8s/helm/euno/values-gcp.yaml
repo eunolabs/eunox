@@ -1,4 +1,4 @@
-# Euno umbrella chart — GCP / GKE overrides
+# Eunox umbrella chart — GCP / GKE overrides
 # ---------------------------------------------------------------------------
 # Apply this file on top of the base values.yaml when deploying on Google
 # Kubernetes Engine (GKE):
@@ -22,11 +22,11 @@
 
 # ── Container images — Artifact Registry ────────────────────────────────────
 # Replace my-gcp-project and us-central1 with your project and region.
-# Euno images are published to ghcr.io; push to Artifact Registry with the
+# Eunox images are published to ghcr.io; push to Artifact Registry with the
 # script in docs/deploy-gke.md §4.3 (push-images-to-artifact-registry.sh).
 gateway:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/tool-gateway
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/gateway
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -41,7 +41,7 @@ gateway:
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
-    GATEWAY_AUDIENCE: tool-gateway
+    GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
     # Cloud KMS-backed audit evidence signing.
@@ -74,10 +74,10 @@ gateway:
   # existingSecret: euno-gateway-secret
   secretEnv: {}
 
-# ── capability-issuer ─────────────────────────────────────────────────────────
+# ── issuer ─────────────────────────────────────────────────────────
 issuer:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/capability-issuer
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/issuer
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -107,15 +107,15 @@ issuer:
 
     # SCIM 2.0 provisioning (Google Workspace SCIM bridge).
     # See docs/issuer-idp-setup.md §11 for the full SCIM bridge guide.
-    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
   # existingSecret: euno-issuer-secret
   secretEnv: {}
 
-# ── api-key-minter ────────────────────────────────────────────────────────────
+# ── minter ────────────────────────────────────────────────────────────
 minter:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/api-key-minter
+    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

@@ -104,7 +104,7 @@ spec:
           image: redis:7.2-alpine
           imagePullPolicy: IfNotPresent
           args:
-            # Disable on-disk persistence: every key Euno writes to Redis is
+            # Disable on-disk persistence: every key Eunox writes to Redis is
             # short-lived (revocation TTLs, kill-switch entries, replay
             # nonces, rate-limit windows) and a fresh start is acceptable.
             - "redis-server"

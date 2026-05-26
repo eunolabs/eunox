@@ -4,7 +4,7 @@
 > **Date:** May 2026
 > **Scope:** Runtime sandboxing and egress restriction for the `agent-runtime` service.
 > **Related files:** `k8s/agent-runtime.yaml`, `k8s/seccomp/agent-runtime.json`,
-> `k8s/network-policies.yaml`, `euno-platform/packages/agent-runtime/`
+> `k8s/network-policies.yaml`, `internal/agent-runtime/`
 
 ---
 

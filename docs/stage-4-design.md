@@ -18,7 +18,7 @@
 
 ## 0. Purpose and Scope
 
-This document is the Stage 4 design freeze for `euno-platform`. It captures every
+This document is the Stage 4 design freeze for `eunox`. It captures every
 architectural decision that Tasks 2–13 must implement — and nothing else. The goal is
 to make implementation choices explicit, reviewable, and traceable before code is
 written, not discovered during code review.
@@ -54,10 +54,10 @@ written, not discovered during code review.
 ### 1.1 Decision
 
 **Primary (hosted service):** Microsoft Entra ID (Azure AD), using the already-implemented
-`AzureADIdentityProvider` (`euno-platform/packages/capability-issuer/src/azure-identity-provider.ts`).
+`AzureADIdentityProvider` (`internal/issuer/src/azure-identity-provider.ts`).
 
 **Second IdP (hosted service + self-host bundle):** **AWS Cognito**, using the already-implemented
-`AWSCognitoIdentityProvider` (`euno-platform/packages/capability-issuer/src/aws-cognito-identity-provider.ts`).
+`AWSCognitoIdentityProvider` (`internal/issuer/src/aws-cognito-identity-provider.ts`).
 
 GCP Cloud Identity is explicitly **not** selected as the second IdP for Stage 4. The GCP
 provider implementation (`gcp-identity-provider.ts`) remains in place and fully usable by
@@ -80,7 +80,7 @@ non-primary for Stage 4 hosted.
 ### 1.3 Configuration surface
 
 The issuer's `index.ts` already reads IdP selection and provider settings using the
-following validated env var names (confirmed in `euno-platform/packages/capability-issuer/src/index.ts`
+following validated env var names (confirmed in `internal/issuer/src/index.ts`
 via `loadConfigOrExit(process.env, 'issuer')`):
 
 ```
@@ -295,7 +295,7 @@ cross-tenant reads are denied (§7.2).
 ### 3.2 Migration
 
 The three tables are created by `IssuerMigrationRunner.migrate()` — a new class in
-`euno-platform/packages/capability-issuer/src/migrations/` modeled on
+`internal/issuer/src/migrations/` modeled on
 `PostgresLedgerBackend.migrate()` in `common-infra/src/ledger-signer.ts`. The migration
 is idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`). The issuer
 bootstrap calls it on startup when `ISSUER_DB_SCHEMA_INIT=true`.
@@ -561,7 +561,7 @@ supported for single-tenant deployments and is documented with a warning in
 
 No new types are introduced in `@euno/common-core`. All template-specific types
 (`TemplateRecord`, `TemplateVersionRecord`, `TemplateAssignment`) are local to the
-issuer package (`euno-platform/packages/capability-issuer/`) and do not need to be
+issuer package (`internal/issuer/`) and do not need to be
 shared across the dependency boundary.
 
 **If a gap is identified during Task 2–6 implementation:** the task author must raise the

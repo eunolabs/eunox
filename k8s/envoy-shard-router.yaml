@@ -1,7 +1,7 @@
 # Envoy Shard Router for Gateway Horizontal Sharding (H-1)
 #
 # This manifest deploys a 2-replica Envoy proxy in front of the
-# tool-gateway StatefulSet.  Its job is to extract the `sub` claim from the
+# gateway StatefulSet.  Its job is to extract the `sub` claim from the
 # Bearer JWT in the `Authorization` header, compute the target shard index
 # using the same FNV-1a % SHARD_COUNT algorithm as the gateway, and route
 # each agent's requests deterministically to the matching StatefulSet pod.
@@ -30,7 +30,7 @@
 #   headless Service (DNS round-robin).  The gateway falls back to the Redis
 #   call-counter store for those requests.
 # - If the Envoy router is unavailable, traffic can fall back to the ClusterIP
-#   Service (tool-gateway:3002).  Availability is preserved; the cost is the
+#   Service (gateway:3002).  Availability is preserved; the cost is the
 #   Redis hot-key returning.
 #
 # ## Scaling (adding or removing shards)
@@ -38,7 +38,7 @@
 # When changing the shard count:
 #   1. Update SHARD_COUNT in the Lua inline_code below.
 #   2. Add / remove the matching per-pod route entries and clusters.
-#   3. Update spec.replicas of the tool-gateway StatefulSet and
+#   3. Update spec.replicas of the gateway StatefulSet and
 #      GATEWAY_SHARD_COUNT on the pods to match.
 #   Keep all three in sync; a mismatch causes counter drift until the next
 #   window elapses.
@@ -172,7 +172,7 @@ data:
                       request_handle:headers():remove("x-euno-shard-index")
 
                       -- Strip any client-supplied X-Target-Host header.
-                      -- The tool-gateway's createTargetHostCanonicalizeMiddleware
+                      -- The gateway's createTargetHostCanonicalizeMiddleware
                       -- rewrites this from the URL path; forwarding a client-
                       -- controlled value would allow resource-label spoofing
                       -- in capability enforcement.
@@ -268,7 +268,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: tool-gateway-0.tool-gateway-headless.euno-system.svc.cluster.local
+                    address: gateway-0.gateway-headless.euno-system.svc.cluster.local
                     port_value: 3002
         health_checks:
         - timeout: 2s
@@ -288,7 +288,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: tool-gateway-1.tool-gateway-headless.euno-system.svc.cluster.local
+                    address: gateway-1.gateway-headless.euno-system.svc.cluster.local
                     port_value: 3002
         health_checks:
         - timeout: 2s
@@ -308,7 +308,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: tool-gateway-2.tool-gateway-headless.euno-system.svc.cluster.local
+                    address: gateway-2.gateway-headless.euno-system.svc.cluster.local
                     port_value: 3002
         health_checks:
         - timeout: 2s
@@ -331,7 +331,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: tool-gateway-headless.euno-system.svc.cluster.local
+                    address: gateway-headless.euno-system.svc.cluster.local
                     port_value: 3002
         health_checks:
         - timeout: 2s
@@ -427,9 +427,9 @@ spec:
           sizeLimit: 32Mi
 
 ---
-# Service — the external entry point that replaces the ClusterIP `tool-gateway`
+# Service — the external entry point that replaces the ClusterIP `gateway`
 # service for agent traffic.  Internal consumers that don't need sharding
-# (health checks, metrics) continue to use `tool-gateway` directly.
+# (health checks, metrics) continue to use `gateway` directly.
 apiVersion: v1
 kind: Service
 metadata:

@@ -15,7 +15,7 @@ service plane; no Stage-3 component is rewritten.
 
 ## 1. Goal
 
-Promote `euno-platform/packages/capability-issuer` from "internal token
+Promote `internal/issuer` from "internal token
 factory used by the API-key minter" to **a first-class user-facing
 identity-bound issuance service** that:
 
@@ -80,14 +80,14 @@ E3. **`euno request` and `euno validate-token` are no longer
     default in hosted mode, return real tokens (request) and real
     JWKS-verified validation results (validate-token), and have happy-
     path + error-path integration tests in
-    `euno-platform/packages/integration-tests/`.
+    `internal/integration-tests/`.
 
 E4. **Manifest templates are usable**: a tech lead can `POST` a template
     via the issuer admin API, assign it to ≥1 agent, and a user with
     the bound role gets a token whose effective capability set (top-level
     `capabilities` claim and VC `credentialSubject.capabilities`) matches
     the assigned template's `requiredCapabilities`. Round-trip is covered
-    by an integration test in `euno-platform/packages/integration-tests/`. The admin UI is
+    by an integration test in `internal/integration-tests/`. The admin UI is
     served by the issuer's own Express process at `/admin/` (four
     server-rendered pages: list, create, detail/version-history,
     assignment) — it is **not** a separate deployment under `web/`.
@@ -102,7 +102,7 @@ E5. **Self-host parity**: `infra/docker-compose.yml` gains an `issuer`
     issuer.
 
 E6. **Cross-stage parity test suite passes**:
-    `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts`
+    `internal/integration-tests/tests/cross-stage-parity.test.ts`
     is extended with a Stage-4 scenario (issuer-minted token) and asserts
     the same decisions, obligations, and OCSF pre-signature record
     contents as the Stage-3 minter-minted token for the same manifest.
@@ -126,7 +126,7 @@ E9. **Threat model addendum** (`docs/security/issuer-identity-threat-
 
 E10. **Pricing and billing plumbing extended**: per-user issuance counts
      are metered through the same `UsageMeter` interface used in Stage 3
-     (`public/packages/common/src/usage-meter.ts`). No new metering
+     (`pkg//src/usage-meter.ts`). No new metering
      interface is introduced.
 
 ---
@@ -138,7 +138,7 @@ below, the PR must add:
 
 1. **Unit tests** in the owning package's `tests/` (or `src/__tests__/`)
    directory.
-2. **An integration test** in `euno-platform/packages/integration-tests/`
+2. **An integration test** in `internal/integration-tests/`
    when the change crosses a process or network boundary (CLI ↔ issuer,
    issuer ↔ IdP, issuer ↔ gateway, issuer ↔ manifest-template store).
 3. **A cross-stage parity test entry** when the change touches token
@@ -177,8 +177,8 @@ artifacts to first-class status:
 
 | Artifact | Today | After Stage 4 |
 |---|---|---|
-| `euno-platform/packages/capability-issuer/` | Internal lib used by the API-key minter; standalone Express app exists but is not exposed as a hosted product surface | Hosted service (HA, KMS-signed, IdP-authenticated) **and** self-host docker image |
-| `public/packages/cli/` `request` / `validate-token` commands | Implemented and usable against explicitly configured issuer/JWKS endpoints today; not yet PKCE/SSO-bound and no hosted-default issuer wiring | Live, documented, end-to-end tested commands; default issuer URL configurable per environment |
+| `internal/issuer/` | Internal lib used by the API-key minter; standalone Express app exists but is not exposed as a hosted product surface | Hosted service (HA, KMS-signed, IdP-authenticated) **and** self-host docker image |
+| `cmd//` `request` / `validate-token` commands | Implemented and usable against explicitly configured issuer/JWKS endpoints today; not yet PKCE/SSO-bound and no hosted-default issuer wiring | Live, documented, end-to-end tested commands; default issuer URL configurable per environment |
 | `web/` (static landing site) | Marketing pages | Adds a (still simple, server-rendered or SPA, decided in Task 0) authenticated **manifest templates** view |
 
 Stage 4 introduces **no new seam types** in `@euno/common-core` unless a
@@ -198,10 +198,10 @@ off before code lands.
 
 Both IdPs already have adapter implementations:
 
-- `euno-platform/packages/capability-issuer/src/azure-identity-provider.ts`
+- `internal/issuer/src/azure-identity-provider.ts`
   (Entra ID — production-ready)
-- `euno-platform/packages/capability-issuer/src/aws-cognito-identity-provider.ts`
-- `euno-platform/packages/capability-issuer/src/gcp-identity-provider.ts`
+- `internal/issuer/src/aws-cognito-identity-provider.ts`
+- `internal/issuer/src/gcp-identity-provider.ts`
 
 Stage 4 work is **wiring, configuration, and operator-facing
 documentation**, not new adapter code. Concretely:
@@ -223,7 +223,7 @@ the issuance pipeline.
 
 ### 4.3 CLI wiring (Task 5)
 
-`public/packages/cli/src/index.ts` already declares the `request` and
+`cmd//src/index.ts` already declares the `request` and
 `validate-token` commands. Stage 4 work:
 
 1. **`euno request`** accepts `--issuer-url`, `--idp <name>`,
@@ -237,16 +237,16 @@ the issuance pipeline.
    `~/.euno/tokens/<agent-id>.jwt` with `0600` perms, and prints the
    `jti` + expiry. Implementation pattern: copy `oauth4webapi` PKCE
    flow already used by the Stage 3 `upgrade-to-hosted` interactive
-   command (`public/packages/mcp/src/cli/upgrade-to-hosted.ts`).
+   command (`pkg//src/cli/upgrade-to-hosted.ts`).
 2. **`euno validate-token`** fetches the issuer's JWKS over HTTPS,
    verifies signature, expiry, and `aud`/`iss`, prints the decoded
    payload, and exits non-zero on any failure. Existing
-   `public/packages/mcp/src/__tests__/validate-token.test.ts` provides
+   `pkg//src/__tests__/validate-token.test.ts` provides
    the test fixture pattern.
 3. **Refresh path**: `euno request --refresh` calls `POST
    /api/v1/renew` with the stored token. **No** silent refresh in the
    CLI — explicit by design (the renewal endpoint is exposed; the agent
-   SDK in `public/packages/mcp/` already handles automatic refresh).
+   SDK in `pkg//` already handles automatic refresh).
 4. **Revocation path**: `euno revoke <jti>` (new subcommand) calls the
    issuer's existing revocation endpoint. The revocation list is
    already mirrored to the gateway via Stage 3 Task 6.
@@ -349,7 +349,7 @@ profiles (Stage 3 Task 13). Stage 4 work:
 
 1. Add an `issuer` service under the `full` and `smoke` profiles.
    The Dockerfile already exists at
-   `euno-platform/packages/capability-issuer/Dockerfile`.
+   `internal/issuer/Dockerfile`.
 2. Bind-mount a `policies/` directory (RoleCapabilityPolicy + initial
    templates seed) at startup; document the layout in `docs/self-
    host.md`.
@@ -439,7 +439,7 @@ Produce `docs/security/issuer-identity-threat-model.md` answering every question
 Phase B — Issuer service hardening
 
 ### Task 2 — Hosted IdP wiring (Entra ID + second IdP) ✅
-Wire both `AzureADIdentityProvider` and the Task-0-chosen second IdP into the issuer's bootstrap (`euno-platform/packages/capability-issuer/src/index.ts`). Configuration via env (`IDENTITY_PROVIDER`, provider-specific config). Per-tenant config supported via `TenantIdpRegistry` (`src/tenant-idp-config.ts`) — file-based JSON mapping with hot-reload. `GET /.well-known/openid-configuration` with optional `?tenantId=` scoping.
+Wire both `AzureADIdentityProvider` and the Task-0-chosen second IdP into the issuer's bootstrap (`internal/issuer/src/index.ts`). Configuration via env (`IDENTITY_PROVIDER`, provider-specific config). Per-tenant config supported via `TenantIdpRegistry` (`src/tenant-idp-config.ts`) — file-based JSON mapping with hot-reload. `GET /.well-known/openid-configuration` with optional `?tenantId=` scoping.
 
 `POST /api/v1/oidc/token` endpoint: accepts a pre-exchanged `idToken` (client performs PKCE code exchange), enforces nonce-claim binding, authorization-code replay prevention (eager fail-closed `OidcStateStore`), and issues a capability token via `issueCapabilityFromUserContext` (skips re-validation).
 
@@ -465,8 +465,8 @@ The existing `RoleCapabilityPolicy` machinery is already implemented. Production
 - `src/issuance/issue-controller.ts` — `policy` made mutable; `updatePolicy()` added.
 - `src/issuer-service.ts` — `updatePolicy()` propagates to both pipeline and controller.
 - `src/index.ts` — Postgres store init, SIGHUP hot-reload handler, admin routes mounted after `express.json()`.
-- `public/packages/common/src/config/schema.ts` — `ISSUER_ROLE_POLICY_DB_URL`, `ISSUER_ADMIN_API_KEY`, `ISSUER_ADMIN_JWKS_URI`, `ISSUER_ADMIN_JWT_AUDIENCE`, `ISSUER_ADMIN_JWT_ISSUER` added to `IssuerConfigSchema`.
-- Tests (57 new): `tests/postgres-role-policy-store.test.ts`, `tests/admin-role-policy.test.ts`, `tests/hot-reload.test.ts`; 5 new config schema tests in `euno-platform/packages/common/tests/config.test.ts`.
+- `pkg//src/config/schema.ts` — `ISSUER_ROLE_POLICY_DB_URL`, `ISSUER_ADMIN_API_KEY`, `ISSUER_ADMIN_JWKS_URI`, `ISSUER_ADMIN_JWT_AUDIENCE`, `ISSUER_ADMIN_JWT_ISSUER` added to `IssuerConfigSchema`.
+- Tests (57 new): `tests/postgres-role-policy-store.test.ts`, `tests/admin-role-policy.test.ts`, `tests/hot-reload.test.ts`; 5 new config schema tests in `pkg/tests/config.test.ts`.
 - Total: 506 capability-issuer tests pass, 936 common tests pass.
 
 ### Task 4 — Token attenuation & renewal as live, supported endpoints
@@ -481,10 +481,10 @@ Phase C — Developer surface
 ### Task 5 — `euno request` and `euno validate-token` wired to live issuer
 Per § 4.3. Includes `euno revoke` as a new subcommand.
 - **Tests**: integration test for the full PKCE flow against a mock IdP; `validate-token` test against a real JWKS endpoint.
-- **Docs**: `public/packages/cli/README.md` updated; `docs/quickstart-stage-4.md` walks a new user from `npm install -g @euno/cli` to first issued token.
+- **Docs**: `cmd//README.md` updated; `docs/quickstart-stage-4.md` walks a new user from `npm install -g @euno/cli` to first issued token.
 
 ### Task 6 — Manifest template store + admin API ✅ COMPLETE
-Per § 4.4. Postgres migrations land in `euno-platform/packages/capability-issuer/src/migrations/` (use the same migration pattern Stage 3 added for the audit ledger).
+Per § 4.4. Postgres migrations land in `internal/issuer/src/migrations/` (use the same migration pattern Stage 3 added for the audit ledger).
 - The issuance branch in `IssueController` that consults templates is the only change to existing issuance code.
 - **Tests**: round-trip CRUD on templates; assignment-driven issuance test; immutability-of-versions test; cross-tenant access denial test; soft-delete semantics test.
 
@@ -508,14 +508,14 @@ Extend `GatewayTelemetryCollector` (Stage 3 Task 16) to recognise issuance event
 - **Tests**: meter dual-write test; tenant aggregation test.
 
 ### Task 11 — Cross-stage parity test extension ✅ COMPLETE
-Extend `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts` with a Stage-4 scenario: the same `AgentCapabilityManifest` issued via (a) Stage-3 minter and (b) Stage-4 issuer must produce identical decisions, identical obligations, and identical OCSF pre-signature record contents on the gateway. This is the operational proof of E6.
+Extend `internal/integration-tests/tests/cross-stage-parity.test.ts` with a Stage-4 scenario: the same `AgentCapabilityManifest` issued via (a) Stage-3 minter and (b) Stage-4 issuer must produce identical decisions, identical obligations, and identical OCSF pre-signature record contents on the gateway. This is the operational proof of E6.
 - The intentional divergence is `authorizedBy.userId`: the minter carries the API-key prefix (a synthetic identifier, e.g. `"sk-abc12345"`); the issuer carries the IdP-resolved user identity (e.g. `"user@corp.com"`). The `sub` claim is identical in both paths (sub = agentId). Document this in the test's comment and in `docs/stage-3-gateway-protocol.md` so the gateway operator knows to expect it.
 
 ### Task 12 — Stage-5 readiness instrumentation
 Add `scripts/stage5-readiness.ts` modeled on `scripts/stage4-readiness.ts`. Single signal: `EUNO_TELEMETRY_API /v1/stats/stage5-gate` returns ≥1 enterprise inbound matching the criteria in `docs/mvp.md` line 748. Exit codes: 0=READY, 1=NOT READY, 2=UNKNOWN. This is the gate tracker; it does not unilaterally start Stage 5.
 
 ### Task 13 — Stage-4 status block + reference materials
-Add the `> **Stage 4 status**` block to `docs/mvp.md` § "Stage 4" with one bullet per task above. Add `docs/issuer-operator-runbook.md` (operator runbook: deployment topology, KMS key rotation procedure carried over from minter Task 11, alerting wiring, on-call playbook for IdP outages — fail-closed semantics). Update `README.md` and `public/packages/cli/README.md` with a Stage-4 hosted section.
+Add the `> **Stage 4 status**` block to `docs/mvp.md` § "Stage 4" with one bullet per task above. Add `docs/issuer-operator-runbook.md` (operator runbook: deployment topology, KMS key rotation procedure carried over from minter Task 11, alerting wiring, on-call playbook for IdP outages — fail-closed semantics). Update `README.md` and `cmd//README.md` with a Stage-4 hosted section.
 
 ---
 
@@ -542,7 +542,7 @@ in Stage 4:
    headings.
 5. **License boundary**: the issuer service runtime (the Express app,
    the admin API, the templates store) is **BSL** under
-   `euno-platform/packages/capability-issuer/`. The CLI commands and
+   `internal/issuer/`. The CLI commands and
    any types added to `@euno/common-core` are **Apache-2.0** under
    `public/packages/`. The two-folder structure is the mechanical
    gate; CI dependency enforcement (Stage 0 Substage 0.4) catches

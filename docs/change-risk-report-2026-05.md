@@ -1,9 +1,9 @@
-# Change-Risk Report — euno-platform
+# Change-Risk Report — eunox
 
 > **Reviewer role:** Principal Software Architect  
 > **Date:** May 2026  
-> **Scope:** Highest change-risk ("fragile") areas in the euno-platform monorepo — code that is hard to modify without breaking something else.  
-> **Artefacts reviewed:** `euno-platform/packages/tool-gateway/src/bootstrap.ts`, `src/app-factory.ts`, `src/admin-api.ts`, `src/enforcement.ts`, `public/packages/common/src/config/schema.ts`, `public/packages/mcp/src/cli.ts`, `src/policy/source.ts`, `src/transport/obligations.ts`
+> **Scope:** Highest change-risk ("fragile") areas in the eunox monorepo — code that is hard to modify without breaking something else.  
+> **Artefacts reviewed:** `internal/gateway/src/bootstrap.ts`, `src/app-factory.ts`, `src/admin-api.ts`, `src/enforcement.ts`, `pkg//src/config/schema.ts`, `pkg//src/cli.ts`, `src/policy/source.ts`, `src/transport/obligations.ts`
 
 ---
 
@@ -159,7 +159,7 @@ function buildGatewayCounters(
 
 ### H-R1 — `admin-api.ts` is a 1 725-line god-module
 
-**File:** `euno-platform/packages/tool-gateway/src/admin-api.ts`
+**File:** `internal/gateway/src/admin-api.ts`
 
 **Why fragile:**  
 All seven admin endpoint groups (kill-switch, revocation, epochs, partner-DIDs, usage,
@@ -184,7 +184,7 @@ it auto-tracks the enum. Then split into per-group router files:
 
 ### H-R2 — `config/schema.ts` is a 3 289-line monolith
 
-**File:** `public/packages/common/src/config/schema.ts`
+**File:** `pkg//src/config/schema.ts`
 
 **Why fragile:**  
 Every service's env-var schema (issuer, gateway, minter, agent-runtime, future services)
@@ -200,7 +200,7 @@ importing a shared `base-schema.ts`. The main `schema.ts` becomes a re-export ba
 
 ### MH-R1 — `enforcement.ts` string-dispatches on condition types with no exhaustiveness check
 
-**File:** `euno-platform/packages/tool-gateway/src/enforcement.ts`
+**File:** `internal/gateway/src/enforcement.ts`
 
 Adding a new `CapabilityCondition` subtype produces no compiler error in the dispatch
 logic. The failure mode is a silently unenforced policy condition — a security regression,
@@ -214,7 +214,7 @@ that every registered condition type has a handler.
 
 ### MH-R2 — `cli.ts` uses a boolean flag for PDP mode selection
 
-**File:** `public/packages/mcp/src/cli.ts`
+**File:** `pkg//src/cli.ts`
 
 ```typescript
 const isRemoteMode = enforcerUrl !== undefined;
@@ -234,7 +234,7 @@ plus a pure `buildPdp(mode: EnforcementMode): PolicyDecisionPoint` factory.
 
 ### M-R1 — `transport/obligations.ts` has an implicit pre-condition
 
-**File:** `public/packages/mcp/src/transport/obligations.ts`
+**File:** `pkg//src/transport/obligations.ts`
 
 `applyRedactObligations()` silently no-ops when called with an error result; callers must
 know to guard on `!result.isError` before calling. The type system does not enforce this.

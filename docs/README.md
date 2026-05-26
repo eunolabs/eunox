@@ -10,7 +10,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | --- | ---------- |
 | [../README.md](../README.md) | Project README — value prop, quick start, links. |
 | [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup. |
-| [euno-mcp README](../public/packages/mcp/README.md) | `@euno/mcp` quickstart and condition reference. |
+| [euno-mcp README](../pkg//README.md) | `@euno/mcp` quickstart and condition reference. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 
 ## 2. Architecture
@@ -57,7 +57,7 @@ Design and operational documentation for euno. Docs are organized by purpose.
 | Doc | What it is |
 | --- | ---------- |
 | [promotion.md](./promotion.md) | Launch copy and messaging for @euno/mcp. |
-| [launch-post.md](../public/packages/mcp/docs/launch-post.md) | Draft Show HN post. |
+| [launch-post.md](../pkg//docs/launch-post.md) | Draft Show HN post. |
 | [blog-articles.md](./blog-articles.md) | Suggested blog article list: background, architecture, UX, technology, design principles. |
 
 ## 7. Roadmap and planning

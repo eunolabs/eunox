@@ -5,7 +5,7 @@
 sketch" (lines 822–845), and the quarantined-package policy in
 § "Stage 0" (lines 200–216). Cross-references: `docs/diagrams.md` Set D
 (AGT integration), `docs/stage-4-design.md`, and
-`euno-platform/packages/{partner-issuer-sim,db-token-service,storage-grant-service,posture-emitter}/STATUS.md`.
+`internal/{partner-issuer-sim,db-token-service,storage-grant-service,posture-emitter}/STATUS.md`.
 
 **Predecessor status.** Stage 4 is complete (Tasks 0–13 in `docs/mvp.md`
 § "Stage 4" are all checked off). The capability issuer with enterprise-IdP
@@ -114,7 +114,7 @@ operator can register a partner DID, the partner issues a JWT from their
 own simulated or real issuer, and the gateway accepts and audits the token.
 The `partner-issuer-sim` docker image builds and runs as a standalone
 reference. Integration test coverage in
-`euno-platform/packages/integration-tests/` covers the full cross-org
+`internal/integration-tests/` covers the full cross-org
 round-trip including a circuit-breaker open/close cycle.
 
 **E3.** **SOC2 audit-trail export is live**: a `GET /api/v1/audit/export`
@@ -137,7 +137,7 @@ goes from internal wiring to a first-class operator-facing feature.
 and documented**: both services build, have ≥85% branch coverage, are
 described in `docs/self-host.md` §"Stage 5 service extensions", and are
 included in the `full` docker-compose profile. An integration test in
-`euno-platform/packages/integration-tests/` demonstrates a round-trip
+`internal/integration-tests/` demonstrates a round-trip
 (issue capability token → exchange for DB credential → use credential →
 credential expires after capability TTL).
 
@@ -149,7 +149,7 @@ A single-command `helm install euno ./k8s/helm/euno` on a vanilla cluster
 with only a Postgres and Redis dependency produces a running stack.
 
 **E7.** **AGT in-process guard adapter is documented and tested**:
-`euno-platform/packages/agent-runtime/` exposes `createAgtGuard()` (new)
+`internal/agent-runtime/` exposes `createAgtGuard()` (new)
 which wires a capability-check hook into the LLM reasoning loop via the
 `InProcessToolTransport`. The integration matches the architecture in
 `docs/diagrams.md` Set D. At least one integration test uses the guard
@@ -195,12 +195,12 @@ For every task the PR must add:
 
 1. **Unit tests** in the owning package's `tests/` (or `src/__tests__/`)
    directory, colocated with the changed source.
-2. **An integration test** in `euno-platform/packages/integration-tests/`
+2. **An integration test** in `internal/integration-tests/`
    for every cross-process or network boundary (partner issuer ↔ gateway,
    SCIM push ↔ issuance, DB service ↔ gateway, posture emitter ↔ export
    endpoint).
 3. **A cross-stage parity test entry** (in
-   `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts`)
+   `internal/integration-tests/tests/cross-stage-parity.test.ts`)
    whenever the change touches token shape, audit shape, or policy shape.
    Stage-5 tokens (partner-issued) must produce identical gateway decisions
    as Stage-4 tokens for the same manifest — the **only** structural
@@ -246,19 +246,19 @@ existing packages. No new packages are created.
 
 | Package | Current status | After Stage 5 |
 |---|---|---|
-| `euno-platform/packages/partner-issuer-sim` | Quarantined; simulates partner DID issuer | Production reference simulator + integration harness; first-class CI component |
-| `euno-platform/packages/db-token-service` | Quarantined; DB credential issuance stub | Production service: exchanges capability token for scoped DB credentials; included in `full` compose profile |
-| `euno-platform/packages/storage-grant-service` | Quarantined; storage grant stub | Production service: exchanges capability token for scoped blob/S3 grants; included in `full` compose profile |
-| `euno-platform/packages/posture-emitter` | Quarantined; WAL-queue durable emitter | Production OCSF export pipeline: `DurablePostureEmitter` wired into gateway audit; powers the `GET /api/v1/audit/export` endpoint |
+| `internal/partner-issuer-sim` | Quarantined; simulates partner DID issuer | Production reference simulator + integration harness; first-class CI component |
+| `internal/db-token-service` | Quarantined; DB credential issuance stub | Production service: exchanges capability token for scoped DB credentials; included in `full` compose profile |
+| `internal/storage-grant-service` | Quarantined; storage grant stub | Production service: exchanges capability token for scoped blob/S3 grants; included in `full` compose profile |
+| `internal/posture-emitter` | Quarantined; WAL-queue durable emitter | Production OCSF export pipeline: `DurablePostureEmitter` wired into gateway audit; powers the `GET /api/v1/audit/export` endpoint |
 
 #### New capabilities in existing packages
 
 | Package | New capability |
 |---|---|
-| `euno-platform/packages/tool-gateway` | Cross-chain anchor GA (`ENABLE_CROSS_CHAIN_ANCHOR`, `GET /api/v1/audit/chain-proof`); partner-federation documentation; per-DID circuit-breaker Prometheus metrics published |
-| `euno-platform/packages/capability-issuer` | SCIM 2.0 endpoints (`/scim/v2/Users`, `/scim/v2/Groups`); `/.well-known/capability-issuer` promoted to stable v1.0.0 contract; `did:ion` circuit breaker + health-check |
-| `euno-platform/packages/agent-runtime` | `createAgtGuard()` — in-process capability-check hook for defense-in-depth (Set D architecture) |
-| `euno-platform/packages/integration-tests` | Cross-org federation suite; SOC2 export verification; AGT guard defense-in-depth scenario |
+| `internal/gateway` | Cross-chain anchor GA (`ENABLE_CROSS_CHAIN_ANCHOR`, `GET /api/v1/audit/chain-proof`); partner-federation documentation; per-DID circuit-breaker Prometheus metrics published |
+| `internal/issuer` | SCIM 2.0 endpoints (`/scim/v2/Users`, `/scim/v2/Groups`); `/.well-known/capability-issuer` promoted to stable v1.0.0 contract; `did:ion` circuit breaker + health-check |
+| `internal/agent-runtime` | `createAgtGuard()` — in-process capability-check hook for defense-in-depth (Set D architecture) |
+| `internal/integration-tests` | Cross-org federation suite; SOC2 export verification; AGT guard defense-in-depth scenario |
 | `infra/` | `full` compose profile gains `db-token-service`, `storage-grant-service`, `posture-emitter`; smoke-test extended |
 | `k8s/` | Helm chart (`k8s/helm/euno/`) covering all Stage-5 services; air-gap image list; restricted-network values file |
 
@@ -266,14 +266,14 @@ existing packages. No new packages are created.
 
 The implementation seam already exists:
 
-- `euno-platform/packages/tool-gateway/src/partner-issuer-resolver.ts` —
+- `internal/gateway/src/partner-issuer-resolver.ts` —
   `PartnerIssuerResolver` with `PartnerDidRegistry`, per-DID
   `RedisCircuitBreaker`, negative-cache, and positive-cache TTL.
-- `euno-platform/packages/tool-gateway/src/partner-did-registry.ts` —
+- `internal/gateway/src/partner-did-registry.ts` —
   two-eyes registration workflow with optional pin attestation.
-- `euno-platform/packages/capability-issuer/src/did-resolver.ts` —
+- `internal/issuer/src/did-resolver.ts` —
   `resolveDID()` supporting `did:web`, `did:ion`, `did:key`.
-- `euno-platform/packages/partner-issuer-sim/` — simulates the partner-org
+- `internal/partner-issuer-sim/` — simulates the partner-org
   issuer end of the trust chain.
 
 Stage-5 work is:
@@ -331,7 +331,7 @@ Stage-5 work:
 2. **Chain-proof endpoint**: `GET /api/v1/audit/chain-proof?since=<ISO>&until=<ISO>`
    returns a JSON object `{ commits: SignedCrossChainCommitment[], chainHead: string }`.
    The `SignedCrossChainCommitment` type already exists in `@euno/common`
-   (`public/packages/common/src/wire.ts`) and is emitted by
+   (`pkg//src/wire.ts`) and is emitted by
    `CrossChainAnchorOptions.onCommitment`. Authentication:
    `X-Admin-API-Key: <GATEWAY_ADMIN_API_KEY>` (the same timing-safe check
    used by the gateway's existing admin routes).
@@ -400,7 +400,7 @@ new feature code.
 **`db-token-service`**:
 1. Remove quarantine gate. Mark `1.0.0` stable.
 2. Verify that all config fields are present in `GatewayConfigSchema` and
-   `DbTokenServiceConfigSchema` (they are, per `public/packages/common/src/config/schema.ts`).
+   `DbTokenServiceConfigSchema` (they are, per `pkg//src/config/schema.ts`).
 3. Add to `infra/docker-compose.yml` `full` profile with a `DB_URL` pointing
    to the compose Postgres.
 4. Integration test (in `integration-tests/tests/db-token-service.test.ts`):
@@ -430,7 +430,7 @@ and `InProcessProxyHandler`. The diagrams in `docs/diagrams.md` Set D
 Stage-5 work:
 
 1. **`createAgtGuard(options: AgtGuardOptions): AgtGuard`** in
-   `euno-platform/packages/agent-runtime/src/agt-guard.ts` (new file).
+   `internal/agent-runtime/src/agt-guard.ts` (new file).
    `AgtGuardOptions`:
    ```typescript
    interface AgtGuardOptions {
@@ -456,13 +456,13 @@ Stage-5 work:
    `onGatewayDeny` is invoked and the denial is logged by the gateway as
    usual.
 
-2. **Types land in `@euno/common-core`** (`public/packages/common/src/`):
+2. **Types land in `@euno/common-core`** (`pkg//src/`):
    `AgtGuardOptions`, `AgtGuardResult` (`allow | deny`), `AgtGuardDenyReason`.
    The `onGatewayDeny` callback type (`(toolName: string, gatewayErrorCode: string) => void`)
    is inlined in `AgtGuardOptions`; no additional exported type is needed.
    These are Apache-2.0; the implementation in `agent-runtime` is BSL.
 
-3. **Tests** in `euno-platform/packages/agent-runtime/tests/agt-guard.test.ts`:
+3. **Tests** in `internal/agent-runtime/tests/agt-guard.test.ts`:
    - Guard allows a tool call in scope → forwarded to transport.
    - Guard denies a tool call out of scope → `onDeny` called, transport
      not invoked.
@@ -477,7 +477,7 @@ Stage-5 work:
 ### 4.7 `/.well-known/capability-issuer` discovery v1.0.0 (Task 9)
 
 The endpoint already exists at
-`euno-platform/packages/capability-issuer/src/index.ts:1242`. It currently
+`internal/issuer/src/index.ts:1242`. It currently
 returns:
 
 ```json
@@ -821,7 +821,7 @@ Per § 4.9. Helm chart, air-gap image list, restricted-network checklist,
 
 #### Task 12 — Cross-stage parity extension (Stage 5 scenarios)
 
-Extend `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts`
+Extend `internal/integration-tests/tests/cross-stage-parity.test.ts`
 with two Stage-5 scenarios:
 
 1. A partner-issued token (from `partner-issuer-sim`) for the same
@@ -847,7 +847,7 @@ surfaced, DID federation checklist, SCIM provisioning checklist).
 - Add `> **Stage 5 status**` block to `docs/mvp.md` §"Stage 5" with
   one bullet per task (Tasks 0–13) above. This is the last thing merged.
 - Update `README.md` with a Stage-5 enterprise section.
-- Update `public/packages/cli/README.md` with partner-federation and
+- Update `cmd//README.md` with partner-federation and
   SOC2 export CLI references.
 - Add `CHANGELOG.md` entries for all four un-quarantined packages.
 
@@ -879,7 +879,7 @@ These mirror Stage 4 §7 and are non-negotiable in Stage 5:
    every affected package.
 
 5. **License boundary**: the four un-quarantined packages and all new
-   gateway/issuer runtime code remain **BSL** under `euno-platform/packages/`.
+   gateway/issuer runtime code remain **BSL** under `internal/`.
    The three new `@euno/common-core` AGT guard types are **Apache-2.0**
    under `public/packages/`. CI dependency enforcement (Stage 0 Substage
    0.4) is the mechanical gate.

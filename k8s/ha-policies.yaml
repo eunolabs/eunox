@@ -4,21 +4,21 @@
 # HorizontalPodAutoscaler.
 #
 # Apply *after* the base manifests:
-#   - Capability Issuer: capability-issuer-deployment.yaml  (Deployment)
-#   - Tool Gateway:      tool-gateway.yaml                  (StatefulSet + Envoy shard router)
+#   - Capability Issuer: issuer-deployment.yaml  (Deployment)
+#   - Tool Gateway:      gateway.yaml                  (StatefulSet + Envoy shard router)
 #
 # Rationale (from execution-plan.md, Sprint 5):
 #   - "Capability Issuer as a highly-available service (two or more instances,
 #     behind load balancer, with auto-scale)."
 #   - "Tool Gateway close to agents (sidecar in AKS pod, DaemonSet, or dedicated
-#     internal service)."  -> the sharded StatefulSet (tool-gateway.yaml) runs
+#     internal service)."  -> the sharded StatefulSet (gateway.yaml) runs
 #     behind the Envoy shard router; its replica count is managed manually (see
 #     note below) and `agent-runtime.yaml` targets the Envoy router endpoint.
 #
 # ## Why no HPA for the sharded gateway StatefulSet?
 #
 # The H-1 sharding topology is hard-coded for a fixed number of shards:
-#   - spec.replicas in tool-gateway.yaml
+#   - spec.replicas in gateway.yaml
 #   - GATEWAY_SHARD_COUNT env var on every pod
 #   - SHARD_COUNT in the Envoy Lua inline_code
 #   - Route entries and per-pod cluster stanzas in envoy-shard-router.yaml
@@ -30,19 +30,19 @@
 # To scale the sharded gateway, follow the manual procedure in
 # docs/HORIZONTAL_SHARDING.md (§ "Add a shard").
 #
-# If you are using the non-sharded Deployment variant (tool-gateway-deployment.yaml)
+# If you are using the non-sharded Deployment variant (gateway-deployment.yaml)
 # you can safely add an HPA like this:
 #
 #   apiVersion: autoscaling/v2
 #   kind: HorizontalPodAutoscaler
 #   metadata:
-#     name: tool-gateway-hpa
+#     name: gateway-hpa
 #     namespace: euno-system
 #   spec:
 #     scaleTargetRef:
 #       apiVersion: apps/v1
 #       kind: Deployment
-#       name: tool-gateway
+#       name: gateway
 #     minReplicas: 3
 #     maxReplicas: 20
 #     metrics: [...]
@@ -51,31 +51,31 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: capability-issuer-pdb
+  name: issuer-pdb
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
     component: control-plane
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app: capability-issuer
+      app: issuer
 
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: capability-issuer-hpa
+  name: issuer-hpa
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
     component: control-plane
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: capability-issuer
+    name: issuer
   minReplicas: 2
   maxReplicas: 8
   metrics:
@@ -113,10 +113,10 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: tool-gateway-pdb
+  name: gateway-pdb
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
     component: data-plane
 spec:
   # The gateway is on the hot path for every tool call; keep at least 2 pods
@@ -124,4 +124,4 @@ spec:
   minAvailable: 2
   selector:
     matchLabels:
-      app: tool-gateway
+      app: gateway

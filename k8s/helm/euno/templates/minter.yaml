@@ -1,5 +1,5 @@
 {{/*
-api-key-minter Deployment
+minter Deployment
 */}}
 apiVersion: v1
 kind: ServiceAccount

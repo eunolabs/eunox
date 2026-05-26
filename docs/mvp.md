@@ -5,12 +5,12 @@
 > **Status of this document:** strategy / planning. Not implementation.
 > Reviewed against the actual state of the workspace packages and the rest of
 > `docs/` (April 2026). A second pass (May 2026) identified four additional
-> problems — `euno-platform/packages/common` split, dependency-direction enforcement,
+> problems — `pkg` split, dependency-direction enforcement,
 > minter threat model, and the two-folder structure — addressed in this
 > revision. See [§ Analysis](#analysis-where-the-prior-plan-needed-tightening)
 > for what changed and why.
 > Current package workspaces live under `public/packages/*` and
-> `euno-platform/packages/*`; there is no root `packages/` workspace.
+> `internal/*`; there is no root `packages/` workspace.
 
 ---
 
@@ -70,13 +70,13 @@ operational layer). It had four substantive problems and one
 material factual error that this revision fixes.
 
 1. **Factual error.** The prior plan said Stage 1 would *extract* MCP
-   interception logic from `euno-platform/packages/framework-adapters`. There is no
-   MCP code in `euno-platform/packages/framework-adapters` — only LangChain, MAF,
+   interception logic from `internal/framework-adapters`. There is no
+   MCP code in `internal/framework-adapters` — only LangChain, MAF,
    and CrewAI adapters. Stage 1 is **greenfield**, not extraction.
    What can be extracted is the `CapabilityCondition` discriminated
    union, `condition-registry`, `capability-validators`,
    `argument-validator`, the in-memory `CallCounterStore`, and the
-   in-memory `KillSwitchManager` from `euno-platform/packages/common`. The MCP
+   in-memory `KillSwitchManager` from `pkg`. The MCP
    protocol layer itself has to be built.
 
 2. **The Stage 3 upgrade is not "a single config change."** The prior
@@ -116,7 +116,7 @@ material factual error that this revision fixes.
    design decision: it cannot be retrofitted into a security tool
    without burning trust. See [§ Telemetry & gate instrumentation](#telemetry--gate-instrumentation).
 
-6. **`euno-platform/packages/common` mixes open and operational code.** The package
+6. **`pkg` mixes open and operational code.** The package
    currently contains both Apache-2.0-compatible things (types,
    interfaces, in-memory stores, the four interface seams) and
    operational things (Redis/Postgres/KMS-backed implementations).
@@ -183,7 +183,7 @@ strategy.
 >   [`docs/stage-0-freeze.md`](./stage-0-freeze.md) merged.
 > - [x] **Substage 0.2** -- MCP SDK version pinned; support window recorded in
 >   [`docs/mcp-support.md`](./mcp-support.md).
-> - [x] **Substage 0.3** -- `euno-platform/packages/common` split into `common-core`
+> - [x] **Substage 0.3** -- `pkg` split into `common-core`
 >   (Apache-2.0) and `common-infra` (BUSL-1.1); package-level `LICENSE` files
 >   added; compat shim kept as `@euno/common` (BUSL-1.1) for back-compat.
 > - [x] **Substage 0.4** -- CI dependency-direction enforcement landed:
@@ -193,10 +193,10 @@ strategy.
 >   GitHub Actions CI workflow (`.github/workflows/ci.yml`). The `@euno/cli`
 >   migration to `@euno/common-core` is complete; the allowlist is empty
 >   (zero violations). Two-folder strategy decided and documented; top-level
->   folders [`public/`](../public/) and [`euno-platform/`](../euno-platform/)
+>   folders [`public/`](../public/) and [`eunox/`](../eunox/)
 >   contain the actual packages under their respective `packages/`
 >   subdirectories. Apache-2.0 packages live under `public/packages/` and
->   BUSL-1.1 packages live under `euno-platform/packages/`.
+>   BUSL-1.1 packages live under `internal/`.
 >
 > **All six Stage 0 gate conditions are now met. Stage 1 may begin.**
 
@@ -209,10 +209,10 @@ default behavior is to keep building outwards.
 
 **Decisions to make and write down before Stage 1 begins:**
 
-- **Feature-freeze** `euno-platform/packages/{tool-gateway, capability-issuer, common, common-infra, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
-- **Quarantine** `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
+- **Feature-freeze** `internal/{tool-gateway, capability-issuer, common, common-infra, agent-runtime, framework-adapters}` to security fixes, dependency bumps, and design-partner-driven changes only. No new features without a named user. Policy and PR-review checklist: [`docs/stage-0-freeze.md`](./stage-0-freeze.md).
+- **Quarantine** `internal/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter}`: keep them building in CI, do not invest further until a Stage-4 customer pays for it. Each package carries a `STATUS.md` marking it "design-partner driven, not on the roadmap."
 - **Pin the MCP SDK version** the project will support (`@modelcontextprotocol/sdk`), document the protocol revision, and decide the support window. MCP is still pre-1.0; pretending otherwise causes silent breakage. Decision recorded in [`docs/mcp-support.md`](./mcp-support.md).
-- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `euno-platform/packages/common` into `common-core` (Apache-2.0) and `common-infra` (BSL) and organising packages into the two-folder structure described in [§ Repository structure](#repository-structure-public--private).
+- **Draw the license boundary** (see below) and add `LICENSE` files at the package level so the boundary is mechanical, not editorial. This includes splitting `pkg` into `common-core` (Apache-2.0) and `common-infra` (BSL) and organising packages into the two-folder structure described in [§ Repository structure](#repository-structure-public--private).
 
 **Gate to Stage 1:** the freeze is announced (internal note is fine),
 the Stage-1 package layout is approved, the license boundary is in
@@ -227,11 +227,11 @@ two-folder structure is in place.
 |---|---|---|
 | `@euno/mcp` (new) | Apache-2.0 | Wedge. Must be trivially adoptable, redistributable, embeddable in commercial products. Apache-2.0 (not MIT) for the patent grant. |
 | `@euno/langchain` (new) | Apache-2.0 | Same reason. |
-| `public/packages/common` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
-| `public/packages/cli` | Apache-2.0 | Developer surface. |
-| `euno-platform/packages/common-infra` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
-| `euno-platform/packages/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed euno Gateway" against you. |
-| `euno-platform/packages/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
+| `pkg/` (split from `common`) | Apache-2.0 | Types, interfaces, in-memory stores, the four interface seams. Imported by the open packages; cannot be more restrictive than them. |
+| `cmd/` | Apache-2.0 | Developer surface. |
+| `pkg` (split from `common`) | BSL 1.1 | Redis, Postgres, KMS-backed implementations. Operational layer. Depends on `common-core`; the reverse dependency is forbidden (see below). |
+| `internal/{tool-gateway, capability-issuer, agent-runtime, framework-adapters}` | BSL 1.1, change date = today + 4 years → Apache-2.0 | The operational layer. BSL allows non-production use, source review, and self-host for non-competing use; blocks a hyperscaler from launching "Managed euno Gateway" against you. |
+| `internal/{partner-issuer-sim, db-token-service, storage-grant-service, posture-emitter, integration-tests}` | BSL 1.1 | Same. |
 
 **Dependency direction rule.** BSL packages may depend on Apache-2.0
 packages. Apache-2.0 packages must never depend on BSL packages.
@@ -267,7 +267,7 @@ public/                          # public — Apache-2.0
     mcp/
     cli/
 
-euno-platform/                     # private — BUSL-1.1
+eunox/                     # private — BUSL-1.1
   packages/
     common-infra/
     common/
@@ -280,10 +280,10 @@ euno-platform/                     # private — BUSL-1.1
 ```
 
 Both folder trees are npm workspaces declared in the root `package.json`
-(`public/packages/*` and `euno-platform/packages/*`).
+(`public/packages/*` and `internal/*`).
 
 **How the dependency works.** The `common` package (`@euno/common-core`) lives in `public/packages/`
-and is consumed by the platform packages in `euno-platform/packages/` as
+and is consumed by the platform packages in `internal/` as
 a normal workspace dependency. When published to npm, `@euno/common-core`
 becomes the public API contract that external consumers (and the future
 hosted platform) install as a regular npm dependency. The interface seams
@@ -310,7 +310,7 @@ to something hidden.
 
 > **Stage 1 status** (May 2026)
 >
-> - [x] Task 1 — `public/packages/mcp` scaffolded; build, lint, test all pass
+> - [x] Task 1 — `pkg/` scaffolded; build, lint, test all pass
 > - [x] Task 2 — `MCP_PROTOCOL_VERSION` constant; `docs/mcp-support.md` updated
 > - [x] Task 3 — `StdioProxy` with full passthrough + `tools/call` interception
 > - [x] Task 4 — Mock upstream + stdio integration tests (transport-stdio.test.ts)
@@ -345,15 +345,15 @@ not just one framework. The enforcement boundary is the protocol
 itself — the agent has no import path, no function reference, no
 escape route.
 
-**Why not extract from `euno-platform/packages/framework-adapters`.** There is no
+**Why not extract from `internal/framework-adapters`.** There is no
 MCP code there. The MCP transport, JSON-RPC framing, and request
 routing are new code. What *can* be reused from the repository:
 
-- `CapabilityCondition` discriminated union and `condition-registry` from `public/packages/common`
-- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `public/packages/common`
-- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `public/packages/common/src/call-counter-store.ts`
-- `KillSwitchManager` in-memory backend from `public/packages/common/src/kill-switch.ts`
-- `AgentCapabilityManifest` types and the `euno validate` codepath from `public/packages/cli`
+- `CapabilityCondition` discriminated union and `condition-registry` from `pkg/`
+- `argument-validator` and `capability-validators` (path / SQL / table-name validators) from `pkg/`
+- `InMemoryCallCounterStore` (with in-memory per-key expiry tracking) from `pkg//src/call-counter-store.ts`
+- `KillSwitchManager` in-memory backend from `pkg//src/kill-switch.ts`
+- `AgentCapabilityManifest` types and the `euno validate` codepath from `cmd/`
 
 That reuse is the keystone of [§ Schema parity](#policy-and-audit-schema-parity-non-negotiable).
 
@@ -417,7 +417,7 @@ npx -y @euno/mcp validate ./euno.policy.yaml
 
 **`CapabilityCondition` variants supported in v0** (a strict subset of
 the production `CapabilityCondition` discriminated union in
-`public/packages/common/src/wire.ts`, so policies upgrade without rewriting):
+`pkg//src/wire.ts`, so policies upgrade without rewriting):
 
 - `maxCalls` (sliding window — the `CallCounterStore` already supports both per-session and per-window)
 - `timeWindow` (`notBefore` / `notAfter`)
@@ -473,7 +473,7 @@ say it for you.
 ### Execution plan
 
 **Weeks 1–2 — Skeleton + transport.**
-- Create `public/packages/mcp` (publishes as `@euno/mcp`).
+- Create `pkg/` (publishes as `@euno/mcp`).
 - Implement stdio and HTTP MCP transports with `tools/list` / `resources/list` / `prompts/list` passthrough and `tools/call` interception. Do not reimplement JSON-RPC; use `@modelcontextprotocol/sdk`.
 - Wire the in-memory `CallCounterStore` and `KillSwitchManager` from `@euno/common-core` (no Redis, no Postgres).
 - Local jsonl audit log (`~/.euno/audit.jsonl`), OCSF-shaped, locally HMAC-signed (key generated at first run, stored in `~/.euno/key`). Format identical to the Stage-3+ signed evidence; signer is the only thing that changes.
@@ -481,7 +481,7 @@ say it for you.
 **Weeks 3–4 — Policy engine + CLI.**
 - Implement YAML/JSON policy loader producing the existing `AgentCapabilityManifest` in memory (one isomorphic shape, see [§ schema parity](#policy-and-audit-schema-parity-non-negotiable)).
 - Wire the `CapabilityCondition` types listed above through `condition-registry`.
-- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `public/packages/cli` so a manifest validates identically locally and in the issuer.
+- `euno-mcp proxy` and `euno-mcp validate` CLI commands. Reuse the existing `euno validate` codepath from `cmd/` so a manifest validates identically locally and in the issuer.
 - Lightweight integration test using a mock upstream MCP server (a 30-line stdio echo server is enough).
 
 **Weeks 5–6 — Ship and distribute.**
@@ -511,7 +511,7 @@ entire staged plan. Get it wrong and every later stage compounds the
 mistake.
 
 **Rule.** The policy file `@euno/mcp` consumes is a literal subset of
-`AgentCapabilityManifest` (`public/packages/common/src/types.ts`). The
+`AgentCapabilityManifest` (`pkg//src/types.ts`). The
 condition types it understands are a literal subset of
 `CapabilityCondition`. The audit records it writes are
 OCSF-formatted, identical in shape to what the gateway writes to
@@ -528,11 +528,11 @@ SIEM. The only differences across stages are:
 
 That is the entire Stage 3 migration: swap the implementations of
 four interfaces that already exist as seams in `@euno/common-core` —
-[`TokenVerifier`](../public/packages/common/src/runtime.ts),
-[`CallCounterStore`](../public/packages/common/src/condition-registry.ts),
-[`EvidenceSigner`](../public/packages/common/src/runtime.ts), and
-[`KillSwitchManager`](../public/packages/common/src/runtime.ts) (with its
-optional [`KillSwitchPersistenceBackend`](../euno-platform/packages/common-infra/src/redis-kill-switch.ts)
+[`TokenVerifier`](../pkg//src/runtime.ts),
+[`CallCounterStore`](../pkg//src/condition-registry.ts),
+[`EvidenceSigner`](../pkg//src/runtime.ts), and
+[`KillSwitchManager`](../pkg//src/runtime.ts) (with its
+optional [`KillSwitchPersistenceBackend`](../pkg/src/redis-kill-switch.ts)
 for Postgres dual-write). Policy storage is the only seam that is
 genuinely new in Stage 3: in Stage 1 the policy is a local file read
 once at startup; in Stage 3 it's a signed JWT verified per request via
@@ -568,10 +568,10 @@ path at any layer.
 > - [x] Task 7 — `euno-mcp validate-token` CLI (audit log explainer, HMAC verifier)
 > - [x] Task 8 — `euno-mcp stats` CLI (denial-reason histograms from local audit log)
 > - [x] Task 9 — `@euno/langchain` companion package — `wrapAsLangChainTool` over local-only `CapabilityRuntime`
-> - [x] Task 10 — Reference policy library under `public/packages/mcp/policies/`
+> - [x] Task 10 — Reference policy library under `pkg//policies/`
 > - [x] Task 11 — README + docs updates: condition matrix, before/after, schema-parity claim
 > - [x] Task 12 — Stage 3 readiness script + signal collection update
-> - [x] Post-Stage-2 — VSCode build/debug configs (`.vscode/launch.json`, `tasks.json`, `settings.json`, `extensions.json`); CODEOWNERS and LICENSE updated to reflect `public/packages/common/` rename
+> - [x] Post-Stage-2 — VSCode build/debug configs (`.vscode/launch.json`, `tasks.json`, `settings.json`, `extensions.json`); CODEOWNERS and LICENSE updated to reflect `pkg//` rename
 >
 > **All 12 Stage 2 tasks are complete. `@euno/mcp` 0.1.0 is ready to publish.**
 
@@ -585,8 +585,8 @@ handles richer conditions unchanged because enforcement is still at
 
 - Additional condition types in policy config: IP allowlists, argument-schema validation with structured error reporting, rate limiting by time window, the existing `capability-validators` for SQL `SELECT`-only / table allowlists / column allowlists.
 - `euno-mcp validate-token` CLI for inspecting why a request was denied (reads the local audit log, reconstructs the decision).
-- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `euno-platform/packages/agent-runtime`, just with a local-only backend.**
-- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `public/packages/mcp/policies/` directory. This is what makes the 5-minute pitch real.
+- `@euno/langchain` companion package — wraps a `Tool` / `StructuredTool` so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same `AgentCapabilityManifest` and the same enforcement core. **Not a separate enforcer — the same `CapabilityRuntime` shape used by `internal/agent-runtime`, just with a local-only backend.**
+- A reference policy library: 3–5 pre-baked `euno.policy.yaml` files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a `pkg//policies/` directory. This is what makes the 5-minute pitch real.
 - Continued telemetry; expose denial-reason histograms in the local CLI (`euno-mcp stats`).
 
 ### Gate to Stage 3 — measurable
@@ -605,28 +605,28 @@ Run `npx ts-node scripts/stage3-readiness.ts` to check current status (exits 0 w
 >
 > - [x] Task 0 — Stage 3 design freeze & RFC: `docs/stage3executionplan.md` authored; KMS provider, Postgres/Redis deployment shape, API-key format, and wire contract captured; pending final merge review
 > - [x] Task 1 — API-key minter threat model: `docs/security/minter-threat-model.md` produced; all seven MVP questions answered; pending engineer + security sign-off
-> - [x] Task 2 — `@euno/mcp` enforcer mode dispatch (remote-enforcer client): `RemoteEnforcerPDP` in `public/packages/mcp/src/enforcer/remote.ts`; `--enforcer-url` / `--enforcer-api-key` / `--enforcer-timeout` CLI flags; fail-closed on any network or protocol error; `applyRemoteObligations()` in `transport/obligations.ts`; 42 tests
-> - [x] Task 3 — `JWTTokenVerifier` wiring: `KmsTokenSigner` in `euno-platform/packages/common-infra/src/kms-token-signer.ts` (Azure, AWS, GCP drivers); JWKS-client glue behind the seam in `tool-gateway/src/jwks-client.ts`; registered as production `TokenVerifier` in gateway bootstrap; round-trip + unknown-condition-deny tests in `euno-platform/packages/integration-tests/tests/jwt-token-verifier-wiring.test.ts`
-> - [x] Task 4 — `RedisCallCounterStore` for the gateway: `euno-platform/packages/common-infra/src/call-counter-store.ts` (Redis impl) + `redis-circuit-breaker.ts` wired into `tool-gateway/src/enforcement.ts`; fail-closed on Redis outage (operator-overridable via `CALL_COUNTER_FAIL_OPEN=true`); multi-replica counter parity tested
-> - [x] Task 5 — KMS-backed `EvidenceSigner`: `KmsEvidenceSigner` in `euno-platform/packages/common-infra/src/kms-evidence-signer.ts` (Azure, AWS, GCP drivers, pre-computed SHA-256 digest); wired as gateway default in `tool-gateway/src/audit-module.ts`; `LocalHmacSigner` available behind `AUDIT_SIGNING_KMS_PROVIDER` unset; parity test asserts identical canonical JSON pre-signature; 29 tests
-> - [x] Task 6 — `RedisKillSwitchManager` with Postgres dual-write: `euno-platform/packages/common-infra/src/redis-kill-switch.ts` + `PostgresKillSwitchBackend` (dual-write; Redis cold-start replay from Postgres); wired in `tool-gateway/src/admin-api.ts`; kill-switch-survives-Redis-flush + Postgres mirror tests
+> - [x] Task 2 — `@euno/mcp` enforcer mode dispatch (remote-enforcer client): `RemoteEnforcerPDP` in `pkg//src/enforcer/remote.ts`; `--enforcer-url` / `--enforcer-api-key` / `--enforcer-timeout` CLI flags; fail-closed on any network or protocol error; `applyRemoteObligations()` in `transport/obligations.ts`; 42 tests
+> - [x] Task 3 — `JWTTokenVerifier` wiring: `KmsTokenSigner` in `pkg/src/kms-token-signer.ts` (Azure, AWS, GCP drivers); JWKS-client glue behind the seam in `tool-gateway/src/jwks-client.ts`; registered as production `TokenVerifier` in gateway bootstrap; round-trip + unknown-condition-deny tests in `internal/integration-tests/tests/jwt-token-verifier-wiring.test.ts`
+> - [x] Task 4 — `RedisCallCounterStore` for the gateway: `pkg/src/call-counter-store.ts` (Redis impl) + `redis-circuit-breaker.ts` wired into `tool-gateway/src/enforcement.ts`; fail-closed on Redis outage (operator-overridable via `CALL_COUNTER_FAIL_OPEN=true`); multi-replica counter parity tested
+> - [x] Task 5 — KMS-backed `EvidenceSigner`: `KmsEvidenceSigner` in `pkg/src/kms-evidence-signer.ts` (Azure, AWS, GCP drivers, pre-computed SHA-256 digest); wired as gateway default in `tool-gateway/src/audit-module.ts`; `LocalHmacSigner` available behind `AUDIT_SIGNING_KMS_PROVIDER` unset; parity test asserts identical canonical JSON pre-signature; 29 tests
+> - [x] Task 6 — `RedisKillSwitchManager` with Postgres dual-write: `pkg/src/redis-kill-switch.ts` + `PostgresKillSwitchBackend` (dual-write; Redis cold-start replay from Postgres); wired in `tool-gateway/src/admin-api.ts`; kill-switch-survives-Redis-flush + Postgres mirror tests
 > - [x] Task 7 — Persistent audit query API: `GET /api/v1/audit/records` in `tool-gateway/src/routes/audit.ts`; paginated, filterable by `tenantId`, `agentId`, `jti`, `decision`, time range, `conditionType`, `denialCode`; OCSF records returned as-is; tenant-scoped by bearer token; constants `LEDGER_QUERY_DEFAULT_LIMIT=50`, `LEDGER_QUERY_MAX_LIMIT=1000`
 > - [x] Task 8 — Admin API hardening: `AdminIdempotencyStore` (24 h cache by `Idempotency-Key`); per-tenant `AdminApiOptions.tenantId` isolation; `acknowledgesCrossTenantImpact` guard for global kill ops; `OcsfAuthorizationEvent` (class_uid 3003) emitted for every mutating admin action; full tests in `tool-gateway/tests/admin-api.test.ts`
-> - [x] Task 9 — Hosted enforcement HTTP contract: `POST /api/v1/enforce` in `tool-gateway/src/routes/enforce.ts`; wire types (`EnforceRequest`, `EnforceResponse`, `Obligation`, `DenialInfo`, `ENFORCE_PROTOCOL_VERSION`) in `public/packages/common/src/wire.ts`; `X-Euno-Protocol-Version` header versioning; error-class taxonomy in `utils.ts`; protocol documented in `docs/stage-3-gateway-protocol.md`
-> - [x] Task 10 — Minter service skeleton: `euno-platform/packages/api-key-minter/` (BSL); `POST /mint` → `{capabilityToken, expiresAt}` (TTL ≤ 300 s); API-key store hashed-at-rest with prefix-indexed lookup; rate-limited per tenant; token shape identical to capability-issuer output; 183 tests
+> - [x] Task 9 — Hosted enforcement HTTP contract: `POST /api/v1/enforce` in `tool-gateway/src/routes/enforce.ts`; wire types (`EnforceRequest`, `EnforceResponse`, `Obligation`, `DenialInfo`, `ENFORCE_PROTOCOL_VERSION`) in `pkg//src/wire.ts`; `X-Euno-Protocol-Version` header versioning; error-class taxonomy in `utils.ts`; protocol documented in `docs/stage-3-gateway-protocol.md`
+> - [x] Task 10 — Minter service skeleton: `internal/minter/` (BSL); `POST /mint` → `{capabilityToken, expiresAt}` (TTL ≤ 300 s); API-key store hashed-at-rest with prefix-indexed lookup; rate-limited per tenant; token shape identical to capability-issuer output; 183 tests
 > - [x] Task 11 — Minter HSM integration: `KmsTokenSigner` (Azure, AWS, GCP) reused from `@euno/common-infra`; `MeteredTokenSigner` decorator wraps it; `KeyRotationManager` + `InMemoryJwksStore` in `src/key-rotation.ts`; per-mint audit row in `PostgresMintAuditStore`; key-rotation runbook tested end-to-end
 > - [x] Task 12 — Minter monitoring & alerting: 6 Prometheus metrics (`mintTotal`, `mintLatencySeconds`, `kmsSignLatencySeconds`, `kmsErrorTotal{error_class}`, `anomalyAlertsTotal{rule}`, `keyRotationTotal{kid,reason}`); `AnomalyDetector` (3 rules: `rate_spike`, `off_hours_low_activity`, `failure_clustering`) in `src/anomaly-detector.ts`; 5 alert rules in `prometheus/minter-alert-rules.yaml`
-> - [x] Task 13 — Self-hostable Docker image: `euno-platform/packages/tool-gateway/Dockerfile` (multi-stage, configurable Redis/Postgres/KMS backends via env vars); `infra/docker-compose.yml` with `dev`, `full`, and `smoke` profiles (gateway + Redis + Postgres + capability-issuer); smoke-test target exercises health, metrics, and enforcement; `infra/smoke-test.sh` script
+> - [x] Task 13 — Self-hostable Docker image: `internal/gateway/Dockerfile` (multi-stage, configurable Redis/Postgres/KMS backends via env vars); `infra/docker-compose.yml` with `dev`, `full`, and `smoke` profiles (gateway + Redis + Postgres + capability-issuer); smoke-test target exercises health, metrics, and enforcement; `infra/smoke-test.sh` script
 > - [x] Task 14 — BYO-GW path documentation: `docs/self-host.md` produced; covers component list, what self-hosters give up, minimum viable issuer recipe (DID-based identity, AWS KMS signing path with LocalStack note, local EC-key gateway audit signing), full production docker-compose, audit query API, admin ops, and security checklist
-> - [x] Task 15 — `@euno/mcp` upgrade UX: `euno-mcp upgrade-to-hosted` interactive command in `public/packages/mcp/src/cli/upgrade-to-hosted.ts`; validates API key against gateway, uploads policy, patches `mcp.json` / `claude_desktop_config.json` with backup; `--dry-run` flag; idempotent; 51 tests; `docs/upgrade-to-hosted.md` documents manual path
+> - [x] Task 15 — `@euno/mcp` upgrade UX: `euno-mcp upgrade-to-hosted` interactive command in `pkg//src/cli/upgrade-to-hosted.ts`; validates API key against gateway, uploads policy, patches `mcp.json` / `claude_desktop_config.json` with backup; `--dry-run` flag; idempotent; 51 tests; `docs/upgrade-to-hosted.md` documents manual path
 > - [x] Task 16 — Telemetry continuity: `GatewayTelemetryCollector` in `tool-gateway/src/gateway-telemetry.ts` (per-tenant, opt-out via `EUNO_TELEMETRY=0`, 5-min flush, same JSON schema as Stage 1–2 events); `scripts/stage4-readiness.ts` tracks Stage-4 gate (C1 = ≥1 paying team, C2 = ≥1 written security/compliance question); 47 tests
-> - [x] Task 17 — Pricing & billing plumbing: `docs/pricing-stage-3.md` captures pricing decision; `UsageMeter` interface + `InMemoryUsageMeter` in `@euno/common` (`public/packages/common/src/usage-meter.ts`); wired into `EnforcementEngine` and kill-switch invocations; `GET /admin/usage` + `POST /admin/usage/reset` via `mountUsageRoutes()` in `tool-gateway/src/routes/usage.ts`; 36 tests
-> - [x] Task 18 — Reference materials & migration guide: `docs/migrating-from-local.md` produced; covers before/after config, cryptographic story (why API key ≠ JWT), explicit data-boundary analysis for SOC2/GDPR review, step-by-step migration, rollback procedure, self-host alternative, and FAQ; `README.md` and `public/packages/mcp/README.md` updated with hosted-mode section and links
-> - [x] Task 19 — Cross-stage parity test suite: `euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts` (36 tests); proves decision parity, obligation parity, and OCSF pre-signature field parity across local and hosted enforcement paths; documents intentional divergences (resource naming, unlisted-tool semantics, denialCode in result struct vs audit evidence)
-> - [x] Task 20 — Gate-to-Stage-4 instrumentation: `scripts/stage4-readiness.ts` (C1 = ≥1 paying team via `EUNO_TELEMETRY_API /v1/stats/stage4-gate`, C2 = ≥1 written security/compliance question; exit 0=READY/1=NOT READY/2=UNKNOWN), `euno-platform/packages/tool-gateway/src/gateway-telemetry.ts` (per-tenant 5-min flush), and `public/packages/common/src/usage-meter.ts` (billing metering) collectively instrument the Stage-3-to-4 gate; `docs/mvp.md` is the gate tracker for the remaining open criteria
+> - [x] Task 17 — Pricing & billing plumbing: `docs/pricing-stage-3.md` captures pricing decision; `UsageMeter` interface + `InMemoryUsageMeter` in `@euno/common` (`pkg//src/usage-meter.ts`); wired into `EnforcementEngine` and kill-switch invocations; `GET /admin/usage` + `POST /admin/usage/reset` via `mountUsageRoutes()` in `tool-gateway/src/routes/usage.ts`; 36 tests
+> - [x] Task 18 — Reference materials & migration guide: `docs/migrating-from-local.md` produced; covers before/after config, cryptographic story (why API key ≠ JWT), explicit data-boundary analysis for SOC2/GDPR review, step-by-step migration, rollback procedure, self-host alternative, and FAQ; `README.md` and `pkg//README.md` updated with hosted-mode section and links
+> - [x] Task 19 — Cross-stage parity test suite: `internal/integration-tests/tests/cross-stage-parity.test.ts` (36 tests); proves decision parity, obligation parity, and OCSF pre-signature field parity across local and hosted enforcement paths; documents intentional divergences (resource naming, unlisted-tool semantics, denialCode in result struct vs audit evidence)
+> - [x] Task 20 — Gate-to-Stage-4 instrumentation: `scripts/stage4-readiness.ts` (C1 = ≥1 paying team via `EUNO_TELEMETRY_API /v1/stats/stage4-gate`, C2 = ≥1 written security/compliance question; exit 0=READY/1=NOT READY/2=UNKNOWN), `internal/gateway/src/gateway-telemetry.ts` (per-tenant 5-min flush), and `pkg//src/usage-meter.ts` (billing metering) collectively instrument the Stage-3-to-4 gate; `docs/mvp.md` is the gate tracker for the remaining open criteria
 
 **What changes.** Move enforcement out of the local proxy process
-into a persistent service. `euno-platform/packages/tool-gateway` stops being
+into a persistent service. `internal/gateway` stops being
 overengineered and starts being exactly right for the population
 that's pulled this far.
 
@@ -659,12 +659,12 @@ perspective the upgrade really is one config change:
 
 From the operator's perspective the API-key minter is the new
 service. The Stage-3 gateway code is the existing
-`euno-platform/packages/tool-gateway` with its existing verifier path; nothing
+`internal/gateway` with its existing verifier path; nothing
 about the security model has to be relaxed.
 
 ### What ships
 
-- `euno-platform/packages/tool-gateway` exposed as a hosted service and as a
+- `internal/gateway` exposed as a hosted service and as a
   self-hosted Docker image (the latter under BSL).
 - The API-key minter described above (lives in the hosted offering;
   not part of the self-host bundle initially — that decision can flip
@@ -738,7 +738,7 @@ threat model delays Stage 3, that is the correct trade.
 > - [x] Task 10 — Telemetry continuity: `UsageMeter` interface extended with `recordIssuance(tenantId, userId)` and `recordRenewal(tenantId, userId)`; `TenantUsageSnapshot` gains `issuanceEvents`, `renewalEvents`, `issuancesByUser?`, `renewalsByUser?`; `InMemoryUsageMeter` + `RedisUsageMeter` implement new methods; `GatewayTelemetryCollector` + `GatewayTelemetryHooks` extended with `recordIssuance`/`recordRenewal`; `GatewayTelemetryEvent` gains `issuanceEvents`, `renewalEvents`, `distinctIssuingUsers`, `distinctRenewingUsers`; `IssuerTelemetryCollector` in capability-issuer emits same event schema on opt-in (`EUNO_TELEMETRY=1`); wired into issue/renew/OIDC routes; 37 usage-meter tests + 40 gateway-telemetry tests pass
 > - [x] Task 11 — Cross-stage parity test extension
 > - [x] Task 12 — Stage-5 readiness instrumentation: `scripts/stage5-readiness.ts` added; single C1 signal (`confirmedEnterpriseInbound ≥ 1`) from `EUNO_TELEMETRY_API /v1/stats/stage5-gate`; exit codes 0=READY / 1=NOT READY / 2=UNKNOWN; 41 unit tests covering evaluateCriterion1, buildCriteria, computeOverallResult, queryTelemetry, fetchJson, and the C1_THRESHOLD_ENTERPRISE_INBOUND constant; `scripts/README.md` updated with usage notes for stage4-readiness and stage5-readiness
-> - [x] Task 13 — Stage-4 status block + reference materials: `docs/mvp.md` §"Stage 4" status block updated with one bullet per task; `docs/issuer-operator-runbook.md` covers deployment topology, KMS key rotation, F-1 rate-limit alerting, and IdP-outage on-call playbook with fail-closed semantics; `README.md` updated with Stage-4 hosted-issuer section and revised project status table (Stage 4 = current); `public/packages/cli/README.md` updated with Stage-4 hosted-issuer quick-setup section
+> - [x] Task 13 — Stage-4 status block + reference materials: `docs/mvp.md` §"Stage 4" status block updated with one bullet per task; `docs/issuer-operator-runbook.md` covers deployment topology, KMS key rotation, F-1 rate-limit alerting, and IdP-outage on-call playbook with fail-closed semantics; `README.md` updated with Stage-4 hosted-issuer section and revised project status table (Stage 4 = current); `cmd//README.md` updated with Stage-4 hosted-issuer quick-setup section
 
 **What changes.** Multiple agents, multiple users, multiple policies
 tied to real identities rather than config files. Token issuance
@@ -747,7 +747,7 @@ an internal API-key minter.
 
 ### What ships
 
-- `euno-platform/packages/capability-issuer` shipped as part of the hosted product
+- `internal/issuer` shipped as part of the hosted product
   and self-host bundle.
 - Entra ID + at minimum one other identity provider (AWS Cognito or
   GCP Cloud Identity — pick whichever the design partners ask for).
@@ -803,7 +803,7 @@ anchor). That is the moment to un-quarantine, polish, and ship.
 > - [x] Task 11 — On-prem deployment bundle: `k8s/helm/` per-service values schemas; `k8s/network-policies.yaml`; `k8s/pod-security-standards.yaml`; air-gapped setup documented; docker-compose `full` profile extended with Stage-5 services; `npm run gen:helm-schema` regenerates schemas from `config/schema.ts`
 > - [x] Task 12 — Cross-stage parity extension (Stage 5 scenarios): 8 new parity assertions in `cross-stage-parity.test.ts`; Scenario 1 — partner-issued token (EdDSA, `iss`=partner DID resolved over HTTP via `PartnerIssuerResolver`) produces identical gateway allow/deny decisions as a local-issued RS256 token for the same `capabilities` array (4 assertions: allow parity, deny parity, iss-agnostic allow, OCSF `conditionType` parity); Scenario 2 — AGT guard+gateway single audit entry invariant: guard allow + gateway deny → exactly one `signEvidence` call; guard deny (tool not in manifest) → zero `signEvidence` calls; guard allow + gateway allow → exactly one allow audit entry; 81 total parity tests pass
 > - [x] Task 13 — Stage-5 consolidated self-host documentation: `docs/self-host.md` §12 "Stage 5 — Enterprise Deployment" added (service topology, partner DID federation, SCIM, cross-chain anchor, SOC2 export, DB token service, storage grant service, AGT guard, discovery v1.0.0, Helm + air-gap bundle, docker-compose additions, did:ion productionization, compliance checklists × 3, Stage-5 security checklist); `scripts/check-stage5-docs.mjs` doc-validation lint script; 13 tests in `scripts/__tests__/check-stage5-docs.test.mjs`; §2 feature matrix updated to reflect Stage-5 features as available
-> - [x] Task 14 — Stage-5 status block + reference materials: `docs/mvp.md` Stage-5 status block completed with all 15 task entries (Tasks 0–14); `README.md` §"Stage 5 — Enterprise" added (partner DID federation, cross-chain anchor, SOC2 audit export, AGT guard, SCIM, discovery v1.0.0, on-prem bundle); project status table updated to Stage 5 ✅ Done; `public/packages/cli/README.md` §"Stage 5: Enterprise Features" added (partner-federation CLI workflow, SOC2 audit export CLI commands, `euno validate-token`, `euno audit export`, and `euno discover` references); `CHANGELOG.md` added to all four un-quarantined packages (`partner-issuer-sim` updated, `posture-emitter`, `db-token-service`, `storage-grant-service` created at v1.0.0); `scripts/check-task14-references.mjs` CI lint + 16 tests in `scripts/__tests__/check-task14-references.test.mjs`
+> - [x] Task 14 — Stage-5 status block + reference materials: `docs/mvp.md` Stage-5 status block completed with all 15 task entries (Tasks 0–14); `README.md` §"Stage 5 — Enterprise" added (partner DID federation, cross-chain anchor, SOC2 audit export, AGT guard, SCIM, discovery v1.0.0, on-prem bundle); project status table updated to Stage 5 ✅ Done; `cmd//README.md` §"Stage 5: Enterprise Features" added (partner-federation CLI workflow, SOC2 audit export CLI commands, `euno validate-token`, `euno audit export`, and `euno discover` references); `CHANGELOG.md` added to all four un-quarantined packages (`partner-issuer-sim` updated, `posture-emitter`, `db-token-service`, `storage-grant-service` created at v1.0.0); `scripts/check-task14-references.mjs` CI lint + 16 tests in `scripts/__tests__/check-task14-references.test.mjs`
 
 ---
 
@@ -819,7 +819,7 @@ constraints, in priority order:
 2. **No payload contents, ever.** No tool names, no argument values,
    no file paths, no SQL fragments. Counts only. The schema is
    public and small enough to fit in the README.
-3. **Documented schema** in `public/packages/mcp/TELEMETRY.md`. What's
+3. **Documented schema** in `pkg//TELEMETRY.md`. What's
    sent, where, why, how to disable.
 4. **Anonymous install ID** (random UUID, regenerated per install).
    No machine fingerprint. No IP retention beyond aggregation.

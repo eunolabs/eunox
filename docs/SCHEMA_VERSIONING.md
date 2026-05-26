@@ -115,7 +115,7 @@ if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
 
 1. **Update Gateway** (Week 1-2)
    ```typescript
-   // public/packages/common/src/types.ts
+   // pkg//src/types.ts
    export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
      '1.0',
      '1.1', // NEW

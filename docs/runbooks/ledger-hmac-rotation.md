@@ -1,7 +1,7 @@
 # Runbook: Audit Ledger HMAC Secret Rotation
 
 > **Applies to:** `PostgresLedgerBackend` and `PerReplicaPostgresLedgerBackend`  
-> **File:** `euno-platform/packages/common-infra/src/ledger-signer.ts`  
+> **File:** `pkg/src/ledger-signer.ts`  
 > **CI-7 / OQ-1**
 
 ---
@@ -185,7 +185,7 @@ env:
 
 ### Cross-references
 
-- `euno-platform/packages/common-infra/src/ledger-signer.ts` — backend implementation, `verifyRowHmac()` method
+- `pkg/src/ledger-signer.ts` — backend implementation, `verifyRowHmac()` method
 - `docs/ARCHITECTURE.md §7` — audit ledger design
 - `docs/stage-3-design.md §3.2` — HMAC tamper-evidence model
 - `docs/architecture-review-2026-05.md §CI-7, §OQ-1` — architecture review findings

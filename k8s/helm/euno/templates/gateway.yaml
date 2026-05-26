@@ -1,5 +1,5 @@
 {{/*
-tool-gateway Deployment
+gateway Deployment
 */}}
 apiVersion: v1
 kind: ServiceAccount

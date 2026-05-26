@@ -33,8 +33,8 @@ services:
   partner-issuer-sim:
     build:
       context: ..
-      dockerfile: euno-platform/packages/partner-issuer-sim/Dockerfile
-    image: euno/partner-issuer-sim:dev
+      dockerfile: eunox/packages/partner-issuer-sim/Dockerfile
+    image: eunox/partner-issuer-sim:dev
     container_name: euno-partner-sim
     environment:
       PORT: "4001"
@@ -63,8 +63,8 @@ services:
   our-issuer:
     build:
       context: ..
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
-    image: euno/capability-issuer:dev
+      dockerfile: eunox/packages/capability-issuer/Dockerfile
+    image: eunox/issuer:dev
     container_name: euno-our-issuer
     environment:
       PORT: "3000"
@@ -81,8 +81,8 @@ services:
   our-gateway:
     build:
       context: ..
-      dockerfile: euno-platform/packages/tool-gateway/Dockerfile
-    image: euno/tool-gateway:dev
+      dockerfile: eunox/packages/tool-gateway/Dockerfile
+    image: eunox/gateway:dev
     container_name: euno-our-gateway
     depends_on:
       partner-issuer-sim:

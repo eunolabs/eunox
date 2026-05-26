@@ -1,15 +1,15 @@
 apiVersion: v2
-name: euno
+name: eunox
 description: |
-  Umbrella Helm chart for the full Euno platform — Stage 5 on-prem deployment.
+  Umbrella Helm chart for the full Eunoxx platform — on-prem deployment.
 
   Renders Kubernetes Deployment, Service, and ConfigMap (+ Secret) resources
   for the following services directly from templates in this chart:
-    - tool-gateway
-    - capability-issuer
-    - api-key-minter
-    - db-token-service
-    - storage-grant-service
+    - gateway
+    - issuer
+    - minter
+    - db-token-svc
+    - storage-grant-svc
     - posture-emitter
 
   External dependencies (Postgres, Redis) are NOT included by default.
@@ -18,27 +18,26 @@ description: |
   gateway.env.REDIS_URL, issuer.env.ISSUER_DB_URL).
   To evaluate the full stack locally, enable the optional bitnami sub-charts:
 
-    helm install euno ./k8s/helm/euno \
+    helm install eunox ./k8s/helm/euno \
       --set postgresql.enabled=true \
       --set redis.enabled=true \
       -f k8s/helm/euno/values.yaml
 
-  See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the production
-  installation guide, air-gap checklist, and network-policy templates.
+  See docs/DEPLOYMENT.md for the production installation guide.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
 keywords:
-  - euno
-  - tool-gateway
-  - capability-issuer
+  - eunox
+  - gateway
+  - issuer
   - mcp
   - enterprise
-home: https://github.com/edgeobs/euno-platform
+home: https://github.com/edgeobs/eunox
 sources:
-  - https://github.com/edgeobs/euno-platform
+  - https://github.com/edgeobs/eunox
 maintainers:
-  - name: Euno Platform Team
+  - name: Eunoxx Team
 
 dependencies:
   # ── Optional Postgres (bitnami) ────────────────────────────────────────────

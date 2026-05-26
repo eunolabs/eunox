@@ -17,7 +17,7 @@
 # ---------------------
 # All backend selection is driven by environment variables.  The values below
 # are the recommended defaults for a self-hosted local stack.  Override any
-# variable by copying euno-platform/packages/tool-gateway/.env.example to
+# variable by copying eunox/packages/tool-gateway/.env.example to
 # infra/.env and editing it, or by setting the variable in your shell before
 # calling docker compose.
 #
@@ -41,7 +41,7 @@
 #   2. Configure REDIS_URL pointing at a password-protected, TLS-enabled Redis.
 #   3. Configure AUDIT_LEDGER_PG_URL with TLS mode=require.
 #   4. Set ENABLE_CRYPTOGRAPHIC_AUDIT=true and provide a signing key.
-#   5. See euno-platform/packages/tool-gateway/.env.example for the full reference.
+#   5. See eunox/packages/tool-gateway/.env.example for the full reference.
 
 version: "3.9"
 
@@ -54,8 +54,9 @@ version: "3.9"
 x-gateway-build: &gateway-build
   build:
     context: ..
-    dockerfile: euno-platform/packages/tool-gateway/Dockerfile
-  image: euno/tool-gateway:local
+    dockerfile: Dockerfile
+    target: gateway
+  image: eunox/gateway:local
   restart: unless-stopped
   ports:
     - "${GATEWAY_EXPOSE_PORT:-3002}:${GATEWAY_PORT:-3002}"
@@ -161,8 +162,9 @@ services:
   capability-issuer:
     build:
       context: ..
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
-    image: euno/capability-issuer:local
+      dockerfile: Dockerfile
+      target: issuer
+    image: eunox/issuer:local
     container_name: euno-capability-issuer
     restart: unless-stopped
     environment:
@@ -277,7 +279,7 @@ services:
     build:
       context: mock-oidc
       dockerfile: Dockerfile
-    image: euno/mock-oidc:local
+    image: eunox/mock-oidc:local
     container_name: euno-mock-oidc
     profiles: ["smoke"]
     restart: unless-stopped
@@ -301,8 +303,9 @@ services:
   db-token-service:
     build:
       context: ..
-      dockerfile: euno-platform/packages/db-token-service/Dockerfile
-    image: euno/db-token-service:local
+      dockerfile: Dockerfile
+      target: db-token-svc
+    image: eunox/db-token-service:local
     container_name: euno-db-token-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
@@ -333,8 +336,9 @@ services:
   storage-grant-service:
     build:
       context: ..
-      dockerfile: euno-platform/packages/storage-grant-service/Dockerfile
-    image: euno/storage-grant-service:local
+      dockerfile: Dockerfile
+      target: storage-grant-svc
+    image: eunox/storage-grant-service:local
     container_name: euno-storage-grant-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
@@ -366,8 +370,9 @@ services:
   posture-emitter:
     build:
       context: ..
-      dockerfile: euno-platform/packages/posture-emitter/Dockerfile
-    image: euno/posture-emitter:local
+      dockerfile: Dockerfile
+      target: posture-emitter
+    image: eunox/posture-emitter:local
     container_name: euno-posture-emitter
     profiles: ["full", "smoke"]
     restart: unless-stopped

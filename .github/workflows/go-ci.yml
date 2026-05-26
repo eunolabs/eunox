@@ -1,26 +1,16 @@
-# Copyright 2024-2025 Euno Platform Authors
+# Copyright 2026 Eunox Authors
 # SPDX-License-Identifier: BUSL-1.1
 
 name: Go CI
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'euno-go/**'
-      - '.github/workflows/go-ci.yml'
+    branches: [main, "copilot/**"]
   pull_request:
     branches: [main]
-    paths:
-      - 'euno-go/**'
-      - '.github/workflows/go-ci.yml'
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    working-directory: euno-go
 
 jobs:
   lint:
@@ -31,8 +21,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-          cache-dependency-path: euno-go/go.sum
+          go-version: '1.25'
+          cache-dependency-path: go.sum
 
       - name: Run go vet
         run: go vet ./...
@@ -41,7 +31,6 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
-          working-directory: euno-go
 
   test:
     name: Test
@@ -51,8 +40,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-          cache-dependency-path: euno-go/go.sum
+          go-version: '1.25'
+          cache-dependency-path: go.sum
 
       - name: Run tests with race detector
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
@@ -61,7 +50,7 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total coverage: ${COVERAGE}%"
-          PKG_COVERAGE=$(go tool cover -func=coverage.out | grep "^github.com/edgeobs/euno-platform/euno-go/pkg/" | awk '{sum += substr($3, 1, length($3)-1); n++} END {if (n>0) printf "%.1f", sum/n; else print "0"}')
+          PKG_COVERAGE=$(go tool cover -func=coverage.out | grep "^github.com/edgeobs/eunox/pkg/" | awk '{sum += substr($3, 1, length($3)-1); n++} END {if (n>0) printf "%.1f", sum/n; else print "0"}')
           echo "pkg/ average coverage: ${PKG_COVERAGE}%"
           if [ "$(echo "$PKG_COVERAGE < 80" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage for pkg/ is below 80% threshold: ${PKG_COVERAGE}%"
@@ -75,7 +64,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check BSL license headers
-        working-directory: euno-go
         run: make check-license
 
   build:
@@ -90,8 +78,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-          cache-dependency-path: euno-go/go.sum
+          go-version: '1.25'
+          cache-dependency-path: go.sum
 
       - name: Build
         env:

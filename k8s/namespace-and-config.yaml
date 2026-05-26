@@ -1,4 +1,4 @@
-# Namespace and ConfigMap for Euno System
+# Namespace and ConfigMap for Eunox System
 apiVersion: v1
 kind: Namespace
 metadata:

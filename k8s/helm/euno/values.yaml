@@ -1,4 +1,4 @@
-# Euno umbrella chart — top-level values
+# Eunox umbrella chart — top-level values
 # ---------------------------------------------------------------------------
 # Each service is configured through two separate maps:
 #
@@ -41,11 +41,11 @@
 # See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the full
 # production installation guide.
 
-# ── tool-gateway ─────────────────────────────────────────────────────────────
+# ── gateway ─────────────────────────────────────────────────────────────
 gateway:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/euno/tool-gateway
+    repository: ghcr.io/edgeobs/eunox/gateway
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -58,7 +58,7 @@ gateway:
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
-    GATEWAY_AUDIENCE: tool-gateway
+    GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
   # Sensitive values — stored in a Kubernetes Secret.
   # Override these at install time via --set gateway.secretEnv.KEY=value or
@@ -69,11 +69,11 @@ gateway:
   #   AUDIT_LEDGER_HMAC_SECRET: ""
   #   ADMIN_API_KEY: ""
 
-# ── capability-issuer ─────────────────────────────────────────────────────────
+# ── issuer ─────────────────────────────────────────────────────────
 issuer:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/euno/capability-issuer
+    repository: ghcr.io/edgeobs/eunox/issuer
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -88,11 +88,11 @@ issuer:
   #   ISSUER_DB_URL: ""
   #   ISSUER_SCIM_BEARER_TOKEN: ""
 
-# ── api-key-minter ─────────────────────────────────────────────────────────
+# ── minter ─────────────────────────────────────────────────────────
 minter:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/euno/api-key-minter
+    repository: ghcr.io/edgeobs/euno/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:

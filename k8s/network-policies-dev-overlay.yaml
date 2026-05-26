@@ -46,14 +46,14 @@ metadata:
     euno.dev/dev-only: 'true'
   annotations:
     euno.dev/purpose: >
-      Broad dev/staging egress overlay for tool-gateway pods.
+      Broad dev/staging egress overlay for gateway pods.
       Provides temporary access to managed Redis and external backend services
       before their private endpoint CIDRs are known.
       REMOVE THIS POLICY IN PRODUCTION.
 spec:
   podSelector:
     matchLabels:
-      app: tool-gateway
+      app: gateway
   policyTypes:
   - Egress
   egress:
@@ -95,14 +95,14 @@ metadata:
     euno.dev/dev-only: 'true'
   annotations:
     euno.dev/purpose: >
-      Broad dev/staging egress overlay for capability-issuer pods.
+      Broad dev/staging egress overlay for issuer pods.
       Provides temporary access to Azure Key Vault / Azure AD / GCP KMS and
       managed Redis before their private endpoint CIDRs are known.
       REMOVE THIS POLICY IN PRODUCTION.
 spec:
   podSelector:
     matchLabels:
-      app: capability-issuer
+      app: issuer
   policyTypes:
   - Egress
   egress:
