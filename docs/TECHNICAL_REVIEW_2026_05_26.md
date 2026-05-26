@@ -3,7 +3,7 @@
 **Repository:** `edgeobs/eunox`  
 **Reviewer Role:** Principal Software Architect  
 **Date:** 2026-05-26  
-**Commit:** `8156330` (HEAD of `copilot/technical-review-system-architecture`)  
+**Commit:** `81563305` (HEAD of `copilot/technical-review-system-architecture`)  
 **Scope:** Full system architecture, design documents, and implementation code
 
 ---
@@ -387,7 +387,7 @@ Ordered by priority and dependency:
 |--------|-------|
 | Go source files (non-test) | 150 |
 | Test files | 89 |
-| Test-to-source ratio | 59% |
+| Test file ratio (files) | 59% |
 | Services (cmd/) | 6 (gateway, issuer, minter, db-token-svc, posture-emitter, storage-grant-svc) |
 | Packages (pkg/) | 15+ |
 | Documentation files | 34+ |
@@ -398,4 +398,4 @@ Ordered by priority and dependency:
 
 ---
 
-*Review conducted against commit `8156330` of `edgeobs/eunox` branch `copilot/technical-review-system-architecture`.*
+*Review conducted against commit `81563305` of `edgeobs/eunox` branch `copilot/technical-review-system-architecture`.*
