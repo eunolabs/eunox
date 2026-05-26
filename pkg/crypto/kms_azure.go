@@ -65,6 +65,9 @@ type RealAzureKeyVaultSigner struct {
 
 // NewRealAzureKeyVaultSigner creates a production Azure Key Vault signer.
 func NewRealAzureKeyVaultSigner(cfg *RealAzureKeyVaultSignerConfig) (*RealAzureKeyVaultSigner, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("crypto: Azure Key Vault signer config is required")
+	}
 	if cfg.VaultURL == "" {
 		return nil, fmt.Errorf("crypto: Azure Key Vault URL is required")
 	}

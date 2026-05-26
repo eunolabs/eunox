@@ -86,7 +86,6 @@ func NewRealAWSKMSSigner(cfg RealAWSKMSSignerConfig) (*RealAWSKMSSigner, error) 
 // Sign delegates the signing operation to AWS KMS.
 // The digest must be pre-hashed using the hash function corresponding to the
 // configured algorithm (e.g., SHA-256 for RS256/ES256/PS256).
-// For EdDSA, pass the full message (Ed25519 performs its own hashing).
 func (s *RealAWSKMSSigner) Sign(ctx context.Context, digest []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -97,16 +96,11 @@ func (s *RealAWSKMSSigner) Sign(ctx context.Context, digest []byte) ([]byte, err
 		return nil, err
 	}
 
-	messageType := "DIGEST"
-	if s.algorithm == EdDSA {
-		messageType = "RAW"
-	}
-
 	output, err := s.client.Sign(ctx, &AWSKMSSignInput{
 		KeyID:            s.keyID,
 		Message:          digest,
 		SigningAlgorithm: awsAlg,
-		MessageType:      messageType,
+		MessageType:      "DIGEST",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("crypto: AWS KMS sign: %w", err)
@@ -125,6 +119,11 @@ func (s *RealAWSKMSSigner) Algorithm() Algorithm {
 // KeyID returns the configured AWS KMS key identifier.
 func (s *RealAWSKMSSigner) KeyID() string {
 	return s.keyID
+}
+
+// Region returns the configured AWS region.
+func (s *RealAWSKMSSigner) Region() string {
+	return s.region
 }
 
 // awsKMSSigningAlgorithm maps JOSE algorithm identifiers to AWS KMS SigningAlgorithm values.

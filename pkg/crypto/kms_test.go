@@ -957,7 +957,8 @@ func TestRealAWSKMSSigner_AllSupportedAlgorithms(t *testing.T) {
 					// Return a dummy signature. For ECDSA, return valid ASN.1.
 					switch alg {
 					case ES256, ES384, ES512:
-						asn1Bytes, _ := asn1.Marshal(ecdsaSig{R: big.NewInt(1), S: big.NewInt(1)})
+						asn1Bytes, err := asn1.Marshal(ecdsaSig{R: big.NewInt(1), S: big.NewInt(1)})
+						require.NoError(t, err)
 						return &AWSKMSSignOutput{Signature: asn1Bytes}, nil
 					default:
 						return &AWSKMSSignOutput{Signature: []byte("rsa-sig")}, nil

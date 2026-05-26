@@ -67,6 +67,9 @@ type RealGCPCloudKMSSigner struct {
 
 // NewRealGCPCloudKMSSigner creates a production GCP Cloud KMS signer.
 func NewRealGCPCloudKMSSigner(cfg *RealGCPCloudKMSSignerConfig) (*RealGCPCloudKMSSigner, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("crypto: GCP Cloud KMS signer config is required")
+	}
 	if cfg.ProjectID == "" {
 		return nil, fmt.Errorf("crypto: GCP project ID is required")
 	}
