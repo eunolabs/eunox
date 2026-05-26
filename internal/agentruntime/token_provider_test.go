@@ -391,8 +391,8 @@ func TestAuthTokenProvider_StopCancelsBackgroundRefresh(t *testing.T) {
 	// Wait for the refresh to start.
 	select {
 	case <-refreshStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("background refresh did not start within 5s")
+	case <-time.After(2 * time.Second):
+		t.Fatal("background refresh did not start within 2s")
 	}
 
 	// Stop the provider — this should cancel the lifecycle context.
