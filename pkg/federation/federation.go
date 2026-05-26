@@ -207,7 +207,9 @@ func (p *PartnerIssuerResolver) ResolvePublicKeys(ctx context.Context, didURI st
 
 	// Check if circuit is open.
 	if !cb.Allow() {
-		p.metrics.RecordResolution(method, "circuit_open", 0)
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "circuit_open", 0)
+		}
 		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("%w (method: %s)", ErrCircuitOpen, method)
 	}
@@ -219,7 +221,9 @@ func (p *PartnerIssuerResolver) ResolvePublicKeys(ctx context.Context, didURI st
 
 	if err != nil {
 		cb.RecordFailure()
-		p.metrics.RecordResolution(method, "error", durationSec)
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "error", durationSec)
+		}
 		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("resolve partner DID: %w", err)
 	}
@@ -227,13 +231,17 @@ func (p *PartnerIssuerResolver) ResolvePublicKeys(ctx context.Context, didURI st
 	keys := doc.PublicKeys()
 	if len(keys) == 0 {
 		cb.RecordFailure()
-		p.metrics.RecordResolution(method, "no_key", durationSec)
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "no_key", durationSec)
+		}
 		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("%w: %s", ErrNoPublicKey, didURI)
 	}
 
 	cb.RecordSuccess()
-	p.metrics.RecordResolution(method, "success", durationSec)
+	if p.metrics != nil {
+		p.metrics.RecordResolution(method, "success", durationSec)
+	}
 	p.emitCircuitBreakerMetrics()
 	return keys, nil
 }
