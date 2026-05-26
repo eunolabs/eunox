@@ -20,7 +20,7 @@ func newMiniredis(t *testing.T) *redis.Client {
 	client := redis.NewClient(&redis.Options{
 		Addr: "127.0.0.1:1", // Guaranteed to fail connections.
 	})
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 

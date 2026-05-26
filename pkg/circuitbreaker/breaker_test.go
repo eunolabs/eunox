@@ -13,10 +13,6 @@ import (
 	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 )
 
-func fixedClock(t time.Time) func() time.Time {
-	return func() time.Time { return t }
-}
-
 func TestDefaultConfig(t *testing.T) {
 	cfg := circuitbreaker.DefaultConfig()
 	if cfg.FailureThreshold != 5 {
@@ -91,26 +87,6 @@ func TestBreaker_SuccessResetsCounter(t *testing.T) {
 }
 
 func TestBreaker_TransitionsToHalfOpenAfterCooldown(t *testing.T) {
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	cfg := circuitbreaker.Config{
-		FailureThreshold:  2,
-		CooldownDuration:  5 * time.Second,
-		HalfOpenMaxProbes: 2,
-	}
-	b := circuitbreaker.New(cfg, circuitbreaker.WithClock(fixedClock(now)))
-
-	b.RecordFailure()
-	b.RecordFailure()
-	// Now open.
-	if b.Allow() {
-		t.Fatal("expected denial while open")
-	}
-
-	// Advance past cooldown.
-	now = now.Add(6 * time.Second)
-	b = circuitbreaker.New(cfg, circuitbreaker.WithClock(fixedClock(now)))
-	// Re-create to simulate time advance more cleanly using a mutable clock:
-	// Actually, let me use a proper mutable clock.
 	var mu sync.Mutex
 	current := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time {
@@ -124,7 +100,12 @@ func TestBreaker_TransitionsToHalfOpenAfterCooldown(t *testing.T) {
 		current = current.Add(d)
 	}
 
-	b = circuitbreaker.New(cfg, circuitbreaker.WithClock(clock))
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  2,
+		CooldownDuration:  5 * time.Second,
+		HalfOpenMaxProbes: 2,
+	}
+	b := circuitbreaker.New(cfg, circuitbreaker.WithClock(clock))
 	b.RecordFailure()
 	b.RecordFailure()
 	if b.Allow() {
