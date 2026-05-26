@@ -38,7 +38,7 @@ func TestApp_EmitObserved(t *testing.T) {
 		LastSeen:   time.Now().UTC(),
 	}
 
-	err = app.EmitObserved(&record)
+	err = app.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	// Wait for delivery.
@@ -62,7 +62,7 @@ func TestApp_EmitRevoked(t *testing.T) {
 	app.Start()
 
 	revokedAt := time.Now().UTC().Truncate(time.Second)
-	err = app.EmitRevoked("agent-revoke", revokedAt)
+	err = app.EmitRevoked(context.Background(), "agent-revoke", revokedAt)
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -81,10 +81,10 @@ func TestApp_EmitObserved_Disabled(t *testing.T) {
 	require.NoError(t, err)
 	defer app.Stop()
 
-	err = app.EmitObserved(&AgentInventoryRecord{AgentID: "agent-1", FirstSeen: time.Now(), LastSeen: time.Now()})
+	err = app.EmitObserved(context.Background(), &AgentInventoryRecord{AgentID: "agent-1", FirstSeen: time.Now(), LastSeen: time.Now()})
 	assert.NoError(t, err)
 
-	depth, err := app.QueueDepth()
+	depth, err := app.QueueDepth(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), depth)
 }
@@ -110,12 +110,12 @@ func TestApp_EmitObserved_Deduplication(t *testing.T) {
 	}
 
 	// First emit should enqueue.
-	err = app.EmitObserved(&record)
+	err = app.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	// Second emit within window should be deduplicated.
 	record.LastSeen = now.Add(1 * time.Minute)
-	err = app.EmitObserved(&record)
+	err = app.EmitObserved(context.Background(), &record)
 	require.NoError(t, err)
 
 	// Wait for delivery of the single event.
@@ -141,7 +141,7 @@ func TestApp_QueueDepth(t *testing.T) {
 
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_ = app.EmitObserved(&AgentInventoryRecord{
+		_ = app.EmitObserved(context.Background(), &AgentInventoryRecord{
 			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,
@@ -149,7 +149,7 @@ func TestApp_QueueDepth(t *testing.T) {
 
 	}
 
-	depth, err := app.QueueDepth()
+	depth, err := app.QueueDepth(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), depth)
 }
@@ -203,7 +203,7 @@ func TestApp_HandleReady_Degraded(t *testing.T) {
 	// Push enough events to exceed threshold.
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_ = app.EmitObserved(&AgentInventoryRecord{
+		_ = app.EmitObserved(context.Background(), &AgentInventoryRecord{
 			AgentID:   fmt.Sprintf("agent-%d", i),
 			FirstSeen: now,
 			LastSeen:  now,

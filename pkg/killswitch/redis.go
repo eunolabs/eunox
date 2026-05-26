@@ -27,7 +27,8 @@ type Redis struct {
 	killedAgents   map[string]bool
 	killedSessions map[string]bool
 
-	cancel context.CancelFunc
+	lifecycleCtx context.Context
+	cancel       context.CancelFunc
 }
 
 // NewRedis creates a Redis-backed kill-switch manager.
@@ -45,6 +46,7 @@ func NewRedis(client redis.Cmdable) *Redis {
 // It should be called once during application startup.
 func (r *Redis) Start(ctx context.Context) {
 	subCtx, cancel := context.WithCancel(ctx)
+	r.lifecycleCtx = subCtx
 	r.cancel = cancel
 
 	// Load initial state
@@ -317,6 +319,10 @@ func (r *Redis) handlePubSubMessage(payload string) {
 	r.mu.Unlock()
 
 	if shouldRefresh && r.client != nil {
-		_ = r.refreshState(context.Background())
+		ctx := r.lifecycleCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		_ = r.refreshState(ctx)
 	}
 }

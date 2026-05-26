@@ -41,7 +41,7 @@ func (s *RedisPartnerDIDStore) WithLogger(logger *slog.Logger) *RedisPartnerDIDS
 }
 
 // Register adds a new partner DID to the store.
-func (s *RedisPartnerDIDStore) Register(did, name, description string) error {
+func (s *RedisPartnerDIDStore) Register(ctx context.Context, did, name, description string) error {
 	now := s.now()
 	p := &PartnerDID{
 		DID:          did,
@@ -57,7 +57,6 @@ func (s *RedisPartnerDIDStore) Register(did, name, description string) error {
 		return fmt.Errorf("partner DID store: marshal: %w", err)
 	}
 
-	ctx := context.Background()
 	if err := s.client.HSet(ctx, redisPartnerDIDHashKey, did, data).Err(); err != nil {
 		return fmt.Errorf("partner DID store: register: %w", err)
 	}
@@ -65,8 +64,7 @@ func (s *RedisPartnerDIDStore) Register(did, name, description string) error {
 }
 
 // Unregister removes a partner DID from the store.
-func (s *RedisPartnerDIDStore) Unregister(did string) error {
-	ctx := context.Background()
+func (s *RedisPartnerDIDStore) Unregister(ctx context.Context, did string) error {
 	n, err := s.client.HDel(ctx, redisPartnerDIDHashKey, did).Result()
 	if err != nil {
 		return fmt.Errorf("partner DID store: unregister: %w", err)
@@ -78,14 +76,10 @@ func (s *RedisPartnerDIDStore) Unregister(did string) error {
 }
 
 // List returns all registered partner DIDs.
-func (s *RedisPartnerDIDStore) List() []PartnerDID {
-	ctx := context.Background()
+func (s *RedisPartnerDIDStore) List(ctx context.Context) ([]PartnerDID, error) {
 	result, err := s.client.HGetAll(ctx, redisPartnerDIDHashKey).Result()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("partner DID store: list failed", slog.String("error", err.Error()))
-		}
-		return []PartnerDID{}
+		return nil, fmt.Errorf("partner DID store: list: %w", err)
 	}
 
 	partners := make([]PartnerDID, 0, len(result))
@@ -99,30 +93,28 @@ func (s *RedisPartnerDIDStore) List() []PartnerDID {
 		}
 		partners = append(partners, p)
 	}
-	return partners
+	return partners, nil
 }
 
 // Get retrieves a partner DID by its identifier.
-func (s *RedisPartnerDIDStore) Get(did string) (*PartnerDID, bool) {
-	ctx := context.Background()
+func (s *RedisPartnerDIDStore) Get(ctx context.Context, did string) (*PartnerDID, bool, error) {
 	data, err := s.client.HGet(ctx, redisPartnerDIDHashKey, did).Result()
 	if err != nil {
-		if err != redis.Nil && s.logger != nil {
-			s.logger.Error("partner DID store: get failed", slog.String("did", did), slog.String("error", err.Error()))
+		if err == redis.Nil {
+			return nil, false, nil
 		}
-		return nil, false
+		return nil, false, fmt.Errorf("partner DID store: get: %w", err)
 	}
 
 	var p PartnerDID
 	if err := json.Unmarshal([]byte(data), &p); err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("partner DID store: unmarshal: %w", err)
 	}
-	return &p, true
+	return &p, true, nil
 }
 
 // SetStatus updates the status of a partner DID.
-func (s *RedisPartnerDIDStore) SetStatus(did, status string) error {
-	ctx := context.Background()
+func (s *RedisPartnerDIDStore) SetStatus(ctx context.Context, did, status string) error {
 	data, err := s.client.HGet(ctx, redisPartnerDIDHashKey, did).Result()
 	if err != nil {
 		if err == redis.Nil {

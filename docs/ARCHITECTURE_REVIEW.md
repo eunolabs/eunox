@@ -329,9 +329,15 @@ Ordered by priority and dependency:
 
 | # | Item | Depends On | Effort | Owner |
 |---|------|-----------|--------|-------|
-| 4 | CR-2: Fix context propagation (36 instances) | — | 1 week | All teams |
-| 5 | DI-4: Standardize health checks | — | 2 days | Platform team |
-| 6 | DI-5: Add circuit breakers | — | 3 days | Gateway team |
+| 4 | CR-2: Fix context propagation (36 instances) | — | 1 week | ✅ Done |
+| 5 | DI-4: Standardize health checks | — | 2 days | ✅ Done |
+| 6 | DI-5: Add circuit breakers | — | 3 days | ✅ Done |
+
+**Implementation Notes (Phase 2):**
+
+- **CR-2**: Added `context.Context` parameter to `PartnerDIDStore` interface, `RedisPartnerDIDStore`, posture emitter methods (`EmitObserved`, `EmitRevoked`, `QueueDepth`, `UpdateMetrics`), and kill switch pub/sub handler. All request-path code now propagates the caller's context to Redis and I/O operations. Defensive nil-guards in shutdown paths (audit flush, identity init) left as-is.
+- **DI-4**: Created `docs/HEALTH_CHECKS.md` documenting the `/health/live` and `/health/ready` convention, Kubernetes probe config, circuit breaker integration, and per-service behavior. Added `Content-Type: application/json` headers to `pkg/lifecycle` handlers.
+- **DI-5**: Extracted generic `pkg/circuitbreaker` package from `pkg/federation`: `Breaker` (3-state: closed/open/half-open), `Do`/`DoVoid` generic wrappers, `ProtectedSigner` (KMS), `Transport` (HTTP/IdP/JWKS), `ProtectedRedis` (Redis commands). Federation package refactored to delegate via type aliases (backward-compatible). 87.7% test coverage.
 
 ### Phase 3: Scalability & Maintainability (Week 3–4)
 

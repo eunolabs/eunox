@@ -123,6 +123,7 @@ func (m *Manager) SetUnhealthy() {
 // HealthHandler returns an http.HandlerFunc for liveness probes.
 func (m *Manager) HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if m.IsHealthy() {
 			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, `{"status":"healthy"}`)
@@ -136,6 +137,7 @@ func (m *Manager) HealthHandler() http.HandlerFunc {
 // ReadyHandler returns an http.HandlerFunc for readiness probes.
 func (m *Manager) ReadyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if m.IsReady() {
 			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, `{"status":"ready"}`)

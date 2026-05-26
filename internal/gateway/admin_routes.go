@@ -22,15 +22,15 @@ var ErrPartnerDIDNotFound = errors.New("partner DID not found")
 // PartnerDIDStore manages trusted partner DIDs.
 type PartnerDIDStore interface {
 	// Register adds a trusted partner DID.
-	Register(did, name, description string) error
+	Register(ctx context.Context, did, name, description string) error
 	// Unregister removes a trusted partner DID.
-	Unregister(did string) error
+	Unregister(ctx context.Context, did string) error
 	// List returns all registered partner DIDs.
-	List() []PartnerDID
+	List(ctx context.Context) ([]PartnerDID, error)
 	// Get returns a single partner DID by DID string.
-	Get(did string) (*PartnerDID, bool)
+	Get(ctx context.Context, did string) (*PartnerDID, bool, error)
 	// SetStatus updates the status of a partner DID.
-	SetStatus(did, status string) error
+	SetStatus(ctx context.Context, did, status string) error
 }
 
 // PartnerDID represents a registered partner DID entry.
@@ -59,7 +59,7 @@ func NewInMemoryPartnerDIDStore() *InMemoryPartnerDIDStore {
 }
 
 // Register adds a new partner DID to the store.
-func (s *InMemoryPartnerDIDStore) Register(did, name, description string) error {
+func (s *InMemoryPartnerDIDStore) Register(_ context.Context, did, name, description string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (s *InMemoryPartnerDIDStore) Register(did, name, description string) error 
 }
 
 // Unregister removes a partner DID from the store.
-func (s *InMemoryPartnerDIDStore) Unregister(did string) error {
+func (s *InMemoryPartnerDIDStore) Unregister(_ context.Context, did string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -89,7 +89,7 @@ func (s *InMemoryPartnerDIDStore) Unregister(did string) error {
 }
 
 // List returns all registered partner DIDs.
-func (s *InMemoryPartnerDIDStore) List() []PartnerDID {
+func (s *InMemoryPartnerDIDStore) List(_ context.Context) ([]PartnerDID, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -97,24 +97,24 @@ func (s *InMemoryPartnerDIDStore) List() []PartnerDID {
 	for _, p := range s.partners {
 		result = append(result, *p)
 	}
-	return result
+	return result, nil
 }
 
 // Get retrieves a partner DID by its identifier.
-func (s *InMemoryPartnerDIDStore) Get(did string) (*PartnerDID, bool) {
+func (s *InMemoryPartnerDIDStore) Get(_ context.Context, did string) (*PartnerDID, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	p, ok := s.partners[did]
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	clone := *p
-	return &clone, true
+	return &clone, true, nil
 }
 
 // SetStatus updates the status of a partner DID.
-func (s *InMemoryPartnerDIDStore) SetStatus(did, status string) error {
+func (s *InMemoryPartnerDIDStore) SetStatus(_ context.Context, did, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
