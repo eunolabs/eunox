@@ -214,12 +214,20 @@ func TestBreaker_Reset(t *testing.T) {
 	b.RecordFailure()
 	b.RecordFailure()
 	// Open.
+	beforeReset := b.Stats()
+	if beforeReset.LastFailureTime.IsZero() {
+		t.Fatal("expected non-zero LastFailureTime before reset")
+	}
 	b.Reset()
 	if s := b.State(); s != circuitbreaker.StateClosed {
 		t.Errorf("expected StateClosed after reset, got %q", s)
 	}
 	if !b.Allow() {
 		t.Fatal("expected Allow() after reset")
+	}
+	afterReset := b.Stats()
+	if !afterReset.LastFailureTime.IsZero() {
+		t.Fatal("expected LastFailureTime to be cleared on reset")
 	}
 }
 
@@ -332,6 +340,28 @@ func TestDo_CancelledContext(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
+}
+
+func TestDo_NilBreakerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil breaker")
+		}
+	}()
+	_, _ = circuitbreaker.Do(context.Background(), nil, func(_ context.Context) (int, error) {
+		return 0, nil
+	})
+}
+
+func TestDoVoid_NilBreakerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil breaker")
+		}
+	}()
+	_ = circuitbreaker.DoVoid(context.Background(), nil, func(_ context.Context) error {
+		return nil
+	})
 }
 
 func TestDoVoid_Success(t *testing.T) {
@@ -448,4 +478,31 @@ func TestProtectedSigner_CancelledContext(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
+}
+
+func TestProtectedSigner_NilInputsPanic(t *testing.T) {
+	b := circuitbreaker.New(circuitbreaker.DefaultConfig())
+	inner := &mockSigner{
+		signFn: func(_ context.Context, digest []byte) ([]byte, error) {
+			return append([]byte("sig:"), digest...), nil
+		},
+	}
+
+	t.Run("nil breaker", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic for nil breaker")
+			}
+		}()
+		_ = circuitbreaker.NewProtectedSigner(inner, nil)
+	})
+
+	t.Run("nil signer", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic for nil signer")
+			}
+		}()
+		_ = circuitbreaker.NewProtectedSigner(nil, b)
+	})
 }

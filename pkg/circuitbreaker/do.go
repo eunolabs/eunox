@@ -10,6 +10,12 @@ import "context"
 // returns ErrOpen without calling fn. Context cancellation is respected.
 func Do[T any](ctx context.Context, b *Breaker, fn func(ctx context.Context) (T, error)) (T, error) {
 	var zero T
+	if b == nil {
+		panic("circuitbreaker: breaker must not be nil")
+	}
+	if fn == nil {
+		panic("circuitbreaker: fn must not be nil")
+	}
 
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -31,6 +37,13 @@ func Do[T any](ctx context.Context, b *Breaker, fn func(ctx context.Context) (T,
 
 // DoVoid is like Do but for operations that return only an error.
 func DoVoid(ctx context.Context, b *Breaker, fn func(ctx context.Context) error) error {
+	if b == nil {
+		panic("circuitbreaker: breaker must not be nil")
+	}
+	if fn == nil {
+		panic("circuitbreaker: fn must not be nil")
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}

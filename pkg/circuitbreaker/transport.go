@@ -15,6 +15,9 @@ type Transport struct {
 // NewTransport creates an HTTP transport wrapped with a circuit breaker.
 // If inner is nil, http.DefaultTransport is used.
 func NewTransport(inner http.RoundTripper, breaker *Breaker) *Transport {
+	if breaker == nil {
+		panic("circuitbreaker: breaker must not be nil")
+	}
 	if inner == nil {
 		inner = http.DefaultTransport
 	}

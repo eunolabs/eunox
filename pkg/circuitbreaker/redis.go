@@ -21,6 +21,12 @@ type ProtectedRedis struct {
 
 // NewProtectedRedis creates a Redis client wrapper protected by a circuit breaker.
 func NewProtectedRedis(inner redis.Cmdable, breaker *Breaker) *ProtectedRedis {
+	if inner == nil {
+		panic("circuitbreaker: redis client must not be nil")
+	}
+	if breaker == nil {
+		panic("circuitbreaker: breaker must not be nil")
+	}
 	return &ProtectedRedis{inner: inner, breaker: breaker}
 }
 
@@ -124,7 +130,13 @@ func (pr *ProtectedRedis) Publish(ctx context.Context, channel string, message i
 // Eval executes a Redis EVAL command with circuit breaker protection.
 func (pr *ProtectedRedis) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
 	if !pr.breaker.Allow() {
-		cmd := redis.NewCmd(ctx, "eval", script)
+		evalArgs := make([]interface{}, 0, 3+len(keys)+len(args))
+		evalArgs = append(evalArgs, "eval", script, len(keys))
+		for _, key := range keys {
+			evalArgs = append(evalArgs, key)
+		}
+		evalArgs = append(evalArgs, args...)
+		cmd := redis.NewCmd(ctx, evalArgs...)
 		cmd.SetErr(ErrOpen)
 		return cmd
 	}

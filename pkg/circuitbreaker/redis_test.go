@@ -6,6 +6,8 @@ package circuitbreaker_test
 import (
 	"context"
 	"errors"
+	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,12 +15,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func newMiniredis(t *testing.T) *redis.Client {
+func newFailingRedisClient(t *testing.T) *redis.Client {
 	t.Helper()
-	// Use a client pointing at nothing - we'll test error behavior.
-	// For success tests, we use a real miniredis.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
 	client := redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:1", // Guaranteed to fail connections.
+		Addr: addr,
 	})
 	t.Cleanup(func() { _ = client.Close() })
 	return client
@@ -31,7 +38,7 @@ func TestProtectedRedis_OpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -54,7 +61,7 @@ func TestProtectedRedis_SetOpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -76,7 +83,7 @@ func TestProtectedRedis_DelOpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -95,7 +102,7 @@ func TestProtectedRedis_ExistsOpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -114,7 +121,7 @@ func TestProtectedRedis_IncrOpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -133,7 +140,7 @@ func TestProtectedRedis_PublishOpensOnFailures(t *testing.T) {
 		HalfOpenMaxProbes: 1,
 	}
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	ctx := context.Background()
@@ -148,10 +155,55 @@ func TestProtectedRedis_PublishOpensOnFailures(t *testing.T) {
 func TestProtectedRedis_BreakerAccessor(t *testing.T) {
 	cfg := circuitbreaker.DefaultConfig()
 	b := circuitbreaker.New(cfg)
-	client := newMiniredis(t)
+	client := newFailingRedisClient(t)
 	pr := circuitbreaker.NewProtectedRedis(client, b)
 
 	if pr.Breaker() != b {
 		t.Fatal("Breaker() should return the underlying breaker")
 	}
+}
+
+func TestProtectedRedis_EvalOpenIncludesAllArgs(t *testing.T) {
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  1,
+		CooldownDuration:  time.Minute,
+		HalfOpenMaxProbes: 1,
+	}
+	b := circuitbreaker.New(cfg)
+	b.RecordFailure()
+	client := newFailingRedisClient(t)
+	pr := circuitbreaker.NewProtectedRedis(client, b)
+
+	cmd := pr.Eval(context.Background(), "return ARGV[1]", []string{"k1", "k2"}, "a1", 2)
+	if !errors.Is(cmd.Err(), circuitbreaker.ErrOpen) {
+		t.Fatalf("expected ErrOpen, got %v", cmd.Err())
+	}
+
+	want := []interface{}{"eval", "return ARGV[1]", 2, "k1", "k2", "a1", 2}
+	if !reflect.DeepEqual(cmd.Args(), want) {
+		t.Fatalf("unexpected args: got %v want %v", cmd.Args(), want)
+	}
+}
+
+func TestProtectedRedis_NilInputsPanic(t *testing.T) {
+	b := circuitbreaker.New(circuitbreaker.DefaultConfig())
+	client := newFailingRedisClient(t)
+
+	t.Run("nil breaker", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic for nil breaker")
+			}
+		}()
+		_ = circuitbreaker.NewProtectedRedis(client, nil)
+	})
+
+	t.Run("nil client", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic for nil client")
+			}
+		}()
+		_ = circuitbreaker.NewProtectedRedis(nil, b)
+	})
 }

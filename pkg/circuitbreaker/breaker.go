@@ -190,6 +190,7 @@ func (b *Breaker) Reset() {
 
 	b.state = StateClosed
 	b.consecutiveFails = 0
+	b.lastFailureTime = time.Time{}
 	b.halfOpenProbes = 0
 	b.lastTransitionAt = b.now()
 }

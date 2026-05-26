@@ -25,6 +25,12 @@ type ProtectedSigner struct {
 
 // NewProtectedSigner wraps a Signer with the given circuit breaker.
 func NewProtectedSigner(inner Signer, breaker *Breaker) *ProtectedSigner {
+	if inner == nil {
+		panic("circuitbreaker: signer must not be nil")
+	}
+	if breaker == nil {
+		panic("circuitbreaker: breaker must not be nil")
+	}
 	return &ProtectedSigner{inner: inner, breaker: breaker}
 }
 

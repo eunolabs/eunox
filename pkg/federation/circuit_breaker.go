@@ -43,14 +43,5 @@ func NewCircuitBreaker(cfg CircuitBreakerConfig) *CircuitBreaker {
 	})
 }
 
-// newCircuitBreakerWithClock creates a circuit breaker with a custom time source (for testing).
-func newCircuitBreakerWithClock(cfg CircuitBreakerConfig, clock func() time.Time) *CircuitBreaker {
-	return circuitbreaker.New(circuitbreaker.Config{
-		FailureThreshold:  cfg.FailureThreshold,
-		CooldownDuration:  cfg.CooldownDuration,
-		HalfOpenMaxProbes: cfg.HalfOpenMaxProbes,
-	}, circuitbreaker.WithClock(clock))
-}
-
 // CircuitBreakerStats holds circuit breaker statistics.
 type CircuitBreakerStats = circuitbreaker.Stats

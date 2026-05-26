@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,11 +55,11 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 	now := time.Now()
-	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
+	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	}, func() time.Time { return now })
+	}, circuitbreaker.WithClock(func() time.Time { return now }))
 
 	// Trip the breaker.
 	cb.RecordFailure()
@@ -75,11 +76,11 @@ func TestCircuitBreaker_TransitionsToHalfOpen(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 	now := time.Now()
-	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
+	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	}, func() time.Time { return now })
+	}, circuitbreaker.WithClock(func() time.Time { return now }))
 
 	// Trip.
 	cb.RecordFailure()
@@ -97,11 +98,11 @@ func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	now := time.Now()
-	cb := newCircuitBreakerWithClock(CircuitBreakerConfig{
+	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:  2,
 		CooldownDuration:  5 * time.Second,
 		HalfOpenMaxProbes: 1,
-	}, func() time.Time { return now })
+	}, circuitbreaker.WithClock(func() time.Time { return now }))
 
 	// Trip.
 	cb.RecordFailure()

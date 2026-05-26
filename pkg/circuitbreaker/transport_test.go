@@ -6,6 +6,7 @@ package circuitbreaker_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,20 +79,32 @@ func TestTransport_NetworkErrorCountsAsFailure(t *testing.T) {
 	}
 	b := circuitbreaker.New(cfg)
 	client := &http.Client{Transport: circuitbreaker.NewTransport(nil, b)}
+	unreachable := newUnreachableURL(t)
 
-	// Request to a closed server.
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:1", http.NoBody)
+	// Request to an unreachable server.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, unreachable, http.NoBody)
 	_, err := client.Do(req)
 	if err == nil {
 		t.Fatal("expected network error")
 	}
 
 	// Breaker should be open now.
-	req, _ = http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:1", http.NoBody)
+	req, _ = http.NewRequestWithContext(context.Background(), http.MethodGet, unreachable, http.NoBody)
 	_, err = client.Do(req)
 	if !errors.Is(err, circuitbreaker.ErrOpen) {
 		t.Fatalf("expected ErrOpen, got %v", err)
 	}
+}
+
+func newUnreachableURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return "http://" + addr
 }
 
 func TestTransport_CancelledContext(t *testing.T) {
@@ -128,4 +141,13 @@ func TestTransport_4xxCountsAsSuccess(t *testing.T) {
 	if stats.TotalSuccesses != 1 {
 		t.Errorf("expected 1 success (4xx is not a circuit failure), got %d", stats.TotalSuccesses)
 	}
+}
+
+func TestTransport_NilBreakerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil breaker")
+		}
+	}()
+	_ = circuitbreaker.NewTransport(nil, nil)
 }
