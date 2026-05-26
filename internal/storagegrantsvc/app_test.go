@@ -375,105 +375,105 @@ func TestIsPermissionAllowed(t *testing.T) {
 }
 
 func TestStorageGrantSvc_ProductionMode_RejectsStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-tests := []struct {
-name    string
-adapter CloudStorageAdapter
-}{
-{"aws-s3", NewAWSS3Adapter("us-east-1", "my-bucket")},
-{"azure-blob", NewAzureBlobAdapter("myaccount", "mycontainer")},
-{"gcp-gcs", NewGCPGCSAdapter("my-project", "my-bucket")},
-}
+	tests := []struct {
+		name    string
+		adapter CloudStorageAdapter
+	}{
+		{"aws-s3", NewAWSS3Adapter("us-east-1", "my-bucket")},
+		{"azure-blob", NewAzureBlobAdapter("myaccount", "mycontainer")},
+		{"gcp-gcs", NewGCPGCSAdapter("my-project", "my-bucket")},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-t.Parallel()
-_, err := New(
-Config{
-ProductionMode: true,
-Adapter:        tt.name,
-},
-Dependencies{
-Adapter:  tt.adapter,
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err == nil {
-t.Fatal("expected error for stub adapter in production mode")
-}
-if !errors.Is(err, ErrNotImplemented) {
-t.Fatalf("expected ErrNotImplemented, got: %v", err)
-}
-})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := New(
+				Config{
+					ProductionMode: true,
+					Adapter:        tt.name,
+				},
+				Dependencies{
+					Adapter:  tt.adapter,
+					Verifier: &mockVerifier{},
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+				},
+			)
+			if err == nil {
+				t.Fatal("expected error for stub adapter in production mode")
+			}
+			if !errors.Is(err, ErrNotImplemented) {
+				t.Fatalf("expected ErrNotImplemented, got: %v", err)
+			}
+		})
+	}
 }
 
 func TestStorageGrantSvc_ProductionMode_AllowsNonStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-app, err := New(
-Config{
-ProductionMode: true,
-Adapter:        "mock",
-},
-Dependencies{
-Adapter:  &mockStorageAdapter{},
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
-if app == nil {
-t.Fatal("expected non-nil app")
-}
+	app, err := New(
+		Config{
+			ProductionMode: true,
+			Adapter:        "mock",
+		},
+		Dependencies{
+			Adapter:  &mockStorageAdapter{},
+			Verifier: &mockVerifier{},
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if app == nil {
+		t.Fatal("expected non-nil app")
+	}
 }
 
 func TestStorageGrantSvc_NonProductionMode_AllowsStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-app, err := New(
-Config{
-ProductionMode: false,
-Adapter:        "aws-s3",
-},
-Dependencies{
-Adapter:  NewAWSS3Adapter("us-east-1", "my-bucket"),
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
-if app == nil {
-t.Fatal("expected non-nil app")
-}
+	app, err := New(
+		Config{
+			ProductionMode: false,
+			Adapter:        "aws-s3",
+		},
+		Dependencies{
+			Adapter:  NewAWSS3Adapter("us-east-1", "my-bucket"),
+			Verifier: &mockVerifier{},
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if app == nil {
+		t.Fatal("expected non-nil app")
+	}
 }
 
 func TestAWSS3Adapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewAWSS3Adapter("us-east-1", "bucket")
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewAWSS3Adapter("us-east-1", "bucket")
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }
 
 func TestAzureBlobAdapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewAzureBlobAdapter("account", "container")
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewAzureBlobAdapter("account", "container")
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }
 
 func TestGCPGCSAdapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewGCPGCSAdapter("project", "bucket")
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewGCPGCSAdapter("project", "bucket")
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }

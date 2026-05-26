@@ -374,106 +374,106 @@ func TestExtractBearerToken(t *testing.T) {
 }
 
 func TestDBTokenSvc_ProductionMode_RejectsStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-tests := []struct {
-name    string
-adapter CloudDBAdapter
-}{
-{"aws-rds", NewAWSRDSAdapter("us-east-1", "localhost", 5432)},
-{"azure-sql", NewAzureSQLAdapter("server.database.windows.net", 1433)},
-{"gcp-cloudsql", NewGCPCloudSQLAdapter("project:region:instance", 5432)},
-}
+	tests := []struct {
+		name    string
+		adapter CloudDBAdapter
+	}{
+		{"aws-rds", NewAWSRDSAdapter("us-east-1", "localhost", 5432)},
+		{"azure-sql", NewAzureSQLAdapter("server.database.windows.net", 1433)},
+		{"gcp-cloudsql", NewGCPCloudSQLAdapter("project:region:instance", 5432)},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-t.Parallel()
-_, err := New(
-Config{
-ProductionMode: true,
-Adapter:        tt.name,
-},
-Dependencies{
-Adapter:  tt.adapter,
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err == nil {
-t.Fatal("expected error for stub adapter in production mode")
-}
-if !errors.Is(err, ErrNotImplemented) {
-t.Fatalf("expected ErrNotImplemented, got: %v", err)
-}
-})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := New(
+				Config{
+					ProductionMode: true,
+					Adapter:        tt.name,
+				},
+				Dependencies{
+					Adapter:  tt.adapter,
+					Verifier: &mockVerifier{},
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+				},
+			)
+			if err == nil {
+				t.Fatal("expected error for stub adapter in production mode")
+			}
+			if !errors.Is(err, ErrNotImplemented) {
+				t.Fatalf("expected ErrNotImplemented, got: %v", err)
+			}
+		})
+	}
 }
 
 func TestDBTokenSvc_ProductionMode_AllowsNonStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-// mockDBAdapter does not implement StubAdapter, so it should be allowed.
-app, err := New(
-Config{
-ProductionMode: true,
-Adapter:        "mock",
-},
-Dependencies{
-Adapter:  &mockDBAdapter{},
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
-if app == nil {
-t.Fatal("expected non-nil app")
-}
+	// mockDBAdapter does not implement StubAdapter, so it should be allowed.
+	app, err := New(
+		Config{
+			ProductionMode: true,
+			Adapter:        "mock",
+		},
+		Dependencies{
+			Adapter:  &mockDBAdapter{},
+			Verifier: &mockVerifier{},
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if app == nil {
+		t.Fatal("expected non-nil app")
+	}
 }
 
 func TestDBTokenSvc_NonProductionMode_AllowsStubAdapter(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-app, err := New(
-Config{
-ProductionMode: false,
-Adapter:        "aws-rds",
-},
-Dependencies{
-Adapter:  NewAWSRDSAdapter("us-east-1", "localhost", 5432),
-Verifier: &mockVerifier{},
-Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-},
-)
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
-if app == nil {
-t.Fatal("expected non-nil app")
-}
+	app, err := New(
+		Config{
+			ProductionMode: false,
+			Adapter:        "aws-rds",
+		},
+		Dependencies{
+			Adapter:  NewAWSRDSAdapter("us-east-1", "localhost", 5432),
+			Verifier: &mockVerifier{},
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if app == nil {
+		t.Fatal("expected non-nil app")
+	}
 }
 
 func TestAWSRDSAdapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewAWSRDSAdapter("us-east-1", "localhost", 5432)
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewAWSRDSAdapter("us-east-1", "localhost", 5432)
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }
 
 func TestAzureSQLAdapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewAzureSQLAdapter("server", 1433)
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewAzureSQLAdapter("server", 1433)
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }
 
 func TestGCPCloudSQLAdapter_IsStub(t *testing.T) {
-t.Parallel()
-a := NewGCPCloudSQLAdapter("project:region:instance", 5432)
-if !a.IsStub() {
-t.Fatal("expected IsStub() to return true")
-}
+	t.Parallel()
+	a := NewGCPCloudSQLAdapter("project:region:instance", 5432)
+	if !a.IsStub() {
+		t.Fatal("expected IsStub() to return true")
+	}
 }
