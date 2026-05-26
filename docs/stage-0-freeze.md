@@ -11,12 +11,10 @@ The following packages are **feature-frozen** during Stages 1–2:
 
 | Package | Owner team |
 |---|---|
-| `euno-platform/packages/tool-gateway` | `@edgeobs/euno-dp` |
-| `euno-platform/packages/capability-issuer` | `@edgeobs/euno-cp` |
-| `euno-platform/packages/common` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
-| `euno-platform/packages/common-infra` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
-| `euno-platform/packages/agent-runtime` | `@edgeobs/euno-dp` |
-| `euno-platform/packages/framework-adapters` | `@edgeobs/euno-dx` |
+| `internal/gateway` | `@edgeobs/euno-dp` |
+| `internal/issuer` | `@edgeobs/euno-cp` |
+| `pkg` | `@edgeobs/euno-cp` + `@edgeobs/euno-dp` |
+| `internal/agentruntime` | `@edgeobs/euno-dp` |
 
 ## What the freeze means
 
@@ -66,13 +64,12 @@ confirm all of the following before approving:
 ## Quarantined packages
 
 Four packages are additionally quarantined — they are kept building in CI
-but receive no further investment until a Stage-4 customer pays for them.
-Each carries a `STATUS.md` explaining this.  See:
+but receive no further investment until a Stage-4 customer pays for them:
 
-- [`euno-platform/packages/partner-issuer-sim/STATUS.md`](../euno-platform/packages/partner-issuer-sim/STATUS.md)
-- [`euno-platform/packages/db-token-service/STATUS.md`](../euno-platform/packages/db-token-service/STATUS.md)
-- [`euno-platform/packages/storage-grant-service/STATUS.md`](../euno-platform/packages/storage-grant-service/STATUS.md)
-- [`euno-platform/packages/posture-emitter/STATUS.md`](../euno-platform/packages/posture-emitter/STATUS.md)
+- `internal/dbtokensvc`
+- `internal/storagegrantsvc`
+- `internal/posture`
+- `internal/agentruntime`
 
 ## MCP SDK pin
 

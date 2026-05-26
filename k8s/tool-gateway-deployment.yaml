@@ -2,46 +2,46 @@
 #
 # ⚠  CHOOSE ONE gateway manifest, never apply both:
 #
-#   tool-gateway.yaml             ← StatefulSet with Envoy shard router (H-1).
+#   gateway.yaml             ← StatefulSet with Envoy shard router (H-1).
 #                                   Pairs with envoy-shard-router.yaml and the
 #                                   StatefulSet-targeted HPA in ha-policies.yaml.
 #                                   Use this for production / multi-replica.
 #
-#   tool-gateway-deployment.yaml  ← This file. Plain Deployment, no sharding.
+#   gateway-deployment.yaml  ← This file. Plain Deployment, no sharding.
 #                                   Simpler to operate; suitable for
 #                                   single-region pilots without shard routing.
 #                                   If you use this, change ha-policies.yaml
 #                                   scaleTargetRef back to kind: Deployment.
 #
 # Applying both creates two controllers (StatefulSet + Deployment) fighting
-# over the same pod selector and a conflicting Service/tool-gateway definition.
+# over the same pod selector and a conflicting Service/gateway definition.
 #
 # Sprint 3 Sandbox Hardening settings are present in both files.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tool-gateway
+  name: gateway
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
     version: v1.0.0
     component: data-plane
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: tool-gateway
+      app: gateway
   template:
     metadata:
       labels:
-        app: tool-gateway
+        app: gateway
         version: v1.0.0
       annotations:
         # Sprint 3: AppArmor profile annotation
-        container.apparmor.security.beta.kubernetes.io/tool-gateway: localhost/euno-restricted
+        container.apparmor.security.beta.kubernetes.io/gateway: localhost/euno-restricted
     spec:
       # Sprint 3: Service account with no API token (config injected via env)
-      serviceAccountName: tool-gateway-sa
+      serviceAccountName: gateway-sa
       automountServiceAccountToken: false
 
       # Task 7: Topology spread + anti-affinity so replica count translates into
@@ -60,13 +60,13 @@ spec:
         whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app: tool-gateway
+            app: gateway
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
-            app: tool-gateway
+            app: gateway
 
       affinity:
         podAntiAffinity:
@@ -76,7 +76,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchLabels:
-                app: tool-gateway
+                app: gateway
             topologyKey: kubernetes.io/hostname
 
       # Sprint 3: Security context at pod level
@@ -93,8 +93,8 @@ spec:
           type: RuntimeDefault
 
       containers:
-      - name: tool-gateway
-        image: eunoacr.azurecr.io/tool-gateway:v1.0.0
+      - name: gateway
+        image: eunoacr.azurecr.io/gateway:v1.0.0
         imagePullPolicy: Always
 
         ports:
@@ -114,7 +114,7 @@ spec:
         - name: ADMIN_PORT
           value: "3003"
         # Bind the admin server to the pod's IP (downward API) so it is
-        # only reachable via the ClusterIP `tool-gateway-admin` Service
+        # only reachable via the ClusterIP `gateway-admin` Service
         # below, not via the public LoadBalancer. The gateway config
         # schema rejects production rollouts that leave ADMIN_HOST as a
         # wildcard (0.0.0.0 / ::) — defence in depth on top of the
@@ -134,7 +134,7 @@ spec:
         # deprecated single-key endpoint. Schema rejects production
         # rollouts that point at ISSUER_PUBLIC_KEY_URL alone.
         - name: ISSUER_JWKS_URL
-          value: "http://capability-issuer:3001/.well-known/jwks.json"
+          value: "http://issuer:3001/.well-known/jwks.json"
         - name: BACKEND_SERVICE_URL
           valueFrom:
             configMapKeyRef:
@@ -274,7 +274,7 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: tool-gateway-sa
+  name: gateway-sa
   namespace: euno-system
 automountServiceAccountToken: false
 
@@ -283,10 +283,10 @@ automountServiceAccountToken: false
 apiVersion: v1
 kind: Service
 metadata:
-  name: tool-gateway
+  name: gateway
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
 spec:
   type: LoadBalancer
   ports:
@@ -295,17 +295,17 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: tool-gateway
+    app: gateway
 
 ---
 # Service for admin API (ClusterIP only - internal)
 apiVersion: v1
 kind: Service
 metadata:
-  name: tool-gateway-admin
+  name: gateway-admin
   namespace: euno-system
   labels:
-    app: tool-gateway
+    app: gateway
 spec:
   type: ClusterIP
   ports:
@@ -314,7 +314,7 @@ spec:
     protocol: TCP
     name: admin
   selector:
-    app: tool-gateway
+    app: gateway
 
 ---
 # ConfigMap for non-sensitive configuration
@@ -327,6 +327,6 @@ data:
   backend-service-url: "https://your-backend-service.com"
   # Distributed coordination (Redis) — REQUIRED so revocation, kill-switch,
   # maxCalls counters, and DPoP replay defense propagate across all
-  # tool-gateway replicas.  Defaults to the in-cluster Redis from
+  # gateway replicas.  Defaults to the in-cluster Redis from
   # `redis.yaml`; override with a managed Redis URL for production.
   redis-url: "redis://redis.euno-system.svc.cluster.local:6379"

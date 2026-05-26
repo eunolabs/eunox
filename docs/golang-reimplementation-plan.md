@@ -1,7 +1,7 @@
 # Euno Platform — Go Re-Implementation Execution Plan
 
 > **License:** Business Source License (BSL 1.1)
-> **Target:** Feature-parity with TypeScript euno-platform (enterprise product from day one)
+> **Target:** Feature-parity with TypeScript eunox (enterprise product from day one)
 > **Excluded:** MCP proxy MVP (the `@euno/mcp` local proxy package)
 
 ---
@@ -9,7 +9,7 @@
 ## Repository Layout (Target)
 
 ```
-euno-go/
+./
 ├── cmd/                          # Service entry points
 │   ├── gateway/                  # Tool Gateway binary
 │   ├── issuer/                   # Capability Issuer binary

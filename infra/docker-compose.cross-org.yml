@@ -31,10 +31,7 @@ version: "3.9"
 
 services:
   partner-issuer-sim:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/partner-issuer-sim/Dockerfile
-    image: euno/partner-issuer-sim:dev
+    image: eunox/partner-issuer-sim:dev
     container_name: euno-partner-sim
     environment:
       PORT: "4001"
@@ -61,10 +58,7 @@ services:
       retries: 5
 
   our-issuer:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
-    image: euno/capability-issuer:dev
+    image: eunox/issuer:dev
     container_name: euno-our-issuer
     environment:
       PORT: "3000"
@@ -79,10 +73,7 @@ services:
       retries: 5
 
   our-gateway:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/tool-gateway/Dockerfile
-    image: euno/tool-gateway:dev
+    image: eunox/gateway:dev
     container_name: euno-our-gateway
     depends_on:
       partner-issuer-sim:

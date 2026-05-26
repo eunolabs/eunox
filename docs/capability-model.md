@@ -4,21 +4,21 @@
 > document have landed in code. See:
 >
 > - **Typed conditions:** `CapabilityCondition` discriminated union in
->   `public/packages/common/src/types.ts` and the shared validate / enforce
->   pipeline in `public/packages/common/src/condition-registry.ts`.
+>   `pkg//src/types.ts` and the shared validate / enforce
+>   pipeline in `pkg//src/condition-registry.ts`.
 > - **Issuance-time validation:** `CapabilityIssuerService.issueCapability`
 >   and `attenuateCapability` reject malformed or unknown conditions
->   before signing (`euno-platform/packages/capability-issuer/src/issuer-service.ts`).
+>   before signing (`internal/issuer/src/issuer-service.ts`).
 > - **Gateway enforcement:** `EnforcementEngine.validateAction` in
->   `euno-platform/packages/tool-gateway/src/enforcement.ts` runs every typed
+>   `internal/gateway/src/enforcement.ts` runs every typed
 >   condition; unknown types deny by default.
 > - **Distributed `maxCalls`:** `CallCounterStore` with in-memory and
 >   Redis-backed implementations in
->   `public/packages/common/src/call-counter-store.ts`, wired into the gateway
+>   `pkg//src/call-counter-store.ts`, wired into the gateway
 >   entrypoint via `createCallCounterStoreFromEnv` (reuses the same
 >   `REDIS_URL` as the kill-switch / revocation-store wiring).
 > - **Wildcard fix:** segment-aware `matchesResource` with scheme
->   equality enforcement in `public/packages/common/src/utils.ts`.
+>   equality enforcement in `pkg//src/utils.ts`.
 > - **Action widening:** `Action = string` (legacy verbs preserved as
 >   `LEGACY_ACTIONS`) so resource-specific verbs (`db:select`,
 >   `s3:putObject`) are first-class.

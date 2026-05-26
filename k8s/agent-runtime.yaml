@@ -82,7 +82,7 @@ spec:
           # agent's requests are consistently hashed to the correct gateway shard.
           # The Envoy Service maps port 3002 → envoy container port 8080.
           # To bypass sharding (e.g. when Envoy is unavailable), change this to
-          # http://tool-gateway:3002 — sharding will be disabled and the gateway
+          # http://gateway:3002 — sharding will be disabled and the gateway
           # will use Redis for all call-counter operations.
           #
           # ── Gap 6 / P2 — HTTPS upgrade ────────────────────────────────────────
@@ -93,7 +93,7 @@ spec:
           # traffic-isolation guarantee.
           value: "http://envoy-shard-router:3002"
         - name: ISSUER_URL
-          value: "http://capability-issuer:3001"
+          value: "http://issuer:3001"
         # Sprint 2: Token refresh interval
         - name: TOKEN_REFRESH_INTERVAL
           value: "600"
@@ -195,7 +195,7 @@ spec:
       #   projected:
       #     sources:
       #     - serviceAccountToken:
-      #         audience: capability-issuer
+      #         audience: issuer
       #         expirationSeconds: 3600
       #         path: token
       #

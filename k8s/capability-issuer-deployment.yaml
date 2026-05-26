@@ -2,28 +2,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: capability-issuer
+  name: issuer
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
     version: v1.0.0
     component: control-plane
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: capability-issuer
+      app: issuer
   template:
     metadata:
       labels:
-        app: capability-issuer
+        app: issuer
         version: v1.0.0
       annotations:
         # Sprint 3: AppArmor profile annotation
-        container.apparmor.security.beta.kubernetes.io/capability-issuer: localhost/euno-restricted
+        container.apparmor.security.beta.kubernetes.io/issuer: localhost/euno-restricted
     spec:
       # Sprint 3: Service account with no API token (config injected via env)
-      serviceAccountName: capability-issuer-sa
+      serviceAccountName: issuer-sa
       automountServiceAccountToken: false
 
       # Task 7: Topology spread + anti-affinity so replica count translates into
@@ -44,13 +44,13 @@ spec:
         whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app: capability-issuer
+            app: issuer
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
-            app: capability-issuer
+            app: issuer
 
       affinity:
         podAntiAffinity:
@@ -61,7 +61,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchLabels:
-                app: capability-issuer
+                app: issuer
             topologyKey: kubernetes.io/hostname
 
       # Sprint 3: Security context at pod level
@@ -78,8 +78,8 @@ spec:
           type: RuntimeDefault
 
       containers:
-      - name: capability-issuer
-        image: eunoacr.azurecr.io/capability-issuer:v1.0.0
+      - name: issuer
+        image: eunoacr.azurecr.io/issuer:v1.0.0
         imagePullPolicy: Always
 
         ports:
@@ -304,7 +304,7 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: capability-issuer-sa
+  name: issuer-sa
   namespace: euno-system
 automountServiceAccountToken: false
 
@@ -313,10 +313,10 @@ automountServiceAccountToken: false
 apiVersion: v1
 kind: Service
 metadata:
-  name: capability-issuer
+  name: issuer
   namespace: euno-system
   labels:
-    app: capability-issuer
+    app: issuer
 spec:
   type: ClusterIP
   ports:
@@ -325,7 +325,7 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: capability-issuer
+    app: issuer
 
 ---
 # ConfigMap for non-sensitive configuration

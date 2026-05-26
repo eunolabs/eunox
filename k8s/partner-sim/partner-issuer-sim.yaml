@@ -46,9 +46,9 @@ metadata:
   namespace: euno-partner-sim
 data:
   PARTNER_ISSUER_DID: "did:web:partner-issuer-sim.euno-partner-sim.svc%3A4001"
-  PARTNER_AUDIENCE: "tool-gateway"
+  PARTNER_AUDIENCE: "gateway"
   PARTNER_TOKEN_TTL: "900"
-  PARTNER_TRUSTED_ISSUER_DIDS: "did:web:capability-issuer.euno-system.svc%3A3000"
+  PARTNER_TRUSTED_ISSUER_DIDS: "did:web:issuer.euno-system.svc%3A3000"
 
 ---
 apiVersion: v1
@@ -129,7 +129,7 @@ spec:
         # DID without TLS termination inside the cluster.  Production
         # deployments MUST leave this unset.
         - name: DID_WEB_ALLOW_HTTP_FOR_HOSTS
-          value: "capability-issuer.euno-system.svc:3000"
+          value: "issuer.euno-system.svc:3000"
         resources:
           requests:
             cpu: "50m"

@@ -26,12 +26,12 @@ window fleet-wide.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/mint-rate-limiter.ts`
+- `internal/minter/src/mint-rate-limiter.ts`
   — `MintRateLimiter` interface, `InMemoryMintRateLimiter`, `RedisBackedMintRateLimiter`,
     `createPingRateLimiterFromEnv` (the pattern to replicate).
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` line 182
+- `internal/minter/src/bootstrap.ts` line 182
   — hardcoded `new InMemoryMintRateLimiter(...)` that must be replaced.
-- `euno-platform/packages/api-key-minter/src/routes/mint.ts`
+- `internal/minter/src/routes/mint.ts`
   — `MintRouterOptions.rateLimiter` injection point; no change needed here.
 
 #### What to implement
@@ -61,7 +61,7 @@ window fleet-wide.
    - Add `MINTER_MINT_REDIS_URL` to the minter env template/example so the setting
      is discoverable.
 
-4. **Add tests** in `euno-platform/packages/api-key-minter/tests/` (new file
+4. **Add tests** in `internal/minter/tests/` (new file
    `mint-rate-limiter.test.ts` or extend the existing one if it exists):
    - `createMintRateLimiterFromEnv` returns `RedisBackedMintRateLimiter` when
      `MINTER_MINT_REDIS_URL` is set.
@@ -95,7 +95,7 @@ writes to fail with 503 on the new pods.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts`
+- `internal/minter/src/bootstrap.ts`
   - Lines 109–143: `auditPool` created as `new pgModule.Pool(...)`, assigned to
     `pool` locally. Reference is not hoisted above the `shutdown` closure.
   - Lines 150–180: `keyPool` created as `new pgKeyModule.Pool(...)`, assigned to
@@ -132,7 +132,7 @@ writes to fail with 503 on the new pods.
    };
    ```
 
-3. **Add tests** in `euno-platform/packages/api-key-minter/tests/bootstrap.test.ts`:
+3. **Add tests** in `internal/minter/tests/bootstrap.test.ts`:
    - Mock `pg.Pool` so its `.end()` is a jest spy.
    - Trigger the `shutdown` handler (emit `'SIGTERM'` on `process`).
    - Assert `.end()` was called on both pools when `MINTER_AUDIT_DB_URL` and
@@ -161,16 +161,16 @@ replay, but a valid unexpired token is accepted at any tenant's resource path.
 
 #### Existing code to understand
 
-- `euno-platform/packages/tool-gateway/src/enforcement.ts` line 302:
+- `internal/gateway/src/enforcement.ts` line 302:
   `this.gatewayAudience = options.gatewayAudience ?? 'tool-gateway';`
-- `public/packages/common/src/config/schema.ts` — `GatewayConfigSchema`; look for
+- `pkg//src/config/schema.ts` — `GatewayConfigSchema`; look for
   `GATEWAY_AUDIENCE`. It is already a config key; verify the field and its default.
-- `euno-platform/packages/tool-gateway/src/bootstrap.ts` — `initializeServices`;
+- `internal/gateway/src/bootstrap.ts` — `initializeServices`;
   check how `gatewayAudience` is plumbed from config into `EnforcementEngine`.
 
 #### What to implement
 
-1. **Add `HOSTED_MODE` to `GatewayConfigSchema`** in `public/packages/common/src/config/schema.ts`:
+1. **Add `HOSTED_MODE` to `GatewayConfigSchema`** in `pkg//src/config/schema.ts`:
    ```ts
    HOSTED_MODE: z.enum(['true', 'false']).optional(),
    ```
@@ -183,7 +183,7 @@ replay, but a valid unexpired token is accepted at any tenant's resource path.
    document that `GATEWAY_AUDIENCE` must be unique per tenant, recommend the format
    `"tool-gateway:<tenant-slug>"`, and explain the cross-tenant replay risk.
 
-3. **Add tests** in `euno-platform/packages/common/tests/config.test.ts`:
+3. **Add tests** in `pkg/tests/config.test.ts`:
    - `HOSTED_MODE=true` + `GATEWAY_AUDIENCE=tool-gateway` → validation error.
    - `HOSTED_MODE=true` + `GATEWAY_AUDIENCE=tool-gateway:acme` → valid.
    - `HOSTED_MODE=false` + `GATEWAY_AUDIENCE=tool-gateway` → valid (no enforcement).
@@ -214,11 +214,11 @@ a v1 gateway receives no error, and the unknown data leaks into audit records.
 
 #### Existing code to understand
 
-- `euno-platform/packages/tool-gateway/src/routes/enforce.ts` lines 177–241:
+- `internal/gateway/src/routes/enforce.ts` lines 177–241:
   `parseEnforceRequestBody`. The `ctx` binding is a `Record<string, unknown>`.
 - `ENFORCE_PROTOCOL_VERSION` is imported from `@euno/common`; `parseProtocolVersion`
   returns the numeric version from the request header (missing = v1).
-- `EnforceRequest` wire type: `public/packages/common/src/wire.ts` — the `context`
+- `EnforceRequest` wire type: `pkg//src/wire.ts` — the `context`
   field shape.
 
 #### What to implement
@@ -247,7 +247,7 @@ a v1 gateway receives no error, and the unknown data leaks into audit records.
    stripper can be version-aware in the future (pass the already-resolved value from
    the route handler).
 
-3. **Add tests** in `euno-platform/packages/tool-gateway/tests/enforce.test.ts`:
+3. **Add tests** in `internal/gateway/tests/enforce.test.ts`:
    - POST with `context: { sourceIp: '1.2.3.4', unknownField: 'x' }` → 200 (allowed);
      response body does not contain `unknownField` in any audit shape.
    - POST with only known context fields → 200 (no regression).
@@ -275,7 +275,7 @@ so operators must restart multiple times to discover all single-node Redis URLs.
 #### Existing code to understand
 
 ```ts
-// euno-platform/packages/api-key-minter/src/production-guard.ts lines 138–153
+// internal/minter/src/production-guard.ts lines 138–153
 for (const [varName, url] of redisVars) {
   if (url && !isHaRedisUrl(url)) {
     violations.push(`${varName} appears to point at a single-node Redis ...`);
@@ -289,7 +289,7 @@ for (const [varName, url] of redisVars) {
 Remove the `break` statement from the Redis HA loop. Each single-node URL should
 produce an independent violation message in `violations[]`.
 
-Update the existing test in `euno-platform/packages/api-key-minter/tests/bootstrap.test.ts`
+Update the existing test in `internal/minter/tests/bootstrap.test.ts`
 that asserts the message content, to verify that when both `REDIS_URL` *and*
 `ANOMALY_REDIS_URL` are single-node, the error message lists both.
 
@@ -315,19 +315,19 @@ API (kill-switch, revocation, partner-DID) is reachable on the public interface.
 
 #### Existing code to understand
 
-- `euno-platform/packages/tool-gateway/src/bootstrap.ts`
+- `internal/gateway/src/bootstrap.ts`
   - `checkProductionRedisHa` (lines 459–497) is the pattern to follow: an exported
     function called at the top of `initializeServices`, throws with a clear message
     in production only.
   - Search for `adminHost` in `initializeServices` to see where it is currently
     read from config.
-- `public/packages/common/src/config/schema.ts` — `GatewayConfigSchema`;
+- `pkg//src/config/schema.ts` — `GatewayConfigSchema`;
   `ADMIN_HOST` field.
 
 #### What to implement
 
 1. **Add `checkProductionAdminHost`** exported function in
-   `euno-platform/packages/tool-gateway/src/bootstrap.ts`:
+   `internal/gateway/src/bootstrap.ts`:
    ```ts
    export function checkProductionAdminHost(
      env: { ADMIN_HOST?: string },
@@ -351,7 +351,7 @@ API (kill-switch, revocation, partner-DID) is reachable on the public interface.
 2. **Call `checkProductionAdminHost`** at the top of `initializeServices` alongside
    `checkProductionRedisHa`.
 
-3. **Add tests** in `euno-platform/packages/tool-gateway/tests/self-host-config.test.ts`
+3. **Add tests** in `internal/gateway/tests/self-host-config.test.ts`
    (same file as the Redis HA tests):
    - `NODE_ENV=production` + no `ADMIN_HOST` → throws.
    - `NODE_ENV=production` + `ADMIN_HOST=0.0.0.0` → throws.
@@ -380,17 +380,17 @@ check; pool errors are only discovered on the first real request.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` lines 112–123 (audit
+- `internal/minter/src/bootstrap.ts` lines 112–123 (audit
   pool) and 150–165 (key pool).
-- `public/packages/common/src/config/schema.ts` — `MinterConfigSchema` — add three
+- `pkg//src/config/schema.ts` — `MinterConfigSchema` — add three
   new fields here.
-- `euno-platform/packages/api-key-minter/src/postgres-mint-audit-store.ts` and
-  `euno-platform/packages/api-key-minter/src/postgres-api-key-store.ts` — check
+- `internal/minter/src/postgres-mint-audit-store.ts` and
+  `internal/minter/src/postgres-api-key-store.ts` — check
   constructor signatures to see if the pool is already a public property.
 
 #### What to implement
 
-1. **Add to `MinterConfigSchema`** in `public/packages/common/src/config/schema.ts`:
+1. **Add to `MinterConfigSchema`** in `pkg//src/config/schema.ts`:
    ```ts
    MINTER_AUDIT_POOL_SIZE: z.coerce.number().int().positive().optional(),
    MINTER_API_KEY_POOL_SIZE: z.coerce.number().int().positive().optional(),
@@ -448,7 +448,7 @@ writing to a shared PVC SQLite file can corrupt data.
 
 #### Existing code to understand
 
-- `euno-platform/packages/capability-issuer/src/issuance/posture.ts` (or wherever
+- `internal/issuer/src/issuance/posture.ts` (or wherever
   `DurablePostureEmitter` is implemented) — check `POSTURE_DURABLE_QUEUE_PATH`.
 - `k8s/capability-issuer-deployment.yaml` — PVC mount and replica count.
 - `docs/ARCHITECTURE.md` §6 posture emitter section.
@@ -494,10 +494,10 @@ containment need to know the worst-case bound.
 #### Existing code to understand
 
 - `docs/DISTRIBUTED_STATE.md` — already describes the three mechanisms.
-- `public/packages/common/src/config/schema.ts` — `GatewayConfigSchema` — check if
+- `pkg//src/config/schema.ts` — `GatewayConfigSchema` — check if
   `KILL_SWITCH_REFRESH_INTERVAL_MS` is already a typed config key (it may already be
   present; verify).
-- `euno-platform/packages/common-infra/src/redis-kill-switch.ts` — where the
+- `pkg/src/redis-kill-switch.ts` — where the
   refresh interval is consumed.
 
 #### What to implement
@@ -548,9 +548,9 @@ client-supplied `context.now`. If `timeWindow` conditions read the client-suppli
 
 #### Existing code to understand
 
-- `euno-platform/packages/tool-gateway/src/routes/enforce.ts` — route handler,
+- `internal/gateway/src/routes/enforce.ts` — route handler,
   `validateClockSkew`, `enforceConditions` call site.
-- `public/packages/common/src/enforcement.ts` (or wherever `enforceConditions` is
+- `pkg//src/enforcement.ts` (or wherever `enforceConditions` is
   implemented) — check whether `timeWindow` uses `context.now` or `Date.now()`.
 
 #### What to implement
@@ -567,7 +567,7 @@ client-supplied `context.now`. If `timeWindow` conditions read the client-suppli
    > activity time. It is **not** used for `timeWindow` condition evaluation —
    > the gateway always uses its own `Date.now()` clock.
 
-4. **Add a regression test** in `euno-platform/packages/tool-gateway/tests/enforce.test.ts`:
+4. **Add a regression test** in `internal/gateway/tests/enforce.test.ts`:
    - Issue a request with a `timeWindow` condition that would be *in-range* for the
      gateway's `Date.now()` but *out-of-range* for a `context.now` 55 s in the
      future.
@@ -595,7 +595,7 @@ the deny branch.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/mint-rate-limiter.ts` lines 170–216:
+- `internal/minter/src/mint-rate-limiter.ts` lines 170–216:
   `RedisBackedMintRateLimiter.check` method.
 - `RedisMintRateLimiterClient` interface (lines 84–91): already declares `incr`,
   `decr`, `expire`, `ttl`. A Lua script approach would add an `eval` method; a SET NX
@@ -653,11 +653,11 @@ with typed optional peer dependencies.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` lines 113–116 and
+- `internal/minter/src/bootstrap.ts` lines 113–116 and
   153–156.
-- `euno-platform/packages/api-key-minter/package.json` — current `dependencies` and
+- `internal/minter/package.json` — current `dependencies` and
   `peerDependencies`.
-- `euno-platform/packages/api-key-minter/tsconfig.json` — compiler settings.
+- `internal/minter/tsconfig.json` — compiler settings.
 
 #### What to implement
 
@@ -715,13 +715,13 @@ invisible to the anomaly detector.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/routes/mint.ts` lines 80–90:
+- `internal/minter/src/routes/mint.ts` lines 80–90:
   `parseBearerToken` returns the raw key string. After the early-exit for missing
   bearer token (line 83), `rawKeyOrNull` holds the full `sk-<prefix8>.<secret>`
   string.
-- `euno-platform/packages/api-key-minter/src/api-key.ts` — key format helpers.
+- `internal/minter/src/api-key.ts` — key format helpers.
   Check for a `parseKeyPrefix(rawKey): string | null` function or equivalent.
-- `euno-platform/packages/api-key-minter/src/anomaly-detector.ts` — `recordMint`
+- `internal/minter/src/anomaly-detector.ts` — `recordMint`
   signature: `recordMint(tenantId: string, success: boolean): string[]`.
 
 #### What to implement
@@ -747,7 +747,7 @@ invisible to the anomaly detector.
    }
    ```
 
-3. **Add tests** in `euno-platform/packages/api-key-minter/tests/mint-route.test.ts`:
+3. **Add tests** in `internal/minter/tests/mint-route.test.ts`:
    - Failed auth with an `sk-XXXXXXXX.secret` key → anomaly detector receives
      `recordMint('prefix:XXXXXXXX', false)`.
    - Invalid bearer format → anomaly detector is not called.
@@ -774,10 +774,10 @@ making production configuration verification difficult.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` — end of `main()`,
+- `internal/minter/src/bootstrap.ts` — end of `main()`,
   the `server.listen(...)` call (currently the last substantive operation).
 - The gateway pattern: search for `logger.info('Gateway ready'` or similar in
-  `euno-platform/packages/tool-gateway/src/bootstrap.ts`.
+  `internal/gateway/src/bootstrap.ts`.
 
 #### What to implement
 
@@ -824,10 +824,10 @@ remain verifiable during the rotation window.
 
 #### Existing code to understand
 
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts` lines 68–78:
+- `internal/minter/src/bootstrap.ts` lines 68–78:
   `peppers` array construction from `MINTER_PEPPER_HEX` / `MINTER_PEPPER_VERSION`.
   Only a single pepper entry is constructed from env vars today.
-- `euno-platform/packages/api-key-minter/src/api-key-verifier.ts` — `PepperEntry`
+- `internal/minter/src/api-key-verifier.ts` — `PepperEntry`
   type, how `ApiKeyVerifier` selects the pepper for verification vs. issuance.
 - `docs/runbooks/ledger-hmac-rotation.md` — style reference.
 

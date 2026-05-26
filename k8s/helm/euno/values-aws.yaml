@@ -1,4 +1,4 @@
-# Euno umbrella chart — AWS / EKS overrides
+# Eunox umbrella chart — AWS / EKS overrides
 # ---------------------------------------------------------------------------
 # Apply this file on top of the base values.yaml when deploying on Amazon EKS:
 #
@@ -20,11 +20,11 @@
 
 # ── Container images — ECR private registry ──────────────────────────────────
 # Replace 123456789012 with your AWS account ID and adjust the region/tag.
-# Euno images are published to ghcr.io; push to ECR with the script in
+# Eunox images are published to ghcr.io; push to ECR with the script in
 # docs/deploy-eks.md §4.2 (push-images-to-ecr.sh).
 gateway:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/tool-gateway
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/gateway
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -39,7 +39,7 @@ gateway:
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
-    GATEWAY_AUDIENCE: tool-gateway
+    GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
     # KMS-backed audit evidence signing.
@@ -66,10 +66,10 @@ gateway:
   # existingSecret: euno-gateway-secret
   secretEnv: {}
 
-# ── capability-issuer ─────────────────────────────────────────────────────────
+# ── issuer ─────────────────────────────────────────────────────────
 issuer:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/capability-issuer
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/issuer
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -97,15 +97,15 @@ issuer:
 
     # SCIM 2.0 provisioning (Cognito IAM Identity Center bridge).
     # See docs/issuer-idp-setup.md §10 for the full SCIM bridge guide.
-    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
   # existingSecret: euno-issuer-secret
   secretEnv: {}
 
-# ── api-key-minter ────────────────────────────────────────────────────────────
+# ── minter ────────────────────────────────────────────────────────────
 minter:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/api-key-minter
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

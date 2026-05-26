@@ -16,7 +16,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
    - This closes the highest-risk fallback paths in the hosted control plane.
    - Dependencies: None.
    - **Fix:** `validateProductionMinterConfig` in
-     `euno-platform/packages/api-key-minter/src/production-guard.ts` (exported
+     `internal/minter/src/production-guard.ts` (exported
      for testing). Called at the top of `main()` in `bootstrap.ts`. Fails with a
      single, multi-item error message listing every violation so operators can
      fix all issues in one restart cycle. Checks: `MINTER_ADMIN_API_KEY`,
@@ -31,7 +31,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      and rolling deploys.
    - Dependencies: Task 1.
    - **Fix:** `PostgresApiKeyStore` in
-     `euno-platform/packages/api-key-minter/src/postgres-api-key-store.ts`
+     `internal/minter/src/postgres-api-key-store.ts`
      (exported for testing). Implements all `ApiKeyStore` methods against a
      `api_keys` Postgres table (`BIGINT GENERATED ALWAYS AS IDENTITY` PK, JSONB
      capabilities, `TEXT[]` scopes, optional `revoked_at` / `expires_at` /
@@ -47,7 +47,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
    - If audit is mandatory, move from fire-and-forget to acknowledged persistence;
      if best-effort is acceptable, document the loss model and alert on failures.
    - Dependencies: Task 1.
-   - **Fix:** Audit write in `euno-platform/packages/api-key-minter/src/routes/mint.ts`
+   - **Fix:** Audit write in `internal/minter/src/routes/mint.ts`
      changed from fire-and-forget (`void …catch`) to `await`ed with explicit
      failure handling. A failed audit write returns **503 Service Unavailable**
      (token not returned) and increments the new
@@ -66,7 +66,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      equivalents.
    - Dependencies: None.
    - **Fix:** `checkProductionRedisHa` extracted as an exported function in
-     `euno-platform/packages/tool-gateway/src/bootstrap.ts`. Changed from a
+     `internal/gateway/src/bootstrap.ts`. Changed from a
      non-fatal `logger.warn` to a fatal `throw Error` in production when any
      configured Redis URL (`REDIS_URL`, `REVOCATION_REDIS_URL`,
      `KILL_SWITCH_REDIS_URL`, `CALL_COUNTER_REDIS_URL`) matches a single-node
@@ -105,7 +105,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
    - Keep current shared-secret auth only as an explicitly temporary fallback.
    - Dependencies: Task 1.
    - **Fix:** New `AdminJwtVerifier` class in
-     `euno-platform/packages/api-key-minter/src/admin-jwt-verifier.ts`
+     `internal/minter/src/admin-jwt-verifier.ts`
      (exported for testing).  Uses `jose.createRemoteJWKSet` + `jose.jwtVerify`
      to verify operator JWTs against a configurable JWKS endpoint.  Extracts
      `sub` as `operatorId`; optionally enforces a required scope from `scp`/`scope`
@@ -143,7 +143,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
    - Dependencies: None.
    - **Fix:** `PostgresLedgerBackend.migrate()` and
      `PerReplicaPostgresLedgerBackend.migrate()` in
-     `euno-platform/packages/common-infra/src/ledger-signer.ts` now emit five
+     `pkg/src/ledger-signer.ts` now emit five
      additional `CREATE INDEX IF NOT EXISTS` statements covering
      `(payload->>'tenantId')`, `(payload->>'decision')`,
      `(payload->>'capabilityId')`, `(payload->>'agentId')`, and
@@ -151,7 +151,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      `queryEntries()` filter predicates.  Indexes are expression indexes so
      PostgreSQL can use them for equality predicates without a full-table JSONB
      scan.  Schema docstrings in `ledger-signer.ts` updated.
-     9 new tests in `euno-platform/packages/common/tests/ledger-signer.test.ts`
+     9 new tests in `pkg/tests/ledger-signer.test.ts`
      covering both backends (868 total common tests).
 
 ---
@@ -163,7 +163,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
    - Serve tenant/operator queries from a query-optimized store or projection.
    - Dependencies: Task 8.
    - **Fix:** Added `AuditQueryStore` interface and `PostgresAuditQueryStore` class to
-     `euno-platform/packages/common-infra/src/ledger-signer.ts`. The interface isolates the
+     `pkg/src/ledger-signer.ts`. The interface isolates the
      SELECT-only read path from `LedgerBackend` (which owns chain state, advisory locks,
      and HMAC material). `PostgresAuditQueryStore` is a thin, transaction-free wrapper that
      issues a single `SELECT … WHERE … ORDER BY seq … LIMIT` query per call — no advisory
@@ -172,7 +172,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
      produce a `PostgresAuditQueryStore` for `postgres` and `per-replica-postgres` backends
      (backed by the same pool as the write backend — no extra connections), and updated
      `app-factory.ts` with backward-compat fallback to `auditLedgerBackend`. 16 new tests in
-     `euno-platform/packages/common/tests/ledger-signer.test.ts`.
+     `pkg/tests/ledger-signer.test.ts`.
 
 10. **Align issuer and minter bootstrap patterns with the gateway** ✅ DONE
     - Move remaining large bootstraps toward typed config loading and explicit
@@ -180,7 +180,7 @@ Related review: [architecture-review-2026-05.md](./architecture-review-2026-05.m
     - Reduce environment parsing drift and production/dev behavior mismatches.
     - Dependencies: Task 1.
     - **Fix:** Added `MinterConfigSchema` and `MinterConfig` to
-      `public/packages/common/src/config/schema.ts`. Registered `'minter'` in
+      `pkg//src/config/schema.ts`. Registered `'minter'` in
       `EUNO_SERVICE_NAMES`, `EUNO_CONFIG_SCHEMAS`, `EunoConfigFor`, and `EunoConfig`.
       Added `'minter'` header to `SERVICE_HEADERS` in `dump-template.ts`.
       Updated minter `bootstrap.ts` to call `loadConfigOrExit(process.env, 'minter')`

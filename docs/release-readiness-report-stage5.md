@@ -146,7 +146,7 @@ The `@euno/integration-tests` suite (181 assertions) covers:
 7. **License boundary is mechanically enforced.** The
    `scripts/check-license-boundary.mjs` CI gate prevents BSL types from leaking
    into Apache-2.0 packages. The three new `AgtGuardOptions` / `AgtGuardResult`
-   / `AgtGuardDenyReason` types correctly land in `public/packages/common`
+   / `AgtGuardDenyReason` types correctly land in `pkg/`
    (Apache-2.0) with the implementation in `agent-runtime` (BSL).
 
 ### Risks and Mitigations
@@ -173,16 +173,16 @@ member 'AgentInventoryRecord'` and related symbols). All 85 unit tests were
 skipped.
 
 **Root cause:** `jest.config.js` for `posture-emitter` mapped `@euno/common`
-to `euno-platform/packages/common/src` (the compatibility shim), but did not
+to `pkg/src` (the compatibility shim), but did not
 also map `@euno/common-core` and `@euno/common-infra`. The shim's
 `index.ts` re-exports via `export * from '@euno/common-core'` and
 `export * from '@euno/common-infra'`; without the secondary mappings those
 barrel exports resolved to unbuilt `dist/` paths at jest transpile time.
 
-**Fix:** Added `@euno/common-core` → `../../../public/packages/common/src` and
+**Fix:** Added `@euno/common-core` → `../../../pkg//src` and
 `@euno/common-infra` → `../common-infra/src` to both the `transform.tsconfig.paths`
 block and the `moduleNameMapper` in
-`euno-platform/packages/posture-emitter/jest.config.js`. This mirrors the
+`internal/posture-emitter/jest.config.js`. This mirrors the
 pattern already established in `agent-runtime/jest.config.js`.
 
 **Result:** All 85 `@euno/posture-emitter` tests now pass.
@@ -192,13 +192,13 @@ pattern already established in `agent-runtime/jest.config.js`.
 **Symptom:** Running `npm test -w @euno/partner-issuer-sim` produced
 `error TS2305: Module '"@euno/common"' has no exported member
 'CapabilityTokenPayload'` and `CAPABILITY_TOKEN_SCHEMA_VERSION` (from
-`public/packages/common/src/wire.ts`). The single test suite was skipped.
+`pkg//src/wire.ts`). The single test suite was skipped.
 
 **Root cause:** Same missing `@euno/common-core` and `@euno/common-infra`
 moduleNameMapper entries, identical to Defect 1.
 
 **Fix:** Applied the same fix to
-`euno-platform/packages/partner-issuer-sim/jest.config.js`, additionally
+`internal/partner-issuer-sim/jest.config.js`, additionally
 preserving the existing `@euno/capability-issuer` and
 `@euno/capability-issuer/adapters` mappings already present in that file.
 
@@ -232,7 +232,7 @@ All required documentation artefacts are present and linked:
 | did:ion circuit breaker + air-gap recipe | `docs/issuer-idp-setup.md` §"DID-based partner issuers" | ✅ |
 | Discovery endpoint OpenAPI spec | `docs/openapi/capability-issuer-discovery.yaml` | ✅ |
 | Cross-chain anchor runbook | `docs/issuer-operator-runbook.md` §"Cross-chain anchor" | ✅ |
-| CLI README Stage-5 section | `public/packages/cli/README.md` §"Stage 5: Enterprise Features" | ✅ |
+| CLI README Stage-5 section | `cmd//README.md` §"Stage 5: Enterprise Features" | ✅ |
 | README Stage-5 enterprise section | `README.md` §"Enterprise deployment (Stage 5)" | ✅ |
 | CHANGELOGs for all 4 un-quarantined packages | `packages/{posture-emitter,db-token-service,storage-grant-service}/CHANGELOG.md`; `partner-issuer-sim/CHANGELOG.md` | ✅ |
 

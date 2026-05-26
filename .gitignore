@@ -1,43 +1,15 @@
-# Dependencies
-node_modules/
-package-lock.json
-yarn.lock
+# Go build artifacts
+coverage.out
 
-# Build outputs
-dist/
-build/
-*.js
-*.js.map
-*.d.ts
-*.d.ts.map
-!jest.config.js
-!jest.globalSetup.js
-# Operational scripts checked into source (e.g. F-9 verify-evidence.js).
-# The blanket `*.js` rule above would otherwise hide these hand-written
-# entry points alongside compiled TypeScript output.
-!scripts/**/*.js
-# k6 perf scenarios (I-22) — checked into source so ops can run them
-# against deployed environments. Without this exception the blanket
-# `*.js` rule above would silently drop them at commit time.
-!packages/integration-tests/perf/k6/**/*.js
-# AWS Lambda authorizer source (Sprint-1 multi-cloud parity for APIM
-# `validate-jwt`). The blanket `*.js` rule above would otherwise hide
-# this hand-written infra file alongside compiled TypeScript output.
-!infra/**/*.js
-# Static website JS in web/assets/ — checked into source so the site
-# can be served directly. The blanket `*.js` rule above would otherwise
-# silently drop these hand-written files.
-!web/**/*.js
-# Astro site's hand-written public JS entry point. The blanket `*.js`
-# rule above would otherwise silently drop this file.
-!site/public/main.js
+# Binary output
+/bin/
 
 # Environment variables
 .env
 .env.local
 .env.*.local
 
-# IDE — ignore personal settings, but track project-level VSCode configs
+# IDE
 .vscode/*
 !.vscode/launch.json
 !.vscode/tasks.json
@@ -55,18 +27,17 @@ Thumbs.db
 # Logs
 logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Testing
-coverage/
-.nyc_output/
-
-# TypeScript incremental build artifacts
-*.tsbuildinfo
 
 # Temporary files
 tmp/
 temp/
 *.tmp
+
+# Node (site/ only)
+node_modules/
+dist/
+
+# Static website JS in web/assets/ — checked into source
+!web/**/*.js
+# Astro site's hand-written public JS entry point
+!site/public/main.js

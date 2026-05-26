@@ -2,7 +2,7 @@
 
 ## Deployment Topology
 
-The capability issuer runs as an Express service (`euno-platform/packages/capability-issuer`) behind the gateway. In the hosted product it is deployed as a container alongside the gateway and KMS. In self-host mode it is included as the `issuer` service in `infra/docker-compose.yml` (full profile).
+The capability issuer runs as an Express service (`internal/issuer`) behind the gateway. In the hosted product it is deployed as a container alongside the gateway and KMS. In self-host mode it is included as the `issuer` service in `infra/docker-compose.yml` (full profile).
 
 ```
 Client → [API Gateway :3002] → [Capability Issuer :3001] → [KMS Signer]
@@ -250,7 +250,7 @@ The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSO
 
 - **Authentication**: `GET /api/v1/audit/chain-proof` requires `X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>` (timing-safe comparison). The route is absent (404) when `ENABLE_CROSS_CHAIN_ANCHOR=false`.
 - **Signing key**: Commitments are signed by the same KMS key as per-record evidence. An attacker who obtains the HMAC secret (`AUDIT_LEDGER_HMAC_SECRET`) can forge **HMAC metadata** on individual rows but cannot forge the commitment **signature** (which requires the KMS private key). See `docs/security/minter-threat-model.md` and `docs/runbooks/ledger-hmac-rotation.md` for HMAC key rotation procedures.
-- **S3 anchoring**: The bootstrap does not wire an S3 client by default. To publish commitments to S3 Object-Lock, construct `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` in a custom entrypoint. See `CrossChainAnchorOptions.s3` in `euno-platform/packages/common-infra/src/ledger-signer.ts`.
+- **S3 anchoring**: The bootstrap does not wire an S3 client by default. To publish commitments to S3 Object-Lock, construct `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` in a custom entrypoint. See `CrossChainAnchorOptions.s3` in `pkg/src/ledger-signer.ts`.
 
 ### Azure Confidential Ledger (ACL) backend
 

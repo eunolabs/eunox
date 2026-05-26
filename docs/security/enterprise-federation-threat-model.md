@@ -745,7 +745,7 @@ threat model must not imply that the in-process guard is a security boundary.*
 documentation, marketing material, or customer-facing description.**
 
 The `createAgtGuard()` function in
-`euno-platform/packages/agent-runtime/src/agt-guard.ts` implements an
+`internal/agent-runtime/src/agt-guard.ts` implements an
 **in-process policy check** that evaluates tool calls against an
 `AgentCapabilityManifest` before forwarding them to the outer gateway.
 
@@ -845,7 +845,7 @@ available. They must not be used for:
 For multi-tenant cloud deployments, the only supported signing providers
 are `azure-keyvault`, `aws-kms`, and `gcp-cloudkms` (per the
 `capability-issuer` `SIGNING_PROVIDER` config in
-`public/packages/common/src/config/schema.ts`). These providers use
+`pkg//src/config/schema.ts`). These providers use
 non-exportable HSM/KMS keys with per-workload-identity access control.
 File-based keys have no equivalent access isolation guarantee.
 
@@ -967,10 +967,10 @@ When rotating the signing key in an air-gapped deployment:
 
 - [`docs/stage5executionplan.md` §5](../stage5executionplan.md#5-enterprise-threat-model-addendum-blocking--task-1) — originating questions
 - [`docs/stage-5-design.md`](../stage-5-design.md) — Stage 5 RFC / design freeze
-- [`euno-platform/packages/tool-gateway/src/partner-did-registry.ts`](../../euno-platform/packages/tool-gateway/src/partner-did-registry.ts) — `PartnerDidRegistry`, `PinAttestation`, `verifyPinAttestation`, `createPinAttestation`
-- [`euno-platform/packages/tool-gateway/src/partner-issuer-resolver.ts`](../../euno-platform/packages/tool-gateway/src/partner-issuer-resolver.ts) — `PartnerIssuerResolver`, circuit-breaker integration, cache TTLs
-- [`euno-platform/packages/db-token-service/src/app.ts`](../../euno-platform/packages/db-token-service/src/app.ts) — DB credential issuance, TTL derivation, rate limits
+- [`internal/gateway/src/partner-did-registry.ts`](../../internal/gateway/src/partner-did-registry.ts) — `PartnerDidRegistry`, `PinAttestation`, `verifyPinAttestation`, `createPinAttestation`
+- [`internal/gateway/src/partner-issuer-resolver.ts`](../../internal/gateway/src/partner-issuer-resolver.ts) — `PartnerIssuerResolver`, circuit-breaker integration, cache TTLs
+- [`internal/db-token-service/src/app.ts`](../../internal/db-token-service/src/app.ts) — DB credential issuance, TTL derivation, rate limits
 - [`docs/runbooks/ledger-hmac-rotation.md`](../runbooks/ledger-hmac-rotation.md) — HMAC secret rotation strategies
 - [`docs/security/issuer-identity-threat-model.md`](./issuer-identity-threat-model.md) — predecessor Stage-4 threat model
-- [`public/packages/common/src/agt-guard.ts`](../../public/packages/common/src/agt-guard.ts) — AGT guard types
-- [`public/packages/common/src/config/schema.ts`](../../public/packages/common/src/config/schema.ts) — `IssuerConfigSchema`, `GatewayConfigSchema`
+- [`pkg//src/agt-guard.ts`](../../pkg//src/agt-guard.ts) — AGT guard types
+- [`pkg//src/config/schema.ts`](../../pkg//src/config/schema.ts) — `IssuerConfigSchema`, `GatewayConfigSchema`

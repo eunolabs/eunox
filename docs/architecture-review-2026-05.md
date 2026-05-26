@@ -1,9 +1,9 @@
-# Architecture Review — euno-platform
+# Architecture Review — eunox
 
 > **Reviewer role:** Principal Software Architect  
 > **Date:** May 2026  
 > **Scope:** Stage 3 implementation — tool-gateway, api-key-minter, @euno/mcp remote-enforcer, billing plumbing (Task 17), distributed state (Redis/Postgres)  
-> **Artefacts reviewed:** `docs/ARCHITECTURE.md`, `docs/stage-3-design.md`, `docs/pricing-stage-3.md`, gateway source (`euno-platform/packages/tool-gateway/src/`), minter source (`euno-platform/packages/api-key-minter/src/`), common-infra (`euno-platform/packages/common-infra/src/`), MCP remote enforcer (`public/packages/mcp/src/enforcer/remote.ts`), config schema (`public/packages/common/src/config/schema.ts`)
+> **Artefacts reviewed:** `docs/ARCHITECTURE.md`, `docs/stage-3-design.md`, `docs/pricing-stage-3.md`, gateway source (`internal/gateway/src/`), minter source (`internal/minter/src/`), common-infra (`pkg/src/`), MCP remote enforcer (`pkg//src/enforcer/remote.ts`), config schema (`pkg//src/config/schema.ts`)
 
 ---
 
@@ -13,7 +13,7 @@
 
 **Severity:** High  
 **Packages:** `tool-gateway`, `@euno/common`  
-**File:** `euno-platform/packages/tool-gateway/src/bootstrap.ts` (Step 13a)  
+**File:** `internal/gateway/src/bootstrap.ts` (Step 13a)  
 **Fix:** `RedisUsageMeter` + `createUsageMeterFromEnv` factory in `@euno/common-infra`;
 `euno_usage_meter_errors_total` Prometheus counter + `onMeterError` callback in
 `EnforcementEngine` (see commit with "feat(gateway/infra): cr-1/ci-2/ci-4 — durable
@@ -42,7 +42,7 @@ silent failures are observable.
 
 **Severity:** High  
 **Package:** `tool-gateway`  
-**File:** `euno-platform/packages/tool-gateway/src/routes/enforce.ts`  
+**File:** `internal/gateway/src/routes/enforce.ts`  
 **Fix:** `ENFORCE_SOURCE_IP_MODE` env var + `sourceIpMode` option on
 `EnforceRouterOptions` (see commit with "fix(gateway): CR-2 sourceIp trust
 boundary").
@@ -78,7 +78,7 @@ https://expressjs.com/en/guide/behind-proxies.html.
 
 **Severity:** High  
 **Package:** `common-infra`, deployment  
-**Files:** `euno-platform/packages/common-infra/src/redis-circuit-breaker.ts`, `k8s/redis.yaml`
+**Files:** `pkg/src/redis-circuit-breaker.ts`, `k8s/redis.yaml`
 
 All four runtime-security state stores share a single `REDIS_URL` with no Redis
 Sentinel or Cluster HA at the application level. The in-cluster `k8s/redis.yaml`
@@ -103,15 +103,15 @@ outcome.
 - `k8s/redis.yaml`: Deployment carries `euno.dev/dev-only: 'true'` label and
   an `euno.dev/dev-only-reason` annotation; the file header clearly states it
   is **DEV/PILOT ONLY** with instructions for every major HA Redis option.
-- `euno-platform/packages/tool-gateway/src/bootstrap.ts`: Startup `warn` when
+- `internal/gateway/src/bootstrap.ts`: Startup `warn` when
   `NODE_ENV=production` and `REDIS_URL` (or any per-store override URL) does
   not use a Sentinel or Cluster scheme.
-- `public/packages/common/src/config/schema.ts` + `revocation-store.ts`:
+- `pkg//src/config/schema.ts` + `revocation-store.ts`:
   `REDIS_GRACE_PERIOD_MS` option (default 0 = disabled).  When set, the
   revocation store uses its local write-through cache for the first
   `REDIS_GRACE_PERIOD_MS` ms after Redis first becomes unavailable, preventing
   a brief blip from causing a total brownout.  Recommended production value: 5000 ms.
-- `euno-platform/packages/tool-gateway/prometheus/gateway-alert-rules.yaml`:
+- `internal/gateway/prometheus/gateway-alert-rules.yaml`:
   `EunoGatewayRevocationStoreUnavailable` alert fires when
   `euno_gateway_revocation_unavailable_total > 0 for 2m`.  Also includes
   `EunoGatewayRedisCircuitOpen`, `EunoGatewayRedisErrorsElevated`, and
@@ -119,7 +119,7 @@ outcome.
 - `docs/DEPLOYMENT.md`: New "Redis HA for production" section documents
   Sentinel/Cluster URL formats, per-store URL overrides, grace period
   configuration, startup validation behaviour, and alert rule loading.
-- `euno-platform/packages/common-infra/src/redis-circuit-breaker.ts`:
+- `pkg/src/redis-circuit-breaker.ts`:
   `getOpenedAt()` method exposes when the circuit opened for grace-period
   integration by calling code.
 
@@ -129,7 +129,7 @@ outcome.
 
 **Severity:** Medium-High  
 **Package:** `api-key-minter`  
-**File:** `euno-platform/packages/api-key-minter/src/anomaly-detector.ts`
+**File:** `internal/minter/src/anomaly-detector.ts`
 
 `AnomalyDetector` is an in-process ring-buffer structure. Each minter replica
 maintains completely independent per-tenant `BucketStore` state. An attacker
@@ -148,23 +148,23 @@ rules share the same blind spot.
   label so per-instance vs. fleet-wide discrepancies are visible.
 
 **Fix:** All three recommendations implemented.
-- `euno-platform/packages/api-key-minter/src/anomaly-detector.ts`: Prominent
+- `internal/minter/src/anomaly-detector.ts`: Prominent
   `⚠️ Per-replica limitation (CR-4)` section added to the module JSDoc.
   `AnomalyDetectorOptions.replicaId` field added; passed as `replica` label on
   the `euno_minter_anomaly_alerts_total` counter.
-- `euno-platform/packages/api-key-minter/src/redis-anomaly-detector.ts`:
+- `internal/minter/src/redis-anomaly-detector.ts`:
   New `RedisAnomalyDetector` class backs bucket state in Redis hashes
   (`minter:anomaly:short:{tenantId}` / `minter:anomaly:long:{tenantId}`).
   HINCRBY provides atomic increments without locking; EXPIRE manages TTL.
   Transparent fallback to in-memory `AnomalyDetector` on any Redis error.
   `createAnomalyDetectorFromEnv` factory selects Redis or in-memory based on
   `ANOMALY_REDIS_URL` / `REDIS_URL`.
-- `euno-platform/packages/api-key-minter/src/bootstrap.ts`: Wires
+- `internal/minter/src/bootstrap.ts`: Wires
   `RedisAnomalyDetector` when `ANOMALY_REDIS_URL` or `REDIS_URL` is set;
   `replicaId` from `MINTER_REPLICA_ID` env var or `os.hostname()`.
-- `euno-platform/packages/api-key-minter/src/metrics.ts`: `replica` label
+- `internal/minter/src/metrics.ts`: `replica` label
   added to `euno_minter_anomaly_alerts_total`.
-- `euno-platform/packages/api-key-minter/prometheus/minter-alert-rules.yaml`:
+- `internal/minter/prometheus/minter-alert-rules.yaml`:
   New `MinterAnomalyReplicaSkew` alert fires when one replica's anomaly rate
   is < 50% of the fleet average over 10 minutes.
 - `docs/security/minter-threat-model.md §7`: CR-4 per-replica limitation
@@ -195,7 +195,7 @@ front-matter, or use a CODEOWNERS approval requirement on
 ### DI-1 — GCP per-tenant key isolation is explicitly blocked ✅ FIXED
 
 **Package:** `common-infra`  
-**File:** `euno-platform/packages/common-infra/src/kms-token-signer.ts`
+**File:** `pkg/src/kms-token-signer.ts`
 
 The design document (`docs/stage-3-design.md §1.1`) states: *"GCP deployments
 currently lack per-tenant key isolation through a shared signer config."* This
@@ -221,7 +221,7 @@ for the operator guide.
 ### DI-2 — PostgreSQL advisory lock is a global serialization bottleneck for the audit ledger ✅ FIXED
 
 **Package:** `common-infra`  
-**File:** `euno-platform/packages/common-infra/src/ledger-signer.ts`
+**File:** `pkg/src/ledger-signer.ts`
 
 `PostgresLedgerBackend` acquires `pg_advisory_xact_lock(BigInt('0x455534004C454447'))`,
 a **single global lock** shared by all replicas and all tenants. Under high
@@ -258,7 +258,7 @@ The `PerReplicaPostgresLedgerBackend` addresses this, but the simple
 ### DI-3 — `AdminIdempotencyStore` is in-memory; provides false guarantees in multi-replica deployments ✅ FIXED
 
 **Package:** `tool-gateway`  
-**File:** `euno-platform/packages/tool-gateway/src/admin-api.ts`
+**File:** `internal/gateway/src/admin-api.ts`
 
 The in-memory `AdminIdempotencyStore` is local-process only, correctly documented
 as such. However: (a) a replica restart clears the store, allowing re-processing
@@ -282,7 +282,7 @@ Redis store for Stage 4 HA admin deployments.
 ### DI-4 — Telemetry endpoint is an outbound call to an external service from the enforcement plane ✅ FIXED
 
 **Package:** `tool-gateway`  
-**File:** `euno-platform/packages/tool-gateway/src/gateway-telemetry.ts`
+**File:** `internal/gateway/src/gateway-telemetry.ts`
 
 `GatewayTelemetryCollector` calls `https://telemetry.euno.dev/v1/events` by
 default. This outbound connection from the enforcement plane to an external HTTPS
@@ -334,7 +334,7 @@ updated.
 
 ### CI-1 — `parseEnforceRequestBody` passes unknown context fields through unchecked
 
-**File:** `euno-platform/packages/tool-gateway/src/routes/enforce.ts`
+**File:** `internal/gateway/src/routes/enforce.ts`
 
 The enforce-request parser performs individual `typeof` checks. Unknown fields in
 `context` (beyond `sourceIp`, `recipients`, `now`) pass through silently. When
@@ -350,7 +350,7 @@ Zod schema keyed to the protocol version.
 
 ### CI-2 — `usageMeter.recordEnforcement` errors are silently swallowed with no counter ✅ FIXED
 
-**File:** `euno-platform/packages/tool-gateway/src/enforcement.ts`  
+**File:** `internal/gateway/src/enforcement.ts`  
 **Fix:** Added `onMeterError?: () => void` to `EnforcementEngineOptions`; the
 `catch {}` block in `validateAction`'s `finally` now calls
 `this.onMeterError?.()`. Bootstrap wires this to a new `euno_usage_meter_errors_total`
@@ -367,7 +367,7 @@ so failures surface in dashboards (`euno_usage_meter_errors_total`).
 
 ### CI-3 — Admin kill-switch "illusion of kill" when `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true` ✅ FIXED
 
-**File:** `euno-platform/packages/tool-gateway/src/admin-api.ts`
+**File:** `internal/gateway/src/admin-api.ts`
 
 When `KILL_SWITCH_FAIL_OPEN_ON_WRITE=true` and Redis is unreachable, the admin
 API returns 200 (kill appeared to succeed) but only the originating replica
@@ -391,7 +391,7 @@ warning. The flag is plumbed from the env var through `initializeServices` →
 
 ### CI-4 — Anomaly detection fires only to Prometheus; silent if Prometheus is unavailable ✅ FIXED
 
-**File:** `euno-platform/packages/api-key-minter/src/routes/mint.ts`  
+**File:** `internal/minter/src/routes/mint.ts`  
 **Fix:** `AnomalyDetector.recordMint()` return value is already checked in the
 mint route and a structured `logger.warn('Mint anomaly detected', { tenantId, rules })`
 is emitted when `firedRules.length > 0` — both after a successful mint and after
@@ -410,7 +410,7 @@ Prometheus outage.
 
 ### CI-5 — `InMemoryMintRateLimiter` for `/api/v1/ping` is per-process, not per-fleet ✅ FIXED
 
-**File:** `euno-platform/packages/api-key-minter/src/mint-rate-limiter.ts`  
+**File:** `internal/minter/src/mint-rate-limiter.ts`  
 **Fix:** `RedisBackedMintRateLimiter` + `createPingRateLimiterFromEnv` factory
 (see commit with "fix(minter): CI-5 Redis-backed ping rate limiter").
 
@@ -455,7 +455,7 @@ includes the new production behaviour note.
 
 ### CI-7 — Audit ledger HMAC secret rotation procedure is undocumented ✅ FIXED
 
-**File:** `euno-platform/packages/common-infra/src/ledger-signer.ts`
+**File:** `pkg/src/ledger-signer.ts`
 
 The per-row `row_hmac` is a tamper-detection mechanism whose secret has no documented
 rotation procedure. Rotating the secret invalidates every existing row's HMAC,
@@ -473,7 +473,7 @@ environment variables, Kubernetes/Helm deployment snippets, and cross-references
 
 ### CI-8 — JWKS cache `kid`-miss can cause a fan-out stampede to the issuer on key rotation ✅ FIXED
 
-**File:** `euno-platform/packages/tool-gateway/src/verifier.ts` (JwksClient usage)
+**File:** `internal/gateway/src/verifier.ts` (JwksClient usage)
 
 On key rotation, all in-flight tokens with the new `kid` arrive simultaneously at
 a cache that still holds the old key set, triggering concurrent JWKS refreshes.
@@ -501,7 +501,7 @@ to it as "a separate credential, distinct from the signing key" but there is no
 corresponding env-var entry in `schema.ts` or provisioning runbook.
 
 **Fix:** `AUDIT_LEDGER_HMAC_SECRET` is present in `schema.ts` (see
-`public/packages/common/src/config/schema.ts`) and documented in
+`pkg//src/config/schema.ts`) and documented in
 `docs/runbooks/ledger-hmac-rotation.md` (CI-7), which covers secret generation
 (`openssl rand -hex 32`), accepted formats, three rotation strategies (new table,
 dual-secret backfill, per-row versioning), Kubernetes/Helm examples, and guidance

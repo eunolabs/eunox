@@ -15,11 +15,9 @@ endpoint and applies the returned obligations locally. This document is the
 authoritative specification of that HTTP contract.
 
 The canonical type definitions live in
-`public/packages/common/src/wire.ts` — `EnforceRequest`, `EnforceRequestContext`,
-`EnforceResponse`, `Obligation`, `DenialInfo` — so both the gateway
-(`tool-gateway`) and the client (`@euno/mcp`) compile against the same types
-without duplication. Any change to those types MUST land in `@euno/common-core`
-first (per the cross-cutting obligation in `docs/stage3executionplan.md`).
+`pkg/capability/enforce.go` and `pkg/capability/obligation.go` —
+`EnforceRequest`, `EnforceRequestContext`, `EnforceResponse`, `Obligation`,
+`DenialInfo`.
 
 ---
 
@@ -94,7 +92,7 @@ X-Request-Id: <uuid>   (optional; reflected verbatim in the response)
 
 ```typescript
 /**
- * Defined in public/packages/common/src/wire.ts — EnforceRequest
+ * Defined in pkg/capability/enforce.go — EnforceRequest
  */
 interface EnforceRequest {
   /** MCP session ID from the initialize handshake. */
@@ -154,7 +152,7 @@ interface EnforceRequestContext {
 
 ```typescript
 /**
- * Defined in public/packages/common/src/wire.ts — EnforceResponse
+ * Defined in pkg/capability/enforce.go — EnforceResponse
  */
 interface EnforceResponse {
   /**
@@ -401,7 +399,7 @@ Gateway operators comparing minter-vs-issuer audit rows **must** exclude
 OCSF fields are identical between the two issuance paths.
 
 This behaviour is proven by the parity test in
-`euno-platform/packages/integration-tests/tests/cross-stage-parity.test.ts`
+`internal/integration-tests/tests/cross-stage-parity.test.ts`
 (describe block: *"Stage-4 parity: minter-vs-issuer produces identical gateway
 decisions (Task 11)"*).
 

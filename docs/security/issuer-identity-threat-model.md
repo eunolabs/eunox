@@ -226,7 +226,7 @@ fetching, caching, and refresh internally. The caching behaviour:
   env var if operator-configurable TTL is required.
 - **Gateway-side JWKS (for verifying capability JWTs):** uses the existing
   `EUNO_JWKS_CACHE_TTL_SECONDS` config variable (default 300 s; defined in
-  `public/packages/common/src/config/schema.ts:923`).
+  `pkg//src/config/schema.ts:923`).
 
 A failed JWKS refresh does not invalidate the currently cached JWKS (fail-safe for
 transient JWKS endpoint flaps). The issuer rejects tokens only if no cached JWKS
@@ -274,7 +274,7 @@ A request where the JSON body includes `role: "admin"` (or any `requestedCapabil
 derived from admin roles) but whose IdP token contains only `roles: ["viewer"]` MUST
 resolve to the `viewer` capability set, not the `admin` set.
 
-This is covered by `euno-platform/packages/capability-issuer/tests/issuer-role-privilege-escalation.test.ts`
+This is covered by `internal/issuer/tests/issuer-role-privilege-escalation.test.ts`
 (to be created in Task 2 as part of the negative-test requirement). The test:
 
 1. Mocks an IdP token with `roles: ["viewer"]`.
@@ -423,7 +423,7 @@ out all cross-tenant bindings from the request and returns 403 for each.
 ### 5.2 Required tests (verbatim from §5)
 
 The following negative tests MUST be present in
-`euno-platform/packages/capability-issuer/tests/template-cross-tenant.test.ts`
+`internal/issuer/tests/template-cross-tenant.test.ts`
 (to be created in Task 6):
 
 | Scenario | Expected result |

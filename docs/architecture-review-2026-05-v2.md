@@ -1,4 +1,4 @@
-# Architecture Review — euno-platform (v2)
+# Architecture Review — eunox (v2)
 
 > **Reviewer role:** Principal Software Architect
 > **Date:** May 2026 (second-round review)
@@ -11,12 +11,12 @@
 >
 > **Artefacts reviewed:**
 > - `docs/ARCHITECTURE.md`, `docs/stage-3-design.md`, `docs/pricing-stage-3.md`
-> - `euno-platform/packages/tool-gateway/src/`
-> - `euno-platform/packages/api-key-minter/src/`
-> - `euno-platform/packages/capability-issuer/src/`
-> - `euno-platform/packages/common-infra/src/`
-> - `public/packages/mcp/src/enforcer/remote.ts`
-> - `public/packages/common/src/config/schema.ts`
+> - `internal/gateway/src/`
+> - `internal/minter/src/`
+> - `internal/issuer/src/`
+> - `pkg/src/`
+> - `pkg//src/enforcer/remote.ts`
+> - `pkg//src/config/schema.ts`
 > - `k8s/`
 
 ---
@@ -39,7 +39,7 @@ implementation refinements worth addressing before billing activates.
 ### CR-NEW-1 — Primary `/mint` rate limiter is still `InMemoryMintRateLimiter`
 
 **Severity:** High
-**File:** `euno-platform/packages/api-key-minter/src/bootstrap.ts:182`
+**File:** `internal/minter/src/bootstrap.ts:182`
 
 CI-5 from the prior review migrated only the **ping** rate limiter to
 `RedisBackedMintRateLimiter`. The primary mint-route rate limiter remains
@@ -68,7 +68,7 @@ already exists and is fully tested.
 ### CR-NEW-2 — Minter Postgres connection pools are not closed on graceful shutdown
 
 **Severity:** High
-**File:** `euno-platform/packages/api-key-minter/src/bootstrap.ts:242–251`
+**File:** `internal/minter/src/bootstrap.ts:242–251`
 
 The minter's SIGTERM/SIGINT handler:
 
@@ -104,7 +104,7 @@ scope as the `shutdown` closure.
 ### CR-NEW-3 — Cross-tenant token replay via default shared gateway audience (OQ-6, unresolved)
 
 **Severity:** High
-**File:** `euno-platform/packages/tool-gateway/src/enforcement.ts:302`
+**File:** `internal/gateway/src/enforcement.ts:302`
 
 `EnforcementEngine` defaults `gatewayAudience` to the literal `"tool-gateway"`. In
 a hosted multi-tenant gateway where multiple tenants share a single gateway instance,
@@ -136,7 +136,7 @@ of tenant B's resources.
 ### CR-NEW-4 — `parseEnforceRequestBody` passes unknown context fields unchecked (CI-1, still open)
 
 **Severity:** Medium-High
-**File:** `euno-platform/packages/tool-gateway/src/routes/enforce.ts:177–241`
+**File:** `internal/gateway/src/routes/enforce.ts:177–241`
 
 The parser performs type-checks on `sourceIp`, `recipients`, and `now` individually,
 then returns `b as unknown as EnforceRequest`. Unknown properties in `context` are
@@ -158,7 +158,7 @@ evaluation.
 
 ### DI-NEW-1 — SQLite posture-emitter queue is unsafe in a multi-replica issuer
 
-**File:** `euno-platform/packages/capability-issuer/src/index.ts`,
+**File:** `internal/issuer/src/index.ts`,
 `k8s/capability-issuer-deployment.yaml`
 
 The `DurablePostureEmitter` uses SQLite as a write-ahead queue. The K8s deployment
@@ -179,7 +179,7 @@ supported and fail loudly when the constraint is violated.
 
 ### DI-NEW-2 — Admin HTTP surface default binding is not enforced at startup
 
-**File:** `euno-platform/packages/tool-gateway/src/bootstrap.ts`,
+**File:** `internal/gateway/src/bootstrap.ts`,
 `GatewayDependencies.adminHost`
 
 The `adminHost` field is documented as requiring a non-wildcard value in production,
@@ -197,7 +197,7 @@ existing `checkProductionRedisHa` call) that throws when `NODE_ENV=production` a
 
 ### DI-NEW-3 — Production guard stops after first Redis violation (inconsistent fail-fast model)
 
-**File:** `euno-platform/packages/api-key-minter/src/production-guard.ts:150–152`
+**File:** `internal/minter/src/production-guard.ts:150–152`
 
 The `validateProductionMinterConfig` function collects **all** violations for
 non-Redis checks so operators can fix every problem in one restart cycle. The Redis
@@ -233,7 +233,7 @@ as a configurable default in the config schema so Enterprise operators can reduc
 
 ### DI-NEW-5 — No Postgres pool size or health-check configuration on minter pools
 
-**File:** `euno-platform/packages/api-key-minter/src/bootstrap.ts:123, 163`
+**File:** `internal/minter/src/bootstrap.ts:123, 163`
 
 Both `new pgModule.Pool({ connectionString: auditDbUrl })` and
 `new pgKeyModule.Pool({ connectionString: apiKeyDbUrl })` use default `pg` pool
@@ -252,7 +252,7 @@ is unreachable at startup rather than discovering it on the first mint attempt.
 
 ### CI-NEW-1 — `require('pg')` dynamic import anti-pattern in bootstrap
 
-**File:** `euno-platform/packages/api-key-minter/src/bootstrap.ts:113–116, 153–156`
+**File:** `internal/minter/src/bootstrap.ts:113–116, 153–156`
 
 Both Postgres pools use `require('pg')` with an eslint-disable comment. This
 prevents TypeScript compile-time type-checking, disables IDE auto-complete, and
@@ -270,7 +270,7 @@ restoring type safety.
 
 ### CI-NEW-2 — `context.now` validation vs. enforcement clock (OQ-4, still open)
 
-**File:** `euno-platform/packages/tool-gateway/src/routes/enforce.ts:253–271`
+**File:** `internal/gateway/src/routes/enforce.ts:253–271`
 
 `validateClockSkew` rejects a `context.now` that deviates more than 60 seconds from
 the gateway clock, but `enforceConditions` is called with the full
@@ -287,7 +287,7 @@ for audit attribution only, not for condition evaluation.
 
 ### CI-NEW-3 — `RedisBackedMintRateLimiter` INCR→EXPIRE is non-atomic
 
-**File:** `euno-platform/packages/api-key-minter/src/mint-rate-limiter.ts:173–178`
+**File:** `internal/minter/src/mint-rate-limiter.ts:173–178`
 
 ```ts
 const count = await this.client.incr(fullKey);
@@ -309,7 +309,7 @@ always carries a TTL atomically.
 
 ### CI-NEW-4 — Anomaly detection misses authentication-failure spray attacks
 
-**File:** `euno-platform/packages/api-key-minter/src/routes/mint.ts:196–220`
+**File:** `internal/minter/src/routes/mint.ts:196–220`
 
 The anomaly detector is called with `recordMint(tenantId, false)` on the failure
 path, but `tenantId` is only populated after API-key verification succeeds. For
@@ -327,7 +327,7 @@ targeted brute-force.
 
 ### CI-NEW-5 — Minter bootstrap lacks a consolidated startup summary log
 
-**File:** `euno-platform/packages/api-key-minter/src/bootstrap.ts`
+**File:** `internal/minter/src/bootstrap.ts`
 
 The minter bootstrap logs individual component choices but no consolidated startup
 summary. An operator cannot quickly verify the full configuration profile (KMS vs PEM

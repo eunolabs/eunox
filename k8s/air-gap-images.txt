@@ -1,4 +1,4 @@
-# Euno Platform — Air-gap image list
+# Eunox — Air-gap image list
 # ─────────────────────────────────────────────────────────────────────────────
 # All container images required for a full Stage-5 on-prem deployment.
 # Images are listed with their expected SHA-256 digest so operators can verify
@@ -26,22 +26,22 @@
 # Format: <image>:<tag>@sha256:<digest>
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Euno platform services ───────────────────────────────────────────────────
-ghcr.io/edgeobs/euno/tool-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
-ghcr.io/edgeobs/euno/capability-issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
-ghcr.io/edgeobs/euno/api-key-minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
-ghcr.io/edgeobs/euno/db-token-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
-ghcr.io/edgeobs/euno/storage-grant-service:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
-ghcr.io/edgeobs/euno/posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
+# ── Eunox services ───────────────────────────────────────────────────
+ghcr.io/edgeobs/eunox/gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
+ghcr.io/edgeobs/eunox/issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
+ghcr.io/edgeobs/eunox/minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
+ghcr.io/edgeobs/eunox/db-token-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
+ghcr.io/edgeobs/eunox/storage-grant-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
+ghcr.io/edgeobs/eunox/posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
 
 # ── Partner issuer simulator (optional — reference deployment only) ──────────
-ghcr.io/edgeobs/euno/partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
+ghcr.io/edgeobs/eunox/partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
 
 # ── Base images used at build time (needed only for air-gapped builds) ───────
-# node:20-alpine is the base for all Euno service images.
+# golang:1.25-alpine is the base for all Eunox service images.
 # alpine/curl is used by the smoke-test container.
 # Digests below are examples; pin to the exact digest used in the Dockerfiles.
-node:20-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
+golang:1.25-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
 alpine/curl:latest@sha256:0000000000000000000000000000000000000000000000000000000000000011
 
 # ── Optional dependencies (bitnami — disabled by default in Helm chart) ──────

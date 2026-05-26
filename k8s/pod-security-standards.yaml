@@ -1,4 +1,4 @@
-# Pod Security Standards for Euno - Sprint 3 Sandbox Hardening
+# Pod Security Standards for Eunox - Sprint 3 Sandbox Hardening
 # Uses Pod Security Admission (PSA) which replaces deprecated PodSecurityPolicy
 #
 # Apply this namespace configuration to enforce pod security standards

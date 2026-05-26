@@ -13,15 +13,15 @@ This plan turns docs/mvp.md §"Stage 2: General Tool Enforcement" (lines 552–5
 Shared context (paste into every Stage 2 issue)
 
 
-Repository layout. Public, Apache-2.0 packages live under public/packages/{cli,common,mcp,langchain}. The `@euno/common-core` package lives at `public/packages/common/` (the directory was renamed from `common-core` to `common`; the npm package name `@euno/common-core` is unchanged). Stage 2 work stays inside public/packages/mcp plus public/packages/langchain and public/packages/mcp/policies/. Do not add Redis, Postgres, KMS, or any cross-process state — that is Stage 3.
+Repository layout. Public, Apache-2.0 packages live under public/packages/{cli,common,mcp,langchain}. The `@euno/common-core` package lives at `pkg//` (the directory was renamed from `common-core` to `common`; the npm package name `@euno/common-core` is unchanged). Stage 2 work stays inside pkg/ plus pkg/ and pkg//policies/. Do not add Redis, Postgres, KMS, or any cross-process state — that is Stage 3.
 
-Reuse, do not reinvent. All five Stage-2 condition types already exist in public/packages/common/src/condition-registry.ts: ipRangeHandler, recipientDomainHandler, redactFieldsHandler, policyHandler, plus the registerCustomCondition / registerPolicyBackend registries. enforceCondition and the two-tier ordering helpers in the same file already handle them. Stage 2 is mostly lifting the Stage-1 gate, wiring richer request context, and surfacing the new capabilities through the CLI/policy/audit surfaces — no new condition logic in @euno/common-core.
+Reuse, do not reinvent. All five Stage-2 condition types already exist in pkg//src/condition-registry.ts: ipRangeHandler, recipientDomainHandler, redactFieldsHandler, policyHandler, plus the registerCustomCondition / registerPolicyBackend registries. enforceCondition and the two-tier ordering helpers in the same file already handle them. Stage 2 is mostly lifting the Stage-1 gate, wiring richer request context, and surfacing the new capabilities through the CLI/policy/audit surfaces — no new condition logic in @euno/common-core.
 
-Stage-1 gate to lift. public/packages/mcp/src/policy/source.ts defines DEFERRED_CONDITION_TYPES (lines 50–56) and rejectDeferredConditions (lines 66–94), and rejects ipRange | recipientDomain | redactFields | policy | custom. Stage 2 removes types from this set as the matching wiring lands — never lift the gate before the wiring is in place, because the existing gate fails fast with a clear error and partial wiring would silently degrade enforcement.
+Stage-1 gate to lift. pkg//src/policy/source.ts defines DEFERRED_CONDITION_TYPES (lines 50–56) and rejectDeferredConditions (lines 66–94), and rejects ipRange | recipientDomain | redactFields | policy | custom. Stage 2 removes types from this set as the matching wiring lands — never lift the gate before the wiring is in place, because the existing gate fails fast with a clear error and partial wiring would silently degrade enforcement.
 
-PDP entry point. public/packages/mcp/src/pdp.ts. The shape ConditionContext from @euno/common-core/condition-registry (lines 50–102) is the integration seam — populating sourceIp, recipients, customHandlers, policyBackends is how the new condition types start getting real values. The conditionTypeToDenialCode map already includes ipRange and recipientDomain (lines 241–253) — extend it as needed.
+PDP entry point. pkg//src/pdp.ts. The shape ConditionContext from @euno/common-core/condition-registry (lines 50–102) is the integration seam — populating sourceIp, recipients, customHandlers, policyBackends is how the new condition types start getting real values. The conditionTypeToDenialCode map already includes ipRange and recipientDomain (lines 241–253) — extend it as needed.
 
-Audit shape. public/packages/mcp/src/audit/audit-sink.ts writes OCSF API Activity events (class_uid 6003) with a unmapped field that already includes denialCode and conditionType (lines 267–268). New denial-cause fields (e.g. for argument-schema details) go in unmapped. The LocalHmacSigner round-trip is already validated by verifyAuditEvent.
+Audit shape. pkg//src/audit/audit-sink.ts writes OCSF API Activity events (class_uid 6003) with a unmapped field that already includes denialCode and conditionType (lines 267–268). New denial-cause fields (e.g. for argument-schema details) go in unmapped. The LocalHmacSigner round-trip is already validated by verifyAuditEvent.
 
 Schema parity is non-negotiable. Per mvp.md §"Policy and audit schema parity" (lines 501–548): the policy file is a literal subset of AgentCapabilityManifest; @euno/mcp imports types from @euno/common-core and never defines its own. Unknown condition types are denied at validate time and at enforcement time (defence in depth). Stage 2 must not relax this.
 
@@ -29,7 +29,7 @@ Build and check commands (verified): from repo root, npm install, then npm run l
 
 Distribution. @euno/mcp is published via .github/workflows/release-mcp.yml to GitHub Packages (publishConfig.registry). New @euno/langchain package follows the identical publish workflow with its own release file.
 
-Telemetry. denialsByConditionType is already collected in public/packages/mcp/src/telemetry/collector.ts. New denial codes added in Stage 2 land in that map automatically. Do not add identifying fields — see TELEMETRY.md.
+Telemetry. denialsByConditionType is already collected in pkg//src/telemetry/collector.ts. New denial codes added in Stage 2 land in that map automatically. Do not add identifying fields — see TELEMETRY.md.
 
 Stage 2 readiness gate. Do not start Stage 2 work until scripts/stage2-readiness.ts reports READY, or a maintainer has explicitly acknowledged the gate criteria are met. Each of the tasks below is independent of that gate decision.
 
@@ -60,7 +60,7 @@ Stage 2 status (target: …)
 
  Task 9 — @euno/langchain companion package — wrapAsLangChainTool over local-only CapabilityRuntime
 
- Task 10 — Reference policy library under public/packages/mcp/policies/
+ Task 10 — Reference policy library under pkg//policies/
 
  Task 11 — README + docs updates: condition matrix, before/after, schema-parity claim
 
@@ -78,20 +78,20 @@ Scope.
 
 
 
-File: public/packages/mcp/src/pdp.ts — extend PdpDecision with an optional details?: Record<string, unknown> field (already an obvious extension shape, alongside denialCode/conditionType). When the validateArguments call throws, capture the structured information the validator already exposes (path, expected, got) and put it on details.
+File: pkg//src/pdp.ts — extend PdpDecision with an optional details?: Record<string, unknown> field (already an obvious extension shape, alongside denialCode/conditionType). When the validateArguments call throws, capture the structured information the validator already exposes (path, expected, got) and put it on details.
 
-Verify the validator surface: public/packages/common/src/argument-validator.ts — confirm the error class exposes path / expected / actual. If only a string is exposed today, first add a typed ArgumentValidationError (with path, expected, got) to @euno/common-core and re-export from @euno/common. Do not break existing tests — keep the .message shape compatible.
+Verify the validator surface: pkg//src/argument-validator.ts — confirm the error class exposes path / expected / actual. If only a string is exposed today, first add a typed ArgumentValidationError (with path, expected, got) to @euno/common-core and re-export from @euno/common. Do not break existing tests — keep the .message shape compatible.
 
-File: public/packages/mcp/src/transport/stdio.ts and transport/http.ts — the place that turns a PdpDecision into the JSON-RPC error response must serialise details into the data field of the JSON-RPC error object (the SDK supports it). Match the shape { code: 'ARGUMENT_VALIDATION_FAILED', conditionType: 'argumentSchema', details: { path, expected, got } }.
+File: pkg//src/transport/stdio.ts and transport/http.ts — the place that turns a PdpDecision into the JSON-RPC error response must serialise details into the data field of the JSON-RPC error object (the SDK supports it). Match the shape { code: 'ARGUMENT_VALIDATION_FAILED', conditionType: 'argumentSchema', details: { path, expected, got } }.
 
-File: public/packages/mcp/src/audit/audit-sink.ts — extend McpAuditRecord with optional details?: Record<string, unknown> and write it into the existing unmapped block alongside denialCode/conditionType. Do not put it at the top level of the OCSF event — unmapped is the documented escape hatch (lines 25–28 of audit-sink.ts).
+File: pkg//src/audit/audit-sink.ts — extend McpAuditRecord with optional details?: Record<string, unknown> and write it into the existing unmapped block alongside denialCode/conditionType. Do not put it at the top level of the OCSF event — unmapped is the documented escape hatch (lines 25–28 of audit-sink.ts).
 
 
 Acceptance.
 
 
 
-New unit tests in public/packages/mcp/src/__tests__/ covering: a denied call returns a structured details object; the audit log captures the same details; the existing tests continue to pass.
+New unit tests in pkg//src/__tests__/ covering: a denied call returns a structured details object; the audit log captures the same details; the existing tests continue to pass.
 
 One end-to-end test using the mock upstream from test/fixtures/ proves a client receives the structured error.
 
@@ -108,15 +108,15 @@ Scope.
 
 
 
-File: public/packages/mcp/src/transport/http.ts — at the request handler, capture the source IP. Honour X-Forwarded-For only when the proxy is bound to loopback (the default) and the operator has explicitly opted in via a new --trust-forwarded-for CLI flag (default off). Otherwise use req.socket.remoteAddress. Strip the ::ffff: IPv4-mapped prefix the same way _handleControlKill does today (http.ts lines 683–687).
+File: pkg//src/transport/http.ts — at the request handler, capture the source IP. Honour X-Forwarded-For only when the proxy is bound to loopback (the default) and the operator has explicitly opted in via a new --trust-forwarded-for CLI flag (default off). Otherwise use req.socket.remoteAddress. Strip the ::ffff: IPv4-mapped prefix the same way _handleControlKill does today (http.ts lines 683–687).
 
-File: public/packages/mcp/src/pdp.ts — extend PdpContext with sourceIp?: string. Pass it through into ConditionContext in decide() (around line 531).
+File: pkg//src/pdp.ts — extend PdpContext with sourceIp?: string. Pass it through into ConditionContext in decide() (around line 531).
 
-File: public/packages/mcp/src/transport/stdio.ts — leave sourceIp undefined for stdio sessions (the existing handler will deny if a policy includes ipRange, with a clear reason). Document this in the README ("ipRange is enforced only over HTTP transport").
+File: pkg//src/transport/stdio.ts — leave sourceIp undefined for stdio sessions (the existing handler will deny if a policy includes ipRange, with a clear reason). Document this in the README ("ipRange is enforced only over HTTP transport").
 
-File: public/packages/mcp/src/policy/source.ts — remove 'ipRange' from DEFERRED_CONDITION_TYPES (line 50 set). Add a new test that loads a policy containing ipRange and asserts it succeeds.
+File: pkg//src/policy/source.ts — remove 'ipRange' from DEFERRED_CONDITION_TYPES (line 50 set). Add a new test that loads a policy containing ipRange and asserts it succeeds.
 
-File: public/packages/mcp/src/cli.ts — add the --trust-forwarded-for flag to the proxy subcommand with a stderr warning at startup when enabled.
+File: pkg//src/cli.ts — add the --trust-forwarded-for flag to the proxy subcommand with a stderr warning at startup when enabled.
 
 
 Acceptance.
@@ -140,11 +140,11 @@ Scope.
 
 
 
-File: public/packages/mcp/src/pdp.ts — add an extractRecipients(rawArgs) helper alongside extractFilePath/extractTables/extractSqlOperation (around lines 200–230 of pdp.ts; verify their helpers). Recognise the common shapes tool authors use: to, recipients, cc, bcc — strings or arrays of strings. Return string[] | undefined.
+File: pkg//src/pdp.ts — add an extractRecipients(rawArgs) helper alongside extractFilePath/extractTables/extractSqlOperation (around lines 200–230 of pdp.ts; verify their helpers). Recognise the common shapes tool authors use: to, recipients, cc, bcc — strings or arrays of strings. Return string[] | undefined.
 
 Wire the extracted value into ConditionContext in decide() (around line 539).
 
-File: public/packages/mcp/src/policy/source.ts — remove 'recipientDomain' from DEFERRED_CONDITION_TYPES.
+File: pkg//src/policy/source.ts — remove 'recipientDomain' from DEFERRED_CONDITION_TYPES.
 
 Update the denial-code map in pdp.ts (already includes recipientDomain → RECIPIENT_DOMAIN_DENIED, line 250 — confirm and reuse).
 
@@ -170,13 +170,13 @@ Scope.
 
 
 
-Files: public/packages/mcp/src/transport/stdio.ts and transport/http.ts — after the upstream returns a tools/call result, if the matched constraint had redactFields conditions, walk the result through the registry's response-path helpers. The registry already exposes redactConditions and hasRedactObligation (condition-registry.ts lines 795 and 843) — use these directly; do not reimplement the dotted-path stripping (deleteDottedPath).
+Files: pkg//src/transport/stdio.ts and transport/http.ts — after the upstream returns a tools/call result, if the matched constraint had redactFields conditions, walk the result through the registry's response-path helpers. The registry already exposes redactConditions and hasRedactObligation (condition-registry.ts lines 795 and 843) — use these directly; do not reimplement the dotted-path stripping (deleteDottedPath).
 
-File: public/packages/mcp/src/pdp.ts — decide() returns the matched constraint via the existing path. Extend PdpDecision with an optional obligations?: { redactFields?: string[][] } (or surface the matched conditions list via a new decideWithObligations helper, whichever is cleaner — the simpler path is to return the matched CapabilityConstraint reference inside the decision so the transport can run obligations without re-doing the match).
+File: pkg//src/pdp.ts — decide() returns the matched constraint via the existing path. Extend PdpDecision with an optional obligations?: { redactFields?: string[][] } (or surface the matched conditions list via a new decideWithObligations helper, whichever is cleaner — the simpler path is to return the matched CapabilityConstraint reference inside the decision so the transport can run obligations without re-doing the match).
 
-File: public/packages/mcp/src/policy/source.ts — remove 'redactFields' from DEFERRED_CONDITION_TYPES.
+File: pkg//src/policy/source.ts — remove 'redactFields' from DEFERRED_CONDITION_TYPES.
 
-File: public/packages/mcp/src/audit/audit-sink.ts — record obligationsApplied: ['redactFields'] in unmapped so operators can see the response was rewritten.
+File: pkg//src/audit/audit-sink.ts — record obligationsApplied: ['redactFields'] in unmapped so operators can see the response was rewritten.
 
 
 Acceptance.
@@ -200,13 +200,13 @@ Scope.
 
 
 
-File: public/packages/mcp/src/cli.ts — add a new --policy-backend <module> repeatable flag on the proxy subcommand. Each value is a Node module path (relative or absolute) that exports a default function (api: { registerPolicyBackend }) => void. Resolve modules with the same rules import() uses (CommonJS / ESM both).
+File: pkg//src/cli.ts — add a new --policy-backend <module> repeatable flag on the proxy subcommand. Each value is a Node module path (relative or absolute) that exports a default function (api: { registerPolicyBackend }) => void. Resolve modules with the same rules import() uses (CommonJS / ESM both).
 
-File: public/packages/mcp/src/policy/backends.ts (new) — small loader that imports each module, calls its default export with { registerPolicyBackend } from @euno/common-core, and emits structured stderr logs ([euno-mcp] registered policy backend: <name>).
+File: pkg//src/policy/backends.ts (new) — small loader that imports each module, calls its default export with { registerPolicyBackend } from @euno/common-core, and emits structured stderr logs ([euno-mcp] registered policy backend: <name>).
 
-File: public/packages/mcp/src/policy/source.ts — remove 'policy' from DEFERRED_CONDITION_TYPES.
+File: pkg//src/policy/source.ts — remove 'policy' from DEFERRED_CONDITION_TYPES.
 
-Document the SDK contract for backend authors in a new public/packages/mcp/docs/policy-backends.md (1–2 pages, matching the tone of TELEMETRY.md). Worked example: an OPA-style allow/deny.
+Document the SDK contract for backend authors in a new pkg//docs/policy-backends.md (1–2 pages, matching the tone of TELEMETRY.md). Worked example: an OPA-style allow/deny.
 
 README update: add a "Custom policy backends" section.
 
@@ -232,15 +232,15 @@ Scope.
 
 
 
-File: public/packages/mcp/src/cli.ts — add --custom-condition <module> repeatable flag on the proxy subcommand, mirroring Task 5's --policy-backend.
+File: pkg//src/cli.ts — add --custom-condition <module> repeatable flag on the proxy subcommand, mirroring Task 5's --policy-backend.
 
-File: public/packages/mcp/src/policy/custom-handlers.ts (new) — loader analogous to Task 5; calls each module's default export with { registerCustomCondition }.
+File: pkg//src/policy/custom-handlers.ts (new) — loader analogous to Task 5; calls each module's default export with { registerCustomCondition }.
 
-File: public/packages/mcp/src/policy/source.ts — remove 'custom' from DEFERRED_CONDITION_TYPES.
+File: pkg//src/policy/source.ts — remove 'custom' from DEFERRED_CONDITION_TYPES.
 
-File: public/packages/mcp/src/pdp.ts — populate ConditionContext.customHandlers from getCustomConditionHandlers() so the registered handlers are actually visible during enforcement (around line 539).
+File: pkg//src/pdp.ts — populate ConditionContext.customHandlers from getCustomConditionHandlers() so the registered handlers are actually visible during enforcement (around line 539).
 
-New public/packages/mcp/docs/custom-conditions.md with worked example.
+New pkg//docs/custom-conditions.md with worked example.
 
 
 Acceptance.
@@ -264,7 +264,7 @@ Scope.
 
 
 
-File: public/packages/mcp/src/cli.ts — register a new subcommand:
+File: pkg//src/cli.ts — register a new subcommand:
 
 euno-mcp validate-token --request-id <uid> — finds the matching audit record by metadata.uid and prints a human-readable summary (decision, denialCode, conditionType, details, signing key fingerprint, signature verification result via the existing verifyAuditEvent).
 
@@ -274,9 +274,9 @@ euno-mcp validate-token --since <ISO8601> — prints a one-line-per-decision tai
 
 
 
-File: public/packages/mcp/src/audit/audit-sink.ts — confirm verifyAuditEvent (line 437) is exported and stable. If not, expose it through audit/index.ts.
+File: pkg//src/audit/audit-sink.ts — confirm verifyAuditEvent (line 437) is exported and stable. If not, expose it through audit/index.ts.
 
-File: public/packages/mcp/src/cli/validate-token.ts (new) — the implementation. Output format mirrors the euno-mcp validate pattern (✓/✗ + indented details).
+File: pkg//src/cli/validate-token.ts (new) — the implementation. Output format mirrors the euno-mcp validate pattern (✓/✗ + indented details).
 
 Telemetry: emit a new subcommand: 'validate-token' event so the existing collector counts these invocations. Update TelemetryEvent.subcommand type union (telemetry/types.ts line 35).
 
@@ -302,7 +302,7 @@ Scope.
 
 
 
-File: public/packages/mcp/src/cli/stats.ts (new). Command: euno-mcp stats [--since <ISO8601>] [--audit-log <path>]. Reads the JSONL audit log, aggregates by unmapped.conditionType and unmapped.denialCode, and prints a small ASCII table:
+File: pkg//src/cli/stats.ts (new). Command: euno-mcp stats [--since <ISO8601>] [--audit-log <path>]. Reads the JSONL audit log, aggregates by unmapped.conditionType and unmapped.denialCode, and prints a small ASCII table:
 Code
 Period: 2026-05-08 → 2026-05-15  (Total: 1,237 calls; 89 denied)
 ─────────────────────────────────────────────────────────────────
@@ -333,16 +333,16 @@ Stable column ordering and totals; deterministic on the same input.
 
 Task 9 — @euno/langchain companion package
 
-Why. mvp.md line 564: "@euno/langchain companion package — wraps a Tool / StructuredTool so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same AgentCapabilityManifest and the same enforcement core. Not a separate enforcer — the same CapabilityRuntime shape used by euno-platform/packages/agent-runtime, just with a local-only backend."
+Why. mvp.md line 564: "@euno/langchain companion package — wraps a Tool / StructuredTool so LangChain.js users who don't want to introduce an MCP transport into a Node process can adopt euno in-process. Uses the same AgentCapabilityManifest and the same enforcement core. Not a separate enforcer — the same CapabilityRuntime shape used by internal/agent-runtime, just with a local-only backend."
 
 
 Scope.
 
 
 
-New package public/packages/langchain/ published as @euno/langchain (Apache-2.0). Mirror the structure of public/packages/mcp/: package.json, tsconfig.json, jest.config.js, README.md, LICENSE, src/, test/. The publish workflow is a copy of release-mcp.yml named release-langchain.yml.
+New package pkg// published as @euno/langchain (Apache-2.0). Mirror the structure of pkg//: package.json, tsconfig.json, jest.config.js, README.md, LICENSE, src/, test/. The publish workflow is a copy of release-mcp.yml named release-langchain.yml.
 
-Reuse — do not depend on euno-platform/packages/framework-adapters (that is a private/BSL workspace). Re-implement the structural LangChainCompatibleTool shape from euno-platform/packages/framework-adapters/src/langchain.ts lines 44–59 inside this package, but route enforcement through @euno/mcp's ConditionEnforcerPDP (or factor a thin shared helper into @euno/mcp if needed). The agent-runtime CapabilityRuntime interface is what the structural type should match — copy only the public, structural pieces, keeping the implementation Apache-2.0-clean.
+Reuse — do not depend on internal/framework-adapters (that is a private/BSL workspace). Re-implement the structural LangChainCompatibleTool shape from internal/framework-adapters/src/langchain.ts lines 44–59 inside this package, but route enforcement through @euno/mcp's ConditionEnforcerPDP (or factor a thin shared helper into @euno/mcp if needed). The agent-runtime CapabilityRuntime interface is what the structural type should match — copy only the public, structural pieces, keeping the implementation Apache-2.0-clean.
 
 Public API:
 ts
@@ -362,7 +362,7 @@ const tool = wrapAsLangChainTool(runtime, {
 
 The local runtime composes FilePolicySource + ConditionEnforcerPDP + LocalAuditSink from @euno/mcp — no Redis, no signing service. Same denial codes, same audit shape.
 
-Tests: structural compatibility against @langchain/core's StructuredTool (use the structural-typing pattern from euno-platform/packages/framework-adapters/tests/langchain.test.ts so we don't add @langchain/core as a runtime dep).
+Tests: structural compatibility against @langchain/core's StructuredTool (use the structural-typing pattern from internal/framework-adapters/tests/langchain.test.ts so we don't add @langchain/core as a runtime dep).
 
 Dependencies — verify Apache-2.0 / MIT compatibility before adding (gh-advisory-database for any new npm dep). The only new runtime dep should be @euno/mcp itself (or, alternatively, @euno/common-core + the new shared helper described above).
 
@@ -385,14 +385,14 @@ Repo-root npm run lint && npm run test && npm run build green.
 
 Task 10 — Reference policy library
 
-Why. mvp.md line 565: "3–5 pre-baked euno.policy.yaml files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a public/packages/mcp/policies/ directory. This is what makes the 5-minute pitch real."
+Why. mvp.md line 565: "3–5 pre-baked euno.policy.yaml files for common upstream MCP servers (filesystem, Postgres, GitHub, Slack), in a pkg//policies/ directory. This is what makes the 5-minute pitch real."
 
 
 Scope.
 
 
 
-New directory public/packages/mcp/policies/ with at least the following files (pick five from the list in mvp.md):
+New directory pkg//policies/ with at least the following files (pick five from the list in mvp.md):
 
 filesystem.policy.yaml — for @modelcontextprotocol/server-filesystem. Use allowedExtensions and per-tool argumentSchema to block writes outside a directory whitelist.
 
@@ -406,18 +406,18 @@ fetch.policy.yaml — ipRange allowlist (deny private CIDRs from being targets) 
 
 
 
-Each file must validate cleanly via euno-mcp validate <file> — add a CI job in .github/workflows/ (or a new test in public/packages/mcp/test/) that loops over the directory and asserts each policy validates.
+Each file must validate cleanly via euno-mcp validate <file> — add a CI job in .github/workflows/ (or a new test in pkg//test/) that loops over the directory and asserts each policy validates.
 
 Each file must include a top-of-file comment block: upstream package + version it targets, what the policy blocks, what it deliberately leaves open, and a link back to its README.
 
-Update public/packages/mcp/README.md with a "Reference policies" section that lists each one with a one-line description.
+Update pkg//README.md with a "Reference policies" section that lists each one with a one-line description.
 
 
 Acceptance.
 
 
 
-New CI step (or new test in policies.test.ts) loads every *.policy.yaml under public/packages/mcp/policies/ and asserts the loader returns a valid manifest.
+New CI step (or new test in policies.test.ts) loads every *.policy.yaml under pkg//policies/ and asserts the loader returns a valid manifest.
 
 One end-to-end test per policy proving at least one obvious denial (e.g., for postgres.policy.yaml, a DROP TABLE is denied; for fetch.policy.yaml, http://169.254.169.254/... is denied).
 
@@ -434,13 +434,13 @@ Scope.
 
 
 
-Files: public/packages/mcp/README.md and public/packages/mcp/docs/. Update the supported-conditions matrix to mark ipRange, recipientDomain, redactFields, policy, custom as supported. Add a footnote linking to the policy/custom backend docs (Tasks 5/6).
+Files: pkg//README.md and pkg//docs/. Update the supported-conditions matrix to mark ipRange, recipientDomain, redactFields, policy, custom as supported. Add a footnote linking to the policy/custom backend docs (Tasks 5/6).
 
 Add the second worked example: a request denied by recipientDomain over the HTTP transport.
 
 Update the "What is explicitly cut from Stage 1" section so any reader cross-referencing mvp.md sees the Stage 2 deltas.
 
-Update public/packages/mcp/CHANGELOG.md with a Stage-2 release entry that names every new flag, every new subcommand, and every new condition.
+Update pkg//CHANGELOG.md with a Stage-2 release entry that names every new flag, every new subcommand, and every new condition.
 
 Update docs/mvp.md Stage-2 status block with the same checklist used at the top of this plan.
 
@@ -474,7 +474,7 @@ C3: ≥1 conversation with a team that has already implemented some hand-rolled 
 
 
 
-Telemetry collector update (public/packages/mcp/src/telemetry/collector.ts) — add (privacy-preserving) per-install team-size estimate inferred only from installId + ephemeral counts. Do not add IPs, hostnames, or user identifiers — that is non-negotiable. If a privacy-preserving estimate isn't possible, leave C1 manually tracked and document that.
+Telemetry collector update (pkg//src/telemetry/collector.ts) — add (privacy-preserving) per-install team-size estimate inferred only from installId + ephemeral counts. Do not add IPs, hostnames, or user identifiers — that is non-negotiable. If a privacy-preserving estimate isn't possible, leave C1 manually tracked and document that.
 
 New .github/ISSUE_TEMPLATE/stage-3-signal.md modeled on .github/ISSUE_TEMPLATE/feature-ask.md (referenced in stage2-readiness.ts line 129).
 

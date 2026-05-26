@@ -719,7 +719,7 @@ GovCloud endpoints are resolved automatically from `AWS_REGION`:
 
 ```bash
 AWS_REGION=us-gov-west-1
-AUDIT_LEDGER_S3_BUCKET=euno-govcloud-audit-anchors
+AUDIT_LEDGER_S3_BUCKET=eunox-govcloud-audit-anchors
 # No AUDIT_LEDGER_S3_ENDPOINT override needed for standard GovCloud S3
 ```
 

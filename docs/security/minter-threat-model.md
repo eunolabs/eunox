@@ -13,7 +13,7 @@
 
 ## Background
 
-The API-key minter is a thin façade in front of `euno-platform/packages/tool-gateway`.
+The API-key minter is a thin façade in front of `internal/gateway`.
 Its sole job is to translate a long-lived API key into a short-lived signed JWT capability
 token, so that developers can upgrade from local enforcement to the hosted gateway with a
 single config change:
@@ -49,7 +49,7 @@ Managed HSM — key material is never software-resident. Non-exportability must 
 ### Design
 
 The minter uses one of the three KMS drivers already implemented in
-`euno-platform/packages/capability-issuer/src/{azure-signer,aws-kms-signer,gcp-cloudkms-signer}.ts`.
+`internal/issuer/src/{azure-signer,aws-kms-signer,gcp-cloudkms-signer}.ts`.
 All three implement the `SigningAdapter` / `TokenSigner` interface from `@euno/common`.
 The **chosen driver for the hosted offering is Azure Managed HSM** (not Standard Key
 Vault), with per-tenant EC P-256 (`EC-HSM`, `ES256`) signing keys. Self-hosters may
@@ -235,7 +235,7 @@ The damage depends on which credential is compromised:
 
 ### Testing requirement
 
-The rotation procedure is tested end-to-end in `euno-platform/packages/integration-tests/`
+The rotation procedure is tested end-to-end in `internal/integration-tests/`
 before Stage 3 ships. The test:
 - Mints a token with the old key (with a TTL long enough for the test to complete, e.g. 5 minutes).
 - Rotates to a new key (adds new `kid` to JWKS, switches minter, then removes old `kid`).
@@ -446,7 +446,7 @@ stored as lowercase hex SHA-256 of the canonical row. The sidecar supplies `mint
 explicitly before hashing rather than relying on the database default. Binary `row_hmac`
 is encoded as base64url for verification exports. This is the same pattern used by
 `LedgerAuditEvidenceSigner` in
-`euno-platform/packages/common-infra/src/ledger-signer.ts`. An attacker who compromises
+`pkg/src/ledger-signer.ts`. An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
 process and its secret — two separate compromises required.
 
@@ -489,7 +489,7 @@ that deletes rows creates a detectable gap in the Merkle chain.
 ### Metrics
 
 The minter exposes the following Prometheus metrics (consistent with the naming convention
-in `public/packages/common/src/metrics.ts`):
+in `pkg//src/metrics.ts`):
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -702,8 +702,8 @@ enforcing this is tracked in the Stage 3 task checklist in `docs/mvp.md`.
 | [`docs/stage3executionplan.md`](../stage3executionplan.md) | Task 1 (this document), Task 10–12 (minter implementation) |
 | [`docs/enforcement.md`](../enforcement.md) | Cryptographic-token invariant |
 | [`docs/capability-model.md`](../capability-model.md) | §6 — unknown types are denied by default |
-| [`euno-platform/packages/common-infra/src/ledger-signer.ts`](../../euno-platform/packages/common-infra/src/ledger-signer.ts) | Per-row HMAC ledger pattern reused for mint-audit |
-| [`euno-platform/packages/tool-gateway/src/revocation-store.ts`](../../euno-platform/packages/tool-gateway/src/revocation-store.ts) | Token revocation used in key rotation (§3) |
-| [`euno-platform/packages/capability-issuer/src/azure-signer.ts`](../../euno-platform/packages/capability-issuer/src/azure-signer.ts) | Azure Key Vault signing driver |
-| [`euno-platform/packages/capability-issuer/src/aws-kms-signer.ts`](../../euno-platform/packages/capability-issuer/src/aws-kms-signer.ts) | AWS KMS signing driver |
-| [`euno-platform/packages/capability-issuer/src/gcp-cloudkms-signer.ts`](../../euno-platform/packages/capability-issuer/src/gcp-cloudkms-signer.ts) | GCP Cloud KMS signing driver |
+| [`pkg/src/ledger-signer.ts`](../../pkg/src/ledger-signer.ts) | Per-row HMAC ledger pattern reused for mint-audit |
+| [`internal/gateway/src/revocation-store.ts`](../../internal/gateway/src/revocation-store.ts) | Token revocation used in key rotation (§3) |
+| [`internal/issuer/src/azure-signer.ts`](../../internal/issuer/src/azure-signer.ts) | Azure Key Vault signing driver |
+| [`internal/issuer/src/aws-kms-signer.ts`](../../internal/issuer/src/aws-kms-signer.ts) | AWS KMS signing driver |
+| [`internal/issuer/src/gcp-cloudkms-signer.ts`](../../internal/issuer/src/gcp-cloudkms-signer.ts) | GCP Cloud KMS signing driver |

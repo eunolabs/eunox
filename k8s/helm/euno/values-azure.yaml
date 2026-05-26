@@ -1,4 +1,4 @@
-# Euno umbrella chart — Azure / AKS overrides
+# Eunox umbrella chart — Azure / AKS overrides
 # ---------------------------------------------------------------------------
 # Apply this file on top of the base values.yaml when deploying on Azure
 # Kubernetes Service (AKS):
@@ -24,12 +24,12 @@
 
 # ── Container images — Azure Container Registry ───────────────────────────────
 # Replace myacr and adjust the tag.
-# Euno images are published to ghcr.io; push to ACR with:
-#   az acr import --name myacr --source ghcr.io/edgeobs/euno/tool-gateway:1.0.0 \
-#     --image euno/tool-gateway:1.0.0
+# Eunox images are published to ghcr.io; push to ACR with:
+#   az acr import --name myacr --source ghcr.io/edgeobs/eunox/gateway:1.0.0 \
+#     --image eunox/gateway:1.0.0
 gateway:
   image:
-    repository: myacr.azurecr.io/euno/tool-gateway
+    repository: myacr.azurecr.io/eunox/gateway
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -49,7 +49,7 @@ gateway:
   env:
     NODE_ENV: production
     EUNO_DEPLOYMENT_TIER: multi-replica
-    GATEWAY_AUDIENCE: tool-gateway
+    GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
     # Azure Key Vault-backed audit evidence signing.
@@ -76,10 +76,10 @@ gateway:
   # existingSecret: euno-gateway-secret
   secretEnv: {}
 
-# ── capability-issuer ─────────────────────────────────────────────────────────
+# ── issuer ─────────────────────────────────────────────────────────
 issuer:
   image:
-    repository: myacr.azurecr.io/euno/capability-issuer
+    repository: myacr.azurecr.io/eunox/issuer
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -109,15 +109,15 @@ issuer:
 
     # SCIM 2.0 provisioning (Entra ID SCIM endpoint).
     # See docs/issuer-idp-setup.md §9 for the full SCIM bridge guide.
-    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+    # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
   # existingSecret: euno-issuer-secret
   secretEnv: {}
 
-# ── api-key-minter ────────────────────────────────────────────────────────────
+# ── minter ────────────────────────────────────────────────────────────
 minter:
   image:
-    repository: myacr.azurecr.io/euno/api-key-minter
+    repository: myacr.azurecr.io/eunox/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

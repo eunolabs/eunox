@@ -17,8 +17,8 @@
 # ---------------------
 # All backend selection is driven by environment variables.  The values below
 # are the recommended defaults for a self-hosted local stack.  Override any
-# variable by copying euno-platform/packages/tool-gateway/.env.example to
-# infra/.env and editing it, or by setting the variable in your shell before
+# variable by creating infra/.env and editing it, or by setting the variable
+# in your shell before
 # calling docker compose.
 #
 #   • Redis    — REDIS_URL=redis://redis:6379
@@ -32,7 +32,7 @@
 #   • Evidence signing
 #       ENABLE_CRYPTOGRAPHIC_AUDIT=false  → disabled (default).
 #       ENABLE_CRYPTOGRAPHIC_AUDIT=true   → software HMAC; see EVIDENCE_SIGNING_KEY_*.
-#       AUDIT_SIGNING_KMS_PROVIDER=…      → cloud-HSM; see .env.example for required vars.
+#       AUDIT_SIGNING_KMS_PROVIDER=…      → cloud-HSM; see this file for required vars.
 #
 # Production checklist
 # --------------------
@@ -41,7 +41,7 @@
 #   2. Configure REDIS_URL pointing at a password-protected, TLS-enabled Redis.
 #   3. Configure AUDIT_LEDGER_PG_URL with TLS mode=require.
 #   4. Set ENABLE_CRYPTOGRAPHIC_AUDIT=true and provide a signing key.
-#   5. See euno-platform/packages/tool-gateway/.env.example for the full reference.
+#   5. See this file for the full reference.
 
 version: "3.9"
 
@@ -52,10 +52,7 @@ version: "3.9"
 # Common build + port + healthcheck config shared by both gateway variants.
 # Merged into `gateway` (dev) and `gateway-full` (full/smoke) via <<: *anchor.
 x-gateway-build: &gateway-build
-  build:
-    context: ..
-    dockerfile: euno-platform/packages/tool-gateway/Dockerfile
-  image: euno/tool-gateway:local
+  image: eunox/gateway:local
   restart: unless-stopped
   ports:
     - "${GATEWAY_EXPOSE_PORT:-3002}:${GATEWAY_PORT:-3002}"
@@ -159,10 +156,7 @@ services:
   # against the local mock-oidc service; dev/full profiles leave it unset so the
   # issuer boots without attempting to reach an unavailable IdP.
   capability-issuer:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/capability-issuer/Dockerfile
-    image: euno/capability-issuer:local
+    image: eunox/issuer:local
     container_name: euno-capability-issuer
     restart: unless-stopped
     environment:
@@ -277,7 +271,7 @@ services:
     build:
       context: mock-oidc
       dockerfile: Dockerfile
-    image: euno/mock-oidc:local
+    image: eunox/mock-oidc:local
     container_name: euno-mock-oidc
     profiles: ["smoke"]
     restart: unless-stopped
@@ -299,10 +293,7 @@ services:
   # Active when --profile full or --profile smoke is passed.
   # See docs/self-host.md §12.6 for configuration reference.
   db-token-service:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/db-token-service/Dockerfile
-    image: euno/db-token-service:local
+    image: eunox/db-token-service:local
     container_name: euno-db-token-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
@@ -331,10 +322,7 @@ services:
   # Active when --profile full or --profile smoke is passed.
   # See docs/self-host.md §12.7 for configuration reference.
   storage-grant-service:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/storage-grant-service/Dockerfile
-    image: euno/storage-grant-service:local
+    image: eunox/storage-grant-service:local
     container_name: euno-storage-grant-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
@@ -364,10 +352,7 @@ services:
   # Active when --profile full or --profile smoke is passed.
   # See docs/self-host.md §12.11 and §13 for configuration reference.
   posture-emitter:
-    build:
-      context: ..
-      dockerfile: euno-platform/packages/posture-emitter/Dockerfile
-    image: euno/posture-emitter:local
+    image: eunox/posture-emitter:local
     container_name: euno-posture-emitter
     profiles: ["full", "smoke"]
     restart: unless-stopped

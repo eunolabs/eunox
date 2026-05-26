@@ -71,7 +71,7 @@ jobs:
           # in Settings → Secrets and variables → Actions → Variables.
           # If either ID is unset, the Giscus widget is suppressed entirely
           # (no comments section shown) rather than rendering with empty config.
-          PUBLIC_GISCUS_REPO: edgeobs/euno-platform
+          PUBLIC_GISCUS_REPO: edgeobs/eunox
           PUBLIC_GISCUS_REPO_ID: ${{ vars.GISCUS_REPO_ID }}
           PUBLIC_GISCUS_CATEGORY: Blog Comments
           PUBLIC_GISCUS_CATEGORY_ID: ${{ vars.GISCUS_CATEGORY_ID }}
