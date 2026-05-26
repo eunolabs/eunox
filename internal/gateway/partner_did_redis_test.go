@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -62,7 +63,7 @@ func TestRedisPartnerDIDStore_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(i int) {
 			defer func() { done <- struct{}{} }()
-			did := "did:web:concurrent-" + string(rune('a'+i))
+			did := fmt.Sprintf("did:web:concurrent-%d", i)
 			_ = store.Register(did, "Partner", "")
 		}(i)
 	}

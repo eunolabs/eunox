@@ -321,7 +321,10 @@ func (app *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	activeRecords := app.recordStore.ListActive()
-	dlqDepth, _ := app.queue.DeadLetterDepth(context.Background())
+	dlqDepth, dlqErr := app.queue.DeadLetterDepth(context.Background())
+	if dlqErr != nil {
+		slog.Warn("failed to read dead letter depth", slog.String("error", dlqErr.Error()))
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled":        app.config.Enabled,
@@ -411,7 +414,10 @@ func (app *App) handleListDeadLetters(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	dlqDepth, _ := app.queue.DeadLetterDepth(context.Background())
+	dlqDepth, dlqErr := app.queue.DeadLetterDepth(context.Background())
+	if dlqErr != nil {
+		slog.Warn("failed to read dead letter depth for listing", slog.String("error", dlqErr.Error()))
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"deadLetters": events,
