@@ -354,9 +354,9 @@ func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 	assert.Equal(t, capability.DecisionDeny, resp2.Decision)
 }
 
-func TestEnforce_DPoP_JKT_FailsClosed(t *testing.T) {
-	// When a token carries a DPoP confirmation JKT, verification must fail closed
-	// because full JWK thumbprint comparison is not yet implemented.
+func TestEnforce_DPoP_JKT_VerifiesBinding(t *testing.T) {
+	// When a token carries a DPoP confirmation JKT, full DPoP proof verification
+	// is performed (RFC 9449). An invalid proof JWT is rejected.
 	claims := &capability.TokenPayload{
 		Subject:      "agent-1",
 		ExpiresAt:    time.Now().Add(time.Hour).Unix(),
@@ -375,7 +375,7 @@ func TestEnforce_DPoP_JKT_FailsClosed(t *testing.T) {
 			"toolName":  "tool",
 		},
 		"dpop": map[string]interface{}{
-			"proof":      "any-proof",
+			"proof":      "invalid-proof-not-a-jwt",
 			"httpMethod": "POST",
 			"httpUrl":    "https://gateway.example.com/api/v1/enforce",
 		},
@@ -391,6 +391,8 @@ func TestEnforce_DPoP_JKT_FailsClosed(t *testing.T) {
 	var resp capability.EnforceResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Contains(t, resp.Denial.Message, "DPoP")
 }
 
 func TestValidate_AllowMatchingCapability(t *testing.T) {

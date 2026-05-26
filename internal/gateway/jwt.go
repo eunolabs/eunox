@@ -26,6 +26,9 @@ type DPoPJTIStore interface {
 }
 
 // verifyDPoP verifies a DPoP proof against the token's confirmation claim.
+// When the token carries a cnf.jkt claim, full DPoP proof verification is
+// performed (RFC 9449): JWT parsing, JWK thumbprint comparison, htm/htu
+// matching, iat validation, and signature verification.
 func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, claims *capability.TokenPayload) error {
 	if dpop.Proof == "" {
 		return errors.New("empty DPoP proof")
@@ -35,14 +38,14 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 		return errors.New("DPoP proof must include httpMethod and httpUrl")
 	}
 
-	// If the token has a confirmation claim with JKT, verify binding.
-	// Full DPoP JWT parsing and JWK thumbprint comparison is required for
-	// proper binding verification; fail closed rather than silently skipping.
+	// If the token has a confirmation claim with JKT, perform full binding verification.
 	if claims.Confirmation != nil && claims.Confirmation.JKT != "" {
-		return errors.New("DPoP token binding (JKT) verification is not supported; request denied")
+		if err := verifyDPoPBinding(dpop.Proof, claims.Confirmation.JKT, dpop.HTTPMethod, dpop.HTTPURL); err != nil {
+			return err
+		}
 	}
 
-	// Check replay using the DPoP proof as a unique identifier
+	// Check replay using the DPoP proof as a unique identifier.
 	if app.dpopStore != nil {
 		proofID := computeDPoPID(dpop)
 		alreadyUsed, err := app.dpopStore.MarkUsed(ctx, proofID)

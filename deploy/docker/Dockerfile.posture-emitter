@@ -1,0 +1,50 @@
+# Copyright 2026 Eunox Authors
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Dockerfile for posture-emitter service.
+# Unlike other services, posture-emitter uses modernc.org/sqlite which is
+# pure-Go but benefits from CGO_ENABLED=0 (uses the Go-native backend).
+# This image includes a /data volume for the durable SQLite queue.
+
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+ARG VERSION=0.0.0
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# modernc.org/sqlite is pure-Go; CGO_ENABLED=0 is safe.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -buildid=" \
+    -o /out/service \
+    ./cmd/posture-emitter/
+
+# ── Final stage (distroless) ─────────────────────────────────────────────────
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+COPY --from=builder /out/service /usr/local/bin/service
+
+# Create data directory for SQLite durable queue.
+# The directory is writable; the rest of the filesystem is read-only.
+VOLUME ["/data"]
+
+USER 65534:65534
+
+LABEL org.opencontainers.image.source="https://github.com/edgeobs/eunox"
+LABEL org.opencontainers.image.licenses="BUSL-1.1"
+LABEL org.opencontainers.image.vendor="Eunox"
+
+ENTRYPOINT ["/usr/local/bin/service"]
