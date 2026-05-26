@@ -19,9 +19,12 @@ import (
 	"github.com/edgeobs/eunox/pkg/federation"
 	"github.com/edgeobs/eunox/pkg/killswitch"
 	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/edgeobs/eunox/pkg/ratelimit"
 	"github.com/edgeobs/eunox/pkg/revocation"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+const defaultAdminRateLimitPerMinute = 10
 
 // Config holds the gateway application configuration.
 type Config struct {
@@ -42,6 +45,10 @@ type Config struct {
 	AdminJWKSURI string
 	// AdminJWTAudience is the expected audience in admin JWTs.
 	AdminJWTAudience string
+
+	// AdminRateLimitPerMinute is the maximum number of admin requests per source IP per minute.
+	// Defaults to 10 if not set.
+	AdminRateLimitPerMinute int
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -71,6 +78,7 @@ type App struct {
 	metrics          *gatewayMetrics
 	dpopStore        DPoPJTIStore
 	adminAuth        AdminAuthenticator
+	adminRateLimiter *ratelimit.InMemoryLimiter
 	idempotency      *IdempotencyStore
 	usageTracker     *UsageTracker
 	adminDeps        AdminDependencies
@@ -135,6 +143,17 @@ func New(cfg *Config, deps *Dependencies) *App {
 	if deps.IONResolver != nil {
 		app.ionHealthChecker = NewIONHealthChecker(deps.IONResolver)
 	}
+
+	// Initialize admin rate limiter (CR-4).
+	adminRateLimit := cfg.AdminRateLimitPerMinute
+	if adminRateLimit <= 0 {
+		adminRateLimit = defaultAdminRateLimitPerMinute
+	}
+	app.adminRateLimiter = ratelimit.NewInMemory(ratelimit.Config{
+		Rate:   adminRateLimit,
+		Window: time.Minute,
+		Burst:  adminRateLimit,
+	})
 
 	app.router = app.buildRouter()
 	app.adminRouter = app.buildAdminRouter()

@@ -35,9 +35,11 @@ type IssuerConfig struct {
 	AWSKMSKeyID  string `env:"AWS_KMS_KEY_ID"`
 
 	// GCP Cloud KMS
-	GCPProjectID   string `env:"GCP_PROJECT_ID"`
-	GCPKeyringID   string `env:"GCP_KEYRING_ID"`
-	GCPCryptoKeyID string `env:"GCP_CRYPTOKEY_ID"`
+	GCPProjectID        string `env:"GCP_PROJECT_ID"`
+	GCPLocationID       string `env:"GCP_LOCATION_ID" default:"global"`
+	GCPKeyringID        string `env:"GCP_KEYRING_ID"`
+	GCPCryptoKeyID      string `env:"GCP_CRYPTOKEY_ID"`
+	GCPCryptoKeyVersion string `env:"GCP_CRYPTOKEY_VERSION" default:"1"`
 
 	// Azure AD
 	AzureADTenantID string `env:"AZURE_AD_TENANT_ID"`

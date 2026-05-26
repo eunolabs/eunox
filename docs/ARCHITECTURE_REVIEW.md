@@ -311,13 +311,19 @@ The documentation mentions deployment across clouds (EKS, GKE) but:
 
 Ordered by priority and dependency:
 
-### Phase 1: Security Hardening (Week 1–2)
+### Phase 1: Security Hardening (Week 1–2) ✅ COMPLETE
 
-| # | Item | Depends On | Effort | Owner |
-|---|------|-----------|--------|-------|
-| 1 | CR-1: Implement real KMS signers | — | 2 weeks | Crypto team |
-| 2 | CR-3: Migrate admin auth to JWT | CR-1 (key material) | 3 days | Gateway team |
-| 3 | CR-4: Add admin endpoint rate limiting | — | 2 days | Gateway team |
+| # | Item | Depends On | Effort | Status |
+|---|------|-----------|--------|--------|
+| 1 | CR-1: Implement real KMS signers | — | 2 weeks | ✅ Done |
+| 2 | CR-3: Migrate admin auth to JWT | CR-1 (key material) | 3 days | ✅ Done |
+| 3 | CR-4: Add admin endpoint rate limiting | — | 2 days | ✅ Done |
+
+**Implementation Notes (Phase 1):**
+
+- **CR-1**: `buildSigner()` in `cmd/issuer/main.go` now wires real KMS signers (AWS KMS, Azure Key Vault, GCP Cloud KMS) via a factory-based client registration pattern (`pkg/crypto/kms_clients.go`). Software signing is rejected in production. `SingleKeyStore` accepts `crypto.Signer` interface.
+- **CR-3**: `validateAdminAuth()` in `cmd/gateway/main.go` enforces JWT admin auth (`GATEWAY_ADMIN_JWKS_URI`) in production. Static `ADMIN_API_KEY` is deprecated with a warning when used alongside JWT.
+- **CR-4**: Admin endpoints are rate-limited at 10 req/min per source IP (configurable via `GATEWAY_ADMIN_RATE_LIMIT_PER_MINUTE`). Health endpoints (`/health/*`) are exempt. Standard rate-limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After`) are returned.
 
 ### Phase 2: Reliability (Week 2–3)
 

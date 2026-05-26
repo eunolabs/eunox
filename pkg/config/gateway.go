@@ -13,7 +13,9 @@ type GatewayConfig struct {
 	AdminHost         string         `env:"ADMIN_HOST" production:"required"`
 	IssuerJWKSURL     string         `env:"ISSUER_JWKS_URL"`
 	BackendServiceURL string         `env:"BACKEND_SERVICE_URL"`
-	AdminAPIKey       string         `env:"ADMIN_API_KEY" production:"required"`
+	AdminAPIKey       string         `env:"ADMIN_API_KEY"`
+	AdminJWKSURI      string         `env:"ADMIN_JWKS_URI"`
+	AdminJWTAudience  string         `env:"ADMIN_JWT_AUDIENCE"`
 	RequireKID        bool           `env:"EUNO_REQUIRE_KID" default:"true"`
 	JWKSCacheTTL      int            `env:"EUNO_JWKS_CACHE_TTL_SECONDS" default:"300" min:"0"`
 	GatewayAudience   string         `env:"GATEWAY_AUDIENCE" default:"tool-gateway"`
@@ -27,8 +29,9 @@ type GatewayConfig struct {
 	CallCounterRedisURL string `env:"CALL_COUNTER_REDIS_URL"`
 
 	// Rate limiting
-	RateLimitWindowMS    int `env:"RATE_LIMIT_WINDOW_MS" default:"60000" min:"1"`
-	RateLimitMaxRequests int `env:"RATE_LIMIT_MAX_REQUESTS" default:"1000" min:"1"`
+	RateLimitWindowMS       int `env:"RATE_LIMIT_WINDOW_MS" default:"60000" min:"1"`
+	RateLimitMaxRequests    int `env:"RATE_LIMIT_MAX_REQUESTS" default:"1000" min:"1"`
+	AdminRateLimitPerMinute int `env:"ADMIN_RATE_LIMIT_PER_MINUTE" default:"10" min:"1"`
 
 	// CORS
 	AllowedOrigins string `env:"ALLOWED_ORIGINS"`
