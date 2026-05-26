@@ -6,6 +6,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -155,16 +159,22 @@ type S3AnchorConfig struct {
 	Region string
 	// Endpoint override for testing/localstack.
 	Endpoint string
+	// AccessKeyID is the AWS access key ID for SigV4 signing.
+	AccessKeyID string
+	// SecretAccessKey is the AWS secret access key for SigV4 signing.
+	SecretAccessKey string
+	// SessionToken is an optional AWS session token (for assumed roles).
+	SessionToken string
 }
 
 // S3AnchorBackend anchors chain checkpoints to S3 immutable objects.
 type S3AnchorBackend struct {
-	config S3AnchorConfig
+	config *S3AnchorConfig
 	client *http.Client
 }
 
 // NewS3AnchorBackend creates a new S3 anchor backend.
-func NewS3AnchorBackend(cfg S3AnchorConfig) *S3AnchorBackend {
+func NewS3AnchorBackend(cfg *S3AnchorConfig) *S3AnchorBackend {
 	return &S3AnchorBackend{
 		config: cfg,
 		client: &http.Client{Timeout: 30 * time.Second},
@@ -186,15 +196,18 @@ func (b *S3AnchorBackend) Anchor(ctx context.Context, anchor *ChainAnchor) (stri
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", b.config.Bucket, b.config.Region)
 	}
-	url := fmt.Sprintf("%s/%s", endpoint, key)
+	reqURL := fmt.Sprintf("%s/%s", endpoint, key)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("audit: create S3 request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// TODO(audit): Implement AWS SigV4 signing for production S3 access.
-	// Current implementation assumes pre-signed URLs or test endpoints.
+
+	// Sign with AWS SigV4 if credentials are configured.
+	if b.config.AccessKeyID != "" && b.config.SecretAccessKey != "" {
+		signAWSRequest(req, body, b.config.Region, "s3", b.config.AccessKeyID, b.config.SecretAccessKey, b.config.SessionToken)
+	}
 
 	resp, err := b.client.Do(req)
 	if err != nil {
@@ -219,11 +232,16 @@ func (b *S3AnchorBackend) Verify(ctx context.Context, anchor *ChainAnchor) (bool
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", b.config.Bucket, b.config.Region)
 	}
-	url := fmt.Sprintf("%s/%s", endpoint, key)
+	reqURL := fmt.Sprintf("%s/%s", endpoint, key)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, http.NoBody)
 	if err != nil {
 		return false, fmt.Errorf("audit: create S3 HEAD request: %w", err)
+	}
+
+	// Sign with AWS SigV4 if credentials are configured.
+	if b.config.AccessKeyID != "" && b.config.SecretAccessKey != "" {
+		signAWSRequest(req, nil, b.config.Region, "s3", b.config.AccessKeyID, b.config.SecretAccessKey, b.config.SessionToken)
 	}
 
 	resp, err := b.client.Do(req)
@@ -277,10 +295,10 @@ func (b *AzureConfidentialLedgerBackend) Anchor(ctx context.Context, anchor *Cha
 		return "", fmt.Errorf("audit: marshal anchor for ACL: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/app/transactions?api-version=2022-05-13&collectionId=euno-audit",
+	endpoint := fmt.Sprintf("%s/app/transactions?api-version=2022-05-13&collectionId=euno-audit",
 		b.config.Endpoint)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("audit: create ACL request: %w", err)
 	}
@@ -318,10 +336,10 @@ func (b *AzureConfidentialLedgerBackend) Verify(ctx context.Context, anchor *Cha
 		return false, nil
 	}
 
-	url := fmt.Sprintf("%s/app/transactions/%s?api-version=2022-05-13",
+	endpoint := fmt.Sprintf("%s/app/transactions/%s?api-version=2022-05-13",
 		b.config.Endpoint, anchor.ExternalRef)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return false, fmt.Errorf("audit: create ACL GET request: %w", err)
 	}
@@ -339,4 +357,134 @@ func (b *AzureConfidentialLedgerBackend) Verify(ctx context.Context, anchor *Cha
 	}()
 
 	return resp.StatusCode == http.StatusOK, nil
+}
+
+// --- AWS SigV4 Signing ---
+
+// signAWSRequest signs an HTTP request using AWS Signature Version 4.
+// This implements the signing algorithm per https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html
+func signAWSRequest(req *http.Request, payload []byte, region, service, accessKeyID, secretAccessKey, sessionToken string) {
+	now := time.Now().UTC()
+	datestamp := now.Format("20060102")
+	amzdate := now.Format("20060102T150405Z")
+
+	// Set required headers.
+	req.Header.Set("X-Amz-Date", amzdate)
+	if sessionToken != "" {
+		req.Header.Set("X-Amz-Security-Token", sessionToken)
+	}
+
+	// Hash the payload.
+	payloadHash := sha256Hex(payload)
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	// Determine host from URL.
+	parsedURL := req.URL
+	host := parsedURL.Host
+	if host == "" {
+		host = req.Host
+	}
+	req.Header.Set("Host", host)
+
+	// Build signed headers list.
+	signedHeaders := buildSignedHeaders(req)
+	signedHeaderStr := strings.Join(signedHeaders, ";")
+
+	// Build canonical request.
+	canonicalURI := parsedURL.Path
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	canonicalQueryString := buildCanonicalQueryString(parsedURL.Query())
+	canonicalHeaders := buildCanonicalHeaders(req, signedHeaders)
+
+	canonicalRequest := strings.Join([]string{
+		req.Method,
+		canonicalURI,
+		canonicalQueryString,
+		canonicalHeaders,
+		signedHeaderStr,
+		payloadHash,
+	}, "\n")
+
+	// Build string to sign.
+	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", datestamp, region, service)
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzdate,
+		credentialScope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+
+	// Derive signing key.
+	signingKey := deriveSigningKey(secretAccessKey, datestamp, region, service)
+
+	// Compute signature.
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	// Set Authorization header.
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		accessKeyID, credentialScope, signedHeaderStr, signature)
+	req.Header.Set("Authorization", authHeader)
+}
+
+func sha256Hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+func hmacSHA256(key, data []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
+
+func deriveSigningKey(secretKey, datestamp, region, service string) []byte {
+	kDate := hmacSHA256([]byte("AWS4"+secretKey), []byte(datestamp))
+	kRegion := hmacSHA256(kDate, []byte(region))
+	kService := hmacSHA256(kRegion, []byte(service))
+	kSigning := hmacSHA256(kService, []byte("aws4_request"))
+	return kSigning
+}
+
+func buildSignedHeaders(req *http.Request) []string {
+	headers := make([]string, 0, len(req.Header))
+	for name := range req.Header {
+		headers = append(headers, strings.ToLower(name))
+	}
+	sort.Strings(headers)
+	return headers
+}
+
+func buildCanonicalHeaders(req *http.Request, signedHeaders []string) string {
+	var b strings.Builder
+	for _, name := range signedHeaders {
+		values := req.Header[http.CanonicalHeaderKey(name)]
+		b.WriteString(name)
+		b.WriteByte(':')
+		b.WriteString(strings.TrimSpace(strings.Join(values, ",")))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func buildCanonicalQueryString(values url.Values) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var pairs []string
+	for _, k := range keys {
+		vs := values[k]
+		sort.Strings(vs)
+		for _, v := range vs {
+			pairs = append(pairs, url.QueryEscape(k)+"="+url.QueryEscape(v))
+		}
+	}
+	return strings.Join(pairs, "&")
 }

@@ -54,9 +54,10 @@ func main() {
 
 	// Build app.
 	cfg := storagegrantsvc.Config{
-		DefaultTTL: 15 * time.Minute,
-		MaxTTL:     60 * time.Minute,
-		Adapter:    adapter,
+		DefaultTTL:     15 * time.Minute,
+		MaxTTL:         60 * time.Minute,
+		Adapter:        adapter,
+		ProductionMode: os.Getenv("NODE_ENV") == "production",
 	}
 
 	deps := storagegrantsvc.Dependencies{
@@ -66,7 +67,11 @@ func main() {
 		Metrics:  metrics,
 	}
 
-	app := storagegrantsvc.New(cfg, deps)
+	app, appErr := storagegrantsvc.New(cfg, deps)
+	if appErr != nil {
+		logger.Error("failed to create application", slog.String("error", appErr.Error()))
+		os.Exit(1)
+	}
 
 	// Start HTTP server.
 	srv := &http.Server{

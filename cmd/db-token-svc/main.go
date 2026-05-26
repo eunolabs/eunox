@@ -61,9 +61,10 @@ func main() {
 
 	// Build app.
 	cfg := dbtokensvc.Config{
-		DefaultTTL: 15 * time.Minute,
-		MaxTTL:     60 * time.Minute,
-		Adapter:    adapter,
+		DefaultTTL:     15 * time.Minute,
+		MaxTTL:         60 * time.Minute,
+		Adapter:        adapter,
+		ProductionMode: os.Getenv("NODE_ENV") == "production",
 	}
 
 	deps := dbtokensvc.Dependencies{
@@ -74,7 +75,11 @@ func main() {
 		Metrics:  metrics,
 	}
 
-	app := dbtokensvc.New(cfg, deps)
+	app, appErr := dbtokensvc.New(cfg, deps)
+	if appErr != nil {
+		logger.Error("failed to create application", slog.String("error", appErr.Error()))
+		os.Exit(1)
+	}
 
 	// Start HTTP server.
 	srv := &http.Server{

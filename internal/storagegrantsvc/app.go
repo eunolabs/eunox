@@ -30,7 +30,14 @@ var (
 	ErrNoStorageCapability = errors.New("storagegrantsvc: no storage:// capability in token")
 	ErrUnsupportedAdapter  = errors.New("storagegrantsvc: unsupported cloud adapter")
 	ErrMintFailed          = errors.New("storagegrantsvc: credential mint failed")
+	ErrNotImplemented      = errors.New("storagegrantsvc: cloud adapter not implemented for production use")
 )
+
+// StubAdapter is an interface that stub adapters can implement to identify themselves.
+// Any adapter implementing this interface will be rejected in production mode.
+type StubAdapter interface {
+	IsStub() bool
+}
 
 // StorageGrant represents a minted short-lived storage credential.
 type StorageGrant struct {
@@ -76,9 +83,10 @@ type TokenClaims struct {
 
 // Config holds the storage grant service configuration.
 type Config struct {
-	DefaultTTL time.Duration
-	MaxTTL     time.Duration
-	Adapter    string // "aws-s3", "azure-blob", "gcp-gcs"
+	DefaultTTL     time.Duration
+	MaxTTL         time.Duration
+	Adapter        string // "aws-s3", "azure-blob", "gcp-gcs"
+	ProductionMode bool   // When true, stub adapters are rejected.
 }
 
 // Dependencies holds the injected backends for the storage grant service.
@@ -103,20 +111,29 @@ type storageMetrics struct {
 }
 
 // New creates a new Storage Grant Service App.
-func New(cfg Config, deps Dependencies) *App {
+// In production mode, it returns an error if a stub adapter is configured.
+func New(cfg Config, deps Dependencies) (*App, error) {
 	if cfg.DefaultTTL == 0 {
 		cfg.DefaultTTL = 15 * time.Minute
 	}
 	if cfg.MaxTTL == 0 {
 		cfg.MaxTTL = 60 * time.Minute
 	}
+
+	// In production mode, reject stub adapters.
+	if cfg.ProductionMode {
+		if stub, ok := deps.Adapter.(StubAdapter); ok && stub.IsStub() {
+			return nil, fmt.Errorf("%w: adapter %q is a stub and cannot be used in production; configure real cloud SDK credentials", ErrNotImplemented, deps.Adapter.Name())
+		}
+	}
+
 	app := &App{
 		config: cfg,
 		deps:   deps,
 	}
 	app.metrics = app.initMetrics()
 	app.router = app.buildRouter()
-	return app
+	return app, nil
 }
 
 // Handler returns the http.Handler for the storage grant service.
@@ -340,6 +357,9 @@ func NewAWSS3Adapter(region, bucket string) *AWSS3Adapter {
 // Name implements CloudStorageAdapter.
 func (a *AWSS3Adapter) Name() string { return "aws-s3" }
 
+// IsStub implements StubAdapter — these adapters generate placeholder URLs.
+func (a *AWSS3Adapter) IsStub() bool { return true }
+
 // MintGrant implements CloudStorageAdapter.
 func (a *AWSS3Adapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
 	// In production, this would use AWS SDK to generate a presigned URL
@@ -377,6 +397,9 @@ func NewAzureBlobAdapter(accountName, container string) *AzureBlobAdapter {
 
 // Name implements CloudStorageAdapter.
 func (a *AzureBlobAdapter) Name() string { return "azure-blob" }
+
+// IsStub implements StubAdapter — these adapters generate placeholder URLs.
+func (a *AzureBlobAdapter) IsStub() bool { return true }
 
 // MintGrant implements CloudStorageAdapter.
 func (a *AzureBlobAdapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
@@ -430,6 +453,9 @@ func NewGCPGCSAdapter(projectID, bucket string) *GCPGCSAdapter {
 
 // Name implements CloudStorageAdapter.
 func (a *GCPGCSAdapter) Name() string { return "gcp-gcs" }
+
+// IsStub implements StubAdapter — these adapters generate placeholder URLs.
+func (a *GCPGCSAdapter) IsStub() bool { return true }
 
 // MintGrant implements CloudStorageAdapter.
 func (a *GCPGCSAdapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {

@@ -30,7 +30,14 @@ var (
 	ErrNoDBCapability     = errors.New("dbtokensvc: no db:// capability in token")
 	ErrUnsupportedAdapter = errors.New("dbtokensvc: unsupported cloud adapter")
 	ErrMintFailed         = errors.New("dbtokensvc: credential mint failed")
+	ErrNotImplemented     = errors.New("dbtokensvc: cloud adapter not implemented for production use")
 )
+
+// StubAdapter is an interface that stub adapters can implement to identify themselves.
+// Any adapter implementing this interface will be rejected in production mode.
+type StubAdapter interface {
+	IsStub() bool
+}
 
 // DBCredential represents a minted short-lived database credential.
 type DBCredential struct {
@@ -84,9 +91,10 @@ type CapabilityMapping struct {
 
 // Config holds the DB token service configuration.
 type Config struct {
-	DefaultTTL time.Duration
-	MaxTTL     time.Duration
-	Adapter    string // "aws-rds", "azure-sql", "gcp-cloudsql"
+	DefaultTTL     time.Duration
+	MaxTTL         time.Duration
+	Adapter        string // "aws-rds", "azure-sql", "gcp-cloudsql"
+	ProductionMode bool   // When true, stub adapters are rejected.
 }
 
 // Dependencies holds the injected backends for the DB token service.
@@ -112,20 +120,29 @@ type dbTokenMetrics struct {
 }
 
 // New creates a new DB Token Service App.
-func New(cfg Config, deps Dependencies) *App {
+// In production mode, it returns an error if a stub adapter is configured.
+func New(cfg Config, deps Dependencies) (*App, error) {
 	if cfg.DefaultTTL == 0 {
 		cfg.DefaultTTL = 15 * time.Minute
 	}
 	if cfg.MaxTTL == 0 {
 		cfg.MaxTTL = 60 * time.Minute
 	}
+
+	// In production mode, reject stub adapters.
+	if cfg.ProductionMode {
+		if stub, ok := deps.Adapter.(StubAdapter); ok && stub.IsStub() {
+			return nil, fmt.Errorf("%w: adapter %q is a stub and cannot be used in production; configure real cloud SDK credentials", ErrNotImplemented, deps.Adapter.Name())
+		}
+	}
+
 	app := &App{
 		config: cfg,
 		deps:   deps,
 	}
 	app.metrics = app.initMetrics()
 	app.router = app.buildRouter()
-	return app
+	return app, nil
 }
 
 // Handler returns the http.Handler for the DB token service.
@@ -349,6 +366,9 @@ func NewAWSRDSAdapter(region, endpoint string, port int) *AWSRDSAdapter {
 // Name implements CloudDBAdapter.
 func (a *AWSRDSAdapter) Name() string { return "aws-rds" }
 
+// IsStub implements StubAdapter — these adapters generate placeholder tokens.
+func (a *AWSRDSAdapter) IsStub() bool { return true }
+
 // MintCredential implements CloudDBAdapter.
 func (a *AWSRDSAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	// In production, this would use AWS STS AssumeRole + RDS IAM auth token generation.
@@ -384,6 +404,9 @@ func NewAzureSQLAdapter(serverName string, port int) *AzureSQLAdapter {
 // Name implements CloudDBAdapter.
 func (a *AzureSQLAdapter) Name() string { return "azure-sql" }
 
+// IsStub implements StubAdapter — these adapters generate placeholder tokens.
+func (a *AzureSQLAdapter) IsStub() bool { return true }
+
 // MintCredential implements CloudDBAdapter.
 func (a *AzureSQLAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	// In production, this would use Azure managed identity to acquire an access token
@@ -418,6 +441,9 @@ func NewGCPCloudSQLAdapter(instanceConnection string, port int) *GCPCloudSQLAdap
 
 // Name implements CloudDBAdapter.
 func (a *GCPCloudSQLAdapter) Name() string { return "gcp-cloudsql" }
+
+// IsStub implements StubAdapter — these adapters generate placeholder tokens.
+func (a *GCPCloudSQLAdapter) IsStub() bool { return true }
 
 // MintCredential implements CloudDBAdapter.
 func (a *GCPCloudSQLAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {

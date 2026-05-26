@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,7 +44,7 @@ func (m *mockDBAdapter) MintCredential(_ context.Context, req *MintDBCredentialR
 
 func newTestDBTokenApp(t *testing.T, verifier TokenVerifier, adapter CloudDBAdapter) *App {
 	t.Helper()
-	return New(
+	app, err := New(
 		Config{
 			DefaultTTL: 15 * time.Minute,
 			MaxTTL:     60 * time.Minute,
@@ -60,6 +61,10 @@ func newTestDBTokenApp(t *testing.T, verifier TokenVerifier, adapter CloudDBAdap
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		},
 	)
+	if err != nil {
+		t.Fatalf("newTestDBTokenApp: %v", err)
+	}
+	return app
 }
 
 func TestDBTokenSvc_HealthLive(t *testing.T) {
@@ -255,7 +260,7 @@ func TestDBTokenSvc_MintToken_NoMapping(t *testing.T) {
 		},
 	}
 	// Use a mapping that doesn't match.
-	app := New(
+	app, err := New(
 		Config{DefaultTTL: 15 * time.Minute, MaxTTL: 60 * time.Minute},
 		Dependencies{
 			Adapter:  &mockDBAdapter{},
@@ -268,6 +273,9 @@ func TestDBTokenSvc_MintToken_NoMapping(t *testing.T) {
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		},
 	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
@@ -363,4 +371,109 @@ func TestExtractBearerToken(t *testing.T) {
 			t.Errorf("header=%q: got %q, want %q", tt.header, got, tt.want)
 		}
 	}
+}
+
+func TestDBTokenSvc_ProductionMode_RejectsStubAdapter(t *testing.T) {
+t.Parallel()
+
+tests := []struct {
+name    string
+adapter CloudDBAdapter
+}{
+{"aws-rds", NewAWSRDSAdapter("us-east-1", "localhost", 5432)},
+{"azure-sql", NewAzureSQLAdapter("server.database.windows.net", 1433)},
+{"gcp-cloudsql", NewGCPCloudSQLAdapter("project:region:instance", 5432)},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+t.Parallel()
+_, err := New(
+Config{
+ProductionMode: true,
+Adapter:        tt.name,
+},
+Dependencies{
+Adapter:  tt.adapter,
+Verifier: &mockVerifier{},
+Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+},
+)
+if err == nil {
+t.Fatal("expected error for stub adapter in production mode")
+}
+if !errors.Is(err, ErrNotImplemented) {
+t.Fatalf("expected ErrNotImplemented, got: %v", err)
+}
+})
+}
+}
+
+func TestDBTokenSvc_ProductionMode_AllowsNonStubAdapter(t *testing.T) {
+t.Parallel()
+
+// mockDBAdapter does not implement StubAdapter, so it should be allowed.
+app, err := New(
+Config{
+ProductionMode: true,
+Adapter:        "mock",
+},
+Dependencies{
+Adapter:  &mockDBAdapter{},
+Verifier: &mockVerifier{},
+Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+},
+)
+if err != nil {
+t.Fatalf("unexpected error: %v", err)
+}
+if app == nil {
+t.Fatal("expected non-nil app")
+}
+}
+
+func TestDBTokenSvc_NonProductionMode_AllowsStubAdapter(t *testing.T) {
+t.Parallel()
+
+app, err := New(
+Config{
+ProductionMode: false,
+Adapter:        "aws-rds",
+},
+Dependencies{
+Adapter:  NewAWSRDSAdapter("us-east-1", "localhost", 5432),
+Verifier: &mockVerifier{},
+Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+},
+)
+if err != nil {
+t.Fatalf("unexpected error: %v", err)
+}
+if app == nil {
+t.Fatal("expected non-nil app")
+}
+}
+
+func TestAWSRDSAdapter_IsStub(t *testing.T) {
+t.Parallel()
+a := NewAWSRDSAdapter("us-east-1", "localhost", 5432)
+if !a.IsStub() {
+t.Fatal("expected IsStub() to return true")
+}
+}
+
+func TestAzureSQLAdapter_IsStub(t *testing.T) {
+t.Parallel()
+a := NewAzureSQLAdapter("server", 1433)
+if !a.IsStub() {
+t.Fatal("expected IsStub() to return true")
+}
+}
+
+func TestGCPCloudSQLAdapter_IsStub(t *testing.T) {
+t.Parallel()
+a := NewGCPCloudSQLAdapter("project:region:instance", 5432)
+if !a.IsStub() {
+t.Fatal("expected IsStub() to return true")
+}
 }
