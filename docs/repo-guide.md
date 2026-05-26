@@ -55,7 +55,7 @@ eunox/
 │   ├── posture/
 │   └── integration/
 ├── pkg/                    # Public importable packages
-│   ├── capability/         # Token payload types, constraints, conditions
+│   ├── capability/         # Token payload types, constraints, conditions, JWKS verification
 │   ├── callcounter/        # Rate-limit call counting
 │   ├── config/             # Struct-tag validated config loading
 │   ├── crypto/             # Signing adapters (software PEM, KMS)

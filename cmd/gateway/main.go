@@ -88,11 +88,19 @@ func run() error {
 	revStore := revocation.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	// JWT verifier (noop for Stage 2; will be JWKS-based in integration)
-	var jwtVerifier gateway.JWTVerifier = &noopVerifier{}
+	// JWT verifier — JWKS-based when configured; noop fallback for development.
+	var jwtVerifier gateway.JWTVerifier
 	if cfg.IssuerJWKSURL != "" {
-		logger.Info("JWKS URL configured", slog.String("url", cfg.IssuerJWKSURL))
-		// In production, this would be a JWKS-based verifier
+		logger.Info("configuring JWKS-based JWT verification", slog.String("url", cfg.IssuerJWKSURL))
+		jwtVerifier = gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
+			JWKSURL:    cfg.IssuerJWKSURL,
+			Audience:   cfg.GatewayAudience,
+			RequireKID: cfg.RequireKID,
+			CacheTTL:   time.Duration(cfg.JWKSCacheTTL) * time.Second,
+			Logger:     logger,
+		})
+	} else {
+		jwtVerifier = &noopVerifier{}
 	}
 
 	// Build gateway app

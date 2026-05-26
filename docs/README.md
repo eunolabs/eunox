@@ -77,6 +77,8 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | Doc                                                | What it is                      |
 | -------------------------------------------------- | ------------------------------- |
 | [multi-cloud-plan.md](./multi-cloud-plan.md)       | Multi-cloud support plan.       |
+| [DEFERRED.md](./DEFERRED.md)                       | Intentionally deferred work tracker (KMS, cloud adapters, integration tests). |
+| [OPEN_QUESTIONS.md](./OPEN_QUESTIONS.md)           | Open design questions.          |
 | [stage-0-freeze.md](./stage-0-freeze.md)           | Platform package freeze policy. |
 | [stage3executionplan.md](./stage3executionplan.md) | Stage 3 execution plan.         |
 | [stage4executionplan.md](./stage4executionplan.md) | Stage 4 execution plan.         |

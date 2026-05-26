@@ -42,9 +42,6 @@ func main() {
 		slog.String("commit", commit),
 		slog.String("date", date),
 		slog.String("port", port),
-		slog.String("version", version),
-		slog.String("commit", commit),
-		slog.String("date", date),
 		slog.String("adapter", adapter),
 	)
 
@@ -148,12 +145,15 @@ func buildAdapter(name string) (dbtokensvc.CloudDBAdapter, error) {
 	}
 }
 
-//nolint:unparam // placeholder until external verifier is configured
 func buildVerifier() (dbtokensvc.TokenVerifier, error) {
-	if os.Getenv("ISSUER_JWKS_URL") == "" {
+	jwksURL := os.Getenv("ISSUER_JWKS_URL")
+	if jwksURL == "" {
 		return nil, errors.New("ISSUER_JWKS_URL must be set")
 	}
-	return nil, errors.New("JWT verification via ISSUER_JWKS_URL is not implemented yet")
+	return dbtokensvc.NewJWKSTokenVerifier(dbtokensvc.JWKSTokenVerifierConfig{
+		JWKSURL:  jwksURL,
+		Audience: os.Getenv("ISSUER_JWT_AUDIENCE"),
+	}), nil
 }
 
 func envOrDefault(key, fallback string) string {
