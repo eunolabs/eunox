@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Euno Capability Issuer API
+  title: eunox Capability Issuer API
   description: |
     The Capability Issuer issues, attenuates, and renews capability tokens
     (signed JWTs) that authorise AI agents to perform specific actions on

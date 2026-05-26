@@ -1,8 +1,8 @@
-# Euno Platform — Go Re-Implementation Execution Plan
+# eunox — Go Re-Implementation Execution Plan
 
 > **License:** Business Source License (BSL 1.1)
 > **Target:** Feature-parity with TypeScript eunox (enterprise product from day one)
-> **Excluded:** MCP proxy MVP (the `@euno/mcp` local proxy package)
+> **Excluded:** MCP proxy MVP (the `@eunox/mcp` local proxy package)
 
 ---
 
@@ -65,22 +65,22 @@
 
 ## Technology Choices
 
-| Concern | Choice | Rationale |
-|---------|--------|-----------|
-| HTTP framework | `net/http` + `chi` router | Lightweight, stdlib-compatible, middleware composable |
-| Config | `viper` + custom Zod-equivalent validator | Typed, env-based, fail-fast on boot |
-| JWT/JWS | `go-jose/v4` (Square) | Full JOSE stack, KMS integration, JWK Sets |
-| DID resolution | Custom (`pkg/did`) | Minimal dep surface; did:web is HTTP GET, did:key is decode |
-| Database | `pgx/v5` (PostgreSQL), `go-redis/v9` | High-performance, connection pool, pipeline support |
-| Migrations | `github.com/golang-migrate/migrate/v4` | SQL-first, embeddable, multi-source |
-| Metrics | `prometheus/client_golang` | Industry standard, direct Prometheus exposition |
-| Tracing | `go.opentelemetry.io/otel` | Vendor-neutral, W3C Trace Context propagation |
-| Logging | `log/slog` (stdlib) | Structured, zero-alloc, handler composable |
-| Testing | `testing` + `testify` + `testcontainers-go` | Stdlib + assertions + real infra in tests |
-| Build | `Makefile` + `goreleaser` | Reproducible, cross-platform, multi-arch containers |
-| Linting | `golangci-lint` | Unified lint runner (staticcheck, gosec, errcheck, etc.) |
-| Code gen | `oapi-codegen` | Type-safe HTTP handlers from OpenAPI specs |
-| Dependency injection | Constructor injection (no framework) | Explicit wiring; `main()` builds the dependency graph |
+| Concern              | Choice                                      | Rationale                                                   |
+| -------------------- | ------------------------------------------- | ----------------------------------------------------------- |
+| HTTP framework       | `net/http` + `chi` router                   | Lightweight, stdlib-compatible, middleware composable       |
+| Config               | `viper` + custom Zod-equivalent validator   | Typed, env-based, fail-fast on boot                         |
+| JWT/JWS              | `go-jose/v4` (Square)                       | Full JOSE stack, KMS integration, JWK Sets                  |
+| DID resolution       | Custom (`pkg/did`)                          | Minimal dep surface; did:web is HTTP GET, did:key is decode |
+| Database             | `pgx/v5` (PostgreSQL), `go-redis/v9`        | High-performance, connection pool, pipeline support         |
+| Migrations           | `github.com/golang-migrate/migrate/v4`      | SQL-first, embeddable, multi-source                         |
+| Metrics              | `prometheus/client_golang`                  | Industry standard, direct Prometheus exposition             |
+| Tracing              | `go.opentelemetry.io/otel`                  | Vendor-neutral, W3C Trace Context propagation               |
+| Logging              | `log/slog` (stdlib)                         | Structured, zero-alloc, handler composable                  |
+| Testing              | `testing` + `testify` + `testcontainers-go` | Stdlib + assertions + real infra in tests                   |
+| Build                | `Makefile` + `goreleaser`                   | Reproducible, cross-platform, multi-arch containers         |
+| Linting              | `golangci-lint`                             | Unified lint runner (staticcheck, gosec, errcheck, etc.)    |
+| Code gen             | `oapi-codegen`                              | Type-safe HTTP handlers from OpenAPI specs                  |
+| Dependency injection | Constructor injection (no framework)        | Explicit wiring; `main()` builds the dependency graph       |
 
 ---
 
@@ -370,12 +370,14 @@
 ### Implementation Notes (Stage 5)
 
 **Packages delivered:**
+
 - `pkg/audit` — Pipeline, EvidenceSigner, HMAC chain, PostgresLedgerBackend (advisory lock), PerReplicaPostgresLedgerBackend (lock-free), QueryStore (read-only), HTTPTransport (Splunk HEC), AzureSentinelTransport, AnchorService (S3, Azure Confidential Ledger)
 - `pkg/ocsf` — Full OCSF v1.1 event types (class 3003/6003), SOC2 control mappings, builder pattern
 - `internal/gateway` — Audit routes: /records, /export, /signing-keys, /chain-proof
 - `migrations/audit/001_create_audit_records` — SQL DDL for audit_records + chain_anchors tables
 
 **Deferred work completed in Stage 6:**
+
 - PostgreSQL benchmark harness implemented (`pkg/audit/benchmark_test.go`) — validates structure with mock backend; requires live DB for real performance numbers
 - Minter → gateway integration test implemented (`internal/integration/minter_gateway_test.go`)
 
@@ -432,6 +434,7 @@
 ### Implementation Notes (Stage 6)
 
 **Files added:**
+
 - `internal/gateway/admin.go` — Admin authentication (`StaticKeyAdminAuth`), `IdempotencyStore` (24h TTL, response replay), admin middleware chain, cross-tenant acknowledgment checker
 - `internal/gateway/admin_routes.go` — All admin endpoint handlers, `PartnerDIDStore` interface + `InMemoryPartnerDIDStore`, OCSF audit emission, `buildAdminRouter()` constructor
 - `internal/gateway/telemetry.go` — `TelemetryCollector` (buffered, periodic flush, per-tenant opt-out), `UsageTracker` (per-tenant request/decision stats with atomic counters)
@@ -441,11 +444,13 @@
 - `pkg/audit/benchmark_test.go` — Benchmark harness for PostgreSQL ledger append + signing (deferred from Stage 5)
 
 **Files modified:**
+
 - `internal/gateway/app.go` — Added `adminRouter`, `adminAuth`, `idempotency`, `usageTracker`, `adminDeps` fields; `AdminHandler()` method; wired admin components in `New()`
 - `cmd/gateway/main.go` — Admin server now serves `app.AdminHandler()` (separate admin router, resolved Stage 6 TODO)
 - `pkg/config/gateway.go` — Added `TenantID`, `TelemetryEnabled`, `TelemetryFlushMS` config fields
 
 **Architecture decisions:**
+
 - Admin router is fully separate from public router (different chi.Router instance)
 - Admin auth uses timing-safe comparison via `crypto/subtle.ConstantTimeCompare`
 - Supports both `X-Admin-Api-Key` (canonical) and `X-Admin-Key` (legacy fallback) headers
@@ -454,6 +459,7 @@
 - Telemetry collector supports graceful shutdown via `Stop()` which flushes pending events
 
 **Deferred work (tracked for future stages):**
+
 - Redis pub/sub for cross-replica kill-switch propagation (currently in-memory; Redis store in `pkg/killswitch` handles persistence but pub/sub notification is a Stage 7+ concern for multi-replica deployments)
 - ~~JWT-based admin auth (gateway currently supports static key only; minter already has `CombinedAdminAuth` with JWT support that can be ported)~~ — **Completed in Stage 7** (`internal/gateway/admin_jwt.go`)
 - PostgreSQL benchmark requires live database for meaningful numbers (harness validates structure with mock backend)
@@ -517,6 +523,7 @@
 - `internal/gateway/admin_jwt.go` — `AdminJWTVerifier` (JWKS-based JWT verification), `CombinedAdminAuth` (JWT primary via Authorization: Bearer, static key deprecated fallback via X-Admin-Api-Key) — **completes deferred Stage 6 work**
 
 **Deferred Stage 6 work completed in Stage 7:**
+
 - JWT-based admin auth for gateway: `CombinedAdminAuth` in `internal/gateway/admin_jwt.go` (ported from minter pattern)
 - Redis pub/sub for kill-switch propagation: remains deferred (in-memory sufficient for single-replica; Redis persistence in `pkg/killswitch` handles durability)
 - PostgreSQL benchmark: harness in `pkg/audit/benchmark_test.go` validates structure; live DB numbers require deployment environment
@@ -560,11 +567,13 @@
 ### Implementation Notes (completed)
 
 **Architecture:**
+
 - `internal/posture/` — Full posture emitter package with durable SQLite WAL queue, record store with deduplication, delivery worker with exponential backoff, and plugin architecture
 - `cmd/posture-emitter/` — Binary entry point with config loading, plugin wiring, and graceful shutdown
 - `pkg/config/emitter.go` — `EmitterConfig` struct with env-var-based configuration
 
 **Core components:**
+
 - `types.go` — Core types: `AgentInventoryRecord`, `QueuedEvent`, `Plugin`/`Queue`/`RecordStore` interfaces
 - `queue.go` — `SQLiteQueue` with WAL mode, exclusive locking, single max connection (enforces single-writer invariant); uses `context.Background()` for all DB operations
 - `record_store.go` — `InMemoryRecordStore` with configurable deduplication window, thread-safe upsert/revoke/list
@@ -572,12 +581,14 @@
 - `app.go` — `App` struct coordinates queue + record store + delivery worker + HTTP handlers + Prometheus metrics
 
 **Plugins (all implement `Plugin` interface):**
+
 - `plugin_defender.go` — Microsoft Defender CSPM: maps to security assessments (`Healthy`/`NotApplicable` status)
 - `plugin_security_hub.go` — AWS Security Hub: maps to ASFF findings (batch import/update, ACTIVE→ARCHIVED lifecycle)
 - `plugin_scc.go` — GCP Security Command Center: maps to SCC findings (create-or-update, ACTIVE→INACTIVE lifecycle)
 - `plugin_stdout.go` — Stdout JSON logger for development/testing
 
 **HTTP API:**
+
 - `GET /health/live` — Always 200
 - `GET /health/ready` — 200 if queue depth ≤ threshold, 503 if degraded
 - `GET /api/v1/status` — Enabled state, queue depth, active agents, plugin list
@@ -585,6 +596,7 @@
 - `POST /api/v1/revoke` — Enqueue revocation event
 
 **Testing:**
+
 - `queue_test.go` — 7 tests (push/peek/ack/nack/depth/ordering/durability)
 - `record_store_test.go` — 8 tests (upsert/dedupe-window/revoke/list-active)
 - `delivery_test.go` — 6 tests (delivery/revoke/retry/dead-letter/multi-plugin/drain)
@@ -593,6 +605,7 @@
 - 79.1% statement coverage, 0 lint issues
 
 **Deferred work:**
+
 - Direct issuer→posture synchronous call: requires issuer to accept a `PostureEmitter` dependency; currently the emitter is a standalone service receiving HTTP calls
 - Real cloud SDK client implementations: plugins define client interfaces; production wiring requires Azure/AWS/GCP SDK imports (out of scope for core implementation)
 - Dead-letter table: currently dead-lettered events are logged and ack'd; a dedicated DLQ table for inspection/replay is a future enhancement
@@ -635,11 +648,13 @@
 **Completed 2026-05-25.**
 
 Package structure:
+
 - `internal/agentruntime/` — Core library (types, runtime, token provider, tool invoker, DPoP, retry, manifest, HTTP client)
 - `internal/agentruntime/adapters/` — Framework adapters (HTTP, LangChain, function-call)
 - `internal/integration/agentruntime_test.go` — Integration tests exercising full loop
 
 Key design decisions:
+
 - **Functional options pattern** for `Runtime` configuration (`WithLogger`, `WithHintsProvider`)
 - **`HTTPClient` interface** abstracts HTTP transport — enables testing without real network, custom TLS configs, or middleware injection
 - **DPoP key management** uses ECDSA P-256 with JWK thumbprint (RFC 9449); nonce handling via mutex-protected state
@@ -649,11 +664,13 @@ Key design decisions:
 - **`IdentityTokenProvider func(ctx) (string, error)`** — pluggable identity assertion (OIDC, service account, etc.)
 
 Test coverage:
+
 - 68 unit tests across dpop, retry, token_provider, tool_invoker, manifest, runtime, adapters
 - 4 integration tests with real issuer/gateway servers (full loop, DPoP end-to-end, manifest-driven issuance, HTTP adapter)
 - All tests pass with `-race` flag
 
 Known limitation:
+
 - Gateway's `verifyDPoP` returns error when `claims.Confirmation.JKT != ""` — DPoP binding is validated at issuance level but gateway enforce endpoint does not yet verify DPoP proofs on tool calls. This is tracked for Stage 10 hardening.
 
 ---
@@ -672,7 +689,7 @@ Known limitation:
    - Read-only filesystem
    - No shell, no package manager in final image
    - Air-gap image list (`k8s/air-gap-images.txt`)
-2. **Helm umbrella chart** (`k8s/helm/euno/`):
+2. **Helm umbrella chart** (`k8s/helm/eunox/`):
    - Per-service templates with security hardening
    - Cloud-specific value overlays (AWS, Azure, GCP)
    - Pod Security Standards (restricted) — runAsNonRoot, seccompProfile, drop ALL capabilities
@@ -842,12 +859,14 @@ The following items require external infrastructure or CI integration and are de
 ## Cross-Cutting Concerns (All Stages)
 
 ### Security Principles
+
 - **Zero-trust:** Every inter-service call carries verifiable identity
 - **Fail-closed:** Unknown conditions, schemas, or issuers → reject
 - **Least privilege:** Services hold only the keys they need (issuer signs, gateway verifies)
 - **Defense in depth:** Network policies + application auth + audit
 
 ### Go Idioms to Enforce
+
 - **Explicit error handling:** No panics in library code; `error` returns everywhere
 - **Context propagation:** All I/O functions accept `context.Context` as first arg
 - **Interface segregation:** Small interfaces (1-3 methods); compose via embedding
@@ -856,6 +875,7 @@ The following items require external infrastructure or CI integration and are de
 - **No init() abuse:** Configuration happens explicitly in `main()`
 
 ### Migration Strategy (TypeScript → Go)
+
 1. Deploy Go services alongside TypeScript (shadow mode)
 2. Compare responses for identical requests (parity verification)
 3. Gradually shift traffic (canary → 10% → 50% → 100%)
@@ -891,6 +911,7 @@ Stage 12 requires: Stage 10 + 11 complete
 ```
 
 **Parallelization opportunities:**
+
 - Stages 3 + 4 can proceed in parallel after Stage 2
 - Stages 5 + 6 + 7 can proceed in parallel after Stage 3
 - Stage 8 can proceed after Stage 3

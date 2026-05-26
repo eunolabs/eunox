@@ -44,16 +44,16 @@ active API keys and trigger a fleet-wide re-issuance.
 ## Pre-rotation checklist
 
 - [ ] Confirm access to the secrets manager (AWS Secrets Manager / Azure Key
-  Vault / HashiCorp Vault) that holds `MINTER_PEPPER_HEX`.
+      Vault / HashiCorp Vault) that holds `MINTER_PEPPER_HEX`.
 - [ ] Verify you have write access to the `api_keys` table (needed to update
-  hashes during the grace period, if using Strategy B).
+      hashes during the grace period, if using Strategy B).
 - [ ] Schedule a maintenance window (Strategy B only — Strategy A is
-  zero-downtime for new keys; existing keys see a 401 until re-issued).
+      zero-downtime for new keys; existing keys see a 401 until re-issued).
 - [ ] Notify all tenant administrators that API keys will require re-issuance
-  (Strategy A) or that a brief maintenance window is in progress (Strategy B).
+      (Strategy A) or that a brief maintenance window is in progress (Strategy B).
 - [ ] Confirm the `MINTER_PEPPER_VERSION` variable is set and tracked — the
-  version string is stored alongside each hash so the verifier can select the
-  correct pepper during a dual-verification grace period.
+      version string is stored alongside each hash so the verifier can select the
+      correct pepper during a dual-verification grace period.
 
 ---
 
@@ -84,11 +84,13 @@ coordinating a re-issuance campaign with tenants.
    Set the new `MINTER_PEPPER_VERSION` (e.g. increment `v1` → `v2`).
 
 3. **Deploy the updated configuration** to the minter fleet:
+
    ```bash
    # New pepper for minting
    MINTER_PEPPER_HEX=<new-hex>
    MINTER_PEPPER_VERSION=v2
    ```
+
    The `ApiKeyVerifier` attempts verification with the current pepper first; if
    that fails it retries with any configured fallback pepper versions (see the
    `peppers` array in `bootstrap.ts`). **To support the grace period, deploy
@@ -97,8 +99,8 @@ coordinating a re-issuance campaign with tenants.
    ```typescript
    // In bootstrap.ts during the grace period (multi-pepper mode)
    peppers = [
-     { version: 'v2', key: Buffer.from(newPepperHex, 'hex') },  // new (primary)
-     { version: 'v1', key: Buffer.from(oldPepperHex, 'hex') },  // old (fallback)
+     { version: "v2", key: Buffer.from(newPepperHex, "hex") }, // new (primary)
+     { version: "v1", key: Buffer.from(oldPepperHex, "hex") }, // old (fallback)
    ];
    ```
 
@@ -138,15 +140,17 @@ maintenance window and DDL-level write access to the `api_keys` table.
 2. **Open a maintenance window.** Scale down the minter fleet to zero replicas.
 
 3. **Run the re-hash script** against the `api_keys` table:
+
    ```bash
    node -e "
    const { Pool } = require('pg');
-   const { ApiKeyVerifier } = require('@euno/api-key-minter');
+   const { ApiKeyVerifier } = require('@eunox/api-key-minter');
    // Script must re-derive each key using the old pepper and re-store
    // using the new pepper. See ApiKeyVerifier.rehashAll() (if available)
    // or implement per-row: SELECT rawSecret from a backup, re-hash, UPDATE.
    "
    ```
+
    > **Prerequisites:** You must have the raw (pre-hash) API keys available
    > from a secure backup or key-escrow system. If raw keys are not available,
    > use Strategy A (re-issuance) instead — the hash is one-way and cannot be
@@ -182,13 +186,13 @@ After a successful rotation, confirm:
 
 ```bash
 # Issue a new API key under the new pepper version
-curl -s -X POST https://minter.euno.example/admin/keys \
+curl -s -X POST https://minter.eunox.example/admin/keys \
   -H "X-Admin-Key: $MINTER_ADMIN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tenantId": "test-tenant"}' | jq .
 
 # Verify the key mints a capability token successfully
-curl -s -X POST https://minter.euno.example/api/v1/mint \
+curl -s -X POST https://minter.eunox.example/api/v1/mint \
   -H "Authorization: Bearer sk-<prefix>.<secret>" \
   -H "Content-Type: application/json" \
   -d '{"agentId": "did:example:test", "sessionId": "s-001"}' | jq .capabilityToken

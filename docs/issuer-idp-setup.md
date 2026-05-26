@@ -7,6 +7,7 @@
 > are covered here.
 >
 > **Related documents:**
+>
 > - [`docs/self-host.md`](./self-host.md) — self-host overview and deployment topology
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
 > - [`docs/stage4executionplan.md`](./stage4executionplan.md) — Stage-4 execution plan (Task 2)
@@ -17,16 +18,16 @@
 ## 1. Overview
 
 The Capability Issuer authenticates users by validating an **ID token** issued
-by an upstream enterprise IdP.  The validation covers:
+by an upstream enterprise IdP. The validation covers:
 
-| Claim / check | Enforced by |
-|---|---|
-| Signature (RS256 / ES256) | `jose` `jwtVerify` against IdP JWKS |
-| `iss` (issuer) | Provider-specific issuer URL |
-| `aud` (audience) | Client ID / app URI |
-| `exp` / `iat` | `jose` `jwtVerify` |
-| `nonce` binding | Endpoint: `claims.nonce` must equal the request `nonce` field |
-| Authorization-code replay | `OidcStateStore`: each code accepted at most once |
+| Claim / check             | Enforced by                                                   |
+| ------------------------- | ------------------------------------------------------------- |
+| Signature (RS256 / ES256) | `jose` `jwtVerify` against IdP JWKS                           |
+| `iss` (issuer)            | Provider-specific issuer URL                                  |
+| `aud` (audience)          | Client ID / app URI                                           |
+| `exp` / `iat`             | `jose` `jwtVerify`                                            |
+| `nonce` binding           | Endpoint: `claims.nonce` must equal the request `nonce` field |
+| Authorization-code replay | `OidcStateStore`: each code accepted at most once             |
 
 Role claims extracted from the validated token are mapped to capability
 constraints; the request body can **never** escalate the resulting role set
@@ -34,11 +35,11 @@ constraints; the request body can **never** escalate the resulting role set
 
 ### Supported providers
 
-| Provider | `IDENTITY_PROVIDER` value |
-|---|---|
-| Microsoft Entra ID (Azure AD) | `azure-ad` (default) |
-| AWS Cognito | `aws-cognito` |
-| GCP Cloud Identity / Firebase Auth | `gcp-identity` |
+| Provider                           | `IDENTITY_PROVIDER` value |
+| ---------------------------------- | ------------------------- |
+| Microsoft Entra ID (Azure AD)      | `azure-ad` (default)      |
+| AWS Cognito                        | `aws-cognito`             |
+| GCP Cloud Identity / Firebase Auth | `gcp-identity`            |
 
 ---
 
@@ -47,9 +48,9 @@ constraints; the request body can **never** escalate the resulting role set
 ### 2.1 Create an app registration
 
 1. Open **Azure Portal → Entra ID → App registrations → New registration**.
-2. **Name**: `euno-capability-issuer-<env>` (e.g. `euno-capability-issuer-prod`).
-3. **Supported account types**: *Accounts in this organizational directory only
-   (Single tenant)*.
+2. **Name**: `eunox-capability-issuer-<env>` (e.g. `eunox-capability-issuer-prod`).
+3. **Supported account types**: _Accounts in this organizational directory only
+   (Single tenant)_.
 4. **Redirect URI**: leave blank for now (the issuer uses the PKCE
    authorization-code flow entirely at the client CLI level; no redirect URI
    is registered on the server side).
@@ -57,7 +58,7 @@ constraints; the request body can **never** escalate the resulting role set
 
 ### 2.2 Expose App Roles
 
-The issuer derives capabilities from the `roles` claim in the ID token.  Define
+The issuer derives capabilities from the `roles` claim in the ID token. Define
 at least one app role for each capability tier you intend to grant.
 
 1. In your app registration, open **App roles → Create app role**.
@@ -76,21 +77,22 @@ at least one app role for each capability tier you intend to grant.
 
 ### 2.4 Collect configuration values
 
-| Variable | Where to find it |
-|---|---|
-| `AZURE_AD_TENANT_ID` | **Overview** page: *Directory (tenant) ID* |
-| `AZURE_AD_CLIENT_ID` | **Overview** page: *Application (client) ID* |
+| Variable             | Where to find it                             |
+| -------------------- | -------------------------------------------- |
+| `AZURE_AD_TENANT_ID` | **Overview** page: _Directory (tenant) ID_   |
+| `AZURE_AD_CLIENT_ID` | **Overview** page: _Application (client) ID_ |
 
 ### 2.5 Conditional Access (recommended for production)
 
 Add a Conditional Access policy in Entra ID that requires MFA for your app
-registration in production environments.  The issuer's `AzureADIdentityProvider`
+registration in production environments. The issuer's `AzureADIdentityProvider`
 reads the `xms_cc` claim (Continuous Access Evaluation) and enforces it when
 `REQUIRE_CA_TIERS` is set.
 
 ### 2.6 Privileged Identity Management (PIM) — optional
 
 If you use Azure AD PIM for JIT role activation:
+
 - Set `PIM_REQUIRED_ROLES` to the comma-separated list of roles that MUST be
   currently active.
 - Set `CAP_TTL_TO_PIM_ACTIVATION=true` (default) so capability tokens expire
@@ -134,7 +136,7 @@ AZURE_AD_CLIENT_ID=<application-client-id>
 
 ### 3.2 Add app roles via Groups
 
-Cognito exposes group membership as the `cognito:groups` claim.  The
+Cognito exposes group membership as the `cognito:groups` claim. The
 `AWSCognitoIdentityProvider` maps `cognito:groups` to `roles` in the
 `UserContext`.
 
@@ -145,8 +147,8 @@ Cognito exposes group membership as the `cognito:groups` claim.  The
 ### 3.3 Configure a custom `nonce` claim
 
 Cognito's hosted UI automatically includes a `nonce` claim in ID tokens when
-the authorization request carries a `nonce` parameter.  No extra configuration
-is needed — the `euno request` CLI generates and validates it automatically.
+the authorization request carries a `nonce` parameter. No extra configuration
+is needed — the `eunox request` CLI generates and validates it automatically.
 
 If you are using the programmatic flow (sending `idToken` directly to
 `POST /api/v1/oidc/token`), your client is responsible for:
@@ -157,11 +159,11 @@ If you are using the programmatic flow (sending `idToken` directly to
 
 ### 3.4 Collect configuration values
 
-| Variable | Where to find it |
-|---|---|
-| `AWS_COGNITO_USER_POOL_ID` | User pool → **Overview**: *Pool ID* (e.g. `us-east-1_XYZabc`) |
-| `AWS_COGNITO_CLIENT_ID` | App integration → App clients: *Client ID* |
-| `AWS_COGNITO_REGION` | First segment of the Pool ID (e.g. `us-east-1`) |
+| Variable                   | Where to find it                                              |
+| -------------------------- | ------------------------------------------------------------- |
+| `AWS_COGNITO_USER_POOL_ID` | User pool → **Overview**: _Pool ID_ (e.g. `us-east-1_XYZabc`) |
+| `AWS_COGNITO_CLIENT_ID`    | App integration → App clients: _Client ID_                    |
+| `AWS_COGNITO_REGION`       | First segment of the Pool ID (e.g. `us-east-1`)               |
 
 ### 3.5 Environment variables
 
@@ -229,7 +231,7 @@ configuration is preserved and an error is logged — no traffic is disrupted.
 ### 4.3 Environment variable
 
 ```bash
-ISSUER_TENANT_IDP_CONFIG_FILE=/etc/euno/tenant-idp-config.json
+ISSUER_TENANT_IDP_CONFIG_FILE=/etc/eunox/tenant-idp-config.json
 ```
 
 ---
@@ -237,7 +239,7 @@ ISSUER_TENANT_IDP_CONFIG_FILE=/etc/euno/tenant-idp-config.json
 ## 5. OIDC discovery document
 
 The issuer exposes a discovery document at
-`GET /.well-known/openid-configuration`.  To include the `authorization_endpoint`
+`GET /.well-known/openid-configuration`. To include the `authorization_endpoint`
 and `token_endpoint` URLs, set:
 
 ```bash
@@ -256,8 +258,8 @@ GET /.well-known/openid-configuration?tenantId=tenant-a
 ## 6. Authorization-code replay prevention
 
 The issuer tracks every authorization code submitted to
-`POST /api/v1/oidc/token`.  Each code is accepted at most once within a
-configurable TTL window.  Replay attempts receive `401 AUTHENTICATION_FAILED`.
+`POST /api/v1/oidc/token`. Each code is accepted at most once within a
+configurable TTL window. Replay attempts receive `401 AUTHENTICATION_FAILED`.
 
 ```bash
 # TTL for used-code tombstones and pending state entries (default: 600 seconds)
@@ -268,7 +270,7 @@ OIDC_CODE_TTL_SECONDS=600
 
 ## 7. OIDC token endpoint — client flow
 
-The client (typically the `euno request` CLI) follows this flow:
+The client (typically the `eunox request` CLI) follows this flow:
 
 ```
 1. GET  /api/v1/oidc/authorize?agentId=<agent>
@@ -303,7 +305,7 @@ The client (typically the `euno request` CLI) follows this flow:
 ```
 
 The `nonce` from step 1 must appear as the `nonce` claim inside the signed ID
-token.  The issuer rejects any token whose `nonce` claim does not match.
+token. The issuer rejects any token whose `nonce` claim does not match.
 
 ---
 
@@ -317,9 +319,9 @@ stores them in its Postgres database.
 
 At issuance time, the user's current SCIM group memberships are looked up
 and the mapped roles are **added** to the IdP-provided role set (union).
-SCIM group memberships are the authoritative source for *group-derived*
+SCIM group memberships are the authoritative source for _group-derived_
 roles; IdP token claims remain the primary authentication signal and
-continue to contribute their own roles.  SCIM enrichment never removes
+continue to contribute their own roles. SCIM enrichment never removes
 roles that were already granted by the IdP.
 
 If the SCIM lookup fails (e.g. database outage), the issuer falls back to
@@ -337,9 +339,9 @@ IdP-only roles (fail-open) and logs a warning.
 
 ### 8.2 Environment variables
 
-| Variable | Description |
-|---|---|
-| `ISSUER_SCIM_BEARER_TOKEN` | **Required.** Static bearer token the IdP sends on every SCIM request. Validated with constant-time comparison. ≥32 characters; rotate immediately on exposure. |
+| Variable                     | Description                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ISSUER_SCIM_BEARER_TOKEN`   | **Required.** Static bearer token the IdP sends on every SCIM request. Validated with constant-time comparison. ≥32 characters; rotate immediately on exposure.                            |
 | `ISSUER_SCIM_GROUP_ROLE_MAP` | **Optional.** JSON object mapping SCIM group `displayName` → issuer role key. Example: `{"SalesTeam":"sales","EngineeringTeam":"engineer"}`. Unmapped groups are ignored at issuance time. |
 
 ```bash
@@ -350,20 +352,20 @@ ISSUER_SCIM_GROUP_ROLE_MAP='{"SalesTeam":"sales","EngineeringTeam":"engineer"}'
 
 ### 8.3 SCIM endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST`   | `/scim/v2/Users`       | Provision a new user |
-| `GET`    | `/scim/v2/Users`       | List users (supports `?filter=`, `?count=`, `?startIndex=`) |
-| `GET`    | `/scim/v2/Users/:id`   | Get user by SCIM ID |
-| `PUT`    | `/scim/v2/Users/:id`   | Replace user (preserves `active` when omitted per RFC 7644) |
-| `PATCH`  | `/scim/v2/Users/:id`   | Partial update / deprovision (`active=false`); supports `add`, `replace`, `remove` operations |
-| `DELETE` | `/scim/v2/Users/:id`   | Soft-delete user and remove all group memberships |
-| `POST`   | `/scim/v2/Groups`      | Provision a new group |
-| `GET`    | `/scim/v2/Groups`      | List groups (supports `?filter=`, `?count=`, `?startIndex=`) |
-| `GET`    | `/scim/v2/Groups/:id`  | Get group by SCIM ID |
-| `PUT`    | `/scim/v2/Groups/:id`  | Replace group (replaces full membership set atomically) |
-| `PATCH`  | `/scim/v2/Groups/:id`  | Membership delta: `add` appends members; `replace` on `members` replaces the full set (RFC 7644 §3.5.2.3); `remove` removes specified members |
-| `DELETE` | `/scim/v2/Groups/:id`  | Delete group and remove all memberships |
+| Method   | Path                  | Description                                                                                                                                   |
+| -------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/scim/v2/Users`      | Provision a new user                                                                                                                          |
+| `GET`    | `/scim/v2/Users`      | List users (supports `?filter=`, `?count=`, `?startIndex=`)                                                                                   |
+| `GET`    | `/scim/v2/Users/:id`  | Get user by SCIM ID                                                                                                                           |
+| `PUT`    | `/scim/v2/Users/:id`  | Replace user (preserves `active` when omitted per RFC 7644)                                                                                   |
+| `PATCH`  | `/scim/v2/Users/:id`  | Partial update / deprovision (`active=false`); supports `add`, `replace`, `remove` operations                                                 |
+| `DELETE` | `/scim/v2/Users/:id`  | Soft-delete user and remove all group memberships                                                                                             |
+| `POST`   | `/scim/v2/Groups`     | Provision a new group                                                                                                                         |
+| `GET`    | `/scim/v2/Groups`     | List groups (supports `?filter=`, `?count=`, `?startIndex=`)                                                                                  |
+| `GET`    | `/scim/v2/Groups/:id` | Get group by SCIM ID                                                                                                                          |
+| `PUT`    | `/scim/v2/Groups/:id` | Replace group (replaces full membership set atomically)                                                                                       |
+| `PATCH`  | `/scim/v2/Groups/:id` | Membership delta: `add` appends members; `replace` on `members` replaces the full set (RFC 7644 §3.5.2.3); `remove` removes specified members |
+| `DELETE` | `/scim/v2/Groups/:id` | Delete group and remove all memberships                                                                                                       |
 
 All endpoints require `Authorization: Bearer <ISSUER_SCIM_BEARER_TOKEN>`.
 Unauthenticated requests receive `401 Unauthorized` with
@@ -378,7 +380,7 @@ The SCIM user lookup at issuance time uses two identifiers from the IdP token:
    UPN from the IdP token), falling back to `userContext.userId`.
 
 For SCIM enrichment to work reliably in production, the IdP MUST push the
-user's `sub` claim as the SCIM `externalId` field.  If neither the externalId
+user's `sub` claim as the SCIM `externalId` field. If neither the externalId
 nor the email/userName match any active SCIM user, enrichment is silently
 skipped and only IdP-provided roles are used.
 
@@ -417,17 +419,18 @@ externalId` — leave this mapping active.
    - Click **Test Connection** to verify.
 
 2. Under **Mappings**, ensure the default User and Group attribute mappings
-   are active.  The issuer expects `userName` (typically `userPrincipalName`)
-   and `displayName` on groups.  The default `objectId → externalId` user
+   are active. The issuer expects `userName` (typically `userPrincipalName`)
+   and `displayName` on groups. The default `objectId → externalId` user
    mapping should remain active so the issuance hot-path can match users by
    their Entra ID `sub` claim.
 
-3. Under **Settings → Scope**, choose *Sync only assigned users and groups*
+3. Under **Settings → Scope**, choose _Sync only assigned users and groups_
    and assign only the groups relevant to capability issuance.
 
 ### 8.7 Filter support
 
 The issuer supports the following SCIM filter operators:
+
 - `eq` — exact equality (e.g. `userName eq "alice@example.com"`)
 - `co` — contains (e.g. `displayName co "Sales"`)
 
@@ -437,7 +440,7 @@ Filters on unsupported attributes return an empty result set.
 
 When the issuer is configured for per-tenant IdPs
 (`ISSUER_TENANT_IDP_CONFIG_FILE`), SCIM provisioning is global by default
-(a single bearer token covers all tenants).  To achieve per-tenant SCIM
+(a single bearer token covers all tenants). To achieve per-tenant SCIM
 isolation, deploy separate issuer instances per tenant (recommended) or
 use a reverse proxy that rewrites the Authorization header and routes to
 tenant-scoped pools.
@@ -449,23 +452,23 @@ tenant-scoped pools.
 Before deploying to production:
 
 - [ ] App registration (Entra ID) or User Pool (Cognito) is **single-tenant** or
-  scoped to your organization.
+      scoped to your organization.
 - [ ] Role assignments are controlled by your IAM / directory team, not
-  individual users.
+      individual users.
 - [ ] `OIDC_CODE_TTL_SECONDS` is set to a value ≤ 600 seconds.
 - [ ] `ISSUER_PUBLIC_URL` is set to the exact URL clients will use (no trailing
-  slash; `https` in production).
+      slash; `https` in production).
 - [ ] The issuer is behind TLS termination with a valid certificate.
 - [ ] PIM / Conditional Access policies are active for sensitive role tiers.
 - [ ] `REQUIRE_CA_TIERS` is set for any capability action tier that should
-  require MFA / compliant device (Entra ID only).
+      require MFA / compliant device (Entra ID only).
 - [ ] The `ISSUER_TENANT_IDP_CONFIG_FILE` (if used) is read-only to the
-  issuer process and write-protected at the host level.
+      issuer process and write-protected at the host level.
 - [ ] `ISSUER_SCIM_BEARER_TOKEN` (if SCIM is enabled) is at least 32 characters,
-  stored in a secret manager, and rotated at least annually.
+      stored in a secret manager, and rotated at least annually.
 - [ ] `ISSUER_SCIM_GROUP_ROLE_MAP` is reviewed by an operator before deployment —
-  mapping a group to an admin-tier role (e.g. `operator`) grants elevated
-  capabilities to all members of that group.
+      mapping a group to an admin-tier role (e.g. `operator`) grants elevated
+      capabilities to all members of that group.
 
 ---
 
@@ -520,10 +523,10 @@ two alternatives are supported:
    ([github.com/decentralized-identity/ion](https://github.com/decentralized-identity/ion))
    as a pod sidecar or a separate service in your cluster.
 2. Expose the resolver via a ClusterIP service at a stable in-cluster URL,
-   for example `http://ion-sidecar.euno.svc.cluster.local:3000`.
+   for example `http://ion-sidecar.eunox.svc.cluster.local:3000`.
 3. Set the issuer env var:
    ```bash
-   ION_RESOLVER_URL=http://ion-sidecar.euno.svc.cluster.local:3000/api/v1.0/identifiers
+   ION_RESOLVER_URL=http://ion-sidecar.eunox.svc.cluster.local:3000/api/v1.0/identifiers
    ```
 4. For non-`did:web` DIDs no HTTP allow-list is needed. For `did:web` DIDs
    served internally over plain HTTP, add the host to
@@ -536,11 +539,11 @@ The issuer wraps every `did:ion` resolution call in a circuit breaker that
 opens after repeated failures, preventing a sustained resolver outage from
 blocking all DID-based authentication attempts with full network timeouts.
 
-| Env var | Default | Description |
-|---|---|---|
-| `ION_CB_FAILURE_THRESHOLD` | `3` | Number of failures within the window to open the circuit. |
-| `ION_CB_WINDOW_SECONDS` | `30` | Sliding window (seconds) for failure counting. |
-| `ION_CB_COOLDOWN_SECONDS` | `60` | Seconds the circuit stays open before a probe is allowed. |
+| Env var                    | Default | Description                                               |
+| -------------------------- | ------- | --------------------------------------------------------- |
+| `ION_CB_FAILURE_THRESHOLD` | `3`     | Number of failures within the window to open the circuit. |
+| `ION_CB_WINDOW_SECONDS`    | `30`    | Sliding window (seconds) for failure counting.            |
+| `ION_CB_COOLDOWN_SECONDS`  | `60`    | Seconds the circuit stays open before a probe is allowed. |
 
 **Behaviour when circuit is open:**
 
@@ -572,7 +575,9 @@ GET /healthz/did-ion
 ```json
 { "status": "ok" }
 ```
+
 or
+
 ```json
 { "status": "degraded", "reason": "circuit_open" }
 { "status": "degraded", "reason": "probe_failed" }
@@ -610,13 +615,13 @@ resolver and any private ION sidecar that anchors on the same Bitcoin Mainnet.
 ## 10. Cognito SCIM bridge (AWS IAM Identity Center)
 
 > **Status:** Multi-cloud Phase 1. Use this section when you want to provision
-> users and groups into the Euno issuer from AWS Cognito via the SCIM 2.0
+> users and groups into the eunox issuer from AWS Cognito via the SCIM 2.0
 > protocol, using **AWS IAM Identity Center** as the SCIM push source.
 
 AWS Cognito User Pools do not have a built-in outbound SCIM push capability.
 The recommended integration path is to use **AWS IAM Identity Center** (formerly
 AWS SSO) as the SCIM push source, with the IAM Identity Center SCIM endpoint
-configured to push to the Euno issuer's SCIM endpoint.
+configured to push to the eunox issuer's SCIM endpoint.
 
 ### 10.1 Architecture
 
@@ -627,7 +632,7 @@ AWS IAM Identity Center
         │  HTTPS POST /scim/v2/Users
         │  HTTPS POST /scim/v2/Groups
         ▼
-Euno capability-issuer (/scim/v2/)
+eunox capability-issuer (/scim/v2/)
   ──► scim_users / scim_groups tables (Postgres)
         │
         ▼
@@ -645,7 +650,7 @@ manages the authoritative group memberships that drive SCIM provisioning.
 - `ISSUER_DB_URL` set and pointing at a Postgres instance.
 - `ISSUER_SCIM_BEARER_TOKEN` set (≥ 32 characters, stored in Secrets Manager —
   see [`docs/secrets-aws.md`](./secrets-aws.md)).
-- The Euno issuer is reachable from IAM Identity Center over HTTPS.
+- The eunox issuer is reachable from IAM Identity Center over HTTPS.
   On EKS, expose the issuer via an internal ALB with ACM certificate
   (see [`docs/deploy-eks.md`](./deploy-eks.md) §5).
 
@@ -653,21 +658,21 @@ manages the authoritative group memberships that drive SCIM provisioning.
 
 1. Open **AWS Console → IAM Identity Center → Settings → Automatic provisioning**.
 
-2. Click **Enable** under *Automatic provisioning*. IAM Identity Center
+2. Click **Enable** under _Automatic provisioning_. IAM Identity Center
    generates a **SCIM endpoint URL** and an **Access token**.
 
 3. Copy the generated **SCIM endpoint URL** (e.g.
    `https://scim.us-east-1.amazonaws.com/…/scim/v2/`).
    You do **not** use this URL directly — instead, configure IAM Identity Center
-   to push to the **Euno** SCIM endpoint (step 4).
+   to push to the **eunox** SCIM endpoint (step 4).
 
 4. Under **Identity source → External identity provider** (or built-in
-   directory), navigate to **Provisioning** and supply the Euno SCIM endpoint:
+   directory), navigate to **Provisioning** and supply the eunox SCIM endpoint:
 
-   | Field | Value |
-   |---|---|
+   | Field         | Value                           |
+   | ------------- | ------------------------------- |
    | SCIM endpoint | `https://<issuer-host>/scim/v2` |
-   | Bearer token | `<ISSUER_SCIM_BEARER_TOKEN>` |
+   | Bearer token  | `<ISSUER_SCIM_BEARER_TOKEN>`    |
 
    > **Note:** If IAM Identity Center's provisioning UI does not support a
    > custom SCIM endpoint directly, use the **AWS SCIM gateway** Lambda
@@ -675,15 +680,15 @@ manages the authoritative group memberships that drive SCIM provisioning.
 
 5. Under **Attribute mappings**, verify the following mappings are active:
 
-   | IAM Identity Center attribute | SCIM attribute |
-   |---|---|
-   | `${user:AD_GUID}` or `${user:subject}` | `externalId` |
-   | `${user:email}` | `userName` |
-   | `${user:givenName}` | `name.givenName` |
-   | `${user:familyName}` | `name.familyName` |
-   | `${user:displayName}` | `displayName` |
+   | IAM Identity Center attribute          | SCIM attribute    |
+   | -------------------------------------- | ----------------- |
+   | `${user:AD_GUID}` or `${user:subject}` | `externalId`      |
+   | `${user:email}`                        | `userName`        |
+   | `${user:givenName}`                    | `name.givenName`  |
+   | `${user:familyName}`                   | `name.familyName` |
+   | `${user:displayName}`                  | `displayName`     |
 
-   The Euno SCIM user lookup uses `externalId` (matched against the IdP `sub`
+   The eunox SCIM user lookup uses `externalId` (matched against the IdP `sub`
    claim) first, then `userName` (email). Ensure `externalId` is mapped to
    the same identifier that Cognito will include as the `sub` claim in ID
    tokens.
@@ -697,14 +702,14 @@ manages the authoritative group memberships that drive SCIM provisioning.
    entries in your `ISSUER_SCIM_GROUP_ROLE_MAP`:
 
    ```bash
-   # Example group display names → euno roles
+   # Example group display names → eunox roles
    ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
    ```
 
 2. Assign users to the relevant groups in IAM Identity Center.
 
 3. IAM Identity Center pushes `POST /scim/v2/Groups` with the group's `displayName`
-   and member list to the Euno issuer.
+   and member list to the eunox issuer.
 
 4. At token issuance time, the issuer looks up the authenticated user's SCIM
    group memberships and adds the mapped roles to the role set provided by
@@ -715,19 +720,19 @@ manages the authoritative group memberships that drive SCIM provisioning.
 When using Cognito as the runtime identity provider alongside IAM Identity
 Center for SCIM provisioning, ensure the attribute values are consistent:
 
-| Attribute | Cognito ID token claim | IAM Identity Center → SCIM `externalId` |
-|---|---|---|
+| Attribute       | Cognito ID token claim           | IAM Identity Center → SCIM `externalId`                                  |
+| --------------- | -------------------------------- | ------------------------------------------------------------------------ |
 | User identifier | `sub` (UUID assigned by Cognito) | Must match. Map `${user:subject}` → `externalId` in IAM Identity Center. |
-| Email | `email` | `userName` in SCIM |
-| Groups | `cognito:groups` | `members` list in `/scim/v2/Groups` |
+| Email           | `email`                          | `userName` in SCIM                                                       |
+| Groups          | `cognito:groups`                 | `members` list in `/scim/v2/Groups`                                      |
 
-The Euno SCIM enrichment matches the Cognito `sub` claim value against
+The eunox SCIM enrichment matches the Cognito `sub` claim value against
 `scim_users.external_id`. For the match to succeed, IAM Identity Center must
 push the same `sub` value as the SCIM `externalId`.
 
 If the Cognito `sub` values differ from the IAM Identity Center subject
 identifiers (e.g. when IAM Identity Center uses its own internal IDs), use
-the **email-based fallback**: Euno will fall back to matching `userName`
+the **email-based fallback**: eunox will fall back to matching `userName`
 against the user's email from the Cognito token if `externalId` does not match.
 
 ### 10.6 Alternative: custom SCIM proxy Lambda (advanced)
@@ -737,7 +742,7 @@ When IAM Identity Center cannot push directly to an arbitrary SCIM endpoint
 thin Lambda proxy that:
 
 1. Receives SCIM events from IAM Identity Center's built-in SCIM endpoint.
-2. Forwards them to the Euno issuer's `/scim/v2/` endpoint with the
+2. Forwards them to the eunox issuer's `/scim/v2/` endpoint with the
    `ISSUER_SCIM_BEARER_TOKEN`.
 
 ```
@@ -745,10 +750,10 @@ IAM Identity Center
   → built-in SCIM endpoint
     → EventBridge / SNS
       → Lambda (scim-proxy)
-        → Euno /scim/v2/
+        → eunox /scim/v2/
 ```
 
-This pattern is also useful when the Euno issuer is deployed in a private VPC
+This pattern is also useful when the eunox issuer is deployed in a private VPC
 without an internet-facing ALB.
 
 ### 10.7 Environment variables
@@ -782,14 +787,14 @@ AWS_COGNITO_CLIENT_ID=<app-client-id>
 ## 11. Google Workspace SCIM bridge (Cloud Identity)
 
 > **Status:** Multi-cloud Phase 1. Use this section when you want to provision
-> users and groups into the Euno issuer from Google Workspace (formerly G Suite)
+> users and groups into the eunox issuer from Google Workspace (formerly G Suite)
 > via the SCIM 2.0 protocol, using a **Google Workspace SCIM provisioning**
 > service account and OAuth 2.0 credential.
 
 Google Workspace supports outbound SCIM provisioning to third-party apps via
 an **OAuth service account**. The provisioning agent authenticates with a
 service account credential and pushes user and group lifecycle events to the
-Euno issuer's SCIM endpoint.
+eunox issuer's SCIM endpoint.
 
 ### 11.1 Architecture
 
@@ -800,7 +805,7 @@ Google Workspace Admin SDK
         │  HTTPS POST /scim/v2/Users
         │  HTTPS POST /scim/v2/Groups
         ▼
-Euno capability-issuer (/scim/v2/)
+eunox capability-issuer (/scim/v2/)
   ──► scim_users / scim_groups tables (Postgres)
         │
         ▼
@@ -809,7 +814,7 @@ Euno capability-issuer (/scim/v2/)
 ```
 
 The provisioning agent uses an **OAuth service account** to authenticate to
-the Euno SCIM endpoint. At runtime, GCP Cloud Identity / Firebase Auth
+the eunox SCIM endpoint. At runtime, GCP Cloud Identity / Firebase Auth
 authenticates users and issues ID tokens; the SCIM provisioning layer keeps
 the group membership data up to date independently.
 
@@ -820,7 +825,7 @@ the group membership data up to date independently.
 - `ISSUER_DB_URL` set and pointing at a Postgres instance.
 - `ISSUER_SCIM_BEARER_TOKEN` set (≥ 32 characters, stored in GCP Secret
   Manager — see [`docs/secrets-gcp.md`](./secrets-gcp.md)).
-- The Euno issuer is reachable from the provisioning agent over HTTPS.
+- The eunox issuer is reachable from the provisioning agent over HTTPS.
   On GKE, expose the issuer via a GKE Ingress with a Google-managed SSL
   certificate (see [`docs/deploy-gke.md`](./deploy-gke.md) §5).
 
@@ -830,15 +835,15 @@ Google Workspace SCIM provisioning uses an **OAuth service account** (a GCP
 service account with Google Workspace domain-wide delegation).
 
 1. In the GCP Console: **IAM & Admin → Service Accounts → Create**.
-   - **Name**: `euno-scim-provisioner`
-   - **Description**: `SCIM provisioning agent for Euno capability issuer`
+   - **Name**: `eunox-scim-provisioner`
+   - **Description**: `SCIM provisioning agent for eunox capability issuer`
 
 2. Download a JSON key for the service account (this key will be used by the
    provisioning agent — keep it in Secret Manager):
 
    ```bash
-   gcloud iam service-accounts keys create /tmp/euno-scim-sa.json \
-     --iam-account "euno-scim-provisioner@${PROJECT_ID}.iam.gserviceaccount.com" \
+   gcloud iam service-accounts keys create /tmp/eunox-scim-sa.json \
+     --iam-account "eunox-scim-provisioner@${PROJECT_ID}.iam.gserviceaccount.com" \
      --project "${PROJECT_ID}"
    ```
 
@@ -859,25 +864,25 @@ feature in all editions. The recommended approaches are:
 1. In Google Admin Console: **Apps → Web and mobile apps → Add app →
    Add SAML app** (or OIDC app) → configure provisioning.
 2. Under **Provisioning**, enable **Automatic provisioning** and supply the
-   Euno SCIM endpoint:
+   eunox SCIM endpoint:
 
-   | Field | Value |
-   |---|---|
-   | SCIM base URL | `https://<issuer-host>/scim/v2` |
-   | OAuth bearer token | `<ISSUER_SCIM_BEARER_TOKEN>` |
+   | Field              | Value                           |
+   | ------------------ | ------------------------------- |
+   | SCIM base URL      | `https://<issuer-host>/scim/v2` |
+   | OAuth bearer token | `<ISSUER_SCIM_BEARER_TOKEN>`    |
 
 3. Under **Attribute mappings**, ensure the following are active:
 
-   | Google Workspace attribute | SCIM attribute |
-   |---|---|
-   | `id` (Google internal user ID) | `externalId` |
-   | `primaryEmail` | `userName` |
-   | `name.givenName` | `name.givenName` |
-   | `name.familyName` | `name.familyName` |
-   | `name.fullName` | `displayName` |
-   | `suspended` → `false` | `active` |
+   | Google Workspace attribute     | SCIM attribute    |
+   | ------------------------------ | ----------------- |
+   | `id` (Google internal user ID) | `externalId`      |
+   | `primaryEmail`                 | `userName`        |
+   | `name.givenName`               | `name.givenName`  |
+   | `name.familyName`              | `name.familyName` |
+   | `name.fullName`                | `displayName`     |
+   | `suspended` → `false`          | `active`          |
 
-   The Euno SCIM user lookup uses `externalId` (matched against the IdP `sub`
+   The eunox SCIM user lookup uses `externalId` (matched against the IdP `sub`
    claim). For GCP Cloud Identity / Firebase Auth, the `sub` claim in the ID
    token is the Google internal user ID (`id`). Map `id → externalId` to
    ensure correct matching.
@@ -886,21 +891,21 @@ feature in all editions. The recommended approaches are:
 
 For editions without built-in SCIM provisioning, deploy a lightweight Cloud
 Run service or Cloud Function that polls the Google Admin SDK Directory API
-and pushes changes to the Euno SCIM endpoint:
+and pushes changes to the eunox SCIM endpoint:
 
 ```javascript
 // cloud-run/google-workspace-scim-sync.mjs
-// Sync Google Workspace users and groups to the Euno SCIM endpoint.
-import { google } from 'googleapis';
+// Sync Google Workspace users and groups to the eunox SCIM endpoint.
+import { google } from "googleapis";
 
 const EUNO_SCIM_BASE = process.env.EUNO_SCIM_BASE_URL;
-const EUNO_BEARER   = process.env.ISSUER_SCIM_BEARER_TOKEN;
-const ADMIN_EMAIL   = process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL;
+const EUNO_BEARER = process.env.ISSUER_SCIM_BEARER_TOKEN;
+const ADMIN_EMAIL = process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL;
 
 const auth = new google.auth.GoogleAuth({
   scopes: [
-    'https://www.googleapis.com/auth/admin.directory.user.readonly',
-    'https://www.googleapis.com/auth/admin.directory.group.readonly',
+    "https://www.googleapis.com/auth/admin.directory.user.readonly",
+    "https://www.googleapis.com/auth/admin.directory.group.readonly",
   ],
 });
 
@@ -908,25 +913,25 @@ const auth = new google.auth.GoogleAuth({
 const client = await auth.getClient();
 client.subject = ADMIN_EMAIL;
 
-const admin = google.admin({ version: 'directory_v1', auth: client });
+const admin = google.admin({ version: "directory_v1", auth: client });
 
 async function syncUsers() {
-  const { data } = await admin.users.list({ customer: 'my_customer' });
+  const { data } = await admin.users.list({ customer: "my_customer" });
   for (const user of data.users ?? []) {
     await fetch(`${EUNO_SCIM_BASE}/Users`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${EUNO_BEARER}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${EUNO_BEARER}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
-        externalId: user.id,   // Google internal user ID → matches GCP sub claim
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        externalId: user.id, // Google internal user ID → matches GCP sub claim
         userName: user.primaryEmail,
         displayName: user.name?.fullName ?? user.primaryEmail,
         name: {
-          givenName: user.name?.givenName ?? '',
-          familyName: user.name?.familyName ?? '',
+          givenName: user.name?.givenName ?? "",
+          familyName: user.name?.familyName ?? "",
         },
         active: !user.suspended,
       }),
@@ -941,14 +946,14 @@ async function syncUsers() {
    entries in your `ISSUER_SCIM_GROUP_ROLE_MAP`:
 
    ```bash
-   # Example group names → euno roles
+   # Example group names → eunox roles
    ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
    ```
 
 2. Assign users to the relevant groups in Google Workspace Admin Console.
 
 3. The provisioning agent pushes `POST /scim/v2/Groups` with the group's
-   `displayName` and member list to the Euno issuer.
+   `displayName` and member list to the eunox issuer.
 
 4. At token issuance time, the issuer looks up the authenticated user's SCIM
    group memberships (by `externalId` = Google `sub` claim, falling back to
@@ -961,13 +966,13 @@ When using GCP Cloud Identity / Firebase Auth as the runtime identity provider
 alongside Google Workspace SCIM provisioning, ensure attribute values are
 consistent:
 
-| Attribute | GCP Cloud Identity ID token claim | Google Workspace → SCIM mapping |
-|---|---|---|
-| User identifier | `sub` (Google internal user ID) | `id → externalId` — this must match the `sub` value in the ID token. |
-| Email | `email` | `primaryEmail → userName` |
-| Groups | (not in token; enriched via SCIM) | `members` list in `/scim/v2/Groups` |
+| Attribute       | GCP Cloud Identity ID token claim | Google Workspace → SCIM mapping                                      |
+| --------------- | --------------------------------- | -------------------------------------------------------------------- |
+| User identifier | `sub` (Google internal user ID)   | `id → externalId` — this must match the `sub` value in the ID token. |
+| Email           | `email`                           | `primaryEmail → userName`                                            |
+| Groups          | (not in token; enriched via SCIM) | `members` list in `/scim/v2/Groups`                                  |
 
-The Euno SCIM enrichment matches the GCP `sub` claim value against
+The eunox SCIM enrichment matches the GCP `sub` claim value against
 `scim_users.external_id`. For the match to succeed, the provisioning agent
 must push the same Google internal user ID as the SCIM `externalId`.
 
@@ -982,7 +987,7 @@ ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","Euno
 # Identity provider remains GCP Cloud Identity for runtime authentication:
 IDENTITY_PROVIDER=gcp-identity
 GCP_PROJECT_ID=my-gcp-project
-GCP_IDENTITY_AUDIENCE=https://issuer.euno.example.com
+GCP_IDENTITY_AUDIENCE=https://issuer.eunox.example.com
 ```
 
 ### 11.8 Security checklist
