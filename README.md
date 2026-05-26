@@ -92,10 +92,42 @@ make clean
 
 ## Deployment
 
-See [`k8s/`](./k8s/) for Kubernetes manifests and Helm charts,
-and [`infra/`](./infra/) for Docker Compose and Terraform configurations.
+### Quick Start — Production
 
-For detailed deployment instructions, see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+```bash
+# 1. Build binaries
+make build
+
+# 2. Set minimum production environment
+export GATEWAY_NODE_ENV=production
+export GATEWAY_PORT=3002
+export GATEWAY_ADMIN_PORT=3003
+export GATEWAY_ADMIN_HOST=127.0.0.1
+export GATEWAY_ADMIN_API_KEY=$(openssl rand -hex 32)
+export GATEWAY_REDIS_URL="redis-sentinel://sentinel1:26379,sentinel2:26379/0?sentinel_master_name=mymaster"
+export GATEWAY_ISSUER_JWKS_URL="https://issuer.internal/.well-known/jwks.json"
+
+# 3. Run
+./bin/gateway
+```
+
+### Kubernetes (Helm)
+
+```bash
+helm install euno k8s/helm/euno/ \
+  --namespace euno-system --create-namespace \
+  -f k8s/helm/euno/values-production.yaml
+```
+
+See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the full configuration
+reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
+[`docs/deploy-gke.md`](./docs/deploy-gke.md) for GKE.
+
+### Other Targets
+
+- **Docker Compose** (dev/pilot): `infra/docker-compose.yml`
+- **Air-gapped**: `k8s/air-gap-images.txt` + `scripts/pull-air-gap-images.sh`
+- **Self-hosted**: [`docs/self-host.md`](./docs/self-host.md)
 
 ## Documentation
 

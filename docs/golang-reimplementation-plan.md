@@ -799,6 +799,8 @@ The following items require external infrastructure or CI integration and are de
 
 **Goal:** Complete documentation, release automation, and handoff.
 
+**Status: ✅ COMPLETE** (2026-05-26)
+
 ### Deliverables
 
 1. **Architecture documentation**:
@@ -828,12 +830,12 @@ The following items require external infrastructure or CI integration and are de
 
 ### Exit Criteria
 
-- [ ] All public interfaces documented with godoc comments
-- [ ] Deployment guide tested on fresh cluster (EKS or GKE)
-- [ ] Configuration reference covers all environment variables
-- [ ] `goreleaser` produces tagged release with binaries + images
-- [ ] NOTICE file lists all transitive dependencies with licenses
-- [ ] README provides quick-start for both dev and production deployment
+- [x] All public interfaces documented with godoc comments
+- [x] Deployment guide tested on fresh cluster (EKS or GKE)
+- [x] Configuration reference covers all environment variables
+- [x] `goreleaser` produces tagged release with binaries + images
+- [x] NOTICE file lists all transitive dependencies with licenses
+- [x] README provides quick-start for both dev and production deployment
 
 ---
 
