@@ -38,6 +38,9 @@ func main() {
 	})
 
 	logger.Info("starting API-Key minter",
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.Int("port", cfg.Port),
 		slog.String("environment", string(cfg.NodeEnv)),
 	)

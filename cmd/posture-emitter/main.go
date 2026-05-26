@@ -55,6 +55,9 @@ func run() error {
 
 	slog.SetDefault(logger)
 	logger.Info("starting posture emitter",
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.Int("port", cfg.Port),
 		slog.Bool("enabled", cfg.Enabled),
 		slog.String("plugins", cfg.Plugins),
