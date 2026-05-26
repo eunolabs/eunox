@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/google/uuid"
 )
 
 const maxBodySize = 1 << 20 // 1 MB
@@ -33,14 +34,18 @@ func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 
 // enforceRequestPayload wraps the enforce request with token and optional DPoP.
 type enforceRequestPayload struct {
-	Token   string                   `json:"token"`
+	Token   string                    `json:"token"`
 	Request capability.EnforceRequest `json:"request"`
-	DPoP    *capability.DPoPProof    `json:"dpop,omitempty"`
+	DPoP    *capability.DPoPProof     `json:"dpop,omitempty"`
 }
 
 // handleEnforce handles POST /api/v1/enforce.
 func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
@@ -63,6 +68,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	claims, err := app.deps.JWTVerifier.VerifyToken(r.Context(), payload.Token)
 	if err != nil {
 		resp := capability.EnforceResponse{
+			RequestID: requestID,
 			Decision:  capability.DecisionDeny,
 			DecidedAt: time.Now().UTC().Format(time.RFC3339),
 			Denial: &capability.DenialInfo{
@@ -78,6 +84,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	// Check token expiry
 	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
 		resp := capability.EnforceResponse{
+			RequestID: requestID,
 			Decision:  capability.DecisionDeny,
 			DecidedAt: time.Now().UTC().Format(time.RFC3339),
 			Denial: &capability.DenialInfo{
@@ -100,6 +107,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		}
 		if revoked {
 			resp := capability.EnforceResponse{
+				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
 				Denial: &capability.DenialInfo{
@@ -117,6 +125,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	if payload.DPoP != nil {
 		if err := app.verifyDPoP(r.Context(), payload.DPoP, claims); err != nil {
 			resp := capability.EnforceResponse{
+				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
 				Denial: &capability.DenialInfo{
@@ -140,6 +149,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		}
 		if blocked {
 			resp := capability.EnforceResponse{
+				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
 				Denial: &capability.DenialInfo{
@@ -164,6 +174,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("enforcement engine error"))
 		return
 	}
+	resp.RequestID = requestID
 
 	decision := string(resp.Decision)
 	app.recordMetric(decision, start)
