@@ -1,12 +1,11 @@
 # Enterprise Federation Threat Model Addendum
 
-> **Status:** Approved (2026-05-19) — signed off as part of the Stage-5
-> pre-flight review (see `docs/stage5executionplan.md` §5 and
-> `docs/stage-5-design.md`).
+> **Status:** Approved (2026-05-19) — signed off as part of the
+> enterprise pre-flight review.
 >
 > **Last updated:** 2026-05-19
 >
-> **Authors:** Stage-5 Engineering Team (Platform Security squad)
+> **Authors:** Platform Security squad
 >
 > **Reviewers:**
 >
@@ -18,9 +17,8 @@
 
 ## Background
 
-Stage 5 extends the eunox platform from an enterprise-IdP-integrated capability
-issuer (Stage 4) to a full cross-organizational trust ecosystem. Four capabilities
-introduce materially new attack surfaces:
+The eunox enterprise deployment extends the platform to a full cross-organizational
+trust ecosystem. Four capabilities introduce materially new attack surfaces:
 
 1. **Partner-DID federation** — a remote organization issues capability tokens
    from their own DID-backed signing key, and the eunox gateway must accept and
@@ -34,17 +32,14 @@ introduce materially new attack surfaces:
    short-lived database IAM credentials scoped to a capability token, extending
    the blast radius of a stolen token to include live database access.
 
-This document answers every question required by
-[`docs/stage5executionplan.md` §5](../stage5executionplan.md#5-enterprise-threat-model-addendum-blocking--task-1)
-before partner-federation code (Task 3), SCIM code (Task 10), or SOC2 export
-code (Task 6) may merge to `main`. The question headers below are verbatim
-from §5 of the execution plan.
+This document addresses the following threat model questions before partner-federation
+code, SCIM code, or SOC2 export code may merge to `main`.
 
 ---
 
 ## 1. Partner DID Compromise
 
-**Question from §5:** _If a partner's signing key is compromised, what
+**Question:** _If a partner's signing key is compromised, what
 capability tokens can an attacker mint? What is the blast radius across
 partner-issued sessions? What is the detection path (circuit breaker fires,
 Prometheus alert fires, admin is notified) and the revocation path (remove
@@ -155,7 +150,7 @@ The blast radius is bounded to:
 
 ## 2. DID Document Spoofing
 
-**Question from §5:** _A `did:web` document is served over HTTPS. What
+**Question:** _A `did:web` document is served over HTTPS. What
 happens if the partner's TLS certificate is MiTM'd or the domain is
 hijacked? Document the pin-attestation workflow (`verifyPinAttestation`
 in `partner-did-registry.ts`) and mandate its use for production partner
@@ -282,7 +277,7 @@ dependent on DNS. However:
 
 ## 3. SCIM Bearer Token Exposure
 
-**Question from §5:** _The `ISSUER_SCIM_BEARER_TOKEN` is a long-lived static
+**Question:** _The `ISSUER_SCIM_BEARER_TOKEN` is a long-lived static
 secret. Document its required rotation cadence, storage (secret manager, not
 env file), and the consequence of exposure (all provisioned users/groups must
 be considered attacker-controlled until token is rotated)._
@@ -371,7 +366,7 @@ endpoints.
 
 ## 4. SCIM Privilege Escalation
 
-**Question from §5:** _A SCIM push can assign a user to an admin group.
+**Question:** _A SCIM push can assign a user to an admin group.
 Document the approval workflow required before a SCIM group is mapped to
 an elevated role (`admin`, `operator`). The `ISSUER_SCIM_GROUP_ROLE_MAP`
 must not permit mapping a SCIM group to `operator` without explicit
@@ -465,9 +460,9 @@ at most one TTL window after group removal.
 
 ## 5. Cross-Chain Audit Anchor Tampering
 
-**Question from §5:** _The cross-chain anchor's HMAC secret is already
-documented in `docs/security/ledger-hmac-rotation.md`. For Stage 5,
-document what an attacker who obtains the HMAC secret can do (forge
+**Question:** _The cross-chain anchor's HMAC secret is already
+documented in `docs/security/ledger-hmac-rotation.md`. Document
+what an attacker who obtains the HMAC secret can do (forge
 commitments, not forge individual signed evidence records — the evidence is
 separately KMS-signed), and the impact of the Azure Confidential Ledger
 backend versus the per-replica-postgres backend._
@@ -563,7 +558,7 @@ as the platform's KMS signing key:
 
 ## 6. SOC2 Export Endpoint Exposure
 
-**Question from §5:** _The `GET /api/v1/audit/export` endpoint returns all
+**Question:** _The `GET /api/v1/audit/export` endpoint returns all
 signed audit evidence. Document the authorization model (admin operator-JWT,
 not user token), the rate limit, the cursor expiry (24 h), and the
 data-residency implications (no audit data leaves the on-prem deployment
@@ -650,7 +645,7 @@ requirements before transmitting evidence records outside the deployment.**
 
 ## 7. DB Credential Blast Radius
 
-**Question from §5:** _If a `db-token-service`-issued credential is stolen,
+**Question:** _If a `db-token-service`-issued credential is stolen,
 what DB access does the attacker have? Document the minimum-privilege DB role
 provisioned by the service, the credential TTL (must be ≤ capability token
 TTL), and the connection-level audit trail at the DB layer._
@@ -751,7 +746,7 @@ record the credential issuance event in its own audit log.
 
 ## 8. In-Process Guard Bypass
 
-**Question from §5:** _The AGT guard is a soft guard. Document explicitly
+**Question:** _The AGT guard is a soft guard. Document explicitly
 that an attacker who can modify the agent's in-process state can bypass the
 guard, and that the outer gateway is the only hard enforcement boundary. The
 threat model must not imply that the in-process guard is a security boundary._
@@ -837,7 +832,7 @@ the following statement:
 
 ## 9. Air-Gapped Key Management
 
-**Question from §5:** _In an air-gapped on-prem deployment without an HSM,
+**Question:** _In an air-gapped on-prem deployment without an HSM,
 operators may use file-based EC keys. Document the required file permissions
 (`0400`), the key derivation procedure, the offline backup requirements, and
 the explicit statement that file-based keys are not supported for multi-tenant
@@ -983,12 +978,11 @@ When rotating the signing key in an air-gapped deployment:
 
 ## References
 
-- [`docs/stage5executionplan.md` §5](../stage5executionplan.md#5-enterprise-threat-model-addendum-blocking--task-1) — originating questions
-- [`docs/stage-5-design.md`](../stage-5-design.md) — Stage 5 RFC / design freeze
+- [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — architecture overview
 - [`internal/gateway/src/partner-did-registry.ts`](../../internal/gateway/src/partner-did-registry.ts) — `PartnerDidRegistry`, `PinAttestation`, `verifyPinAttestation`, `createPinAttestation`
 - [`internal/gateway/src/partner-issuer-resolver.ts`](../../internal/gateway/src/partner-issuer-resolver.ts) — `PartnerIssuerResolver`, circuit-breaker integration, cache TTLs
 - [`internal/db-token-service/src/app.ts`](../../internal/db-token-service/src/app.ts) — DB credential issuance, TTL derivation, rate limits
 - [`docs/runbooks/ledger-hmac-rotation.md`](../runbooks/ledger-hmac-rotation.md) — HMAC secret rotation strategies
-- [`docs/security/issuer-identity-threat-model.md`](./issuer-identity-threat-model.md) — predecessor Stage-4 threat model
+- [`docs/security/issuer-identity-threat-model.md`](./issuer-identity-threat-model.md) — issuer identity threat model
 - [`pkg//src/agt-guard.ts`](../../pkg//src/agt-guard.ts) — AGT guard types
 - [`pkg//src/config/schema.ts`](../../pkg//src/config/schema.ts) — `IssuerConfigSchema`, `GatewayConfigSchema`

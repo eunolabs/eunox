@@ -1,16 +1,15 @@
 # Capability Issuer — IdP Setup Guide
 
-> **Target audience:** Platform engineers configuring the Stage-4 Capability
-> Issuer to authenticate users via an enterprise identity provider.
+> **Target audience:** Platform engineers configuring the Capability Issuer to
+> authenticate users via an enterprise identity provider.
 >
-> **Status:** Stage 4. Both the hosted product and the self-host docker image
+> **Status:** Current. Both the hosted product and the self-host docker image
 > are covered here.
 >
 > **Related documents:**
 >
 > - [`docs/self-host.md`](./self-host.md) — self-host overview and deployment topology
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
-> - [`docs/stage4executionplan.md`](./stage4executionplan.md) — Stage-4 execution plan (Task 2)
 > - [`docs/security/issuer-threat-model.md`](./security/issuer-threat-model.md) — threat model (IdP-token replay, nonce binding, aud/iss enforcement)
 
 ---
@@ -472,11 +471,11 @@ Before deploying to production:
 
 ---
 
-## 9. DID-based partner issuers (Stage 5)
+## 9. DID-based partner issuers
 
-> **Status:** Stage 5 — production stable. Use this section when configuring
-> the issuer to authenticate agents whose identity tokens are signed by a
-> DID-backed key rather than a centralized IdP.
+> **Status:** Production stable. Use this section when configuring the issuer
+> to authenticate agents whose identity tokens are signed by a DID-backed key
+> rather than a centralized IdP.
 
 ### 9.1 Provider configuration
 
@@ -533,7 +532,7 @@ two alternatives are supported:
    `DID_WEB_ALLOW_HTTP_FOR_HOSTS` (comma-separated, e.g.
    `partner-sim.local:4001,did-registry.internal`).
 
-### 9.3 ION circuit breaker (Stage 5)
+### 9.3 ION circuit breaker
 
 The issuer wraps every `did:ion` resolution call in a circuit breaker that
 opens after repeated failures, preventing a sustained resolver outage from

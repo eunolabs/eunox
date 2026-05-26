@@ -9,7 +9,6 @@
 >
 > - [`docs/deploy-eks.md`](./deploy-eks.md) — full EKS deployment guide
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — environment-variable reference
-> - [`docs/multi-cloud-plan.md`](./multi-cloud-plan.md) — multi-cloud runbook index
 
 ---
 
@@ -41,7 +40,7 @@ production deployments:
 | ------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
 | `eunox/prod/audit-ledger-hmac-secret` | `AUDIT_LEDGER_HMAC_SECRET` | 64-hex-char HMAC key for audit ledger integrity                                                    |
 | `eunox/prod/gateway-admin-api-key`    | `ADMIN_API_KEY`            | Gateway admin API key (≥ 32 chars; referred to as `GATEWAY_ADMIN_API_KEY` in the multi-cloud plan) |
-| `eunox/prod/partner-did-pin-secret`   | `PARTNER_DID_PIN_SECRET`   | Secret for partner DID pin derivation (Stage 5)                                                    |
+| `eunox/prod/partner-did-pin-secret`   | `PARTNER_DID_PIN_SECRET`   | Secret for partner DID pin derivation                                                                              |
 | `eunox/prod/redis-url`                | `REDIS_URL`                | Redis connection string (incl. password)                                                           |
 | `eunox/prod/audit-ledger-pg-url`      | `AUDIT_LEDGER_PG_URL`      | PostgreSQL connection string for the audit ledger                                                  |
 | `eunox/prod/issuer-db-url`            | `ISSUER_DB_URL`            | PostgreSQL connection string for the capability issuer                                             |

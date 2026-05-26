@@ -206,4 +206,3 @@ curl -s -X POST https://minter.eunox.example/api/v1/mint \
 - `internal/minter/src/bootstrap.ts` — pepper provisioning at startup
 - `docs/runbooks/minter-key-rotation.md` — signing key (JWT) rotation procedure
 - `docs/security/minter-threat-model.md §4` — pepper threat model
-- `docs/architecture-review-2026-05.md §CR-5` — pepper rotation requirement

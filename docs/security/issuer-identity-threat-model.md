@@ -1,11 +1,11 @@
 # Issuer Identity Threat Model
 
-> **Status:** Approved (2026-05-18) — signed off as part of the Stage-4
-> architecture review (see `docs/architecture-review-2026-05-stage4.md`).
+> **Status:** Approved (2026-05-18) — signed off as part of the
+> architecture review.
 >
 > **Last updated:** 2026-05-18
 >
-> **Authors:** Stage-4 Engineering Team (Platform Identity squad)
+> **Authors:** Platform Identity squad
 >
 > **Reviewers:**
 >
@@ -22,12 +22,11 @@ covered the case where a managed signing authority with high blast radius if the
 service identity is compromised signs tokens on behalf of opaque API keys (the minter
 uses per-tenant HSM keys, so the blast radius of an individual key compromise is one
 tenant, but a compromise of the minter _service identity_ can request signatures across
-all tenants that identity can reach). Stage 4 promotes the capability issuer from an
-internal token factory to a first-class user-facing service that accepts authenticated
-end-users via enterprise Identity Providers (Entra ID, AWS Cognito) and mints signed
-capability tokens bound to their verified identity and role.
+all tenants that identity can reach). The capability issuer is a first-class user-facing
+service that accepts authenticated end-users via enterprise Identity Providers (Entra ID,
+AWS Cognito) and mints signed capability tokens bound to their verified identity and role.
 
-This changes the attack surface in three important ways relative to Stage 3:
+This introduces three important attack surface areas:
 
 1. **A new authentication path** (IdP OAuth/OIDC) is now on the critical path to token
    issuance. A compromise of the IdP's app registration or OIDC endpoint is now a direct
@@ -38,16 +37,14 @@ This changes the attack surface in three important ways relative to Stage 3:
    template can silently widen every user's capability set for a given `(tenantId,
 agentId, role)` triple.
 
-This document answers every question required by
-[`docs/stage4executionplan.md` §5](../stage4executionplan.md#5-threat-model-addendum-blocking--task-1)
-before customer-facing IdP integration may ship. The question headers below are verbatim
-from §5 of the execution plan.
+This document addresses the following threat model questions before customer-facing IdP
+integration may ship. The question headers map to the corresponding threat areas.
 
 ---
 
 ## 1. IdP Compromise
 
-**Question from §5:** _If an attacker compromises a tenant's Entra ID app registration,
+**Question:** _If an attacker compromises a tenant's Entra ID app registration,
 what tokens can they obtain? What is the blast radius? What detection capability exists?
 Document required tenant-side IdP hygiene (conditional access, app-role review cadence)._
 
@@ -80,7 +77,7 @@ What the attacker **cannot** do via IdP compromise alone:
 - Sign tokens outside the tenant's registered capability scope.
 - Access the KMS signing key directly — the issuer's workload identity holds only
   `sign` permission on the issuer's keys, not the minter's keys (distinct aliases, per
-  `docs/stage-4-design.md` §6).
+  `docs/ARCHITECTURE.md` §component view).
 
 ### 1.2 Blast radius
 
@@ -110,8 +107,7 @@ single app registration (which it must not — see §1.4).
 The issuer writes one `ISSUANCE` audit row per token (logged as `AuditLogEntry` via the
 `auditLogger` injected into `IssueController`). The row includes:
 `userId`, `agentId`, `tenantId`, `tokenId` (jti), `capabilities`, `iat`, `exp`, and the
-`idpProvider` label (`"azure"` or `"cognito"`) in the `context` map — see
-`docs/stage4executionplan.md` §4.7.
+`idpProvider` label (`"azure"` or `"cognito"`) in the `context` map.
 
 ### 1.4 Required tenant-side IdP hygiene
 
@@ -292,7 +288,7 @@ This is covered by `internal/issuer/tests/issuer-role-privilege-escalation.test.
 When a template assignment exists for `(tenantId, agentId, role)`, the resolved manifest
 comes from the template, not from `RoleCapabilityPolicy`. The role used for the template
 lookup comes from the verified IdP token (`userContext.roles`) — not from the request
-body. The issuance flow (Stage 4 Task 6 addition to `IssueController`) is:
+body. The issuance flow (additions to `IssueController`) is:
 
 1. Resolve `userContext.roles` from the verified IdP token.
 2. For each role in `userContext.roles`, query `template_assignments` for
@@ -310,15 +306,15 @@ authorised for.
 
 ## 4. Manifest Template Tampering
 
-**Question from §5:** _Templates are admin-mutable. Document the admin-role authorisation
-model (must reuse the operator-JWT pattern from `api-key-minter` admin routes per
-`MinterConfigSchema` admin JWT auth — see Stage 3 admin JWT integration), the audit trail
-per template mutation, and the rollback procedure if a malicious template is published._
+**Question:** _Templates are admin-mutable. Document the admin-role authorisation
+model (must reuse the operator-JWT pattern from `api-key-minter` admin routes), the
+audit trail per template mutation, and the rollback procedure if a malicious template
+is published._
 
 ### 4.1 Admin-role authorisation model
 
-The template admin API (§4 of `docs/stage-4-design.md`) is protected by the same
-operator-JWT guard used in `api-key-minter` admin routes:
+The template admin API is protected by the same operator-JWT guard used in
+`api-key-minter` admin routes:
 
 - **Bearer token:** `Authorization: Bearer <jwt>` where the JWT is issued by an
   operator identity provider configured via `ISSUER_ADMIN_JWKS_URI` +
@@ -327,8 +323,7 @@ operator-JWT guard used in `api-key-minter` admin routes:
 - **Required claims:** `sub` (operatorId, persisted in audit), `aud` (must match
   `ISSUER_ADMIN_JWT_AUDIENCE`), `iss` (must match the configured admin JWKS issuer),
   `exp` (must be in the future).
-- **`platformAdmin` claim:** required for cross-tenant assignment operations (per
-  `docs/stage-4-design.md` §4.6).
+- **`platformAdmin` claim:** required for cross-tenant assignment operations.
 - **Fallback:** `X-Admin-Key` header is accepted only as a deprecated fallback for
   self-hosters who have not yet configured an admin JWKS. It emits a `warn` log and is
   rejected in production (`NODE_ENV=production`) unless `ISSUER_ADMIN_API_KEY` is set
@@ -339,8 +334,7 @@ Every admin JWT verification failure returns 401; no mutation is performed.
 ### 4.2 Audit trail per template mutation
 
 Every mutation to the template store writes an OCSF authorization event (class_uid 3003)
-to the issuer's audit log (same `PostgresLedgerBackend` as the gateway, per
-`docs/stage4executionplan.md` §4.7):
+to the issuer's audit log (same `PostgresLedgerBackend` as the gateway):
 
 | Operation       | `eventType`                 | Fields logged                                                                        |
 | --------------- | --------------------------- | ------------------------------------------------------------------------------------ |
@@ -445,9 +439,9 @@ pattern in `capability-issuer/tests/`).
 
 ### 5.3 Row-level security consideration
 
-The Stage 4 implementation uses application-layer tenant filtering (parameterised
+The current implementation uses application-layer tenant filtering (parameterised
 `WHERE owner_tenant_id = $1` in every query). PostgreSQL Row Level Security (RLS) is
-explicitly **not** used in Stage 4 because:
+not used because:
 
 1. The issuer connects with a single service identity that manages the full schema.
 2. Adding RLS would require per-tenant connection pooling or `SET LOCAL app.tenant_id`
@@ -455,24 +449,23 @@ explicitly **not** used in Stage 4 because:
 3. Application-layer filtering is audited at the code level via PR review and the
    cross-tenant tests in §5.2.
 
-Stage 5 may revisit RLS if the deployment topology evolves to a multi-tenant managed
+RLS may be revisited if the deployment topology evolves to a multi-tenant managed
 Postgres service where row-level isolation is enforced by the database engine.
 
 ---
 
 ## 6. Per-Tenant Signing-Key Isolation
 
-**Question from §5:** _Re-affirm the Stage-3 decision (per-tenant KMS keys behind a
-single root) holds for Stage 4. If the hosted deployment uses platform-wide signing for
-cost reasons, document the explicit blast-radius trade-off and the compensating controls._
+**Question:** _Affirm that per-tenant KMS keys behind a single root is the correct
+design. If the hosted deployment uses platform-wide signing for cost reasons, document
+the explicit blast-radius trade-off and the compensating controls._
 
-### 6.1 Re-affirmation
+### 6.1 Affirmation
 
-The Stage-3 decision holds for Stage 4: **per-tenant signing keys, single HSM root.**
-Each tenant's issuer tokens are signed by a distinct `eunox-issuer-tenant-<tenantId>` key
-(see `docs/stage-4-design.md` §6). This is the same architecture as the minter, using
-the same three KMS backends (Azure Managed HSM primary, AWS KMS and GCP Cloud KMS
-supported).
+The design uses **per-tenant signing keys with a single HSM root.**
+Each tenant's issuer tokens are signed by a distinct `eunox-issuer-tenant-<tenantId>` key.
+This is the same architecture as the minter, using the same three KMS backends (Azure
+Managed HSM primary, AWS KMS and GCP Cloud KMS supported).
 
 The issuer uses **distinct key aliases from the minter** (`eunox-issuer-tenant-*` vs.
 `eunox-minter-tenant-*`). A compromise of the issuer's workload identity does not grant
@@ -502,13 +495,12 @@ the hosted product:
 If a future cost analysis shows per-tenant KMS keys are prohibitively expensive at scale
 (>10,000 tenants), the preferred mitigation is a hardware-backed key hierarchy
 (per-tenant derived keys from a root key held in an HSM), not collapsing to a single key.
-This decision point would be documented at Stage 5 design time.
 
 ---
 
 ## 7. Self-Host Operator Key Management
 
-**Question from §5:** _Single-tenant self-host operators may not have an HSM. Document
+**Question:** _Single-tenant self-host operators may not have an HSM. Document
 the supported degraded mode (file-based EC key with strong file perms + offline backup)
 and explicitly mark it "not supported for multi-tenant"._
 
@@ -552,7 +544,7 @@ traffic. Loss of the signing key means:
 - A replacement key must be published to the JWKS endpoint and all previously issued
   tokens must be revoked.
 
-The self-host documentation (`docs/self-host.md`, Stage 4 section) includes a recovery
+The self-host documentation (`docs/self-host.md`) includes a recovery
 procedure for key loss scenarios.
 
 ### 7.2 Explicit: "Not supported for multi-tenant"
@@ -572,29 +564,26 @@ is prohibitive. They must acknowledge this trade-off in their deployment configu
 guard requires when no KMS provider is configured, ensuring the operator has read the
 warning).
 
-### 7.3 OS keychain integration (Stage 5)
+### 7.3 OS keychain integration (deferred)
 
 OS keychain integration (macOS Keychain, Linux `libsecret`, Windows DPAPI) is explicitly
-**deferred to Stage 5**:
+deferred:
 
 - The `keytar` / `@aws-sdk/credential-provider-node` ecosystem varies in reliability
   and CI support across platforms.
 - For a server-side issuer process, OS keychain integration provides minimal additional
   security over a `0600` PEM file on a dedicated server (both require root access to
   extract).
-- The more valuable control for Stage 5 is a lightweight self-host HSM option
-  (e.g., YubiHSM 2 or AWS CloudHSM local client), which is documented as a Stage 5
-  goal in `docs/stage4executionplan.md` §"Non-goals".
-
-This decision is documented here so it is not relitigated in Stage 4 task PRs.
+- The more valuable control is a lightweight self-host HSM option
+  (e.g., YubiHSM 2 or AWS CloudHSM local client).
 
 ---
 
 ## 8. CLI Token Storage at Rest
 
-**Question from §5:** _`~/.eunox/tokens/<agent-id>.jwt` written `0600`. Document the
-trade-off vs. an OS keychain integration (rejected for v1: keytar/keychain integration
-is Stage 5; document this explicitly so it is not relitigated)._
+**Question:** _`~/.eunox/tokens/<agent-id>.jwt` written `0600`. Document the
+trade-off versus OS keychain integration (deferred: keytar/keychain integration adds
+complexity with minimal server-side benefit; document this explicitly)._
 
 ### 8.1 Storage mechanism
 
@@ -620,10 +609,10 @@ permissions.
 | Backup / sync tools (Time Machine, Dropbox, iCloud Drive)    | If `~/.eunox/tokens/` is inside a synced directory, tokens may be exfiltrated via the sync provider. Operators should add `~/.eunox/tokens/` to their `.gitignore` and backup-exclusion list. `eunox init` prints a warning if the tokens directory appears to be under a known sync root. |
 | Theft of the developer's machine                             | Disk encryption (FileVault, BitLocker, LUKS) protects at-rest tokens against physical theft. `eunox` documentation recommends enabling full-disk encryption. Tokens expire within 15 minutes regardless.                                                                                   |
 
-### 8.3 OS keychain integration explicitly deferred to Stage 5
+### 8.3 OS keychain integration (deferred)
 
 OS keychain integration (`keytar` for cross-platform, or platform-native DPAPI/Keychain
-APIs) is explicitly **not implemented in Stage 4**:
+APIs) is not currently implemented:
 
 1. **Reliability:** `keytar` and similar wrappers are brittle in CI and in headless
    server environments (e.g., an engineer running `eunox request` in a devcontainer or
@@ -632,31 +621,31 @@ APIs) is explicitly **not implemented in Stage 4**:
    file provides security equivalent to a keychain entry for the duration of the token's
    usefulness. The keychain adds complexity without a proportionate security gain for this
    TTL.
-3. **Not blocking for Stage 4 use cases:** The primary audience for `eunox request` is
+3. **Not blocking for current use cases:** The primary audience for `eunox request` is
    developers obtaining tokens for local agent testing. The token is used within minutes
    and discarded.
-4. **Stage 5 alignment:** Keychain integration belongs with the broader "enterprise
-   developer UX" hardening in Stage 5 (on-prem, SCIM, SOC 2). Implementing it now would
-   create a platform-support matrix (macOS/Linux/Windows keychain APIs, CI bypass modes)
-   that is out of scope for Stage 4.
+4. **Future work:** Keychain integration belongs with broader "enterprise developer UX"
+   hardening (on-prem, SCIM, SOC 2). Implementing it prematurely would create a
+   platform-support matrix (macOS/Linux/Windows keychain APIs, CI bypass modes) that
+   can wait until demand justifies it.
 
-This decision is recorded here to prevent it from being raised in code review for every
-Stage 4 PR that touches `eunox request`.
+This decision is recorded here to prevent it from being re-raised in every future PR
+that touches `eunox request`.
 
 ---
 
 ## 9. Sign-Off Process
 
 Sign-off requires ≥2 engineers + 1 security reviewer outside the implementer, identical
-to the Stage 3 minter threat model process (`docs/security/minter-threat-model.md`).
+to the minter threat model process (`docs/security/minter-threat-model.md`).
 
-**No customer-facing IdP integration code (Tasks 2, 3) merges to `main` until this
-document carries all three sign-offs.**
+**No customer-facing IdP integration code merges to `main` until this document carries
+all three sign-offs.**
 
 Each reviewer should verify:
 
 - [ ] **§1 (IdP compromise):** blast-radius analysis is complete; tenant-side hygiene
-      requirements are enforceable and documented in `docs/issuer-idp-setup.md` (Task 2).
+      requirements are enforceable and documented in `docs/issuer-idp-setup.md`.
 - [ ] **§2 (IdP-token replay):** PKCE S256 is correctly enforced; `nonce` replay
       protection is fail-closed; all five ID-token claims (`aud`, `iss`, `exp`, `iat`,
       `alg`) are validated before role lookup.
@@ -667,9 +656,8 @@ Each reviewer should verify:
       every mutation is audited with an OCSF event; rollback procedure is actionable.
 - [ ] **§5 (Cross-tenant leakage):** application-layer filtering is correct;
       cross-tenant negative tests are committed; RLS deferral rationale is accepted.
-- [ ] **§6 (Per-tenant key isolation):** Stage-3 decision re-affirmed; distinct issuer
-      key aliases confirmed in `docs/stage-4-design.md`; platform-wide signing explicitly
-      rejected.
+- [ ] **§6 (Per-tenant key isolation):** per-tenant key design confirmed; distinct issuer
+      key aliases verified; platform-wide signing explicitly rejected.
 - [ ] **§7 (Self-host key management):** file-based degraded mode is correctly scoped
       to single-tenant; startup permission guard is specified; offline backup requirement
       is documented.
