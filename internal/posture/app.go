@@ -4,6 +4,7 @@
 package posture
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -180,7 +181,7 @@ func (app *App) EmitObserved(record *AgentInventoryRecord) error {
 		return fmt.Errorf("posture emitter: marshal record: %w", err)
 	}
 
-	if _, err := app.queue.Push(EventObserved, payload); err != nil {
+	if _, err := app.queue.Push(context.Background(), EventObserved, payload); err != nil {
 		return fmt.Errorf("posture emitter: enqueue observed: %w", err)
 	}
 
@@ -208,7 +209,7 @@ func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
 		return fmt.Errorf("posture emitter: marshal revocation: %w", err)
 	}
 
-	if _, err := app.queue.Push(EventRevoked, payload); err != nil {
+	if _, err := app.queue.Push(context.Background(), EventRevoked, payload); err != nil {
 		return fmt.Errorf("posture emitter: enqueue revoked: %w", err)
 	}
 
@@ -221,7 +222,7 @@ func (app *App) EmitRevoked(agentID string, revokedAt time.Time) error {
 
 // QueueDepth returns the current number of events in the queue.
 func (app *App) QueueDepth() (int64, error) {
-	depth, err := app.queue.Depth()
+	depth, err := app.queue.Depth(context.Background())
 	if err != nil {
 		return 0, err
 	}
@@ -275,6 +276,7 @@ func (app *App) buildRouter() chi.Router {
 		r.Get("/status", app.handleStatus)
 		r.Post("/emit", app.handleEmit)
 		r.Post("/revoke", app.handleRevoke)
+		r.Get("/dead-letters", app.handleListDeadLetters)
 	})
 
 	return r
@@ -319,14 +321,16 @@ func (app *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	activeRecords := app.recordStore.ListActive()
+	dlqDepth, _ := app.queue.DeadLetterDepth(context.Background())
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enabled":      app.config.Enabled,
-		"queueDepth":   depth,
-		"activeAgents": len(activeRecords),
-		"plugins":      pluginNames(app.plugins),
-		"started":      app.started.Load(),
-		"totalTracked": app.recordStore.Size(),
+		"enabled":        app.config.Enabled,
+		"queueDepth":     depth,
+		"deadLetterSize": dlqDepth,
+		"activeAgents":   len(activeRecords),
+		"plugins":        pluginNames(app.plugins),
+		"started":        app.started.Load(),
+		"totalTracked":   app.recordStore.Size(),
 	})
 }
 
@@ -397,6 +401,25 @@ func (app *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 
+func (app *App) handleListDeadLetters(w http.ResponseWriter, _ *http.Request) {
+	events, err := app.queue.ListDeadLetters(context.Background(), 100)
+	if err != nil {
+		if app.deps.Logger != nil {
+			app.deps.Logger.Error("posture emitter: failed to list dead letters", slog.String("error", err.Error()))
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list dead letters"})
+		return
+	}
+
+	dlqDepth, _ := app.queue.DeadLetterDepth(context.Background())
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deadLetters": events,
+		"count":       len(events),
+		"total":       dlqDepth,
+	})
+}
+
 // --- Metrics ---
 
 func (app *App) initMetrics() *emitterMetrics {
@@ -448,7 +471,7 @@ func (app *App) UpdateMetrics() {
 	if app.metrics == nil {
 		return
 	}
-	depth, err := app.queue.Depth()
+	depth, err := app.queue.Depth(context.Background())
 	if err != nil {
 		if app.deps.Logger != nil {
 			app.deps.Logger.Error("posture emitter: failed to update queue depth metric", slog.String("error", err.Error()))

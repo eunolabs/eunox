@@ -155,6 +155,9 @@ func NewOIDCProvider(cfg *OIDCConfig, httpClient *http.Client) (*OIDCProvider, e
 	return NewOIDCProviderWithJWKSClient(resolvedCfg, httpClient, NewHTTPJWKSClient(httpClient, resolvedCfg.CacheTTL))
 }
 
+// defaultDiscoveryTimeout is the maximum time allowed for OIDC discovery at startup.
+const defaultDiscoveryTimeout = 10 * time.Second
+
 // NewOIDCProviderWithJWKSClient creates a generic OIDC provider using the supplied JWKS client.
 func NewOIDCProviderWithJWKSClient(cfg *OIDCConfig, httpClient *http.Client, jwksClient JWKSClient) (*OIDCProvider, error) {
 	resolvedCfg := &OIDCConfig{}
@@ -171,7 +174,10 @@ func NewOIDCProviderWithJWKSClient(cfg *OIDCConfig, httpClient *http.Client, jwk
 		return nil, errors.New("jwks client is required")
 	}
 
-	jwksURI, err := discoverJWKSURI(context.Background(), httpClient, resolvedCfg.IssuerURL)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDiscoveryTimeout)
+	defer cancel()
+
+	jwksURI, err := discoverJWKSURI(ctx, httpClient, resolvedCfg.IssuerURL)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +207,11 @@ func newOIDCProvider(cfg *OIDCConfig, httpClient *http.Client, providerType Prov
 	}
 
 	normalized := normalizeOIDCConfig(resolvedCfg)
-	jwksURI, err := discoverJWKSURI(context.Background(), httpClient, normalized.IssuerURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDiscoveryTimeout)
+	defer cancel()
+
+	jwksURI, err := discoverJWKSURI(ctx, httpClient, normalized.IssuerURL)
 	if err != nil {
 		return nil, err
 	}

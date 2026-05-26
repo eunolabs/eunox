@@ -154,6 +154,15 @@ dbTokenService:
   service:
     type: ClusterIP
     port: 5050
+  serviceAccountAnnotations: {}
+  podLabels: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
   env:
     NODE_ENV: production
     DB_TOKENS_ENABLED: "false"
@@ -171,6 +180,15 @@ storageGrantService:
   service:
     type: ClusterIP
     port: 5051
+  serviceAccountAnnotations: {}
+  podLabels: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
   env:
     NODE_ENV: production
     STORAGE_GRANTS_ENABLED: "false"
@@ -189,6 +207,13 @@ postureEmitter:
     pullPolicy: IfNotPresent
   serviceAccountAnnotations: {}
   podLabels: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
   persistence:
     enabled: true
     size: 1Gi

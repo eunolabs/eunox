@@ -123,13 +123,13 @@ P0 — Security (Do Before Production) ✅ ALL COMPLETE
 2	Cloud adapter 501 response in production mode	1 day	internal/dbtokensvc, internal/storagegrantsvc	✅ Done — StubAdapter interface + New() returns error in ProductionMode
 3	S3 anchor SigV4 authentication	1 day	pkg/audit/anchor.go	✅ Done — full AWS SigV4 signing (no SDK dependency)
 4	Admin auth hash-compare pattern	0.5 day	internal/gateway/admin.go	✅ Done — SHA-256 both inputs before subtle.ConstantTimeCompare
-P1 — Reliability (Do Before GA)
-#	Item	Effort	Dependency
-5	Context propagation in posture queue	1 day	internal/posture/queue.go
-6	OIDC discovery startup timeout	0.5 day	pkg/identity/oidc.go
-7	Persistent Partner DID store	2 days	internal/gateway/admin_routes.go, needs PostgreSQL/Redis backend
-8	Dead-letter table for posture emitter	1 day	internal/posture/
-9	Helm resource requests/limits	0.5 day	k8s/helm/euno/values.yaml
+P1 — Reliability (Do Before GA) ✅ COMPLETED
+#	Item	Effort	Dependency	Status
+5	Context propagation in posture queue	1 day	internal/posture/queue.go	✅ Done — Queue interface accepts context.Context; early-return on ctx.Err()
+6	OIDC discovery startup timeout	0.5 day	pkg/identity/oidc.go	✅ Done — 10s timeout via context.WithTimeout
+7	Persistent Partner DID store	2 days	internal/gateway/admin_routes.go, needs PostgreSQL/Redis backend	✅ Done — RedisPartnerDIDStore in internal/gateway/partner_did_redis.go
+8	Dead-letter table for posture emitter	1 day	internal/posture/	✅ Done — posture_dead_letter table, DeadLetter/ListDeadLetters/DeadLetterDepth on Queue interface, /api/v1/dead-letters endpoint
+9	Helm resource requests/limits	0.5 day	k8s/helm/euno/values.yaml	✅ Done — resource blocks for dbTokenService, storageGrantService, postureEmitter
 P2 — Completeness (Do Before Cloud Deployment)
 #	Item	Effort	Dependency
 10	Real AWS cloud adapters (RDS + S3)	3 days	P0 #2

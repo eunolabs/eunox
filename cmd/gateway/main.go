@@ -65,6 +65,8 @@ func run() error {
 	logger.Info("starting gateway",
 		slog.Int("port", cfg.Port),
 		slog.Int("adminPort", cfg.AdminPort),
+		slog.String("commit", commit),
+		slog.String("date", date),
 		slog.String("env", string(cfg.NodeEnv)),
 	)
 

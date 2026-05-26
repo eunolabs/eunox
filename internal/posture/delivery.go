@@ -130,7 +130,7 @@ func (w *DeliveryWorker) pollLoop() {
 }
 
 func (w *DeliveryWorker) tick() {
-	events, err := w.queue.Peek(w.config.BatchSize)
+	events, err := w.queue.Peek(context.Background(), w.config.BatchSize)
 	if err != nil {
 		if w.logger != nil {
 			w.logger.Error("delivery worker: peek failed", slog.String("error", err.Error()))
@@ -176,7 +176,7 @@ func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 	if deliveryErr != nil {
 		// Nack with exponential backoff.
 		nextAttempt := w.computeNextAttempt(event.Attempts)
-		if err := w.queue.Nack(event.ID, nextAttempt, deliveryErr.Error()); err != nil && w.logger != nil {
+		if err := w.queue.Nack(context.Background(), event.ID, nextAttempt, deliveryErr.Error()); err != nil && w.logger != nil {
 			w.logger.Error("delivery worker: nack failed",
 				slog.Int64("eventID", event.ID),
 				slog.String("error", err.Error()),
@@ -184,7 +184,7 @@ func (w *DeliveryWorker) deliverEvent(event *QueuedEvent) {
 		}
 	} else {
 		// All plugins succeeded: ack.
-		if err := w.queue.Ack(event.ID); err != nil && w.logger != nil {
+		if err := w.queue.Ack(context.Background(), event.ID); err != nil && w.logger != nil {
 			w.logger.Error("delivery worker: ack failed",
 				slog.Int64("eventID", event.ID),
 				slog.String("error", err.Error()),
@@ -226,9 +226,9 @@ func (w *DeliveryWorker) deadLetter(event *QueuedEvent) {
 	if w.metrics != nil {
 		w.metrics.OnDeadLettered(event.Type)
 	}
-	// Remove from active queue; in production, this would move to a dead-letter table.
-	if err := w.queue.Ack(event.ID); err != nil && w.logger != nil {
-		w.logger.Error("delivery worker: dead-letter ack failed",
+	// Move to dead-letter table for operator inspection and replay.
+	if err := w.queue.DeadLetter(context.Background(), event); err != nil && w.logger != nil {
+		w.logger.Error("delivery worker: dead-letter failed",
 			slog.Int64("eventID", event.ID),
 			slog.String("error", err.Error()),
 		)

@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS posture_queue (
 	last_error     TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_posture_queue_next_attempt ON posture_queue(next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS posture_dead_letter (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	original_id    INTEGER NOT NULL,
+	event_type     TEXT    NOT NULL,
+	payload        BLOB   NOT NULL,
+	inserted_at    INTEGER NOT NULL,
+	attempts       INTEGER NOT NULL,
+	last_error     TEXT    NOT NULL DEFAULT '',
+	dead_lettered_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_letter(dead_lettered_at);
 `
 
 // SQLiteQueue is a durable event queue backed by SQLite in WAL mode.
@@ -71,12 +83,16 @@ func NewSQLiteQueue(path string) (*SQLiteQueue, error) {
 }
 
 // Push enqueues a new event. Returns the assigned event ID.
-func (q *SQLiteQueue) Push(eventType EventType, payload []byte) (int64, error) {
+func (q *SQLiteQueue) Push(ctx context.Context, eventType EventType, payload []byte) (int64, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: push: %w", err)
+	}
+
 	nowMs := time.Now().UnixMilli()
-	result, err := q.db.ExecContext(context.Background(),
+	result, err := q.db.ExecContext(ctx,
 		`INSERT INTO posture_queue (event_type, payload, inserted_at, next_attempt_at) VALUES (?, ?, ?, ?)`,
 		string(eventType), payload, nowMs, nowMs,
 	)
@@ -93,12 +109,16 @@ func (q *SQLiteQueue) Push(eventType EventType, payload []byte) (int64, error) {
 }
 
 // Peek returns up to limit events that are ready for delivery (next_attempt_at <= now).
-func (q *SQLiteQueue) Peek(limit int) ([]QueuedEvent, error) {
+func (q *SQLiteQueue) Peek(ctx context.Context, limit int) ([]QueuedEvent, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("posture queue: peek: %w", err)
+	}
+
 	nowMs := time.Now().UnixMilli()
-	rows, err := q.db.QueryContext(context.Background(),
+	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, event_type, payload, inserted_at, attempts, next_attempt_at, last_error
 		 FROM posture_queue
 		 WHERE next_attempt_at <= ?
@@ -126,11 +146,15 @@ func (q *SQLiteQueue) Peek(limit int) ([]QueuedEvent, error) {
 }
 
 // Ack removes a successfully delivered event from the queue.
-func (q *SQLiteQueue) Ack(id int64) error {
+func (q *SQLiteQueue) Ack(ctx context.Context, id int64) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	_, err := q.db.ExecContext(context.Background(), `DELETE FROM posture_queue WHERE id = ?`, id)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: ack: %w", err)
+	}
+
+	_, err := q.db.ExecContext(ctx, `DELETE FROM posture_queue WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("posture queue: ack: %w", err)
 	}
@@ -138,11 +162,15 @@ func (q *SQLiteQueue) Ack(id int64) error {
 }
 
 // Nack reschedules a failed event for later retry.
-func (q *SQLiteQueue) Nack(id, nextAttemptAt int64, errMsg string) error {
+func (q *SQLiteQueue) Nack(ctx context.Context, id, nextAttemptAt int64, errMsg string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	_, err := q.db.ExecContext(context.Background(),
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: nack: %w", err)
+	}
+
+	_, err := q.db.ExecContext(ctx,
 		`UPDATE posture_queue SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE id = ?`,
 		nextAttemptAt, errMsg, id,
 	)
@@ -153,14 +181,112 @@ func (q *SQLiteQueue) Nack(id, nextAttemptAt int64, errMsg string) error {
 }
 
 // Depth returns the total number of events in the queue.
-func (q *SQLiteQueue) Depth() (int64, error) {
+func (q *SQLiteQueue) Depth(ctx context.Context) (int64, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: depth: %w", err)
+	}
+
 	var count int64
-	err := q.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM posture_queue`).Scan(&count)
+	err := q.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM posture_queue`).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("posture queue: depth: %w", err)
+	}
+	return count, nil
+}
+
+// DeadLetter moves an event from the active queue to the dead-letter table.
+func (q *SQLiteQueue) DeadLetter(ctx context.Context, event *QueuedEvent) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: dead-letter: %w", err)
+	}
+
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("posture queue: dead-letter begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	nowMs := time.Now().UnixMilli()
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO posture_dead_letter (original_id, event_type, payload, inserted_at, attempts, last_error, dead_lettered_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.ID, string(event.Type), event.Payload, event.InsertedAt, event.Attempts, event.LastError, nowMs,
+	)
+	if err != nil {
+		return fmt.Errorf("posture queue: dead-letter insert: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM posture_queue WHERE id = ?`, event.ID)
+	if err != nil {
+		return fmt.Errorf("posture queue: dead-letter delete: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("posture queue: dead-letter rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("posture queue: dead-letter: event %d not found in queue", event.ID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("posture queue: dead-letter commit: %w", err)
+	}
+	return nil
+}
+
+// ListDeadLetters returns up to limit dead-lettered events, ordered by dead-letter time descending.
+func (q *SQLiteQueue) ListDeadLetters(ctx context.Context, limit int) ([]DeadLetteredEvent, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
+	}
+
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT id, original_id, event_type, payload, inserted_at, attempts, last_error, dead_lettered_at
+		 FROM posture_dead_letter
+		 ORDER BY dead_lettered_at DESC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []DeadLetteredEvent
+	for rows.Next() {
+		var e DeadLetteredEvent
+		var eventType string
+		if err := rows.Scan(&e.ID, &e.OriginalID, &eventType, &e.Payload, &e.InsertedAt, &e.Attempts, &e.LastError, &e.DeadLetteredAt); err != nil {
+			return nil, fmt.Errorf("posture queue: scan dead letter row: %w", err)
+		}
+		e.Type = EventType(eventType)
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// DeadLetterDepth returns the total number of dead-lettered events.
+func (q *SQLiteQueue) DeadLetterDepth(ctx context.Context) (int64, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
+	}
+
+	var count int64
+	err := q.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM posture_dead_letter`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
 	}
 	return count, nil
 }

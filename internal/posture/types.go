@@ -75,17 +75,43 @@ type Plugin interface {
 // Queue is the interface for the durable event queue.
 type Queue interface {
 	// Push enqueues a new event. Returns the assigned event ID.
-	Push(eventType EventType, payload []byte) (int64, error)
+	Push(ctx context.Context, eventType EventType, payload []byte) (int64, error)
 	// Peek returns up to limit events that are ready for delivery.
-	Peek(limit int) ([]QueuedEvent, error)
+	Peek(ctx context.Context, limit int) ([]QueuedEvent, error)
 	// Ack removes a successfully delivered event from the queue.
-	Ack(id int64) error
+	Ack(ctx context.Context, id int64) error
 	// Nack reschedules a failed event for later retry.
-	Nack(id, nextAttemptAt int64, errMsg string) error
+	Nack(ctx context.Context, id, nextAttemptAt int64, errMsg string) error
+	// DeadLetter moves an event from the active queue to the dead-letter table.
+	DeadLetter(ctx context.Context, event *QueuedEvent) error
+	// ListDeadLetters returns up to limit dead-lettered events, ordered by dead-letter time.
+	ListDeadLetters(ctx context.Context, limit int) ([]DeadLetteredEvent, error)
+	// DeadLetterDepth returns the total number of dead-lettered events.
+	DeadLetterDepth(ctx context.Context) (int64, error)
 	// Depth returns the total number of events in the queue.
-	Depth() (int64, error)
+	Depth(ctx context.Context) (int64, error)
 	// Close releases queue resources.
 	Close() error
+}
+
+// DeadLetteredEvent represents an event that exhausted delivery retries.
+type DeadLetteredEvent struct {
+	// ID is the dead-letter table primary key.
+	ID int64 `json:"id"`
+	// OriginalID is the original queue entry identifier.
+	OriginalID int64 `json:"originalId"`
+	// Type is the event type (observed or revoked).
+	Type EventType `json:"type"`
+	// Payload is the JSON-encoded event data.
+	Payload []byte `json:"payload"`
+	// InsertedAt is when the event was originally enqueued (Unix milliseconds).
+	InsertedAt int64 `json:"insertedAt"`
+	// Attempts is the number of delivery attempts made.
+	Attempts int `json:"attempts"`
+	// LastError is the error message from the most recent failed attempt.
+	LastError string `json:"lastError,omitempty"`
+	// DeadLetteredAt is when the event was moved to the DLQ (Unix milliseconds).
+	DeadLetteredAt int64 `json:"deadLetteredAt"`
 }
 
 // RecordStore manages the in-memory inventory of observed agents.
