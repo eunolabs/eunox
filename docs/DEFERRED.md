@@ -2,40 +2,41 @@
 
 This document tracks intentionally deferred functionality that will be addressed in future stages.
 
-## KMS Integrations (Stage 3)
+## ~~KMS Integrations (Stage 3)~~ ✅ Completed
 
-**Location:** `pkg/crypto/kms_stub.go`
+**Location:** `pkg/crypto/kms_aws.go`, `pkg/crypto/kms_azure.go`, `pkg/crypto/kms_gcp.go`
 
-The platform supports pluggable KMS (Key Management Service) backends for production key material. Currently, stub implementations exist for:
+Production KMS implementations are now available for all three cloud providers:
 
-- **AWS KMS** (`NewAWSKMSSigner`)
-- **Azure Key Vault** (`NewAzureKeyVaultSigner`)
-- **GCP Cloud KMS** (`NewGCPCloudKMSSigner`)
+- **AWS KMS** (`NewRealAWSKMSSigner`) — delegates signing to AWS KMS via `AWSKMSClient` interface
+- **Azure Key Vault** (`NewRealAzureKeyVaultSigner`) — delegates signing to Azure Key Vault via `AzureKeyVaultClient` interface
+- **GCP Cloud KMS** (`NewRealGCPCloudKMSSigner`) — delegates signing to GCP Cloud KMS via `GCPCloudKMSClient` interface
 
-Each stub satisfies the `crypto.Signer` interface and returns `ErrKMSNotImplemented` directing implementers to the correct SDK dependency. These stubs are excluded from lint analysis (`.golangci.yml`).
+Each implementation:
+- Satisfies the `crypto.Signer` interface
+- Never holds private key material (all signing is remote)
+- Uses provider/client interfaces for dependency injection (no direct SDK coupling)
+- Supports RSA (PKCS#1 v1.5, PSS) and ECDSA (P-256, P-384, P-521) algorithms
+- Converts ECDSA signatures between DER/ASN.1 and JOSE R||S formats as needed
+- Has comprehensive unit tests with mock clients (`pkg/crypto/kms_test.go`)
 
-**Prerequisites to enable:**
-- Add cloud SDK dependencies to `go.mod`
-- Implement real key fetching and signing operations
-- Add integration tests gated behind `//go:build integration`
-- See `docs/OPEN_QUESTIONS.md` §3 for key rotation design decisions
+The legacy stub implementations (`pkg/crypto/kms_stub.go`) remain available for environments where KMS is not yet configured.
 
-## Cloud Database Adapters (Stage 2)
+**Remaining work (future):**
+- SDK-specific client implementations wrapping `aws-sdk-go-v2/service/kms`, `azure-sdk-for-go/sdk/security/keyvault`, and `cloud.google.com/go/kms`
+- Integration tests gated behind `//go:build integration` using real cloud KMS endpoints
+- Automated key rotation via `RotatingKeyStore` with KMS-backed signers
 
-**Location:** `internal/dbtokensvc/app.go`, `internal/storagegrantsvc/app.go`
+## ~~Cloud Database Adapters (Stage 2)~~ ✅ Completed
 
-The adapter pattern uses `IsStub() bool` to distinguish real adapters from placeholder stubs:
+**Location:** `internal/dbtokensvc/adapter_aws.go`, `adapter_azure.go`, `adapter_gcp.go`; `internal/storagegrantsvc/adapter_aws.go`, `adapter_azure.go`, `adapter_gcp.go`
 
-- `dbtokensvc`: aws-rds, azure-sql, gcp-cloudsql stubs
-- `storagegrantsvc`: S3, GCS, Azure Blob Storage stubs
+Production cloud database and storage adapters are fully implemented:
 
-In production mode (`NODE_ENV=production`), the services reject stub adapters at startup.
+- `dbtokensvc`: RealAWSRDSAdapter (SigV4 presigned URLs), RealAzureSQLAdapter (Azure AD tokens), RealGCPCloudSQLAdapter (OAuth2 tokens)
+- `storagegrantsvc`: RealAWSS3Adapter (SigV4 presigned URLs), RealAzureBlobAdapter (user-delegation SAS tokens), RealGCPGCSAdapter (V4 signed URLs)
 
-**Prerequisites to enable:**
-- Add cloud SDK dependencies per adapter
-- Implement connection pooling and health checks
-- Add retry logic and circuit breakers
-- Gate behind `//go:build integration` for CI
+Each adapter uses provider interfaces for credentials (dependency injection, no direct SDK coupling).
 
 ## Testcontainers Integration Tests (Stage 2)
 
