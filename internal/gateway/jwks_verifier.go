@@ -20,8 +20,8 @@ type JWKSVerifier struct {
 
 // JWKSVerifierConfig configures the JWKSVerifier.
 type JWKSVerifierConfig struct {
-	// JWKSURI is the endpoint serving the issuer's JSON Web Key Set.
-	JWKSURI string
+	// JWKSURL is the endpoint serving the issuer's JSON Web Key Set.
+	JWKSURL string
 	// Audience is the expected audience in the token (optional).
 	Audience string
 	// RequireKID requires the JWT header to contain a kid for key selection.
@@ -38,7 +38,7 @@ type JWKSVerifierConfig struct {
 func NewJWKSVerifier(cfg JWKSVerifierConfig) *JWKSVerifier {
 	return &JWKSVerifier{
 		client: capability.NewJWKSClient(capability.JWKSClientConfig{
-			JWKSURI:    cfg.JWKSURI,
+			JWKSURL:    cfg.JWKSURL,
 			Audience:   cfg.Audience,
 			RequireKID: cfg.RequireKID,
 			CacheTTL:   cfg.CacheTTL,

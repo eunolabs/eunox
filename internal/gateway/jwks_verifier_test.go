@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestJWKSVerifier_VerifyToken_Success(t *testing.T) {
 	key, kid, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 1 * time.Second,
 	})
 
@@ -101,7 +102,7 @@ func TestJWKSVerifier_VerifyToken_ExpiredToken(t *testing.T) {
 	key, kid, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 1 * time.Second,
 	})
 
@@ -132,7 +133,7 @@ func TestJWKSVerifier_VerifyToken_WrongKey(t *testing.T) {
 	_, _, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 1 * time.Second,
 	})
 
@@ -158,7 +159,7 @@ func TestJWKSVerifier_VerifyToken_RequireKID(t *testing.T) {
 	key, _, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:    srv.URL,
+		JWKSURL:    srv.URL,
 		RequireKID: true,
 		CacheTTL:   1 * time.Second,
 	})
@@ -184,7 +185,7 @@ func TestJWKSVerifier_VerifyToken_AudienceCheck(t *testing.T) {
 	key, kid, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		Audience: "expected-audience",
 		CacheTTL: 1 * time.Second,
 	})
@@ -208,6 +209,11 @@ func TestJWKSVerifier_VerifyToken_AudienceCheck(t *testing.T) {
 func TestJWKSVerifier_VerifyToken_JWKSUnavailable(t *testing.T) {
 	t.Parallel()
 
+	// Generate a key and sign a valid token so the verifier reaches the JWKS fetch.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	kid := "unavail-key"
+
 	// Point to a server that 500s.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -215,11 +221,20 @@ func TestJWKSVerifier_VerifyToken_JWKSUnavailable(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 1 * time.Second,
 	})
 
-	_, err := verifier.VerifyToken(context.Background(), "invalid.token.here")
+	now := time.Now()
+	claims := map[string]interface{}{
+		"iss": "https://issuer.example.com",
+		"sub": "user-123",
+		"iat": now.Unix(),
+		"exp": now.Add(1 * time.Hour).Unix(),
+	}
+	token := signCapabilityToken(t, key, kid, claims)
+
+	_, err = verifier.VerifyToken(context.Background(), token)
 	require.Error(t, err)
 }
 
@@ -238,16 +253,16 @@ func TestJWKSVerifier_VerifyToken_CachesKeys(t *testing.T) {
 	}
 	jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{jwk}}
 
-	callCount := 0
+	callCount := int32(0)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		callCount++
+		atomic.AddInt32(&callCount, 1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(jwks)
 	}))
 	t.Cleanup(srv.Close)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 10 * time.Minute, // long cache
 	})
 
@@ -269,7 +284,7 @@ func TestJWKSVerifier_VerifyToken_CachesKeys(t *testing.T) {
 	_, err = verifier.VerifyToken(context.Background(), token)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, callCount, "JWKS should be fetched only once due to caching")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&callCount), "JWKS should be fetched only once due to caching")
 }
 
 func TestJWKSVerifier_VerifyToken_InvalidToken(t *testing.T) {
@@ -277,7 +292,7 @@ func TestJWKSVerifier_VerifyToken_InvalidToken(t *testing.T) {
 	_, _, srv := newTestJWKS(t)
 
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-		JWKSURI:  srv.URL,
+		JWKSURL:  srv.URL,
 		CacheTTL: 1 * time.Second,
 	})
 

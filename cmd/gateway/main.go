@@ -93,9 +93,10 @@ func run() error {
 	if cfg.IssuerJWKSURL != "" {
 		logger.Info("configuring JWKS-based JWT verification", slog.String("url", cfg.IssuerJWKSURL))
 		jwtVerifier = gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
-			JWKSURI:    cfg.IssuerJWKSURL,
+			JWKSURL:    cfg.IssuerJWKSURL,
 			Audience:   cfg.GatewayAudience,
 			RequireKID: cfg.RequireKID,
+			CacheTTL:   time.Duration(cfg.JWKSCacheTTL) * time.Second,
 			Logger:     logger,
 		})
 	} else {

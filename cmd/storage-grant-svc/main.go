@@ -142,7 +142,7 @@ func buildVerifier() (storagegrantsvc.TokenVerifier, error) {
 		return nil, errors.New("ISSUER_JWKS_URL must be set")
 	}
 	return storagegrantsvc.NewJWKSTokenVerifier(storagegrantsvc.JWKSTokenVerifierConfig{
-		JWKSURI:  jwksURL,
+		JWKSURL:  jwksURL,
 		Audience: os.Getenv("ISSUER_JWT_AUDIENCE"),
 	}), nil
 }

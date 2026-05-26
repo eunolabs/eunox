@@ -151,7 +151,7 @@ func buildVerifier() (dbtokensvc.TokenVerifier, error) {
 		return nil, errors.New("ISSUER_JWKS_URL must be set")
 	}
 	return dbtokensvc.NewJWKSTokenVerifier(dbtokensvc.JWKSTokenVerifierConfig{
-		JWKSURI:  jwksURL,
+		JWKSURL:  jwksURL,
 		Audience: os.Getenv("ISSUER_JWT_AUDIENCE"),
 	}), nil
 }

@@ -19,8 +19,8 @@ import (
 
 // JWKSClientConfig configures a JWKS-based token verifier.
 type JWKSClientConfig struct {
-	// JWKSURI is the endpoint serving the issuer's JSON Web Key Set.
-	JWKSURI string
+	// JWKSURL is the endpoint serving the issuer's JSON Web Key Set.
+	JWKSURL string
 	// Audience is the expected audience in the token (optional).
 	Audience string
 	// RequireKID requires the JWT header to contain a kid for key selection.
@@ -59,7 +59,7 @@ func NewJWKSClient(cfg JWKSClientConfig) *JWKSClient {
 		cfg.Logger = slog.Default()
 	}
 	return &JWKSClient{
-		jwksURI:    cfg.JWKSURI,
+		jwksURI:    cfg.JWKSURL,
 		audience:   cfg.Audience,
 		requireKID: cfg.RequireKID,
 		client:     cfg.Client,
@@ -120,13 +120,23 @@ func (c *JWKSClient) VerifyToken(ctx context.Context, tokenStr string) (*TokenPa
 			continue
 		}
 
+		if claims.IssuedAt == nil {
+			return nil, fmt.Errorf("validate claims: token missing iat claim")
+		}
+		if claims.Expiry == nil {
+			return nil, fmt.Errorf("validate claims: token missing exp claim")
+		}
+		if claims.Subject == "" {
+			return nil, fmt.Errorf("validate claims: token missing sub claim")
+		}
+
 		expected := jwt.Expected{
 			Time: time.Now(),
 		}
 		if c.audience != "" {
 			expected.AnyAudience = []string{c.audience}
 		}
-		if err := claims.Validate(expected); err != nil {
+		if err := claims.ValidateWithLeeway(expected, time.Minute); err != nil {
 			return nil, fmt.Errorf("validate claims: %w", err)
 		}
 

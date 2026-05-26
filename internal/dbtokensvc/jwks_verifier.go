@@ -22,8 +22,8 @@ type JWKSTokenVerifier struct {
 
 // JWKSTokenVerifierConfig configures the JWKS-based token verifier.
 type JWKSTokenVerifierConfig struct {
-	// JWKSURI is the endpoint serving the issuer's JSON Web Key Set.
-	JWKSURI string
+	// JWKSURL is the endpoint serving the issuer's JSON Web Key Set.
+	JWKSURL string
 	// Audience is the expected audience in the token (optional).
 	Audience string
 	// CacheTTL is how long JWKS responses are cached. Default: 5 minutes.
@@ -38,7 +38,7 @@ type JWKSTokenVerifierConfig struct {
 func NewJWKSTokenVerifier(cfg JWKSTokenVerifierConfig) *JWKSTokenVerifier {
 	return &JWKSTokenVerifier{
 		client: capability.NewJWKSClient(capability.JWKSClientConfig{
-			JWKSURI:  cfg.JWKSURI,
+			JWKSURL:  cfg.JWKSURL,
 			Audience: cfg.Audience,
 			CacheTTL: cfg.CacheTTL,
 			Client:   cfg.Client,

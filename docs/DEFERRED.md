@@ -2,7 +2,7 @@
 
 This document tracks intentionally deferred functionality that will be addressed in future stages.
 
-## KMS Integrations (Stage 2)
+## KMS Integrations (Stage 3)
 
 **Location:** `pkg/crypto/kms_stub.go`
 
@@ -12,7 +12,7 @@ The platform supports pluggable KMS (Key Management Service) backends for produc
 - **Azure Key Vault** (`NewAzureKeyVaultSigner`)
 - **GCP Cloud KMS** (`NewGCPCloudKMSSigner`)
 
-Each stub satisfies the `crypto.Signer` interface and panics with a clear message directing implementers to the correct SDK dependency. These stubs are excluded from lint analysis (`.golangci.yml`).
+Each stub satisfies the `crypto.Signer` interface and returns `ErrKMSNotImplemented` directing implementers to the correct SDK dependency. These stubs are excluded from lint analysis (`.golangci.yml`).
 
 **Prerequisites to enable:**
 - Add cloud SDK dependencies to `go.mod`
@@ -22,11 +22,11 @@ Each stub satisfies the `crypto.Signer` interface and panics with a clear messag
 
 ## Cloud Database Adapters (Stage 2)
 
-**Location:** `internal/dbtokensvc/adapter.go`, `internal/storagegrantsvc/adapter.go`
+**Location:** `internal/dbtokensvc/app.go`, `internal/storagegrantsvc/app.go`
 
 The adapter pattern uses `IsStub() bool` to distinguish real adapters from placeholder stubs:
 
-- `dbtokensvc`: Cloud Spanner, DynamoDB, CockroachDB stubs
+- `dbtokensvc`: aws-rds, azure-sql, gcp-cloudsql stubs
 - `storagegrantsvc`: S3, GCS, Azure Blob Storage stubs
 
 In production mode (`NODE_ENV=production`), the services reject stub adapters at startup.
@@ -41,7 +41,7 @@ In production mode (`NODE_ENV=production`), the services reject stub adapters at
 
 **Location:** `pkg/testutil/containers.go`
 
-Scaffolding for `testcontainers-go` helpers (PostgreSQL, Redis) is prepared but commented out, gated behind `//go:build integration`.
+Scaffolding for `testcontainers-go` helpers (PostgreSQL, Redis) is not yet implemented, gated behind `//go:build integration`.
 
 **Prerequisites to enable:**
 - Add `testcontainers-go` dependency
