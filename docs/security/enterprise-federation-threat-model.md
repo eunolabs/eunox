@@ -152,8 +152,8 @@ The blast radius is bounded to:
 
 **Question:** _A `did:web` document is served over HTTPS. What
 happens if the partner's TLS certificate is MiTM'd or the domain is
-hijacked? Document the pin-attestation workflow (`verifyPinAttestation`
-in `partner-did-registry.ts`) and mandate its use for production partner
+hijacked? Document the pin-attestation workflow (`verifyPinAttestation`)
+and mandate its use for production partner
 registrations._
 
 ### 2.1 Threat model
@@ -229,7 +229,7 @@ At approval time, the gateway:
    `pinAttestation`, `verifyPinAttestation()` is called first —
    a present-but-invalid attestation causes a fail-closed rejection
    (treated as a tampering signal):
-   ```typescript
+   ```
    // entry has pin AND invalid attestation → fail closed
    if (attestation && !verifyPinAttestation(attestation, secret)) {
      throw new CapabilityError(ErrorCode.AUTHENTICATION_FAILED, ...);
@@ -569,7 +569,7 @@ unless the operator explicitly calls the endpoint)._
 The `GET /api/v1/audit/export` endpoint is protected exclusively by the
 gateway's admin API key (`GATEWAY_ADMIN_API_KEY`), using the same
 timing-safe constant-time comparison (`crypto.timingSafeEqual`) already
-used by all other admin routes in `admin-api.ts`. The authorization
+used by all other admin routes in the gateway admin handlers. The authorization
 requirements are:
 
 - **Header:** `X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>`
@@ -708,7 +708,7 @@ any DB schema change.
 The `db-token-service` derives the credential TTL from the capability
 token's remaining lifetime:
 
-```typescript
+```
 const capabilityTtlSeconds = Math.max(0, payload.exp - now);
 ```
 
@@ -756,8 +756,7 @@ threat model must not imply that the in-process guard is a security boundary._
 **This section is explicit and non-negotiable. It must not be softened in any
 documentation, marketing material, or customer-facing description.**
 
-The `createAgtGuard()` function in
-`internal/agent-runtime/src/agt-guard.ts` implements an
+The `createAgtGuard()` function implements an
 **in-process policy check** that evaluates tool calls against an
 `AgentCapabilityManifest` before forwarding them to the outer gateway.
 
@@ -857,7 +856,7 @@ available. They must not be used for:
 For multi-tenant cloud deployments, the only supported signing providers
 are `azure-keyvault`, `aws-kms`, and `gcp-cloudkms` (per the
 `capability-issuer` `SIGNING_PROVIDER` config in
-`pkg//src/config/schema.ts`). These providers use
+`pkg/config/issuer.go`). These providers use
 non-exportable HSM/KMS keys with per-workload-identity access control.
 File-based keys have no equivalent access isolation guarantee.
 
@@ -979,10 +978,10 @@ When rotating the signing key in an air-gapped deployment:
 ## References
 
 - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — architecture overview
-- [`internal/gateway/src/partner-did-registry.ts`](../../internal/gateway/src/partner-did-registry.ts) — `PartnerDidRegistry`, `PinAttestation`, `verifyPinAttestation`, `createPinAttestation`
-- [`internal/gateway/src/partner-issuer-resolver.ts`](../../internal/gateway/src/partner-issuer-resolver.ts) — `PartnerIssuerResolver`, circuit-breaker integration, cache TTLs
-- [`internal/db-token-service/src/app.ts`](../../internal/db-token-service/src/app.ts) — DB credential issuance, TTL derivation, rate limits
+- [`internal/gateway/partner_did_redis.go`](../../internal/gateway/partner_did_redis.go) — partner DID pin storage and retrieval
+- [`internal/gateway/partner_verifier.go`](../../internal/gateway/partner_verifier.go) — partner issuer verification and cache behavior
+- [`internal/dbtokensvc/app.go`](../../internal/dbtokensvc/app.go) — DB credential issuance and request validation
 - [`docs/runbooks/ledger-hmac-rotation.md`](../runbooks/ledger-hmac-rotation.md) — HMAC secret rotation strategies
 - [`docs/security/issuer-identity-threat-model.md`](./issuer-identity-threat-model.md) — issuer identity threat model
-- [`pkg//src/agt-guard.ts`](../../pkg//src/agt-guard.ts) — AGT guard types
-- [`pkg//src/config/schema.ts`](../../pkg//src/config/schema.ts) — `IssuerConfigSchema`, `GatewayConfigSchema`
+- [`internal/agentruntime/tool_invoker.go`](../../internal/agentruntime/tool_invoker.go) — in-process tool invocation and guard points
+- [`pkg/config/issuer.go`](../../pkg/config/issuer.go) and [`pkg/config/gateway.go`](../../pkg/config/gateway.go) — issuer and gateway config structs

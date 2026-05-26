@@ -882,8 +882,9 @@ The following rows supplement the base feature matrix in §2.
 ### 11.2 Issuer configuration reference
 
 The issuer is configured entirely via environment variables validated on startup
-by the same `loadConfigOrExit` mechanism used by the gateway. The full schema
-is in `pkg//src/config/schema.ts` (`IssuerConfigSchema`).
+by the same config-loading mechanism used by the gateway. The issuer config
+struct and validation rules are defined in `pkg/config/issuer.go` and
+`pkg/config/validation.go`.
 The table below covers the variables a self-host operator must review before
 going to production.
 
@@ -1834,7 +1835,7 @@ layer only — the outer gateway remains the sole hard enforcement boundary.
 
 #### 12.8.1 Quick-start wiring
 
-```typescript
+```
 import { createAgtGuard, type AgtGuardOptions } from "@eunox/agent-runtime";
 
 const guard = createAgtGuard({
@@ -1957,8 +1958,7 @@ helm install eunox-issuer ./k8s/helm/issuer \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
 ```
 
-Values schemas are auto-generated from `pkg//src/config/schema.ts`.
-Regenerate with `npm run gen:helm-schema` from the repository root.
+Values schemas are checked in under `k8s/helm/*/values.schema.json`.
 
 #### 12.10.2 Minimum viable air-gapped setup
 
@@ -2284,7 +2284,7 @@ carry the following values:
 | `capabilityManifestHash`     | `SignedAuditEvidence.capabilityId` (token JTI — proxy)     |
 | `runtime`                    | `'unknown'` — not available in enforcement evidence        |
 | `region`                     | `'unknown'` — not available in enforcement evidence        |
-| `firstSeen`, `lastSeen`      | `SignedAuditEvidence.ts`                                   |
+| `firstSeen`, `lastSeen`      | `SignedAuditEvidence.timestamp`                            |
 
 For accurate `runtime`, `region`, and the real `capabilityManifestHash`,
 correlate enforcement records (keyed by `agentId`) with issuance records
