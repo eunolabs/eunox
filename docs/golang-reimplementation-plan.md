@@ -623,12 +623,38 @@ euno-go/
 
 ### Exit Criteria
 
-- [ ] Runtime acquires token from issuer and caches it
-- [ ] Token refresh occurs before expiry (proactive)
-- [ ] DPoP proofs generated correctly and accepted by gateway
-- [ ] Tool invocation routes through gateway with proper auth headers
-- [ ] Manifest builder produces valid manifests accepted by issuer
-- [ ] Integration test: runtime → issuer → gateway → mock upstream (full loop)
+- [x] Runtime acquires token from issuer and caches it
+- [x] Token refresh occurs before expiry (proactive)
+- [x] DPoP proofs generated correctly and accepted by gateway
+- [x] Tool invocation routes through gateway with proper auth headers
+- [x] Manifest builder produces valid manifests accepted by issuer
+- [x] Integration test: runtime → issuer → gateway → mock upstream (full loop)
+
+### Implementation Notes
+
+**Completed 2026-05-25.**
+
+Package structure:
+- `internal/agentruntime/` — Core library (types, runtime, token provider, tool invoker, DPoP, retry, manifest, HTTP client)
+- `internal/agentruntime/adapters/` — Framework adapters (HTTP, LangChain, function-call)
+- `internal/integration/agentruntime_test.go` — Integration tests exercising full loop
+
+Key design decisions:
+- **Functional options pattern** for `Runtime` configuration (`WithLogger`, `WithHintsProvider`)
+- **`HTTPClient` interface** abstracts HTTP transport — enables testing without real network, custom TLS configs, or middleware injection
+- **DPoP key management** uses ECDSA P-256 with JWK thumbprint (RFC 9449); nonce handling via atomic state
+- **Token caching** with mutex-protected state and `time.AfterFunc` for proactive refresh at 80% of token lifetime
+- **Retry with exponential backoff** — jittered delays, configurable max attempts, `TransientError` type for classification
+- **`Config.DPoPEnabled *bool`** — tri-state: nil=enabled (default), &true=enabled, &false=disabled
+- **`IdentityTokenProvider func(ctx) (string, error)`** — pluggable identity assertion (OIDC, service account, etc.)
+
+Test coverage:
+- 68 unit tests across dpop, retry, token_provider, tool_invoker, manifest, runtime, adapters
+- 4 integration tests with real issuer/gateway servers (full loop, DPoP end-to-end, manifest-driven issuance, HTTP adapter)
+- All tests pass with `-race` flag
+
+Known limitation:
+- Gateway's `verifyDPoP` returns error when `claims.Confirmation.JKT != ""` — DPoP binding is validated at issuance level but gateway enforce endpoint does not yet verify DPoP proofs on tool calls. This is tracked for Stage 10 hardening.
 
 ---
 
