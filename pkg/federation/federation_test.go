@@ -497,6 +497,189 @@ func TestMetrics_NilSafe(_ *testing.T) {
 	m.RecordResolution("web", "success", 0.1)
 }
 
+// --- Resolver + Metrics Integration Tests ---
+
+func TestPartnerIssuerResolver_MetricsWired_Success(t *testing.T) {
+	reg := NewPartnerDIDRegistry()
+	_ = reg.Register("did:web:partner.com", "Partner", "")
+	_ = reg.Approve("did:web:partner.com")
+
+	mockDoc := &did.Document{
+		ID: "did:web:partner.com",
+		VerificationMethod: []did.VerificationMethod{
+			{
+				PublicKeyJwk: &did.JWK{Kty: "OKP", Crv: "Ed25519", X: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"},
+			},
+		},
+	}
+
+	promReg := prometheus.NewRegistry()
+	metrics := NewMetrics(promReg)
+	resolver := &mockDIDResolver{doc: mockDoc}
+
+	pir := NewPartnerIssuerResolver(PartnerIssuerResolverConfig{
+		Registry: reg,
+		Resolver: resolver,
+		Metrics:  metrics,
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold:  3,
+			CooldownDuration:  5 * time.Second,
+			HalfOpenMaxProbes: 1,
+		},
+	})
+
+	_, err := pir.ResolvePublicKeys(context.Background(), "did:web:partner.com")
+	require.NoError(t, err)
+
+	families, err := promReg.Gather()
+	require.NoError(t, err)
+
+	// Should have resolution_total and resolution_duration_seconds and circuit_breaker_state.
+	familyNames := make(map[string]bool)
+	for _, f := range families {
+		familyNames[f.GetName()] = true
+	}
+	assert.True(t, familyNames["euno_partner_did_resolution_total"], "should emit resolution_total")
+	assert.True(t, familyNames["euno_partner_did_resolution_duration_seconds"], "should emit resolution_duration")
+	assert.True(t, familyNames["euno_partner_did_circuit_breaker_state"], "should emit circuit_breaker_state")
+}
+
+func TestPartnerIssuerResolver_MetricsWired_Failure(t *testing.T) {
+	reg := NewPartnerDIDRegistry()
+	_ = reg.Register("did:web:fail.com", "Fail", "")
+	_ = reg.Approve("did:web:fail.com")
+
+	promReg := prometheus.NewRegistry()
+	metrics := NewMetrics(promReg)
+	resolver := &mockDIDResolver{err: errors.New("timeout")}
+
+	pir := NewPartnerIssuerResolver(PartnerIssuerResolverConfig{
+		Registry: reg,
+		Resolver: resolver,
+		Metrics:  metrics,
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold:  3,
+			CooldownDuration:  5 * time.Second,
+			HalfOpenMaxProbes: 1,
+		},
+	})
+
+	_, err := pir.ResolvePublicKeys(context.Background(), "did:web:fail.com")
+	assert.Error(t, err)
+
+	// Verify resolution_total was recorded with "error" outcome.
+	families, err := promReg.Gather()
+	require.NoError(t, err)
+
+	for _, f := range families {
+		if f.GetName() == "euno_partner_did_resolution_total" {
+			require.NotEmpty(t, f.GetMetric())
+			for _, m := range f.GetMetric() {
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "outcome" {
+						assert.Equal(t, "error", lp.GetValue())
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
+	reg := NewPartnerDIDRegistry()
+	_ = reg.Register("did:ion:fail", "ION Fail", "")
+	_ = reg.Approve("did:ion:fail")
+
+	promReg := prometheus.NewRegistry()
+	metrics := NewMetrics(promReg)
+	resolver := &mockDIDResolver{err: errors.New("network error")}
+
+	pir := NewPartnerIssuerResolver(PartnerIssuerResolverConfig{
+		Registry: reg,
+		Resolver: resolver,
+		Metrics:  metrics,
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold:  2,
+			CooldownDuration:  30 * time.Second,
+			HalfOpenMaxProbes: 1,
+		},
+	})
+
+	// Trip the breaker.
+	_, _ = pir.ResolvePublicKeys(context.Background(), "did:ion:fail")
+	_, _ = pir.ResolvePublicKeys(context.Background(), "did:ion:fail")
+
+	// Third call triggers circuit_open outcome.
+	_, err := pir.ResolvePublicKeys(context.Background(), "did:ion:fail")
+	assert.ErrorIs(t, err, ErrCircuitOpen)
+
+	// Verify circuit_open was recorded.
+	families, err := promReg.Gather()
+	require.NoError(t, err)
+
+	hasCircuitOpen := false
+	for _, f := range families {
+		if f.GetName() == "euno_partner_did_resolution_total" {
+			for _, m := range f.GetMetric() {
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "outcome" && lp.GetValue() == "circuit_open" {
+						hasCircuitOpen = true
+					}
+				}
+			}
+		}
+	}
+	assert.True(t, hasCircuitOpen, "should record circuit_open outcome")
+
+	// Verify circuit_breaker_state gauge shows "open" for ion.
+	for _, f := range families {
+		if f.GetName() == "euno_partner_did_circuit_breaker_state" {
+			for _, m := range f.GetMetric() {
+				method := ""
+				state := ""
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "did_method" {
+						method = lp.GetValue()
+					}
+					if lp.GetName() == "state" {
+						state = lp.GetValue()
+					}
+				}
+				if method == "ion" && state == "open" {
+					assert.Equal(t, float64(1), m.GetGauge().GetValue())
+				}
+			}
+		}
+	}
+}
+
+func TestPartnerIssuerResolver_NoMetrics_NoPanic(t *testing.T) {
+	reg := NewPartnerDIDRegistry()
+	_ = reg.Register("did:web:ok.com", "OK", "")
+	_ = reg.Approve("did:web:ok.com")
+
+	resolver := &mockDIDResolver{doc: &did.Document{
+		ID: "did:web:ok.com",
+		VerificationMethod: []did.VerificationMethod{
+			{PublicKeyJwk: &did.JWK{Kty: "OKP", Crv: "Ed25519", X: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}},
+		},
+	}}
+
+	// No metrics configured — should not panic.
+	pir := NewPartnerIssuerResolver(PartnerIssuerResolverConfig{
+		Registry: reg,
+		Resolver: resolver,
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold: 3,
+			CooldownDuration: 5 * time.Second,
+		},
+	})
+
+	keys, err := pir.ResolvePublicKeys(context.Background(), "did:web:ok.com")
+	require.NoError(t, err)
+	assert.Len(t, keys, 1)
+}
+
 // --- Test Helpers ---
 
 type mockDIDResolver struct {
