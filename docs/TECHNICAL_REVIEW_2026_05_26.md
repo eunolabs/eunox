@@ -272,7 +272,7 @@ The `internal/agentruntime/` package manages tool invocation and execution. Ques
 - Is there process-level isolation (seccomp, namespaces) for tool execution?
 - How are tool execution timeouts enforced end-to-end?
 
-**Action:** Document the agent runtime security model, including sandbox boundaries and blast radius containment. Reference `docs/sandboxing.md` if it covers this.
+**Action:** ✅ Documented in [`docs/AGENT_RUNTIME_SECURITY.md`](AGENT_RUNTIME_SECURITY.md) — covers sandbox isolation layers (Kata/gVisor/Firecracker), security controls, tool execution mediation, timeout enforcement, blast radius containment, and threat model.
 
 ---
 
@@ -283,7 +283,7 @@ The `cmd/storage-grant-svc` and `internal/storagegrantsvc` suggest a service tha
 - What prevents grant replay or grant escalation?
 - Is there integration with the audit trail for grant issuance?
 
-**Action:** Document the storage grant lifecycle, trust model, and audit integration.
+**Action:** ✅ Documented in [`docs/STORAGE_GRANT_ARCHITECTURE.md`](STORAGE_GRANT_ARCHITECTURE.md) — covers storage grant lifecycle, trust model, grant scoping (TTL, resource, permission), replay/escalation prevention, and audit integration.
 
 ---
 
@@ -294,7 +294,7 @@ The `cmd/db-token-svc` provides database token management. Questions:
 - What is the rotation/revocation model for database tokens?
 - Is there mutual authentication between the DB token service and consumers?
 
-**Action:** Document the DB token service architecture and its relationship to the minter.
+**Action:** ✅ Documented in [`docs/DB_TOKEN_ARCHITECTURE.md`](DB_TOKEN_ARCHITECTURE.md) — covers DB token architecture, differentiation from capability tokens and Minter API keys, trust chain, policy-based username mapping, mutual authentication, and rotation/revocation model.
 
 ---
 
@@ -305,7 +305,7 @@ The `internal/chaos/` package contains scenario and injector implementations. Qu
 - Are chaos tests run in CI or only on-demand?
 - What is the acceptance criteria for chaos test results before a release?
 
-**Action:** Document chaos testing strategy, coverage matrix, and release gates.
+**Action:** ✅ Documented in [`docs/CHAOS_TESTING_STRATEGY.md`](CHAOS_TESTING_STRATEGY.md) — covers chaos testing framework, failure mode coverage matrix, fault injection points, CI integration, release gates, and acceptance criteria.
 
 ---
 
@@ -316,7 +316,7 @@ The deployment documentation references EKS and GKE. For multi-region deployment
 - How is split-brain prevented for the kill switch (Redis cluster partitions)?
 - What is the expected behavior during a network partition between regions?
 
-**Action:** Document multi-region consistency guarantees and partition tolerance behavior.
+**Action:** ✅ Documented in [`docs/MULTI_REGION_CONSISTENCY.md`](MULTI_REGION_CONSISTENCY.md) — covers consistency model, partition tolerance behavior, kill switch propagation, audit ledger consistency, deployment topologies, and cloud-specific recommendations.
 
 ---
 
@@ -355,13 +355,23 @@ Ordered by priority and dependency:
 
 ### Phase 3: Documentation & Open Questions (Priority: Medium, Effort: 1–2 weeks)
 
-| # | Item | Depends On | Effort | Owner |
-|---|------|-----------|--------|-------|
-| 11 | OQ-1: Agent runtime sandbox documentation | — | 2 days | Security |
-| 12 | OQ-2: Storage grant trust model | — | 1 day | Architect |
-| 13 | OQ-3: DB token service architecture | — | 1 day | Architect |
-| 14 | OQ-4: Chaos testing strategy | — | 2 days | QA |
-| 15 | OQ-5: Multi-region consistency model | — | 3 days | Architect |
+> **Status: ✅ COMPLETED** (2026-05-26)
+
+| # | Item | Depends On | Effort | Status |
+|---|------|-----------|--------|--------|
+| 11 | OQ-1: Agent runtime sandbox documentation | — | 2 days | ✅ Done |
+| 12 | OQ-2: Storage grant trust model | — | 1 day | ✅ Done |
+| 13 | OQ-3: DB token service architecture | — | 1 day | ✅ Done |
+| 14 | OQ-4: Chaos testing strategy | — | 2 days | ✅ Done |
+| 15 | OQ-5: Multi-region consistency model | — | 3 days | ✅ Done |
+
+**Implementation Summary:**
+
+- **OQ-1:** Created `docs/AGENT_RUNTIME_SECURITY.md` documenting the agent runtime security model, sandbox isolation boundaries (Kata/gVisor/Firecracker), blast radius containment, DPoP proof-of-possession, tool execution mediation, timeout enforcement, and threat model.
+- **OQ-2:** Created `docs/STORAGE_GRANT_ARCHITECTURE.md` documenting the storage grant lifecycle, trust model (capability token → cloud-native credential), grant scoping (time-limited, resource-limited), replay prevention, audit integration, and cloud provider details (AWS S3, Azure Blob, GCP GCS).
+- **OQ-3:** Created `docs/DB_TOKEN_ARCHITECTURE.md` documenting the DB token service architecture, differentiation from capability tokens and Minter API keys, trust chain, policy-based username mapping, mutual authentication, rotation/revocation model, and cloud provider integration (AWS RDS, Azure SQL, GCP Cloud SQL).
+- **OQ-4:** Created `docs/CHAOS_TESTING_STRATEGY.md` documenting the chaos testing framework, failure mode coverage matrix (12+ scenarios), fault injection points, CI integration, release gates and acceptance criteria, and recommended future enhancements.
+- **OQ-5:** Created `docs/MULTI_REGION_CONSISTENCY.md` documenting the multi-region consistency model, partition tolerance behavior (fail-closed safety / fail-open best-effort), kill switch propagation (worst-case 30s staleness), audit ledger consistency, deployment topologies (active-passive and active-active), and cloud-specific recommendations.
 
 ---
 
@@ -391,7 +401,7 @@ Ordered by priority and dependency:
 | Test file ratio (files) | 59% |
 | Services (cmd/) | 6 (gateway, issuer, minter, db-token-svc, posture-emitter, storage-grant-svc) |
 | Packages (pkg/) | 15+ |
-| Documentation files | 34+ |
+| Documentation files | 39+ |
 | Migration sets | 2 (audit, minter) |
 | External dependencies | 22 direct |
 | Go version | 1.25.0 |
