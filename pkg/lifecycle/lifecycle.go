@@ -165,12 +165,17 @@ func (m *Manager) Run(ctx context.Context) error {
 	// Wait for shutdown signal or server error.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
 
 	select {
 	case sig := <-sigCh:
 		m.logger.Info("received shutdown signal", slog.String("signal", sig.String()))
 	case err := <-errCh:
 		m.logger.Error("server failed", slog.String("error", err.Error()))
+		shutdownErr := m.shutdown()
+		if shutdownErr != nil {
+			return errors.Join(err, shutdownErr)
+		}
 		return err
 	case <-ctx.Done():
 		m.logger.Info("context cancelled")

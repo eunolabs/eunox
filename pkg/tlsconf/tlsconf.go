@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -96,9 +97,11 @@ type CertReloader struct {
 
 	mu      sync.RWMutex
 	cert    *tls.Certificate
-	modTime time.Time
+	certMod time.Time
+	keyMod  time.Time
 
-	stopCh chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewCertReloader creates a new certificate reloader.
@@ -131,13 +134,20 @@ func (r *CertReloader) GetClientCertificate(_ *tls.CertificateRequestInfo) (*tls
 
 // Start begins periodic certificate reload checks at the given interval.
 func (r *CertReloader) Start(interval time.Duration) {
+	if interval <= 0 {
+		slog.Error("certificate reloader interval must be positive", slog.Duration("interval", interval))
+		return
+	}
+
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				_ = r.reload()
+				if err := r.reload(); err != nil {
+					slog.Error("certificate reload failed", slog.String("error", err.Error()))
+				}
 			case <-r.stopCh:
 				return
 			}
@@ -147,17 +157,24 @@ func (r *CertReloader) Start(interval time.Duration) {
 
 // Stop halts the periodic reload.
 func (r *CertReloader) Stop() {
-	close(r.stopCh)
+	r.stopOnce.Do(func() {
+		close(r.stopCh)
+	})
 }
 
 func (r *CertReloader) reload() error {
-	info, err := os.Stat(r.certFile)
+	certInfo, err := os.Stat(r.certFile)
+	if err != nil {
+		return err
+	}
+
+	keyInfo, err := os.Stat(r.keyFile)
 	if err != nil {
 		return err
 	}
 
 	r.mu.RLock()
-	unchanged := info.ModTime().Equal(r.modTime)
+	unchanged := certInfo.ModTime().Equal(r.certMod) && keyInfo.ModTime().Equal(r.keyMod)
 	r.mu.RUnlock()
 	if unchanged {
 		return nil
@@ -170,7 +187,8 @@ func (r *CertReloader) reload() error {
 
 	r.mu.Lock()
 	r.cert = &cert
-	r.modTime = info.ModTime()
+	r.certMod = certInfo.ModTime()
+	r.keyMod = keyInfo.ModTime()
 	r.mu.Unlock()
 	return nil
 }

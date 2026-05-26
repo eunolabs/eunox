@@ -12,6 +12,8 @@ FROM golang:1.25-alpine AS builder
 
 ARG SERVICE
 ARG VERSION=0.0.0
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 RUN test -n "$SERVICE" || (echo "ERROR: --build-arg SERVICE is required" && exit 1)
 
@@ -28,7 +30,7 @@ RUN go mod download
 COPY . .
 
 # Build the service binary statically (CGO disabled for distroless).
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -buildid=" \
     -o /out/service \

@@ -5,6 +5,7 @@ package lifecycle
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,4 +124,39 @@ func TestManager_MultipleShutdownIdempotent(t *testing.T) {
 	_ = m.shutdown()
 	_ = m.shutdown()
 	assert.Equal(t, 1, counter, "OnStop should only be called once")
+}
+
+func TestManager_RunServerStartFailureTriggersShutdown(t *testing.T) {
+	m := New(WithDrainDelay(0), WithShutdownTimeout(2*time.Second))
+
+	healthyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	healthyAddr := healthyListener.Addr().String()
+	require.NoError(t, healthyListener.Close())
+
+	conflictListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() {
+		_ = conflictListener.Close()
+	}()
+
+	m.AddServer("healthy", &http.Server{
+		Addr:              healthyAddr,
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: time.Second,
+	})
+	m.AddServer("conflict", &http.Server{
+		Addr:              conflictListener.Addr().String(),
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: time.Second,
+	})
+
+	err = m.Run(context.Background())
+	require.Error(t, err)
+
+	select {
+	case <-m.Stopped():
+	case <-time.After(time.Second):
+		t.Fatal("expected manager shutdown to start after server start failure")
+	}
 }

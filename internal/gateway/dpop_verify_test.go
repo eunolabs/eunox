@@ -235,6 +235,8 @@ func TestIsAllowedDPoPAlgorithm(t *testing.T) {
 func TestURLMatchesHTU(t *testing.T) {
 	assert.True(t, urlMatchesHTU("https://example.com/api/v1/enforce", "https://example.com/api/v1/enforce"))
 	assert.True(t, urlMatchesHTU("https://example.com/api/v1/enforce?foo=bar", "https://example.com/api/v1/enforce"))
+	assert.True(t, urlMatchesHTU("https://EXAMPLE.com:443/api/v1/enforce", "https://example.com/api/v1/enforce"))
+	assert.False(t, urlMatchesHTU("https://example.com/API/v1/enforce", "https://example.com/api/v1/enforce"))
 	assert.False(t, urlMatchesHTU("https://example.com/api/v1/other", "https://example.com/api/v1/enforce"))
 }
 

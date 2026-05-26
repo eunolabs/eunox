@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -190,21 +191,57 @@ func isAllowedDPoPAlgorithm(alg string) bool {
 // urlMatchesHTU checks if the request URL matches the DPoP htu claim.
 // Per RFC 9449, htu contains the HTTP URI without query and fragment.
 func urlMatchesHTU(requestURL, htu string) bool {
-	// Normalize: strip query and fragment from both.
-	reqBase := stripQueryFragment(requestURL)
-	htuBase := stripQueryFragment(htu)
-	return strings.EqualFold(reqBase, htuBase)
+	reqParsed, err := normalizeDPoPURL(requestURL)
+	if err != nil {
+		return false
+	}
+	htuParsed, err := normalizeDPoPURL(htu)
+	if err != nil {
+		return false
+	}
+
+	if !strings.EqualFold(reqParsed.Scheme, htuParsed.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(normalizeHostPort(reqParsed), normalizeHostPort(htuParsed)) {
+		return false
+	}
+
+	return normalizedPath(reqParsed) == normalizedPath(htuParsed)
 }
 
-// stripQueryFragment removes query string and fragment from a URL.
-func stripQueryFragment(u string) string {
-	if idx := strings.IndexByte(u, '?'); idx >= 0 {
-		u = u[:idx]
+func normalizeDPoPURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
 	}
-	if idx := strings.IndexByte(u, '#'); idx >= 0 {
-		u = u[:idx]
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed, nil
+}
+
+func normalizeHostPort(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	switch {
+	case port == "":
+		return host
+	case strings.EqualFold(u.Scheme, "http") && port == "80":
+		return host
+	case strings.EqualFold(u.Scheme, "https") && port == "443":
+		return host
+	default:
+		return host + ":" + port
 	}
-	return u
+}
+
+func normalizedPath(u *url.URL) string {
+	path := u.EscapedPath()
+	if path == "" {
+		return "/"
+	}
+	return path
 }
 
 // verifyDPoPSignature verifies the JWT signature using the embedded JWK.
@@ -214,6 +251,6 @@ func verifyDPoPSignature(signingInput, signatureB64, alg string, jwkRaw json.Raw
 		return fmt.Errorf("signature decode error: %w", err)
 	}
 
-	// Use go-jose to verify the signature.
+	// Use the embedded JWK with the local verifier to validate the signature.
 	return verifyWithJWK([]byte(signingInput), sigBytes, alg, jwkRaw)
 }

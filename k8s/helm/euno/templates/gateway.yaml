@@ -83,10 +83,6 @@ spec:
             initialDelaySeconds: 0
             periodSeconds: 5
             failureThreshold: 2
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sleep", "5"]
           envFrom:
             - configMapRef:
                 name: {{ include "euno.fullname" . }}-gateway-config

@@ -196,6 +196,41 @@ func TestCertReloader_StartStop(t *testing.T) {
 	reloader.Start(50 * time.Millisecond)
 	time.Sleep(100 * time.Millisecond)
 	reloader.Stop()
+	reloader.Stop()
+}
+
+func TestCertReloader_StartWithInvalidInterval(t *testing.T) {
+	ca, caKey, _ := generateTestCA(t)
+	certPEM, keyPEM := generateTestCert(t, ca, caKey, "reloadable.test")
+
+	dir := t.TempDir()
+	certFile := writeTempFile(t, dir, "server.crt", certPEM)
+	keyFile := writeTempFile(t, dir, "server.key", keyPEM)
+
+	reloader, err := NewCertReloader(certFile, keyFile)
+	require.NoError(t, err)
+
+	reloader.Start(0)
+	reloader.Stop()
+}
+
+func TestCertReloader_ReloadWhenOnlyKeyChanges(t *testing.T) {
+	ca, caKey, _ := generateTestCA(t)
+	certPEM, keyPEM := generateTestCert(t, ca, caKey, "reloadable.test")
+	_, rotatedKeyPEM := generateTestCert(t, ca, caKey, "reloadable.test")
+
+	dir := t.TempDir()
+	certFile := writeTempFile(t, dir, "server.crt", certPEM)
+	keyFile := writeTempFile(t, dir, "server.key", keyPEM)
+
+	reloader, err := NewCertReloader(certFile, keyFile)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(keyFile, rotatedKeyPEM, 0o600))
+	require.NoError(t, os.Chtimes(keyFile, time.Now().Add(time.Second), time.Now().Add(time.Second)))
+	err = reloader.reload()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reload certificate")
 }
 
 func TestNewServerTLSConfig_InvalidCert(t *testing.T) {
