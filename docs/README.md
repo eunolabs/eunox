@@ -19,10 +19,13 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | Doc                                            | What it is                                             |
 | ---------------------------------------------- | ------------------------------------------------------ |
 | [ARCHITECTURE.md](./ARCHITECTURE.md)           | C4 views, sequence diagrams, deployment view.          |
+| [ARCHITECTURE_REVIEW.md](./ARCHITECTURE_REVIEW.md) | Formal architecture review and execution plan.     |
 | [capability-model.md](./capability-model.md)   | Security model, capability design.                     |
 | [enforcement.md](./enforcement.md)             | Policy decision point, enforcement guarantees.         |
 | [diagrams.md](./diagrams.md)                   | Mermaid architecture diagrams.                         |
 | [DISTRIBUTED_STATE.md](./DISTRIBUTED_STATE.md) | Redis-backed shared state for multi-agent deployments. |
+| [MULTI_TENANCY.md](./MULTI_TENANCY.md)         | Multi-tenancy isolation model, boundaries, and threat model. |
+| [FEDERATION_TRUST_LIFECYCLE.md](./FEDERATION_TRUST_LIFECYCLE.md) | Partner federation trust lifecycle (onboarding → revocation). |
 
 ## 3. Design references
 
@@ -31,6 +34,10 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [ADAPTERS.md](./ADAPTERS.md)                                   | Pluggable identity provider and token signer adapter pattern (Go implementation). |
 | [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns.                         |
 | [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md)                 | Schema versioning, deployment ordering.                                           |
+| [SCHEMA_MIGRATIONS.md](./SCHEMA_MIGRATIONS.md)                 | Database schema reference, migration conventions, CI validation.                  |
+| [AUDIT_CHAIN_ARCHITECTURE.md](./AUDIT_CHAIN_ARCHITECTURE.md)   | Audit chain architecture, single-writer vs per-replica trade-offs.                |
+| [AUDIT_RETENTION_COMPLIANCE.md](./AUDIT_RETENTION_COMPLIANCE.md) | Audit retention policy, chain pruning, compliance targets (SOC 2, GDPR, HIPAA). |
+| [POLICY_HOT_RELOAD.md](./POLICY_HOT_RELOAD.md)                 | Policy lifecycle, hot-reload mechanism, safe update procedures.                   |
 | [sandboxing.md](./sandboxing.md)                               | Sandbox reference architecture.                                                   |
 
 ## 4. Deployment and operations
@@ -53,7 +60,8 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | Doc                      | What it is                                             |
 | ------------------------ | ------------------------------------------------------ |
 | [security/](./security/) | Threat models, SOC2 mapping, sandbox architecture.     |
-| [runbooks/](./runbooks/) | Operational runbooks (pepper rotation, HMAC rotation). |
+| [HEALTH_CHECKS.md](./HEALTH_CHECKS.md) | Health check conventions, Kubernetes probes.  |
+| [runbooks/](./runbooks/) | Operational runbooks (DR, key rotation, HMAC rotation). |
 
 ## 8. API specifications
 

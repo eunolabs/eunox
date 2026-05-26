@@ -150,11 +150,207 @@ ETA: [Expected resolution time]
 UPDATES: Every [15/30/60] minutes until resolved
 ```
 
+## Scenario 5: Corrupted Audit Chain
+
+### Symptoms
+
+- Chain verification endpoint returns `valid: false`
+- Alerting/logs indicate repeated chain-proof validation failures
+- Audit export returns errors for specific sequence ranges
+
+### Diagnosis
+
+```bash
+# 1. Identify the break point
+REPLICA_ID="replica-1"
+FROM_SEQ=1
+TO_SEQ=1000000
+BREAK_POINT=$(curl -s "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******" | jq '.broken_at_seq')
+
+# 2. Inspect the corrupted record
+psql -c "SELECT id, sequence_num, chain_hash, previous_hash
+         FROM audit_records
+         WHERE replica_id = '$REPLICA_ID' AND sequence_num = $BREAK_POINT
+         ORDER BY sequence_num;"
+
+# 3. Check if corruption is in a single record or a range
+psql -c "SELECT sequence_num, chain_hash
+         FROM audit_records
+         WHERE replica_id = '$REPLICA_ID'
+           AND sequence_num BETWEEN $((BREAK_POINT - 5)) AND $((BREAK_POINT + 5))
+         ORDER BY sequence_num;"
+```
+
+### Recovery
+
+**Option A: Restore from WAL backup (if corruption is recent)**
+
+```bash
+# 1. Identify the timestamp before corruption
+CORRUPTION_TIME=$(psql -t -c "SELECT timestamp FROM audit_records WHERE sequence_num = $BREAK_POINT")
+
+# 2. Restore to point-in-time before corruption (see Scenario 2)
+# Use recovery_target_time slightly before $CORRUPTION_TIME
+
+# 3. Verify chain integrity after restore
+curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
+```
+
+**Option B: Anchor-based isolation (if corruption is older)**
+
+```bash
+# 1. Create anchor metadata via an offline anchoring job
+# Note: there is no HTTP /admin audit anchor endpoint in gateway.
+# Use tooling around pkg/audit/anchor.go to persist the checkpoint.
+
+# 2. Document the gap as a known integrity exception
+# Add to the incident log with the sequence range and root cause
+
+# 3. The chain continues validly from the next anchor forward
+# Historical queries spanning the gap will note the integrity exception
+```
+
+**Option C: Full chain restore (last resort)**
+
+```bash
+# 1. Stop writers and restore a clean audit DB snapshot
+kubectl -n eunox-system scale deployment eunox-gateway --replicas=0
+# Restore from backup / PITR to a known-good point (see Scenario 2)
+
+# 2. Restart gateway
+kubectl -n eunox-system scale deployment eunox-gateway --replicas=3
+
+# 3. Verify
+curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
+```
+
+---
+
+## Scenario 6: Regional Outage (Multi-Region Failover)
+
+### Prerequisites
+
+- Active-passive or active-active multi-region deployment
+- DNS failover configured (Route 53 health checks, Cloud DNS, or Traffic Manager)
+- Cross-region database replication (RDS read replica, Cloud SQL cross-region)
+
+### Symptoms
+
+- Health check failures from the primary region
+- Cloud provider status page confirms regional issue
+- Increased latency from secondary region probes
+
+### Failover Procedure
+
+```bash
+# 1. Confirm primary region is down (not just a transient issue)
+# Wait for provider confirmation or 3+ minutes of continuous failure
+
+# 2. Promote database read replica to primary
+# AWS:
+aws rds promote-read-replica --db-instance-identifier eunox-audit-dr-replica
+
+# GCP:
+gcloud sql instances promote-replica eunox-audit-dr-replica
+
+# Azure:
+az sql db failover --server eunox-dr --name eunox-audit --partner-server eunox-primary
+
+# 3. Update service configuration to point to new database
+kubectl -n eunox-system set env deployment/eunox-gateway \
+  GATEWAY_AUDIT_DB_URL="$DR_DATABASE_URL"
+kubectl -n eunox-system set env deployment/eunox-issuer \
+  ISSUER_DB_URL="$DR_DATABASE_URL"
+
+# 4. Update DNS (or let health-check-based failover handle it)
+# Route 53:
+aws route53 change-resource-record-sets --hosted-zone-id $ZONE_ID \
+  --change-batch '{"Changes":[{"Action":"UPSERT","ResourceRecordSet":{"Name":"api.eunox.example.com","Type":"A","AliasTarget":{"HostedZoneId":"$DR_ALB_ZONE","DNSName":"$DR_ALB_DNS","EvaluateTargetHealth":true}}}]}'
+
+# 5. Verify services are healthy in DR region
+kubectl --context dr-cluster -n eunox-system get pods
+./infra/smoke-test.sh
+
+# 6. Verify audit chain continuity
+# Note: There may be a gap if writes were in-flight during failover.
+# This is acceptable — document the gap window.
+REPLICA_ID="replica-1"
+FROM_SEQ=1
+TO_SEQ=1000000
+curl "https://gateway-dr:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
+```
+
+### Failback Procedure
+
+```bash
+# 1. Confirm primary region is recovered
+# 2. Re-establish replication from DR → primary
+# 3. Wait for replication lag to reach zero
+# 4. Perform controlled failover back to primary
+# 5. Verify and update DNS
+# 6. Re-establish DR replication (primary → DR)
+```
+
+---
+
+## Scenario 7: Audit Integrity Compromise
+
+### Symptoms
+
+- Unauthorized write access to the audit database or signing system is suspected
+- Chain integrity may be affected, but record signatures still provide tamper evidence
+
+### Impact Assessment
+
+- **Chain integrity:** Compromised (attacker could insert/modify records
+  with valid chain hashes)
+- **Record signatures:** NOT compromised if signing keys remain secure
+- **Detectability:** Forged or altered records will fail signature validation
+
+### Recovery
+
+```bash
+# 1. Rotate/disable compromised credentials (DB access, signing keys as applicable)
+
+# 2. Verify record signatures offline using the published signing keys
+curl https://gateway:3002/api/v1/audit/signing-keys -H "Authorization: ******"
+curl "https://gateway:3002/api/v1/audit/export?tenant_id=$TENANT_ID" -H "Authorization: ******" > audit-export.json
+
+# 3. Restore from last known-good snapshot if tampering is confirmed
+
+# 4. Mark the affected sequence range in incident records and monitoring
+```
+
+---
+
+## Backup Verification Schedule
+
+| Check | Frequency | Automation |
+|-------|-----------|------------|
+| WAL archival lag | Continuous | CloudWatch/Stackdriver alarm |
+| Base backup success | Daily | Backup job exit code monitoring |
+| Restore test (full) | Monthly | Scheduled restore to test instance |
+| Audit chain integrity | Hourly | Automated chain-proof endpoint check |
+| DR region health | Every 5 min | Health check probes from primary |
+| Secret manager access | Daily | Automated secret retrieval test |
+| Helm values in git | On commit | CI validation |
+
+---
+
 ## Post-Recovery Checklist
 
 - [ ] All services healthy (`kubectl get pods -n eunox-system`)
 - [ ] End-to-end token issuance and enforcement working
-- [ ] Audit trail intact (no gaps)
+- [ ] Audit trail intact (no gaps, or gaps documented)
+- [ ] Audit chain verification passing
 - [ ] Monitoring/alerting functional
+- [ ] Redis state rebuilt (kill switch, revocations)
+- [ ] Partner DID cache warm (federation working)
+- [ ] Rate limiters reset (expected after restart)
 - [ ] Post-mortem scheduled within 48 hours
 - [ ] Backup verification re-run
+- [ ] DR replication re-established (if failover occurred)
