@@ -4,7 +4,7 @@
 //go:build integration
 
 // Package testutil provides shared test infrastructure for the Euno platform.
-// The containers.go file provides testcontainers-go helpers for PostgreSQL and Redis.
+// The containers_integration.go file provides testcontainers-go helpers for PostgreSQL and Redis.
 // These are gated behind the "integration" build tag because they require Docker.
 //
 // Usage:

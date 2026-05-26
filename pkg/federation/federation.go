@@ -149,6 +149,8 @@ type PartnerIssuerResolver struct {
 	breakers map[string]*CircuitBreaker
 	mu       sync.RWMutex
 	config   CircuitBreakerConfig
+	metrics  *Metrics
+	now      func() time.Time
 }
 
 // PartnerIssuerResolverConfig configures the PartnerIssuerResolver.
@@ -156,6 +158,9 @@ type PartnerIssuerResolverConfig struct {
 	Registry       *PartnerDIDRegistry
 	Resolver       did.Resolver
 	CircuitBreaker CircuitBreakerConfig
+	// Metrics optionally instruments the resolver with Prometheus metrics.
+	// If nil, no metrics are emitted.
+	Metrics *Metrics
 }
 
 // NewPartnerIssuerResolver creates a new partner issuer resolver.
@@ -175,11 +180,14 @@ func NewPartnerIssuerResolver(cfg PartnerIssuerResolverConfig) *PartnerIssuerRes
 		resolver: cfg.Resolver,
 		breakers: make(map[string]*CircuitBreaker),
 		config:   cfg.CircuitBreaker,
+		metrics:  cfg.Metrics,
+		now:      time.Now,
 	}
 }
 
 // ResolvePublicKeys resolves a partner DID to its public keys.
 // It checks the registry, circuit breaker, and performs DID resolution.
+// Metrics are emitted for each resolution attempt when a Metrics instance is configured.
 func (p *PartnerIssuerResolver) ResolvePublicKeys(ctx context.Context, didURI string) ([]crypto.PublicKey, error) {
 	if !p.registry.IsApproved(didURI) {
 		entry, found := p.registry.Get(didURI)
@@ -199,24 +207,51 @@ func (p *PartnerIssuerResolver) ResolvePublicKeys(ctx context.Context, didURI st
 
 	// Check if circuit is open.
 	if !cb.Allow() {
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "circuit_open", 0)
+		}
+		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("%w (method: %s)", ErrCircuitOpen, method)
 	}
 
-	// Resolve the DID document.
+	// Resolve the DID document, recording duration.
+	start := p.now()
 	doc, err := p.resolver.Resolve(ctx, didURI)
+	durationSec := p.now().Sub(start).Seconds()
+
 	if err != nil {
 		cb.RecordFailure()
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "error", durationSec)
+		}
+		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("resolve partner DID: %w", err)
 	}
 
 	keys := doc.PublicKeys()
 	if len(keys) == 0 {
 		cb.RecordFailure()
+		if p.metrics != nil {
+			p.metrics.RecordResolution(method, "no_key", durationSec)
+		}
+		p.emitCircuitBreakerMetrics()
 		return nil, fmt.Errorf("%w: %s", ErrNoPublicKey, didURI)
 	}
 
 	cb.RecordSuccess()
+	if p.metrics != nil {
+		p.metrics.RecordResolution(method, "success", durationSec)
+	}
+	p.emitCircuitBreakerMetrics()
 	return keys, nil
+}
+
+// emitCircuitBreakerMetrics publishes the current circuit breaker states as Prometheus gauges.
+func (p *PartnerIssuerResolver) emitCircuitBreakerMetrics() {
+	if p.metrics == nil {
+		return
+	}
+	p.metrics.UpdateCircuitBreakerMetrics(p.GetCircuitBreakerStates())
 }
 
 // GetCircuitBreakerStates returns the current state of all circuit breakers.
