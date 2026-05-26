@@ -5,7 +5,7 @@
 # Usage: docker build --build-arg SERVICE=gateway -t eunox/gateway .
 #
 # The final image is distroless (no shell, no package manager) and runs as
-# non-root (UID 1000). The filesystem is read-only at runtime.
+# non-root (UID 65534). The filesystem is read-only at runtime.
 
 # ── Build stage ──────────────────────────────────────────────────────────────
 FROM golang:1.25-alpine AS builder
