@@ -207,8 +207,8 @@ func TestRotatingKeyStore_ConcurrentAccess(t *testing.T) {
 	}()
 
 	for i := 0; i < 10; i++ {
-		s := generateTestSigner(t, "rotated")
-		_ = ks.Rotate(s)
+		rotatedSigner := generateTestSigner(t, "rotated")
+		_ = ks.Rotate(rotatedSigner)
 	}
 	<-done
 }

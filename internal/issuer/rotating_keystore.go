@@ -145,6 +145,7 @@ func (ks *RotatingKeyStore) Prune(cutoff time.Time) int {
 		}
 	}
 
+	// Clear pruned entries so the backing array no longer retains signer references.
 	for i := len(kept); i < len(ks.retired); i++ {
 		ks.retired[i] = retiredKey{}
 	}
