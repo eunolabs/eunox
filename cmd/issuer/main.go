@@ -25,6 +25,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// These variables are set by GoReleaser via -X ldflags at build time.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 const (
 	shutdownTimeout = 10 * time.Second
 )

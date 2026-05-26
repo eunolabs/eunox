@@ -60,6 +60,18 @@ go.opentelemetry.io/otel/trace
   License: Apache-2.0
   Copyright The OpenTelemetry Authors
 
+go.opentelemetry.io/auto/sdk
+  License: Apache-2.0
+  Copyright The OpenTelemetry Authors
+
+go.opentelemetry.io/otel/metric
+  License: Apache-2.0
+  Copyright The OpenTelemetry Authors
+
+go.opentelemetry.io/proto/otlp
+  License: Apache-2.0
+  Copyright The OpenTelemetry Authors
+
 modernc.org/sqlite
   License: BSD-3-Clause
   Copyright (c) 2017 The Sqlite Authors.
@@ -132,7 +144,11 @@ golang.org/x/text
   License: BSD-3-Clause
   Copyright (c) 2009 The Go Authors.
 
-google.golang.org/genproto
+google.golang.org/genproto/googleapis/api
+  License: Apache-2.0
+  Copyright (c) 2015 Google LLC
+
+google.golang.org/genproto/googleapis/rpc
   License: Apache-2.0
   Copyright (c) 2015 Google LLC
 

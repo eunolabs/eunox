@@ -26,8 +26,8 @@
 ### Single-node (development / pilot)
 
 ```bash
-# Build all services (posture-emitter requires CGO_ENABLED=1 for SQLite)
-make build
+# Build the gateway binary
+go build -o ./bin/gateway ./cmd/gateway
 
 # Run gateway with minimal config
 GATEWAY_NODE_ENV=development \
@@ -43,7 +43,7 @@ GATEWAY_ADMIN_PORT=3003 \
 helm install euno k8s/helm/euno/ \
   --namespace euno-system \
   --create-namespace \
-  -f k8s/helm/euno/values-production.yaml
+  -f k8s/helm/euno/values.yaml
 ```
 
 See [deploy-eks.md](./deploy-eks.md) and [deploy-gke.md](./deploy-gke.md) for
@@ -94,8 +94,8 @@ The gateway uses the `GATEWAY_` prefix for all configuration variables.
 | `GATEWAY_EUNO_REQUIRE_KID` | bool | `true` | — | Require `kid` header in JWTs |
 | `GATEWAY_EUNO_JWKS_CACHE_TTL_SECONDS` | int | `300` | — | JWKS cache duration |
 | `GATEWAY_GATEWAY_AUDIENCE` | string | `tool-gateway` | — | Expected `aud` claim value |
-| `GATEWAY_HOSTED_MODE` | bool | `false` | — | Enable hosted multi-tenant mode (requires unique `GATEWAY_AUDIENCE`) |
-| `GATEWAY_TENANT_ID` | string | — | — | Tenant identifier (fallback: `TENANT_ID` env var) |
+| `GATEWAY_HOSTED_MODE` | bool | `false` | — | Enable hosted multi-tenant mode (requires unique `GATEWAY_GATEWAY_AUDIENCE`) |
+| `GATEWAY_TENANT_ID` | string | — | prod | Tenant identifier (fallback: `TENANT_ID` env var); required when `GATEWAY_ADMIN_API_KEY` is set |
 
 #### Rate Limiting
 
@@ -300,10 +300,14 @@ When `NODE_ENV=production` (or `GATEWAY_NODE_ENV=production` for gateway):
 
 2. **Gateway** rejects startup if:
    - Any configured Redis URL is single-node (see below)
-   - `GATEWAY_ADMIN_HOST` uses a wildcard bind
+   - `GATEWAY_ADMIN_API_KEY` is set but `GATEWAY_TENANT_ID` (or `TENANT_ID`) is empty
 
-3. **Hosted mode** (`GATEWAY_HOSTED_MODE=true`) rejects startup if:
-   - `GATEWAY_GATEWAY_AUDIENCE` is the default `tool-gateway` (cross-tenant replay risk)
+   Recommended (not enforced at startup):
+   - Bind `GATEWAY_ADMIN_HOST` to `127.0.0.1` rather than a wildcard address
+
+3. **Hosted mode** (`GATEWAY_HOSTED_MODE=true`):
+   - It is strongly recommended to set `GATEWAY_GATEWAY_AUDIENCE` to a unique
+     non-default value (not `tool-gateway`) to prevent cross-tenant replay attacks
 
 ---
 
@@ -344,22 +348,23 @@ All services expose:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /healthz` | Liveness probe — always 200 if process is running |
-| `GET /readyz` | Readiness probe — 200 when dependencies are connected |
-| `GET /metrics` | Prometheus metrics (gateway, issuer) |
+| `GET /health/live` | Liveness probe — always 200 if process is running |
+| `GET /health/ready` | Readiness probe — 200 when dependencies are connected |
+
+Gateway also exposes `GET /healthz/did-ion` for DID resolution readiness.
 
 Configure Kubernetes probes:
 
 ```yaml
 livenessProbe:
   httpGet:
-    path: /healthz
+    path: /health/live
     port: http
   initialDelaySeconds: 5
   periodSeconds: 10
 readinessProbe:
   httpGet:
-    path: /readyz
+    path: /health/ready
     port: http
   initialDelaySeconds: 5
   periodSeconds: 5
