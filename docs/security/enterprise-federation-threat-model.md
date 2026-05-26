@@ -461,7 +461,7 @@ at most one TTL window after group removal.
 ## 5. Cross-Chain Audit Anchor Tampering
 
 **Question:** _The cross-chain anchor's HMAC secret is already
-documented in `docs/security/ledger-hmac-rotation.md`. Document
+documented in `docs/runbooks/ledger-hmac-rotation.md`. Document
 what an attacker who obtains the HMAC secret can do (forge
 commitments, not forge individual signed evidence records — the evidence is
 separately KMS-signed), and the impact of the Azure Confidential Ledger

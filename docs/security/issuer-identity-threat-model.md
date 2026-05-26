@@ -77,7 +77,7 @@ What the attacker **cannot** do via IdP compromise alone:
 - Sign tokens outside the tenant's registered capability scope.
 - Access the KMS signing key directly — the issuer's workload identity holds only
   `sign` permission on the issuer's keys, not the minter's keys (distinct aliases, per
-  `docs/ARCHITECTURE.md` §component view).
+  `docs/ARCHITECTURE.md` §3 "C4 Level 2 — Container / package view").
 
 ### 1.2 Blast radius
 

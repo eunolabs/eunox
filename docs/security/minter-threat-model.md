@@ -234,7 +234,9 @@ The damage depends on which credential is compromised:
 ### Testing requirement
 
 The rotation procedure is tested end-to-end in `internal/integration-tests/`.
-The test:- Mints a token with the old key (with a TTL long enough for the test to complete, e.g. 5 minutes).
+The test:
+
+- Mints a token with the old key (with a TTL long enough for the test to complete, e.g. 5 minutes).
 - Rotates to a new key (adds new `kid` to JWKS, switches minter, then removes old `kid`).
 - Asserts the old-key token is rejected by the verifier **before its TTL expires**, immediately
   after the old `kid` is removed from the JWKS endpoint — not merely that it is rejected after
@@ -693,8 +695,8 @@ Until all four rows are filled, the minter is **blocked from merging**.
 | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [`docs/enforcement.md`](../enforcement.md)                                                       | Cryptographic-token invariant                                                |
 | [`docs/capability-model.md`](../capability-model.md)                                             | §6 — unknown types are denied by default                                     |
-| [`pkg/src/ledger-signer.ts`](../../pkg/src/ledger-signer.ts)                                     | Per-row HMAC ledger pattern reused for mint-audit                            |
-| [`internal/gateway/src/revocation-store.ts`](../../internal/gateway/src/revocation-store.ts)     | Token revocation used in key rotation (§3)                                   |
-| [`internal/issuer/src/azure-signer.ts`](../../internal/issuer/src/azure-signer.ts)               | Azure Key Vault signing driver                                               |
-| [`internal/issuer/src/aws-kms-signer.ts`](../../internal/issuer/src/aws-kms-signer.ts)           | AWS KMS signing driver                                                       |
-| [`internal/issuer/src/gcp-cloudkms-signer.ts`](../../internal/issuer/src/gcp-cloudkms-signer.ts) | GCP Cloud KMS signing driver                                                 |
+| [`pkg/audit/audit.go`](../../pkg/audit/audit.go)                                                 | Per-row HMAC ledger pattern reused for mint-audit                            |
+| [`pkg/revocation/revocation.go`](../../pkg/revocation/revocation.go)                             | Token revocation used in key rotation (§3)                                   |
+| [`pkg/crypto/kms_azure.go`](../../pkg/crypto/kms_azure.go)                                       | Azure Key Vault signing driver                                               |
+| [`pkg/crypto/kms_aws.go`](../../pkg/crypto/kms_aws.go)                                           | AWS KMS signing driver                                                       |
+| [`pkg/crypto/kms_gcp.go`](../../pkg/crypto/kms_gcp.go)                                           | GCP Cloud KMS signing driver                                                 |

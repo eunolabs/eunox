@@ -185,5 +185,5 @@ env:
 
 ### Cross-references
 
-- `pkg/src/ledger-signer.ts` — backend implementation, `verifyRowHmac()` method
+- `pkg/audit/audit.go` — backend implementation, `verifyRowHmac()` function
 - `docs/ARCHITECTURE.md §7` — audit ledger design

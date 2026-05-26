@@ -196,7 +196,7 @@ aws kms create-key \
 > **Production note:** Use an HSM-backed key in production (AWS CloudHSM-origin
 > CMK, Azure Managed HSM key, or GCP HSM protection level). For the Azure
 > Managed HSM provisioning procedure and non-exportability verification steps,
-> see `docs/DEPLOYMENT.md` §"KMS providers" for details on KMS providers.
+> see `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for details on KMS providers.
 
 #### Step 2 — Write a capability policy manifest
 
@@ -491,7 +491,7 @@ AUDIT_SIGNING_KMS_PROVIDER=aws-kms   # or azure-keyvault / gcp-cloudkms
 AUDIT_SIGNING_AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
 ```
 
-See `docs/DEPLOYMENT.md` §"KMS providers" for the Azure Managed HSM
+See `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for the Azure Managed HSM
 provisioning procedure and the non-exportability verification steps.
 
 ### 5.2 Add Redis and Postgres
@@ -525,7 +525,7 @@ AUDIT_LEDGER_RUN_MIGRATIONS=true   # set to false after first run; manage schema
 ```
 
 The gateway creates the following tables automatically when
-`AUDIT_LEDGER_RUN_MIGRATIONS=true` (see `docs/DEPLOYMENT.md` §"Audit ledger schema" for the full
+`AUDIT_LEDGER_RUN_MIGRATIONS=true` (see `migrations/audit/` for the full
 schema):
 
 ```sql
@@ -803,7 +803,7 @@ item in this checklist:
       `aws-kms`, or `gcp-cloudkms`. A local PEM key is not acceptable in production.
 - [ ] **Key is non-exportable.** Confirm at the KMS level (not just IAM policy).
       For Azure Managed HSM, follow the non-exportability verification procedure in
-      `docs/DEPLOYMENT.md` §"KMS providers".
+      `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider".
 - [ ] **Admin port is not publicly reachable.** `ADMIN_HOST=127.0.0.1` and the
       admin port (3003) is not in the public-facing load-balancer ingress rules.
 - [ ] **`REDIS_CIRCUIT_OPEN_MODE` is set explicitly.** The gateway logs an error
@@ -1248,6 +1248,8 @@ services:
 
   # Minimal OIDC mock for local development / smoke tests.
   # Remove from production deployments and replace with a real IdP.
+  # Note: :latest is intentionally used here for dev/smoke-test convenience only;
+  # do NOT use :latest in production — pin a specific tag for reproducible deployments.
   mock-oidc:
     image: ghcr.io/eunox/mock-oidc:latest
     environment:
@@ -1924,7 +1926,7 @@ resolution.
 
 ### 12.10 On-prem deployment bundle (Helm + air-gap)
 
-> **Reference:** `docs/DEPLOYMENT.md` §"On-prem deployment".
+> **Reference:** `docs/DEPLOYMENT.md` §"Deployment Targets".
 
 The `k8s/helm/` directory contains per-service Helm chart values schemas for
 `tool-gateway`, `capability-issuer`, `db-token-service`, `storage-grant-service`,
