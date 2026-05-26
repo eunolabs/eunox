@@ -225,6 +225,7 @@ func (p *AuthTokenProvider) acquireToken(ctx context.Context) (*TokenResponse, e
 	}
 
 	resp, err := p.httpClient.Do(&HTTPRequest{
+		Context: ctx,
 		Method:  "POST",
 		URL:     url,
 		Headers: headers,

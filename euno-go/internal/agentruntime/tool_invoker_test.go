@@ -190,21 +190,25 @@ func TestToolInvoker_WithDPoP(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Allowed)
 
-	// Verify DPoP proof was included in the enforce request
+	// Verify DPoP payload is omitted from enforce request.
 	var gatewayReq *HTTPRequest
+	var upstreamReq *HTTPRequest
 	for _, r := range client.Requests() {
 		if r.URL == "https://gateway.example.com/api/v1/enforce" {
 			gatewayReq = r
-			break
+		}
+		if r.URL == "https://tools.example.com/files" {
+			upstreamReq = r
 		}
 	}
 	require.NotNil(t, gatewayReq)
+	require.NotNil(t, upstreamReq)
 
 	var payload enforcePayload
 	err = json.Unmarshal(gatewayReq.Body, &payload)
 	require.NoError(t, err)
-	assert.NotNil(t, payload.DPoP)
-	assert.NotEmpty(t, payload.DPoP.Proof)
+	assert.Nil(t, payload.DPoP)
+	assert.NotEmpty(t, upstreamReq.Headers["DPoP"])
 }
 
 func TestToolInvoker_UpstreamCall(t *testing.T) {
@@ -305,6 +309,51 @@ func TestToolInvoker_NoURL(t *testing.T) {
 	resp, err := invoker.Invoke(context.Background(), &ToolRequest{
 		SessionID: "session-1",
 		ToolName:  "read_file",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, resp.Allowed)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestToolInvoker_UpstreamCall_DefaultHTTPMethod(t *testing.T) {
+	client := NewMockHTTPClient(func(req *HTTPRequest) (*HTTPResponse, error) {
+		if req.URL == "https://issuer.example.com/api/v1/issue" {
+			return newTestTokenResponse(3600), nil
+		}
+		if req.URL == "https://gateway.example.com/api/v1/enforce" {
+			return newAllowResponse(), nil
+		}
+		if req.URL == "https://tools.example.com/api/read" {
+			assert.Equal(t, "GET", req.Method)
+			return &HTTPResponse{
+				StatusCode: 200,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+				Body:       []byte(`{"data":"result"}`),
+			}, nil
+		}
+		return &HTTPResponse{StatusCode: 404, Headers: map[string]string{}, Body: []byte("not found")}, nil
+	})
+
+	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+		IssuerURL:     "https://issuer.example.com",
+		HTTPClient:    client,
+		IdentityToken: "test-identity",
+		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	})
+	defer tokenProvider.Stop()
+
+	invoker := NewToolInvoker(ToolInvokerConfig{
+		GatewayURL:    "https://gateway.example.com",
+		HTTPClient:    client,
+		TokenProvider: tokenProvider,
+		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	})
+
+	resp, err := invoker.Invoke(context.Background(), &ToolRequest{
+		SessionID: "session-1",
+		ToolName:  "read_file",
+		URL:       "https://tools.example.com/api/read",
 	})
 
 	require.NoError(t, err)

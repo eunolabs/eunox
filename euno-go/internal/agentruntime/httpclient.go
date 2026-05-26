@@ -33,7 +33,12 @@ func (c *DefaultHTTPClient) Do(req *HTTPRequest) (*HTTPResponse, error) {
 		body = bytes.NewReader(req.Body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(context.Background(), req.Method, req.URL, body)
+	reqCtx := req.Context
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+
+	httpReq, err := http.NewRequestWithContext(reqCtx, req.Method, req.URL, body)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}

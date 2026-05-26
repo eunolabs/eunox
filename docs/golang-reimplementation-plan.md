@@ -642,9 +642,9 @@ Package structure:
 Key design decisions:
 - **Functional options pattern** for `Runtime` configuration (`WithLogger`, `WithHintsProvider`)
 - **`HTTPClient` interface** abstracts HTTP transport — enables testing without real network, custom TLS configs, or middleware injection
-- **DPoP key management** uses ECDSA P-256 with JWK thumbprint (RFC 9449); nonce handling via atomic state
-- **Token caching** with mutex-protected state and `time.AfterFunc` for proactive refresh at 80% of token lifetime
-- **Retry with exponential backoff** — jittered delays, configurable max attempts, `TransientError` type for classification
+- **DPoP key management** uses ECDSA P-256 with JWK thumbprint (RFC 9449); nonce handling via mutex-protected state
+- **Token caching** with mutex-protected state and `time.AfterFunc` for proactive refresh using `RefreshBefore` (default: 30s before expiry)
+- **Retry with exponential backoff** — deterministic delays, configurable max attempts, `TransientError` type for classification
 - **`Config.DPoPEnabled *bool`** — tri-state: nil=enabled (default), &true=enabled, &false=disabled
 - **`IdentityTokenProvider func(ctx) (string, error)`** — pluggable identity assertion (OIDC, service account, etc.)
 

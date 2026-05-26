@@ -93,7 +93,7 @@ type Config struct {
 	// IdentityToken is the initial identity token for authentication with the issuer.
 	IdentityToken string
 	// IdentityTokenProvider optionally provides fresh identity tokens.
-	// If set, this is called when the current identity token is rejected.
+	// If set, this is called for each token acquisition attempt.
 	IdentityTokenProvider func(ctx context.Context) (string, error)
 	// RefreshBeforeExpiry is the duration before token expiry to trigger proactive refresh.
 	// Default is 30 seconds.
@@ -121,6 +121,7 @@ type HTTPClient interface {
 
 // HTTPRequest wraps an outgoing HTTP request.
 type HTTPRequest struct {
+	Context context.Context
 	Method  string
 	URL     string
 	Headers map[string]string

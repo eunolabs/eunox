@@ -89,24 +89,6 @@ func (inv *ToolInvoker) invokeOnce(ctx context.Context, req *ToolRequest) (*Tool
 		},
 	}
 
-	// Add DPoP proof if enabled
-	if inv.dpop != nil {
-		url := inv.gatewayURL + "/api/v1/enforce"
-		httpMethod := req.HTTPMethod
-		if httpMethod == "" {
-			httpMethod = "POST"
-		}
-		proof, err := inv.dpop.GenerateProof(httpMethod, url)
-		if err != nil {
-			return nil, fmt.Errorf("generate DPoP proof: %w", err)
-		}
-		enforceReq.DPoP = &capability.DPoPProof{
-			Proof:      proof,
-			HTTPMethod: httpMethod,
-			HTTPURL:    req.URL,
-		}
-	}
-
 	bodyBytes, err := json.Marshal(enforceReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal enforce request: %w", err)
@@ -118,6 +100,7 @@ func (inv *ToolInvoker) invokeOnce(ctx context.Context, req *ToolRequest) (*Tool
 	}
 
 	resp, err := inv.httpClient.Do(&HTTPRequest{
+		Context: ctx,
 		Method:  "POST",
 		URL:     url,
 		Headers: headers,
@@ -172,9 +155,18 @@ func (inv *ToolInvoker) callUpstream(ctx context.Context, req *ToolRequest, toke
 		headers[k] = v
 	}
 
+	method := req.HTTPMethod
+	if method == "" {
+		if len(req.Body) > 0 {
+			method = "POST"
+		} else {
+			method = "GET"
+		}
+	}
+
 	// Add DPoP proof for the upstream call
 	if inv.dpop != nil {
-		proof, err := inv.dpop.GenerateProof(req.HTTPMethod, req.URL)
+		proof, err := inv.dpop.GenerateProof(method, req.URL)
 		if err != nil {
 			return nil, fmt.Errorf("generate DPoP proof for upstream: %w", err)
 		}
@@ -182,7 +174,8 @@ func (inv *ToolInvoker) callUpstream(ctx context.Context, req *ToolRequest, toke
 	}
 
 	resp, err := inv.httpClient.Do(&HTTPRequest{
-		Method:  req.HTTPMethod,
+		Context: ctx,
+		Method:  method,
 		URL:     req.URL,
 		Headers: headers,
 		Body:    req.Body,
