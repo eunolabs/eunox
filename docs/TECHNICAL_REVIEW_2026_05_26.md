@@ -53,16 +53,15 @@ db.SetMaxOpenConns(1)
 db.SetMaxIdleConns(1)
 ```
 
-The posture queue uses SQLite with a single connection. Under delivery worker pressure:
-- Write contention causes `database is locked` errors under burst load
-- The delivery worker's `context.WithCancel(context.Background())` lifecycle context has no timeout — a stuck delivery blocks the queue indefinitely
-- No dead-letter queue for permanently failed deliveries
+The posture queue uses SQLite with a single connection and an exclusive lock (`_locking_mode=EXCLUSIVE`). The delivery worker already implements per-plugin timeouts via `context.WithTimeout` (`DefaultPluginTimeout = 5s`), exponential backoff, dead-letter semantics (`posture_dead_letter` table), and Prometheus metrics (`posture_queue_depth`, `posture_delivery_errors_total`). The remaining throughput bottleneck is the single-connection, single-writer design itself:
+
+- All queue operations (Push, Peek, Nack, Ack, DeadLetter) serialize through a `sync.Mutex`-guarded connection
+- Under sustained burst, enqueuing callers contend for the same lock as the delivery worker's write operations, causing latency spikes rather than immediate back-pressure
+- The exclusive-lock mode prevents any concurrent readers, even for diagnostic queries
 
 **Recommendation:**
-- Add a delivery timeout (`context.WithTimeout`) to prevent unbounded blocking
-- Implement exponential backoff with max-retry + dead-letter semantics
-- Add a metric for queue depth and delivery failures (`posture_queue_depth`, `posture_delivery_errors_total`)
-- Document SQLite limitations and recommend PostgreSQL for high-volume posture deployments
+- Document SQLite limitations and recommend PostgreSQL for high-volume posture deployments (>100 events/s)
+- Evaluate whether the exclusive-lock constraint can be relaxed by splitting the read (Peek) path to a separate read-only connection under WAL mode
 
 ---
 
@@ -132,18 +131,12 @@ The codebase includes `pkg/circuitbreaker` but Redis failure modes are not consi
 **Location:** `pkg/audit/transport.go` (buffered channel)  
 **Impact:** Scalability & Data Integrity
 
-The audit HTTP transport uses a buffered channel for event queuing. Under sustained burst:
-- If buffer fills, writes block the enforcement hot path (head-of-line blocking)
-- No explicit overflow policy (drop, block, or write-aside)
-- Transport metrics exist (`pkg/audit/transport_metrics.go`) but overflow handling is undefined
+The audit HTTP transport uses a buffered channel for event queuing. The `Enqueue` path is **non-blocking**: when the buffer is full it returns `ErrBatchFull` immediately and records a `dropped` outcome via metrics (`audit_enqueue_total{status="dropped"}`), preventing head-of-line blocking on the enforcement hot path. However, the drop-on-full overflow policy is implicit — callers that ignore `ErrBatchFull` silently lose audit events without operator visibility.
 
 **Recommendation:**
-- Implement explicit overflow policy (configurable):
-  - `block` (default): back-pressure to caller (current behavior)
-  - `drop-newest`: discard new events, increment `audit_events_dropped_total`
-  - `write-aside`: overflow to local disk queue for later delivery
-- Document the trade-offs in `docs/AUDIT_CHAIN_ARCHITECTURE.md`
-- Ensure dropped events are logged with enough context for manual reconciliation
+- Document the overflow policy explicitly (in `docs/AUDIT_CHAIN_ARCHITECTURE.md` and in a code comment on `Enqueue`) so operators understand that audit events are dropped, not blocked, when the buffer is full
+- Decide whether drop-on-full is acceptable for all deployment tiers, or whether a configurable policy (e.g., synchronous write-aside to disk for high-assurance deployments) should be offered
+- Ensure callers log dropped events with enough context for manual reconciliation
 
 ---
 
@@ -154,10 +147,12 @@ The audit HTTP transport uses a buffered channel for event queuing. Under sustai
 
 While OpenTelemetry trace propagation is supported, not all log entries include a request ID that survives across service boundaries without full tracing infrastructure. Operators without Jaeger/Tempo cannot correlate logs.
 
+The services already wire `chimiddleware.RequestID` (chi v5), which generates an `X-Request-ID` header when absent and stores the value in the request context. The current gap is that `RequestLogging` in `pkg/observability/middleware.go` does not extract this value from context and include it as a `request_id` field in the log entry. Similarly, outbound calls (audit writes, posture delivery) do not forward the `X-Request-ID` header.
+
 **Recommendation:**
-- Generate a `X-Request-Id` header if not present in incoming requests
-- Include `request_id` field in all structured log entries for the request lifecycle
-- Propagate through all inter-service calls (audit writes, posture delivery, etc.)
+- In `RequestLogging`, read the request ID via `chimiddleware.GetReqID(r.Context())` and add it as a `request_id` slog attribute on every log entry
+- Propagate the request ID on all outbound inter-service calls (audit writes, posture delivery) by setting the `X-Request-ID` HTTP header on the outbound request
+- Document the correlation approach for operators without a distributed tracing backend
 
 ---
 
@@ -249,12 +244,9 @@ The codebase maintains exceptional discipline in interface-based design:
 
 **Location:** `internal/posture/queue.go:69-71`
 
-SQLite pragmas are set at connection time, but WAL mode configuration and its implications for the delivery worker (concurrent reader) aren't documented.
+`internal/posture/queue.go` already configures WAL mode in both the DSN (`_journal_mode=WAL&_locking_mode=EXCLUSIVE`) and via an explicit `PRAGMA journal_mode=WAL` call at initialization. The `NewSQLiteQueue` doc comment explains the WAL/single-writer behavior. This is fully implemented.
 
-**Recommendation:**
-- Document SQLite pragma choices in code comments
-- Add `PRAGMA journal_mode=WAL` if not already set (enables concurrent reads during writes)
-- Add startup validation that WAL mode is active
+**Assessment:** No action needed. WAL mode is active and documented. See CR-2 for the remaining throughput constraint imposed by the exclusive-lock, single-connection design.
 
 ---
 
@@ -337,7 +329,7 @@ Ordered by priority and dependency:
 | # | Item | Depends On | Effort | Owner |
 |---|------|-----------|--------|-------|
 | 1 | CR-1: Enforce non-nil context in agent runtime | — | 1 day | Platform |
-| 2 | CR-2: Add delivery timeout + dead-letter for posture queue | — | 2 days | Platform |
+| 2 | CR-2: Document SQLite throughput limits; evaluate read/write connection split | — | 1 day | Platform |
 | 3 | CR-3: Add circuit breaker to token provider refresh | DI-2 pattern | 1 day | Platform |
 | 4 | DI-1: Configure PostgreSQL connection pool | — | 1 day | Database |
 | 5 | DI-2: Define Redis failure mode policies | — | 2 days | Platform |
@@ -346,11 +338,10 @@ Ordered by priority and dependency:
 
 | # | Item | Depends On | Effort | Owner |
 |---|------|-----------|--------|-------|
-| 6 | DI-3: Implement audit overflow policy | — | 2 days | Platform |
-| 7 | DI-4: Add request ID correlation | — | 1 day | Observability |
+| 6 | DI-3: Document audit drop-on-full overflow policy | — | 0.5 days | Platform |
+| 7 | DI-4: Log request ID in RequestLogging; propagate on outbound calls | — | 1 day | Observability |
 | 8 | DI-5: CORS wildcard production warning | — | 0.5 days | Security |
 | 9 | IF-7: Document admin rate limiter scope | — | 0.5 days | Docs |
-| 10 | IF-6: SQLite WAL mode documentation | — | 0.5 days | Docs |
 
 ### Phase 3: Documentation & Open Questions (Priority: Medium, Effort: 1–2 weeks)
 
