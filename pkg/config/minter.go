@@ -24,5 +24,5 @@ type MinterConfig struct {
 	RateLimitWindowSecs int         `env:"MINTER_RATE_LIMIT_WINDOW_SECONDS" default:"60" min:"1"`
 
 	// Request body limits
-	MaxRequestBodySize int `env:"MINTER_MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024"`
+	MaxRequestBodySize int `env:"MINTER_MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
 }

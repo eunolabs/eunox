@@ -166,6 +166,7 @@ func run() error {
 		TelemetryEnabled:        telemetryEnabled,
 		TelemetryFlushMS:        cfg.TelemetryFlushMS,
 		AdminRateLimitPerMinute: cfg.AdminRateLimitPerMinute,
+		MaxRequestBodySize:      int64(cfg.MaxRequestBodySize),
 	}
 
 	app := gateway.New(&appCfg, &deps)

@@ -154,9 +154,8 @@ CREATE TABLE chain_anchors (
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `EUNO_DEPLOYMENT_TIER` | `single-replica` | Determines backend selection |
-| `AUDIT_ADVISORY_LOCK_ID` | `8675309` | Advisory lock ID (single-writer only) |
-| `AUDIT_REPLICA_ID` | Auto-generated UUID | Replica identifier (per-replica only) |
-| `AUDIT_ANCHOR_INTERVAL_SECONDS` | `300` | Cross-chain anchor interval |
+
+`AUDIT_ADVISORY_LOCK_ID`, `AUDIT_REPLICA_ID`, and `AUDIT_ANCHOR_INTERVAL_SECONDS` are architecture-level tuning concepts documented here, but they are not currently exposed as first-class environment variables in this Go codebase.
 
 ---
 

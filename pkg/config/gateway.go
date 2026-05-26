@@ -41,5 +41,5 @@ type GatewayConfig struct {
 	TelemetryFlushMS int  `env:"TELEMETRY_FLUSH_MS" default:"300000" min:"1000"`
 
 	// Request body limits
-	MaxRequestBodySize int `env:"MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024"`
+	MaxRequestBodySize int `env:"MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
 }

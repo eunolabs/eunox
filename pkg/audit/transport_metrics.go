@@ -24,7 +24,8 @@ type TransportMetrics struct {
 	// DeliveryTotal counts delivery attempts by outcome ("success" or "failure").
 	DeliveryTotal *prometheus.CounterVec
 
-	// DeliveryDurationSeconds observes the wall-clock time of each delivery call.
+	// DeliveryDurationSeconds observes the wall-clock time of each batch delivery operation,
+	// including any retry/backoff time performed by the transport.
 	DeliveryDurationSeconds *prometheus.HistogramVec
 }
 

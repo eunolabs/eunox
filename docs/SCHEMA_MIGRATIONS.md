@@ -201,7 +201,7 @@ Migration files are validated in CI via the `migration-validation` job:
 
 1. **File existence:** Every `.up.sql` has a matching `.down.sql`.
 2. **Sequential numbering:** Version numbers are contiguous (no gaps).
-3. **SQL syntax:** Basic SQL syntax validation via SQLite dry-run.
+3. **SQL syntax heuristics:** Basic textual checks for migration SQL structure (not a database dry-run).
 4. **License headers:** All files include the BSL license header.
 5. **Naming convention:** Filenames follow `NNN_description.{up,down}.sql`.
 
@@ -223,14 +223,9 @@ Migration files are validated in CI via the `migration-validation` job:
 
 ## Startup Validation
 
-Each service validates its migration state at startup:
+The migration runner supports startup-style validation workflows, but this repository does not currently auto-run migrations in service startup paths via a `MIGRATE_ON_STARTUP` flag.
 
-1. Connects to the database.
-2. Checks for dirty state (failed previous migration).
-3. Verifies current version matches expected version.
-4. If pending migrations exist, applies them (when `MIGRATE_ON_STARTUP=true`) or logs a warning.
-
-This ensures schema drift is detected early and prevents services from operating against an unexpected schema.
+Current behavior in this codebase is CI/test-driven validation and explicit migration execution through runner APIs or operational tooling.
 
 ---
 

@@ -180,7 +180,7 @@ type IssueResponse struct {
 
 func (app *App) handleIssue(w http.ResponseWriter, r *http.Request) {
 	var req IssueRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 		return
 	}
@@ -302,7 +302,7 @@ type AttenuateResponse struct {
 
 func (app *App) handleAttenuate(w http.ResponseWriter, r *http.Request) {
 	var req AttenuateRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 		return
 	}
@@ -399,7 +399,7 @@ type RenewResponse struct {
 
 func (app *App) handleRenew(w http.ResponseWriter, r *http.Request) {
 	var req RenewRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 		return
 	}
@@ -555,7 +555,7 @@ func (app *App) handleSetRolePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RolePolicyRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := app.readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 		return
 	}
@@ -861,8 +861,13 @@ func computePolicyHash(caps []capability.Constraint) string {
 	return base64.RawURLEncoding.EncodeToString(h[:16])
 }
 
-func readJSON(r *http.Request, v interface{}) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, defaultMaxBodySize))
+func (app *App) readJSON(r *http.Request, v interface{}) error {
+	limit := app.config.MaxRequestBodySize
+	if limit <= 0 {
+		limit = defaultMaxBodySize
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}

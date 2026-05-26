@@ -12,7 +12,7 @@ import (
 // --- Kill-Switch Handlers ---
 
 func (app *App) handleKillSwitchGlobalActivate(w http.ResponseWriter, r *http.Request) {
-	if err := requireCrossTenantAck(r); err != nil {
+	if err := app.requireCrossTenantAck(r); err != nil {
 		writeJSON(w, http.StatusForbidden, errorResponse(err.Error()))
 		return
 	}
@@ -37,7 +37,7 @@ func (app *App) handleKillSwitchGlobalActivate(w http.ResponseWriter, r *http.Re
 }
 
 func (app *App) handleKillSwitchGlobalDeactivate(w http.ResponseWriter, r *http.Request) {
-	if err := requireCrossTenantAck(r); err != nil {
+	if err := app.requireCrossTenantAck(r); err != nil {
 		writeJSON(w, http.StatusForbidden, errorResponse(err.Error()))
 		return
 	}
@@ -166,7 +166,7 @@ func (app *App) handleKillSwitchSessionRevive(w http.ResponseWriter, r *http.Req
 }
 
 func (app *App) handleKillSwitchReset(w http.ResponseWriter, r *http.Request) {
-	if err := requireCrossTenantAck(r); err != nil {
+	if err := app.requireCrossTenantAck(r); err != nil {
 		writeJSON(w, http.StatusForbidden, errorResponse(err.Error()))
 		return
 	}

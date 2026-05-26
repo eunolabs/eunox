@@ -121,7 +121,7 @@ func (app *App) handleAdminUsageReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := requireCrossTenantAck(r); err != nil {
+	if err := app.requireCrossTenantAck(r); err != nil {
 		writeJSON(w, http.StatusForbidden, errorResponse(err.Error()))
 		return
 	}

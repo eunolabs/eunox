@@ -75,8 +75,9 @@ func main() {
 
 	// Build app.
 	appCfg := minter.Config{
-		Pepper:          pepper,
-		DefaultTenantID: "default",
+		Pepper:             pepper,
+		DefaultTenantID:    "default",
+		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
 	}
 
 	deps := minter.Dependencies{
