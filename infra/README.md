@@ -74,7 +74,7 @@ overrides:
 | `ADMIN_API_KEY`             | `dev-admin-key`          | Key for `/admin/*` endpoints.  **Change in production.**     |
 | `GATEWAY_AUDIENCE`          | `tool-gateway`           | Expected `aud` claim in capability tokens.                   |
 
-See `euno-platform/packages/tool-gateway/.env.example` for the full reference.
+See `eunox/packages/tool-gateway/.env.example` for the full reference.
 
 ## Deploying the Bicep template
 

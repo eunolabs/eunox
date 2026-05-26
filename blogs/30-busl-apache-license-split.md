@@ -32,14 +32,14 @@ The license split is reflected directly in the repository structure. There are t
 
 ```
 public/      ← Apache 2.0
-euno-platform/   ← BUSL-1.1
+eunox/   ← BUSL-1.1
 ```
 
 Everything in `public/` is Apache 2.0. This includes:
 - `public/packages/mcp/` — the `@euno/mcp` client library (the thing you install in your application)
 - `public/packages/common/` — the `@euno/common-core` types library (policy schema, capability manifest types, condition interfaces)
 
-Everything in `euno-platform/` is BUSL-1.1. This includes:
+Everything in `eunox/` is BUSL-1.1. This includes:
 - The tool gateway (`packages/tool-gateway/`)
 - The capability issuer (`packages/capability-issuer/`)
 - The API key minter (`packages/api-key-minter/`)

@@ -194,7 +194,7 @@ The `CustomCondition` type in `@euno/common-core` is Apache-2.0 public. The regi
 
 One of the tests I run mentally when making changes to `@euno/common-core` is: can I construct a YAML policy that behaves differently under `euno validate` vs. the gateway? If the answer is yes, there's a divergence to fix.
 
-The test suite (`euno-platform/packages/common/tests/`) has explicit parity tests for this: take a set of policy fixtures, run `validateManifest()` on each, and then run the same fixtures through the gateway enforcement engine as test requests and verify the outcomes match. If a policy fails validation, the corresponding request should be denied at the gateway. If it passes validation, the request should be allowed (assuming a valid token and the right resource/action match).
+The test suite (`eunox/packages/common/tests/`) has explicit parity tests for this: take a set of policy fixtures, run `validateManifest()` on each, and then run the same fixtures through the gateway enforcement engine as test requests and verify the outcomes match. If a policy fails validation, the corresponding request should be denied at the gateway. If it passes validation, the request should be allowed (assuming a valid token and the right resource/action match).
 
 These aren't 100% comprehensive — there are enforcement decisions that involve distributed state (call counters, kill switch) that the unit validator can't replicate. But for the static structure of the policy, they provide a regression test that would catch a divergence before it reached production.
 

@@ -55,8 +55,8 @@ gcloud config set project <YOUR_PROJECT_ID>
 ### 1. Clone the repository and navigate to this directory
 
 ```bash
-git clone https://github.com/edgeobs/euno-platform.git
-cd euno-platform/infra/gcp/terraform
+git clone https://github.com/edgeobs/eunox.git
+cd eunox/infra/gcp/terraform
 ```
 
 ### 2. Copy the example variables file and customize it
