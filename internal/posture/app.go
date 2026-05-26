@@ -89,7 +89,7 @@ type emitterMetrics struct {
 const maxJSONBodyBytes = 1 << 20
 
 // New creates a new posture emitter App with the given configuration, plugins, and dependencies.
-func New(cfg Config, plugins []Plugin, deps Dependencies) (*App, error) {
+func New(cfg *Config, plugins []Plugin, deps *Dependencies) (*App, error) {
 	// Create durable queue.
 	queue, err := NewSQLiteQueue(cfg.QueuePath)
 	if err != nil {
@@ -100,8 +100,8 @@ func New(cfg Config, plugins []Plugin, deps Dependencies) (*App, error) {
 	recordStore := NewRecordStore(dedupeWindow)
 
 	app := &App{
-		config:      cfg,
-		deps:        deps,
+		config:      *cfg,
+		deps:        *deps,
 		queue:       queue,
 		recordStore: recordStore,
 		plugins:     plugins,
@@ -158,7 +158,7 @@ func (app *App) Handler() http.Handler {
 
 // EmitObserved enqueues an observed agent record for delivery to CSPM plugins.
 // This is called synchronously by the issuer during token issuance/renewal.
-func (app *App) EmitObserved(record AgentInventoryRecord) error {
+func (app *App) EmitObserved(record *AgentInventoryRecord) error {
 	if !app.config.Enabled {
 		return nil
 	}
@@ -357,7 +357,7 @@ func (app *App) handleEmit(w http.ResponseWriter, r *http.Request) {
 		LastSeen:               now,
 	}
 
-	if err := app.EmitObserved(record); err != nil {
+	if err := app.EmitObserved(&record); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

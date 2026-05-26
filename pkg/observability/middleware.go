@@ -26,6 +26,7 @@ func newResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 }
 
+// WriteHeader records the response status code before writing it to the client.
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)

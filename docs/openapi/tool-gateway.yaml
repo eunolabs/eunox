@@ -101,6 +101,36 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/v1/enforce:
+    post:
+      tags: [enforcement]
+      summary: Evaluate a tool request against a capability token
+      description: |
+        Primary runtime enforcement endpoint used by the agent runtime. The
+        request includes the capability token plus a structured tool request,
+        and the gateway returns an allow / deny decision with any obligations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, request]
+              properties:
+                token:
+                  type: string
+                request:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Enforcement decision
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
   /api/v1/tools/invoke:
     post:
       tags: [enforcement]

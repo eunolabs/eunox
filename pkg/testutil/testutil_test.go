@@ -138,7 +138,7 @@ func TestNewTestServer(t *testing.T) {
 		require.NoError(t, err)
 	}))
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.BaseURL(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.BaseURL(), http.NoBody)
 	require.NoError(t, err)
 
 	resp, err := http.DefaultClient.Do(req)

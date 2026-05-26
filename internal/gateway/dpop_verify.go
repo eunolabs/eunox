@@ -155,6 +155,7 @@ func computeJWKThumbprint(jwkRaw json.RawMessage) (string, error) {
 		if crv == "" || x == "" || y == "" {
 			return "", errors.New("EC JWK missing required fields (crv, x, y)")
 		}
+		//nolint:gocritic // canonical JWK thumbprint format
 		canonical = fmt.Sprintf(`{"crv":"%s","kty":"EC","x":"%s","y":"%s"}`, crv, x, y)
 	case "RSA":
 		e, _ := jwk["e"].(string)
@@ -162,6 +163,7 @@ func computeJWKThumbprint(jwkRaw json.RawMessage) (string, error) {
 		if e == "" || n == "" {
 			return "", errors.New("RSA JWK missing required fields (e, n)")
 		}
+		//nolint:gocritic // canonical JWK thumbprint format
 		canonical = fmt.Sprintf(`{"e":"%s","kty":"RSA","n":"%s"}`, e, n)
 	case "OKP":
 		crv, _ := jwk["crv"].(string)
@@ -169,6 +171,7 @@ func computeJWKThumbprint(jwkRaw json.RawMessage) (string, error) {
 		if crv == "" || x == "" {
 			return "", errors.New("OKP JWK missing required fields (crv, x)")
 		}
+		//nolint:gocritic // canonical JWK thumbprint format
 		canonical = fmt.Sprintf(`{"crv":"%s","kty":"OKP","x":"%s"}`, crv, x)
 	default:
 		return "", fmt.Errorf("unsupported JWK key type: %s", kty)

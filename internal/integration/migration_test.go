@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,6 +109,137 @@ func TestMigration_MigrationFilesExist(t *testing.T) {
 	}
 }
 
+// TestMigration_ForwardBackwardPairs verifies that every .up.sql migration has
+// a corresponding .down.sql file (and vice versa) enabling reversible migrations.
+func TestMigration_ForwardBackwardPairs(t *testing.T) {
+	migrationDirs := []string{
+		"migrations/minter",
+		"migrations/audit",
+	}
+
+	for _, dir := range migrationDirs {
+		t.Run(dir, func(t *testing.T) {
+			fullPath := filepath.Join(projectRoot(t), dir)
+			entries, err := os.ReadDir(fullPath)
+			require.NoError(t, err)
+
+			upFiles := map[string]bool{}
+			downFiles := map[string]bool{}
+
+			for _, e := range entries {
+				name := e.Name()
+				if strings.HasSuffix(name, ".up.sql") {
+					base := strings.TrimSuffix(name, ".up.sql")
+					upFiles[base] = true
+				} else if strings.HasSuffix(name, ".down.sql") {
+					base := strings.TrimSuffix(name, ".down.sql")
+					downFiles[base] = true
+				}
+			}
+
+			// Every up migration must have a corresponding down migration
+			for base := range upFiles {
+				assert.True(t, downFiles[base], "migration %s has .up.sql but missing .down.sql", base)
+			}
+			// Every down migration must have a corresponding up migration
+			for base := range downFiles {
+				assert.True(t, upFiles[base], "migration %s has .down.sql but missing .up.sql", base)
+			}
+			// Must have at least one migration pair
+			assert.Greater(t, len(upFiles), 0, "directory %s should have at least one migration", dir)
+		})
+	}
+}
+
+// TestMigration_SQLSyntaxBasicValidation performs basic syntax validation on
+// migration SQL files (checks for common structural requirements).
+func TestMigration_SQLSyntaxBasicValidation(t *testing.T) {
+	migrationDirs := []string{
+		"migrations/minter",
+		"migrations/audit",
+	}
+
+	for _, dir := range migrationDirs {
+		t.Run(dir, func(t *testing.T) {
+			fullPath := filepath.Join(projectRoot(t), dir)
+			entries, err := os.ReadDir(fullPath)
+			require.NoError(t, err)
+
+			for _, e := range entries {
+				if filepath.Ext(e.Name()) != ".sql" {
+					continue
+				}
+				t.Run(e.Name(), func(t *testing.T) {
+					content, err := os.ReadFile(filepath.Join(fullPath, e.Name()))
+					require.NoError(t, err)
+
+					sql := string(content)
+					// Must not be empty
+					assert.NotEmpty(t, strings.TrimSpace(sql), "migration file should not be empty")
+
+					// Up migrations should contain CREATE or ALTER
+					if strings.HasSuffix(e.Name(), ".up.sql") {
+						hasCreate := strings.Contains(strings.ToUpper(sql), "CREATE")
+						hasAlter := strings.Contains(strings.ToUpper(sql), "ALTER")
+						hasInsert := strings.Contains(strings.ToUpper(sql), "INSERT")
+						assert.True(t, hasCreate || hasAlter || hasInsert,
+							"up migration should contain CREATE, ALTER, or INSERT statement")
+					}
+
+					// Down migrations should contain DROP or ALTER or DELETE
+					if strings.HasSuffix(e.Name(), ".down.sql") {
+						hasDrop := strings.Contains(strings.ToUpper(sql), "DROP")
+						hasAlter := strings.Contains(strings.ToUpper(sql), "ALTER")
+						hasDelete := strings.Contains(strings.ToUpper(sql), "DELETE")
+						assert.True(t, hasDrop || hasAlter || hasDelete,
+							"down migration should contain DROP, ALTER, or DELETE statement")
+					}
+
+					// Must have license header
+					assert.True(t, strings.Contains(sql, "SPDX-License-Identifier"),
+						"migration file should have license header")
+				})
+			}
+		})
+	}
+}
+
+// TestMigration_SequentialNumbering verifies migration files follow sequential
+// numbering (001, 002, 003, ...) without gaps.
+func TestMigration_SequentialNumbering(t *testing.T) {
+	migrationDirs := []string{
+		"migrations/minter",
+		"migrations/audit",
+	}
+
+	for _, dir := range migrationDirs {
+		t.Run(dir, func(t *testing.T) {
+			fullPath := filepath.Join(projectRoot(t), dir)
+			entries, err := os.ReadDir(fullPath)
+			require.NoError(t, err)
+
+			numbers := map[int]bool{}
+			for _, e := range entries {
+				name := e.Name()
+				if !strings.HasSuffix(name, ".up.sql") {
+					continue
+				}
+				// Extract leading number (e.g., "001" from "001_create_api_keys.up.sql")
+				parts := strings.SplitN(name, "_", 2)
+				require.NotEmpty(t, parts, "migration filename should have number prefix")
+				num, err := strconv.Atoi(parts[0])
+				require.NoError(t, err, "migration prefix should be numeric: %s", name)
+				numbers[num] = true
+			}
+
+			// Verify sequential from 1
+			for i := 1; i <= len(numbers); i++ {
+				assert.True(t, numbers[i], "migration %03d is missing (gap in sequence)", i)
+			}
+		})
+	}
+}
+
 // TestMigration_EnvVarIsolation verifies expected environment variables are not
 // pre-set in the test process and won't interfere with integration tests.
 func TestMigration_EnvVarIsolation(t *testing.T) {
@@ -133,7 +266,8 @@ func TestMigration_EnvVarIsolation(t *testing.T) {
 
 	// Verify none of the env vars are accidentally set in test environment
 	// (which would interfere with tests)
-	allVars := append(gatewayEnvVars, issuerEnvVars...)
+	allVars := append([]string{}, gatewayEnvVars...)
+	allVars = append(allVars, issuerEnvVars...)
 	allVars = append(allVars, minterEnvVars...)
 
 	for _, envVar := range allVars {
@@ -205,5 +339,86 @@ func projectRoot(t *testing.T) string {
 			t.Fatal("could not find project root (go.mod)")
 		}
 		dir = parent
+	}
+}
+
+// TestMigration_OpenAPISpecsExistAndValid verifies that OpenAPI specification
+// files exist and contain required structural elements.
+func TestMigration_OpenAPISpecsExistAndValid(t *testing.T) {
+	specFiles := []struct {
+		path         string
+		expectedInfo string
+	}{
+		{"docs/openapi/tool-gateway.yaml", "Tool Gateway"},
+		{"docs/openapi/capability-issuer.yaml", "Capability Issuer"},
+		{"docs/openapi/capability-issuer-discovery.yaml", ""},
+	}
+
+	for _, spec := range specFiles {
+		t.Run(filepath.Base(spec.path), func(t *testing.T) {
+			fullPath := filepath.Join(projectRoot(t), spec.path)
+			content, err := os.ReadFile(fullPath)
+			require.NoError(t, err, "OpenAPI spec file should exist: %s", spec.path)
+
+			yaml := string(content)
+
+			// Must declare OpenAPI version
+			assert.True(t, strings.Contains(yaml, "openapi:"),
+				"spec should declare openapi version")
+
+			// Must have info section
+			assert.True(t, strings.Contains(yaml, "info:"),
+				"spec should have info section")
+
+			// Must have paths section
+			assert.True(t, strings.Contains(yaml, "paths:"),
+				"spec should have paths section")
+
+			// Must have at least one path definition
+			assert.True(t, strings.Contains(yaml, "/"),
+				"spec should define at least one path")
+
+			// Validate expected title if specified
+			if spec.expectedInfo != "" {
+				assert.True(t, strings.Contains(yaml, spec.expectedInfo),
+					"spec should reference %s in title/description", spec.expectedInfo)
+			}
+		})
+	}
+}
+
+// TestMigration_OpenAPISpecEndpointCoverage verifies that the OpenAPI specs
+// document all critical endpoints that exist in the Go implementation.
+func TestMigration_OpenAPISpecEndpointCoverage(t *testing.T) {
+	gatewayEndpoints := []string{
+		"/api/v1/validate",
+		"/health",
+	}
+
+	issuerEndpoints := []string{
+		"/api/v1/issue",
+		"/health",
+	}
+
+	tests := []struct {
+		specPath  string
+		endpoints []string
+	}{
+		{"docs/openapi/tool-gateway.yaml", gatewayEndpoints},
+		{"docs/openapi/capability-issuer.yaml", issuerEndpoints},
+	}
+
+	for _, tc := range tests {
+		t.Run(filepath.Base(tc.specPath), func(t *testing.T) {
+			fullPath := filepath.Join(projectRoot(t), tc.specPath)
+			content, err := os.ReadFile(fullPath)
+			require.NoError(t, err)
+
+			yaml := string(content)
+			for _, endpoint := range tc.endpoints {
+				assert.True(t, strings.Contains(yaml, endpoint),
+					"spec %s should document endpoint %s", tc.specPath, endpoint)
+			}
+		})
 	}
 }

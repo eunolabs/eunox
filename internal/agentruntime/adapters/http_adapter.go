@@ -58,7 +58,7 @@ type HTTPToolResponse struct {
 }
 
 // Call executes an HTTP tool call through the runtime.
-func (a *HTTPAdapter) Call(ctx context.Context, call HTTPToolCall) (*HTTPToolResponse, error) {
+func (a *HTTPAdapter) Call(ctx context.Context, call *HTTPToolCall) (*HTTPToolResponse, error) {
 	url := a.baseURL + "/" + strings.TrimLeft(call.Path, "/")
 
 	method := call.Method
@@ -95,7 +95,7 @@ func (a *HTTPAdapter) Call(ctx context.Context, call HTTPToolCall) (*HTTPToolRes
 }
 
 // CallJSON executes an HTTP tool call and unmarshals the response body into result.
-func (a *HTTPAdapter) CallJSON(ctx context.Context, call HTTPToolCall, result interface{}) error {
+func (a *HTTPAdapter) CallJSON(ctx context.Context, call *HTTPToolCall, result interface{}) error {
 	resp, err := a.Call(ctx, call)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func (a *HTTPAdapter) CallJSON(ctx context.Context, call HTTPToolCall, result in
 }
 
 // CallJSONRequest executes an HTTP tool call with a JSON request body.
-func (a *HTTPAdapter) CallJSONRequest(ctx context.Context, call HTTPToolCall, reqBody interface{}) (*HTTPToolResponse, error) {
+func (a *HTTPAdapter) CallJSONRequest(ctx context.Context, call *HTTPToolCall, reqBody interface{}) (*HTTPToolResponse, error) {
 	if reqBody != nil {
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {

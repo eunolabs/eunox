@@ -47,7 +47,7 @@ func run() error {
 	cfg := config.LoadOrExit[config.GatewayConfig]("GATEWAY")
 
 	// Initialize logger
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       levelFromEnv(cfg.NodeEnv),
 		Format:      "json",
 		ServiceName: "gateway",
@@ -63,7 +63,7 @@ func run() error {
 
 	// Production Redis HA validation
 	if cfg.NodeEnv == config.EnvProduction {
-		if err := config.CheckGatewayRedisHA(cfg); err != nil {
+		if err := config.CheckGatewayRedisHA(&cfg); err != nil {
 			return fmt.Errorf("redis HA validation: %w", err)
 		}
 		logger.Info("redis HA validation passed")
@@ -140,7 +140,7 @@ func run() error {
 		TelemetryFlushMS:  cfg.TelemetryFlushMS,
 	}
 
-	app := gateway.New(appCfg, deps)
+	app := gateway.New(&appCfg, &deps)
 
 	// Create main server
 	srv := &http.Server{
@@ -175,8 +175,10 @@ func run() error {
 		}
 	}()
 
+	listenConfig := net.ListenConfig{}
+
 	go func() {
-		ln, err := net.Listen("tcp", adminSrv.Addr)
+		ln, err := listenConfig.Listen(context.Background(), "tcp", adminSrv.Addr)
 		if err != nil {
 			errCh <- fmt.Errorf("admin listener: %w", err)
 			return

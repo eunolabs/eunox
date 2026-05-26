@@ -142,7 +142,7 @@ func padBytes(b []byte, size int) []byte {
 
 func itoa(i int) string {
 	if i < 10 {
-		return string(rune('0' + i))
+		return string(rune('0' + i)) //nolint:gosec // G115: i is bounded [0,9]
 	}
 	return itoa(i/10) + string(rune('0'+i%10))
 }

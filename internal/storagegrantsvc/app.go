@@ -58,7 +58,7 @@ type CloudStorageAdapter interface {
 	// Name returns the adapter name (e.g., "aws-s3", "azure-blob", "gcp-gcs").
 	Name() string
 	// MintGrant mints a short-lived storage grant.
-	MintGrant(ctx context.Context, req MintStorageGrantRequest) (*StorageGrant, error)
+	MintGrant(ctx context.Context, req *MintStorageGrantRequest) (*StorageGrant, error)
 }
 
 // TokenVerifier verifies JWTs and extracts claims.
@@ -264,7 +264,7 @@ func (app *App) handleMintStorageGrant(w http.ResponseWriter, r *http.Request) {
 		TTL:        ttl,
 	}
 
-	grant, err := app.deps.Adapter.MintGrant(r.Context(), mintReq)
+	grant, err := app.deps.Adapter.MintGrant(r.Context(), &mintReq)
 	if err != nil {
 		if app.metrics != nil {
 			app.metrics.grantTotal.WithLabelValues(app.deps.Adapter.Name(), "error").Inc()
@@ -282,7 +282,7 @@ func (app *App) handleMintStorageGrant(w http.ResponseWriter, r *http.Request) {
 }
 
 func extractStorageFromURI(uri string) (bucket, path string) {
-	// storage://bucket/path → bucket, path
+	// Remove the storage:// scheme and split the remainder into bucket/path components.
 	trimmed := strings.TrimPrefix(uri, "storage://")
 	parts := strings.SplitN(trimmed, "/", 2)
 	if len(parts) >= 1 {
@@ -341,7 +341,7 @@ func NewAWSS3Adapter(region, bucket string) *AWSS3Adapter {
 func (a *AWSS3Adapter) Name() string { return "aws-s3" }
 
 // MintGrant implements CloudStorageAdapter.
-func (a *AWSS3Adapter) MintGrant(_ context.Context, req MintStorageGrantRequest) (*StorageGrant, error) {
+func (a *AWSS3Adapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
 	// In production, this would use AWS SDK to generate a presigned URL
 	// using s3.PresignClient with PutObject or GetObject.
 	bucket := req.Bucket
@@ -379,7 +379,7 @@ func NewAzureBlobAdapter(accountName, container string) *AzureBlobAdapter {
 func (a *AzureBlobAdapter) Name() string { return "azure-blob" }
 
 // MintGrant implements CloudStorageAdapter.
-func (a *AzureBlobAdapter) MintGrant(_ context.Context, req MintStorageGrantRequest) (*StorageGrant, error) {
+func (a *AzureBlobAdapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
 	// In production, this would use Azure SDK to generate a user-delegation SAS token.
 	bucket := req.Bucket
 	if bucket == "" {
@@ -432,7 +432,7 @@ func NewGCPGCSAdapter(projectID, bucket string) *GCPGCSAdapter {
 func (a *GCPGCSAdapter) Name() string { return "gcp-gcs" }
 
 // MintGrant implements CloudStorageAdapter.
-func (a *GCPGCSAdapter) MintGrant(_ context.Context, req MintStorageGrantRequest) (*StorageGrant, error) {
+func (a *GCPGCSAdapter) MintGrant(_ context.Context, req *MintStorageGrantRequest) (*StorageGrant, error) {
 	// In production, this would use GCP storage client to generate a V4 signed URL.
 	bucket := req.Bucket
 	if bucket == "" {

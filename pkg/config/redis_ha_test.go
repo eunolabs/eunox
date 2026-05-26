@@ -82,7 +82,7 @@ func TestCheckRedisHA_Production_MultipleHosts_Passes(t *testing.T) {
 
 func TestCheckRedisHA_Production_EmptyURL_Skipped(t *testing.T) {
 	urls := map[string]string{
-		"REDIS_URL":             "",
+		"REDIS_URL":            "",
 		"REVOCATION_REDIS_URL": "",
 	}
 	errs := CheckRedisHA(EnvProduction, urls)
@@ -92,8 +92,8 @@ func TestCheckRedisHA_Production_EmptyURL_Skipped(t *testing.T) {
 func TestCheckRedisHA_Production_MultipleURLs(t *testing.T) {
 	urls := map[string]string{
 		"REDIS_URL":              "redis://single:6379",
-		"REVOCATION_REDIS_URL":  "redis-sentinel://s1:26379/mymaster",
-		"KILL_SWITCH_REDIS_URL": "redis://another-single:6379",
+		"REVOCATION_REDIS_URL":   "redis-sentinel://s1:26379/mymaster",
+		"KILL_SWITCH_REDIS_URL":  "redis://another-single:6379",
 		"CALL_COUNTER_REDIS_URL": "",
 	}
 	errs := CheckRedisHA(EnvProduction, urls)
@@ -112,7 +112,7 @@ func TestCheckGatewayRedisHA_Production(t *testing.T) {
 		NodeEnv:  EnvProduction,
 		RedisURL: "redis://single:6379",
 	}
-	err := CheckGatewayRedisHA(cfg)
+	err := CheckGatewayRedisHA(&cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "production Redis HA validation failed")
 }
@@ -122,7 +122,7 @@ func TestCheckGatewayRedisHA_NonProduction(t *testing.T) {
 		NodeEnv:  EnvDevelopment,
 		RedisURL: "redis://single:6379",
 	}
-	err := CheckGatewayRedisHA(cfg)
+	err := CheckGatewayRedisHA(&cfg)
 	assert.NoError(t, err)
 }
 
@@ -134,7 +134,7 @@ func TestCheckGatewayRedisHA_AllHA(t *testing.T) {
 		KillSwitchRedisURL:  "redis+sentinel://s1:26379/master",
 		CallCounterRedisURL: "redis://node1:6379,node2:6379",
 	}
-	err := CheckGatewayRedisHA(cfg)
+	err := CheckGatewayRedisHA(&cfg)
 	assert.NoError(t, err)
 }
 

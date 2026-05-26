@@ -48,12 +48,12 @@ func (r *WebResolver) Resolve(ctx context.Context, did string) (*Document, error
 		return nil, fmt.Errorf("invalid did:web URI: %q", did)
 	}
 
-	url, err := webDIDToURL(did)
+	targetURL, err := webDIDToURL(did)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

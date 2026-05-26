@@ -29,14 +29,14 @@ func (m *mockVerifier) VerifyAndExtractCaps(_ context.Context, _ string) (*Token
 type mockDBAdapter struct {
 	cred    *DBCredential
 	err     error
-	lastReq MintDBCredentialRequest
+	lastReq *MintDBCredentialRequest
 }
 
 // Name implements CloudDBAdapter.
 func (m *mockDBAdapter) Name() string { return "mock-db" }
 
 // MintCredential implements CloudDBAdapter.
-func (m *mockDBAdapter) MintCredential(_ context.Context, req MintDBCredentialRequest) (*DBCredential, error) {
+func (m *mockDBAdapter) MintCredential(_ context.Context, req *MintDBCredentialRequest) (*DBCredential, error) {
 	m.lastReq = req
 	return m.cred, m.err
 }
@@ -65,7 +65,7 @@ func newTestDBTokenApp(t *testing.T, verifier TokenVerifier, adapter CloudDBAdap
 func TestDBTokenSvc_HealthLive(t *testing.T) {
 	t.Parallel()
 	app := newTestDBTokenApp(t, &mockVerifier{}, &mockDBAdapter{})
-	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/live", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -76,7 +76,7 @@ func TestDBTokenSvc_HealthLive(t *testing.T) {
 func TestDBTokenSvc_HealthReady(t *testing.T) {
 	t.Parallel()
 	app := newTestDBTokenApp(t, &mockVerifier{}, &mockDBAdapter{})
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -106,7 +106,7 @@ func TestDBTokenSvc_MintToken_Success(t *testing.T) {
 	}
 	app := newTestDBTokenApp(t, verifier, adapter)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -200,7 +200,7 @@ func TestDBTokenSvc_MintToken_MissingAuth(t *testing.T) {
 	t.Parallel()
 	app := newTestDBTokenApp(t, &mockVerifier{}, &mockDBAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
@@ -214,7 +214,7 @@ func TestDBTokenSvc_MintToken_InvalidToken(t *testing.T) {
 	verifier := &mockVerifier{err: ErrInvalidToken}
 	app := newTestDBTokenApp(t, verifier, &mockDBAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -235,7 +235,7 @@ func TestDBTokenSvc_MintToken_NoCapability(t *testing.T) {
 	}
 	app := newTestDBTokenApp(t, verifier, &mockDBAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -269,7 +269,7 @@ func TestDBTokenSvc_MintToken_NoMapping(t *testing.T) {
 		},
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -291,7 +291,7 @@ func TestDBTokenSvc_MintToken_AdapterError(t *testing.T) {
 	adapter := &mockDBAdapter{err: ErrMintFailed}
 	app := newTestDBTokenApp(t, verifier, adapter)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -313,7 +313,7 @@ func TestDBTokenSvc_MintToken_RequiresDatabase(t *testing.T) {
 	}
 	app := newTestDBTokenApp(t, verifier, &mockDBAdapter{})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/db-tokens", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+"test-token")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
@@ -354,7 +354,7 @@ func TestExtractBearerToken(t *testing.T) {
 		{"", ""},
 	}
 	for _, tt := range tests {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		if tt.header != "" {
 			req.Header.Set("Authorization", tt.header)
 		}

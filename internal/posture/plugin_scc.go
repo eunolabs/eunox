@@ -12,9 +12,9 @@ import (
 // SccClient is the interface for interacting with GCP Security Command Center.
 type SccClient interface {
 	// CreateFinding creates a new finding in SCC.
-	CreateFinding(ctx context.Context, req SccCreateFindingRequest) error
+	CreateFinding(ctx context.Context, req *SccCreateFindingRequest) error
 	// UpdateFinding updates an existing finding in SCC.
-	UpdateFinding(ctx context.Context, req SccUpdateFindingRequest) error
+	UpdateFinding(ctx context.Context, req *SccUpdateFindingRequest) error
 }
 
 // SccCreateFindingRequest is the request to create a finding.
@@ -77,7 +77,7 @@ func (p *SccPlugin) Name() string {
 }
 
 // EmitObserved creates or updates a finding for the observed agent.
-func (p *SccPlugin) EmitObserved(ctx context.Context, record AgentInventoryRecord) error {
+func (p *SccPlugin) EmitObserved(ctx context.Context, record *AgentInventoryRecord) error {
 	if p.client == nil {
 		return fmt.Errorf("scc plugin: client not configured")
 	}
@@ -97,24 +97,25 @@ func (p *SccPlugin) EmitObserved(ctx context.Context, record AgentInventoryRecor
 			"capabilityManifestHash": record.CapabilityManifestHash,
 			"runtime":                record.Runtime,
 			"region":                 record.Region,
-			"firstSeen":             record.FirstSeen.UTC().Format(time.RFC3339),
-			"lastSeen":              record.LastSeen.UTC().Format(time.RFC3339),
+			"firstSeen":              record.FirstSeen.UTC().Format(time.RFC3339),
+			"lastSeen":               record.LastSeen.UTC().Format(time.RFC3339),
 		},
 	}
 
 	// Try create first; if already exists, fall back to update.
-	err := p.client.CreateFinding(ctx, SccCreateFindingRequest{
+	err := p.client.CreateFinding(ctx, &SccCreateFindingRequest{
 		Parent:    p.config.SourceName,
 		FindingID: findingID,
 		Finding:   finding,
 	})
 
 	if err != nil && isAlreadyExists(err) {
-		return p.client.UpdateFinding(ctx, SccUpdateFindingRequest{
+		return p.client.UpdateFinding(ctx, &SccUpdateFindingRequest{
 			FindingName: fmt.Sprintf("%s/findings/%s", p.config.SourceName, findingID),
 			Finding:     finding,
 			UpdateMask:  []string{"state", "event_time", "source_properties"},
 		})
+
 	}
 
 	return err
@@ -137,11 +138,12 @@ func (p *SccPlugin) EmitRevoked(ctx context.Context, agentID string, revokedAt t
 		},
 	}
 
-	return p.client.UpdateFinding(ctx, SccUpdateFindingRequest{
+	return p.client.UpdateFinding(ctx, &SccUpdateFindingRequest{
 		FindingName: fmt.Sprintf("%s/findings/%s", p.config.SourceName, findingID),
 		Finding:     finding,
 		UpdateMask:  []string{"state", "event_time", "source_properties"},
 	})
+
 }
 
 // sanitizeFindingID replaces non-alphanumeric characters and caps length for SCC finding IDs.

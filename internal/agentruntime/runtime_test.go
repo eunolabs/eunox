@@ -39,7 +39,7 @@ func TestNew_RequiredConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(tt.cfg)
+			_, err := New(&tt.cfg)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.err)
 		})
@@ -51,12 +51,13 @@ func TestNew_ValidConfig(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	rt, err := New(Config{
+	rt, err := New(&Config{
 		IssuerURL:     "https://issuer.example.com",
 		GatewayURL:    "https://gw.example.com",
 		IdentityToken: "my-id-token",
 		HTTPClient:    client,
 	})
+
 	require.NoError(t, err)
 	require.NotNil(t, rt)
 	defer rt.Stop()
@@ -71,13 +72,14 @@ func TestNew_DPoPDisabled(t *testing.T) {
 	})
 
 	dpopDisabled := false
-	rt, err := New(Config{
+	rt, err := New(&Config{
 		IssuerURL:     "https://issuer.example.com",
 		GatewayURL:    "https://gw.example.com",
 		IdentityToken: "my-id-token",
 		HTTPClient:    client,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -90,13 +92,14 @@ func TestRuntime_GetToken(t *testing.T) {
 	})
 
 	dpopDisabled := false
-	rt, err := New(Config{
+	rt, err := New(&Config{
 		IssuerURL:     "https://issuer.example.com",
 		GatewayURL:    "https://gw.example.com",
 		IdentityToken: "my-id-token",
 		HTTPClient:    client,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -122,13 +125,14 @@ func TestRuntime_InvokeTool(t *testing.T) {
 	})
 
 	dpopDisabled := false
-	rt, err := New(Config{
+	rt, err := New(&Config{
 		IssuerURL:     "https://issuer.example.com",
 		GatewayURL:    "https://gw.example.com",
 		IdentityToken: "my-id-token",
 		HTTPClient:    client,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -154,16 +158,15 @@ func TestRuntime_WithHintsProvider(t *testing.T) {
 	require.NoError(t, err)
 
 	dpopDisabled := false
-	rt, err := New(
-		Config{
-			IssuerURL:     "https://issuer.example.com",
-			GatewayURL:    "https://gw.example.com",
-			IdentityToken: "my-id-token",
-			HTTPClient:    client,
-			DPoPEnabled:   &dpopDisabled,
-		},
-		WithHintsProvider(NewStaticHintsProvider(manifest)),
-	)
+	rt, err := New(&Config{
+		IssuerURL:     "https://issuer.example.com",
+		GatewayURL:    "https://gw.example.com",
+		IdentityToken: "my-id-token",
+		HTTPClient:    client,
+		DPoPEnabled:   &dpopDisabled,
+	},
+		WithHintsProvider(NewStaticHintsProvider(manifest)))
+
 	require.NoError(t, err)
 	defer rt.Stop()
 
@@ -184,7 +187,7 @@ func TestRuntime_WithIdentityTokenProvider(t *testing.T) {
 	})
 
 	dpopDisabled := false
-	rt, err := New(Config{
+	rt, err := New(&Config{
 		IssuerURL:  "https://issuer.example.com",
 		GatewayURL: "https://gw.example.com",
 		IdentityTokenProvider: func(_ context.Context) (string, error) {
@@ -193,6 +196,7 @@ func TestRuntime_WithIdentityTokenProvider(t *testing.T) {
 		HTTPClient:  client,
 		DPoPEnabled: &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	defer rt.Stop()
 

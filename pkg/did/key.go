@@ -86,7 +86,7 @@ func decodeMultibase(s string) ([]byte, error) {
 }
 
 // decodeMulticodec extracts the key type and raw key bytes from multicodec-prefixed data.
-func decodeMulticodec(data []byte) (string, []byte, error) {
+func decodeMulticodec(data []byte) (keyType string, keyBytes []byte, err error) {
 	if len(data) < 2 {
 		return "", nil, errors.New("multicodec data too short")
 	}
@@ -113,7 +113,7 @@ func decodeMulticodec(data []byte) (string, []byte, error) {
 }
 
 // decodeUvarint reads an unsigned varint from a byte slice.
-func decodeUvarint(data []byte) (uint64, int) {
+func decodeUvarint(data []byte) (value uint64, bytesRead int) {
 	var x uint64
 	var s uint
 	for i, b := range data {

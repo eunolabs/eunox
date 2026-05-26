@@ -17,7 +17,7 @@ func newJSONRequest(t *testing.T, method, target string, body []byte) *http.Requ
 	if body != nil {
 		req = httptest.NewRequest(method, target, bytes.NewReader(body))
 	} else {
-		req = httptest.NewRequest(method, target, nil)
+		req = httptest.NewRequest(method, target, http.NoBody)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return req

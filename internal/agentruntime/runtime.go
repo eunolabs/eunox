@@ -41,7 +41,7 @@ func WithHintsProvider(provider IssuanceHintsProvider) Option {
 // New creates a new agent Runtime with the given configuration.
 // The runtime manages DPoP key generation, token acquisition, caching,
 // proactive refresh, and tool invocation through the gateway.
-func New(cfg Config, opts ...Option) (*Runtime, error) {
+func New(cfg *Config, opts ...Option) (*Runtime, error) {
 	if cfg.IssuerURL == "" {
 		return nil, fmt.Errorf("IssuerURL is required")
 	}
@@ -53,7 +53,7 @@ func New(cfg Config, opts ...Option) (*Runtime, error) {
 	}
 
 	r := &Runtime{
-		config: cfg,
+		config: *cfg,
 		logger: slog.Default(),
 	}
 
@@ -99,7 +99,7 @@ func New(cfg Config, opts ...Option) (*Runtime, error) {
 	}
 
 	// Create token provider
-	r.tokenProvider = NewAuthTokenProvider(AuthTokenProviderConfig{
+	r.tokenProvider = NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:             cfg.IssuerURL,
 		HTTPClient:            httpClient,
 		DPoP:                  dpop,
@@ -112,7 +112,7 @@ func New(cfg Config, opts ...Option) (*Runtime, error) {
 	})
 
 	// Create tool invoker
-	r.toolInvoker = NewToolInvoker(ToolInvokerConfig{
+	r.toolInvoker = NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    cfg.GatewayURL,
 		HTTPClient:    httpClient,
 		TokenProvider: r.tokenProvider,

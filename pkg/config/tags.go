@@ -37,7 +37,7 @@ type fieldTags struct {
 	Production []productionRule
 }
 
-func parseFieldTags(field reflect.StructField) (fieldTags, error) {
+func parseFieldTags(field *reflect.StructField) (fieldTags, error) {
 	tags := fieldTags{Env: strings.TrimSpace(field.Tag.Get("env"))}
 
 	if defaultValue, ok := field.Tag.Lookup("default"); ok {
@@ -108,7 +108,7 @@ func parseFieldTags(field reflect.StructField) (fieldTags, error) {
 	return tags, nil
 }
 
-func hasLeafTags(field reflect.StructField) bool {
+func hasLeafTags(field *reflect.StructField) bool {
 	for _, tag := range []string{"env", "default", "required", "min", "max", "enum", "regex", "production"} {
 		if _, ok := field.Tag.Lookup(tag); ok {
 			return true
@@ -117,7 +117,7 @@ func hasLeafTags(field reflect.StructField) bool {
 	return false
 }
 
-func envName(prefix string, tag string) string {
+func envName(prefix, tag string) string {
 	prefix = strings.TrimSpace(prefix)
 	tag = strings.TrimSpace(tag)
 	if tag == "" {

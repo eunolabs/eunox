@@ -63,13 +63,14 @@ func newTestRuntime(t *testing.T, gatewayDecision capability.Decision) *agentrun
 	}
 
 	dpopDisabled := false
-	rt, err := agentruntime.New(agentruntime.Config{
+	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     "https://issuer.example.com",
 		GatewayURL:    "https://gateway.example.com",
 		IdentityToken: "id-token",
 		HTTPClient:    client,
 		DPoPEnabled:   &dpopDisabled,
 	})
+
 	require.NoError(t, err)
 	t.Cleanup(rt.Stop)
 	return rt
@@ -81,7 +82,7 @@ func TestHTTPAdapter_Call(t *testing.T) {
 	rt := newTestRuntime(t, capability.DecisionAllow)
 	adapter := NewHTTPAdapter(rt, "https://tools.example.com", "session-1")
 
-	resp, err := adapter.Call(context.Background(), HTTPToolCall{
+	resp, err := adapter.Call(context.Background(), &HTTPToolCall{
 		ToolName:  "read_file",
 		Method:    "GET",
 		Path:      "/api/files/test.txt",
@@ -97,7 +98,7 @@ func TestHTTPAdapter_CallDenied(t *testing.T) {
 	rt := newTestRuntime(t, capability.DecisionDeny)
 	adapter := NewHTTPAdapter(rt, "https://tools.example.com", "session-1")
 
-	_, err := adapter.Call(context.Background(), HTTPToolCall{
+	_, err := adapter.Call(context.Background(), &HTTPToolCall{
 		ToolName: "delete_file",
 		Method:   "DELETE",
 		Path:     "/api/files/secret",
@@ -112,7 +113,7 @@ func TestHTTPAdapter_CallJSON(t *testing.T) {
 	adapter := NewHTTPAdapter(rt, "https://tools.example.com", "session-1")
 
 	var result map[string]string
-	err := adapter.CallJSON(context.Background(), HTTPToolCall{
+	err := adapter.CallJSON(context.Background(), &HTTPToolCall{
 		ToolName: "get_data",
 		Method:   "GET",
 		Path:     "/api/data",
@@ -126,7 +127,7 @@ func TestHTTPAdapter_CallJSONRequest(t *testing.T) {
 	rt := newTestRuntime(t, capability.DecisionAllow)
 	adapter := NewHTTPAdapter(rt, "https://tools.example.com", "session-1")
 
-	resp, err := adapter.CallJSONRequest(context.Background(), HTTPToolCall{
+	resp, err := adapter.CallJSONRequest(context.Background(), &HTTPToolCall{
 		ToolName: "create_file",
 		Method:   "POST",
 		Path:     "/api/files",
@@ -141,7 +142,7 @@ func TestHTTPAdapter_DefaultMethod(t *testing.T) {
 	adapter := NewHTTPAdapter(rt, "https://tools.example.com", "session-1")
 
 	// When no method specified, defaults to POST
-	resp, err := adapter.Call(context.Background(), HTTPToolCall{
+	resp, err := adapter.Call(context.Background(), &HTTPToolCall{
 		ToolName: "action",
 		Path:     "/api/action",
 	})
@@ -248,7 +249,7 @@ func TestFunctionCallAdapter_RegisterHandler(t *testing.T) {
 	adapter.RegisterHandler("compute", func(_ context.Context, args map[string]interface{}, _ *agentruntime.ToolResponse) (interface{}, error) {
 		return map[string]interface{}{
 			"computed": true,
-			"input":   args["x"],
+			"input":    args["x"],
 		}, nil
 	})
 

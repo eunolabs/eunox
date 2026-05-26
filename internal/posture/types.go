@@ -67,7 +67,7 @@ type Plugin interface {
 	// Name returns the plugin identifier (e.g., "defender", "security-hub", "scc").
 	Name() string
 	// EmitObserved delivers an observed agent record to the CSPM backend.
-	EmitObserved(ctx context.Context, record AgentInventoryRecord) error
+	EmitObserved(ctx context.Context, record *AgentInventoryRecord) error
 	// EmitRevoked notifies the CSPM backend that an agent has been revoked.
 	EmitRevoked(ctx context.Context, agentID string, revokedAt time.Time) error
 }
@@ -81,7 +81,7 @@ type Queue interface {
 	// Ack removes a successfully delivered event from the queue.
 	Ack(id int64) error
 	// Nack reschedules a failed event for later retry.
-	Nack(id int64, nextAttemptAt int64, errMsg string) error
+	Nack(id, nextAttemptAt int64, errMsg string) error
 	// Depth returns the total number of events in the queue.
 	Depth() (int64, error)
 	// Close releases queue resources.
@@ -92,7 +92,7 @@ type Queue interface {
 type RecordStore interface {
 	// Upsert adds or updates a record. Returns true if the record should be emitted
 	// (i.e., it's new or outside the deduplication window).
-	Upsert(record AgentInventoryRecord) bool
+	Upsert(record *AgentInventoryRecord) bool
 	// MarkRevoked marks an agent as revoked. Returns the record if found.
 	MarkRevoked(agentID string, revokedAt time.Time) *AgentInventoryRecord
 	// ListActive returns all non-revoked records.

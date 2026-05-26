@@ -34,7 +34,7 @@ type ToolInvokerConfig struct {
 }
 
 // NewToolInvoker creates a new ToolInvoker.
-func NewToolInvoker(cfg ToolInvokerConfig) *ToolInvoker {
+func NewToolInvoker(cfg *ToolInvokerConfig) *ToolInvoker {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -198,7 +198,7 @@ func (inv *ToolInvoker) callUpstream(ctx context.Context, req *ToolRequest, toke
 
 // enforcePayload is the request body for the gateway's POST /api/v1/enforce endpoint.
 type enforcePayload struct {
-	Token   string                   `json:"token"`
+	Token   string                    `json:"token"`
 	Request capability.EnforceRequest `json:"request"`
-	DPoP    *capability.DPoPProof    `json:"dpop,omitempty"`
+	DPoP    *capability.DPoPProof     `json:"dpop,omitempty"`
 }

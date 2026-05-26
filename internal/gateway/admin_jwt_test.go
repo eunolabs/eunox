@@ -51,7 +51,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 
 	t.Run("valid JWT", func(t *testing.T) {
 		token := signAdminJWT(t, priv, kid, "operator-alice", "gateway-admin")
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		identity, err := auth.Authenticate(context.Background(), req)
@@ -62,7 +62,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 
 	t.Run("expired JWT", func(t *testing.T) {
 		token := signAdminJWTWithExp(t, priv, kid, "op-1", "gateway-admin", time.Now().Add(-1*time.Hour))
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		_, err := auth.Authenticate(context.Background(), req)
@@ -72,7 +72,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 
 	t.Run("wrong kid", func(t *testing.T) {
 		token := signAdminJWT(t, priv, "nonexistent-kid", "op-1", "gateway-admin")
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		_, err := auth.Authenticate(context.Background(), req)
@@ -81,7 +81,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 	})
 
 	t.Run("static key fallback", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", "static-key-123")
 
 		identity, err := auth.Authenticate(context.Background(), req)
@@ -91,7 +91,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 	})
 
 	t.Run("invalid static key", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", "wrong-key")
 
 		_, err := auth.Authenticate(context.Background(), req)
@@ -100,7 +100,7 @@ func TestCombinedAdminAuth_JWT(t *testing.T) {
 	})
 
 	t.Run("no credentials", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 
 		_, err := auth.Authenticate(context.Background(), req)
 		require.Error(t, err)
@@ -128,7 +128,7 @@ func TestCombinedAdminAuth_JWTOnly(t *testing.T) {
 
 	t.Run("JWT works", func(t *testing.T) {
 		token := signAdminJWT(t, priv, kid, "op-jwt", "")
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		identity, err := auth.Authenticate(context.Background(), req)
@@ -137,7 +137,7 @@ func TestCombinedAdminAuth_JWTOnly(t *testing.T) {
 	})
 
 	t.Run("static key not configured", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", "some-key")
 
 		_, err := auth.Authenticate(context.Background(), req)
@@ -153,7 +153,7 @@ func TestCombinedAdminAuth_StaticKeyOnly(t *testing.T) {
 	})
 
 	t.Run("static key works", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("X-Admin-Api-Key", "key-abc")
 
 		identity, err := auth.Authenticate(context.Background(), req)
@@ -162,7 +162,7 @@ func TestCombinedAdminAuth_StaticKeyOnly(t *testing.T) {
 	})
 
 	t.Run("bearer without JWT verifier", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", http.NoBody)
 		req.Header.Set("Authorization", "Bearer fake-jwt")
 
 		_, err := auth.Authenticate(context.Background(), req)

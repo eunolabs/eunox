@@ -19,22 +19,22 @@ type SecurityHubClient interface {
 
 // SecurityHubFinding represents an AWS Security Hub ASFF finding.
 type SecurityHubFinding struct {
-	SchemaVersion string                 `json:"SchemaVersion"`
-	ID            string                 `json:"Id"`
-	ProductArn    string                 `json:"ProductArn"`
-	GeneratorID   string                 `json:"GeneratorId"`
-	AwsAccountID  string                 `json:"AwsAccountId"`
-	Types         []string               `json:"Types"`
-	CreatedAt     string                 `json:"CreatedAt"`
-	UpdatedAt     string                 `json:"UpdatedAt"`
-	Severity      FindingSeverity        `json:"Severity"`
-	Title         string                 `json:"Title"`
-	Description   string                 `json:"Description"`
-	ProductFields map[string]string      `json:"ProductFields"`
-	Resources     []FindingResource      `json:"Resources"`
-	Workflow      *FindingWorkflow       `json:"Workflow,omitempty"`
-	RecordState   string                 `json:"RecordState"`
-	UserDefinedFields map[string]string  `json:"UserDefinedFields,omitempty"`
+	SchemaVersion     string            `json:"SchemaVersion"`
+	ID                string            `json:"Id"`
+	ProductArn        string            `json:"ProductArn"`
+	GeneratorID       string            `json:"GeneratorId"`
+	AwsAccountID      string            `json:"AwsAccountId"`
+	Types             []string          `json:"Types"`
+	CreatedAt         string            `json:"CreatedAt"`
+	UpdatedAt         string            `json:"UpdatedAt"`
+	Severity          FindingSeverity   `json:"Severity"`
+	Title             string            `json:"Title"`
+	Description       string            `json:"Description"`
+	ProductFields     map[string]string `json:"ProductFields"`
+	Resources         []FindingResource `json:"Resources"`
+	Workflow          *FindingWorkflow  `json:"Workflow,omitempty"`
+	RecordState       string            `json:"RecordState"`
+	UserDefinedFields map[string]string `json:"UserDefinedFields,omitempty"`
 }
 
 // FindingSeverity represents the severity section of a finding.
@@ -64,7 +64,7 @@ type FindingIdentifier struct {
 // FindingUpdate contains the fields to update on a finding.
 type FindingUpdate struct {
 	Workflow    *FindingWorkflow `json:"Workflow,omitempty"`
-	RecordState string          `json:"RecordState,omitempty"`
+	RecordState string           `json:"RecordState,omitempty"`
 }
 
 // SecurityHubPluginConfig holds configuration for the AWS Security Hub plugin.
@@ -110,7 +110,7 @@ func (p *SecurityHubPlugin) Name() string {
 }
 
 // EmitObserved imports a finding for the observed agent.
-func (p *SecurityHubPlugin) EmitObserved(ctx context.Context, record AgentInventoryRecord) error {
+func (p *SecurityHubPlugin) EmitObserved(ctx context.Context, record *AgentInventoryRecord) error {
 	if p.client == nil {
 		return fmt.Errorf("security-hub plugin: client not configured")
 	}

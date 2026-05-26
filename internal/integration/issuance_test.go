@@ -68,22 +68,20 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 	metrics := observability.NewMetricsRegistry("test", "issuance")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID:       "did:web:issuer.test",
-			IssuerURL:       "https://issuer.test",
-			DefaultTokenTTL: 300,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine,
-			Identity:     idProvider,
-			KeyStore:     keyStore,
-			Logger:       logger,
-			Metrics:      metrics,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID:       "did:web:issuer.test",
+		IssuerURL:       "https://issuer.test",
+		DefaultTokenTTL: 300,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine,
+		Identity:     idProvider,
+		KeyStore:     keyStore,
+		Logger:       logger,
+		Metrics:      metrics,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
@@ -114,21 +112,18 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 	engine := enforcement.New()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	gwApp := gateway.New(
-		gateway.Config{
-			GatewayAudience: "https://gateway.test",
-			AdminAPIKey:     testAdminKey,
-		},
-		gateway.Dependencies{
-			Engine:      engine,
-			KillSwitch:  killswitch.NewInMemory(),
-			Revocation:  revocation.NewInMemory(),
-			JWTVerifier: &testJWTVerifier{signingKey: signingKey},
-			DPoPStore:   dpopStore,
-			Logger:      logger,
-			Metrics:     metrics,
-		},
-	)
+	gwApp := gateway.New(&gateway.Config{
+		GatewayAudience: "https://gateway.test",
+		AdminAPIKey:     testAdminKey,
+	}, &gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  killswitch.NewInMemory(),
+		Revocation:  revocation.NewInMemory(),
+		JWTVerifier: &testJWTVerifier{signingKey: signingKey},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+		Metrics:     metrics,
+	})
 
 	enforcePayload := map[string]any{
 		"token": issueResp.Token,
@@ -197,21 +192,19 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID:       "did:web:issuer.test",
-			IssuerURL:       "https://issuer.test",
-			DefaultTokenTTL: 3600,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine,
-			Identity:     idProvider,
-			KeyStore:     issuer.NewSingleKeyStore(signingKey),
-			Logger:       logger,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID:       "did:web:issuer.test",
+		IssuerURL:       "https://issuer.test",
+		DefaultTokenTTL: 3600,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine,
+		Identity:     idProvider,
+		KeyStore:     issuer.NewSingleKeyStore(signingKey),
+		Logger:       logger,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
@@ -249,17 +242,14 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	// Step 3: Use attenuated token at gateway
 	engine := enforcement.New()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	gwApp := gateway.New(
-		gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey},
-		gateway.Dependencies{
-			Engine:      engine,
-			KillSwitch:  killswitch.NewInMemory(),
-			Revocation:  revocation.NewInMemory(),
-			JWTVerifier: &testJWTVerifier{signingKey: signingKey},
-			DPoPStore:   dpopStore,
-			Logger:      logger,
-		},
-	)
+	gwApp := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  killswitch.NewInMemory(),
+		Revocation:  revocation.NewInMemory(),
+		JWTVerifier: &testJWTVerifier{signingKey: signingKey},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	})
 
 	// file-read allowed
 	enforceBody, _ := json.Marshal(map[string]any{
@@ -303,21 +293,19 @@ func TestIssuance_JWKSEndpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID:       "did:web:issuer.test",
-			IssuerURL:       "https://issuer.test",
-			DefaultTokenTTL: 300,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policy.New(),
-			Identity:     &testIdentityProvider{},
-			KeyStore:     issuer.NewSingleKeyStore(signingKey),
-			Logger:       logger,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID:       "did:web:issuer.test",
+		IssuerURL:       "https://issuer.test",
+		DefaultTokenTTL: 300,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policy.New(),
+		Identity:     &testIdentityProvider{},
+		KeyStore:     issuer.NewSingleKeyStore(signingKey),
+		Logger:       logger,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
@@ -363,16 +351,14 @@ func TestIssuance_KeyRotation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Issue token with key1
-	issuerApp1 := issuer.New(
-		issuer.Config{
-			IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
-			DefaultTokenTTL: 3600, MaxTokenTTL: 3600, Audience: "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine, Identity: idProvider,
-			KeyStore: issuer.NewSingleKeyStore(key1), Logger: logger,
-		},
-	)
+	issuerApp1 := issuer.New(&issuer.Config{
+		IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
+		DefaultTokenTTL: 3600, MaxTokenTTL: 3600, Audience: "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine, Identity: idProvider,
+		KeyStore: issuer.NewSingleKeyStore(key1), Logger: logger,
+	})
+
 	issuerSrv1 := httptest.NewServer(issuerApp1.Handler())
 	defer issuerSrv1.Close()
 
@@ -389,16 +375,14 @@ func TestIssuance_KeyRotation(t *testing.T) {
 	assert.NotEmpty(t, tokenV1.Token)
 
 	// Issue token with key2
-	issuerApp2 := issuer.New(
-		issuer.Config{
-			IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
-			DefaultTokenTTL: 3600, MaxTokenTTL: 3600, Audience: "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine, Identity: idProvider,
-			KeyStore: issuer.NewSingleKeyStore(key2), Logger: logger,
-		},
-	)
+	issuerApp2 := issuer.New(&issuer.Config{
+		IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
+		DefaultTokenTTL: 3600, MaxTokenTTL: 3600, Audience: "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine, Identity: idProvider,
+		KeyStore: issuer.NewSingleKeyStore(key2), Logger: logger,
+	})
+
 	issuerSrv2 := httptest.NewServer(issuerApp2.Handler())
 	defer issuerSrv2.Close()
 
@@ -439,17 +423,14 @@ func TestIssuance_ExpiredToken_DeniedAtGateway(t *testing.T) {
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	gwApp := gateway.New(
-		gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey},
-		gateway.Dependencies{
-			Engine:      enforcement.New(),
-			KillSwitch:  killswitch.NewInMemory(),
-			Revocation:  revocation.NewInMemory(),
-			JWTVerifier: &staticClaimsVerifier{claims: expiredClaims},
-			DPoPStore:   dpopStore,
-			Logger:      logger,
-		},
-	)
+	gwApp := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
+		Engine:      enforcement.New(),
+		KillSwitch:  killswitch.NewInMemory(),
+		Revocation:  revocation.NewInMemory(),
+		JWTVerifier: &staticClaimsVerifier{claims: expiredClaims},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	})
 
 	enforceBody, _ := json.Marshal(map[string]any{
 		"token": "expired-token",
@@ -477,21 +458,19 @@ func TestIssuance_Discovery_Endpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID:       "did:web:issuer.test",
-			IssuerURL:       "https://issuer.test",
-			DefaultTokenTTL: 300,
-			MaxTokenTTL:     3600,
-			Audience:        "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policy.New(),
-			Identity:     &testIdentityProvider{},
-			KeyStore:     issuer.NewSingleKeyStore(signingKey),
-			Logger:       logger,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID:       "did:web:issuer.test",
+		IssuerURL:       "https://issuer.test",
+		DefaultTokenTTL: 300,
+		MaxTokenTTL:     3600,
+		Audience:        "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policy.New(),
+		Identity:     &testIdentityProvider{},
+		KeyStore:     issuer.NewSingleKeyStore(signingKey),
+		Logger:       logger,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
@@ -521,16 +500,14 @@ func TestIssuance_InvalidIdentityToken(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
-			DefaultTokenTTL: 300, MaxTokenTTL: 3600, Audience: "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policy.New(), Identity: idProvider,
-			KeyStore: issuer.NewSingleKeyStore(signingKey), Logger: logger,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
+		DefaultTokenTTL: 300, MaxTokenTTL: 3600, Audience: "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policy.New(), Identity: idProvider,
+		KeyStore: issuer.NewSingleKeyStore(signingKey), Logger: logger,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
@@ -566,16 +543,14 @@ func TestIssuance_TokenRenewal(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuerApp := issuer.New(
-		issuer.Config{
-			IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
-			DefaultTokenTTL: 300, MaxTokenTTL: 3600, Audience: "https://gateway.test",
-		},
-		issuer.Dependencies{
-			PolicyEngine: policyEngine, Identity: idProvider,
-			KeyStore: issuer.NewSingleKeyStore(signingKey), Logger: logger,
-		},
-	)
+	issuerApp := issuer.New(&issuer.Config{
+		IssuerDID: "did:web:issuer.test", IssuerURL: "https://issuer.test",
+		DefaultTokenTTL: 300, MaxTokenTTL: 3600, Audience: "https://gateway.test",
+	}, &issuer.Dependencies{
+		PolicyEngine: policyEngine, Identity: idProvider,
+		KeyStore: issuer.NewSingleKeyStore(signingKey), Logger: logger,
+	})
+
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 

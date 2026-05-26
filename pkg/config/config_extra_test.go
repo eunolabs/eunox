@@ -129,11 +129,15 @@ func TestLoadStructUnsupportedFieldType(t *testing.T) {
 func TestShouldRecurse(t *testing.T) {
 	typ := reflect.TypeOf(recurseSample{})
 	value := reflect.New(typ).Elem()
+	field0 := typ.Field(0)
+	field1 := typ.Field(1)
+	field2 := typ.Field(2)
+	field3 := typ.Field(3)
 
-	assert.True(t, shouldRecurse(typ.Field(0), value.Field(0)))
-	assert.True(t, shouldRecurse(typ.Field(1), value.Field(1)))
-	assert.False(t, shouldRecurse(typ.Field(2), value.Field(2)))
-	assert.False(t, shouldRecurse(typ.Field(3), value.Field(3)))
+	assert.True(t, shouldRecurse(&field0, value.Field(0)))
+	assert.True(t, shouldRecurse(&field1, value.Field(1)))
+	assert.False(t, shouldRecurse(&field2, value.Field(2)))
+	assert.False(t, shouldRecurse(&field3, value.Field(3)))
 }
 
 func TestAssignValueCoversKinds(t *testing.T) {

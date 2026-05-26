@@ -25,7 +25,7 @@ func TestEngine_ValidateAction_NoMatchingCapability(t *testing.T) {
 		ToolName:  "unknown-tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{Resource: "other-tool", Actions: []string{"read"}},
 	})
 
@@ -43,7 +43,7 @@ func TestEngine_ValidateAction_AllowWildcard(t *testing.T) {
 		ToolName:  "any-tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{Resource: "*", Actions: []string{"*"}},
 	})
 
@@ -63,7 +63,7 @@ func TestEngine_ValidateAction_AllowExactMatch(t *testing.T) {
 		Context:   capability.EnforceRequestContext{Operation: "email:send"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{Resource: "email:send", Actions: []string{"email:send"}},
 	})
 
@@ -80,7 +80,7 @@ func TestEngine_ValidateAction_PrefixMatch(t *testing.T) {
 		ToolName:  "file:read",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{Resource: "file:*", Actions: []string{"*"}},
 	})
 
@@ -99,7 +99,7 @@ func TestEngine_TimeWindow_Allow(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -127,7 +127,7 @@ func TestEngine_TimeWindow_DenyBefore(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -155,7 +155,7 @@ func TestEngine_TimeWindow_DenyAfter(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -182,7 +182,7 @@ func TestEngine_IPRange_Allow(t *testing.T) {
 		Context:   capability.EnforceRequestContext{SourceIP: "10.0.1.50"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -206,7 +206,7 @@ func TestEngine_IPRange_Deny(t *testing.T) {
 		Context:   capability.EnforceRequestContext{SourceIP: "192.168.1.1"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -230,7 +230,7 @@ func TestEngine_IPRange_MissingSourceIP(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -257,7 +257,7 @@ func TestEngine_IPRange_InvalidCIDR(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -294,7 +294,7 @@ func TestEngine_MaxCalls_Allow(t *testing.T) {
 	}
 
 	// First call should be allowed
-	resp, err := engine.ValidateAction(ctx, req, caps)
+	resp, err := engine.ValidateAction(ctx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
@@ -321,13 +321,13 @@ func TestEngine_MaxCalls_Deny(t *testing.T) {
 
 	// Make 3 calls (all should be allowed)
 	for i := 0; i < 3; i++ {
-		resp, err := engine.ValidateAction(ctx, req, caps)
+		resp, err := engine.ValidateAction(ctx, &req, caps)
 		require.NoError(t, err)
 		assert.Equal(t, capability.DecisionAllow, resp.Decision, "call %d should be allowed", i+1)
 	}
 
 	// 4th call should be denied
-	resp, err := engine.ValidateAction(ctx, req, caps)
+	resp, err := engine.ValidateAction(ctx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 	assert.Equal(t, capability.ErrCodeRateLimited, resp.Denial.Code)
@@ -343,7 +343,7 @@ func TestEngine_AllowedOperations_Allow(t *testing.T) {
 		Context:   capability.EnforceRequestContext{Operation: "read"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "file",
 			Actions:  []string{"*"},
@@ -367,7 +367,7 @@ func TestEngine_AllowedOperations_Deny(t *testing.T) {
 		Context:   capability.EnforceRequestContext{Operation: "delete"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "file",
 			Actions:  []string{"*"},
@@ -392,7 +392,7 @@ func TestEngine_AllowedExtensions_Allow(t *testing.T) {
 		Context:   capability.EnforceRequestContext{FilePath: "/docs/report.pdf"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "file:read",
 			Actions:  []string{"*"},
@@ -416,7 +416,7 @@ func TestEngine_AllowedExtensions_Deny(t *testing.T) {
 		Context:   capability.EnforceRequestContext{FilePath: "/etc/passwords.sh"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "file:read",
 			Actions:  []string{"*"},
@@ -445,7 +445,7 @@ func TestEngine_AllowedTables_Allow(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "db:query",
 			Actions:  []string{"*"},
@@ -476,7 +476,7 @@ func TestEngine_AllowedTables_DenyTable(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "db:query",
 			Actions:  []string{"*"},
@@ -505,7 +505,7 @@ func TestEngine_AllowedTables_DenyColumn(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "db:query",
 			Actions:  []string{"*"},
@@ -534,7 +534,7 @@ func TestEngine_RecipientDomain_Allow(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "email:send",
 			Actions:  []string{"*"},
@@ -560,7 +560,7 @@ func TestEngine_RecipientDomain_Deny(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "email:send",
 			Actions:  []string{"*"},
@@ -584,7 +584,7 @@ func TestEngine_RedactFields_ProducesObligation(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -610,7 +610,7 @@ func TestEngine_PolicyCondition_PassThrough(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -633,7 +633,7 @@ func TestEngine_CustomCondition_PassThrough(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -665,7 +665,7 @@ func TestEngine_RegisterCustomCondition(t *testing.T) {
 		ToolName:  "tool",
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -695,7 +695,7 @@ func TestEngine_MultipleConditions_AllMustPass(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -729,7 +729,7 @@ func TestEngine_MultipleConditions_FirstFailureDenies(t *testing.T) {
 		},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -758,7 +758,7 @@ func TestEngine_EmptyActions_MatchesAny(t *testing.T) {
 		Context:   capability.EnforceRequestContext{Operation: "anything"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{Resource: "tool", Actions: nil},
 	})
 
@@ -776,7 +776,7 @@ func TestEngine_AllowedExtensions_FromArguments(t *testing.T) {
 		Arguments: map[string]interface{}{"filePath": "/tmp/data.csv"},
 	}
 
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "file:write",
 			Actions:  []string{"*"},
@@ -807,7 +807,7 @@ func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
 	}
 
 	// Window is open at the fixed server time (12:00) — should allow
-	resp, err := engine.ValidateAction(ctx, req, []capability.Constraint{
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},
@@ -832,7 +832,7 @@ func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
 			Now: "2025-06-15T16:00:00Z",
 		},
 	}
-	resp2, err := engine.ValidateAction(ctx, req2, []capability.Constraint{
+	resp2, err := engine.ValidateAction(ctx, &req2, []capability.Constraint{
 		{
 			Resource: "tool",
 			Actions:  []string{"*"},

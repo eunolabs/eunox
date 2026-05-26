@@ -21,7 +21,7 @@ func TestNewAuthorizationEvent(t *testing.T) {
 		TenantID: "tenant-1",
 	}
 
-	event := NewAuthorizationEvent(ActivityAuthGrant, actor)
+	event := NewAuthorizationEvent(ActivityAuthGrant, &actor)
 
 	if event.ClassUID != ClassAuthorization {
 		t.Errorf("expected class_uid=%d, got %d", ClassAuthorization, event.ClassUID)
@@ -53,7 +53,7 @@ func TestNewAuthorizationEvent_Deny(t *testing.T) {
 	t.Parallel()
 
 	actor := Actor{UserID: "user-456", TenantID: "tenant-2"}
-	event := NewAuthorizationEvent(ActivityAuthDeny, actor).
+	event := NewAuthorizationEvent(ActivityAuthDeny, &actor).
 		WithStatus(StatusFailure, "denied").
 		WithSeverity(SeverityMedium, "Medium").
 		WithSOC2Controls(SOC2CC61, SOC2CC63)
@@ -79,7 +79,7 @@ func TestNewAuthorizationEvent_Revoke(t *testing.T) {
 	t.Parallel()
 
 	actor := Actor{UserID: "admin-1", TenantID: "tenant-1"}
-	event := NewAuthorizationEvent(ActivityAuthRevoke, actor)
+	event := NewAuthorizationEvent(ActivityAuthRevoke, &actor)
 	event.TokenID = "jti-abc123"
 	event.OperatorID = "operator-1"
 	event.Decision = "revoked"
@@ -99,7 +99,7 @@ func TestNewAuthorizationEvent_CrossOrg(t *testing.T) {
 	t.Parallel()
 
 	actor := Actor{UserID: "partner-user", TenantID: "partner-org"}
-	event := NewAuthorizationEvent(ActivityAuthGrant, actor)
+	event := NewAuthorizationEvent(ActivityAuthGrant, &actor)
 	event.CrossOrg = true
 	event.PartnerDID = "did:web:partner.example.com"
 
@@ -121,7 +121,7 @@ func TestNewAPIActivityEvent(t *testing.T) {
 		AgentID:   "agent-1",
 	}
 
-	event := NewAPIActivityEvent(ActivityAPICall, actor)
+	event := NewAPIActivityEvent(ActivityAPICall, &actor)
 
 	if event.ClassUID != ClassAPIActivity {
 		t.Errorf("expected class_uid=%d, got %d", ClassAPIActivity, event.ClassUID)
@@ -144,7 +144,7 @@ func TestAPIActivityEvent_ToolCall(t *testing.T) {
 	t.Parallel()
 
 	actor := Actor{UserID: "user-1", TenantID: "tenant-1"}
-	event := NewAPIActivityEvent(ActivityAPIAllow, actor).
+	event := NewAPIActivityEvent(ActivityAPIAllow, &actor).
 		WithStatus(StatusSuccess, "allowed").
 		WithSeverity(SeverityInformational, "Informational").
 		WithSOC2Controls(SOC2CC72)
@@ -174,7 +174,7 @@ func TestAPIActivityEvent_Deny(t *testing.T) {
 	t.Parallel()
 
 	actor := Actor{UserID: "user-1", TenantID: "tenant-1"}
-	event := NewAPIActivityEvent(ActivityAPIDeny, actor).
+	event := NewAPIActivityEvent(ActivityAPIDeny, &actor).
 		WithStatus(StatusFailure, "denied").
 		WithSeverity(SeverityHigh, "High")
 
@@ -245,7 +245,7 @@ func TestActivityIDs(t *testing.T) {
 func TestAuthorizationEvent_MarshalJSON_UsesNestedObjects(t *testing.T) {
 	t.Parallel()
 
-	event := NewAuthorizationEvent(ActivityAuthGrant, Actor{
+	event := NewAuthorizationEvent(ActivityAuthGrant, &Actor{
 		UserID:    "user-123",
 		UserName:  "alice",
 		TenantID:  "tenant-1",
@@ -277,7 +277,7 @@ func TestAuthorizationEvent_MarshalJSON_UsesNestedObjects(t *testing.T) {
 func TestAPIActivityEvent_MarshalJSON_UsesNestedObjects(t *testing.T) {
 	t.Parallel()
 
-	event := NewAPIActivityEvent(ActivityAPIAllow, Actor{UserID: "user-1", TenantID: "tenant-1"})
+	event := NewAPIActivityEvent(ActivityAPIAllow, &Actor{UserID: "user-1", TenantID: "tenant-1"})
 	event.APIOperation = "enforce"
 	event.APIService = "gateway"
 	event.APIVersion = "v1"

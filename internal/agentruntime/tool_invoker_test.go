@@ -59,19 +59,20 @@ func setupToolInvoker(t *testing.T, gatewayHandler func(*HTTPRequest) (*HTTPResp
 	})
 
 	dpopEnabled := false
-	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	tokenProvider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity",
 		DPoP:          nil,
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	t.Cleanup(tokenProvider.Stop)
 
 	_ = dpopEnabled
 	_ = issueCount
 
-	invoker := NewToolInvoker(ToolInvokerConfig{
+	invoker := NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    "https://gateway.example.com",
 		HTTPClient:    client,
 		TokenProvider: tokenProvider,
@@ -164,16 +165,17 @@ func TestToolInvoker_WithDPoP(t *testing.T) {
 		return newAllowResponse(), nil
 	})
 
-	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	tokenProvider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity",
 		DPoP:          dpop,
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer tokenProvider.Stop()
 
-	invoker := NewToolInvoker(ToolInvokerConfig{
+	invoker := NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    "https://gateway.example.com",
 		HTTPClient:    client,
 		TokenProvider: tokenProvider,
@@ -230,15 +232,16 @@ func TestToolInvoker_UpstreamCall(t *testing.T) {
 		return &HTTPResponse{StatusCode: 404, Headers: map[string]string{}, Body: []byte("not found")}, nil
 	})
 
-	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	tokenProvider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer tokenProvider.Stop()
 
-	invoker := NewToolInvoker(ToolInvokerConfig{
+	invoker := NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    "https://gateway.example.com",
 		HTTPClient:    client,
 		TokenProvider: tokenProvider,
@@ -275,15 +278,16 @@ func TestToolInvoker_GatewayRetry(t *testing.T) {
 		return newAllowResponse(), nil
 	})
 
-	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	tokenProvider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer tokenProvider.Stop()
 
-	invoker := NewToolInvoker(ToolInvokerConfig{
+	invoker := NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    "https://gateway.example.com",
 		HTTPClient:    client,
 		TokenProvider: tokenProvider,
@@ -335,15 +339,16 @@ func TestToolInvoker_UpstreamCall_DefaultHTTPMethod(t *testing.T) {
 		return &HTTPResponse{StatusCode: 404, Headers: map[string]string{}, Body: []byte("not found")}, nil
 	})
 
-	tokenProvider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	tokenProvider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer tokenProvider.Stop()
 
-	invoker := NewToolInvoker(ToolInvokerConfig{
+	invoker := NewToolInvoker(&ToolInvokerConfig{
 		GatewayURL:    "https://gateway.example.com",
 		HTTPClient:    client,
 		TokenProvider: tokenProvider,

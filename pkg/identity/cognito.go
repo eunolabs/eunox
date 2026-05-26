@@ -37,7 +37,7 @@ func NewCognitoProvider(cfg CognitoConfig, httpClient *http.Client) (*CognitoPro
 	}
 
 	issuerURL := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", strings.TrimSpace(cfg.Region), strings.TrimSpace(cfg.UserPoolID))
-	oidcProvider, err := newOIDCProvider(OIDCConfig{
+	oidcProvider, err := newOIDCProvider(&OIDCConfig{
 		IssuerURL:      issuerURL,
 		Audience:       strings.TrimSpace(cfg.AppClientID),
 		RolesClaimPath: "cognito:groups",

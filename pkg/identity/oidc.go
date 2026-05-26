@@ -113,7 +113,7 @@ func (c *HTTPJWKSClient) GetKeySet(ctx context.Context, jwksURL string) (*jose.J
 		return entry.keySet, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create JWKS request: %w", err)
 	}
@@ -147,29 +147,37 @@ func (c *HTTPJWKSClient) GetKeySet(ctx context.Context, jwksURL string) (*jose.J
 }
 
 // NewOIDCProvider creates a generic OIDC provider using an HTTP-backed JWKS client.
-func NewOIDCProvider(cfg OIDCConfig, httpClient *http.Client) (*OIDCProvider, error) {
-	return NewOIDCProviderWithJWKSClient(cfg, httpClient, NewHTTPJWKSClient(httpClient, cfg.CacheTTL))
+func NewOIDCProvider(cfg *OIDCConfig, httpClient *http.Client) (*OIDCProvider, error) {
+	resolvedCfg := &OIDCConfig{}
+	if cfg != nil {
+		resolvedCfg = cfg
+	}
+	return NewOIDCProviderWithJWKSClient(resolvedCfg, httpClient, NewHTTPJWKSClient(httpClient, resolvedCfg.CacheTTL))
 }
 
 // NewOIDCProviderWithJWKSClient creates a generic OIDC provider using the supplied JWKS client.
-func NewOIDCProviderWithJWKSClient(cfg OIDCConfig, httpClient *http.Client, jwksClient JWKSClient) (*OIDCProvider, error) {
+func NewOIDCProviderWithJWKSClient(cfg *OIDCConfig, httpClient *http.Client, jwksClient JWKSClient) (*OIDCProvider, error) {
+	resolvedCfg := &OIDCConfig{}
+	if cfg != nil {
+		resolvedCfg = cfg
+	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
-	if err := validateOIDCConfig(cfg); err != nil {
+	if err := validateOIDCConfig(resolvedCfg); err != nil {
 		return nil, err
 	}
 	if jwksClient == nil {
 		return nil, errors.New("jwks client is required")
 	}
 
-	jwksURI, err := discoverJWKSURI(context.Background(), httpClient, cfg.IssuerURL)
+	jwksURI, err := discoverJWKSURI(context.Background(), httpClient, resolvedCfg.IssuerURL)
 	if err != nil {
 		return nil, err
 	}
 
 	provider := &OIDCProvider{
-		cfg:          normalizeOIDCConfig(cfg),
+		cfg:          normalizeOIDCConfig(resolvedCfg),
 		providerType: ProviderTypeOIDC,
 		jwksURI:      jwksURI,
 		jwksClient:   jwksClient,
@@ -180,15 +188,19 @@ func NewOIDCProviderWithJWKSClient(cfg OIDCConfig, httpClient *http.Client, jwks
 	return provider, nil
 }
 
-func newOIDCProvider(cfg OIDCConfig, httpClient *http.Client, providerType ProviderType, mapper claimsMapper) (*OIDCProvider, error) {
+func newOIDCProvider(cfg *OIDCConfig, httpClient *http.Client, providerType ProviderType, mapper claimsMapper) (*OIDCProvider, error) {
+	resolvedCfg := &OIDCConfig{}
+	if cfg != nil {
+		resolvedCfg = cfg
+	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	if err := validateOIDCConfig(cfg); err != nil {
+	if err := validateOIDCConfig(resolvedCfg); err != nil {
 		return nil, err
 	}
 
-	normalized := normalizeOIDCConfig(cfg)
+	normalized := normalizeOIDCConfig(resolvedCfg)
 	jwksURI, err := discoverJWKSURI(context.Background(), httpClient, normalized.IssuerURL)
 	if err != nil {
 		return nil, err
@@ -223,7 +235,7 @@ func (p *OIDCProvider) VerifyToken(ctx context.Context, token string) (*UserCont
 	if err != nil {
 		return nil, err
 	}
-	if err := validateStandardClaims(registered, p.cfg.IssuerURL, p.cfg.Audience, p.now()); err != nil {
+	if err := validateStandardClaims(&registered, p.cfg.IssuerURL, p.cfg.Audience, p.now()); err != nil {
 		return nil, err
 	}
 	if err := validateRequiredScopes(rawClaims, p.cfg.RequiredScopes); err != nil {
@@ -264,7 +276,8 @@ func (p *OIDCProvider) verifySignedClaims(ctx context.Context, token string) (jw
 	}
 
 	var lastErr error
-	for _, key := range candidateKeys {
+	for i := range candidateKeys {
+		key := &candidateKeys[i]
 		var registered jwt.Claims
 		rawClaims := make(map[string]interface{})
 		if err := parsed.Claims(key.Key, &registered, &rawClaims); err != nil {
@@ -280,7 +293,10 @@ func (p *OIDCProvider) verifySignedClaims(ctx context.Context, token string) (jw
 	return jwt.Claims{}, nil, fmt.Errorf("verify token signature: %w", lastErr)
 }
 
-func validateOIDCConfig(cfg OIDCConfig) error {
+func validateOIDCConfig(cfg *OIDCConfig) error {
+	if cfg == nil {
+		return errors.New("OIDC config is required")
+	}
 	if strings.TrimSpace(cfg.IssuerURL) == "" {
 		return errors.New("issuer URL is required")
 	}
@@ -293,19 +309,23 @@ func validateOIDCConfig(cfg OIDCConfig) error {
 	return nil
 }
 
-func normalizeOIDCConfig(cfg OIDCConfig) OIDCConfig {
-	cfg.IssuerURL = strings.TrimRight(strings.TrimSpace(cfg.IssuerURL), "/")
-	cfg.Audience = strings.TrimSpace(cfg.Audience)
-	cfg.RolesClaimPath = strings.TrimSpace(cfg.RolesClaimPath)
-	if cfg.CacheTTL <= 0 {
-		cfg.CacheTTL = defaultJWKSCacheTTL
+func normalizeOIDCConfig(cfg *OIDCConfig) OIDCConfig {
+	normalized := OIDCConfig{}
+	if cfg != nil {
+		normalized = *cfg
 	}
-	return cfg
+	normalized.IssuerURL = strings.TrimRight(strings.TrimSpace(normalized.IssuerURL), "/")
+	normalized.Audience = strings.TrimSpace(normalized.Audience)
+	normalized.RolesClaimPath = strings.TrimSpace(normalized.RolesClaimPath)
+	if normalized.CacheTTL <= 0 {
+		normalized.CacheTTL = defaultJWKSCacheTTL
+	}
+	return normalized
 }
 
 func discoverJWKSURI(ctx context.Context, httpClient *http.Client, issuerURL string) (string, error) {
 	discoveryURL := strings.TrimRight(strings.TrimSpace(issuerURL), "/") + "/.well-known/openid-configuration"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("create OIDC discovery request: %w", err)
 	}
@@ -330,7 +350,7 @@ func discoverJWKSURI(ctx context.Context, httpClient *http.Client, issuerURL str
 	return doc.JWKSURI, nil
 }
 
-func validateStandardClaims(claims jwt.Claims, issuerURL, audience string, now time.Time) error {
+func validateStandardClaims(claims *jwt.Claims, issuerURL, audience string, now time.Time) error {
 	if claims.Subject == "" {
 		return errors.New("token missing subject claim")
 	}

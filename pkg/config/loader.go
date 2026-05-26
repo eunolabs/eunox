@@ -35,7 +35,7 @@ func Load(prefix string, target interface{}) []ValidationError {
 	}
 
 	rv := reflect.ValueOf(target)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return []ValidationError{{Message: "target must be a non-nil pointer to a struct"}}
 	}
 
@@ -49,7 +49,7 @@ func inferProductionMode(prefix string, value reflect.Value) bool {
 		return false
 	}
 
-	if value.Kind() == reflect.Ptr {
+	if value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return false
 		}
@@ -67,7 +67,7 @@ func inferProductionMode(prefix string, value reflect.Value) bool {
 			continue
 		}
 
-		tags, err := parseFieldTags(field)
+		tags, err := parseFieldTags(&field)
 		if err == nil && tags.Env == "NODE_ENV" {
 			if raw, ok := os.LookupEnv(envName(prefix, tags.Env)); ok {
 				return strings.EqualFold(strings.TrimSpace(raw), string(EnvProduction))
@@ -80,11 +80,11 @@ func inferProductionMode(prefix string, value reflect.Value) bool {
 
 		fieldValue := value.Field(i)
 		switch {
-		case fieldValue.Kind() == reflect.Struct && !hasLeafTags(field):
+		case fieldValue.Kind() == reflect.Struct && !hasLeafTags(&field):
 			if inferProductionMode(prefix, fieldValue) {
 				return true
 			}
-		case fieldValue.Kind() == reflect.Ptr && fieldValue.Type().Elem().Kind() == reflect.Struct && !hasLeafTags(field):
+		case fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct && !hasLeafTags(&field):
 			if inferProductionMode(prefix, reflect.New(fieldValue.Type().Elem()).Elem()) {
 				return true
 			}
@@ -108,13 +108,13 @@ func loadStruct(prefix string, value reflect.Value, path string, production bool
 		fieldValue := value.Field(i)
 		fieldPath := joinFieldPath(path, field.Name)
 
-		if shouldRecurse(field, fieldValue) {
+		if shouldRecurse(&field, fieldValue) {
 			switch {
 			case fieldValue.Kind() == reflect.Struct:
 				nestedErrs, nestedSet := loadStruct(prefix, fieldValue, fieldPath, production)
 				errs = append(errs, nestedErrs...)
 				anySet = anySet || nestedSet
-			case fieldValue.Kind() == reflect.Ptr && fieldValue.Type().Elem().Kind() == reflect.Struct:
+			case fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct:
 				nestedValue := reflect.New(fieldValue.Type().Elem()).Elem()
 				nestedErrs, nestedSet := loadStruct(prefix, nestedValue, fieldPath, production)
 				errs = append(errs, nestedErrs...)
@@ -128,7 +128,7 @@ func loadStruct(prefix string, value reflect.Value, path string, production bool
 			continue
 		}
 
-		tags, err := parseFieldTags(field)
+		tags, err := parseFieldTags(&field)
 		if err != nil {
 			errs = append(errs, ValidationError{
 				Field:   fieldPath,
@@ -161,7 +161,7 @@ func loadStruct(prefix string, value reflect.Value, path string, production bool
 				parsed = false
 			} else {
 				anySet = true
-				errs = append(errs, validateField(fieldPath, envVar, fieldValue, tags, raw)...)
+				errs = append(errs, validateField(fieldPath, envVar, fieldValue, &tags, raw)...)
 			}
 		}
 
@@ -174,7 +174,7 @@ func loadStruct(prefix string, value reflect.Value, path string, production bool
 				})
 			}
 			if production {
-				errs = append(errs, validateProductionRules(fieldPath, envVar, fieldValue, tags, found, raw)...)
+				errs = append(errs, validateProductionRules(fieldPath, envVar, fieldValue, &tags, found, raw)...)
 			}
 		}
 	}

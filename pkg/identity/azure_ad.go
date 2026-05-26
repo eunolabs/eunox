@@ -33,7 +33,7 @@ func NewAzureADProvider(cfg AzureADConfig, httpClient *http.Client) (*AzureADPro
 	}
 
 	issuerURL := fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0", strings.TrimSpace(cfg.TenantID))
-	oidcProvider, err := newOIDCProvider(OIDCConfig{
+	oidcProvider, err := newOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
 		Audience:  strings.TrimSpace(cfg.ClientID),
 	}, httpClient, ProviderTypeAzureAD, func(registered jwt.Claims, raw map[string]interface{}) (*UserContext, error) {

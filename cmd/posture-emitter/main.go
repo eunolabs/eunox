@@ -39,7 +39,7 @@ func main() {
 func run() error {
 	cfg := config.LoadOrExit[config.EmitterConfig]("")
 
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       levelFromEnv(cfg.NodeEnv),
 		Format:      "json",
 		ServiceName: "posture-emitter",
@@ -58,7 +58,7 @@ func run() error {
 	metrics := observability.NewMetricsRegistry("euno", "posture")
 
 	// Build plugins from configuration.
-	plugins, err := buildPlugins(cfg, logger)
+	plugins, err := buildPlugins(&cfg, logger)
 	if err != nil {
 		return fmt.Errorf("build plugins: %w", err)
 	}
@@ -84,7 +84,7 @@ func run() error {
 		Metrics: metrics,
 	}
 
-	app, err := posture.New(appCfg, plugins, deps)
+	app, err := posture.New(&appCfg, plugins, &deps)
 	if err != nil {
 		return fmt.Errorf("create posture emitter: %w", err)
 	}
@@ -138,7 +138,7 @@ func run() error {
 	return nil
 }
 
-func buildPlugins(cfg config.EmitterConfig, logger *slog.Logger) ([]posture.Plugin, error) {
+func buildPlugins(cfg *config.EmitterConfig, logger *slog.Logger) ([]posture.Plugin, error) {
 	pluginNames := strings.Split(cfg.Plugins, ",")
 	var plugins []posture.Plugin
 

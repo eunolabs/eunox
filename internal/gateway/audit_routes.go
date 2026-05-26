@@ -66,7 +66,7 @@ func (app *App) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 
 	page := parsePageParams(r)
 
-	result, err := app.deps.Audit.QueryStore.Query(r.Context(), filter, page)
+	result, err := app.deps.Audit.QueryStore.Query(r.Context(), &filter, page)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("failed to query audit records"))
 		return
@@ -104,7 +104,7 @@ func (app *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 
 	page := parsePageParams(r)
 
-	result, err := app.deps.Audit.QueryStore.Query(r.Context(), filter, page)
+	result, err := app.deps.Audit.QueryStore.Query(r.Context(), &filter, page)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("failed to export audit records"))
 		return
@@ -112,7 +112,8 @@ func (app *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 
 	// Extract OCSF events from the audit records.
 	events := make([]any, 0, len(result.Records))
-	for _, rec := range result.Records {
+	for i := range result.Records {
+		rec := &result.Records[i]
 		if rec.Record.OCSFEvent != nil {
 			events = append(events, rec.Record.OCSFEvent)
 		} else {

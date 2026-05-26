@@ -59,7 +59,7 @@ func (r *IONResolver) Resolve(ctx context.Context, did string) (*Document, error
 
 	url := r.endpoint + did
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -116,7 +116,7 @@ func (r *IONResolver) Resolve(ctx context.Context, did string) (*Document, error
 
 // Healthy checks if the ION endpoint is reachable.
 func (r *IONResolver) Healthy(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.endpoint, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("create health check request: %w", err)
 	}

@@ -34,7 +34,11 @@ type Config struct {
 
 // NewServerTLSConfig creates a *tls.Config suitable for a TLS server.
 // If CAFile is provided, client certificate verification is enabled (mTLS).
-func NewServerTLSConfig(cfg Config) (*tls.Config, error) {
+func NewServerTLSConfig(cfg *Config) (*tls.Config, error) {
+	if cfg == nil {
+		return nil, errors.New("TLS config is required")
+	}
+
 	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load server certificate: %w", err)
@@ -63,7 +67,11 @@ func NewServerTLSConfig(cfg Config) (*tls.Config, error) {
 
 // NewClientTLSConfig creates a *tls.Config suitable for a TLS client.
 // If CertFile and KeyFile are provided, client certificate is presented (mTLS).
-func NewClientTLSConfig(cfg Config) (*tls.Config, error) {
+func NewClientTLSConfig(cfg *Config) (*tls.Config, error) {
+	if cfg == nil {
+		return nil, errors.New("TLS config is required")
+	}
+
 	tlsCfg := &tls.Config{
 		MinVersion: minVersionOrDefault(cfg.MinVersion),
 		ServerName: cfg.ServerName,
@@ -195,7 +203,11 @@ func (r *CertReloader) reload() error {
 
 // NewServerTLSConfigWithReloader creates a server TLS config that automatically
 // reloads certificates when they change on disk.
-func NewServerTLSConfigWithReloader(cfg Config, reloadInterval time.Duration) (*tls.Config, *CertReloader, error) {
+func NewServerTLSConfigWithReloader(cfg *Config, reloadInterval time.Duration) (*tls.Config, *CertReloader, error) {
+	if cfg == nil {
+		return nil, nil, errors.New("TLS config is required")
+	}
+
 	reloader, err := NewCertReloader(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		return nil, nil, err

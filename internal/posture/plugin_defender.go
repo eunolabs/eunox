@@ -66,7 +66,7 @@ func (p *DefenderPlugin) Name() string {
 }
 
 // EmitObserved creates or updates a custom assessment for the observed agent.
-func (p *DefenderPlugin) EmitObserved(ctx context.Context, record AgentInventoryRecord) error {
+func (p *DefenderPlugin) EmitObserved(ctx context.Context, record *AgentInventoryRecord) error {
 	if p.client == nil {
 		return fmt.Errorf("defender plugin: client not configured")
 	}
@@ -84,8 +84,8 @@ func (p *DefenderPlugin) EmitObserved(ctx context.Context, record AgentInventory
 			"capabilityManifestHash": record.CapabilityManifestHash,
 			"runtime":                record.Runtime,
 			"region":                 record.Region,
-			"firstSeen":             record.FirstSeen.UTC().Format(time.RFC3339),
-			"lastSeen":              record.LastSeen.UTC().Format(time.RFC3339),
+			"firstSeen":              record.FirstSeen.UTC().Format(time.RFC3339),
+			"lastSeen":               record.LastSeen.UTC().Format(time.RFC3339),
 		},
 	}
 

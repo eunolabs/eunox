@@ -122,11 +122,11 @@ func redactURL(rawURL string) string {
 // CheckGatewayRedisHA is a convenience function that validates all gateway
 // Redis URLs. It returns a fatal error if any single-node URL is detected
 // in production.
-func CheckGatewayRedisHA(cfg GatewayConfig) error {
+func CheckGatewayRedisHA(cfg *GatewayConfig) error {
 	urls := map[string]string{
 		"REDIS_URL":              cfg.RedisURL,
-		"REVOCATION_REDIS_URL":  cfg.RevocationRedisURL,
-		"KILL_SWITCH_REDIS_URL": cfg.KillSwitchRedisURL,
+		"REVOCATION_REDIS_URL":   cfg.RevocationRedisURL,
+		"KILL_SWITCH_REDIS_URL":  cfg.KillSwitchRedisURL,
 		"CALL_COUNTER_REDIS_URL": cfg.CallCounterRedisURL,
 	}
 

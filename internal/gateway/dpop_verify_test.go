@@ -96,7 +96,7 @@ func computeTestJKT(t *testing.T, key *ecdsa.PublicKey) string {
 	copy(xPadded[curveSize-len(xBytes):], xBytes)
 	copy(yPadded[curveSize-len(yBytes):], yBytes)
 
-	canonical := fmt.Sprintf(`{"crv":"P-256","kty":"EC","x":"%s","y":"%s"}`,
+	canonical := fmt.Sprintf(`{"crv":"P-256","kty":"EC","x":%q,"y":%q}`,
 		base64.RawURLEncoding.EncodeToString(xPadded),
 		base64.RawURLEncoding.EncodeToString(yPadded),
 	)

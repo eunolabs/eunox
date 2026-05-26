@@ -34,12 +34,13 @@ func TestAuthTokenProvider_AcquireToken(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity-token",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	token, err := provider.GetToken(context.Background())
@@ -61,13 +62,14 @@ func TestAuthTokenProvider_TokenCaching(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity-token",
 		RefreshBefore: 30 * time.Second,
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	// First call acquires the token
@@ -89,13 +91,14 @@ func TestAuthTokenProvider_ProactiveRefresh(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity-token",
 		RefreshBefore: 30 * time.Second,
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	// Set nowFunc to simulate time passing
@@ -126,13 +129,14 @@ func TestAuthTokenProvider_DPoPBinding(t *testing.T) {
 	dpop, err := NewDPoPProofGenerator()
 	require.NoError(t, err)
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		DPoP:          dpop,
 		IdentityToken: "test-identity-token",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err = provider.GetToken(context.Background())
@@ -166,13 +170,14 @@ func TestAuthTokenProvider_NonceFromServer(t *testing.T) {
 		return resp, nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		DPoP:          dpop,
 		IdentityToken: "test-identity-token",
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err = provider.GetToken(context.Background())
@@ -200,12 +205,13 @@ func TestAuthTokenProvider_RetryOnTransientError(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-identity-token",
 		RetryConfig:   RetryConfig{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	token, err := provider.GetToken(context.Background())
@@ -220,7 +226,7 @@ func TestAuthTokenProvider_IdentityTokenProvider(t *testing.T) {
 	})
 
 	tokenProviderCalled := false
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:  "https://issuer.example.com",
 		HTTPClient: client,
 		IdentityTokenProvider: func(_ context.Context) (string, error) {
@@ -229,6 +235,7 @@ func TestAuthTokenProvider_IdentityTokenProvider(t *testing.T) {
 		},
 		RetryConfig: RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err := provider.GetToken(context.Background())
@@ -247,12 +254,13 @@ func TestAuthTokenProvider_NoIdentityToken(t *testing.T) {
 		return newTestTokenResponse(3600), nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "",
 		RetryConfig:   RetryConfig{MaxRetries: 0, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err := provider.GetToken(context.Background())
@@ -265,12 +273,13 @@ func TestAuthTokenProvider_HTTPError(t *testing.T) {
 		return nil, errors.New("connection refused")
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-token",
 		RetryConfig:   RetryConfig{MaxRetries: 0, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err := provider.GetToken(context.Background())
@@ -287,12 +296,13 @@ func TestAuthTokenProvider_NonTransient4xx(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-token",
 		RetryConfig:   RetryConfig{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err := provider.GetToken(context.Background())
@@ -313,13 +323,14 @@ func TestAuthTokenProvider_IssuanceHints(t *testing.T) {
 		Audience: "https://my-service.example.com",
 	}
 
-	provider := NewAuthTokenProvider(AuthTokenProviderConfig{
+	provider := NewAuthTokenProvider(&AuthTokenProviderConfig{
 		IssuerURL:     "https://issuer.example.com",
 		HTTPClient:    client,
 		IdentityToken: "test-token",
 		HintsProvider: &staticTestHints{hints: hints},
 		RetryConfig:   RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
+
 	defer provider.Stop()
 
 	_, err := provider.GetToken(context.Background())

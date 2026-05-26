@@ -36,16 +36,17 @@ func TestKillSwitch_GlobalActivation(t *testing.T) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload := map[string]any{
@@ -110,16 +111,17 @@ func TestKillSwitch_PerAgent(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: verifier,
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	agent1Payload := map[string]any{
@@ -178,16 +180,17 @@ func TestKillSwitch_PerSession(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	sess1Payload := map[string]any{
@@ -270,16 +273,17 @@ func TestRevocation_TokenLifecycle(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revStore,
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	handler := app.Handler()
 
 	payload := map[string]any{
@@ -324,10 +328,10 @@ func TestRevocation_UnrevokedTokenStillWorks(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revStore,
@@ -374,17 +378,18 @@ func TestKillSwitch_AdminEndpoint_GlobalActivate(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 		TenantID:        "test-tenant",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	adminHandler := app.AdminHandler()
 
 	// Activate global kill switch via admin API (requires cross-tenant ack)
@@ -417,21 +422,22 @@ func TestKillSwitch_AdminEndpoint_AgentKill(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(gateway.Config{
+	app := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 		TenantID:        "test-tenant",
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+
 	adminHandler := app.AdminHandler()
 
 	// Kill specific agent via admin API
-	req := httptest.NewRequest(http.MethodPost, "/admin/kill-switch/agent/target-agent/kill", nil)
+	req := httptest.NewRequest(http.MethodPost, "/admin/kill-switch/agent/target-agent/kill", http.NoBody)
 	req.Header.Set("X-Admin-Api-Key", testAdminKey)
 	w := httptest.NewRecorder()
 	adminHandler.ServeHTTP(w, req)

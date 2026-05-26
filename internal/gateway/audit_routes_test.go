@@ -36,11 +36,11 @@ type mockQueryStore struct {
 	queryCount   int
 }
 
-func (s *mockQueryStore) Query(_ context.Context, filter audit.QueryFilter, page audit.PageParams) (*audit.QueryResult, error) {
+func (s *mockQueryStore) Query(_ context.Context, filter *audit.QueryFilter, page audit.PageParams) (*audit.QueryResult, error) {
 	if s.queryErr != nil {
 		return nil, s.queryErr
 	}
-	s.lastFilter = filter
+	s.lastFilter = *filter
 	s.lastPage = page
 	s.queryCount++
 	return &audit.QueryResult{
@@ -51,9 +51,9 @@ func (s *mockQueryStore) Query(_ context.Context, filter audit.QueryFilter, page
 }
 
 func (s *mockQueryStore) GetByID(_ context.Context, id string) (*audit.SignedAuditEvidence, error) {
-	for _, r := range s.records {
-		if r.Record.ID == id {
-			return &r, nil
+	for i := range s.records {
+		if s.records[i].Record.ID == id {
+			return &s.records[i], nil
 		}
 	}
 	return nil, audit.ErrRecordNotFound
@@ -76,10 +76,10 @@ func (m *mockAuditJWTVerifier) VerifyToken(_ context.Context, _ string) (*capabi
 }
 
 func newAuditTestApp(t *testing.T, auditDeps *gateway.AuditDependencies) *gateway.App {
-	return newAuditTestAppWithConfig(t, auditDeps, nil, gateway.Config{AdminAPIKey: "test-admin-key"})
+	return newAuditTestAppWithConfig(t, auditDeps, nil, &gateway.Config{AdminAPIKey: "test-admin-key"})
 }
 
-func newAuditTestAppWithConfig(t *testing.T, auditDeps *gateway.AuditDependencies, verifier gateway.JWTVerifier, cfg gateway.Config) *gateway.App {
+func newAuditTestAppWithConfig(t *testing.T, auditDeps *gateway.AuditDependencies, verifier gateway.JWTVerifier, cfg *gateway.Config) *gateway.App {
 	t.Helper()
 
 	counter := callcounter.NewInMemory()
@@ -99,7 +99,7 @@ func newAuditTestAppWithConfig(t *testing.T, auditDeps *gateway.AuditDependencie
 		Audit:       auditDeps,
 	}
 
-	app := gateway.New(cfg, deps)
+	app := gateway.New(cfg, &deps)
 	return app
 }
 
@@ -112,7 +112,7 @@ func TestAuditRecords_NoAuditConfigured(t *testing.T) {
 	t.Parallel()
 
 	app := newAuditTestApp(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -138,7 +138,7 @@ func TestAuditRecords_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=t1", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=t1", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -155,7 +155,7 @@ func TestAuditRecords_WithPagination(t *testing.T) {
 	store := &mockQueryStore{records: []audit.SignedAuditEvidence{}}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
 
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?page=2&page_size=25", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?page=2&page_size=25", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -166,7 +166,7 @@ func TestAuditRecords_WithPagination(t *testing.T) {
 func TestAuditExport_Success(t *testing.T) {
 	t.Parallel()
 
-	ocsfEvent := ocsf.NewAPIActivityEvent(ocsf.ActivityAPIAllow, ocsf.Actor{
+	ocsfEvent := ocsf.NewAPIActivityEvent(ocsf.ActivityAPIAllow, &ocsf.Actor{
 		UserID: "user-1", TenantID: "t1",
 	})
 
@@ -184,7 +184,7 @@ func TestAuditExport_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export?tenant_id=t1", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export?tenant_id=t1", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -217,7 +217,7 @@ func TestAuditExport_NoOCSFEvent(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -240,7 +240,7 @@ func TestAuditSigningKeys_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{SigningKeys: keys})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -256,7 +256,7 @@ func TestAuditSigningKeys_NotConfigured(t *testing.T) {
 	t.Parallel()
 
 	app := newAuditTestApp(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", http.NoBody)
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -295,7 +295,7 @@ func TestAuditChainProof_Success(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=replica-1&from_seq=1&to_seq=2", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=replica-1&from_seq=1&to_seq=2", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -312,7 +312,7 @@ func TestAuditChainProof_MissingReplicaID(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?from_seq=1&to_seq=5", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?from_seq=1&to_seq=5", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -324,7 +324,7 @@ func TestAuditChainProof_InvalidFromSeq(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=abc&to_seq=5", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=abc&to_seq=5", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -336,7 +336,7 @@ func TestAuditChainProof_InvalidToSeq(t *testing.T) {
 
 	store := &mockQueryStore{}
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=5&to_seq=2", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=5&to_seq=2", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -366,7 +366,7 @@ func TestAuditChainProof_BrokenChain(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -381,8 +381,8 @@ func TestAuditRecords_RequiresAuthentication(t *testing.T) {
 	t.Parallel()
 
 	store := &mockQueryStore{}
-	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, nil, gateway.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", nil)
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, nil, &gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -402,8 +402,8 @@ func TestAuditRecords_JWTScopesTenantFilter(t *testing.T) {
 			},
 		},
 	}
-	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, gateway.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", nil)
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, &gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	rec := httptest.NewRecorder()
 
@@ -424,8 +424,8 @@ func TestAuditRecords_JWTRejectsTenantMismatch(t *testing.T) {
 			},
 		},
 	}
-	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, gateway.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=other-tenant", nil)
+	app := newAuditTestAppWithConfig(t, &gateway.AuditDependencies{QueryStore: store}, verifier, &gateway.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records?tenant_id=other-tenant", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	rec := httptest.NewRecorder()
 
@@ -462,7 +462,7 @@ func TestAuditChainProof_BrokenLinkage(t *testing.T) {
 	}
 
 	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
-	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", nil))
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/chain-proof?replica_id=r1&from_seq=1&to_seq=2", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)

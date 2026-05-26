@@ -163,7 +163,7 @@ func computeJWKThumbprint(pub *ecdsa.PublicKey) (string, error) {
 	copy(yPadded[size-len(yBytes):], yBytes)
 
 	thumbprintInput := fmt.Sprintf(
-		`{"crv":"P-256","kty":"EC","x":"%s","y":"%s"}`,
+		`{"crv":"P-256","kty":"EC","x":%q,"y":%q}`,
 		base64.RawURLEncoding.EncodeToString(xPadded),
 		base64.RawURLEncoding.EncodeToString(yPadded),
 	)
@@ -311,4 +311,3 @@ func splitJWT(token string) []string {
 	parts = append(parts, token[start:])
 	return parts
 }
-

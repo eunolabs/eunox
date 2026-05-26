@@ -33,7 +33,7 @@ func (p *StdoutPlugin) Name() string {
 }
 
 // EmitObserved writes the observed record as JSON to the writer.
-func (p *StdoutPlugin) EmitObserved(_ context.Context, record AgentInventoryRecord) error {
+func (p *StdoutPlugin) EmitObserved(_ context.Context, record *AgentInventoryRecord) error {
 	entry := map[string]interface{}{
 		"type":   "observed",
 		"record": record,

@@ -93,12 +93,13 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 	minterApp := minter.New(minter.Config{
 		Pepper:          pepper,
 		DefaultTenantID: "tenant-integration",
-	}, minter.Dependencies{
+	}, &minter.Dependencies{
 		Store:   keyStore,
 		Auth:    minterAuth,
 		Anomaly: minter.NewInMemoryAnomalyDetector(minter.VelocityConfig{MaxMintsPerWindow: 100, Window: time.Minute}, logger),
 		Logger:  logger,
 	})
+
 	minterSrv := httptest.NewServer(minterApp.Handler())
 	defer minterSrv.Close()
 
@@ -129,7 +130,7 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 		TenantID:        "tenant-integration",
 	}
 
-	gwApp := gateway.New(gwCfg, gwDeps)
+	gwApp := gateway.New(&gwCfg, &gwDeps)
 
 	// --- Step 1: Mint an API key ---
 	mintReqBody := map[string]any{
@@ -181,7 +182,7 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 	assert.Equal(t, "allow", enforceResp["decision"], "valid key should be allowed")
 
 	// --- Step 3: Revoke the key via minter ---
-	revokeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, minterSrv.URL+"/admin/v1/keys/"+mintResult.KeyID, nil)
+	revokeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, minterSrv.URL+"/admin/v1/keys/"+mintResult.KeyID, http.NoBody)
 	revokeReq.Header.Set("X-Admin-Api-Key", testMinterKey)
 
 	resp, err = http.DefaultClient.Do(revokeReq)
@@ -235,10 +236,10 @@ func TestIntegration_MinterToGateway_ExpiredKeyRejected(t *testing.T) {
 	ks := killswitch.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	gwApp := gateway.New(gateway.Config{
+	gwApp := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gw",
 		AdminAPIKey:     testAdminKey,
-	}, gateway.Dependencies{
+	}, &gateway.Dependencies{
 		Engine:      engine,
 		KillSwitch:  ks,
 		Revocation:  revocation.NewInMemory(),

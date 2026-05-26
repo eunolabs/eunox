@@ -25,7 +25,7 @@ func main() {
 	port := envOrDefault("STORAGE_GRANT_SVC_PORT", "3006")
 	adapter := envOrDefault("STORAGE_GRANT_SVC_ADAPTER", "aws-s3")
 
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
 		ServiceName: "storage-grant-svc",
 	})
@@ -121,6 +121,7 @@ func buildAdapter(name string) (storagegrantsvc.CloudStorageAdapter, error) {
 	}
 }
 
+//nolint:unparam // placeholder until external verifier is configured
 func buildVerifier() (storagegrantsvc.TokenVerifier, error) {
 	if os.Getenv("ISSUER_JWKS_URL") == "" {
 		return nil, errors.New("ISSUER_JWKS_URL must be set")

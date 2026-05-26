@@ -51,7 +51,7 @@ type AuthTokenProviderConfig struct {
 }
 
 // NewAuthTokenProvider creates a new AuthTokenProvider.
-func NewAuthTokenProvider(cfg AuthTokenProviderConfig) *AuthTokenProvider {
+func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -261,10 +261,10 @@ func (p *AuthTokenProvider) acquireToken(ctx context.Context) (*TokenResponse, e
 
 // issueRequestBody is the request body for the issuer's POST /api/v1/issue endpoint.
 type issueRequestBody struct {
-	Token        string      `json:"token"`
-	Capabilities interface{} `json:"capabilities,omitempty"`
-	TTL          int         `json:"ttl,omitempty"`
-	Audience     string      `json:"audience,omitempty"`
+	Token        string           `json:"token"`
+	Capabilities interface{}      `json:"capabilities,omitempty"`
+	TTL          int              `json:"ttl,omitempty"`
+	Audience     string           `json:"audience,omitempty"`
 	DPoP         *dpopBindingBody `json:"dpop,omitempty"`
 }
 

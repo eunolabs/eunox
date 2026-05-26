@@ -25,7 +25,7 @@ const shutdownTimeout = 10 * time.Second
 
 func main() {
 	cfg := config.LoadOrExit[config.MinterConfig]("")
-	logger := observability.NewLogger(observability.LogConfig{
+	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
 		ServiceName: "minter",
 	})
@@ -36,14 +36,14 @@ func main() {
 	)
 
 	// Build pepper.
-	pepper, err := buildPepper(cfg)
+	pepper, err := buildPepper(&cfg)
 	if err != nil {
 		logger.Error("failed to build pepper", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 
 	// Build admin authenticator.
-	auth := buildAdminAuth(cfg, logger)
+	auth := buildAdminAuth(&cfg, logger)
 
 	// Build anomaly detector.
 	anomaly := minter.NewInMemoryAnomalyDetector(minter.VelocityConfig{
@@ -78,7 +78,7 @@ func main() {
 		Metrics:     metrics,
 	}
 
-	app := minter.New(appCfg, deps)
+	app := minter.New(appCfg, &deps)
 
 	// Start HTTP server.
 	srv := &http.Server{
@@ -111,7 +111,7 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func buildPepper(cfg config.MinterConfig) (*minter.Pepper, error) {
+func buildPepper(cfg *config.MinterConfig) (*minter.Pepper, error) {
 	if cfg.PepperHex == "" {
 		// Development mode: use a deterministic pepper.
 		return minter.NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
@@ -119,7 +119,7 @@ func buildPepper(cfg config.MinterConfig) (*minter.Pepper, error) {
 	return minter.NewPepperFromHex(cfg.PepperHex)
 }
 
-func buildAdminAuth(cfg config.MinterConfig, logger *slog.Logger) minter.AdminAuthenticator {
+func buildAdminAuth(cfg *config.MinterConfig, logger *slog.Logger) minter.AdminAuthenticator {
 	var jwtVerifier *minter.AdminJWTVerifier
 	jwksURI := os.Getenv("MINTER_ADMIN_JWKS_URI")
 	if jwksURI != "" {

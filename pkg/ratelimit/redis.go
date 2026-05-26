@@ -53,6 +53,7 @@ type redisClientAdapter struct {
 	client *redis.Client
 }
 
+// Eval delegates script execution to the underlying Redis client.
 func (a *redisClientAdapter) Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
 	result, err := a.client.Eval(ctx, script, keys, args...).Result()
 	if err != nil {

@@ -83,10 +83,10 @@ type App struct {
 }
 
 // New creates a new issuer App with the given configuration and dependencies.
-func New(cfg Config, deps Dependencies) *App {
+func New(cfg *Config, deps *Dependencies) *App {
 	app := &App{
-		config: cfg,
-		deps:   deps,
+		config: *cfg,
+		deps:   *deps,
 	}
 	app.router = app.buildRouter()
 	return app

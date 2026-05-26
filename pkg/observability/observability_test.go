@@ -24,7 +24,7 @@ import (
 
 func TestNewLoggerJSON(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewLogger(LogConfig{Output: &buf})
+	logger := NewLogger(&LogConfig{Output: &buf})
 
 	logger.Info("hello", slog.String("key", "value"))
 
@@ -46,7 +46,7 @@ func TestNewLoggerJSON(t *testing.T) {
 
 func TestNewLoggerText(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewLogger(LogConfig{Format: "text", Output: &buf})
+	logger := NewLogger(&LogConfig{Format: "text", Output: &buf})
 
 	logger.Info("hello", slog.String("key", "value"))
 
@@ -64,7 +64,7 @@ func TestNewLoggerText(t *testing.T) {
 
 func TestNewLoggerLevel(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewLogger(LogConfig{Level: "warn", Output: &buf})
+	logger := NewLogger(&LogConfig{Level: "warn", Output: &buf})
 
 	logger.Debug("debug")
 	logger.Info("info")
@@ -86,7 +86,7 @@ func TestNewLoggerLevel(t *testing.T) {
 
 func TestNewLoggerServiceAttrs(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewLogger(LogConfig{
+	logger := NewLogger(&LogConfig{
 		Output:      &buf,
 		ServiceName: "api",
 		Version:     "1.2.3",
@@ -177,7 +177,7 @@ func TestMetricsRegistryGauge(t *testing.T) {
 
 func TestRequestLoggingMiddleware(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewLogger(LogConfig{Output: &buf})
+	logger := NewLogger(&LogConfig{Output: &buf})
 	middleware := RequestLogging(logger)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -185,7 +185,7 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 		_, _ = io.WriteString(w, "ok")
 	}))
 
-	req := httptest.NewRequest(http.MethodPost, "/health", nil)
+	req := httptest.NewRequest(http.MethodPost, "/health", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -216,7 +216,7 @@ func TestRequestMetricsMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ready", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -254,7 +254,7 @@ func TestTracePropagationMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/trace", nil)
+	req := httptest.NewRequest(http.MethodGet, "/trace", http.NoBody)
 	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

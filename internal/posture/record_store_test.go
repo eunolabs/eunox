@@ -21,7 +21,7 @@ func TestRecordStore_Upsert_NewRecord(t *testing.T) {
 	}
 
 	// New record should emit.
-	assert.True(t, store.Upsert(record))
+	assert.True(t, store.Upsert(&record))
 	assert.Equal(t, 1, store.Size())
 }
 
@@ -30,16 +30,16 @@ func TestRecordStore_Upsert_DeduplicateWithinWindow(t *testing.T) {
 
 	now := time.Now()
 	record := AgentInventoryRecord{
-		AgentID:  "agent-1",
+		AgentID:   "agent-1",
 		FirstSeen: now,
 		LastSeen:  now,
 	}
 
-	assert.True(t, store.Upsert(record))
+	assert.True(t, store.Upsert(&record))
 
 	// Same agent within window: should not emit.
 	record.LastSeen = now.Add(1 * time.Minute)
-	assert.False(t, store.Upsert(record))
+	assert.False(t, store.Upsert(&record))
 }
 
 func TestRecordStore_Upsert_EmitOutsideWindow(t *testing.T) {
@@ -47,16 +47,16 @@ func TestRecordStore_Upsert_EmitOutsideWindow(t *testing.T) {
 
 	now := time.Now()
 	record := AgentInventoryRecord{
-		AgentID:  "agent-1",
+		AgentID:   "agent-1",
 		FirstSeen: now,
 		LastSeen:  now,
 	}
 
-	assert.True(t, store.Upsert(record))
+	assert.True(t, store.Upsert(&record))
 
 	// Same agent outside window: should emit.
 	record.LastSeen = now.Add(6 * time.Minute)
-	assert.True(t, store.Upsert(record))
+	assert.True(t, store.Upsert(&record))
 }
 
 func TestRecordStore_Upsert_PreservesFirstSeen(t *testing.T) {
@@ -64,16 +64,16 @@ func TestRecordStore_Upsert_PreservesFirstSeen(t *testing.T) {
 
 	firstSeen := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	record := AgentInventoryRecord{
-		AgentID:  "agent-1",
+		AgentID:   "agent-1",
 		FirstSeen: firstSeen,
 		LastSeen:  firstSeen,
 	}
-	store.Upsert(record)
+	store.Upsert(&record)
 
 	// Emit again outside window with different firstSeen.
 	record.FirstSeen = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	record.LastSeen = firstSeen.Add(10 * time.Minute)
-	store.Upsert(record)
+	store.Upsert(&record)
 
 	active := store.ListActive()
 	assert.Len(t, active, 1)
@@ -85,17 +85,17 @@ func TestRecordStore_Upsert_RevokedAgentNotReemitted(t *testing.T) {
 
 	now := time.Now()
 	record := AgentInventoryRecord{
-		AgentID:  "agent-1",
+		AgentID:   "agent-1",
 		FirstSeen: now,
 		LastSeen:  now,
 	}
 
-	store.Upsert(record)
+	store.Upsert(&record)
 	store.MarkRevoked("agent-1", now.Add(1*time.Minute))
 
 	// Try to re-emit the revoked agent.
 	record.LastSeen = now.Add(10 * time.Minute)
-	assert.False(t, store.Upsert(record))
+	assert.False(t, store.Upsert(&record))
 }
 
 func TestRecordStore_MarkRevoked(t *testing.T) {
@@ -109,7 +109,7 @@ func TestRecordStore_MarkRevoked(t *testing.T) {
 		LastSeen:   now,
 	}
 
-	store.Upsert(record)
+	store.Upsert(&record)
 
 	// Mark as revoked.
 	revokedAt := now.Add(5 * time.Minute)
@@ -131,9 +131,9 @@ func TestRecordStore_ListActive(t *testing.T) {
 	store := NewRecordStore(5 * time.Minute)
 
 	now := time.Now()
-	store.Upsert(AgentInventoryRecord{AgentID: "agent-1", FirstSeen: now, LastSeen: now})
-	store.Upsert(AgentInventoryRecord{AgentID: "agent-2", FirstSeen: now, LastSeen: now})
-	store.Upsert(AgentInventoryRecord{AgentID: "agent-3", FirstSeen: now, LastSeen: now})
+	store.Upsert(&AgentInventoryRecord{AgentID: "agent-1", FirstSeen: now, LastSeen: now})
+	store.Upsert(&AgentInventoryRecord{AgentID: "agent-2", FirstSeen: now, LastSeen: now})
+	store.Upsert(&AgentInventoryRecord{AgentID: "agent-3", FirstSeen: now, LastSeen: now})
 
 	store.MarkRevoked("agent-2", now.Add(1*time.Minute))
 
@@ -153,8 +153,8 @@ func TestRecordStore_Size(t *testing.T) {
 	store := NewRecordStore(5 * time.Minute)
 
 	now := time.Now()
-	store.Upsert(AgentInventoryRecord{AgentID: "agent-1", FirstSeen: now, LastSeen: now})
-	store.Upsert(AgentInventoryRecord{AgentID: "agent-2", FirstSeen: now, LastSeen: now})
+	store.Upsert(&AgentInventoryRecord{AgentID: "agent-1", FirstSeen: now, LastSeen: now})
+	store.Upsert(&AgentInventoryRecord{AgentID: "agent-2", FirstSeen: now, LastSeen: now})
 
 	// Size includes revoked.
 	store.MarkRevoked("agent-1", now)
