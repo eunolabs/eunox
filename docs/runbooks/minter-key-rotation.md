@@ -26,7 +26,7 @@ the rotation procedure has already been initiated by an operator.
    ```
 2. Confirm the new key `kid` is live in the JWKS endpoint:
    ```bash
-   curl https://gateway.euno.example/.well-known/jwks.json | jq '.keys[].kid'
+   curl https://gateway.eunox.example/.well-known/jwks.json | jq '.keys[].kid'
    ```
 
 ## Check rotation procedure progress

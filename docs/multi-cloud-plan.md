@@ -1,26 +1,26 @@
 # Multi-Cloud Ecosystem Support Plan
 
-This document describes the plan to deepen euno's first-class support for
+This document describes the plan to deepen eunox's first-class support for
 **AWS** and **GCP** ecosystems in addition to the existing Azure integrations.
 The goal is feature parity across all three major cloud providers so that any
-team — regardless of their cloud home — can deploy and operate euno without
+team — regardless of their cloud home — can deploy and operate eunox without
 workarounds.
 
 ---
 
 ## Current state
 
-| Capability | Azure | AWS | GCP |
-|---|---|---|---|
-| Identity provider | ✅ Entra ID (`azure-ad` adapter) | ✅ Cognito (`aws-cognito` adapter) | ✅ Cloud Identity (`gcp-identity` adapter) |
-| Token signing (KMS) | ✅ Key Vault (`azure-keyvault` signer) | ✅ KMS (`aws-kms` signer) | ✅ Cloud KMS (`gcp-cloudkms` signer) |
-| Secrets management | ✅ Key Vault secrets referenced in docs | ⚠️ Secrets Manager — referenced in docs, no native SDK integration | ⚠️ Secret Manager — referenced in docs, no native SDK integration |
-| Audit ledger storage | ✅ Azure Blob (`AzureBlobObjectStore` via `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob`; managed identity, shared-key, or connection-string auth) | ✅ S3 Object Lock (`S3ObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=s3`; cross-chain anchor) | ✅ GCS (`GcsObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=gcs`; `temporaryHold` per object; multi-cloud redundancy alongside S3) |
-| Infrastructure-as-code | ⚠️ Bicep/ARM — not provided | ⚠️ CloudFormation / CDK — not provided | ⚠️ Deployment Manager / Terraform — not provided |
-| Container registry | ⚠️ ACR — not documented | ⚠️ ECR — not documented | ⚠️ Artifact Registry — not documented |
-| Helm deployment | ✅ AKS compatible | ⚠️ EKS — tested manually, not documented | ⚠️ GKE — tested manually, not documented |
-| Observability integration | ⚠️ Azure Monitor/Sentinel — partially referenced | ⚠️ CloudWatch / Security Hub — not integrated | ⚠️ Cloud Monitoring / Security Command Center — not integrated |
-| Managed IdP SCIM push | ⚠️ Entra ID SCIM — documented in issuer-idp-setup.md | ⚠️ Cognito → SCIM bridge — not documented | ⚠️ Google Workspace → SCIM bridge — not documented |
+| Capability                | Azure                                                                                                                                               | AWS                                                                                               | GCP                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity provider         | ✅ Entra ID (`azure-ad` adapter)                                                                                                                    | ✅ Cognito (`aws-cognito` adapter)                                                                | ✅ Cloud Identity (`gcp-identity` adapter)                                                                                            |
+| Token signing (KMS)       | ✅ Key Vault (`azure-keyvault` signer)                                                                                                              | ✅ KMS (`aws-kms` signer)                                                                         | ✅ Cloud KMS (`gcp-cloudkms` signer)                                                                                                  |
+| Secrets management        | ✅ Key Vault secrets referenced in docs                                                                                                             | ⚠️ Secrets Manager — referenced in docs, no native SDK integration                                | ⚠️ Secret Manager — referenced in docs, no native SDK integration                                                                     |
+| Audit ledger storage      | ✅ Azure Blob (`AzureBlobObjectStore` via `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=azure-blob`; managed identity, shared-key, or connection-string auth) | ✅ S3 Object Lock (`S3ObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=s3`; cross-chain anchor) | ✅ GCS (`GcsObjectStore` / `AUDIT_LEDGER_OBJECT_STORE_PROVIDER=gcs`; `temporaryHold` per object; multi-cloud redundancy alongside S3) |
+| Infrastructure-as-code    | ⚠️ Bicep/ARM — not provided                                                                                                                         | ⚠️ CloudFormation / CDK — not provided                                                            | ⚠️ Deployment Manager / Terraform — not provided                                                                                      |
+| Container registry        | ⚠️ ACR — not documented                                                                                                                             | ⚠️ ECR — not documented                                                                           | ⚠️ Artifact Registry — not documented                                                                                                 |
+| Helm deployment           | ✅ AKS compatible                                                                                                                                   | ⚠️ EKS — tested manually, not documented                                                          | ⚠️ GKE — tested manually, not documented                                                                                              |
+| Observability integration | ⚠️ Azure Monitor/Sentinel — partially referenced                                                                                                    | ⚠️ CloudWatch / Security Hub — not integrated                                                     | ⚠️ Cloud Monitoring / Security Command Center — not integrated                                                                        |
+| Managed IdP SCIM push     | ⚠️ Entra ID SCIM — documented in issuer-idp-setup.md                                                                                                | ⚠️ Cognito → SCIM bridge — not documented                                                         | ⚠️ Google Workspace → SCIM bridge — not documented                                                                                    |
 
 ---
 
@@ -41,7 +41,7 @@ workarounds.
    variables and Helm values.
 
 4. **No mandatory cloud dependency for local or self-hosted mode.** Local
-   (`@euno/mcp` only) and self-hosted deployments must continue to work with
+   (`@eunox/mcp` only) and self-hosted deployments must continue to work with
    no cloud account at all. Cloud integrations are opt-in extensions, not
    required dependencies.
 
@@ -66,7 +66,7 @@ workarounds.
 
 - [x] **Cognito SCIM bridge guide** (`docs/issuer-idp-setup.md` §Cognito SCIM)
   - Cognito User Pool + AWS IAM Identity Center SCIM endpoint configuration
-  - Attribute mappings for `sub`, `email`, and group claims to euno roles
+  - Attribute mappings for `sub`, `email`, and group claims to eunox roles
 
 - [x] **CloudWatch / Security Hub observability guide**
   - Prometheus → CloudWatch Metrics forwarding (ADOT Collector)
@@ -91,7 +91,7 @@ workarounds.
     passed to `AwsSdkS3AnchorClient` for VPC endpoint / PrivateLink deployments
   - `AUDIT_LEDGER_S3_FORCE_PATH_STYLE` env var added for path-style addressing
     (required for some VPC endpoint configurations and MinIO)
-  - `createS3AnchorClientFromEnv()` factory in `@euno/common-infra` —
+  - `createS3AnchorClientFromEnv()` factory in `@eunox/common-infra` —
     the standard bootstrap auto-creates an `S3AnchorClient` when
     `AUDIT_LEDGER_S3_BUCKET` is set; no custom entrypoint required
   - GovCloud (`us-gov-*`) endpoints are resolved automatically from `AWS_REGION`
@@ -117,7 +117,7 @@ workarounds.
 
 - [x] **Terraform module** (`infra/aws/terraform/`)
   - Modular layout: `network/`, `compute/`, `data/`, `security/`, `observability/`
-  - Variables file with euno-specific naming conventions
+  - Variables file with eunox-specific naming conventions
   - README with `terraform init / plan / apply` walkthrough
 
 ---
@@ -140,8 +140,8 @@ workarounds.
 
 - [x] **Google Workspace SCIM bridge guide** (`docs/issuer-idp-setup.md` §Google Workspace SCIM)
   - Google Workspace SCIM provisioning endpoint and OAuth service account setup
-  - Attribute mappings for `sub`, `email`, and `groups` claims to euno roles
-  - Cloud Identity → euno role mapping table example
+  - Attribute mappings for `sub`, `email`, and `groups` claims to eunox roles
+  - Cloud Identity → eunox role mapping table example
 
 - [x] **Cloud Monitoring / Security Command Center observability guide**
   - Prometheus → Cloud Monitoring (via OpenTelemetry Collector) integration
@@ -151,7 +151,7 @@ workarounds.
 ### Phase 2 — Native SDK integration (medium-term)
 
 - [x] **GCP Secret Manager secrets-store adapter**
-  - `GcpSecretManagerSecretStore` implemented in `@euno/common-core` (`secret-store.ts`),
+  - `GcpSecretManagerSecretStore` implemented in `@eunox/common-core` (`secret-store.ts`),
     satisfying the `SecretStore` interface alongside the AWS and Azure implementations
   - Authenticates via Application Default Credentials (Workload Identity Federation,
     `GOOGLE_APPLICATION_CREDENTIALS` key file, or `gcloud auth application-default login`)
@@ -206,13 +206,13 @@ workarounds.
 
 - [x] **Secrets abstraction layer (`SecretStore` interface)**
   - Define a minimal `SecretStore` interface (already implicit in config code)
-    as a first-class exported type in `@euno/common-core`
+    as a first-class exported type in `@eunox/common-core`
   - Register built-in implementations: `EnvSecretStore` (default),
     `AzureKeyVaultSecretStore`, `AwsSecretsManagerSecretStore`,
     `GcpSecretManagerSecretStore`
   - Document the selection logic: if `SECRET_STORE_PROVIDER` is set, load the
     corresponding implementation; otherwise fall back to `process.env`
-  - `createSecretStoreFromEnv()` factory in `@euno/common-core` wired to env config
+  - `createSecretStoreFromEnv()` factory in `@eunox/common-core` wired to env config
   - `SECRET_STORE_PROVIDER` and provider-specific vars added to `IssuerConfigSchema`
     and `GatewayConfigSchema` with cross-field validation
   - Unit tests in `pkg//src/__tests__/secret-store.test.ts`
@@ -243,9 +243,9 @@ workarounds.
   - 33 new unit tests in `common-infra/src/__tests__/object-store.test.ts`
 
 - [x] **Helm chart — cloud-specific values files**
-  - [x] `k8s/helm/euno/values-azure.yaml`
-  - [x] `k8s/helm/euno/values-aws.yaml`
-  - [x] `k8s/helm/euno/values-gcp.yaml`
+  - [x] `k8s/helm/eunox/values-azure.yaml`
+  - [x] `k8s/helm/eunox/values-aws.yaml`
+  - [x] `k8s/helm/eunox/values-gcp.yaml`
   - Each file documents every provider-specific override with inline comments
 
 ### Testing

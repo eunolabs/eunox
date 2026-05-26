@@ -2,7 +2,7 @@
 
 > Patterns for writing capability manifests that work the first time,
 > age well, and survive Sentinel scrutiny. This guide is the canonical
-> companion to `euno init` / `euno validate` / `euno plan` in
+> companion to `eunox init` / `eunox validate` / `eunox plan` in
 > `cmd/`.
 
 A **capability manifest** is the YAML / JSON document that the
@@ -19,19 +19,19 @@ Every manifest must match the `AgentCapabilityManifest` interface in
 `pkg//src/types.ts`. The required top-level fields are
 `agentId`, `name`, `version`, and `requiredCapabilities`. The
 optional fields are `optionalCapabilities` and `metadata`. Anything
-missing or shaped differently is rejected by `euno validate`.
+missing or shaped differently is rejected by `eunox validate`.
 
 ```yaml
-agentId: "sales-research-bot"          # stable, kebab-case, globally unique
-name: "Sales Research Bot"             # human-readable
-version: "0.1.0"                       # agent version (semver)
-requiredCapabilities: []               # see § 2 — every entry is a CapabilityConstraint
-optionalCapabilities: []               # optional; same shape as requiredCapabilities
+agentId: "sales-research-bot" # stable, kebab-case, globally unique
+name: "Sales Research Bot" # human-readable
+version: "0.1.0" # agent version (semver)
+requiredCapabilities: [] # see § 2 — every entry is a CapabilityConstraint
+optionalCapabilities: [] # optional; same shape as requiredCapabilities
 metadata:
   description: "Synthesizes account-research briefings."
-  owner: "revops-oncall@example.com"   # free-form; surfaced into the posture inventory
+  owner: "revops-oncall@example.com" # free-form; surfaced into the posture inventory
   tags: ["revops", "research"]
-  runtime: "node:20"                   # optional descriptor for AI posture inventory
+  runtime: "node:20" # optional descriptor for AI posture inventory
 ```
 
 Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
@@ -48,7 +48,7 @@ unless none of these fits.
 
 ### Pattern A — Single-purpose read agent
 
-> *"This agent looks things up and reports. It never writes anywhere."*
+> _"This agent looks things up and reports. It never writes anywhere."_
 
 ```yaml
 requiredCapabilities:
@@ -59,7 +59,7 @@ requiredCapabilities:
 ```
 
 - Only `read`.
-- Resources scoped to a *segment* with `/*`, never bare `*`.
+- Resources scoped to a _segment_ with `/*`, never bare `*`.
 - The Sentinel rule **"Write attempt from a read-only session"** will
   fire immediately if this agent ever attempts a write — that's the
   intended behaviour and it is **not** a false positive. Investigate
@@ -67,7 +67,7 @@ requiredCapabilities:
 
 ### Pattern B — Workflow agent (read-most, narrow write)
 
-> *"This agent reads broadly but only writes back to one specific path."*
+> _"This agent reads broadly but only writes back to one specific path."_
 
 ```yaml
 requiredCapabilities:
@@ -87,17 +87,17 @@ requiredCapabilities:
 
 ### Pattern C — Tool-specialist agent
 
-> *"This agent calls a single internal tool a lot, with arguments."*
+> _"This agent calls a single internal tool a lot, with arguments."_
 
 ```yaml
 requiredCapabilities:
   - resource: "api://forecasting/predict"
     actions: ["execute"]
     conditions:
-      - type: maxCalls            # MaxCallsCondition
+      - type: maxCalls # MaxCallsCondition
         count: 30
         windowSeconds: 60
-      - type: allowedOperations   # AllowedOperationsCondition (narrows the verb)
+      - type: allowedOperations # AllowedOperationsCondition (narrows the verb)
         operations: ["predict"]
 ```
 
@@ -111,17 +111,17 @@ requiredCapabilities:
 
 ### Pattern D — Delegated / attenuated child
 
-> *"A parent agent spins up a child agent for a sub-task with a strictly
-> smaller capability set."*
+> _"A parent agent spins up a child agent for a sub-task with a strictly
+> smaller capability set."_
 
 ```yaml
 # Body of POST /api/v1/attenuate using the parent token (the
 # request payload uses the same CapabilityConstraint shape, just
 # called requestedCapabilities at the wire layer).
 requestedCapabilities:
-  - resource: "api://crm/customers/12345"   # exact ID, not wildcard
+  - resource: "api://crm/customers/12345" # exact ID, not wildcard
     actions: ["read"]
-ttl: 120                                     # seconds; must be ≤ parent TTL
+ttl: 120 # seconds; must be ≤ parent TTL
 ```
 
 - Resource must be a **strict subset** of a parent capability (the
@@ -135,13 +135,13 @@ ttl: 120                                     # seconds; must be ≤ parent TTL
 The wildcard semantics are **segment-aware** (`pkg//src/utils.ts::matchesResource`).
 Internalize the table below.
 
-| Pattern                      | Matches                                             | Does **not** match                          |
-|------------------------------|-----------------------------------------------------|---------------------------------------------|
-| `api://crm/customers`        | `api://crm/customers` only                          | `api://crm/customers/123`                   |
-| `api://crm/customers/*`      | `api://crm/customers/123`, `.../abc`                | `api://crm/customers`, `.../123/notes`      |
-| `api://crm/customers/**`     | `api://crm/customers/123`, `.../123/notes/xyz`      | `api://crm/customers`, `api://billing/...`  |
-| `storage://docs/team/*`      | `storage://docs/team/file.pdf`                      | `storage://docs/file.pdf`                   |
-| `api://*`                    | (rejected by `euno validate` — too broad)           | —                                           |
+| Pattern                  | Matches                                        | Does **not** match                         |
+| ------------------------ | ---------------------------------------------- | ------------------------------------------ |
+| `api://crm/customers`    | `api://crm/customers` only                     | `api://crm/customers/123`                  |
+| `api://crm/customers/*`  | `api://crm/customers/123`, `.../abc`           | `api://crm/customers`, `.../123/notes`     |
+| `api://crm/customers/**` | `api://crm/customers/123`, `.../123/notes/xyz` | `api://crm/customers`, `api://billing/...` |
+| `storage://docs/team/*`  | `storage://docs/team/file.pdf`                 | `storage://docs/file.pdf`                  |
+| `api://*`                | (rejected by `eunox validate` — too broad)     | —                                          |
 
 Rules:
 
@@ -149,7 +149,7 @@ Rules:
   cross-match, even if you use `**`.
 - **A trailing `/*` matches one segment.** A trailing `/**` matches
   one or more segments.
-- **Bare `*` is not allowed.** `euno validate` and the issuer both
+- **Bare `*` is not allowed.** `eunox     validate` and the issuer both
   reject it.
 
 ## 4. Conditions cookbook
@@ -164,35 +164,35 @@ denied at both issuance and at the gateway, so spelling matters.
 - resource: "api://billing/invoices/*"
   actions: ["read"]
   conditions:
-    - type: maxCalls                     # rate-limit
+    - type: maxCalls # rate-limit
       count: 60
       windowSeconds: 60
-    - type: timeWindow                   # restrict to a window
+    - type: timeWindow # restrict to a window
       notBefore: "2026-04-01T00:00:00Z"
-      notAfter:  "2026-12-31T23:59:59Z"
-    - type: ipRange                      # source-IP allowlist
+      notAfter: "2026-12-31T23:59:59Z"
+    - type: ipRange # source-IP allowlist
       cidrs: ["10.0.0.0/8"]
 
 - resource: "storage://exports/team-a/*"
   actions: ["write"]
   conditions:
-    - type: allowedExtensions            # restrict file types
+    - type: allowedExtensions # restrict file types
       extensions: [".csv", ".json"]
 
 - resource: "db://warehouse/sales"
   actions: ["read"]
   conditions:
-    - type: allowedTables                # restrict tables (and optionally columns)
+    - type: allowedTables # restrict tables (and optionally columns)
       tables: ["sales"]
       columns:
         sales: ["customer_id", "amount", "ts"]
-    - type: redactFields                 # gateway records the redaction obligation
+    - type: redactFields # gateway records the redaction obligation
       fields: ["sales.customer_email"]
 
 - resource: "smtp://outbound/*"
   actions: ["execute"]
   conditions:
-    - type: recipientDomain              # outbound email allowlist
+    - type: recipientDomain # outbound email allowlist
       domains: ["example.com"]
 ```
 
@@ -216,18 +216,18 @@ the Capability Issuer), not in the manifest. For attenuated child
 tokens the caller passes `ttl` in the `/api/v1/attenuate` request
 body and the issuer caps it at the parent's remaining TTL.
 
-| Scenario                                              | Recommended TTL (seconds) |
-|-------------------------------------------------------|---------------------------|
-| Interactive chat / tool call                          | 900 (15 min — the default) |
-| Long-running batch (ETL, embedding job)               | 1800–3600 (use `/renew` if you need more) |
-| Delegated child for one sub-task                      | 60–300                    |
-| Anything that touches money or PII                    | 300 with mandatory `/renew` per action |
+| Scenario                                | Recommended TTL (seconds)                 |
+| --------------------------------------- | ----------------------------------------- |
+| Interactive chat / tool call            | 900 (15 min — the default)                |
+| Long-running batch (ETL, embedding job) | 1800–3600 (use `/renew` if you need more) |
+| Delegated child for one sub-task        | 60–300                                    |
+| Anything that touches money or PII      | 300 with mandatory `/renew` per action    |
 
 Keep the issuer's `DEFAULT_TOKEN_TTL` ≤ 3600 in the pilot.
 
 ## 6. Anti-patterns we caught during the pilot
 
-These all *worked* (token issued, gateway happy) but each one degrades
+These all _worked_ (token issued, gateway happy) but each one degrades
 the security posture and triggered tuning churn during hypercare.
 
 1. **Manifest copied between agents** with `agentId` not changed.
@@ -242,7 +242,7 @@ the security posture and triggered tuning churn during hypercare.
    from a read-only session" rule treats delete as write; over-broad
    manifests defeat the rule.
 4. **Issuing one massive token** that covers every tool the agent
-   *might* need. Issue task-scoped tokens via `/issue` and chain via
+   _might_ need. Issue task-scoped tokens via `/issue` and chain via
    `/attenuate`; the token TTL is short for a reason.
 5. **Hand-editing a JWT** to extend expiry during testing. Use
    `POST /api/v1/renew` — anything else invalidates the signature and
@@ -250,20 +250,20 @@ the security posture and triggered tuning churn during hypercare.
 
 ## 7. Tooling
 
-| Step                                                  | CLI command                                              |
-|-------------------------------------------------------|----------------------------------------------------------|
-| Scaffold a new manifest                                | `euno init --agent <name> --output ./manifest.yaml`      |
-| Add a framework scaffold to it                         | `euno init --framework langchain` (or `maf` / `crewai`)  |
-| Add a cloud-deployment scaffold                        | `euno init --cloud aws` (or `azure` / `gcp`)             |
-| Validate the file                                      | `euno validate ./manifest.yaml`                          |
-| Show the current and supported schema versions on an issuer | `euno schema-version check --issuer <url>`          |
-| Plan a schema-version migration                        | `euno schema-version plan <from> <to>`                   |
-| Inspect a token's `schemaVersion` claim                | `euno schema-version validate-token <jwt>`               |
-| Show CLI configuration / env                           | `euno config`                                            |
-| Request a token (documentation helper)                 | `euno request --agent <id> --token $AAD_ACCESS_TOKEN`    |
+| Step                                                        | CLI command                                              |
+| ----------------------------------------------------------- | -------------------------------------------------------- |
+| Scaffold a new manifest                                     | `eunox init --agent <name> --output ./manifest.yaml`     |
+| Add a framework scaffold to it                              | `eunox init --framework langchain` (or `maf` / `crewai`) |
+| Add a cloud-deployment scaffold                             | `eunox init --cloud aws` (or `azure` / `gcp`)            |
+| Validate the file                                           | `eunox validate ./manifest.yaml`                         |
+| Show the current and supported schema versions on an issuer | `eunox schema-version check --issuer <url>`              |
+| Plan a schema-version migration                             | `eunox schema-version plan <from> <to>`                  |
+| Inspect a token's `schemaVersion` claim                     | `eunox schema-version validate-token <jwt>`              |
+| Show CLI configuration / env                                | `eunox config`                                           |
+| Request a token (documentation helper)                      | `eunox request --agent <id> --token $AAD_ACCESS_TOKEN`   |
 
-Wire `euno validate` into your CI for every manifest PR; combine with
-`euno schema-version check` against your staging issuer if you want to
+Wire `eunox validate` into your CI for every manifest PR; combine with
+`eunox schema-version check` against your staging issuer if you want to
 fail builds on schema-version drift before they reach production.
 
 ## 8. Where this guide lives in the rest of the docs

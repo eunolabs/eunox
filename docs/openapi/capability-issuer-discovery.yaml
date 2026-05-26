@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Euno Capability Issuer — Discovery Document v1.0.0
+  title: eunox Capability Issuer — Discovery Document v1.0.0
   description: |
     The `/.well-known/capability-issuer` discovery endpoint is the authoritative
     integration point for security teams, partner issuers, and automation tooling.

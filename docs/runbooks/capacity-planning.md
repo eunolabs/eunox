@@ -10,53 +10,54 @@ This runbook provides guidelines for scaling the Eunox platform based on traffic
 
 ## Service Scaling Characteristics
 
-| Service | Scaling Dimension | Stateful | Bottleneck |
-|---------|------------------|----------|------------|
-| Gateway | Requests/second | No | CPU (JWT verification, DPoP) |
-| Issuer | Token issuance/min | No | CPU (ECDSA signing) |
-| Minter | Key operations/min | No | Database connections |
-| DB Token Service | Token grants/min | No | Cloud provider API limits |
-| Storage Grant Service | Grant requests/min | No | Cloud provider API limits |
-| Posture Emitter | Events/min | Yes (SQLite) | Single-writer (1 replica max) |
+| Service               | Scaling Dimension  | Stateful     | Bottleneck                    |
+| --------------------- | ------------------ | ------------ | ----------------------------- |
+| Gateway               | Requests/second    | No           | CPU (JWT verification, DPoP)  |
+| Issuer                | Token issuance/min | No           | CPU (ECDSA signing)           |
+| Minter                | Key operations/min | No           | Database connections          |
+| DB Token Service      | Token grants/min   | No           | Cloud provider API limits     |
+| Storage Grant Service | Grant requests/min | No           | Cloud provider API limits     |
+| Posture Emitter       | Events/min         | Yes (SQLite) | Single-writer (1 replica max) |
 
 ## Resource Sizing Guidelines
 
 ### Gateway
 
-| Traffic Tier | Replicas | CPU Request | Memory Request | Notes |
-|-------------|----------|-------------|----------------|-------|
-| < 100 RPS | 2 | 100m | 128Mi | Minimum HA |
-| 100–500 RPS | 3–5 | 250m | 256Mi | HPA handles bursts |
-| 500–2000 RPS | 5–10 | 500m | 512Mi | Consider dedicated nodes |
-| > 2000 RPS | 10+ | 1000m | 1Gi | Multi-zone, dedicated pool |
+| Traffic Tier | Replicas | CPU Request | Memory Request | Notes                      |
+| ------------ | -------- | ----------- | -------------- | -------------------------- |
+| < 100 RPS    | 2        | 100m        | 128Mi          | Minimum HA                 |
+| 100–500 RPS  | 3–5      | 250m        | 256Mi          | HPA handles bursts         |
+| 500–2000 RPS | 5–10     | 500m        | 512Mi          | Consider dedicated nodes   |
+| > 2000 RPS   | 10+      | 1000m       | 1Gi            | Multi-zone, dedicated pool |
 
 ### Issuer
 
-| Traffic Tier | Replicas | CPU Request | Memory Request |
-|-------------|----------|-------------|----------------|
-| < 10 tokens/s | 2 | 100m | 128Mi |
-| 10–50 tokens/s | 3 | 250m | 256Mi |
-| > 50 tokens/s | 5+ | 500m | 512Mi |
+| Traffic Tier   | Replicas | CPU Request | Memory Request |
+| -------------- | -------- | ----------- | -------------- |
+| < 10 tokens/s  | 2        | 100m        | 128Mi          |
+| 10–50 tokens/s | 3        | 250m        | 256Mi          |
+| > 50 tokens/s  | 5+       | 500m        | 512Mi          |
 
 ### Database (PostgreSQL)
 
-| Data Volume | Instance Type | Storage | Connections |
-|------------|---------------|---------|-------------|
-| < 1M keys | db.t3.medium | 50 GB gp3 | 100 |
-| 1–10M keys | db.r6g.large | 200 GB gp3 | 200 |
-| > 10M keys | db.r6g.xlarge | 500 GB io2 | 500 |
+| Data Volume | Instance Type | Storage    | Connections |
+| ----------- | ------------- | ---------- | ----------- |
+| < 1M keys   | db.t3.medium  | 50 GB gp3  | 100         |
+| 1–10M keys  | db.r6g.large  | 200 GB gp3 | 200         |
+| > 10M keys  | db.r6g.xlarge | 500 GB io2 | 500         |
 
 ### Redis
 
-| Use Case | Instance Type | Memory | Cluster Mode |
-|----------|---------------|--------|--------------|
-| Dev/Test | cache.t3.small | 1.5 GB | No |
-| Production (< 1000 RPS) | cache.r6g.large | 13 GB | Sentinel (3 nodes) |
-| Production (> 1000 RPS) | cache.r6g.xlarge | 26 GB | Cluster (6 nodes) |
+| Use Case                | Instance Type    | Memory | Cluster Mode       |
+| ----------------------- | ---------------- | ------ | ------------------ |
+| Dev/Test                | cache.t3.small   | 1.5 GB | No                 |
+| Production (< 1000 RPS) | cache.r6g.large  | 13 GB  | Sentinel (3 nodes) |
+| Production (> 1000 RPS) | cache.r6g.xlarge | 26 GB  | Cluster (6 nodes)  |
 
 ## HPA Configuration
 
 The gateway HPA is configured with:
+
 - **Scale-up**: 70% CPU utilization triggers scale-up
 - **Scale-down**: Stabilization window of 300s prevents flapping
 - **Min replicas**: 2 (HA minimum)
@@ -66,13 +67,13 @@ The gateway HPA is configured with:
 
 ```bash
 # Check current HPA status
-kubectl -n euno-system get hpa euno-gateway
+kubectl -n eunox-system get hpa eunox-gateway
 
 # View scaling events
-kubectl -n euno-system describe hpa euno-gateway
+kubectl -n eunox-system describe hpa eunox-gateway
 
 # Adjust thresholds
-helm upgrade euno k8s/helm/euno/ \
+helm upgrade eunox k8s/helm/eunox/ \
   --set gateway.hpa.targetCPU=60 \
   --set gateway.hpa.maxReplicas=20
 ```
@@ -101,6 +102,7 @@ projected_rps = current_rps * (1 + monthly_growth_rate) ^ months_ahead
 ```
 
 Typical growth rates:
+
 - Organic: 5–10% monthly
 - After launch/expansion: 20–50% monthly
 - Enterprise onboarding: Step function (predict from pipeline)

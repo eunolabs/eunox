@@ -1,14 +1,13 @@
 # Comprehensive Mermaid Diagram Set: Capability‑Native Agent Governance
 
-Three diagram sets follow — each tailored to a distinct audience. Every diagram uses valid Mermaid syntax, labels entities and data objects explicitly, and marks trust boundaries via subgraphs. Azure services appear as reference implementations with generic alternatives noted in labels. 
-
+Three diagram sets follow — each tailored to a distinct audience. Every diagram uses valid Mermaid syntax, labels entities and data objects explicitly, and marks trust boundaries via subgraphs. Azure services appear as reference implementations with generic alternatives noted in labels.
 
 ## SET A — Engineering Implementation Diagrams
 
-These diagrams carry field-level detail on data objects, cryptographic operations, and protocol flows for implementation engineers. 
-
+These diagrams carry field-level detail on data objects, cryptographic operations, and protocol flows for implementation engineers.
 
 ### A1 — End‑to‑End System Architecture
+
 ```mermaid
 flowchart LR
     subgraph Enterprise["Enterprise Domain - Azure Reference"]
@@ -49,6 +48,7 @@ flowchart LR
     ExtService -.->|"resolve Enterprise DID for pubkey"| DIDReg
     ExtService -.->|"check status"| RevList
 ```
+
 Legend:
 |Symbol|Meaning|
 | --- | --- |
@@ -56,17 +56,17 @@ Legend:
 |Dashed arrow|Verification / lookup flow|
 |Subgraph boundary|Trust boundary — components inside share a trust domain|
 
-|Data Object|Key Fields|
-| --- | --- |
-|OIDC Token|sub (userID), roles, aud, exp, iss (IdP)|
-|Capability Token (JWT/VC)|sub (Agent DID), iss (Enterprise DID), actions[], resources[], constraints{ttl, max_calls, redact}, exp, jti (unique ID), signature|
-|DID Document|id (DID), verificationMethod[] (public keys), service[] (endpoints for registry, revocation), authentication[]|
-|Audit Log Event|timestamp, agentDID, capabilityId, action, resource, outcome (allow/deny), parentCapId (if delegated)|
+| Data Object               | Key Fields                                                                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| OIDC Token                | sub (userID), roles, aud, exp, iss (IdP)                                                                                            |
+| Capability Token (JWT/VC) | sub (Agent DID), iss (Enterprise DID), actions[], resources[], constraints{ttl, max_calls, redact}, exp, jti (unique ID), signature |
+| DID Document              | id (DID), verificationMethod[] (public keys), service[] (endpoints for registry, revocation), authentication[]                      |
+| Audit Log Event           | timestamp, agentDID, capabilityId, action, resource, outcome (allow/deny), parentCapId (if delegated)                               |
 
-The validate-jwt policy on Azure APIM enforces existence and validity of the JWT extracted from a specified HTTP header, checking issuer, audience, expiration, required claims, and signature against configured signing keys【6†L16-L22】. Any API gateway with JWT validation (AWS API Gateway + Lambda Authorizer, Envoy with JWT filter, NGINX with auth module) serves the same role. 
-
+The validate-jwt policy on Azure APIM enforces existence and validity of the JWT extracted from a specified HTTP header, checking issuer, audience, expiration, required claims, and signature against configured signing keys【6†L16-L22】. Any API gateway with JWT validation (AWS API Gateway + Lambda Authorizer, Envoy with JWT filter, NGINX with auth module) serves the same role.
 
 ### A2 — Identity and Capability Issuance Flow
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -92,7 +92,7 @@ sequenceDiagram
 ```
 
 ```
-Capability Token payload example: 
+Capability Token payload example:
 {
   "iss": "did:web:enterprise.example.com",
   "sub": "did:web:enterprise.example.com:agents:triage-123",
@@ -112,10 +112,10 @@ Capability Token payload example:
 }
 ```
 
-The signing step uses Azure Key Vault's sign operation, which creates a signature from a digest — the hash is computed locally before calling the Key Vault API【5†L287-L289】. On AWS the equivalent is KMS Sign; on GCP it is Cloud KMS asymmetricSign. 
-
+The signing step uses Azure Key Vault's sign operation, which creates a signature from a digest — the hash is computed locally before calling the Key Vault API【5†L287-L289】. On AWS the equivalent is KMS Sign; on GCP it is Cloud KMS asymmetricSign.
 
 ### A3 — Tool Invocation and Enforcement Flow
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -145,10 +145,11 @@ sequenceDiagram
         Note over Gateway: Log agentDID capId action resource outcome=ALLOWED ts
     end
 ```
-Enforcement semantics: APIM's validate-jwt policy checks that the token was issued by a trusted issuer, targets the correct audience, has not expired, and contains required claims matching the requested operation. Required claims configured via ensure that only tokens explicitly listing the needed action scope pass validation. Tokens lacking the correct scope are rejected with the configured failed-validation-httpcode (default 401)【6†L51-L52】【6†L68-L70】. 
 
+Enforcement semantics: APIM's validate-jwt policy checks that the token was issued by a trusted issuer, targets the correct audience, has not expired, and contains required claims matching the requested operation. Required claims configured via ensure that only tokens explicitly listing the needed action scope pass validation. Tokens lacking the correct scope are rejected with the configured failed-validation-httpcode (default 401)【6†L51-L52】【6†L68-L70】.
 
 ### A4 — Delegation and Attenuation Flow
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -179,6 +180,7 @@ sequenceDiagram
     Gateway->>Gateway: Validate child token same enforcement as A3
     Note over Gateway: Child token authorizes [read] on [logs://cluster/A/node1] only - Any request outside this scope results in DENIED
 ```
+
 Attenuation rules:
 |Parent Capability|Attenuation Allowed|Attenuation Denied|
 | --- | --- | --- |
@@ -187,8 +189,8 @@ Attenuation rules:
 |ttl: 900|ttl: 300 (shorter)|ttl: 1800 (longer)|
 |max_calls: 100|max_calls: 50 (lower)|max_calls: 200 (higher)|
 
-
 ### A5 — Revocation and Kill‑Switch Propagation Flow
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -222,6 +224,7 @@ sequenceDiagram
         Gateway->>Gateway: Log SessionKilled agentDID killedBy ts
     end
 ```
+
 Revocation models compared:
 |Model|Latency|Complexity|Best For|
 | --- | ---- | ---- | ---- |
@@ -230,13 +233,12 @@ Revocation models compared:
 |DID Document status endpoint|Depends on resolution method|Higher — requires registry service discoverable via DID Document|Cross-org credential revocation|
 |Kill-switch (session blacklist)|Immediate (in-memory)|Low — simple set lookup at Gateway|Emergency response|
 
-
 ## SET B — Security Review and Threat‑Modeling Diagrams
 
-These diagrams emphasize trust boundaries, attack surfaces, and containment mechanisms for security architects and threat-modeling sessions. 
-
+These diagrams emphasize trust boundaries, attack surfaces, and containment mechanisms for security architects and threat-modeling sessions.
 
 ### B1 — Trust Boundaries and Attack Surfaces
+
 ```mermaid
 flowchart TB
     subgraph Untrusted["UNTRUSTED ZONE"]
@@ -271,6 +273,7 @@ flowchart TB
     admin -.-> killswitch
     killswitch -.->|"terminate session"| gateway
 ```
+
 Attack surfaces at each trust boundary crossing:
 |Crossing Point|Threat|Mitigation|
 | --- | --- | --- |
@@ -280,8 +283,8 @@ Attack surfaces at each trust boundary crossing:
 |External Agent to Gateway|Compromised partner credential|Issuer DID verification, revocation checking, trust anchor validation|
 |Gateway to Protected Resources|Confused deputy: Gateway acting on attacker behalf|Gateway enforces object-specific capability tokens not identity-based; each action requires a matching token|
 
-
 ### B2 — Token Replay vs Proof‑of‑Possession Defense
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -309,10 +312,11 @@ sequenceDiagram
         Note over GW: Log DeniedAction reason=invalid_dpop ts
     end
 ```
-Security rationale: Without proof-of-possession, a stolen bearer token grants the attacker full authority for the token's lifetime. With DPoP, the attacker must also possess the agent's private key to produce a valid signature. Since the private key is held in protected memory (never exposed to the LLM's token stream), token theft alone is insufficient for exploitation. 
 
+Security rationale: Without proof-of-possession, a stolen bearer token grants the attacker full authority for the token's lifetime. With DPoP, the attacker must also possess the agent's private key to produce a valid signature. Since the private key is held in protected memory (never exposed to the LLM's token stream), token theft alone is insufficient for exploitation.
 
 ### B3 — Confused Deputy Containment via Constrained Delegation
+
 ```mermaid
 flowchart LR
     P["Parent Agent - capabilities A B C"]
@@ -332,6 +336,7 @@ flowchart LR
     C -->|"request action D never existed"| GW
     GW -.->|"token lacks D"| Denied_D
 ```
+
 Blast radius analysis:
 |Scenario|Without Capability Model|With Capability Model|
 | --- | --- | --- |
@@ -339,10 +344,10 @@ Blast radius analysis:
 |Attacker tries to escalate via child|Can invoke any API the parent identity has access to|Gateway rejects any request outside A B|
 |Maximum damage|Unlimited within parent identity scope|Bounded to explicitly delegated actions on specific resources|
 
-This is the mechanical solution to the confused deputy problem: the child agent's authority is provably bounded by the parent's explicit delegation, not by the child's claimed identity or the parent's ambient privileges. 
-
+This is the mechanical solution to the confused deputy problem: the child agent's authority is provably bounded by the parent's explicit delegation, not by the child's claimed identity or the parent's ambient privileges.
 
 ### B4 — Incident Response: Detection to Containment to Forensics
+
 ```mermaid
 flowchart TB
     subgraph Detection["1 Detection"]
@@ -371,22 +376,22 @@ flowchart TB
     AuditGraph --> TraceBack
     TraceBack --> Evidence
 ```
+
 Forensic query examples supported by the Capability Audit Graph:
 |Question|How the CAG Answers It|
-| --- | --- | 
+| --- | --- |
 |What did the compromised agent do?|Query all ActionExecuted events where agentDID = compromised_agent|
 |Who authorized this agent?|Trace CapabilityIssued event via issuedBy field to human principal DID|
 |Could the agent have accessed Resource X?|Check if any capability with resource = X was ever issued to this agent|
 |Did any sub-agent exceed parent authority?|Compare CapabilityDelegated events: verify child scope is a subset of parent scope for every delegation|
 |Is the evidence tamper-proof?|Each audit record is signed with the enterprise Key Vault key — verifiable by any party with the public key【5†L287-L289】|
 
-
 ## SET C — Architecture Communication Diagrams
 
-Simplified diagrams for architects, leadership, and cross-functional stakeholders. Focus on roles, responsibilities, and data flows rather than low-level mechanics. 
-
+Simplified diagrams for architects, leadership, and cross-functional stakeholders. Focus on roles, responsibilities, and data flows rather than low-level mechanics.
 
 ### C1 — Capability‑Native Governance Overview
+
 ```mermaid
 flowchart LR
     user["User or Owner"]
@@ -405,10 +410,11 @@ flowchart LR
     gateway -.->|"blocks if not authorized"| agent
     gateway --> audit
 ```
-Key message for stakeholders: The agent never has direct access to enterprise resources. Every action must pass through the Secure Gateway, which mechanically verifies the agent's token before allowing any operation. If an agent is tricked by malicious input, it can attempt unauthorized actions — but those attempts are automatically blocked and logged. 
 
+Key message for stakeholders: The agent never has direct access to enterprise resources. Every action must pass through the Secure Gateway, which mechanically verifies the agent's token before allowing any operation. If an agent is tricked by malicious input, it can attempt unauthorized actions — but those attempts are automatically blocked and logged.
 
 ### C2 — Agent Authorization Lifecycle
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -429,10 +435,11 @@ sequenceDiagram
         Gateway-->>Agent: Access denied
     end
 ```
-Stakeholder takeaway: This system converts the security question from "Will the AI follow its instructions?" to "Does the AI hold a valid token for this specific action?" — a question with a deterministic, verifiable answer. 
 
+Stakeholder takeaway: This system converts the security question from "Will the AI follow its instructions?" to "Does the AI hold a valid token for this specific action?" — a question with a deterministic, verifiable answer.
 
 ### C3 — Cross‑Organization Agent Trust via Verifiable Credentials
+
 ```mermaid
 flowchart LR
     subgraph OrgA["Organization A"]
@@ -453,7 +460,9 @@ flowchart LR
     serviceB -.->|"3 Resolve Company A DID - fetch public key from DID Doc"| DIDDoc
     serviceB -->|"4 Verify VC signature - 5 If trusted issuer grant access"| serviceB
 ```
-How it works (for non-technical stakeholders): 
+
+How it works (for non-technical stakeholders):
+
 1. Organization A issues a digital credential to its agent, cryptographically signed by Organization A's identity.
 
 2. The agent presents this credential to Organization B's service.
@@ -471,7 +480,7 @@ Research on AI agents equipped with W3C DIDs and VCs demonstrates that this appr
 ## SET D — AGT Integration Diagrams
 
 These diagrams show the layered defense model when integrating with an
-in-process policy engine (e.g. Microsoft AGT) alongside the euno capability
+in-process policy engine (e.g. Microsoft AGT) alongside the eunox capability
 gateway.
 
 ### D1 — High-Level Architecture: Sandbox and AGT Integration
@@ -553,17 +562,17 @@ sequenceDiagram
 
     User->>IdP: Authenticate (OAuth 2.0 / OIDC)
     IdP-->>Issuer: OIDC token (sub, roles, groups)
-    
+
     %% Semicolon replaced with a comma below
     Issuer->>Issuer: Map roles to capability set, mint signed tokens
-    
+
     Issuer-->>Platform: Capability token set
     Platform->>Sandbox: Provision isolated sandbox (deny-all egress)
     Sandbox-->>Platform: Sandbox ready
-    
+
     %% Semicolons replaced with commas below
     Platform->>Agent: Start agent, inject tokens, set proxy as sole egress
-    
+
     Agent->>Agent: Initialize LLM runtime and AGT policy engine
 ```
 

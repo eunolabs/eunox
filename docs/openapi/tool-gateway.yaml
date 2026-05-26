@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Euno Tool Gateway API
+  title: eunox Tool Gateway API
   description: |
     The Tool Gateway is the policy enforcement point for AI-agent traffic.
     Every tool invocation and every proxied request must carry a capability
@@ -198,7 +198,7 @@ paths:
       parameter.  When the proxied backend path contains nested segments,
       percent-encode `/` as `%2F` inside the parameter; for example
       `/proxy/foo%2Fbar` proxies to the backend subpath `/foo/bar`.
-    x-euno-greedy-path-parameter: path
+    x-eunox-greedy-path-parameter: path
     parameters:
       - in: path
         name: path

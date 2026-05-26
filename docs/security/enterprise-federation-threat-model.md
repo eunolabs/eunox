@@ -9,6 +9,7 @@
 > **Authors:** Stage-5 Engineering Team (Platform Security squad)
 >
 > **Reviewers:**
+>
 > - Engineer 1: Platform Engineering Lead — 2026-05-19
 > - Engineer 2: Backend Infrastructure Engineer — 2026-05-19
 > - Security Reviewer: Principal Security Architect — 2026-05-19
@@ -17,12 +18,12 @@
 
 ## Background
 
-Stage 5 extends the euno platform from an enterprise-IdP-integrated capability
+Stage 5 extends the eunox platform from an enterprise-IdP-integrated capability
 issuer (Stage 4) to a full cross-organizational trust ecosystem. Four capabilities
 introduce materially new attack surfaces:
 
 1. **Partner-DID federation** — a remote organization issues capability tokens
-   from their own DID-backed signing key, and the euno gateway must accept and
+   from their own DID-backed signing key, and the eunox gateway must accept and
    verify them without sharing key material.
 2. **SCIM 2.0 provisioning** — an enterprise identity team can push users and
    group memberships from Okta, Entra ID, or Ping Identity, which are then
@@ -43,12 +44,12 @@ from §5 of the execution plan.
 
 ## 1. Partner DID Compromise
 
-**Question from §5:** *If a partner's signing key is compromised, what
+**Question from §5:** _If a partner's signing key is compromised, what
 capability tokens can an attacker mint? What is the blast radius across
 partner-issued sessions? What is the detection path (circuit breaker fires,
 Prometheus alert fires, admin is notified) and the revocation path (remove
 partner DID from registry → circuit breaker forces re-evaluation on next
-request)?*
+request)?_
 
 ### 1.1 What tokens can an attacker mint?
 
@@ -64,7 +65,7 @@ JWTs that:
 
 The attacker **cannot**:
 
-- Mint tokens whose `iss` is the euno platform's own DID — that requires the
+- Mint tokens whose `iss` is the eunox's own DID — that requires the
   platform's KMS signing key, which is a separate key entirely.
 - Exceed the gateway's per-token TTL enforcement (`exp` ≤ `iat` + configured
   max TTL; the gateway rejects tokens whose remaining lifetime exceeds the
@@ -99,30 +100,32 @@ The blast radius is bounded to:
   tokens. Platform-issued tokens (from the platform's own capability issuer)
   are not affected. Other registered partners are not affected.
 
-| Compromised entity | Blast radius |
-|---|---|
-| Partner signing key (private JWKS) | Attacker can mint tokens with `iss = <partner DID>` for any `(agentId, tenantId)`. Bounded by gateway token TTL and positive cache TTL (max 5 min by default). |
-| Partner DID document hosting (domain/registry) | See §2 (DID document spoofing). |
+| Compromised entity                                     | Blast radius                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Partner signing key (private JWKS)                     | Attacker can mint tokens with `iss = <partner DID>` for any `(agentId, tenantId)`. Bounded by gateway token TTL and positive cache TTL (max 5 min by default).                                                                          |
+| Partner DID document hosting (domain/registry)         | See §2 (DID document spoofing).                                                                                                                                                                                                         |
 | Gateway's `TRUSTED_PARTNER_DIDS` env var (legacy path) | An attacker who can write this env var can add an untrusted DID to the trust set without the two-eyes approval workflow. Mitigation: use the `PartnerDidRegistry` admin API (not the env var) for all production partner registrations. |
 
 ### 1.3 Detection path
 
-| Signal | Source | Alert threshold |
-|---|---|---|
-| `euno_partner_did_circuit_breaker_state{did="...", state="open"}` | Prometheus gauge (Task 3: `onCircuitStateChange` callback → Prometheus gauge) | Circuit opens after `PARTNER_DID_CB_FAILURE_THRESHOLD` failures within `PARTNER_DID_CB_WINDOW_MS`; transitions are logged at `warn` level and exported as a gauge. Alert threshold: state = `open` for > 1 minute. |
-| Abnormal issuance volume for partner `iss` | Gateway audit log `ENFORCEMENT_DECISION` events, filter `iss = <partner DID>` | >2× 1-hour moving average per partner DID → PagerDuty. |
-| `euno_gateway_token_verify_error_total{reason="AUTHENTICATION_FAILED", iss="<partner DID>"}` | Prometheus counter | Spike in verification errors from a specific partner DID suggests token replay or key rotation without cache invalidation. Alert on sudden increase. |
-| Partner DID re-resolve cache miss rate | Structured log `partner_did_cache_miss` events | High miss rate (> expected re-resolution frequency) may indicate forced cache invalidation attacks. |
-| Admin API partner-registry mutation events | Audit log `PARTNER_DID_APPROVED`, `PARTNER_DID_REVOKED` | Any registry change outside a change-management window triggers an operator alert. |
+| Signal                                                                                       | Source                                                                        | Alert threshold                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `euno_partner_did_circuit_breaker_state{did="...", state="open"}`                            | Prometheus gauge (Task 3: `onCircuitStateChange` callback → Prometheus gauge) | Circuit opens after `PARTNER_DID_CB_FAILURE_THRESHOLD` failures within `PARTNER_DID_CB_WINDOW_MS`; transitions are logged at `warn` level and exported as a gauge. Alert threshold: state = `open` for > 1 minute. |
+| Abnormal issuance volume for partner `iss`                                                   | Gateway audit log `ENFORCEMENT_DECISION` events, filter `iss = <partner DID>` | >2× 1-hour moving average per partner DID → PagerDuty.                                                                                                                                                             |
+| `euno_gateway_token_verify_error_total{reason="AUTHENTICATION_FAILED", iss="<partner DID>"}` | Prometheus counter                                                            | Spike in verification errors from a specific partner DID suggests token replay or key rotation without cache invalidation. Alert on sudden increase.                                                               |
+| Partner DID re-resolve cache miss rate                                                       | Structured log `partner_did_cache_miss` events                                | High miss rate (> expected re-resolution frequency) may indicate forced cache invalidation attacks.                                                                                                                |
+| Admin API partner-registry mutation events                                                   | Audit log `PARTNER_DID_APPROVED`, `PARTNER_DID_REVOKED`                       | Any registry change outside a change-management window triggers an operator alert.                                                                                                                                 |
 
 ### 1.4 Revocation path
 
 1. **Immediate:** an on-call operator calls the gateway admin API:
+
    ```
    DELETE /admin/partner-dids/:did
    X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
    X-Admin-Operator: <operator-identity>
    ```
+
    The `PartnerDidRegistry.revoke()` method transitions the entry to
    `revoked` status immediately. Subsequent `trusts(did)` calls return
    `false`, and `getKey()` throws `AUTHENTICATION_FAILED` without a
@@ -152,11 +155,11 @@ The blast radius is bounded to:
 
 ## 2. DID Document Spoofing
 
-**Question from §5:** *A `did:web` document is served over HTTPS. What
+**Question from §5:** _A `did:web` document is served over HTTPS. What
 happens if the partner's TLS certificate is MiTM'd or the domain is
 hijacked? Document the pin-attestation workflow (`verifyPinAttestation`
 in `partner-did-registry.ts`) and mandate its use for production partner
-registrations.*
+registrations._
 
 ### 2.1 Threat model
 
@@ -165,6 +168,7 @@ is hosted at `https://partner.example.com/.well-known/did.json`. The
 security of the DID document depends on the security of that HTTPS endpoint.
 
 If an attacker:
+
 - **MiTMs the TLS connection**: obtains a fraudulently issued TLS certificate
   (via a rogue CA or CA compromise) and intercepts the HTTPS response to serve
   a forged DID document containing an attacker-controlled public key.
@@ -182,26 +186,31 @@ acceptance of a substituted DID document. Pin-attestation is **mandatory for
 all production partner registrations** (see §2.4 below).
 
 **Step 1: proposal.** An operator submits a partner DID proposal via:
+
 ```
 POST /admin/partner-dids/proposals
 X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
 X-Admin-Operator: <proposer-identity>
 Body: { "did": "did:web:partner.example.com", ... }
 ```
+
 At proposal time, the gateway resolves the current DID document and computes
 `pinnedDocSha256 = jcsSha256(didDocument)` (JCS-SHA-256 via
 `jcsSerialize()` + SHA-256 over the deterministic JSON). This hash is stored
 in the `PartnerDidEntry`.
 
-**Step 2: two-eyes approval.** A *different* operator (different identity from
+**Step 2: two-eyes approval.** A _different_ operator (different identity from
 the proposer — enforced by `approver !== entry.proposer`; the
 `TwoEyesViolationError` is thrown and logged if violated) approves the entry:
+
 ```
 POST /admin/partner-dids/proposals/:did/approve
 X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>
 X-Admin-Operator: <approver-identity>   ← must differ from proposer
 ```
+
 At approval time, the gateway:
+
 1. Re-fetches the live DID document and recomputes its JCS-SHA-256.
 2. Verifies the hash matches the one recorded at proposal time.
 3. If `PARTNER_DID_PIN_SECRET` is configured, produces a
@@ -217,6 +226,7 @@ At approval time, the gateway:
 
 **Step 3: runtime enforcement.** On every DID document resolution
 (`PartnerIssuerResolver._doResolve()`):
+
 1. The live DID document is fetched over HTTPS.
 2. `jcsSha256(liveDocument)` is computed and compared against
    `pinnedDocSha256` from the registry entry.
@@ -272,10 +282,10 @@ dependent on DNS. However:
 
 ## 3. SCIM Bearer Token Exposure
 
-**Question from §5:** *The `ISSUER_SCIM_BEARER_TOKEN` is a long-lived static
+**Question from §5:** _The `ISSUER_SCIM_BEARER_TOKEN` is a long-lived static
 secret. Document its required rotation cadence, storage (secret manager, not
 env file), and the consequence of exposure (all provisioned users/groups must
-be considered attacker-controlled until token is rotated).*
+be considered attacker-controlled until token is rotated)._
 
 ### 3.1 Nature of the secret
 
@@ -291,12 +301,12 @@ endpoints.
 
 ### 3.2 Required rotation cadence
 
-| Event | Action |
-|---|---|
-| Scheduled rotation | Every **90 days** — aligned with the platform's standard secret rotation policy. |
-| Suspected exposure (any of the below) | **Immediate rotation** — within 1 hour of detection. |
-| SCIM IdP credential store compromise | Immediate rotation. |
-| Any outbound SCIM client secret rotation at the IdP side | Rotate and update the issuer simultaneously in a single change window. |
+| Event                                                                        | Action                                                                                 |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Scheduled rotation                                                           | Every **90 days** — aligned with the platform's standard secret rotation policy.       |
+| Suspected exposure (any of the below)                                        | **Immediate rotation** — within 1 hour of detection.                                   |
+| SCIM IdP credential store compromise                                         | Immediate rotation.                                                                    |
+| Any outbound SCIM client secret rotation at the IdP side                     | Rotate and update the issuer simultaneously in a single change window.                 |
 | SCIM endpoint anomaly (unexpected provisioning events, unknown users/groups) | Immediate rotation + audit review of all SCIM-provisioned changes since last rotation. |
 
 ### 3.3 Storage requirements
@@ -312,6 +322,7 @@ endpoints.
 
 2. **Minimum entropy.** The token must be at least 32 bytes of cryptographically
    random data, encoded as a URL-safe base64 or hex string:
+
    ```bash
    openssl rand -base64 48  # generates a 64-character base64 token
    ```
@@ -360,11 +371,11 @@ endpoints.
 
 ## 4. SCIM Privilege Escalation
 
-**Question from §5:** *A SCIM push can assign a user to an admin group.
+**Question from §5:** _A SCIM push can assign a user to an admin group.
 Document the approval workflow required before a SCIM group is mapped to
 an elevated role (`admin`, `operator`). The `ISSUER_SCIM_GROUP_ROLE_MAP`
 must not permit mapping a SCIM group to `operator` without explicit
-operator-JWT authorization for that mapping.*
+operator-JWT authorization for that mapping._
 
 ### 4.1 Group-to-role mapping architecture
 
@@ -374,7 +385,7 @@ role keys defined in `RoleCapabilityPolicy`. Example:
 
 ```json
 {
-  "EunoViewers":   "viewer",
+  "EunoViewers": "viewer",
   "EunoDevelopers": "developer",
   "EunoOperators": "operator"
 }
@@ -390,12 +401,12 @@ signal).
 
 **Roles classified as "elevated" for this purpose:**
 
-| Role key | Classification |
-|---|---|
-| `viewer` | Standard — no additional gate |
-| `developer` | Standard — no additional gate |
-| `admin` | Elevated — approval required |
-| `operator` | Elevated (highest privilege) — approval + operator-JWT required |
+| Role key    | Classification                                                  |
+| ----------- | --------------------------------------------------------------- |
+| `viewer`    | Standard — no additional gate                                   |
+| `developer` | Standard — no additional gate                                   |
+| `admin`     | Elevated — approval required                                    |
+| `operator`  | Elevated (highest privilege) — approval + operator-JWT required |
 
 **Requirements for mapping a SCIM group to an elevated role:**
 
@@ -404,12 +415,14 @@ signal).
    authenticated admin API call with a valid operator JWT** — not via
    a plain env-var edit or file system change without the operator-JWT
    authorization step. The administrative workflow is:
+
    ```
    POST /api/v1/admin/scim/group-role-map
    Authorization: Bearer <operator-JWT>
    X-Admin-Api-Key: <ISSUER_ADMIN_API_KEY>
    Body: { "groupName": "EunoOperators", "role": "operator" }
    ```
+
    This request is recorded in the issuer audit log with the operator
    identity from the JWT.
 
@@ -452,12 +465,12 @@ at most one TTL window after group removal.
 
 ## 5. Cross-Chain Audit Anchor Tampering
 
-**Question from §5:** *The cross-chain anchor's HMAC secret is already
+**Question from §5:** _The cross-chain anchor's HMAC secret is already
 documented in `docs/security/ledger-hmac-rotation.md`. For Stage 5,
 document what an attacker who obtains the HMAC secret can do (forge
 commitments, not forge individual signed evidence records — the evidence is
 separately KMS-signed), and the impact of the Azure Confidential Ledger
-backend versus the per-replica-postgres backend.*
+backend versus the per-replica-postgres backend._
 
 ### 5.1 What the HMAC secret protects
 
@@ -506,24 +519,25 @@ AWS KMS, or GCP Cloud KMS) during audit pipeline processing. Specifically:
   the JWS signature will fail to verify.
 
 **The two-layer model is intentional:**
+
 - Row-level HMAC (AUDIT_LEDGER_HMAC_SECRET): protects ledger row integrity
   and chain linkage.
 - KMS-based JWS signature: protects the semantic content of each audit
   evidence record.
-An attacker who compromises only one layer is limited: HMAC-only compromise
-enables chain manipulation but not evidence forgery; KMS compromise would
-allow evidence forgery but not chain manipulation (without also having
-database write access and the HMAC secret).
+  An attacker who compromises only one layer is limited: HMAC-only compromise
+  enables chain manipulation but not evidence forgery; KMS compromise would
+  allow evidence forgery but not chain manipulation (without also having
+  database write access and the HMAC secret).
 
 ### 5.4 Per-replica-postgres backend versus Azure Confidential Ledger
 
-| Property | `per-replica-postgres` | Azure Confidential Ledger (ACL) |
-|---|---|---|
-| Tamper protection | Row-level HMAC-SHA-256 (software-enforced; requires `AUDIT_LEDGER_HMAC_SECRET`). DB admin with write access + HMAC secret can forge records. | Hardware-attested append-only ledger; entries cannot be modified or deleted by anyone, including Azure employees. No HMAC secret required. |
-| HMAC secret risk | Present — secret exposure + DB write access = undetected ledger tampering. | Not applicable — ACL enforces immutability at the hardware level. |
-| Availability | Depends on Postgres replication health. | Managed SLA by Microsoft Azure. |
-| Air-gap support | Yes (self-hosted Postgres). | No (requires Azure connectivity). |
-| SOC2 audit defensibility | Row-level HMACs can be verified offline; auditors must trust the HMAC secret chain of custody. | ACL's hardware attestation provides a stronger guarantee for external auditors. |
+| Property                 | `per-replica-postgres`                                                                                                                       | Azure Confidential Ledger (ACL)                                                                                                            |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tamper protection        | Row-level HMAC-SHA-256 (software-enforced; requires `AUDIT_LEDGER_HMAC_SECRET`). DB admin with write access + HMAC secret can forge records. | Hardware-attested append-only ledger; entries cannot be modified or deleted by anyone, including Azure employees. No HMAC secret required. |
+| HMAC secret risk         | Present — secret exposure + DB write access = undetected ledger tampering.                                                                   | Not applicable — ACL enforces immutability at the hardware level.                                                                          |
+| Availability             | Depends on Postgres replication health.                                                                                                      | Managed SLA by Microsoft Azure.                                                                                                            |
+| Air-gap support          | Yes (self-hosted Postgres).                                                                                                                  | No (requires Azure connectivity).                                                                                                          |
+| SOC2 audit defensibility | Row-level HMACs can be verified offline; auditors must trust the HMAC secret chain of custody.                                               | ACL's hardware attestation provides a stronger guarantee for external auditors.                                                            |
 
 **Recommendation:** For environments where SOC2 or external audit defensibility
 is the primary goal, use `AUDIT_LEDGER_BACKEND=acl` (Azure Confidential
@@ -549,11 +563,11 @@ as the platform's KMS signing key:
 
 ## 6. SOC2 Export Endpoint Exposure
 
-**Question from §5:** *The `GET /api/v1/audit/export` endpoint returns all
+**Question from §5:** _The `GET /api/v1/audit/export` endpoint returns all
 signed audit evidence. Document the authorization model (admin operator-JWT,
 not user token), the rate limit, the cursor expiry (24 h), and the
 data-residency implications (no audit data leaves the on-prem deployment
-unless the operator explicitly calls the endpoint).*
+unless the operator explicitly calls the endpoint)._
 
 ### 6.1 Authorization model
 
@@ -593,6 +607,7 @@ by `ADMIN_RATE_LIMIT_MAX`). In addition:
 ### 6.3 Cursor security
 
 The export cursor is an opaque, base64-encoded JSON object:
+
 ```json
 { "lastRowId": 12345, "expiresAt": 1716220000 }
 ```
@@ -615,7 +630,7 @@ for the cursor's 24-hour lifetime. However:
 explicitly calls the export endpoint.** Specifically:
 
 - The platform does not push, replicate, or stream audit evidence to
-  any external service by default, including the euno telemetry API
+  any external service by default, including the eunox telemetry API
   (which collects only aggregate usage counters, not signed evidence
   records).
 - The `DurablePostureEmitter` (`posture-emitter` package) queues evidence
@@ -635,10 +650,10 @@ requirements before transmitting evidence records outside the deployment.**
 
 ## 7. DB Credential Blast Radius
 
-**Question from §5:** *If a `db-token-service`-issued credential is stolen,
+**Question from §5:** _If a `db-token-service`-issued credential is stolen,
 what DB access does the attacker have? Document the minimum-privilege DB role
 provisioned by the service, the credential TTL (must be ≤ capability token
-TTL), and the connection-level audit trail at the DB layer.*
+TTL), and the connection-level audit trail at the DB layer._
 
 ### 7.1 What DB access does the attacker have?
 
@@ -658,6 +673,7 @@ name. The `POST /api/v1/db-tokens` endpoint:
    username.
 
 If the minted credential is stolen, the attacker has:
+
 - **Read/write access** to the DB objects granted to the resolved DB username
   — bounded by the minimum-privilege DB role (see §7.2).
 - **No access** to DB objects outside the capability token's `db://` scope.
@@ -673,13 +689,14 @@ The `dbUsernamesByRole` policy maps issuer roles to pre-provisioned,
 minimum-privilege DB principals. These principals must be provisioned by
 the operator according to the following constraints:
 
-| Issuer role | Required DB permission level |
-|---|---|
-| `viewer` | `SELECT` on approved tables only; no `INSERT`, `UPDATE`, `DELETE`, `CREATE`. |
-| `developer` | `SELECT`, `INSERT`, `UPDATE` on approved tables; no `DELETE` on audit tables; no DDL. |
-| `operator` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on approved tables; no DDL; no direct schema modification. |
+| Issuer role | Required DB permission level                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| `viewer`    | `SELECT` on approved tables only; no `INSERT`, `UPDATE`, `DELETE`, `CREATE`.                      |
+| `developer` | `SELECT`, `INSERT`, `UPDATE` on approved tables; no `DELETE` on audit tables; no DDL.             |
+| `operator`  | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on approved tables; no DDL; no direct schema modification. |
 
 **Prohibited at all levels:**
+
 - `SUPERUSER`, `CREATEDB`, `CREATEROLE` (Postgres) or equivalent on other
   DB platforms.
 - Access to system tables (`pg_catalog`, `information_schema`) beyond
@@ -720,11 +737,11 @@ the `DurablePostureEmitter` plugin is wired (Task 4).
 At the **database layer**, operators are required to enable connection-level
 auditing appropriate for their platform:
 
-| Platform | Required auditing |
-|---|---|
-| Azure SQL | Auditing to Azure Monitor / Storage account (`AUDIT_ACTION_GROUP = SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP, DATABASE_OPERATION_GROUP`) |
-| AWS RDS / Aurora | CloudTrail for IAM auth events; DB audit log (e.g., `pgaudit` for Postgres) with `pgaudit.log = 'write'` at minimum |
-| GCP Cloud SQL | Cloud SQL audit logs (Data Access audit logs enabled for the database instance) |
+| Platform         | Required auditing                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Azure SQL        | Auditing to Azure Monitor / Storage account (`AUDIT_ACTION_GROUP = SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP, DATABASE_OPERATION_GROUP`) |
+| AWS RDS / Aurora | CloudTrail for IAM auth events; DB audit log (e.g., `pgaudit` for Postgres) with `pgaudit.log = 'write'` at minimum                     |
+| GCP Cloud SQL    | Cloud SQL audit logs (Data Access audit logs enabled for the database instance)                                                         |
 
 **Operators are responsible for enabling database-layer auditing.** The
 `db-token-service` cannot enforce database-side logging; it can only
@@ -734,10 +751,10 @@ record the credential issuance event in its own audit log.
 
 ## 8. In-Process Guard Bypass
 
-**Question from §5:** *The AGT guard is a soft guard. Document explicitly
+**Question from §5:** _The AGT guard is a soft guard. Document explicitly
 that an attacker who can modify the agent's in-process state can bypass the
 guard, and that the outer gateway is the only hard enforcement boundary. The
-threat model must not imply that the in-process guard is a security boundary.*
+threat model must not imply that the in-process guard is a security boundary._
 
 ### 8.1 The AGT guard is NOT a security boundary
 
@@ -809,22 +826,22 @@ The AGT guard is **not appropriate** for:
 Any documentation or communications that describe the AGT guard must include
 the following statement:
 
-> *The AGT in-process guard is a defense-in-depth observability layer, not
-> a security boundary. The euno gateway is the authoritative, hard
+> _The AGT in-process guard is a defense-in-depth observability layer, not
+> a security boundary. The eunox gateway is the authoritative, hard
 > enforcement boundary for all capability decisions. Compliance and security
 > teams evaluating the layered enforcement architecture should base their
 > assessment on the gateway's enforcement guarantees, not on the in-process
-> guard.*
+> guard._
 
 ---
 
 ## 9. Air-Gapped Key Management
 
-**Question from §5:** *In an air-gapped on-prem deployment without an HSM,
+**Question from §5:** _In an air-gapped on-prem deployment without an HSM,
 operators may use file-based EC keys. Document the required file permissions
 (`0400`), the key derivation procedure, the offline backup requirements, and
 the explicit statement that file-based keys are not supported for multi-tenant
-cloud deployments.*
+cloud deployments._
 
 ### 9.1 File-based keys are NOT supported for multi-tenant cloud deployments
 
@@ -856,16 +873,17 @@ permissions available on the host:
 
 ```bash
 # Set owner-read-only (no write, no execute, no group/other access)
-chmod 0400 /etc/euno/signing-key.pem
+chmod 0400 /etc/eunox/signing-key.pem
 
 # Verify
-ls -la /etc/euno/signing-key.pem
-# Expected: -r-------- 1 euno-svc euno-svc 227 2026-05-19 signing-key.pem
+ls -la /etc/eunox/signing-key.pem
+# Expected: -r-------- 1 eunox-svc eunox-svc 227 2026-05-19 signing-key.pem
 ```
 
 The key file must be:
+
 - Owned by the service account that runs the capability issuer process
-  (`euno-svc` or equivalent).
+  (`eunox-svc` or equivalent).
 - **Not** group-readable or world-readable.
 - Stored on a filesystem that does not allow `sudo`-accessible modification
   by operators (e.g., mounted from a Kubernetes Secret object, not from a
@@ -898,7 +916,7 @@ console.log(JSON.stringify({ crv: pubJwk.crv, kty: pubJwk.kty, x: pubJwk.x, y: p
 chmod 0400 /secure-media/signing-key.pem
 
 # Step 5: Transfer to the deployment location
-install -m 0400 -o euno-svc -g euno-svc /secure-media/signing-key.pem /etc/euno/signing-key.pem
+install -m 0400 -o eunox-svc -g eunox-svc /secure-media/signing-key.pem /etc/eunox/signing-key.pem
 ```
 
 Key generation must be performed on a trusted, isolated machine (preferably
@@ -921,7 +939,7 @@ Backup requirements:
    ```bash
    # Encrypt the private key for offline backup
    openssl enc -aes-256-cbc -pbkdf2 -iter 100000 \
-     -in /etc/euno/signing-key.pem \
+     -in /etc/eunox/signing-key.pem \
      -out /backup-media/signing-key.pem.enc
    # Store the passphrase in a separate physical location (e.g., sealed envelope)
    ```
@@ -955,10 +973,10 @@ When rotating the signing key in an air-gapped deployment:
 
 ## Sign-off (required before Tasks 3 / 6 / 10 merge)
 
-| Reviewer | Role | Date | Notes |
-|---|---|---|---|
-| Engineer 1: Platform Engineering Lead | Engineer | 2026-05-19 | Reviewed §1–§4, §8–§9; no blocking issues |
-| Engineer 2: Backend Infrastructure Engineer | Engineer | 2026-05-19 | Reviewed §5–§7; confirmed cross-chain model; no blocking issues |
+| Reviewer                                        | Role     | Date       | Notes                                                                                                                         |
+| ----------------------------------------------- | -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Engineer 1: Platform Engineering Lead           | Engineer | 2026-05-19 | Reviewed §1–§4, §8–§9; no blocking issues                                                                                     |
+| Engineer 2: Backend Infrastructure Engineer     | Engineer | 2026-05-19 | Reviewed §5–§7; confirmed cross-chain model; no blocking issues                                                               |
 | Security Reviewer: Principal Security Architect | Security | 2026-05-19 | Full review of all sections; SCIM escalation gate (§4.2) and in-process guard statement (§8.1) confirmed as required controls |
 
 ---

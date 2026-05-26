@@ -8,6 +8,7 @@
 > **Authors:** Stage-4 Engineering Team (Platform Identity squad)
 >
 > **Reviewers:**
+>
 > - Engineer 1: Platform Engineering Lead — 2026-05-18
 > - Engineer 2: Backend Infrastructure Engineer — 2026-05-18
 > - Security Reviewer: Principal Security Architect — 2026-05-18
@@ -20,7 +21,7 @@ The API-key minter threat model ([`docs/security/minter-threat-model.md`](./mint
 covered the case where a managed signing authority with high blast radius if the minter
 service identity is compromised signs tokens on behalf of opaque API keys (the minter
 uses per-tenant HSM keys, so the blast radius of an individual key compromise is one
-tenant, but a compromise of the minter *service identity* can request signatures across
+tenant, but a compromise of the minter _service identity_ can request signatures across
 all tenants that identity can reach). Stage 4 promotes the capability issuer from an
 internal token factory to a first-class user-facing service that accepts authenticated
 end-users via enterprise Identity Providers (Entra ID, AWS Cognito) and mints signed
@@ -35,7 +36,7 @@ This changes the attack surface in three important ways relative to Stage 3:
    escalation via role-mapping manipulation is a meaningful new attack class.
 3. **Admin-mutable manifest templates** are introduced. A malicious or misconfigured
    template can silently widen every user's capability set for a given `(tenantId,
-   agentId, role)` triple.
+agentId, role)` triple.
 
 This document answers every question required by
 [`docs/stage4executionplan.md` §5](../stage4executionplan.md#5-threat-model-addendum-blocking--task-1)
@@ -46,9 +47,9 @@ from §5 of the execution plan.
 
 ## 1. IdP Compromise
 
-**Question from §5:** *If an attacker compromises a tenant's Entra ID app registration,
+**Question from §5:** _If an attacker compromises a tenant's Entra ID app registration,
 what tokens can they obtain? What is the blast radius? What detection capability exists?
-Document required tenant-side IdP hygiene (conditional access, app-role review cadence).*
+Document required tenant-side IdP hygiene (conditional access, app-role review cadence)._
 
 ### 1.1 What tokens can an attacker obtain?
 
@@ -83,12 +84,12 @@ What the attacker **cannot** do via IdP compromise alone:
 
 ### 1.2 Blast radius
 
-| Compromised entity | Blast radius |
-|---|---|
-| Tenant's Entra ID app client secret | Attacker can impersonate any user in the tenant's directory and obtain capability tokens at the roles that user holds. Bounded by the issuer's per-user rate limit and token TTL (≤ 15 min default). |
-| Tenant's Entra ID app registration redirect URI | Code-injection attack on the PKCE flow: attacker can steal auth codes when users are tricked into a login flow. Mitigated by PKCE S256 (the issuer enforces `code_challenge_method=S256`; stolen codes are useless without the `code_verifier`). |
-| Entra ID tenant admin account (full directory access) | Attacker can modify app roles, add users to roles, or bypass Conditional Access policies. This is a platform-level IdP compromise; the issuer's controls cannot substitute for IdP hygiene (§1.4 below). |
-| AWS Cognito User Pool admin credentials | Attacker can add users to groups (which map to roles). Same scope as Entra admin account compromise — bounded per-tenant by Cognito pool separation. |
+| Compromised entity                                    | Blast radius                                                                                                                                                                                                                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tenant's Entra ID app client secret                   | Attacker can impersonate any user in the tenant's directory and obtain capability tokens at the roles that user holds. Bounded by the issuer's per-user rate limit and token TTL (≤ 15 min default).                                             |
+| Tenant's Entra ID app registration redirect URI       | Code-injection attack on the PKCE flow: attacker can steal auth codes when users are tricked into a login flow. Mitigated by PKCE S256 (the issuer enforces `code_challenge_method=S256`; stolen codes are useless without the `code_verifier`). |
+| Entra ID tenant admin account (full directory access) | Attacker can modify app roles, add users to roles, or bypass Conditional Access policies. This is a platform-level IdP compromise; the issuer's controls cannot substitute for IdP hygiene (§1.4 below).                                         |
+| AWS Cognito User Pool admin credentials               | Attacker can add users to groups (which map to roles). Same scope as Entra admin account compromise — bounded per-tenant by Cognito pool separation.                                                                                             |
 
 **Per-tenant containment:** each tenant's app registration is scoped to that tenant's
 directory or Cognito pool. A compromise of one tenant's IdP configuration does not
@@ -97,14 +98,14 @@ single app registration (which it must not — see §1.4).
 
 ### 1.3 Detection capability
 
-| Signal | Source | Alert threshold |
-|---|---|---|
-| Issuance volume spike | `euno_issuer_issue_total{tenantId}` Prometheus counter | >2× 1-hour moving average for the tenant → PagerDuty |
-| Issuance from new `userId` | Issuer audit log `ISSUANCE` events | First appearance of a `userId` not seen in the prior 30 days → low-priority alert for operator review |
-| Issuance outside business hours | Issuer audit log time-of-day | Off-hours spikes combined with new userId trigger medium-priority alert |
-| IdP sign-in anomaly | Azure AD Sign-in Logs / Cognito CloudTrail | Cross-reference with issuer audit log to confirm whether anomalous sign-in resulted in a capability token |
-| KMS sign operation count | Azure Monitor / CloudTrail / Cloud Audit Logs | KMS sign-ops per tenant > threshold → same PagerDuty escalation as for the minter |
-| `kid` mismatches in gateway | `euno_gateway_token_verify_error_total` | A surge in `JWKS_KEY_NOT_FOUND` errors suggests tokens are being produced with an unknown key |
+| Signal                          | Source                                                 | Alert threshold                                                                                           |
+| ------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Issuance volume spike           | `euno_issuer_issue_total{tenantId}` Prometheus counter | >2× 1-hour moving average for the tenant → PagerDuty                                                      |
+| Issuance from new `userId`      | Issuer audit log `ISSUANCE` events                     | First appearance of a `userId` not seen in the prior 30 days → low-priority alert for operator review     |
+| Issuance outside business hours | Issuer audit log time-of-day                           | Off-hours spikes combined with new userId trigger medium-priority alert                                   |
+| IdP sign-in anomaly             | Azure AD Sign-in Logs / Cognito CloudTrail             | Cross-reference with issuer audit log to confirm whether anomalous sign-in resulted in a capability token |
+| KMS sign operation count        | Azure Monitor / CloudTrail / Cloud Audit Logs          | KMS sign-ops per tenant > threshold → same PagerDuty escalation as for the minter                         |
+| `kid` mismatches in gateway     | `euno_gateway_token_verify_error_total`                | A surge in `JWKS_KEY_NOT_FOUND` errors suggests tokens are being produced with an unknown key             |
 
 The issuer writes one `ISSUANCE` audit row per token (logged as `AuditLogEntry` via the
 `auditLogger` injected into `IssueController`). The row includes:
@@ -138,8 +139,8 @@ The issuer writes one `ISSUANCE` audit row per token (logged as `AuditLogEntry` 
    Entra ID must have "Allow public client flows" disabled (or set to "No") to prevent
    silent fallback to the implicit flow.
 
-5. **Redirect URI allowlist.** Only `http://localhost:<port>/callback` (for `euno request`)
-   and the issuer's own `https://issuer.euno.example/api/v1/callback` may appear in the
+5. **Redirect URI allowlist.** Only `http://localhost:<port>/callback` (for `eunox request`)
+   and the issuer's own `https://issuer.eunox.example/api/v1/callback` may appear in the
    app registration's redirect URI list. Wildcards are forbidden.
 
 6. **Client-secret rotation.** App client secrets must be rotated on a 90-day schedule
@@ -150,13 +151,13 @@ The issuer writes one `ISSUANCE` audit row per token (logged as `AuditLogEntry` 
 
 ## 2. IdP-Token Replay Against the Issuer
 
-**Question from §5:** *Confirm the issuer rejects re-used IdP authorization codes (PKCE
+**Question from §5:** _Confirm the issuer rejects re-used IdP authorization codes (PKCE
 state binding), enforces `nonce`, and validates `aud`/`iss`/`exp`/`iat` of the IdP's ID
-token before consulting the role mapping.*
+token before consulting the role mapping._
 
 ### 2.1 PKCE state binding and authorization code single-use
 
-The `euno request` CLI command implements the PKCE S256 flow:
+The `eunox request` CLI command implements the PKCE S256 flow:
 
 1. A cryptographically random `code_verifier` (≥ 43 characters of URL-safe base64url
    entropy) is generated per authorization session.
@@ -180,6 +181,7 @@ The issuer includes a `nonce` claim in every authorization request sent to the I
 `nonce = BASE64URL(RANDOM_32_BYTES)`, stored in the ephemeral PKCE state.
 
 On receiving the ID token from the IdP, the issuer verifies:
+
 - `nonce` in the ID token matches the `nonce` sent in the authorization request.
 - The `nonce` has not been seen before. The nonce deduplication store operates in one
   of two modes:
@@ -202,14 +204,14 @@ The in-process fallback is **only** active when Redis is not configured at all.
 The `AzureADIdentityProvider` and `AWSCognitoIdentityProvider` both perform full
 JOSE validation via the `jose` library before returning a `UserContext`:
 
-| Claim | Validation |
-|---|---|
-| `aud` | Must exactly match the configured `AZURE_AD_CLIENT_ID` (for Entra ID) or `AWS_COGNITO_CLIENT_ID` (for Cognito ID tokens; access tokens are verified via the `client_id` claim instead). Validation rejects the token if the audience is absent or is an array that does not include the expected value. |
-| `iss` | Must exactly match the tenant's configured OIDC issuer URL (e.g., `https://login.microsoftonline.com/<tid>/v2.0` or `https://cognito-idp.<region>.amazonaws.com/<poolId>`). |
-| `exp` | Must be in the future; the issuer applies a 60-second clock-skew tolerance. Tokens more than 60 seconds past their `exp` are rejected. |
-| `iat` | Must be in the past; the issuer rejects tokens with an `iat` more than 60 seconds in the future (anti-clockskew-future). |
-| Signature | Verified against the IdP's JWKS endpoint via `jose.createRemoteJWKSet()`. See §2.3.1 below for caching details. |
-| `alg` | Only `RS256` and `ES256` are accepted. `none` and symmetric algorithms (`HS256`, etc.) are explicitly rejected. |
+| Claim     | Validation                                                                                                                                                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aud`     | Must exactly match the configured `AZURE_AD_CLIENT_ID` (for Entra ID) or `AWS_COGNITO_CLIENT_ID` (for Cognito ID tokens; access tokens are verified via the `client_id` claim instead). Validation rejects the token if the audience is absent or is an array that does not include the expected value. |
+| `iss`     | Must exactly match the tenant's configured OIDC issuer URL (e.g., `https://login.microsoftonline.com/<tid>/v2.0` or `https://cognito-idp.<region>.amazonaws.com/<poolId>`).                                                                                                                             |
+| `exp`     | Must be in the future; the issuer applies a 60-second clock-skew tolerance. Tokens more than 60 seconds past their `exp` are rejected.                                                                                                                                                                  |
+| `iat`     | Must be in the past; the issuer rejects tokens with an `iat` more than 60 seconds in the future (anti-clockskew-future).                                                                                                                                                                                |
+| Signature | Verified against the IdP's JWKS endpoint via `jose.createRemoteJWKSet()`. See §2.3.1 below for caching details.                                                                                                                                                                                         |
+| `alg`     | Only `RS256` and `ES256` are accepted. `none` and symmetric algorithms (`HS256`, etc.) are explicitly rejected.                                                                                                                                                                                         |
 
 Validation is performed **before** any role lookup or capability derivation. If any
 claim fails, the issuer returns 401 and logs the rejection without consulting the
@@ -236,10 +238,10 @@ is available at all (e.g., first-use and the JWKS endpoint is unreachable).
 
 ## 3. Role-Mapping Privilege Escalation
 
-**Question from §5:** *A user with role X requests a token; can they craft a request that
+**Question from §5:** _A user with role X requests a token; can they craft a request that
 resolves to role Y's manifest? The `IssueController` must derive the role from the
 verified IdP token, never from the request body. Test: a request that includes
-`role: admin` but whose IdP token contains `role: viewer` resolves to viewer.*
+`role: admin` but whose IdP token contains `role: viewer` resolves to viewer._
 
 ### 3.1 Role derivation is always from the verified IdP token
 
@@ -247,11 +249,13 @@ The issuance pipeline in `IssueController.handle()` derives capabilities as foll
 
 ```typescript
 // Step 1: Validate the user's authentication token (IdP JWKS verification)
-const userContext = await this.identityProvider.validateToken(request.authToken);
+const userContext = await this.identityProvider.validateToken(
+  request.authToken,
+);
 
 // Step 2: Map roles from the VERIFIED userContext to capabilities
 let capabilities = mapRolesToCapabilitiesForPolicy(
-  userContext.roles,   // <── from IdP token, never from request body
+  userContext.roles, // <── from IdP token, never from request body
   this.policy,
   userContext.tenantId,
 );
@@ -306,10 +310,10 @@ authorised for.
 
 ## 4. Manifest Template Tampering
 
-**Question from §5:** *Templates are admin-mutable. Document the admin-role authorisation
+**Question from §5:** _Templates are admin-mutable. Document the admin-role authorisation
 model (must reuse the operator-JWT pattern from `api-key-minter` admin routes per
 `MinterConfigSchema` admin JWT auth — see Stage 3 admin JWT integration), the audit trail
-per template mutation, and the rollback procedure if a malicious template is published.*
+per template mutation, and the rollback procedure if a malicious template is published._
 
 ### 4.1 Admin-role authorisation model
 
@@ -338,12 +342,12 @@ Every mutation to the template store writes an OCSF authorization event (class_u
 to the issuer's audit log (same `PostgresLedgerBackend` as the gateway, per
 `docs/stage4executionplan.md` §4.7):
 
-| Operation | `eventType` | Fields logged |
-|---|---|---|
-| Create template | `TEMPLATE_CREATED` | `operatorId`, `templateId`, `name`, `policyHash` |
-| Append version | `TEMPLATE_VERSION_APPENDED` | `operatorId`, `templateId`, `version`, `policyHash` |
-| Assign | `TEMPLATE_ASSIGNED` | `operatorId`, `assignmentId`, `templateId`, `version`, `tenantId`, `agentId`, `role` |
-| Soft-delete | `TEMPLATE_DELETED` | `operatorId`, `templateId`, `deletedAt` |
+| Operation       | `eventType`                 | Fields logged                                                                        |
+| --------------- | --------------------------- | ------------------------------------------------------------------------------------ |
+| Create template | `TEMPLATE_CREATED`          | `operatorId`, `templateId`, `name`, `policyHash`                                     |
+| Append version  | `TEMPLATE_VERSION_APPENDED` | `operatorId`, `templateId`, `version`, `policyHash`                                  |
+| Assign          | `TEMPLATE_ASSIGNED`         | `operatorId`, `assignmentId`, `templateId`, `version`, `tenantId`, `agentId`, `role` |
+| Soft-delete     | `TEMPLATE_DELETED`          | `operatorId`, `templateId`, `deletedAt`                                              |
 
 The audit log is append-only (same tamper-evident HMAC chain as the gateway's
 `LedgerAuditEvidenceSigner`). An attacker who can write to the Postgres database
@@ -400,8 +404,8 @@ misconfigured manifest that widens capabilities):
 
 ## 5. Cross-Tenant Template Leakage
 
-**Question from §5:** *A template owned by tenant A must never be assignable, listable,
-or fetchable by tenant B. Test boundary explicitly.*
+**Question from §5:** _A template owned by tenant A must never be assignable, listable,
+or fetchable by tenant B. Test boundary explicitly._
 
 ### 5.1 Tenant isolation design
 
@@ -426,14 +430,14 @@ The following negative tests MUST be present in
 `internal/issuer/tests/template-cross-tenant.test.ts`
 (to be created in Task 6):
 
-| Scenario | Expected result |
-|---|---|
-| Tenant B requests `GET /api/v1/admin/templates/:templateIdOwnedByA` | 404 — template existence not disclosed |
-| Tenant B requests `GET /api/v1/admin/templates?ownerTenantId=A` | 200 with empty list — B's JWT filters the query to B's own templates |
-| Tenant B attempts `POST /api/v1/admin/templates/:templateIdOwnedByA/versions` | 404 |
-| Tenant B attempts `POST /api/v1/admin/templates/:templateIdOwnedByA/assign` | 404 |
-| Tenant B (without `platformAdmin`) assigns a template they own to tenant A's agents | 403 — cross-tenant binding requires `platformAdmin` |
-| Tenant B (with `platformAdmin`) assigns a template to tenant A's agents | 200 — platform admin may perform cross-tenant operations |
+| Scenario                                                                            | Expected result                                                      |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Tenant B requests `GET /api/v1/admin/templates/:templateIdOwnedByA`                 | 404 — template existence not disclosed                               |
+| Tenant B requests `GET /api/v1/admin/templates?ownerTenantId=A`                     | 200 with empty list — B's JWT filters the query to B's own templates |
+| Tenant B attempts `POST /api/v1/admin/templates/:templateIdOwnedByA/versions`       | 404                                                                  |
+| Tenant B attempts `POST /api/v1/admin/templates/:templateIdOwnedByA/assign`         | 404                                                                  |
+| Tenant B (without `platformAdmin`) assigns a template they own to tenant A's agents | 403 — cross-tenant binding requires `platformAdmin`                  |
+| Tenant B (with `platformAdmin`) assigns a template to tenant A's agents             | 200 — platform admin may perform cross-tenant operations             |
 
 These tests use two distinct `operatorId`/`tenantId` pairs and run against the same
 in-memory Postgres instance (using `pg-mem` or a local test schema, matching the
@@ -458,31 +462,31 @@ Postgres service where row-level isolation is enforced by the database engine.
 
 ## 6. Per-Tenant Signing-Key Isolation
 
-**Question from §5:** *Re-affirm the Stage-3 decision (per-tenant KMS keys behind a
+**Question from §5:** _Re-affirm the Stage-3 decision (per-tenant KMS keys behind a
 single root) holds for Stage 4. If the hosted deployment uses platform-wide signing for
-cost reasons, document the explicit blast-radius trade-off and the compensating controls.*
+cost reasons, document the explicit blast-radius trade-off and the compensating controls._
 
 ### 6.1 Re-affirmation
 
 The Stage-3 decision holds for Stage 4: **per-tenant signing keys, single HSM root.**
-Each tenant's issuer tokens are signed by a distinct `euno-issuer-tenant-<tenantId>` key
+Each tenant's issuer tokens are signed by a distinct `eunox-issuer-tenant-<tenantId>` key
 (see `docs/stage-4-design.md` §6). This is the same architecture as the minter, using
 the same three KMS backends (Azure Managed HSM primary, AWS KMS and GCP Cloud KMS
 supported).
 
-The issuer uses **distinct key aliases from the minter** (`euno-issuer-tenant-*` vs.
-`euno-minter-tenant-*`). A compromise of the issuer's workload identity does not grant
+The issuer uses **distinct key aliases from the minter** (`eunox-issuer-tenant-*` vs.
+`eunox-minter-tenant-*`). A compromise of the issuer's workload identity does not grant
 signing rights on minter keys, and vice versa.
 
 ### 6.2 Blast radius (hosted product)
 
-| Layer | Mechanism |
-|---|---|
-| **Per-tenant key isolation** | A compromise of one tenant's signing key cannot forge tokens for another tenant. The gateway's verifier validates `aud`/`iss`/`kid` and rejects tokens whose `kid` does not correspond to the presenting tenant. |
-| **Short TTL** | Default token TTL is 15 minutes (900 seconds). Even with a compromised key, the window for valid-but-attacker-controlled tokens is bounded. |
-| **Revocation** | The gateway's `RevocationStore` covers the unexpired window. On key compromise, bulk-revoke all JTIs in the issuer audit log signed with the compromised `kid`. |
-| **Issuer workload identity segmentation** | The issuer's workload identity holds `sign` permission only on `euno-issuer-tenant-*` keys — not on `euno-minter-tenant-*` keys or any other tenant's issuer key. |
-| **HSM admin identity separation** | Key creation, rotation, and access-policy changes require the separate HSM admin identity (two-person approval) per `docs/security/minter-threat-model.md` §1. |
+| Layer                                     | Mechanism                                                                                                                                                                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Per-tenant key isolation**              | A compromise of one tenant's signing key cannot forge tokens for another tenant. The gateway's verifier validates `aud`/`iss`/`kid` and rejects tokens whose `kid` does not correspond to the presenting tenant. |
+| **Short TTL**                             | Default token TTL is 15 minutes (900 seconds). Even with a compromised key, the window for valid-but-attacker-controlled tokens is bounded.                                                                      |
+| **Revocation**                            | The gateway's `RevocationStore` covers the unexpired window. On key compromise, bulk-revoke all JTIs in the issuer audit log signed with the compromised `kid`.                                                  |
+| **Issuer workload identity segmentation** | The issuer's workload identity holds `sign` permission only on `eunox-issuer-tenant-*` keys — not on `eunox-minter-tenant-*` keys or any other tenant's issuer key.                                              |
+| **HSM admin identity separation**         | Key creation, rotation, and access-policy changes require the separate HSM admin identity (two-person approval) per `docs/security/minter-threat-model.md` §1.                                                   |
 
 ### 6.3 Deferred platform-wide signing option (explicitly rejected for hosted)
 
@@ -504,9 +508,9 @@ This decision point would be documented at Stage 5 design time.
 
 ## 7. Self-Host Operator Key Management
 
-**Question from §5:** *Single-tenant self-host operators may not have an HSM. Document
+**Question from §5:** _Single-tenant self-host operators may not have an HSM. Document
 the supported degraded mode (file-based EC key with strong file perms + offline backup)
-and explicitly mark it "not supported for multi-tenant".*
+and explicitly mark it "not supported for multi-tenant"._
 
 ### 7.1 Supported degraded mode — file-based EC key (single-tenant only)
 
@@ -543,6 +547,7 @@ openssl pkey -in issuer-signing-key.pem -noout -text | grep "Private-Key"
 **Offline backup:** the PEM file MUST be backed up to an offline medium (encrypted
 USB, printed QR code in a physically locked location) before the issuer starts serving
 traffic. Loss of the signing key means:
+
 - All in-flight tokens become unverifiable once the JWKS endpoint changes.
 - A replacement key must be published to the JWKS endpoint and all previously issued
   tokens must be revoked.
@@ -587,18 +592,18 @@ This decision is documented here so it is not relitigated in Stage 4 task PRs.
 
 ## 8. CLI Token Storage at Rest
 
-**Question from §5:** *`~/.euno/tokens/<agent-id>.jwt` written `0600`. Document the
+**Question from §5:** _`~/.eunox/tokens/<agent-id>.jwt` written `0600`. Document the
 trade-off vs. an OS keychain integration (rejected for v1: keytar/keychain integration
-is Stage 5; document this explicitly so it is not relitigated).*
+is Stage 5; document this explicitly so it is not relitigated)._
 
 ### 8.1 Storage mechanism
 
-Tokens issued by `euno request` are persisted to
-`~/.euno/tokens/<agent-id>.jwt` with `0600` permissions (owner read/write only).
+Tokens issued by `eunox request` are persisted to
+`~/.eunox/tokens/<agent-id>.jwt` with `0600` permissions (owner read/write only).
 
 The write sequence:
 
-1. Write token to a temporary file in the same directory (`~/.euno/tokens/<agent-id>.jwt.tmp`).
+1. Write token to a temporary file in the same directory (`~/.eunox/tokens/<agent-id>.jwt.tmp`).
 2. `chmod 0600` the temporary file before any content is written.
 3. Rename (atomic on POSIX) to the final path.
 4. Verify the final file has `0600` permissions; abort and delete if not.
@@ -608,12 +613,12 @@ permissions.
 
 ### 8.2 Threat assessment
 
-| Threat | Mitigation |
-|---|---|
-| Local attacker with access to the developer's home directory | `0600` prevents other users from reading the file. Requires root or the same OS user to extract the token. |
-| Malicious process running as the same OS user | Cannot be prevented by file permissions alone. Mitigated by short token TTL (default 15 min) and the fact that the token is scoped to a specific `agentId`. |
-| Backup / sync tools (Time Machine, Dropbox, iCloud Drive) | If `~/.euno/tokens/` is inside a synced directory, tokens may be exfiltrated via the sync provider. Operators should add `~/.euno/tokens/` to their `.gitignore` and backup-exclusion list. `euno init` prints a warning if the tokens directory appears to be under a known sync root. |
-| Theft of the developer's machine | Disk encryption (FileVault, BitLocker, LUKS) protects at-rest tokens against physical theft. `euno` documentation recommends enabling full-disk encryption. Tokens expire within 15 minutes regardless. |
+| Threat                                                       | Mitigation                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Local attacker with access to the developer's home directory | `0600` prevents other users from reading the file. Requires root or the same OS user to extract the token.                                                                                                                                                                                 |
+| Malicious process running as the same OS user                | Cannot be prevented by file permissions alone. Mitigated by short token TTL (default 15 min) and the fact that the token is scoped to a specific `agentId`.                                                                                                                                |
+| Backup / sync tools (Time Machine, Dropbox, iCloud Drive)    | If `~/.eunox/tokens/` is inside a synced directory, tokens may be exfiltrated via the sync provider. Operators should add `~/.eunox/tokens/` to their `.gitignore` and backup-exclusion list. `eunox init` prints a warning if the tokens directory appears to be under a known sync root. |
+| Theft of the developer's machine                             | Disk encryption (FileVault, BitLocker, LUKS) protects at-rest tokens against physical theft. `eunox` documentation recommends enabling full-disk encryption. Tokens expire within 15 minutes regardless.                                                                                   |
 
 ### 8.3 OS keychain integration explicitly deferred to Stage 5
 
@@ -621,13 +626,13 @@ OS keychain integration (`keytar` for cross-platform, or platform-native DPAPI/K
 APIs) is explicitly **not implemented in Stage 4**:
 
 1. **Reliability:** `keytar` and similar wrappers are brittle in CI and in headless
-   server environments (e.g., an engineer running `euno request` in a devcontainer or
+   server environments (e.g., an engineer running `eunox request` in a devcontainer or
    remote SSH session has no accessible keychain).
 2. **Marginal benefit for short-lived tokens:** a 15-minute token stored in a `0600`
    file provides security equivalent to a keychain entry for the duration of the token's
    usefulness. The keychain adds complexity without a proportionate security gain for this
    TTL.
-3. **Not blocking for Stage 4 use cases:** The primary audience for `euno request` is
+3. **Not blocking for Stage 4 use cases:** The primary audience for `eunox request` is
    developers obtaining tokens for local agent testing. The token is used within minutes
    and discarded.
 4. **Stage 5 alignment:** Keychain integration belongs with the broader "enterprise
@@ -636,7 +641,7 @@ APIs) is explicitly **not implemented in Stage 4**:
    that is out of scope for Stage 4.
 
 This decision is recorded here to prevent it from being raised in code review for every
-Stage 4 PR that touches `euno request`.
+Stage 4 PR that touches `eunox request`.
 
 ---
 
@@ -651,28 +656,28 @@ document carries all three sign-offs.**
 Each reviewer should verify:
 
 - [ ] **§1 (IdP compromise):** blast-radius analysis is complete; tenant-side hygiene
-  requirements are enforceable and documented in `docs/issuer-idp-setup.md` (Task 2).
+      requirements are enforceable and documented in `docs/issuer-idp-setup.md` (Task 2).
 - [ ] **§2 (IdP-token replay):** PKCE S256 is correctly enforced; `nonce` replay
-  protection is fail-closed; all five ID-token claims (`aud`, `iss`, `exp`, `iat`,
-  `alg`) are validated before role lookup.
+      protection is fail-closed; all five ID-token claims (`aud`, `iss`, `exp`, `iat`,
+      `alg`) are validated before role lookup.
 - [ ] **§3 (Role-mapping escalation):** `IssueController` never reads roles from the
-  request body; the required negative test is committed; template-assignment path
-  also derives roles from verified IdP token.
+      request body; the required negative test is committed; template-assignment path
+      also derives roles from verified IdP token.
 - [ ] **§4 (Template tampering):** admin-route protection reuses operator-JWT pattern;
-  every mutation is audited with an OCSF event; rollback procedure is actionable.
+      every mutation is audited with an OCSF event; rollback procedure is actionable.
 - [ ] **§5 (Cross-tenant leakage):** application-layer filtering is correct;
-  cross-tenant negative tests are committed; RLS deferral rationale is accepted.
+      cross-tenant negative tests are committed; RLS deferral rationale is accepted.
 - [ ] **§6 (Per-tenant key isolation):** Stage-3 decision re-affirmed; distinct issuer
-  key aliases confirmed in `docs/stage-4-design.md`; platform-wide signing explicitly
-  rejected.
+      key aliases confirmed in `docs/stage-4-design.md`; platform-wide signing explicitly
+      rejected.
 - [ ] **§7 (Self-host key management):** file-based degraded mode is correctly scoped
-  to single-tenant; startup permission guard is specified; offline backup requirement
-  is documented.
+      to single-tenant; startup permission guard is specified; offline backup requirement
+      is documented.
 - [ ] **§8 (CLI token storage):** `0600` semantics are correctly implemented;
-  keychain-deferral rationale is documented; TTL-based mitigations are accurate.
+      keychain-deferral rationale is documented; TTL-based mitigations are accurate.
 
-| Reviewer | Role | Date | Notes |
-|---|---|---|---|
-| _(name)_ | Engineer | _(date)_ | |
-| _(name)_ | Engineer | _(date)_ | |
-| _(name)_ | Security | _(date)_ | |
+| Reviewer | Role     | Date     | Notes |
+| -------- | -------- | -------- | ----- |
+| _(name)_ | Engineer | _(date)_ |       |
+| _(name)_ | Engineer | _(date)_ |       |
+| _(name)_ | Security | _(date)_ |       |
