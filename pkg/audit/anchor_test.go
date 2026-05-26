@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -25,11 +26,11 @@ func TestS3AnchorBackend_SignsRequestsWithCredentials(t *testing.T) {
 	defer srv.Close()
 
 	backend := NewS3AnchorBackend(&S3AnchorConfig{
-		Bucket:         "test-bucket",
-		Prefix:         "anchors/",
-		Region:         "us-east-1",
-		Endpoint:       srv.URL,
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		Bucket:          "test-bucket",
+		Prefix:          "anchors/",
+		Region:          "us-east-1",
+		Endpoint:        srv.URL,
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	})
 
@@ -63,13 +64,13 @@ func TestS3AnchorBackend_IncludesSessionToken(t *testing.T) {
 	defer srv.Close()
 
 	backend := NewS3AnchorBackend(&S3AnchorConfig{
-		Bucket:         "test-bucket",
-		Prefix:         "",
-		Region:         "eu-west-1",
-		Endpoint:       srv.URL,
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		Bucket:          "test-bucket",
+		Prefix:          "",
+		Region:          "eu-west-1",
+		Endpoint:        srv.URL,
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-		SessionToken:   "FwoGZXIvYXdzEBY-session-token-example",
+		SessionToken:    "FwoGZXIvYXdzEBY-session-token-example",
 	})
 
 	anchor := &ChainAnchor{
@@ -133,11 +134,11 @@ func TestS3AnchorBackend_Verify_WithCredentials(t *testing.T) {
 	defer srv.Close()
 
 	backend := NewS3AnchorBackend(&S3AnchorConfig{
-		Bucket:         "test-bucket",
-		Prefix:         "anchors/",
-		Region:         "us-east-1",
-		Endpoint:       srv.URL,
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		Bucket:          "test-bucket",
+		Prefix:          "anchors/",
+		Region:          "us-east-1",
+		Endpoint:        srv.URL,
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	})
 
@@ -162,11 +163,11 @@ func TestS3AnchorBackend_Anchor_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	backend := NewS3AnchorBackend(&S3AnchorConfig{
-		Bucket:         "test-bucket",
-		Prefix:         "",
-		Region:         "us-east-1",
-		Endpoint:       srv.URL,
-		AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+		Bucket:          "test-bucket",
+		Prefix:          "",
+		Region:          "us-east-1",
+		Endpoint:        srv.URL,
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 		SecretAccessKey: "secret",
 	})
 
@@ -222,13 +223,16 @@ func TestBuildCanonicalQueryString(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		input  map[string][]string
+		input  url.Values
 		expect string
 	}{
 		{"empty", nil, ""},
-		{"single", map[string][]string{"key": {"value"}}, "key=value"},
-		{"sorted", map[string][]string{"b": {"2"}, "a": {"1"}}, "a=1&b=2"},
-		{"encoded", map[string][]string{"k": {"v w"}}, "k=v+w"},
+		{"single", url.Values{"key": {"value"}}, "key=value"},
+		{"sorted", url.Values{"b": {"2"}, "a": {"1"}}, "a=1&b=2"},
+		{"encoded", url.Values{"k": {"v w"}}, "k=v%20w"},
+		{"multiple-spaces", url.Values{"k": {"v  w"}}, "k=v%20%20w"},
+		{"leading-trailing-spaces", url.Values{"k": {" v "}}, "k=%20v%20"},
+		{"spaces-in-key", url.Values{"k k": {"v"}}, "k%20k=v"},
 	}
 
 	for _, tt := range tests {

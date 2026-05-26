@@ -483,8 +483,28 @@ func buildCanonicalQueryString(values url.Values) string {
 		vs := values[k]
 		sort.Strings(vs)
 		for _, v := range vs {
-			pairs = append(pairs, url.QueryEscape(k)+"="+url.QueryEscape(v))
+			pairs = append(pairs, awsPercentEncode(k)+"="+awsPercentEncode(v))
 		}
 	}
 	return strings.Join(pairs, "&")
+}
+
+func awsPercentEncode(value string) string {
+	const hexChars = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(value) * 3)
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'A' && c <= 'Z') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hexChars[c>>4])
+		b.WriteByte(hexChars[c&0x0F])
+	}
+	return b.String()
 }

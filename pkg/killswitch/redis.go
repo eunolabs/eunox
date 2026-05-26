@@ -291,7 +291,7 @@ func (r *Redis) listenPubSub(ctx context.Context, pubsub *redis.PubSub) {
 // "agent:revive:<id>", "session:kill:<id>", "session:revive:<id>", "reset".
 func (r *Redis) handlePubSubMessage(payload string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	shouldRefresh := false
 
 	switch {
 	case payload == "global:activate":
@@ -311,8 +311,12 @@ func (r *Redis) handlePubSubMessage(payload string) {
 	case len(payload) > len("session:revive:") && payload[:len("session:revive:")] == "session:revive:":
 		delete(r.killedSessions, payload[len("session:revive:"):])
 	default:
-		// Unknown message — trigger a full refresh from Redis on next read.
-		// We don't call refreshState here to avoid re-lock issues;
-		// the periodic refresh or next pub/sub message will sync state.
+		// Unknown message — trigger a full refresh from Redis.
+		shouldRefresh = true
+	}
+	r.mu.Unlock()
+
+	if shouldRefresh && r.client != nil {
+		_ = r.refreshState(context.Background())
 	}
 }
