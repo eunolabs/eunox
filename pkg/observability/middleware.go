@@ -72,8 +72,9 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 // RequestLogging returns middleware that logs each HTTP request.
-// It includes the request ID (from chi's middleware.RequestID or X-Request-Id header)
-// in every log entry for cross-service correlation.
+// It includes the request ID (from chi's middleware.RequestID or SetRequestID)
+// in every log entry for cross-service correlation. The RequestID middleware
+// must be applied before RequestLogging for the request_id field to be populated.
 func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

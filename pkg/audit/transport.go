@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/observability"
 )
 
 // Transport errors.
@@ -319,8 +318,6 @@ func (t *HTTPTransport) deliver(ctx context.Context, records []SignedAuditEviden
 	for k, v := range t.config.Headers {
 		req.Header.Set(k, v)
 	}
-	// Propagate request ID for cross-service correlation (DI-4).
-	observability.PropagateRequestID(ctx, req)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -591,8 +588,6 @@ func (t *AzureSentinelTransport) deliver(ctx context.Context, records []SignedAu
 		}
 		req.Header.Set("Authorization", authHeader)
 	}
-	// Propagate request ID for cross-service correlation (DI-4).
-	observability.PropagateRequestID(ctx, req)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
