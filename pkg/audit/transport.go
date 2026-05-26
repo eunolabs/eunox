@@ -79,9 +79,9 @@ const defaultDeliveryTimeout = 30 * time.Second
 
 // HTTPTransport delivers OCSF events via HTTP POST.
 type HTTPTransport struct {
-	config      HTTPTransportConfig
-	client      *http.Client
-	logger      *slog.Logger
+	config          HTTPTransportConfig
+	client          *http.Client
+	logger          *slog.Logger
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
@@ -175,11 +175,11 @@ func (t *HTTPTransport) Close() error {
 	t.mu.Unlock()
 
 	close(t.done)
-	t.lifecycleCancel()
 	t.wg.Wait()
 
 	// Flush remaining buffer with a bounded context.
-	t.flushBuffer()
+	t.flushBuffer(context.Background())
+	t.lifecycleCancel()
 	return nil
 }
 
@@ -194,12 +194,16 @@ func (t *HTTPTransport) flushLoop() {
 		case <-t.done:
 			return
 		case <-ticker.C:
-			t.flushBuffer()
+			t.flushBuffer(t.lifecycleCtx)
 		}
 	}
 }
 
-func (t *HTTPTransport) flushBuffer() {
+func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
 	batch := make([]SignedAuditEvidence, 0, t.config.BatchSize)
 
 	for {
@@ -207,7 +211,7 @@ func (t *HTTPTransport) flushBuffer() {
 		case ev := <-t.buffer:
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
-				ctx, cancel := context.WithTimeout(t.lifecycleCtx, defaultDeliveryTimeout)
+				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("audit transport: delivery failed",
 						"error", err, "batch_size", len(batch))
@@ -218,7 +222,7 @@ func (t *HTTPTransport) flushBuffer() {
 		default:
 			// No more buffered events.
 			if len(batch) > 0 {
-				ctx, cancel := context.WithTimeout(t.lifecycleCtx, defaultDeliveryTimeout)
+				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("audit transport: delivery failed",
 						"error", err, "batch_size", len(batch))
@@ -411,11 +415,11 @@ func (t *AzureSentinelTransport) Close() error {
 	t.mu.Unlock()
 
 	close(t.done)
-	t.lifecycleCancel()
 	t.wg.Wait()
 
 	// Flush remaining buffer with a bounded context.
-	t.flushBuffer()
+	t.flushBuffer(context.Background())
+	t.lifecycleCancel()
 	return nil
 }
 
@@ -430,12 +434,16 @@ func (t *AzureSentinelTransport) flushLoop() {
 		case <-t.done:
 			return
 		case <-ticker.C:
-			t.flushBuffer()
+			t.flushBuffer(t.lifecycleCtx)
 		}
 	}
 }
 
-func (t *AzureSentinelTransport) flushBuffer() {
+func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
 	batch := make([]SignedAuditEvidence, 0, t.config.BatchSize)
 
 	for {
@@ -443,7 +451,7 @@ func (t *AzureSentinelTransport) flushBuffer() {
 		case ev := <-t.buffer:
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
-				ctx, cancel := context.WithTimeout(t.lifecycleCtx, defaultDeliveryTimeout)
+				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("azure sentinel transport: delivery failed",
 						"error", err, "batch_size", len(batch))
@@ -453,7 +461,7 @@ func (t *AzureSentinelTransport) flushBuffer() {
 			}
 		default:
 			if len(batch) > 0 {
-				ctx, cancel := context.WithTimeout(t.lifecycleCtx, defaultDeliveryTimeout)
+				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
 				if err := t.deliverWithRetry(ctx, batch); err != nil {
 					t.logger.Error("azure sentinel transport: delivery failed",
 						"error", err, "batch_size", len(batch))

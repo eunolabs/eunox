@@ -92,6 +92,25 @@ func TestRotatingKeyStore_RotateNilReturnsError(t *testing.T) {
 	assert.Len(t, ks.PublicKeys(), 1)
 }
 
+func TestRotatingKeyStore_NewNilPanics(t *testing.T) {
+	assert.PanicsWithValue(t, "current signer must not be nil", func() {
+		_ = NewRotatingKeyStore(nil)
+	})
+}
+
+func TestRotatingKeyStore_RotateDuplicateKeyIDReturnsError(t *testing.T) {
+	signer1 := generateTestSigner(t, "key-1")
+	ks := NewRotatingKeyStore(signer1)
+
+	duplicate := generateTestSigner(t, "key-1")
+	err := ks.Rotate(duplicate)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Equal(t, "key-1", ks.CurrentSigner().KeyID())
+	assert.Empty(t, ks.retired)
+}
+
 func TestRotatingKeyStore_Prune(t *testing.T) {
 	signer1 := generateTestSigner(t, "key-1")
 	signer2 := generateTestSigner(t, "key-2")
@@ -139,6 +158,22 @@ func TestRotatingKeyStore_PruneSelectiveByTime(t *testing.T) {
 	require.Len(t, keys, 2)
 	assert.Equal(t, "key-3", keys[0].KeyID)
 	assert.Equal(t, "key-2", keys[1].KeyID)
+}
+
+func TestRotatingKeyStore_RotateDuplicateRetiredKeyIDReturnsError(t *testing.T) {
+	signer1 := generateTestSigner(t, "key-1")
+	signer2 := generateTestSigner(t, "key-2")
+	ks := NewRotatingKeyStore(signer1)
+
+	require.NoError(t, ks.Rotate(signer2))
+
+	duplicate := generateTestSigner(t, "key-1")
+	err := ks.Rotate(duplicate)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Equal(t, "key-2", ks.CurrentSigner().KeyID())
+	assert.Equal(t, 1, ks.RetiredKeyCount())
 }
 
 func TestRotatingKeyStore_PruneNothingToPrune(t *testing.T) {

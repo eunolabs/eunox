@@ -273,6 +273,37 @@ func TestHTTPTransport_FlushLoop(t *testing.T) {
 	assert.Equal(t, int64(3), atomic.LoadInt64(&received))
 }
 
+func TestHTTPTransport_CloseFlushesBufferedEvents(t *testing.T) {
+	t.Parallel()
+
+	var received int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var records []SignedAuditEvidence
+		_ = json.Unmarshal(body, &records)
+		atomic.AddInt64(&received, int64(len(records)))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	transport := NewHTTPTransport(&HTTPTransportConfig{
+		TransportConfig: TransportConfig{
+			BatchSize:     10,
+			FlushInterval: time.Hour,
+			MaxRetries:    1,
+			RetryBackoff:  time.Millisecond,
+			BufferSize:    100,
+		},
+		Endpoint: server.URL,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.NoError(t, transport.Enqueue(&SignedAuditEvidence{
+		Record: LogEntry{ID: "rec-1", EventType: "test"},
+	}))
+	require.NoError(t, transport.Close())
+	assert.Equal(t, int64(1), atomic.LoadInt64(&received))
+}
+
 // --- Azure Sentinel Transport Tests ---
 
 func TestAzureSentinelTransport_Send_Success(t *testing.T) {
@@ -359,6 +390,37 @@ func TestAzureSentinelTransport_DefaultLogType(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "EunoAudit", receivedLogType)
+}
+
+func TestAzureSentinelTransport_CloseFlushesBufferedEvents(t *testing.T) {
+	t.Parallel()
+
+	var received int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var records []SignedAuditEvidence
+		_ = json.Unmarshal(body, &records)
+		atomic.AddInt64(&received, int64(len(records)))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	transport := NewAzureSentinelTransport(&AzureSentinelConfig{
+		TransportConfig: TransportConfig{
+			BatchSize:     10,
+			FlushInterval: time.Hour,
+			MaxRetries:    1,
+			RetryBackoff:  time.Millisecond,
+			BufferSize:    100,
+		},
+		Endpoint: server.URL,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.NoError(t, transport.Enqueue(&SignedAuditEvidence{
+		Record: LogEntry{ID: "rec-1", EventType: "test"},
+	}))
+	require.NoError(t, transport.Close())
+	assert.Equal(t, int64(1), atomic.LoadInt64(&received))
 }
 
 func TestBuildAzureSentinelAuthorization(t *testing.T) {

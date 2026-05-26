@@ -72,7 +72,7 @@ The `RotatingKeyStore` maintains:
 ### Operational Notes
 
 - **JWKS caching:** Relying parties (gateways) cache JWKS with a configurable TTL (`GATEWAY_EUNO_JWKS_CACHE_TTL_SECONDS`, default 300s). After rotating, allow at least one cache TTL cycle before the new key is universally available.
-- **KMS stubs:** The cloud KMS integrations (AWS KMS, Azure Key Vault, GCP Cloud KMS) remain stubs by design in Stage 1. When wired, they implement the same `crypto.Signer` interface and slot directly into `RotatingKeyStore` with no architectural change.
+- **KMS stubs:** The cloud KMS integrations (AWS KMS, Azure Key Vault, GCP Cloud KMS) remain stubs by design in Stage 1. Today, `RotatingKeyStore` stores `*crypto.SoftwareSigner`, so KMS-backed rotation would require widening the store to an interface that exposes signing plus public-key metadata for JWKS publication.
 - **Key ID (`kid`):** Each key has a unique `kid` used in JWT headers for key selection. The `GATEWAY_EUNO_REQUIRE_KID=true` setting ensures gateways always select the correct verification key from JWKS.
 
 ---
@@ -124,32 +124,32 @@ This gives pgx performance characteristics while maintaining interface compatibi
 
 **Question:** The Redis rate limiter exists, but is rate-limit state preserved across gateway restarts? If using in-memory for development, what's the production expectation?
 
-**Answer:** Yes, rate-limit state is fully persistent when using the Redis backend.
+**Answer:** Gateway max-call state is persistent when the Redis-backed call counter is configured; otherwise development and test setups use in-memory state.
 
 ### Implementation Details
 
 | Backend | State persistence | Use case |
 |---------|------------------|----------|
-| `RedisLimiter` (pkg/ratelimit/redis.go) | ✅ Fully persistent in Redis sorted sets with `PEXPIRE` TTL | Production |
-| `InMemoryLimiter` (pkg/ratelimit/memory.go) | ❌ Lost on restart | Development, testing |
+| `callcounter.Redis` (`pkg/callcounter/redis.go`) | ✅ Persistent in Redis with per-window expiration | Production gateway max-call enforcement |
+| `callcounter.InMemory` (`pkg/callcounter/memory.go`) | ❌ Lost on restart | Development, testing |
 
 ### Production Expectations
 
-- **Redis backend is required for production.** Configure via `GATEWAY_REDIS_URL`.
-- **State survives gateway restarts** because the sliding window is maintained as a Redis sorted set (ZSET). Each request is a scored member; expired entries are pruned with `ZREMRANGEBYSCORE` on each check.
-- **Multi-replica consistency:** All gateway replicas share the same Redis sorted set, providing cluster-wide rate limiting without inter-replica coordination.
-- **Failure mode:** If Redis is unreachable, the rate limiter fails open (allows requests) with a warning log. This prevents a Redis outage from causing a total service disruption.
+- **Redis backend is required for durable production max-call enforcement.** Configure it via `GATEWAY_CALL_COUNTER_REDIS_URL`.
+- **State survives gateway restarts** because the counter state is stored in Redis and reused by any replacement replica.
+- **Multi-replica consistency:** All gateway replicas share the same Redis-backed call-counter state, so max-call conditions are enforced cluster-wide.
+- **Failure mode:** If the call counter errors, enforcement returns a condition failure and the request is denied rather than allowed.
 
 ### Configuration
 
 ```env
-# Production (Redis)
-GATEWAY_REDIS_URL=redis://redis-cluster:6379
+# Production (Redis-backed max-call enforcement)
+GATEWAY_CALL_COUNTER_REDIS_URL=redis://redis-cluster:6379
 GATEWAY_RATE_LIMIT_WINDOW_MS=60000
 GATEWAY_RATE_LIMIT_MAX_REQUESTS=1000
 
 # Development (in-memory, no persistence)
-# Omit GATEWAY_REDIS_URL to use in-memory fallback
+# Omit GATEWAY_CALL_COUNTER_REDIS_URL to use in-memory fallback
 ```
 
 ---
@@ -183,38 +183,32 @@ See `internal/issuer/scim.go` for implementation and `internal/issuer/scim_test.
 
 **Question:** `pkg/testutil/containers.go` has testcontainers gated by build tag and commented out. How are integration tests running against real PostgreSQL/Redis?
 
-**Answer:** Integration tests currently use in-memory backends. Real database tests require the `integration` build tag and Docker.
+**Answer:** The checked-in integration suite currently uses in-memory backends. Real PostgreSQL/Redis container helpers are only planned scaffolding at the moment.
 
 ### Current Architecture
 
 ```
-internal/integration/        → Integration tests using in-memory backends (no Docker)
-pkg/testutil/containers.go   → Testcontainers helpers (build tag: integration)
+internal/integration/        → Integration tests using in-memory backends (no Docker, no build tag)
+pkg/testutil/containers.go   → Integration-tagged placeholder for future testcontainers helpers
 ```
 
 ### Design Decision
 
-The integration test suite is structured in two tiers:
+The integration test suite currently has a single implemented tier:
 
 | Tier | Build tag | Backend | Docker required | CI gate |
 |------|-----------|---------|----------------|---------|
 | **Unit + Integration (in-memory)** | (none) | In-memory implementations | No | `make test` |
-| **Integration (real infra)** | `integration` | PostgreSQL + Redis containers | Yes | Optional CI job |
 
 ### Rationale
 
-1. **Fast CI feedback** — `make test` runs in ~10s without Docker. This is the primary CI gate.
-2. **Real-infra validation** — testcontainers-based tests validate SQL migration correctness, Redis Lua scripts under real Redis, and connection pool behavior. These run in a separate CI job (`go test -tags=integration ./...`).
-3. **Local development** — developers can run the full test suite without Docker installed.
+1. **Fast CI feedback** — `make test` runs without Docker and is the primary CI gate.
+2. **Local development** — developers can run the checked-in test suite without Docker installed.
+3. **Future extension point** — `pkg/testutil/containers.go` documents how real-infra helpers can be added later behind the `integration` build tag.
 
-### Running Real Integration Tests
+### Current State of Real Integration Tests
 
-```bash
-# Requires Docker daemon
-go test -tags=integration -race ./internal/integration/...
-```
-
-The `pkg/testutil.PostgresContainer()` and `pkg/testutil.RedisContainer()` helpers automatically start and stop containers per test.
+At present there are no wired `integration`-tagged tests that start PostgreSQL or Redis containers. The helper implementations in `pkg/testutil/containers.go` are commented TODO scaffolding rather than active utilities.
 
 ---
 
@@ -227,4 +221,4 @@ The `pkg/testutil.PostgresContainer()` and `pkg/testutil.RedisContainer()` helpe
 | 3 | Database connection pooling | Intentional `DB` interface for driver independence |
 | 4 | Rate limiting persistence | Redis backend is persistent; in-memory is dev-only |
 | 5 | SCIM completeness | Full SCIM 2.0 implemented (P3 #17) |
-| 6 | Testcontainers | Two-tier: in-memory for speed, Docker for real-infra validation |
+| 6 | Testcontainers | Current suite is in-memory; Docker helpers are planned scaffolding |

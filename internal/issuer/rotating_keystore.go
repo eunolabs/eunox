@@ -38,6 +38,10 @@ type retiredKey struct {
 
 // NewRotatingKeyStore creates a RotatingKeyStore with the given active signer.
 func NewRotatingKeyStore(current *crypto.SoftwareSigner) *RotatingKeyStore {
+	if current == nil {
+		panic("current signer must not be nil")
+	}
+
 	return &RotatingKeyStore{
 		current: current,
 	}
@@ -60,19 +64,25 @@ func (ks *RotatingKeyStore) PublicKeys() []PublicKeyInfo {
 	keys := make([]PublicKeyInfo, 0, 1+len(ks.retired))
 
 	// Active key
-	pub := ks.current.PublicKey()
-	if pub != nil {
-		keys = append(keys, PublicKeyInfo{
-			KeyID:     ks.current.KeyID(),
-			Algorithm: ks.current.Algorithm(),
-			PublicKey: pub,
-			Use:       "sig",
-		})
+	if ks.current != nil {
+		pub := ks.current.PublicKey()
+		if pub != nil {
+			keys = append(keys, PublicKeyInfo{
+				KeyID:     ks.current.KeyID(),
+				Algorithm: ks.current.Algorithm(),
+				PublicKey: pub,
+				Use:       "sig",
+			})
+		}
 	}
 
 	// Retired keys (reverse chronological)
 	for i := len(ks.retired) - 1; i >= 0; i-- {
 		rk := ks.retired[i]
+		if rk.signer == nil {
+			continue
+		}
+
 		pub := rk.signer.PublicKey()
 		if pub != nil {
 			keys = append(keys, PublicKeyInfo{
@@ -97,10 +107,23 @@ func (ks *RotatingKeyStore) Rotate(newSigner *crypto.SoftwareSigner) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	ks.retired = append(ks.retired, retiredKey{
-		signer:    ks.current,
-		retiredAt: time.Now(),
-	})
+	if ks.current != nil && ks.current.KeyID() == newSigner.KeyID() {
+		return fmt.Errorf("signer with key id %q already exists", newSigner.KeyID())
+	}
+
+	for _, rk := range ks.retired {
+		if rk.signer != nil && rk.signer.KeyID() == newSigner.KeyID() {
+			return fmt.Errorf("signer with key id %q already exists", newSigner.KeyID())
+		}
+	}
+
+	if ks.current != nil {
+		ks.retired = append(ks.retired, retiredKey{
+			signer:    ks.current,
+			retiredAt: time.Now(),
+		})
+	}
+
 	ks.current = newSigner
 	return nil
 }
@@ -121,6 +144,11 @@ func (ks *RotatingKeyStore) Prune(cutoff time.Time) int {
 			kept = append(kept, rk)
 		}
 	}
+
+	for i := len(kept); i < len(ks.retired); i++ {
+		ks.retired[i] = retiredKey{}
+	}
+
 	ks.retired = kept
 	return pruned
 }
