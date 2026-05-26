@@ -13,6 +13,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [agent-sdk.md](./agent-sdk.md) | Agent Runtime SDK: token management, tool invocation, attenuate/renew endpoints. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current package map and architecture overview. |
 | [golang-reimplementation-plan.md](./golang-reimplementation-plan.md) | Go re-implementation execution plan (all stages). |
+| [pricing.md](./pricing.md) | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise). |
 
 ## 2. Architecture
 

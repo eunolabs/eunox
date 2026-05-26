@@ -90,6 +90,13 @@ const maxJSONBodyBytes = 1 << 20
 
 // New creates a new posture emitter App with the given configuration, plugins, and dependencies.
 func New(cfg *Config, plugins []Plugin, deps *Dependencies) (*App, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("posture emitter: cfg must not be nil")
+	}
+	if deps == nil {
+		return nil, fmt.Errorf("posture emitter: deps must not be nil")
+	}
+
 	// Create durable queue.
 	queue, err := NewSQLiteQueue(cfg.QueuePath)
 	if err != nil {
