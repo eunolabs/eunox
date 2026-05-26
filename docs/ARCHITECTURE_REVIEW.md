@@ -355,15 +355,23 @@ Ordered by priority and dependency:
 - **DI-3**: Extracted hard-coded `maxBodySize` constants from all services (gateway, issuer, minter, dbtokensvc, posture, storagegrantsvc) into configurable values. Added `MaxRequestBodySize` fields to `pkg/config` structs with service-specific env names (for example `GATEWAY_MAX_REQUEST_BODY_SIZE`, `MINTER_MAX_REQUEST_BODY_SIZE`, `POSTURE_MAX_REQUEST_BODY_SIZE`). Gateway/issuer/minter now wire config to request parsing paths; remaining services retain defaults unless configured in their own service config paths.
 - **IF-3**: Created `pkg/audit/transport_metrics.go` with `TransportMetrics` struct exposing buffer utilization gauge, enqueue counter (success/dropped), flush batch size histogram, delivery counter (success/failure), and delivery duration histogram. Instrumented both `HTTPTransport` and `AzureSentinelTransport` via functional options (`WithHTTPTransportMetrics`, `WithAzureSentinelTransportMetrics`). All metrics are nil-safe — no-ops when not wired. 14 dedicated tests.
 
-### Phase 4: Documentation & Open Questions (Week 4–5)
+### Phase 4: Documentation & Open Questions (Week 4–5) ✅ COMPLETE
 
-| # | Item | Depends On | Effort | Owner |
-|---|------|-----------|--------|-------|
-| 11 | OQ-1: Document multi-tenancy model | — | 2 days | Architect |
-| 12 | OQ-2: Document federation trust lifecycle | — | 2 days | Security team |
-| 13 | OQ-3: Define retention/compliance strategy | — | 3 days | Compliance team |
-| 14 | OQ-4: Document policy hot-reload | — | 1 day | Platform team |
-| 15 | OQ-5: Create DR runbook | — | 3 days | SRE team |
+| # | Item | Depends On | Effort | Status |
+|---|------|-----------|--------|--------|
+| 11 | OQ-1: Document multi-tenancy model | — | 2 days | ✅ Done |
+| 12 | OQ-2: Document federation trust lifecycle | — | 2 days | ✅ Done |
+| 13 | OQ-3: Define retention/compliance strategy | — | 3 days | ✅ Done |
+| 14 | OQ-4: Document policy hot-reload | — | 1 day | ✅ Done |
+| 15 | OQ-5: Create DR runbook | — | 3 days | ✅ Done |
+
+**Implementation Notes (Phase 4):**
+
+- **OQ-1**: Created `docs/MULTI_TENANCY.md` — comprehensive documentation covering tenant identification, data isolation (row-level filtering with composite indexes), enforcement isolation (per-tenant signing keys), administrative isolation (JWT-scoped admin tokens), rate limiting strategy, threat model (7 threats with mitigations), deployment topologies (shared → fully isolated), and compliance mapping (GDPR, SOC 2, HIPAA).
+- **OQ-2**: Created `docs/FEDERATION_TRUST_LIFECYCLE.md` — documents the full partner trust lifecycle (discovery → registration → approval → active → rotation → revocation), DID resolution architecture (did:web, did:key, did:ion with caching), token verification flow, capability attenuation rules (subset validation), circuit breaker protection (per-method isolation), security controls, and operational procedures.
+- **OQ-3**: Created `docs/AUDIT_RETENTION_COMPLIANCE.md` — defines retention periods (90 days hot, 2 years warm, 7 years cold), chain-compatible pruning protocol (anchor-based with Merkle verification), archive format and lifecycle management, compliance targets (SOC 2, HIPAA, PCI DSS, GDPR), right-to-erasure strategies (pseudonymization, selective redaction, segment deletion), and operational procedures for prune cycles.
+- **OQ-4**: Created `docs/POLICY_HOT_RELOAD.md` — documents the policy file format, hot-reload architecture (poll-based with RWMutex atomic swap), validation safety (fail-safe: old policies retained on error), admin API endpoints for runtime management, policy hash binding in tokens, Kubernetes ConfigMap integration, and troubleshooting guide.
+- **OQ-5**: Expanded `docs/runbooks/disaster-recovery.md` — added Scenario 5 (corrupted audit HMAC chain with three recovery options), Scenario 6 (regional outage with multi-region failover/failback procedures), Scenario 7 (HMAC secret compromise), backup verification schedule, and enhanced post-recovery checklist.
 
 ---
 
@@ -380,7 +388,7 @@ Ordered by priority and dependency:
 | Code Quality | 9/10 | 80%+ coverage target, race detector, linter enforced |
 | Deployment Readiness | 8/10 | Helm, K8s, air-gap; needs KMS integration for production |
 
-**Production Readiness Verdict:** 🟡 Deploy to staging today; production after Phase 1–2 completion (~3 weeks).
+**Production Readiness Verdict:** 🟢 All phases complete. Production-ready with standard operational prerequisites (KMS credentials, Redis HA, monitoring stack).
 
 ---
 
