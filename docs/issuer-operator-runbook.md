@@ -16,10 +16,10 @@ Per-subject rate limiting is enforced before any signing operation (F-1). The bu
 
 ### Default parameters (hosted)
 
-| Parameter | Default | Env var override |
-|-----------|---------|-----------------|
-| `windowSeconds` | 60 | `RATE_LIMIT_WINDOW_SECONDS` |
-| Recommended hosted limit | 20 requests/window | `RATE_LIMIT_MAX_REQUESTS` |
+| Parameter                | Default            | Env var override            |
+| ------------------------ | ------------------ | --------------------------- |
+| `windowSeconds`          | 60                 | `RATE_LIMIT_WINDOW_SECONDS` |
+| Recommended hosted limit | 20 requests/window | `RATE_LIMIT_MAX_REQUESTS`   |
 
 Rate limiting applies equally to `/issue`, `/attenuate`, and `/renew`. A denied request returns HTTP 429 with a `Retry-After` header indicating seconds until the window resets.
 
@@ -48,6 +48,7 @@ Both endpoints use the same rate limiter as `/api/v1/issue` but with a different
 ## Alerting
 
 Wire Prometheus alerts on:
+
 - `euno_issuer_issuance_rate_limit_denied_total` — spike indicates abuse or misconfiguration.
 - `euno_issuer_issuance_total{outcome="error"}` — sustained errors indicate KMS or IdP degradation.
 - p99 latency of `/api/v1/issue` > 2s — KMS or IdP degradation.
@@ -60,14 +61,14 @@ in-memory maps to fleet-wide Redis-backed counters. The table below
 lists every store, its default backing, the minimum replica count at
 which Redis becomes **required**, and the relevant env var.
 
-| Store | Default backing | Redis-required at | Env var | Notes |
-|---|---|---|---|---|
-| **Issuance rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (or `ISSUANCE_RATE_LIMIT_KEY_PREFIX` for namespace isolation) | Without Redis each pod enforces the limit independently; effective budget is `ISSUANCE_RATE_LIMIT_MAX × replica-count`. `EUNO_DEPLOYMENT_TIER=multi-replica` with `NODE_ENV=production` **requires** `REDIS_URL` (schema-enforced). |
-| **Storage-grant rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (shared) or `STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX` | Same per-pod multiplication risk as the issuance limiter; enabled only when `STORAGE_GRANTS_ENABLED=true`. |
-| **DB-token rate limiter** | In-memory per replica | ≥ 2 replicas | `REDIS_URL` (shared) or `DB_TOKEN_RATE_LIMIT_KEY_PREFIX` | Same per-pod multiplication risk; enabled only when `DB_TOKENS_ENABLED=true`. |
-| **OIDC state store** (nonce + ID-token-hash replay prevention) | In-memory per replica *(single-replica / dev only)* | ≥ 2 replicas | `OIDC_STATE_REDIS_URL` (preferred) or `REDIS_URL` (fallback) | **CR-1 resolved (2026-05-18):** `RedisOidcStateStore` is now the default when either Redis URL is configured. Without Redis, a replay attack can succeed by targeting a pod that has not seen the original exchange. The factory emits a structured `warn` when falling back to in-memory so misconfigured deployments are visible in logs. |
-| **Usage meter** (gateway-side) | In-memory per gateway replica | ≥ 2 gateway replicas | `USAGE_METER_REDIS_URL` or `REDIS_URL` on the gateway | The issuer itself does not hold a usage meter; metering is gateway-side. Under HA the gateway bootstraps a Redis-backed `UsageMeter` when a Redis URL is available, falling back to in-memory with a `warn`. |
-| **Issuer telemetry collector** | In-memory per replica; flushed on graceful shutdown | All replica counts | `EUNO_TELEMETRY=1` (opt-in); no Redis path | The `IssuerTelemetryCollector` aggregates counters in-process and ships them via the configured telemetry sink (HTTP/stdout) at shutdown. It is not fleet-wide; each replica reports independently. Aggregate fleet-level metrics require summing across replicas at the sink. |
+| Store                                                          | Default backing                                     | Redis-required at    | Env var                                                                   | Notes                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------- | --------------------------------------------------- | -------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Issuance rate limiter**                                      | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (or `ISSUANCE_RATE_LIMIT_KEY_PREFIX` for namespace isolation) | Without Redis each pod enforces the limit independently; effective budget is `ISSUANCE_RATE_LIMIT_MAX × replica-count`. `EUNO_DEPLOYMENT_TIER=multi-replica` with `NODE_ENV=production` **requires** `REDIS_URL` (schema-enforced).                                                                                                         |
+| **Storage-grant rate limiter**                                 | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (shared) or `STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX`             | Same per-pod multiplication risk as the issuance limiter; enabled only when `STORAGE_GRANTS_ENABLED=true`.                                                                                                                                                                                                                                  |
+| **DB-token rate limiter**                                      | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (shared) or `DB_TOKEN_RATE_LIMIT_KEY_PREFIX`                  | Same per-pod multiplication risk; enabled only when `DB_TOKENS_ENABLED=true`.                                                                                                                                                                                                                                                               |
+| **OIDC state store** (nonce + ID-token-hash replay prevention) | In-memory per replica _(single-replica / dev only)_ | ≥ 2 replicas         | `OIDC_STATE_REDIS_URL` (preferred) or `REDIS_URL` (fallback)              | **CR-1 resolved (2026-05-18):** `RedisOidcStateStore` is now the default when either Redis URL is configured. Without Redis, a replay attack can succeed by targeting a pod that has not seen the original exchange. The factory emits a structured `warn` when falling back to in-memory so misconfigured deployments are visible in logs. |
+| **Usage meter** (gateway-side)                                 | In-memory per gateway replica                       | ≥ 2 gateway replicas | `USAGE_METER_REDIS_URL` or `REDIS_URL` on the gateway                     | The issuer itself does not hold a usage meter; metering is gateway-side. Under HA the gateway bootstraps a Redis-backed `UsageMeter` when a Redis URL is available, falling back to in-memory with a `warn`.                                                                                                                                |
+| **Issuer telemetry collector**                                 | In-memory per replica; flushed on graceful shutdown | All replica counts   | `EUNO_TELEMETRY=1` (opt-in); no Redis path                                | The `IssuerTelemetryCollector` aggregates counters in-process and ships them via the configured telemetry sink (HTTP/stdout) at shutdown. It is not fleet-wide; each replica reports independently. Aggregate fleet-level metrics require summing across replicas at the sink.                                                              |
 
 ### Minimum viable multi-replica setup
 
@@ -81,6 +82,7 @@ NODE_ENV=production
 ```
 
 In this configuration:
+
 - The issuance rate limiter is fleet-wide.
 - OIDC replay prevention is fleet-wide (both the nonce/state and the
   ID-token-hash maps are in Redis with per-key TTL).
@@ -119,7 +121,7 @@ Operationally, treat SIGHUP as **atomic for new requests** and
 ## Token Revocation
 
 OIDC-path capability tokens are revoked exclusively via the **gateway admin API**
-(`euno revoke <jti>` or `POST /admin/revoke`). The capability issuer maintains
+(`eunox revoke <jti>` or `POST /admin/revoke`). The capability issuer maintains
 **no separate revocation list**. This means:
 
 - The gateway is the single canonical revocation source for all tokens regardless
@@ -135,7 +137,7 @@ distributed consensus and keeps the issuer stateless with respect to live tokens
 To revoke a token:
 
 ```sh
-euno revoke <token-jti>
+eunox revoke <token-jti>
 # or
 curl -X POST https://<gateway>/admin/revoke \
   -H "X-Admin-Api-Key: $EUNO_ADMIN_API_KEY" \
@@ -180,22 +182,24 @@ curl -H "X-Admin-Api-Key: $GATEWAY_ADMIN_API_KEY" \
 
 ```json
 {
-  "commits": [ /* SignedCrossChainCommitment[] */ ],
+  "commits": [
+    /* SignedCrossChainCommitment[] */
+  ],
   "chainHead": "<hex-encoded SHA-256 of latest commitment in store>"
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `commits` | Commitments within the `since`/`until` window. Empty array when none match. |
+| Field       | Description                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commits`   | Commitments within the `since`/`until` window. Empty array when none match.                                                                                                     |
 | `chainHead` | `canonicalSha256` of the most recent commitment across all time (not filtered). Use this to detect gaps between successive calls. `null` if no commitment has been emitted yet. |
 
 **Query parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `since` | ISO 8601 string | Inclusive lower bound on `commitment.ts`. |
-| `until` | ISO 8601 string | Inclusive upper bound on `commitment.ts`. |
+| Parameter | Type            | Description                               |
+| --------- | --------------- | ----------------------------------------- |
+| `since`   | ISO 8601 string | Inclusive lower bound on `commitment.ts`. |
+| `until`   | ISO 8601 string | Inclusive upper bound on `commitment.ts`. |
 
 Both bounds are optional. Omit both to retrieve all in-memory commitments.
 
@@ -210,7 +214,7 @@ curl https://<gateway>/.well-known/jwks.json > jwks.json
 # 2. Verify the commitment (pseudo-code; adapt to your tooling)
 node -e "
 const commit = require('./commit.json');
-const canonical = require('@euno/common').canonicalSha256(
+const canonical = require('@eunox/common').canonicalSha256(
   Object.fromEntries(
     Object.entries(commit).filter(([k]) =>
       !['signature', 'keyId', 'algorithm'].includes(k)
@@ -226,8 +230,8 @@ The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSO
 
 ### Prometheus metric
 
-| Metric | Type | Description |
-|--------|------|-------------|
+| Metric                                | Type  | Description                                                                                                                                           |
+| ------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `euno_cross_chain_anchor_lag_seconds` | Gauge | Seconds since the last successful commitment. Zero until first commitment. Alert when this exceeds `2 × AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS / 1000`. |
 
 **Alert rule example (Prometheus):**
@@ -272,7 +276,8 @@ The ACL backend uses `DefaultAzureCredential` for authentication (workload ident
 The issuer is **fail-closed** on IdP validation failure: if `validateToken()` throws, the request is rejected with 401. Existing valid tokens continue to work (verification is stateless JWKS-based).
 
 **Steps:**
+
 1. Check IdP status page. If IdP is down, inform users; no issuer action needed.
 2. If JWKS endpoint is unreachable, the gateway will reject all incoming tokens. Cache JWKS with a TTL and rotate on next successful fetch.
 3. Escalate to IdP vendor if outage persists > 15 min.
-4. To temporarily allow a specific service account during an IdP outage, contact the Euno platform team; emergency issuance requires out-of-band operator access and is not available via a self-service CLI command.
+4. To temporarily allow a specific service account during an IdP outage, contact the eunox platform team; emergency issuance requires out-of-band operator access and is not available via a self-service CLI command.

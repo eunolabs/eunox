@@ -1,11 +1,12 @@
-# Deploying Euno on Amazon EKS
+# Deploying eunox on Amazon EKS
 
-> **Target audience:** Platform engineers deploying the Euno platform on AWS
+> **Target audience:** Platform engineers deploying the eunox on AWS
 > Elastic Kubernetes Service (EKS).
 >
 > **Status:** Multi-cloud Phase 1 documentation.
 >
 > **Related documents:**
+>
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
 > - [`docs/secrets-aws.md`](./secrets-aws.md) — AWS Secrets Manager integration
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP setup (Cognito SCIM §10)
@@ -16,13 +17,13 @@
 
 ## 1. Prerequisites
 
-| Requirement | Version / notes |
-|---|---|
-| AWS CLI | ≥ 2.13 |
-| `eksctl` | ≥ 0.180 |
-| `kubectl` | ≥ 1.29 |
-| Helm | ≥ 3.14 |
-| AWS account with permissions to create EKS clusters, IAM roles, ECR, ACM, ALB |  |
+| Requirement                                                                   | Version / notes |
+| ----------------------------------------------------------------------------- | --------------- |
+| AWS CLI                                                                       | ≥ 2.13          |
+| `eksctl`                                                                      | ≥ 0.180         |
+| `kubectl`                                                                     | ≥ 1.29          |
+| Helm                                                                          | ≥ 3.14          |
+| AWS account with permissions to create EKS clusters, IAM roles, ECR, ACM, ALB |                 |
 
 ---
 
@@ -32,10 +33,10 @@
 
 ```bash
 eksctl create cluster \
-  --name euno-prod \
+  --name eunox-prod \
   --region us-east-1 \
   --version 1.29 \
-  --nodegroup-name euno-nodes \
+  --nodegroup-name eunox-nodes \
   --node-type m6i.large \
   --nodes 3 \
   --nodes-min 2 \
@@ -50,7 +51,7 @@ required for IAM Roles for Service Accounts (IRSA).
 ### 2.2 Verify the OIDC provider
 
 ```bash
-aws eks describe-cluster --name euno-prod --region us-east-1 \
+aws eks describe-cluster --name eunox-prod --region us-east-1 \
   --query "cluster.identity.oidc.issuer" --output text
 # https://oidc.eks.us-east-1.amazonaws.com/id/<OIDC_ID>
 
@@ -68,6 +69,7 @@ use long-lived access keys in pod environment variables.
 ### 3.1 `capability-issuer` IAM role
 
 The issuer needs:
+
 - **AWS Cognito** read access (for token validation) — no IAM policy required;
   Cognito public JWKs are fetched over HTTPS.
 - **AWS KMS** signing access (if `SIGNING_PROVIDER=aws-kms`).
@@ -77,7 +79,7 @@ Create the role:
 
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-OIDC_PROVIDER=$(aws eks describe-cluster --name euno-prod --region us-east-1 \
+OIDC_PROVIDER=$(aws eks describe-cluster --name eunox-prod --region us-east-1 \
   --query "cluster.identity.oidc.issuer" --output text | sed 's|https://||')
 
 cat > /tmp/issuer-trust-policy.json <<EOF
@@ -91,7 +93,7 @@ cat > /tmp/issuer-trust-policy.json <<EOF
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": {
-        "${OIDC_PROVIDER}:sub": "system:serviceaccount:euno:euno-issuer",
+        "${OIDC_PROVIDER}:sub": "system:serviceaccount:eunox:eunox-issuer",
         "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
       }
     }
@@ -100,17 +102,17 @@ cat > /tmp/issuer-trust-policy.json <<EOF
 EOF
 
 aws iam create-role \
-  --role-name euno-issuer-role \
+  --role-name eunox-issuer-role \
   --assume-role-policy-document file:///tmp/issuer-trust-policy.json
 
 # KMS signing (attach if SIGNING_PROVIDER=aws-kms)
 aws iam attach-role-policy \
-  --role-name euno-issuer-role \
+  --role-name eunox-issuer-role \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoKmsSigningPolicy
 
 # Secrets Manager read (attach if using ASCP or if the app reads directly)
 aws iam attach-role-policy \
-  --role-name euno-issuer-role \
+  --role-name eunox-issuer-role \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoSecretsReadPolicy
 ```
 
@@ -120,6 +122,7 @@ See [`docs/secrets-aws.md`](./secrets-aws.md) §3 for the `EunoSecretsReadPolicy
 ### 3.2 `tool-gateway` IAM role
 
 The gateway needs:
+
 - **AWS KMS** signing access (for audit evidence signing if `SIGNING_PROVIDER=aws-kms`).
 - **AWS Secrets Manager** read access (for `AUDIT_LEDGER_HMAC_SECRET`, etc.).
 - **S3 Object Lock** write access (if `ENABLE_CROSS_CHAIN_ANCHOR=true`).
@@ -136,7 +139,7 @@ cat > /tmp/gateway-trust-policy.json <<EOF
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": {
-        "${OIDC_PROVIDER}:sub": "system:serviceaccount:euno:euno-gateway",
+        "${OIDC_PROVIDER}:sub": "system:serviceaccount:eunox:eunox-gateway",
         "${OIDC_PROVIDER}:aud": "sts.amazonaws.com"
       }
     }
@@ -145,20 +148,20 @@ cat > /tmp/gateway-trust-policy.json <<EOF
 EOF
 
 aws iam create-role \
-  --role-name euno-gateway-role \
+  --role-name eunox-gateway-role \
   --assume-role-policy-document file:///tmp/gateway-trust-policy.json
 
 aws iam attach-role-policy \
-  --role-name euno-gateway-role \
+  --role-name eunox-gateway-role \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoKmsSigningPolicy
 
 aws iam attach-role-policy \
-  --role-name euno-gateway-role \
+  --role-name eunox-gateway-role \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoSecretsReadPolicy
 
 # S3 anchor (attach only if ENABLE_CROSS_CHAIN_ANCHOR=true)
 aws iam attach-role-policy \
-  --role-name euno-gateway-role \
+  --role-name eunox-gateway-role \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoS3AnchorPolicy
 ```
 
@@ -168,26 +171,26 @@ The Helm chart creates `ServiceAccount` resources for each service. Annotate
 them with the IAM role ARN before or after install:
 
 ```bash
-kubectl annotate serviceaccount euno-issuer \
-  -n euno \
-  eks.amazonaws.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/euno-issuer-role
+kubectl annotate serviceaccount eunox-issuer \
+  -n eunox \
+  eks.amazonaws.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/eunox-issuer-role
 
-kubectl annotate serviceaccount euno-gateway \
-  -n euno \
-  eks.amazonaws.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/euno-gateway-role
+kubectl annotate serviceaccount eunox-gateway \
+  -n eunox \
+  eks.amazonaws.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/eunox-gateway-role
 ```
 
 Alternatively, supply the annotation via Helm values:
 
 ```yaml
-# k8s/helm/euno/values-aws.yaml excerpt
+# k8s/helm/eunox/values-aws.yaml excerpt
 issuer:
   serviceAccountAnnotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-issuer-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/eunox-issuer-role"
 
 gateway:
   serviceAccountAnnotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-gateway-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/eunox-gateway-role"
 ```
 
 ---
@@ -202,7 +205,7 @@ aws ecr get-login-password --region us-east-1 | \
   123456789012.dkr.ecr.us-east-1.amazonaws.com
 ```
 
-### 4.2 Push Euno images to ECR
+### 4.2 Push eunox images to ECR
 
 For air-gapped or locked-down deployments, pull the images from the public
 registry and push them to your private ECR repositories.
@@ -232,14 +235,14 @@ aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
 for img in "${IMAGES[@]}"; do
-  SRC="ghcr.io/edgeobs/euno/${img}:${EUNO_VERSION}"
-  DST="${ECR_REGISTRY}/euno/${img}:${EUNO_VERSION}"
+  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNO_VERSION}"
+  DST="${ECR_REGISTRY}/eunox/${img}:${EUNO_VERSION}"
   docker pull "${SRC}"
   docker tag  "${SRC}" "${DST}"
   docker push "${DST}"
 done
 
-echo "All images pushed to ${ECR_REGISTRY}/euno/"
+echo "All images pushed to ${ECR_REGISTRY}/eunox/"
 ```
 
 ### 4.3 EKS image pull configuration
@@ -256,7 +259,7 @@ kubectl create secret docker-registry ecr-pull-secret \
   --docker-server=123456789012.dkr.ecr.us-east-1.amazonaws.com \
   --docker-username=AWS \
   --docker-password=$(aws ecr get-login-password --region us-east-1) \
-  --namespace euno
+  --namespace eunox
 ```
 
 Then reference it in your Helm values:
@@ -283,7 +286,7 @@ aws iam create-policy \
 
 # Create an IRSA service account for the controller
 eksctl create iamserviceaccount \
-  --cluster euno-prod \
+  --cluster eunox-prod \
   --namespace kube-system \
   --name aws-load-balancer-controller \
   --role-name AmazonEKSLoadBalancerControllerRole \
@@ -295,7 +298,7 @@ helm repo add eks https://aws.github.io/eks-charts
 helm repo update eks
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
-  --set clusterName=euno-prod \
+  --set clusterName=eunox-prod \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
@@ -304,8 +307,8 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
 
 ```bash
 aws acm request-certificate \
-  --domain-name euno.example.com \
-  --subject-alternative-names "*.euno.example.com" \
+  --domain-name eunox.example.com \
+  --subject-alternative-names "*.eunox.example.com" \
   --validation-method DNS \
   --region us-east-1
 # Note the CertificateArn from the output
@@ -323,8 +326,8 @@ Create an Ingress that routes external traffic to the gateway and issuer:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: euno-ingress
-  namespace: euno
+  name: eunox-ingress
+  namespace: eunox
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -335,24 +338,24 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: euno.example.com
+    - host: eunox.example.com
       http:
         paths:
           - path: /api/v1/
             pathType: Prefix
             backend:
               service:
-                name: euno-tool-gateway
+                name: eunox-tool-gateway
                 port:
                   number: 3002
-    - host: issuer.euno.example.com
+    - host: issuer.eunox.example.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: euno-capability-issuer
+                name: eunox-capability-issuer
                 port:
                   number: 3001
 ```
@@ -368,11 +371,11 @@ spec:
 ### 6.1 Install the Helm chart
 
 ```bash
-kubectl create namespace euno
+kubectl create namespace eunox
 
-helm install euno ./k8s/helm/euno \
-  --namespace euno \
-  -f k8s/helm/euno/values-aws.yaml \
+helm install eunox ./k8s/helm/eunox \
+  --namespace eunox \
+  -f k8s/helm/eunox/values-aws.yaml \
   --set gateway.secretEnv.AUDIT_LEDGER_HMAC_SECRET="${AUDIT_LEDGER_HMAC_SECRET}" \
   --set gateway.secretEnv.ADMIN_API_KEY="${ADMIN_API_KEY}" \
   --set gateway.secretEnv.REDIS_URL="${REDIS_URL}" \
@@ -387,24 +390,24 @@ resources instead. See [`docs/secrets-aws.md`](./secrets-aws.md).
 ### 6.2 AWS-specific `values-aws.yaml` overrides
 
 ```yaml
-# Full file: k8s/helm/euno/values-aws.yaml
+# Full file: k8s/helm/eunox/values-aws.yaml
 # See that file for inline documentation of every override.
 ```
 
-The complete `values-aws.yaml` is at `k8s/helm/euno/values-aws.yaml` in this
+The complete `values-aws.yaml` is at `k8s/helm/eunox/values-aws.yaml` in this
 repository.
 
 ### 6.3 Verify the deployment
 
 ```bash
-kubectl get pods -n euno
-kubectl logs -n euno -l app=euno-tool-gateway --tail=50
-kubectl logs -n euno -l app=euno-capability-issuer --tail=50
+kubectl get pods -n eunox
+kubectl logs -n eunox -l app=eunox-tool-gateway --tail=50
+kubectl logs -n eunox -l app=eunox-capability-issuer --tail=50
 
 # Health checks
-kubectl exec -n euno deploy/euno-tool-gateway -- \
+kubectl exec -n eunox deploy/eunox-tool-gateway -- \
   curl -s http://localhost:3002/healthz | jq .
-kubectl exec -n euno deploy/euno-capability-issuer -- \
+kubectl exec -n eunox deploy/eunox-capability-issuer -- \
   curl -s http://localhost:3001/healthz | jq .
 ```
 
@@ -415,20 +418,20 @@ kubectl exec -n euno deploy/euno-capability-issuer -- \
 ### 7.1 Prometheus → CloudWatch Metrics (ADOT Collector)
 
 Install the AWS Distro for OpenTelemetry (ADOT) Collector to scrape Prometheus
-metrics from Euno pods and forward them to CloudWatch.
+metrics from eunox pods and forward them to CloudWatch.
 
 #### 7.1.1 Install ADOT add-on
 
 ```bash
 # Enable the ADOT add-on on the cluster
 aws eks create-addon \
-  --cluster-name euno-prod \
+  --cluster-name eunox-prod \
   --addon-name adot \
   --region us-east-1
 
 # Create the IRSA service account for ADOT
 eksctl create iamserviceaccount \
-  --cluster euno-prod \
+  --cluster eunox-prod \
   --namespace opentelemetry-operator-system \
   --name adot-collector \
   --attach-policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy \
@@ -437,7 +440,7 @@ eksctl create iamserviceaccount \
 
 #### 7.1.2 ADOT Collector configuration
 
-Deploy an `OpenTelemetryCollector` custom resource that scrapes the Euno
+Deploy an `OpenTelemetryCollector` custom resource that scrapes the eunox
 Prometheus endpoints and ships metrics to CloudWatch.
 
 ```yaml
@@ -445,8 +448,8 @@ Prometheus endpoints and ships metrics to CloudWatch.
 apiVersion: opentelemetry.io/v1alpha1
 kind: OpenTelemetryCollector
 metadata:
-  name: euno-adot
-  namespace: euno
+  name: eunox-adot
+  namespace: eunox
 spec:
   serviceAccount: adot-collector
   config: |
@@ -454,32 +457,32 @@ spec:
       prometheus:
         config:
           scrape_configs:
-            - job_name: euno-gateway
+            - job_name: eunox-gateway
               scrape_interval: 30s
               static_configs:
-                - targets: ["euno-tool-gateway:3002"]
+                - targets: ["eunox-tool-gateway:3002"]
               metrics_path: /metrics
-            - job_name: euno-issuer
+            - job_name: eunox-issuer
               scrape_interval: 30s
               static_configs:
-                - targets: ["euno-capability-issuer:3001"]
+                - targets: ["eunox-capability-issuer:3001"]
               metrics_path: /metrics
 
     processors:
       resource:
         attributes:
           - key: ClusterName
-            value: euno-prod
+            value: eunox-prod
             action: upsert
           - key: Namespace
-            value: euno
+            value: eunox
             action: upsert
 
     exporters:
       awsemf:
         region: us-east-1
-        namespace: Euno
-        log_group_name: /euno/metrics
+        namespace: eunox
+        log_group_name: /eunox/metrics
         log_stream_name: "{PodName}"
         dimension_rollup_option: NoDimensionRollup
         metric_declarations:
@@ -499,15 +502,15 @@ spec:
           exporters: [awsemf]
 ```
 
-Key Euno metrics forwarded to CloudWatch:
+Key eunox metrics forwarded to CloudWatch:
 
-| Metric | Description | CloudWatch dimension |
-|---|---|---|
-| `euno_capability_tokens_issued_total` | Tokens issued per tenant | `ClusterName`, `Namespace` |
-| `euno_audit_events_total` | Signed audit events per tool | `ClusterName`, `Namespace` |
-| `euno_tool_calls_denied_total` | Denials per `denial_reason` label | `ClusterName`, `Namespace` |
-| `euno_cross_chain_anchor_lag_seconds` | S3 anchor write lag | `ClusterName`, `Namespace` |
-| `euno_partner_did_circuit_breaker_state` | ION circuit breaker state | `ClusterName`, `Namespace` |
+| Metric                                   | Description                       | CloudWatch dimension       |
+| ---------------------------------------- | --------------------------------- | -------------------------- |
+| `euno_capability_tokens_issued_total`    | Tokens issued per tenant          | `ClusterName`, `Namespace` |
+| `euno_audit_events_total`                | Signed audit events per tool      | `ClusterName`, `Namespace` |
+| `euno_tool_calls_denied_total`           | Denials per `denial_reason` label | `ClusterName`, `Namespace` |
+| `euno_cross_chain_anchor_lag_seconds`    | S3 anchor write lag               | `ClusterName`, `Namespace` |
+| `euno_partner_did_circuit_breaker_state` | ION circuit breaker state         | `ClusterName`, `Namespace` |
 
 ### 7.2 OCSF audit events → Security Hub findings
 
@@ -526,31 +529,34 @@ tool-gateway audit ledger
 
 #### 7.2.2 OCSF → Security Hub finding field mapping
 
-| OCSF field | Security Hub finding field |
-|---|---|
-| `evidence.agentId` | `Resources[0].Id` |
-| `evidence.toolName` | `Resources[0].Details.Other.toolName` |
-| `evidence.outcome` (`deny`) | `Severity.Label = HIGH` |
-| `evidence.outcome` (`allow`) | `Severity.Label = INFORMATIONAL` |
-| `evidence.ts` | `CreatedAt` / `UpdatedAt` |
-| `evidence.denialReason` | `Description` |
-| `evidence.tenantId` | `AwsAccountId` |
-| `evidence.capabilityId` | `Resources[0].Details.Other.capabilityId` |
+| OCSF field                   | Security Hub finding field                |
+| ---------------------------- | ----------------------------------------- |
+| `evidence.agentId`           | `Resources[0].Id`                         |
+| `evidence.toolName`          | `Resources[0].Details.Other.toolName`     |
+| `evidence.outcome` (`deny`)  | `Severity.Label = HIGH`                   |
+| `evidence.outcome` (`allow`) | `Severity.Label = INFORMATIONAL`          |
+| `evidence.ts`                | `CreatedAt` / `UpdatedAt`                 |
+| `evidence.denialReason`      | `Description`                             |
+| `evidence.tenantId`          | `AwsAccountId`                            |
+| `evidence.capabilityId`      | `Resources[0].Details.Other.capabilityId` |
 
 Example Lambda handler (Node.js). The Lambda is triggered by a CloudWatch Logs
 subscription filter; the event payload is base64-encoded gzip JSON.
 
 ```javascript
 // lambda/ocsf-to-securityhub.mjs
-import zlib from 'zlib';
-import { SecurityHubClient, BatchImportFindingsCommand } from '@aws-sdk/client-securityhub';
+import zlib from "zlib";
+import {
+  SecurityHubClient,
+  BatchImportFindingsCommand,
+} from "@aws-sdk/client-securityhub";
 
 const hub = new SecurityHubClient({});
 
 export async function handler(event) {
   // CloudWatch Logs subscription filter payload: base64-encoded gzip JSON.
-  const payload = Buffer.from(event.awslogs.data, 'base64');
-  const logData = JSON.parse(zlib.gunzipSync(payload).toString('utf8'));
+  const payload = Buffer.from(event.awslogs.data, "base64");
+  const logData = JSON.parse(zlib.gunzipSync(payload).toString("utf8"));
 
   const findings = [];
 
@@ -561,30 +567,34 @@ export async function handler(event) {
     } catch {
       continue; // skip non-JSON log lines
     }
-    if (evidence.outcome !== 'deny') continue; // only import denials
+    if (evidence.outcome !== "deny") continue; // only import denials
 
     findings.push({
-      SchemaVersion: '2018-10-08',
-      Id: `euno/${evidence.evidenceId}`,
+      SchemaVersion: "2018-10-08",
+      Id: `eunox/${evidence.evidenceId}`,
       ProductArn: `arn:aws:securityhub:${process.env.AWS_REGION}::product/aws/securityhub`,
-      GeneratorId: 'euno-tool-gateway',
+      GeneratorId: "eunox-tool-gateway",
       AwsAccountId: evidence.tenantId ?? process.env.AWS_ACCOUNT_ID,
-      Types: ['Software and Configuration Checks/Industry and Regulatory Standards'],
+      Types: [
+        "Software and Configuration Checks/Industry and Regulatory Standards",
+      ],
       CreatedAt: new Date(evidence.ts).toISOString(),
       UpdatedAt: new Date(evidence.ts).toISOString(),
-      Severity: { Label: 'HIGH' },
-      Title: `Euno capability enforcement: tool call denied`,
-      Description: evidence.denialReason ?? 'capability enforcement denial',
-      Resources: [{
-        Type: 'Other',
-        Id: evidence.agentId,
-        Details: {
-          Other: {
-            toolName: evidence.toolName,
-            capabilityId: evidence.capabilityId ?? '',
+      Severity: { Label: "HIGH" },
+      Title: `eunox capability enforcement: tool call denied`,
+      Description: evidence.denialReason ?? "capability enforcement denial",
+      Resources: [
+        {
+          Type: "Other",
+          Id: evidence.agentId,
+          Details: {
+            Other: {
+              toolName: evidence.toolName,
+              capabilityId: evidence.capabilityId ?? "",
+            },
           },
         },
-      }],
+      ],
     });
   }
 
@@ -596,7 +606,7 @@ export async function handler(event) {
 
 ### 7.3 CloudWatch Insights query templates
 
-Use the following Log Insights queries against the `/euno/audit` log group
+Use the following Log Insights queries against the `/eunox/audit` log group
 (or wherever fluent-bit / ADOT forwards the gateway logs).
 
 #### Denial-reason histogram (last 24 h)
@@ -634,14 +644,14 @@ fields @timestamp, euno_cross_chain_anchor_lag_seconds
 
 ```bash
 # Upgrade
-helm upgrade euno ./k8s/helm/euno \
-  --namespace euno \
-  -f k8s/helm/euno/values-aws.yaml \
+helm upgrade eunox ./k8s/helm/eunox \
+  --namespace eunox \
+  -f k8s/helm/eunox/values-aws.yaml \
   --set gateway.image.tag=1.1.0 \
   --set issuer.image.tag=1.1.0
 
 # Rollback
-helm rollback euno --namespace euno
+helm rollback eunox --namespace eunox
 ```
 
 ---
@@ -659,12 +669,12 @@ helm rollback euno --namespace euno
       an internal ALB or restrict via Network Policy.
 - [ ] Kubernetes Network Policies restrict pod-to-pod traffic to the minimum
       required (gateway ↔ Redis, gateway ↔ Postgres, issuer ↔ Postgres).
-- [ ] Pod Security Admission is set to `restricted` for the `euno` namespace.
+- [ ] Pod Security Admission is set to `restricted` for the `eunox` namespace.
 - [ ] `AUDIT_LEDGER_HMAC_SECRET` and `ADMIN_API_KEY` are sourced from Secrets
       Manager — never stored in plaintext in Helm values or ConfigMaps.
       See [`docs/secrets-aws.md`](./secrets-aws.md).
 - [ ] CloudWatch Logs retention is set to at least 90 days for the
-      `/euno/audit` log group (SOC 2 CC7 requirement).
+      `/eunox/audit` log group (SOC 2 CC7 requirement).
 - [ ] Security Hub findings are reviewed weekly; high-severity denials trigger
       automated alerts via EventBridge.
 
@@ -679,19 +689,19 @@ is set — no custom entrypoint required.
 ### 10.1 Standard configuration
 
 ```bash
-AUDIT_LEDGER_S3_BUCKET=euno-prod-audit-anchors
+AUDIT_LEDGER_S3_BUCKET=eunox-prod-audit-anchors
 AUDIT_LEDGER_ANCHOR_INTERVAL=1000   # write every 1000 audit rows
 ENABLE_CROSS_CHAIN_ANCHOR=true
 # Region is taken from AWS_REGION (the standard EKS IRSA env var)
 ```
 
-The bucket MUST have Object Lock enabled in `COMPLIANCE` mode.  The writing pod's
+The bucket MUST have Object Lock enabled in `COMPLIANCE` mode. The writing pod's
 IRSA role needs `s3:PutObject` and `s3:PutObjectRetention` on the bucket.
 
 ### 10.2 VPC endpoint / PrivateLink configuration
 
 When traffic to S3 must stay within the VPC (zero-internet-egress clusters),
-use an S3 Interface VPC Endpoint and configure Euno with the endpoint URL:
+use an S3 Interface VPC Endpoint and configure eunox with the endpoint URL:
 
 ```bash
 # Create a VPC Interface Endpoint for S3 (one-time setup):
@@ -713,7 +723,7 @@ For path-style URL addressing (required by some VPC endpoint configurations):
 AUDIT_LEDGER_S3_FORCE_PATH_STYLE=true
 ```
 
-### 10.3 GovCloud (us-gov-*) regions
+### 10.3 GovCloud (us-gov-\*) regions
 
 GovCloud endpoints are resolved automatically from `AWS_REGION`:
 
@@ -735,14 +745,11 @@ is set in the pod environment.
     {
       "Sid": "EunoS3Anchor",
       "Effect": "Allow",
-      "Action": [
-        "s3:PutObject",
-        "s3:PutObjectRetention"
-      ],
-      "Resource": "arn:aws:s3:::euno-prod-audit-anchors/*"
+      "Action": ["s3:PutObject", "s3:PutObjectRetention"],
+      "Resource": "arn:aws:s3:::eunox-prod-audit-anchors/*"
     }
   ]
 }
 ```
 
-Attach this policy to the `euno-gateway` IRSA role (see §3).
+Attach this policy to the `eunox-gateway` IRSA role (see §3).

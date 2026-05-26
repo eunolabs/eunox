@@ -31,19 +31,19 @@ curl -X POST https://gateway.internal:3003/admin/v1/kill-switch \
 
 ```bash
 # Connect to Redis sentinel/cluster
-redis-cli -h redis-sentinel.euno-system.svc -p 26379
-> SENTINEL get-master-addr-by-name euno-master
+redis-cli -h redis-sentinel.eunox-system.svc -p 26379
+> SENTINEL get-master-addr-by-name eunox-master
 # Connect to master
 redis-cli -h <master-ip> -p 6379
-> SET euno:kill-switch:global "1"
+> SET eunox:kill-switch:global "1"
 ```
 
 ### Via Kubernetes ConfigMap (Fallback)
 
 ```bash
-kubectl -n euno-system patch configmap euno-gateway-config \
+kubectl -n eunox-system patch configmap eunox-gateway-config \
   --type merge -p '{"data":{"KILL_SWITCH_ENABLED":"true"}}'
-kubectl -n euno-system rollout restart deployment/euno-gateway
+kubectl -n eunox-system rollout restart deployment/eunox-gateway
 ```
 
 ## Verification
@@ -79,7 +79,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 - **Metric**: `euno_gateway_kill_switch_active{tenant}` gauge
 - **Alert**: `EunoKillSwitchActive` fires when kill switch has been active > 5 minutes without acknowledgment
-- **Dashboard**: Grafana > Euno Operations > Kill Switch panel
+- **Dashboard**: Grafana > eunox Operations > Kill Switch panel
 
 ## Post-Incident
 

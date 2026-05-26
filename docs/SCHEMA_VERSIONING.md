@@ -2,7 +2,7 @@
 
 ## Overview
 
-Capability tokens in euno include a `schemaVersion` field that enables forward and backward compatibility during schema evolution. This document describes the versioning strategy, migration procedures, and compatibility guarantees.
+Capability tokens in eunox include a `schemaVersion` field that enables forward and backward compatibility during schema evolution. This document describes the versioning strategy, migration procedures, and compatibility guarantees.
 
 ## Current Version
 
@@ -30,9 +30,9 @@ Capability tokens in euno include a `schemaVersion` field that enables forward a
 
 ## Compatibility Matrix
 
-| Gateway Version | Supported Token Schema Versions | Notes |
-|----------------|--------------------------------|-------|
-| 1.0.x          | 1.0                             | Initial release |
+| Gateway Version | Supported Token Schema Versions | Notes           |
+| --------------- | ------------------------------- | --------------- |
+| 1.0.x           | 1.0                             | Initial release |
 
 ## Version Numbering
 
@@ -43,6 +43,7 @@ Schema versions follow a `MAJOR.MINOR` format:
 **Indicates:** Breaking changes requiring coordinated updates
 
 **Examples:**
+
 - Removing required fields
 - Changing field semantics
 - Renaming fields
@@ -55,6 +56,7 @@ Schema versions follow a `MAJOR.MINOR` format:
 **Indicates:** Backward-compatible additions
 
 **Examples:**
+
 - Adding optional fields
 - New condition types
 - Additional validation rules (backward-compatible)
@@ -86,14 +88,17 @@ The tool gateway verifier validates `schemaVersion` on every token verification:
 ```typescript
 // Pseudo-code
 if (!token.schemaVersion) {
-  throw INVALID_TOKEN("Token missing required schemaVersion field")
+  throw INVALID_TOKEN("Token missing required schemaVersion field");
 }
 if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
-  throw INVALID_TOKEN(`Unsupported token schema version: ${token.schemaVersion}`)
+  throw INVALID_TOKEN(
+    `Unsupported token schema version: ${token.schemaVersion}`,
+  );
 }
 ```
 
 **Validation Points:**
+
 - Signature verification
 - Revocation check
 - Audience validation
@@ -101,6 +106,7 @@ if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
 - Condition enforcement
 
 **Error Handling:**
+
 - Missing `schemaVersion` → `INVALID_TOKEN` (401)
 - Unsupported `schemaVersion` → `INVALID_TOKEN` (401)
 - Error messages include list of supported versions
@@ -114,22 +120,26 @@ if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
 **Steps:**
 
 1. **Update Gateway** (Week 1-2)
+
    ```typescript
    // pkg//src/types.ts
    export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
-     '1.0',
-     '1.1', // NEW
+     "1.0",
+     "1.1", // NEW
    ]);
    ```
+
    - Add new version to `SUPPORTED_SCHEMA_VERSIONS`
    - Implement version-specific logic (if needed)
    - Deploy gateway updates
    - Verify all gateways updated
 
 2. **Update Issuer** (Week 3-4)
+
    ```typescript
-   export const CAPABILITY_TOKEN_SCHEMA_VERSION = '1.1' as const;
+   export const CAPABILITY_TOKEN_SCHEMA_VERSION = "1.1" as const;
    ```
+
    - Update `CAPABILITY_TOKEN_SCHEMA_VERSION`
    - Deploy issuer updates
    - Monitor token distribution
@@ -149,6 +159,7 @@ if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
 **Scenario:** Breaking changes to schema structure
 
 **Prerequisites:**
+
 - Document breaking changes
 - Update gateway code to handle both versions
 - Create migration guide for clients
@@ -252,6 +263,7 @@ The versioning system prioritizes security over availability:
 **Threat:** Attacker forces issuer to mint old-version tokens with known vulnerabilities
 
 **Mitigation:**
+
 - Issuer configuration locks to single version
 - Only current version should be minted in production
 - Monitor for unexpected old-version tokens
@@ -261,10 +273,11 @@ The versioning system prioritizes security over availability:
 Version strings are validated via exact match against a static set:
 
 ```typescript
-SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)
+SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion);
 ```
 
 **Security Properties:**
+
 - No regex parsing (no ReDoS)
 - No semver parsing (no injection)
 - Constant-time lookup (no timing attacks)
@@ -272,6 +285,7 @@ SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)
 ### Audit Trail
 
 `schemaVersion` is signed into the JWT payload:
+
 - Tamper-evident
 - Captured in audit logs
 - Enables forensic analysis of version-related issues
@@ -283,12 +297,14 @@ SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)
 Track these metrics for version health:
 
 1. **Token Version Distribution**
+
    ```
    capability_token.issued{version="1.0"}
    capability_token.issued{version="1.1"}
    ```
 
 2. **Version Validation Outcomes**
+
    ```
    capability_token.verified{version="1.0", outcome="success"}
    capability_token.verified{version="1.1", outcome="success"}
@@ -312,6 +328,7 @@ Track these metrics for version health:
 ### Q: Why not use semantic versioning (e.g., 1.2.3)?
 
 **A:** Patch versions don't add value for schema evolution. Changes are either:
+
 - Backward-compatible (minor version)
 - Breaking (major version)
 
@@ -324,6 +341,7 @@ A two-part version (MAJOR.MINOR) is simpler and sufficient.
 ### Q: What happens to tokens in flight during a version migration?
 
 **A:** Tokens have short TTLs (default 15 minutes). During migration:
+
 1. Old tokens expire naturally
 2. New tokens are accepted by updated gateways
 3. Minimal overlap period
@@ -331,6 +349,7 @@ A two-part version (MAJOR.MINOR) is simpler and sufficient.
 ### Q: Can I issue multiple schema versions simultaneously?
 
 **A:** Technically yes (for migration), but:
+
 - Not recommended for steady-state
 - Increases complexity
 - Issuer should mint single version (current)
@@ -338,10 +357,12 @@ A two-part version (MAJOR.MINOR) is simpler and sufficient.
 ### Q: How does schemaVersion relate to kid (key ID)?
 
 **A:** They serve different purposes:
+
 - **`schemaVersion`**: Token structure evolution
 - **`kid`**: Key rotation and signing identity
 
 Both are orthogonal. A token can have:
+
 - `schemaVersion: "1.0"` with `kid: "2023-key"`
 - `schemaVersion: "1.0"` with `kid: "2024-key"`
 
@@ -354,6 +375,7 @@ Both are orthogonal. A token can have:
 ## Change Log
 
 ### 2026-04-28
+
 - Initial version (1.0) implemented
 - Schema versioning added to all token creation paths
 - Gateway validation implemented

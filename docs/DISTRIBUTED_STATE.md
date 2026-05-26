@@ -11,11 +11,11 @@ This document covers both.
 
 The Tool Gateway exposes an emergency kill switch with three scopes:
 
-| Scope | Effect |
-|-------|--------|
-| **Global** | Block every agent request fleet-wide |
-| **Session** | Block every request whose `context.sessionId` matches |
-| **Agent** | Block every request whose JWT `sub` (agent DID) matches |
+| Scope       | Effect                                                  |
+| ----------- | ------------------------------------------------------- |
+| **Global**  | Block every agent request fleet-wide                    |
+| **Session** | Block every request whose `context.sessionId` matches   |
+| **Agent**   | Block every request whose JWT `sub` (agent DID) matches |
 
 ### Architecture
 
@@ -50,7 +50,7 @@ keeping an in-memory snapshot refreshed by three complementary mechanisms:
 1. **Write-through (issuing pod).** Every mutating admin-API call writes to
    Redis first, then updates the local cache. The issuing pod observes its own
    change immediately.
-2. **Pub/sub (every other pod, *primary*).** After a successful Redis write the
+2. **Pub/sub (every other pod, _primary_).** After a successful Redis write the
    issuing pod publishes a granular event on `<prefix>events`. Every replica
    applies it to its local cache within single-digit milliseconds.
 3. **Periodic refresh (safety net).** A background timer (`KILL_SWITCH_REFRESH_INTERVAL_MS`,
@@ -74,12 +74,12 @@ eventual convergence.
 
 ### Redis key schema
 
-| Key | Type | Meaning |
-|-----|------|---------|
-| `<prefix>global` | String `"1"` | Global kill active; deleted when inactive |
-| `<prefix>killed_sessions` | SET | Killed session IDs |
-| `<prefix>killed_agents` | SET | Killed agent IDs |
-| `<prefix>events` | PUB/SUB channel | Real-time invalidation events (not persisted) |
+| Key                       | Type            | Meaning                                       |
+| ------------------------- | --------------- | --------------------------------------------- |
+| `<prefix>global`          | String `"1"`    | Global kill active; deleted when inactive     |
+| `<prefix>killed_sessions` | SET             | Killed session IDs                            |
+| `<prefix>killed_agents`   | SET             | Killed agent IDs                              |
+| `<prefix>events`          | PUB/SUB channel | Real-time invalidation events (not persisted) |
 
 Kill switches have no natural TTL — they remain in effect until explicitly
 revived via the admin API (`POST /admin/kill-switch/.../revive`) or
@@ -87,13 +87,13 @@ revived via the admin API (`POST /admin/kill-switch/.../revive`) or
 
 ### Configuration
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `REDIS_URL` | _(unset)_ | Redis endpoint. Required for distributed kill switch. |
-| `KILL_SWITCH_KEY_PREFIX` | `killswitch:` | Prefix for all kill-switch keys and the pub/sub channel. Override to share a Redis instance across environments. |
-| `KILL_SWITCH_REFRESH_INTERVAL_MS` | `30000` | Safety-net refresh interval. Set to `0` to disable (pub/sub-only). |
-| `KILL_SWITCH_FAIL_OPEN_ON_WRITE` | `false` | When `true`, write failures update only the local cache; other pods see the kill only after Redis recovers. |
-| `KILL_SWITCH_PUBSUB_ENABLED` | `true` | Set `false` to suppress the subscriber and rely on the periodic refresh (saves one Redis connection per pod). |
+| Variable                          | Default       | Meaning                                                                                                          |
+| --------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`                       | _(unset)_     | Redis endpoint. Required for distributed kill switch.                                                            |
+| `KILL_SWITCH_KEY_PREFIX`          | `killswitch:` | Prefix for all kill-switch keys and the pub/sub channel. Override to share a Redis instance across environments. |
+| `KILL_SWITCH_REFRESH_INTERVAL_MS` | `30000`       | Safety-net refresh interval. Set to `0` to disable (pub/sub-only).                                               |
+| `KILL_SWITCH_FAIL_OPEN_ON_WRITE`  | `false`       | When `true`, write failures update only the local cache; other pods see the kill only after Redis recovers.      |
+| `KILL_SWITCH_PUBSUB_ENABLED`      | `true`        | Set `false` to suppress the subscriber and rely on the periodic refresh (saves one Redis connection per pod).    |
 
 When `REDIS_URL` is unset the gateway falls back to `DefaultKillSwitchManager`
 (process-local memory only) and logs:
@@ -126,11 +126,11 @@ REDIS_URL not configured, using in-memory kill-switch manager
 
 ### Propagation SLA and staleness window
 
-| Propagation path | Latency | SLA guarantee |
-|-----------------|---------|---------------|
-| Pub/sub (issuing pod → all other pods) | < 10 ms typical | Sub-second under normal Redis connectivity |
-| Periodic refresh safety net | Up to `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30 s default |
-| Startup seed (new/restarted pod) | At startup, before first request | Always current at boot |
+| Propagation path                       | Latency                                 | SLA guarantee                              |
+| -------------------------------------- | --------------------------------------- | ------------------------------------------ |
+| Pub/sub (issuing pod → all other pods) | < 10 ms typical                         | Sub-second under normal Redis connectivity |
+| Periodic refresh safety net            | Up to `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30 s default                               |
+| Startup seed (new/restarted pod)       | At startup, before first request        | Always current at boot                     |
 
 **Worst-case staleness** is `KILL_SWITCH_REFRESH_INTERVAL_MS` (default **30 s**).
 This is the bounded window during which a newly-activated kill switch may not
@@ -209,20 +209,20 @@ when `REDIS_URL` is unset or when `EUNO_DEPLOYMENT_TIER=single-replica`. It is
 **not** shared across processes. `createRevocationStoreFromEnv` selects the
 appropriate backend automatically:
 
-| Condition | Backend |
-|-----------|---------|
-| `REDIS_URL` unset | `InMemoryRevocationStore` (+ informational log) |
-| `REDIS_URL` set, production or multi-replica | `RedisRevocationStore`; throws at startup if `ioredis` is missing |
+| Condition                                      | Backend                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `REDIS_URL` unset                              | `InMemoryRevocationStore` (+ informational log)                                        |
+| `REDIS_URL` set, production or multi-replica   | `RedisRevocationStore`; throws at startup if `ioredis` is missing                      |
 | `REDIS_URL` set, development or single-replica | `RedisRevocationStore`; falls back to in-memory with error log if `ioredis` is missing |
 
 ### Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REDIS_URL` | _(unset)_ | Redis connection URL. Required for multi-replica deployments. |
-| `REVOCATION_KEY_PREFIX` | `revoked:` | Redis key prefix for revocation entries. |
-| `REVOCATION_FAIL_OPEN` | `false` | When `true`, Redis errors fall open (treat token as not revoked). |
-| `REVOCATION_UNAVAILABLE_MODE` | _(none)_ | `fail-closed` (default), `503`, or `open` — controls gateway behaviour when Redis is unavailable. |
+| Variable                      | Default    | Description                                                                                       |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`                   | _(unset)_  | Redis connection URL. Required for multi-replica deployments.                                     |
+| `REVOCATION_KEY_PREFIX`       | `revoked:` | Redis key prefix for revocation entries.                                                          |
+| `REVOCATION_FAIL_OPEN`        | `false`    | When `true`, Redis errors fall open (treat token as not revoked).                                 |
+| `REVOCATION_UNAVAILABLE_MODE` | _(none)_   | `fail-closed` (default), `503`, or `open` — controls gateway behaviour when Redis is unavailable. |
 
 ### Kubernetes deployment example
 
@@ -231,9 +231,9 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gateway-config
-  namespace: euno-system
+  namespace: eunox-system
 data:
-  REDIS_URL: "redis://euno-redis:6379"
+  REDIS_URL: "redis://eunox-redis:6379"
   NODE_ENV: "production"
   EUNO_DEPLOYMENT_TIER: "multi-replica"
 ```
@@ -242,11 +242,11 @@ For managed Redis services:
 
 ```bash
 # Azure Cache for Redis (TLS)
-REDIS_URL=rediss://euno-cache.redis.cache.windows.net:6380
+REDIS_URL=rediss://eunox-cache.redis.cache.windows.net:6380
 REDIS_PASSWORD=<access-key>
 
 # AWS ElastiCache
-REDIS_URL=redis://euno-cache.abc123.use1.cache.amazonaws.com:6379
+REDIS_URL=redis://eunox-cache.abc123.use1.cache.amazonaws.com:6379
 
 # GCP Memorystore
 REDIS_URL=redis://10.0.0.3:6379
@@ -266,12 +266,12 @@ See `k8s/redis.yaml` for an in-cluster Redis deployment.
 
 ### Monitoring
 
-| Metric | Description |
-|--------|-------------|
-| `euno_gateway_revocation_list_size` | In-memory store size (always 0 when Redis is in use) |
+| Metric                                      | Description                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------- |
+| `euno_gateway_revocation_list_size`         | In-memory store size (always 0 when Redis is in use)                |
 | `euno_gateway_revocation_unavailable_total` | Revocation checks that returned 401/503 due to Redis unavailability |
-| Redis `DBSIZE` / `KEYS revoked:*` | Live revocation entries across the fleet |
-| Redis error logs | Logged at `error` level with fields `error`, `tokenId`, `failMode` |
+| Redis `DBSIZE` / `KEYS revoked:*`           | Live revocation entries across the fleet                            |
+| Redis error logs                            | Logged at `error` level with fields `error`, `tokenId`, `failMode`  |
 
 ### Performance
 

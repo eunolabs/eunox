@@ -37,11 +37,11 @@ Store the secret in your key-management system (e.g. Azure Key Vault, AWS Secret
 
 ### Accepted formats
 
-| Format | Example | Minimum length |
-|--------|---------|----------------|
-| 64-char lowercase hex | `openssl rand -hex 32` | 64 hex chars (= 32 bytes) |
-| Base64 | `openssl rand -base64 32` | decodes to ≥ 32 bytes |
-| Raw UTF-8 | any printable string | 32 chars |
+| Format                | Example                   | Minimum length            |
+| --------------------- | ------------------------- | ------------------------- |
+| 64-char lowercase hex | `openssl rand -hex 32`    | 64 hex chars (= 32 bytes) |
+| Base64                | `openssl rand -base64 32` | decodes to ≥ 32 bytes     |
+| Raw UTF-8             | any printable string      | 32 chars                  |
 
 ---
 
@@ -82,7 +82,7 @@ Create a new ledger table, configure the backend to write to it with the new sec
 AUDIT_LEDGER_TABLE=euno_audit_ledger_v2 \
 AUDIT_LEDGER_HMAC_SECRET=<new-secret> \
   node -e "
-const { PostgresLedgerBackend } = require('@euno/common-infra');
+const { PostgresLedgerBackend } = require('@eunox/common-infra');
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.POSTGRES_URL });
 const backend = new PostgresLedgerBackend({ pool, hmacSecret: process.env.AUDIT_LEDGER_HMAC_SECRET });
@@ -151,11 +151,11 @@ A future enhancement would store a `secret_version` column alongside `row_hmac` 
 
 ### Environment variables
 
-| Variable | Description |
-|----------|-------------|
+| Variable                   | Description                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
 | `AUDIT_LEDGER_HMAC_SECRET` | HMAC-SHA-256 secret (hex, base64, or UTF-8). Required when `ENABLE_CRYPTOGRAPHIC_AUDIT=true`. |
-| `AUDIT_LEDGER_TABLE` | Postgres table name (default `euno_audit_ledger`). Change this for Strategy A rotation. |
-| `AUDIT_LEDGER_SCHEMA_INIT` | Set `true` to run `CREATE TABLE IF NOT EXISTS` on startup. |
+| `AUDIT_LEDGER_TABLE`       | Postgres table name (default `euno_audit_ledger`). Change this for Strategy A rotation.       |
+| `AUDIT_LEDGER_SCHEMA_INIT` | Set `true` to run `CREATE TABLE IF NOT EXISTS` on startup.                                    |
 
 ### Kubernetes / Helm
 

@@ -1,6 +1,6 @@
-# Self-Hosting euno — BYO-GW Guide
+# Self-Hosting eunox — BYO-GW Guide
 
-> **Target audience:** Platform engineers and security teams running euno
+> **Target audience:** Platform engineers and security teams running eunox
 > infrastructure on their own cloud or on-premises.
 >
 > **Status:** Stage 5 (Enterprise) documentation. Self-hosting is available under the
@@ -9,6 +9,7 @@
 > in a competing product.
 >
 > **Related documents:**
+>
 > - [`docs/stage-3-design.md`](./stage-3-design.md) — authoritative Stage 3 architecture decisions
 > - [`docs/stage-4-design.md`](./stage-4-design.md) — Stage 4 hosted-identity architecture
 > - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — build and configuration reference
@@ -16,7 +17,7 @@
 > - [`docs/capability-model.md`](./capability-model.md) — enforcement invariants
 > - [`docs/security/minter-threat-model.md`](./security/minter-threat-model.md) — minter threat model
 > - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — Stage 5 enterprise threat model
-> - [`docs/migrating-from-local.md`](./migrating-from-local.md) — upgrading from `@euno/mcp` local mode
+> - [`docs/migrating-from-local.md`](./migrating-from-local.md) — upgrading from `@eunox/mcp` local mode
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP wiring recipes (including SCIM §8)
 > - [`docs/ADAPTERS.md`](./ADAPTERS.md) — identity and signing adapter reference
 > - [`docs/agent-sdk.md`](./agent-sdk.md) — AGT in-process guard SDK reference
@@ -29,15 +30,15 @@
 
 Self-hosting means you run **all** of the following infrastructure yourself, using the BSL-licensed images from this repository:
 
-| Component | Package | Purpose |
-|---|---|---|
-| **Capability Issuer** | `internal/issuer` | Issues signed JWT capability tokens from your identity store and KMS |
-| **Tool Gateway** | `internal/gateway` | Enforces capability tokens on every agent tool call |
-| **Redis** | BYO (≥ 6.2) | Shared state: call counters, kill-switch, revocation list, DPoP replay cache |
-| **Postgres** | BYO (≥ 14) | Durable truth: audit ledger, kill-switch persistence, revocation durability |
-| **KMS / signing key** | BYO (Azure Key Vault, AWS KMS, GCP Cloud KMS, or local for dev) | Signs capability tokens (issuer) and audit evidence (gateway) |
+| Component             | Package                                                         | Purpose                                                                      |
+| --------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Capability Issuer** | `internal/issuer`                                               | Issues signed JWT capability tokens from your identity store and KMS         |
+| **Tool Gateway**      | `internal/gateway`                                              | Enforces capability tokens on every agent tool call                          |
+| **Redis**             | BYO (≥ 6.2)                                                     | Shared state: call counters, kill-switch, revocation list, DPoP replay cache |
+| **Postgres**          | BYO (≥ 14)                                                      | Durable truth: audit ledger, kill-switch persistence, revocation durability  |
+| **KMS / signing key** | BYO (Azure Key Vault, AWS KMS, GCP Cloud KMS, or local for dev) | Signs capability tokens (issuer) and audit evidence (gateway)                |
 
-`@euno/mcp` itself (the agent-side proxy) is Apache-2.0 and does not require a
+`@eunox/mcp` itself (the agent-side proxy) is Apache-2.0 and does not require a
 self-hosted gateway. You only need this guide if you want persistent shared state
 — shared kill-switch, shared call counters, and a queryable audit ledger — across
 more than one agent process.
@@ -49,42 +50,42 @@ more than one agent process.
 The self-host bundle intentionally excludes the managed minter façade. The table
 below maps every Cloud feature to its self-host equivalent.
 
-| Feature | Cloud (Managed) | Self-host (BSL) |
-|---|---|---|
-| Local enforcement (`@euno/mcp` only) | ✅ | ✅ |
-| stdio + HTTP proxy transports | ✅ | ✅ |
-| All condition types (Stage 1–2) | ✅ | ✅ |
-| Local HMAC audit log | ✅ | ✅ |
-| `euno-mcp validate-token` / `stats` | ✅ | ✅ |
-| Remote enforcer mode (`enforcer: url`) | ✅ | ✅ |
-| KMS-backed audit signer | ✅ | ✅ (BYO KMS) |
-| Redis call-counter store | ✅ | ✅ (BYO Redis) |
-| Redis kill-switch manager | ✅ | ✅ (BYO Redis) |
-| Postgres audit ledger | ✅ | ✅ (BYO Postgres) |
-| Audit query API | Cloud-managed retention | ✅ (you manage retention) |
-| Kill-switch admin API | ✅ | ✅ |
-| **API-key minter façade** (`sk-...` → JWT) | ✅ | ❌ — issue tokens directly via capability-issuer |
-| SSO via OIDC | Cloud Team + | ❌ — bring your own IdP integration |
-| Evidence export (signed OCSF) | Cloud Enterprise | ✅ — `GET /api/v1/audit/export` (§12.5) |
-| On-prem signing key (BYO HSM) | Cloud Enterprise | ✅ |
-| SOC2 attestation docs | Cloud Enterprise | ✅ — see §12.13 compliance checklists |
-| Cross-chain audit anchor | Cloud Enterprise | ✅ — `AUDIT_LEDGER_BACKEND=per-replica-postgres` (§12.4) |
-| Partner DID federation | Cloud Enterprise | ✅ — two-eyes DID registry (§12.2) |
-| SCIM 2.0 provisioning | Cloud Enterprise | ✅ — `/scim/v2/` endpoints (§12.3) |
-| DB credential issuance | Cloud Enterprise | ✅ — db-token-service (§12.6) |
-| Storage-grant issuance | Cloud Enterprise | ✅ — storage-grant-service (§12.7) |
-| AGT in-process guard | Cloud Enterprise | ✅ — `createAgtGuard()` (§12.8) |
-| Discovery endpoint v1.0.0 | Cloud Enterprise | ✅ — `/.well-known/capability-issuer` (§12.9) |
-| Helm chart + air-gap bundle | Cloud Enterprise | ✅ — `k8s/helm/` (§12.10) |
+| Feature                                    | Cloud (Managed)         | Self-host (BSL)                                          |
+| ------------------------------------------ | ----------------------- | -------------------------------------------------------- |
+| Local enforcement (`@eunox/mcp` only)      | ✅                      | ✅                                                       |
+| stdio + HTTP proxy transports              | ✅                      | ✅                                                       |
+| All condition types (Stage 1–2)            | ✅                      | ✅                                                       |
+| Local HMAC audit log                       | ✅                      | ✅                                                       |
+| `eunox-mcp validate-token` / `stats`       | ✅                      | ✅                                                       |
+| Remote enforcer mode (`enforcer: url`)     | ✅                      | ✅                                                       |
+| KMS-backed audit signer                    | ✅                      | ✅ (BYO KMS)                                             |
+| Redis call-counter store                   | ✅                      | ✅ (BYO Redis)                                           |
+| Redis kill-switch manager                  | ✅                      | ✅ (BYO Redis)                                           |
+| Postgres audit ledger                      | ✅                      | ✅ (BYO Postgres)                                        |
+| Audit query API                            | Cloud-managed retention | ✅ (you manage retention)                                |
+| Kill-switch admin API                      | ✅                      | ✅                                                       |
+| **API-key minter façade** (`sk-...` → JWT) | ✅                      | ❌ — issue tokens directly via capability-issuer         |
+| SSO via OIDC                               | Cloud Team +            | ❌ — bring your own IdP integration                      |
+| Evidence export (signed OCSF)              | Cloud Enterprise        | ✅ — `GET /api/v1/audit/export` (§12.5)                  |
+| On-prem signing key (BYO HSM)              | Cloud Enterprise        | ✅                                                       |
+| SOC2 attestation docs                      | Cloud Enterprise        | ✅ — see §12.13 compliance checklists                    |
+| Cross-chain audit anchor                   | Cloud Enterprise        | ✅ — `AUDIT_LEDGER_BACKEND=per-replica-postgres` (§12.4) |
+| Partner DID federation                     | Cloud Enterprise        | ✅ — two-eyes DID registry (§12.2)                       |
+| SCIM 2.0 provisioning                      | Cloud Enterprise        | ✅ — `/scim/v2/` endpoints (§12.3)                       |
+| DB credential issuance                     | Cloud Enterprise        | ✅ — db-token-service (§12.6)                            |
+| Storage-grant issuance                     | Cloud Enterprise        | ✅ — storage-grant-service (§12.7)                       |
+| AGT in-process guard                       | Cloud Enterprise        | ✅ — `createAgtGuard()` (§12.8)                          |
+| Discovery endpoint v1.0.0                  | Cloud Enterprise        | ✅ — `/.well-known/capability-issuer` (§12.9)            |
+| Helm chart + air-gap bundle                | Cloud Enterprise        | ✅ — `k8s/helm/` (§12.10)                                |
 
 ### The key difference: no managed minter
 
-In the managed Cloud offering, `@euno/mcp` sends an `sk-...` API key; the cloud
+In the managed Cloud offering, `@eunox/mcp` sends an `sk-...` API key; the cloud
 minter verifies it and mints a short-lived signed JWT before the request reaches
 the gateway.
 
 **Self-hosters must issue their own JWT capability tokens** via the
-`capability-issuer` service (or any compatible issuer). The `@euno/mcp`
+`capability-issuer` service (or any compatible issuer). The `@eunox/mcp`
 remote-enforcer mode accepts a pre-issued JWT in the `Authorization` header
 instead of an `sk-...` API key when pointed at a self-hosted gateway. The gateway
 verifier path is identical — the cryptographic-token invariant is preserved, only
@@ -109,7 +110,7 @@ the issuance front-door changes.
 │           │                   │  GET  /api/v1/audit/records      │  │
 │           ▼                   │  POST /admin/kill-switch/...     │  │
 │  ┌────────────────┐           │                                  │  │
-│  │  @euno/mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
+│  │  @eunox/mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
 │  │  (agent proxy) │           └──────────┬───────────────────────┘  │
 │  └────────────────┘                      │  R/W                     │
 │                                          ▼                          │
@@ -175,14 +176,14 @@ policy YAML/JSON) as claims. To issue one you need:
 
 ```bash
 # Create a directory for the self-host stack (outside the repo)
-mkdir -p /srv/euno/keys && chmod 700 /srv/euno/keys
+mkdir -p /srv/eunox/keys && chmod 700 /srv/eunox/keys
 
 # Create an EC P-256 asymmetric signing key in AWS KMS (ES256)
 # Note: you must have the AWS CLI configured with sufficient IAM permissions.
 aws kms create-key \
   --key-usage SIGN_VERIFY \
   --key-spec ECC_NIST_P256 \
-  --description "euno capability-issuer signing key (dev)" \
+  --description "eunox capability-issuer signing key (dev)" \
   --region us-east-1
 
 # The output includes "KeyId" — copy it; you'll need it in Step 3.
@@ -202,7 +203,7 @@ aws kms create-key \
 
 #### Step 2 — Write a capability policy manifest
 
-Create `/srv/euno/policies/agent.yaml` following the pattern in
+Create `/srv/eunox/policies/agent.yaml` following the pattern in
 [`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md):
 
 ```yaml
@@ -222,12 +223,12 @@ requiredCapabilities:
 Validate the manifest before deploying:
 
 ```bash
-npx -y @euno/mcp validate-policy /srv/euno/policies/agent.yaml
+npx -y @eunox/mcp validate-policy /srv/eunox/policies/agent.yaml
 ```
 
 #### Step 3 — Configure the capability issuer
 
-Create `/srv/euno/issuer.env`:
+Create `/srv/eunox/issuer.env`:
 
 ```bash
 # Runtime
@@ -262,7 +263,7 @@ ENABLE_DETAILED_LOGGING=false
 
 #### Step 4 — Configure the tool gateway
 
-Create `/srv/euno/gateway.env`:
+Create `/srv/eunox/gateway.env`:
 
 ```bash
 # Runtime
@@ -280,8 +281,8 @@ ISSUER_JWKS_URL=http://capability-issuer:3001/.well-known/jwks.json
 # Audit evidence signing: local EC P-256 key for dev (no KMS required for the gateway).
 # Generate:
 #   openssl ecparam -name prime256v1 -genkey -noout \
-#     | openssl pkcs8 -topk8 -nocrypt -out /srv/euno/keys/audit-signing.pem
-#   chmod 600 /srv/euno/keys/audit-signing.pem
+#     | openssl pkcs8 -topk8 -nocrypt -out /srv/eunox/keys/audit-signing.pem
+#   chmod 600 /srv/eunox/keys/audit-signing.pem
 ENABLE_CRYPTOGRAPHIC_AUDIT=true
 EVIDENCE_SIGNED_DECISIONS=deny
 EVIDENCE_SIGNING_KEY_FILE=/app/keys/audit-signing.pem
@@ -303,7 +304,7 @@ AUDIT_LEDGER_BACKEND=none
 #### Step 5 — Start the local stack
 
 ```bash
-docker compose -f /srv/euno/docker-compose.yml up
+docker compose -f /srv/eunox/docker-compose.yml up
 ```
 
 See §4.5 for the `docker-compose.yml`.
@@ -331,10 +332,10 @@ curl -s -X POST http://localhost:3001/api/v1/issue \
 # → { "token": "eyJ...", "expiresAt": 1747000000, "tokenId": "jti-...", "capabilities": [...] }
 ```
 
-Store the returned `token` value; it is what `@euno/mcp` will forward in
+Store the returned `token` value; it is what `@eunox/mcp` will forward in
 `Authorization: Bearer` when calling `POST /api/v1/enforce`.
 
-#### Step 7 — Configure @euno/mcp to use the self-hosted gateway
+#### Step 7 — Configure @eunox/mcp to use the self-hosted gateway
 
 In your `claude_desktop_config.json` (or equivalent MCP host config), pass the
 pre-issued JWT instead of an `sk-...` API key:
@@ -345,19 +346,26 @@ pre-issued JWT instead of an `sk-...` API key:
     "my-server": {
       "command": "npx",
       "args": [
-        "-y", "@euno/mcp", "proxy",
-        "--enforcer-url", "http://localhost:3002",
-        "--enforcer-api-key", "<the-jwt-from-step-6>",
+        "-y",
+        "@eunox/mcp",
+        "proxy",
+        "--enforcer-url",
+        "http://localhost:3002",
+        "--enforcer-api-key",
+        "<the-jwt-from-step-6>",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
-      ]
-    }
-  }
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/data",
+      ],
+    },
+  },
 }
 ```
 
 > **Token expiry:** The JWT expires after `DEFAULT_TOKEN_TTL` seconds. The
-> `--enforcer-api-key` is a static bearer token — `@euno/mcp` does not
+> `--enforcer-api-key` is a static bearer token — `@eunox/mcp` does not
 > automatically re-issue it. Before the token expires, re-issue a fresh JWT
 > from the issuer (§6.1) and update the config, then restart the proxy.
 
@@ -379,16 +387,16 @@ This recipe intentionally omits:
 
 Capabilities that require the omitted components:
 
-| Omitted component | Impact |
-|---|---|
-| Redis | Call-rate counters (`maxCalls`) are per-replica only; kill-switch changes are not shared across gateway replicas; revocation list is in-memory |
-| Postgres | Audit records are ephemeral (lost on restart); audit query API returns no results |
-| Enterprise OIDC | Callers must present DID-bound JWTs; Azure AD / Cognito / GCP-issued OIDC tokens are not accepted |
-| Gateway-side KMS | Audit evidence signatures are produced by a software PEM key; a compromised host leaks the audit signing key |
+| Omitted component | Impact                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Redis             | Call-rate counters (`maxCalls`) are per-replica only; kill-switch changes are not shared across gateway replicas; revocation list is in-memory |
+| Postgres          | Audit records are ephemeral (lost on restart); audit query API returns no results                                                              |
+| Enterprise OIDC   | Callers must present DID-bound JWTs; Azure AD / Cognito / GCP-issued OIDC tokens are not accepted                                              |
+| Gateway-side KMS  | Audit evidence signatures are produced by a software PEM key; a compromised host leaks the audit signing key                                   |
 
 ### 4.4 Docker Compose for the local stack
 
-Create `/srv/euno/docker-compose.yml`:
+Create `/srv/eunox/docker-compose.yml`:
 
 ```yaml
 # Local self-host stack: capability-issuer + tool-gateway (no Redis, no Postgres)
@@ -400,10 +408,10 @@ version: "3.9"
 services:
   capability-issuer:
     image: ghcr.io/edgeobs/eunox/issuer:1.0.0
-    container_name: euno-issuer
-    env_file: /srv/euno/issuer.env
+    container_name: eunox-issuer
+    env_file: /srv/eunox/issuer.env
     volumes:
-      - /srv/euno/policies:/app/policies:ro
+      - /srv/eunox/policies:/app/policies:ro
     ports:
       - "3001:3001"
     healthcheck:
@@ -414,16 +422,16 @@ services:
 
   tool-gateway:
     image: ghcr.io/edgeobs/eunox/gateway:1.0.0
-    container_name: euno-gateway
-    env_file: /srv/euno/gateway.env
+    container_name: eunox-gateway
+    env_file: /srv/eunox/gateway.env
     volumes:
-      - /srv/euno/keys:/app/keys:ro
+      - /srv/eunox/keys:/app/keys:ro
     depends_on:
       capability-issuer:
         condition: service_healthy
     ports:
       - "3002:3002"
-      - "127.0.0.1:3003:3003"    # admin — host-side loopback only
+      - "127.0.0.1:3003:3003" # admin — host-side loopback only
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
       interval: 10s
@@ -440,11 +448,11 @@ services:
 For production, the capability-issuer signing key MUST be stored in a managed
 KMS or HSM. The three supported backends are:
 
-| Backend | `SIGNING_PROVIDER` value | FIPS 140-2 Level | Per-tenant key isolation |
-|---|---|---|---|
-| Azure Key Vault (Managed HSM) | `azure-keyvault` | Level 3 (HSM keys) | ✅ via `keysByPolicyHash` |
-| AWS KMS | `aws-kms` | Level 3 (CloudHSM-backed CMKs) | ✅ separate CMK per tenant |
-| GCP Cloud KMS | `gcp-cloudkms` | Level 3 (HSM protection level) | ✅ separate CryptoKey per tenant |
+| Backend                       | `SIGNING_PROVIDER` value | FIPS 140-2 Level               | Per-tenant key isolation         |
+| ----------------------------- | ------------------------ | ------------------------------ | -------------------------------- |
+| Azure Key Vault (Managed HSM) | `azure-keyvault`         | Level 3 (HSM keys)             | ✅ via `keysByPolicyHash`        |
+| AWS KMS                       | `aws-kms`                | Level 3 (CloudHSM-backed CMKs) | ✅ separate CMK per tenant       |
+| GCP Cloud KMS                 | `gcp-cloudkms`           | Level 3 (HSM protection level) | ✅ separate CryptoKey per tenant |
 
 **Azure Key Vault (recommended for hosted or Azure-primary deployments):**
 
@@ -471,7 +479,7 @@ AWS_KMS_REGION=us-east-1
 SIGNING_PROVIDER=gcp-cloudkms
 GCP_PROJECT_ID=my-project
 GCP_LOCATION_ID=us-central1
-GCP_KEYRING_ID=euno-signing
+GCP_KEYRING_ID=eunox-signing
 GCP_CRYPTOKEY_ID=capability-signing-key
 # Credentials via Workload Identity — no key file required in production
 ```
@@ -576,15 +584,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: euno
+      POSTGRES_USER: eunox
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
-      POSTGRES_DB: euno
+      POSTGRES_DB: eunox
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U euno"]
+      test: ["CMD-SHELL", "pg_isready -U eunox"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -606,7 +614,7 @@ services:
 
   capability-issuer:
     image: ghcr.io/edgeobs/eunox/issuer:1.0.0
-    container_name: euno-issuer
+    container_name: eunox-issuer
     env_file: ./issuer.env
     environment:
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
@@ -624,11 +632,11 @@ services:
 
   tool-gateway:
     image: ghcr.io/edgeobs/eunox/gateway:1.0.0
-    container_name: euno-gateway
+    container_name: eunox-gateway
     env_file: ./gateway.env
     environment:
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
-      AUDIT_LEDGER_PG_URL: "postgresql://euno:${POSTGRES_PASSWORD}@postgres:5432/euno"
+      AUDIT_LEDGER_PG_URL: "postgresql://eunox:${POSTGRES_PASSWORD}@postgres:5432/eunox"
     depends_on:
       capability-issuer:
         condition: service_healthy
@@ -638,7 +646,7 @@ services:
         condition: service_healthy
     ports:
       - "3002:3002"
-      - "127.0.0.1:3003:3003"    # admin port — never expose publicly
+      - "127.0.0.1:3003:3003" # admin port — never expose publicly
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
       interval: 10s
@@ -698,11 +706,11 @@ The response body contains:
 ### 6.2 Inspect a token
 
 ```bash
-npx -y @euno/mcp validate-token <token>
+npx -y @eunox/mcp validate-token <token>
 # Prints: issuer DID, agentId, conditions, expiry, and signature status
 ```
 
-### 6.3 Configure @euno/mcp with a pre-issued token
+### 6.3 Configure @eunox/mcp with a pre-issued token
 
 ```jsonc
 // claude_desktop_config.json or equivalent
@@ -711,21 +719,29 @@ npx -y @euno/mcp validate-token <token>
     "my-governed-server": {
       "command": "npx",
       "args": [
-        "-y", "@euno/mcp", "proxy",
-        "--enforcer-url", "http://gateway.internal:3002",
-        "--enforcer-api-key", "<token-from-step-6-1>",
-        "--enforcer-timeout", "5000",
+        "-y",
+        "@eunox/mcp",
+        "proxy",
+        "--enforcer-url",
+        "http://gateway.internal:3002",
+        "--enforcer-api-key",
+        "<token-from-step-6-1>",
+        "--enforcer-timeout",
+        "5000",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
-      ]
-    }
-  }
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/data",
+      ],
+    },
+  },
 }
 ```
 
-`@euno/mcp` includes the token as `Authorization: Bearer <token>` on every
+`@eunox/mcp` includes the token as `Authorization: Bearer <token>` on every
 `POST /api/v1/enforce` call. The gateway verifies the JWT signature and expiry on
-each request. Token expiry is not automatically handled by `@euno/mcp` — re-issue
+each request. Token expiry is not automatically handled by `@eunox/mcp` — re-issue
 a fresh JWT from the issuer before the token expires and update the config, then
 restart the proxy.
 
@@ -818,11 +834,11 @@ item in this checklist:
 
 ---
 
-## 10. Upgrading from @euno/mcp local mode
+## 10. Upgrading from @eunox/mcp local mode
 
 See [`docs/migrating-from-local.md`](./migrating-from-local.md) (Task 18) for
 the step-by-step upgrade path, including the manual policy migration and the
-interactive `euno-mcp upgrade-to-hosted` command (Task 15) that automates the
+interactive `eunox-mcp upgrade-to-hosted` command (Task 15) that automates the
 config change.
 
 The short version:
@@ -831,7 +847,7 @@ The short version:
 2. Issue a capability token for your agent (§6.1).
 3. Change `"enforcer": "local"` to `"enforcer": "http://gateway.internal:3002"` and add
    `"enforcerApiKey": "<token>"` in your MCP host config.
-4. Run `euno-mcp validate-token <token>` to confirm the gateway accepts it.
+4. Run `eunox-mcp validate-token <token>` to confirm the gateway accepts it.
 5. Tail gateway logs to confirm enforcement events are landing in Postgres.
 
 The policy YAML format is identical between local mode and the hosted gateway —
@@ -852,15 +868,15 @@ in a self-hosted deployment and how it differs from the managed cloud product.
 The following rows have changed since Stage 3. Rows not listed here are
 unchanged from §2.
 
-| Feature | Cloud (Managed) | Self-host (BSL) |
-|---|---|---|
-| **Capability issuer** | Managed (multi-tenant) | ✅ BYO single-tenant issuer |
-| **Entra ID / AWS Cognito IdP wiring** | Managed | ✅ — configure via env vars |
-| **Per-tenant IdP configuration** | Managed | ✅ — `ISSUER_TENANT_IDP_CONFIG_FILE` JSON |
-| **Manifest template store** | Cloud Team+ | ✅ BYO Postgres (`ISSUER_DB_URL`) |
-| **Admin operator-JWT auth** | Managed JWKS | ✅ BYO JWKS endpoint |
-| **SSO via OIDC** | Cloud Team+ | ✅ (single IdP or per-tenant) |
-| **API-key minter façade** (`sk-...` → JWT) | ✅ | ❌ — issue tokens directly |
+| Feature                                    | Cloud (Managed)        | Self-host (BSL)                           |
+| ------------------------------------------ | ---------------------- | ----------------------------------------- |
+| **Capability issuer**                      | Managed (multi-tenant) | ✅ BYO single-tenant issuer               |
+| **Entra ID / AWS Cognito IdP wiring**      | Managed                | ✅ — configure via env vars               |
+| **Per-tenant IdP configuration**           | Managed                | ✅ — `ISSUER_TENANT_IDP_CONFIG_FILE` JSON |
+| **Manifest template store**                | Cloud Team+            | ✅ BYO Postgres (`ISSUER_DB_URL`)         |
+| **Admin operator-JWT auth**                | Managed JWKS           | ✅ BYO JWKS endpoint                      |
+| **SSO via OIDC**                           | Cloud Team+            | ✅ (single IdP or per-tenant)             |
+| **API-key minter façade** (`sk-...` → JWT) | ✅                     | ❌ — issue tokens directly                |
 
 > **BYO-Issuer note:** Self-hosters now run the issuer alongside the gateway.
 > The managed minter façade (§2, "The key difference: no managed minter") is
@@ -877,70 +893,70 @@ going to production.
 
 #### 11.2.1 Identity provider (IdP)
 
-| Variable | Default | Notes |
-|---|---|---|
-| `IDENTITY_PROVIDER` | `azure-ad` | `azure-ad` \| `aws-cognito` \| `gcp-identity` |
-| `AZURE_AD_TENANT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
-| `AZURE_AD_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=azure-ad` |
-| `AWS_COGNITO_USER_POOL_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` (or set `AWS_COGNITO_ISSUER`) |
-| `AWS_COGNITO_CLIENT_ID` | — | Required when `IDENTITY_PROVIDER=aws-cognito` |
-| `GCP_IDENTITY_AUDIENCE` | — | Required when `IDENTITY_PROVIDER=gcp-identity` |
-| `ISSUER_TENANT_IDP_CONFIG_FILE` | — | Path to per-tenant IdP JSON (§11.3). Hot-reloaded on SIGHUP. |
+| Variable                        | Default    | Notes                                                                       |
+| ------------------------------- | ---------- | --------------------------------------------------------------------------- |
+| `IDENTITY_PROVIDER`             | `azure-ad` | `azure-ad` \| `aws-cognito` \| `gcp-identity`                               |
+| `AZURE_AD_TENANT_ID`            | —          | Required when `IDENTITY_PROVIDER=azure-ad`                                  |
+| `AZURE_AD_CLIENT_ID`            | —          | Required when `IDENTITY_PROVIDER=azure-ad`                                  |
+| `AWS_COGNITO_USER_POOL_ID`      | —          | Required when `IDENTITY_PROVIDER=aws-cognito` (or set `AWS_COGNITO_ISSUER`) |
+| `AWS_COGNITO_CLIENT_ID`         | —          | Required when `IDENTITY_PROVIDER=aws-cognito`                               |
+| `GCP_IDENTITY_AUDIENCE`         | —          | Required when `IDENTITY_PROVIDER=gcp-identity`                              |
+| `ISSUER_TENANT_IDP_CONFIG_FILE` | —          | Path to per-tenant IdP JSON (§11.3). Hot-reloaded on SIGHUP.                |
 
 #### 11.2.2 Token signing key
 
 The issuer signs capability tokens via a cloud KMS. Local file-based keys are
 **not supported** — a KMS key is required for all deployments.
 
-| Variable | Default | Notes |
-|---|---|---|
+| Variable           | Default          | Notes                                           |
+| ------------------ | ---------------- | ----------------------------------------------- |
 | `SIGNING_PROVIDER` | `azure-keyvault` | `azure-keyvault` \| `aws-kms` \| `gcp-cloudkms` |
 
 **Azure Key Vault** (`SIGNING_PROVIDER=azure-keyvault`):
 
-| Variable | Default | Notes |
-|---|---|---|
-| `AZURE_KEYVAULT_URL` | — | Required. E.g. `https://your-vault.vault.azure.net/` |
-| `AZURE_KEYVAULT_KEY_NAME` | `capability-signing-key` | Key name inside the vault. |
-| `AZURE_KEYVAULT_KEY_VERSION` | *(latest)* | Pin to a specific key version in production. |
-| `AZURE_CREDENTIAL_TYPE` | `default` | `default` \| `managed-identity` \| `client-secret` |
+| Variable                     | Default                  | Notes                                                |
+| ---------------------------- | ------------------------ | ---------------------------------------------------- |
+| `AZURE_KEYVAULT_URL`         | —                        | Required. E.g. `https://your-vault.vault.azure.net/` |
+| `AZURE_KEYVAULT_KEY_NAME`    | `capability-signing-key` | Key name inside the vault.                           |
+| `AZURE_KEYVAULT_KEY_VERSION` | _(latest)_               | Pin to a specific key version in production.         |
+| `AZURE_CREDENTIAL_TYPE`      | `default`                | `default` \| `managed-identity` \| `client-secret`   |
 
 **AWS KMS** (`SIGNING_PROVIDER=aws-kms`):
 
-| Variable | Default | Notes |
-|---|---|---|
-| `AWS_KMS_KEY_ID` | — | Required. KMS key ARN or ID. |
-| `AWS_KMS_REGION` | `us-east-1` | AWS region of the key. |
+| Variable         | Default     | Notes                        |
+| ---------------- | ----------- | ---------------------------- |
+| `AWS_KMS_KEY_ID` | —           | Required. KMS key ARN or ID. |
+| `AWS_KMS_REGION` | `us-east-1` | AWS region of the key.       |
 
 **GCP Cloud KMS** (`SIGNING_PROVIDER=gcp-cloudkms`):
 
-| Variable | Default | Notes |
-|---|---|---|
-| `GCP_PROJECT_ID` | — | Required. GCP project containing the key ring. |
-| `GCP_KEYRING_ID` | — | Required. KMS key ring ID. |
-| `GCP_CRYPTOKEY_ID` | — | Required. KMS crypto key ID. |
-| `GCP_CRYPTOKEY_VERSION` | *(primary)* | Pin to a specific key version in production. |
-| `GCP_LOCATION_ID` | `us-central1` | KMS location. |
+| Variable                | Default       | Notes                                          |
+| ----------------------- | ------------- | ---------------------------------------------- |
+| `GCP_PROJECT_ID`        | —             | Required. GCP project containing the key ring. |
+| `GCP_KEYRING_ID`        | —             | Required. KMS key ring ID.                     |
+| `GCP_CRYPTOKEY_ID`      | —             | Required. KMS crypto key ID.                   |
+| `GCP_CRYPTOKEY_VERSION` | _(primary)_   | Pin to a specific key version in production.   |
+| `GCP_LOCATION_ID`       | `us-central1` | KMS location.                                  |
 
 #### 11.2.3 Manifest template store (Postgres)
 
-| Variable | Default | Notes |
-|---|---|---|
-| `ISSUER_DB_URL` | — | `postgres://…` DSN. When unset, template store is disabled (direct-manifest mode only). |
-| `ISSUER_DB_SCHEMA` | `public` | Postgres schema for template tables. Must be a valid SQL identifier. |
-| `ISSUER_DB_SCHEMA_INIT` | `false` | Set to `true` on first run to create tables automatically. |
+| Variable                | Default  | Notes                                                                                   |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------- |
+| `ISSUER_DB_URL`         | —        | `postgres://…` DSN. When unset, template store is disabled (direct-manifest mode only). |
+| `ISSUER_DB_SCHEMA`      | `public` | Postgres schema for template tables. Must be a valid SQL identifier.                    |
+| `ISSUER_DB_SCHEMA_INIT` | `false`  | Set to `true` on first run to create tables automatically.                              |
 
 #### 11.2.4 Admin API authentication
 
 Operator endpoints (`PUT /api/v1/admin/role-policy`, `/api/v1/admin/templates/*`) are
 protected by one of two auth mechanisms — configure exactly one:
 
-| Variable | Default | Notes |
-|---|---|---|
-| `ISSUER_ADMIN_JWKS_URI` | — | URL of your operator JWKS endpoint. Preferred for production. |
-| `ISSUER_ADMIN_JWT_AUDIENCE` | — | Required when `ISSUER_ADMIN_JWKS_URI` is set. |
-| `ISSUER_ADMIN_JWT_ISSUER` | — | Optional issuer check on operator JWTs. |
-| `ISSUER_ADMIN_API_KEY` | — | Shared-secret fallback. Must be ≥ 32 chars and not equal to `dev-issuer-admin-key` in production. |
+| Variable                    | Default | Notes                                                                                             |
+| --------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `ISSUER_ADMIN_JWKS_URI`     | —       | URL of your operator JWKS endpoint. Preferred for production.                                     |
+| `ISSUER_ADMIN_JWT_AUDIENCE` | —       | Required when `ISSUER_ADMIN_JWKS_URI` is set.                                                     |
+| `ISSUER_ADMIN_JWT_ISSUER`   | —       | Optional issuer check on operator JWTs.                                                           |
+| `ISSUER_ADMIN_API_KEY`      | —       | Shared-secret fallback. Must be ≥ 32 chars and not equal to `dev-issuer-admin-key` in production. |
 
 > In production, `NODE_ENV=production` **requires** either
 > `ISSUER_ADMIN_JWKS_URI` or a strong `ISSUER_ADMIN_API_KEY`. The issuer
@@ -948,14 +964,14 @@ protected by one of two auth mechanisms — configure exactly one:
 
 #### 11.2.5 Rate limiting and other settings
 
-| Variable | Default | Notes |
-|---|---|---|
-| `ISSUANCE_RATE_LIMIT_ENABLED` | `true` | Set to `false` only in development. |
-| `ISSUANCE_RATE_LIMIT_MAX` | `60` | Max issuances per `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` per `(tenantId, userId, agentId)` tuple. |
-| `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` | `60` | Tumbling window (seconds) for the per-user rate limiter. |
-| `ISSUER_REGION` | — | Logical region tag stamped into issued tokens (`region` claim). |
-| `DEFAULT_TOKEN_TTL` | `900` | Default capability-token lifetime (seconds). Can be overridden per-request. |
-| `EUNO_TELEMETRY` | *(unset)* | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNO_TELEMETRY_URL`). |
+| Variable                             | Default   | Notes                                                                                           |
+| ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------- |
+| `ISSUANCE_RATE_LIMIT_ENABLED`        | `true`    | Set to `false` only in development.                                                             |
+| `ISSUANCE_RATE_LIMIT_MAX`            | `60`      | Max issuances per `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` per `(tenantId, userId, agentId)` tuple. |
+| `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` | `60`      | Tumbling window (seconds) for the per-user rate limiter.                                        |
+| `ISSUER_REGION`                      | —         | Logical region tag stamped into issued tokens (`region` claim).                                 |
+| `DEFAULT_TOKEN_TTL`                  | `900`     | Default capability-token lifetime (seconds). Can be overridden per-request.                     |
+| `EUNO_TELEMETRY`                     | _(unset)_ | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNO_TELEMETRY_URL`).  |
 
 ### 11.3 Per-tenant IdP configuration
 
@@ -990,6 +1006,7 @@ points to a JSON file that maps tenant IDs to IdP configurations.
 
 The top-level `tenants` object is keyed by logical `tenantId` values (the value
 that appears in issued tokens). Each entry must specify:
+
 - `provider`: one of `azure-ad`, `aws-cognito`, or `gcp-identity`
 - A provider-specific sub-object: `azureAD`, `awsCognito`, or `gcpIdentity`
 
@@ -1001,7 +1018,7 @@ hot-reloaded on `SIGHUP` — no restart required after adding a new tenant.
 
 ```bash
 # After updating the JSON file:
-kill -HUP $(cat /var/run/euno-issuer.pid)
+kill -HUP $(cat /var/run/eunox-issuer.pid)
 # Issuer logs: "SIGHUP received: reloading tenant IdP config"
 ```
 
@@ -1061,11 +1078,11 @@ The issuer delegates all token signing to a cloud KMS. Local file-based keys
 are **not supported** — all deployments require a KMS key. The choice of KMS
 provider affects your blast radius if the key-management plane is compromised.
 
-| Mode | `SIGNING_PROVIDER` | Use case |
-|---|---|---|
-| **Azure Key Vault** | `azure-keyvault` | Entra ID deployments; managed identity is the preferred credential |
-| **AWS KMS** | `aws-kms` | Cognito / AWS-native deployments; IAM role for credentials |
-| **GCP Cloud KMS** | `gcp-cloudkms` | GCP-native deployments; ADC or service-account key file |
+| Mode                | `SIGNING_PROVIDER` | Use case                                                           |
+| ------------------- | ------------------ | ------------------------------------------------------------------ |
+| **Azure Key Vault** | `azure-keyvault`   | Entra ID deployments; managed identity is the preferred credential |
+| **AWS KMS**         | `aws-kms`          | Cognito / AWS-native deployments; IAM role for credentials         |
+| **GCP Cloud KMS**   | `gcp-cloudkms`     | GCP-native deployments; ADC or service-account key file            |
 
 > **Full trade-off analysis:** See
 > [`docs/security/issuer-identity-threat-model.md §7`](./security/issuer-identity-threat-model.md)
@@ -1190,10 +1207,10 @@ ISSUER_ADMIN_JWT_ISSUER=https://sts.windows.net/<tenant-id>/
 NODE_ENV=production
 ```
 
-**Entra App Role → euno role mapping:**
+**Entra App Role → eunox role mapping:**
 
 ```bash
-# Push a role-policy that maps Entra App Roles to euno capability roles.
+# Push a role-policy that maps Entra App Roles to eunox capability roles.
 curl -X PUT https://issuer.internal:4000/api/v1/admin/role-policy \
   -H "Authorization: Bearer <operator-jwt>" \
   -H "Content-Type: application/json" \
@@ -1213,10 +1230,10 @@ bring up the complete Stage-4 stack:
 ```yaml
 services:
   capability-issuer:
-    image: ghcr.io/euno/capability-issuer:stage4
+    image: ghcr.io/eunox/capability-issuer:stage4
     depends_on:
       - db
-      - mock-oidc      # Remove in production; use real IdP
+      - mock-oidc # Remove in production; use real IdP
     environment:
       IDENTITY_PROVIDER: aws-cognito
       AWS_COGNITO_USER_POOL_ID: "${AWS_COGNITO_USER_POOL_ID}"
@@ -1224,7 +1241,7 @@ services:
       SIGNING_PROVIDER: aws-kms
       AWS_KMS_KEY_ID: "${AWS_KMS_KEY_ID}"
       AWS_KMS_REGION: "${AWS_REGION:-us-east-1}"
-      ISSUER_DB_URL: "postgres://euno:euno@db:5432/euno"
+      ISSUER_DB_URL: "postgres://eunox:eunox@db:5432/eunox"
       ISSUER_DB_SCHEMA_INIT: "true"
       ISSUER_ADMIN_API_KEY: "${ISSUER_ADMIN_API_KEY}"
       NODE_ENV: production
@@ -1235,7 +1252,7 @@ services:
   # Minimal OIDC mock for local development / smoke tests.
   # Remove from production deployments and replace with a real IdP.
   mock-oidc:
-    image: ghcr.io/euno/mock-oidc:stage4
+    image: ghcr.io/eunox/mock-oidc:stage4
     environment:
       PORT: "4100"
     ports:
@@ -1258,12 +1275,11 @@ In addition to the items in §9, review the following before going to production
 - [ ] **SIGHUP tested**: Confirm hot-reload works for your IdP config and role policy (`kill -HUP <pid>`) before relying on it for zero-downtime updates.
 - [ ] **Full threat model**: `docs/security/issuer-identity-threat-model.md` reviewed and sign-off obtained from engineer + security.
 
-
 ---
 
 ## 12. Stage 5 — Enterprise Deployment
 
-Stage 5 graduates euno from an enterprise-IdP-integrated issuance platform
+Stage 5 graduates eunox from an enterprise-IdP-integrated issuance platform
 (Stage 4) to a **compliance-signed, fully air-gappable enterprise deployment**
 targeting the CISO and external auditor as primary buyers. Four previously
 quarantined packages are promoted to stable (`1.0.0`), six capabilities are
@@ -1271,6 +1287,7 @@ added to existing packages, and all Stage-5 features ship in both the hosted
 product and the self-host bundle at parity.
 
 > **Key documents for this section**
+>
 > - [`docs/stage5executionplan.md`](./stage5executionplan.md) — full Stage-5 execution plan (Tasks 0–13)
 > - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — approved threat model (BLOCKING gate for Tasks 3, 6, 10)
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) §8 — SCIM 2.0 provisioning (Okta, Entra ID, Ping Identity)
@@ -1301,7 +1318,7 @@ The Stage-5 self-host stack adds four services to the Stage-4 base:
 │          │                └──────────────────┬──────────────────────────┘    │
 │          ▼                                   │ partner JWT                   │
 │  ┌───────────────────┐                       │                               │
-│  │  @euno/mcp        │── JWT ──────────────► │                               │
+│  │  @eunox/mcp        │── JWT ──────────────► │                               │
 │  │  (agent proxy)    │                       ▼                               │
 │  │  + AgtGuard       │             ┌─────────────────────────────────────┐   │
 │  │  (in-process)     │             │  Tool Gateway :3002                 │   │
@@ -1337,17 +1354,17 @@ The Stage-5 self-host stack adds four services to the Stage-4 base:
 
 #### Updated service list
 
-| Service | Package | Stage | Purpose |
-|---|---|---|---|
-| **Capability Issuer** | `capability-issuer` | 4+ | Issues JWT capability tokens; Stage-5 adds SCIM endpoints, OIDC discovery v1.0.0 |
-| **Tool Gateway** | `tool-gateway` | 3+ | Enforces capability tokens; Stage-5 adds partner-DID verification, audit-export endpoint, chain-proof endpoint |
-| **DB Token Service** | `db-token-service` | **5** | Exchanges a capability token for short-lived scoped database credentials |
-| **Storage Grant Service** | `storage-grant-service` | **5** | Exchanges a capability token for short-lived presigned URLs or SAS tokens |
-| **Posture Emitter** | `posture-emitter` | **5** | Durable WAL-queue that fans OCSF evidence records to compliance sinks |
-| **Partner Issuer Sim** | `partner-issuer-sim` | **5** | Reference simulator for partner-org DID-backed issuers (integration harness) |
-| **Redis** | BYO (>= 6.2) | 3+ | Revocation, kill-switch, call-counter, partner-DID circuit-breaker |
-| **Postgres** | BYO (>= 14) | 3+ | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`) |
-| **KMS** | BYO | 3+ | Signs capability tokens (issuer) and audit evidence (gateway) |
+| Service                   | Package                 | Stage | Purpose                                                                                                        |
+| ------------------------- | ----------------------- | ----- | -------------------------------------------------------------------------------------------------------------- |
+| **Capability Issuer**     | `capability-issuer`     | 4+    | Issues JWT capability tokens; Stage-5 adds SCIM endpoints, OIDC discovery v1.0.0                               |
+| **Tool Gateway**          | `tool-gateway`          | 3+    | Enforces capability tokens; Stage-5 adds partner-DID verification, audit-export endpoint, chain-proof endpoint |
+| **DB Token Service**      | `db-token-service`      | **5** | Exchanges a capability token for short-lived scoped database credentials                                       |
+| **Storage Grant Service** | `storage-grant-service` | **5** | Exchanges a capability token for short-lived presigned URLs or SAS tokens                                      |
+| **Posture Emitter**       | `posture-emitter`       | **5** | Durable WAL-queue that fans OCSF evidence records to compliance sinks                                          |
+| **Partner Issuer Sim**    | `partner-issuer-sim`    | **5** | Reference simulator for partner-org DID-backed issuers (integration harness)                                   |
+| **Redis**                 | BYO (>= 6.2)            | 3+    | Revocation, kill-switch, call-counter, partner-DID circuit-breaker                                             |
+| **Postgres**              | BYO (>= 14)             | 3+    | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`)         |
+| **KMS**                   | BYO                     | 3+    | Signs capability tokens (issuer) and audit evidence (gateway)                                                  |
 
 ---
 
@@ -1361,7 +1378,7 @@ The Stage-5 self-host stack adds four services to the Stage-4 base:
 > **Reference:** `docs/ADAPTERS.md` §"Partner Federation"; Stage-5 Task 3.
 
 Partner federation lets a remote organization issue capability tokens from
-their own W3C DID-backed signing key. The euno gateway accepts and
+their own W3C DID-backed signing key. The eunox gateway accepts and
 cryptographically verifies those tokens without sharing key material.
 
 #### 12.2.1 How it works
@@ -1377,17 +1394,17 @@ cryptographically verifies those tokens without sharing key material.
 
 #### 12.2.2 Gateway configuration reference
 
-| Variable | Default | Description |
-|---|---|---|
-| `PARTNER_DID_REGISTRY_REQUIRED` | `true` in production | When `true`, `TRUSTED_PARTNER_DIDS` is a startup error — use the two-eyes registry. |
-| `TRUSTED_PARTNER_DIDS` | — | Comma-separated DID allowlist (dev / bootstrap only; blocked in production). |
-| `PARTNER_DID_CACHE_TTL_SECONDS` | `300` | Positive-resolution DID cache TTL (seconds). |
-| `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` | `30` | Negative-resolution (NXDID) cache TTL (seconds). |
-| `PARTNER_DID_REQUIRE_PIN` | `false` | When `true`, every partner DID registration must include a pin attestation. |
-| `PARTNER_DID_CB_FAILURE_THRESHOLD` | `5` | Failures within `PARTNER_DID_CB_WINDOW_SECONDS` that open the circuit breaker. |
-| `PARTNER_DID_CB_WINDOW_SECONDS` | `60` | Sliding window (seconds) for circuit-breaker failure counting. |
-| `PARTNER_DID_CB_COOLDOWN_SECONDS` | `120` | Cooldown (seconds) before the circuit breaker enters half-open. |
-| `PARTNER_ISSUER_DISCOVERY_URL` | — | URL of a partner `/.well-known/capability-issuer` document. When set, auto-seeds the partner DID at startup (bypasses two-eyes — dev/staging only). |
+| Variable                                 | Default              | Description                                                                                                                                         |
+| ---------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PARTNER_DID_REGISTRY_REQUIRED`          | `true` in production | When `true`, `TRUSTED_PARTNER_DIDS` is a startup error — use the two-eyes registry.                                                                 |
+| `TRUSTED_PARTNER_DIDS`                   | —                    | Comma-separated DID allowlist (dev / bootstrap only; blocked in production).                                                                        |
+| `PARTNER_DID_CACHE_TTL_SECONDS`          | `300`                | Positive-resolution DID cache TTL (seconds).                                                                                                        |
+| `PARTNER_DID_NEGATIVE_CACHE_TTL_SECONDS` | `30`                 | Negative-resolution (NXDID) cache TTL (seconds).                                                                                                    |
+| `PARTNER_DID_REQUIRE_PIN`                | `false`              | When `true`, every partner DID registration must include a pin attestation.                                                                         |
+| `PARTNER_DID_CB_FAILURE_THRESHOLD`       | `5`                  | Failures within `PARTNER_DID_CB_WINDOW_SECONDS` that open the circuit breaker.                                                                      |
+| `PARTNER_DID_CB_WINDOW_SECONDS`          | `60`                 | Sliding window (seconds) for circuit-breaker failure counting.                                                                                      |
+| `PARTNER_DID_CB_COOLDOWN_SECONDS`        | `120`                | Cooldown (seconds) before the circuit breaker enters half-open.                                                                                     |
+| `PARTNER_ISSUER_DISCOVERY_URL`           | —                    | URL of a partner `/.well-known/capability-issuer` document. When set, auto-seeds the partner DID at startup (bypasses two-eyes — dev/staging only). |
 
 #### 12.2.3 Registering a partner DID (production workflow)
 
@@ -1422,10 +1439,10 @@ curl -X POST https://gateway.internal:3003/admin/partner-dids/proposals \
 
 #### 12.2.4 DID resolver configuration for air-gapped deployments
 
-| Variable | Default | Description |
-|---|---|---|
-| `ION_RESOLVER_URL` | `https://ion.msidentity.com/api/v1.0/identifiers` | Override for a self-hosted ION node or open-source ION sidecar. |
-| `DID_WEB_ALLOW_HTTP_FOR_HOSTS` | — | Hostnames where `did:web` may resolve over plain HTTP (development only). |
+| Variable                       | Default                                           | Description                                                               |
+| ------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| `ION_RESOLVER_URL`             | `https://ion.msidentity.com/api/v1.0/identifiers` | Override for a self-hosted ION node or open-source ION sidecar.           |
+| `DID_WEB_ALLOW_HTTP_FOR_HOSTS` | —                                                 | Hostnames where `did:web` may resolve over plain HTTP (development only). |
 
 For fully air-gapped deployments run the open-source
 [ION](https://github.com/decentralized-identity/ion) sidecar and set
@@ -1480,26 +1497,26 @@ ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-random-secret>
 ISSUER_SCIM_GROUP_ROLE_MAP='{"SalesTeam":"sales","EngineeringTeam":"engineer"}'
 
 # Required — SCIM data stored in Postgres alongside existing issuer tables
-ISSUER_DB_URL=postgres://euno:euno@db:5432/euno
+ISSUER_DB_URL=postgres://eunox:eunox@db:5432/eunox
 ISSUER_DB_SCHEMA_INIT=true   # creates SCIM tables on first run
 ```
 
 #### 12.3.3 SCIM endpoints
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/scim/v2/Users` | Provision a new user |
-| `GET` | `/scim/v2/Users` | List users (`?filter=`, `?count=`, `?startIndex=`) |
-| `GET` | `/scim/v2/Users/:id` | Get user by SCIM ID |
-| `PUT` | `/scim/v2/Users/:id` | Replace user (idempotent) |
-| `PATCH` | `/scim/v2/Users/:id` | Update attributes or active status |
-| `DELETE` | `/scim/v2/Users/:id` | Deprovision user (soft-delete) |
-| `POST` | `/scim/v2/Groups` | Provision a new group |
-| `GET` | `/scim/v2/Groups` | List groups |
-| `GET` | `/scim/v2/Groups/:id` | Get group by SCIM ID |
-| `PUT` | `/scim/v2/Groups/:id` | Replace group (full membership; idempotent) |
-| `PATCH` | `/scim/v2/Groups/:id` | Update membership delta |
-| `DELETE` | `/scim/v2/Groups/:id` | Remove group |
+| Method   | Path                  | Purpose                                            |
+| -------- | --------------------- | -------------------------------------------------- |
+| `POST`   | `/scim/v2/Users`      | Provision a new user                               |
+| `GET`    | `/scim/v2/Users`      | List users (`?filter=`, `?count=`, `?startIndex=`) |
+| `GET`    | `/scim/v2/Users/:id`  | Get user by SCIM ID                                |
+| `PUT`    | `/scim/v2/Users/:id`  | Replace user (idempotent)                          |
+| `PATCH`  | `/scim/v2/Users/:id`  | Update attributes or active status                 |
+| `DELETE` | `/scim/v2/Users/:id`  | Deprovision user (soft-delete)                     |
+| `POST`   | `/scim/v2/Groups`     | Provision a new group                              |
+| `GET`    | `/scim/v2/Groups`     | List groups                                        |
+| `GET`    | `/scim/v2/Groups/:id` | Get group by SCIM ID                               |
+| `PUT`    | `/scim/v2/Groups/:id` | Replace group (full membership; idempotent)        |
+| `PATCH`  | `/scim/v2/Groups/:id` | Update membership delta                            |
+| `DELETE` | `/scim/v2/Groups/:id` | Remove group                                       |
 
 All endpoints require `Authorization: Bearer <ISSUER_SCIM_BEARER_TOKEN>`.
 Wrong token returns `401 WWW-Authenticate: Bearer realm="SCIM"`.
@@ -1532,7 +1549,7 @@ live chain.
 ```env
 # Enable per-replica audit chains
 AUDIT_LEDGER_BACKEND=per-replica-postgres
-AUDIT_LEDGER_PG_URL=postgres://euno_audit:secret@db:5432/euno
+AUDIT_LEDGER_PG_URL=postgres://euno_audit:secret@db:5432/eunox
 AUDIT_LEDGER_HMAC_SECRET=<64-hex-chars from openssl rand -hex 32>
 AUDIT_LEDGER_RUN_MIGRATIONS=true       # single-replica / dev only
 
@@ -1611,11 +1628,11 @@ curl -s "https://gateway.internal:3002/api/v1/audit/export?cursor=<cursor>" \
   -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
 ```
 
-| Parameter | Values | Description |
-|---|---|---|
-| `scope` | `soc2-cc6`, `soc2-cc7`, `all` | `cc6` = logical access controls; `cc7` = system operations. |
-| `cursor` | opaque string | Pagination cursor from previous response. Expires 24 h after issue. |
-| `pageSize` | 1–1000 | Max records per page (default 100). |
+| Parameter  | Values                        | Description                                                         |
+| ---------- | ----------------------------- | ------------------------------------------------------------------- |
+| `scope`    | `soc2-cc6`, `soc2-cc7`, `all` | `cc6` = logical access controls; `cc7` = system operations.         |
+| `cursor`   | opaque string                 | Pagination cursor from previous response. Expires 24 h after issue. |
+| `pageSize` | 1–1000                        | Max records per page (default 100).                                 |
 
 #### 12.5.2 Offline evidence verification
 
@@ -1639,7 +1656,7 @@ control mapping and the auditor-facing export procedure.
 ```env
 POSTURE_EMITTER_ENABLED=true
 POSTURE_EMITTER_PLUGINS=durable         # SQLite WAL queue
-POSTURE_DURABLE_QUEUE_PATH=/var/lib/euno/posture.db  # persistent volume path
+POSTURE_DURABLE_QUEUE_PATH=/var/lib/eunox/posture.db  # persistent volume path
 ```
 
 For HA (multi-replica) deployments use a Redis-stream queue drainer. See
@@ -1674,7 +1691,7 @@ DB_USERNAME_POLICY_FILE=/app/config/db-usernames.json
 
 # Cloud IAM (set one block for your provider)
 # AWS RDS IAM
-AWS_DB_TOKEN_ROLE_ARN=arn:aws:iam::123456789012:role/euno-db-token-role
+AWS_DB_TOKEN_ROLE_ARN=arn:aws:iam::123456789012:role/eunox-db-token-role
 # Azure SQL AAD — set AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET or use workload identity
 ```
 
@@ -1729,11 +1746,11 @@ curl -X POST https://db-token-service.internal:5050/api/v1/db-tokens \
 
 #### 12.6.3 Operational endpoints
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Liveness — always returns `{ status: "healthy" }` |
-| `GET /health/ready` | Readiness — 503 when `DB_TOKENS_ENABLED=false` or no minters configured |
-| `GET /.well-known/db-token-service` | Service metadata (issuerDid, audience, endpoints) |
+| Endpoint                            | Purpose                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `GET /health`                       | Liveness — always returns `{ status: "healthy" }`                       |
+| `GET /health/ready`                 | Readiness — 503 when `DB_TOKENS_ENABLED=false` or no minters configured |
+| `GET /.well-known/db-token-service` | Service metadata (issuerDid, audience, endpoints)                       |
 
 > **Blast radius note:** A stolen DB credential grants access only to the
 > exact DB instance and user listed in the capability constraint. The credential
@@ -1768,7 +1785,7 @@ STORAGE_GRANT_MAX_TTL_SECONDS=900
 
 # Cloud IAM (set one block for your provider)
 # AWS S3
-AWS_STORAGE_GRANT_ROLE_ARN=arn:aws:iam::123456789012:role/euno-storage-grant-role
+AWS_STORAGE_GRANT_ROLE_ARN=arn:aws:iam::123456789012:role/eunox-storage-grant-role
 # Azure Blob — use workload identity or AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
 # GCP Cloud Storage — use Workload Identity Federation or GOOGLE_APPLICATION_CREDENTIALS
 ```
@@ -1797,11 +1814,11 @@ curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
 
 #### 12.7.3 Operational endpoints
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Liveness — always returns `{ status: "healthy" }` |
-| `GET /health/ready` | Readiness — 503 when `STORAGE_GRANTS_ENABLED=false` or no minters configured |
-| `GET /.well-known/storage-grant-service` | Service metadata (issuerDid, audience, endpoints) |
+| Endpoint                                 | Purpose                                                                      |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET /health`                            | Liveness — always returns `{ status: "healthy" }`                            |
+| `GET /health/ready`                      | Readiness — 503 when `STORAGE_GRANTS_ENABLED=false` or no minters configured |
+| `GET /.well-known/storage-grant-service` | Service metadata (issuerDid, audience, endpoints)                            |
 
 ---
 
@@ -1810,7 +1827,7 @@ curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
 > **Reference:** `docs/agent-sdk.md` §"AGT in-process guard";
 > `docs/diagrams.md` Set D; Stage-5 Task 8.
 
-The AGT guard (`createAgtGuard()` from `@euno/agent-runtime`) is an in-process
+The AGT guard (`createAgtGuard()` from `@eunox/agent-runtime`) is an in-process
 capability pre-screen that sits between the agent logic and the outer gateway.
 It implements the **defense-in-depth Set-D architecture**. The guard is a soft
 layer only — the outer gateway remains the sole hard enforcement boundary.
@@ -1824,24 +1841,29 @@ layer only — the outer gateway remains the sole hard enforcement boundary.
 #### 12.8.1 Quick-start wiring
 
 ```typescript
-import { createAgtGuard, type AgtGuardOptions } from '@euno/agent-runtime';
+import { createAgtGuard, type AgtGuardOptions } from "@eunox/agent-runtime";
 
 const guard = createAgtGuard({
-  tokenSupplier: () => fetchCapabilityToken(),  // called before each tool invoke
+  tokenSupplier: () => fetchCapabilityToken(), // called before each tool invoke
   policy: agentCapabilityManifest,
 
   onDeny(toolName, reason) {
-    logger.warn('AGT guard blocked', { toolName, reason });
+    logger.warn("AGT guard blocked", { toolName, reason });
   },
 
   onGatewayDeny(toolName, gatewayErrorCode) {
     // Guard allowed; outer gateway denied.  The gateway audit log is the record.
-    logger.warn('Gateway denied after guard allow', { toolName, gatewayErrorCode });
+    logger.warn("Gateway denied after guard allow", {
+      toolName,
+      gatewayErrorCode,
+    });
   },
 } satisfies AgtGuardOptions);
 
 // Use guard.invokeTool() instead of calling the tool directly.
-const response = await guard.invokeTool('read_file', { path: '/tmp/output.txt' });
+const response = await guard.invokeTool("read_file", {
+  path: "/tmp/output.txt",
+});
 ```
 
 See `docs/agent-sdk.md` §"AGT in-process guard" for the full API reference,
@@ -1919,25 +1941,25 @@ and `agent-runtime`. Postgres and Redis are expected to be operator-provisioned.
 
 ```bash
 # Gateway
-helm install euno-gateway ./k8s/helm/gateway \
+helm install eunox-gateway ./k8s/helm/gateway \
   --set env.NODE_ENV=production \
   --set env.GATEWAY_AUDIENCE=my-org \
   --set env.REDIS_URL="rediss://redis.internal:6380" \
   --set env.AUDIT_LEDGER_BACKEND=per-replica-postgres \
-  --set env.AUDIT_LEDGER_PG_URL="postgres://euno_audit:secret@db.internal:5432/euno" \
+  --set env.AUDIT_LEDGER_PG_URL="postgres://euno_audit:secret@db.internal:5432/eunox" \
   --set env.AUDIT_LEDGER_HMAC_SECRET="<64-hex-chars>" \
   --set env.GATEWAY_ADMIN_API_KEY="<admin-key>" \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
 
 # Issuer
-helm install euno-issuer ./k8s/helm/issuer \
+helm install eunox-issuer ./k8s/helm/issuer \
   --set env.NODE_ENV=production \
   --set env.IDENTITY_PROVIDER=azure-ad \
   --set env.AZURE_AD_TENANT_ID="<tenant>" \
   --set env.AZURE_AD_CLIENT_ID="<client>" \
   --set env.SIGNING_PROVIDER=azure-keyvault \
   --set env.AZURE_KEYVAULT_URL="https://your-vault.vault.azure.net/" \
-  --set env.ISSUER_DB_URL="postgres://euno:secret@db.internal:5432/euno" \
+  --set env.ISSUER_DB_URL="postgres://eunox:secret@db.internal:5432/eunox" \
   --set env.ISSUER_DB_SCHEMA_INIT=true \
   --set env.ISSUER_SCIM_BEARER_TOKEN="<scim-token>" \
   --set env.EUNO_DEPLOYMENT_TIER=multi-replica
@@ -1952,16 +1974,16 @@ A fully air-gapped deployment requires the following egress endpoints to be
 reachable from within the cluster, proxied, or replaced with on-prem
 equivalents:
 
-| Endpoint | Required for | Air-gap replacement |
-|---|---|---|
-| KMS endpoint (Azure KV / AWS KMS / GCP KMS) | Token signing | BYO HSM with PKCS#11 adapter |
-| Postgres | Audit ledger, SCIM tables, issuer state | On-prem Postgres (no egress) |
-| Redis | Revocation, kill-switch, circuit-breaker | On-prem Redis (no egress) |
-| `https://ion.msidentity.com/api/v1.0/identifiers` | `did:ion` DID resolution | Self-hosted ION node (`ION_RESOLVER_URL=http://ion-sidecar:3000/identifiers`) |
-| IdP (Entra ID / Cognito) | User authentication | On-prem OIDC provider |
-| SCIM source (Okta / Entra ID) | Group push | On-prem LDAP-to-SCIM bridge |
-| S3 Object-Lock bucket | Cross-chain anchor | MinIO with Object-Lock in the cluster |
-| `EUNO_TELEMETRY_API` | Telemetry (opt-in only) | Set `EUNO_TELEMETRY=0` to disable |
+| Endpoint                                          | Required for                             | Air-gap replacement                                                           |
+| ------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------- |
+| KMS endpoint (Azure KV / AWS KMS / GCP KMS)       | Token signing                            | BYO HSM with PKCS#11 adapter                                                  |
+| Postgres                                          | Audit ledger, SCIM tables, issuer state  | On-prem Postgres (no egress)                                                  |
+| Redis                                             | Revocation, kill-switch, circuit-breaker | On-prem Redis (no egress)                                                     |
+| `https://ion.msidentity.com/api/v1.0/identifiers` | `did:ion` DID resolution                 | Self-hosted ION node (`ION_RESOLVER_URL=http://ion-sidecar:3000/identifiers`) |
+| IdP (Entra ID / Cognito)                          | User authentication                      | On-prem OIDC provider                                                         |
+| SCIM source (Okta / Entra ID)                     | Group push                               | On-prem LDAP-to-SCIM bridge                                                   |
+| S3 Object-Lock bucket                             | Cross-chain anchor                       | MinIO with Object-Lock in the cluster                                         |
+| `EUNO_TELEMETRY_API`                              | Telemetry (opt-in only)                  | Set `EUNO_TELEMETRY=0` to disable                                             |
 
 > For completely disconnected deployments, use `did:key` or `did:web` with
 > `DID_WEB_ALLOW_HTTP_FOR_HOSTS` pointing at an in-cluster DID host.
@@ -1981,7 +2003,7 @@ AZURE_AD_TENANT_ID=<tenant>
 AZURE_AD_CLIENT_ID=<client>
 SIGNING_PROVIDER=azure-keyvault
 AZURE_KEYVAULT_URL=https://your-vault.vault.azure.net/
-ISSUER_DB_URL=postgres://euno:secret@localhost:5432/euno
+ISSUER_DB_URL=postgres://eunox:secret@localhost:5432/eunox
 ISSUER_DB_SCHEMA_INIT=true
 ISSUER_ADMIN_API_KEY=<admin-key>
 ION_RESOLVER_URL=http://localhost:3000/identifiers   # local ION sidecar
@@ -1990,7 +2012,7 @@ ION_RESOLVER_URL=http://localhost:3000/identifiers   # local ION sidecar
 GATEWAY_AUDIENCE=my-org
 ISSUER_JWKS_URL=http://localhost:3001/.well-known/jwks.json
 AUDIT_LEDGER_BACKEND=postgres
-AUDIT_LEDGER_PG_URL=postgres://euno:secret@localhost:5432/euno
+AUDIT_LEDGER_PG_URL=postgres://eunox:secret@localhost:5432/eunox
 AUDIT_LEDGER_HMAC_SECRET=<64-hex-chars>
 AUDIT_LEDGER_RUN_MIGRATIONS=true
 GATEWAY_ADMIN_API_KEY=<gateway-admin-key>
@@ -2002,7 +2024,7 @@ ADMIN_HOST=127.0.0.1
 `k8s/network-policies.yaml` restricts ingress/egress at the Kubernetes
 NetworkPolicy layer. Apply it before routing production traffic.
 `k8s/network-policies-dev-overlay.yaml` opens broad egress for development
-(label `euno.dev/dev-only: 'true'`). **Do not apply the dev overlay in
+(label `eunox.dev/dev-only: 'true'`). **Do not apply the dev overlay in
 production clusters.**
 
 ---
@@ -2016,7 +2038,7 @@ profile) for the full working example.
 ```yaml
 services:
   db-token-service:
-    image: ghcr.io/euno/db-token-service:1.0.0
+    image: ghcr.io/eunox/db-token-service:1.0.0
     depends_on: [capability-issuer, db]
     environment:
       DB_TOKENS_ENABLED: "true"
@@ -2029,7 +2051,7 @@ services:
     profiles: ["full"]
 
   storage-grant-service:
-    image: ghcr.io/euno/storage-grant-service:1.0.0
+    image: ghcr.io/eunox/storage-grant-service:1.0.0
     depends_on: [capability-issuer]
     environment:
       STORAGE_GRANTS_ENABLED: "true"
@@ -2042,7 +2064,7 @@ services:
 
   posture-emitter-drainer:
     # Single-writer SQLite drainer — do NOT scale to more than 1 replica.
-    image: ghcr.io/euno/posture-emitter:1.0.0
+    image: ghcr.io/eunox/posture-emitter:1.0.0
     depends_on: [redis]
     environment:
       POSTURE_EMITTER_ENABLED: "true"
@@ -2055,7 +2077,7 @@ services:
 
   partner-issuer-sim:
     # Reference simulator for partner-org DID-backed issuers.
-    image: ghcr.io/euno/partner-issuer-sim:1.0.0
+    image: ghcr.io/eunox/partner-issuer-sim:1.0.0
     environment:
       PORT: "4200"
       PARTNER_ISSUER_DID: "did:web:localhost:4200"
@@ -2078,8 +2100,8 @@ The `resolveDidIon()` function is wrapped with a `RedisCircuitBreaker`. A
 `{ "status": "ok" | "degraded" }`. Wire this into your readiness probe to
 detect ION resolver outages before they affect partner-token issuance.
 
-| Variable | Default | Description |
-|---|---|---|
+| Variable           | Default                                           | Description                         |
+| ------------------ | ------------------------------------------------- | ----------------------------------- |
 | `ION_RESOLVER_URL` | `https://ion.msidentity.com/api/v1.0/identifiers` | Public or self-hosted resolver URL. |
 
 For air-gapped deployments, point `ION_RESOLVER_URL` at a local ION sidecar:
@@ -2230,14 +2252,14 @@ routing production traffic through a Stage-5 deployment:
 
 The **durable posture emitter** feeds AI-posture inventory records to cloud
 security management surfaces (Azure Defender CSPM, AWS Security Hub,
-GCP Security Command Center) for every signed enforcement event.  It uses a
+GCP Security Command Center) for every signed enforcement event. It uses a
 local SQLite WAL queue to guarantee delivery across pod restarts.
 
 ### 13.1 How it works
 
 Every time the gateway signs an audit-evidence record (via the async audit
 pipeline) the `PostureEmitterPlugin` shim converts the `SignedAuditEvidence`
-into an `AgentInventoryRecord` and writes it to the durable queue.  A
+into an `AgentInventoryRecord` and writes it to the durable queue. A
 background delivery worker fans out the record to each configured plugin,
 retrying with exponential back-off until all plugins acknowledge.
 
@@ -2246,32 +2268,32 @@ level and never affects the enforcement decision.
 
 ### 13.2 Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `POSTURE_EMITTER_ENABLED` | `false` | Set `true` to activate. |
-| `POSTURE_EMITTER_PLUGINS` | `stdout` | Comma-separated plugin list: `stdout`, `defender-cspm`, `security-hub`, `scc`. |
-| `POSTURE_DURABLE_QUEUE_PATH` | `:memory:` (error in production) | Path to the SQLite WAL queue on a persistent volume, e.g. `/var/lib/euno/posture-queue.db`. **Required in production.** |
-| `POSTURE_DURABLE_POLL_INTERVAL_MS` | `1000` | Worker poll interval. |
-| `POSTURE_DURABLE_MAX_ATTEMPTS` | `10` | Max delivery attempts before dead-lettering. |
-| `POSTURE_DURABLE_BATCH_SIZE` | `50` | Events per poll tick. |
-| `AZURE_SUBSCRIPTION_ID` | — | Required when `defender-cspm` is in `POSTURE_EMITTER_PLUGINS`. |
-| `AWS_ACCOUNT_ID`, `AWS_REGION`, `SECURITY_HUB_PRODUCT_ARN` | — | Required for `security-hub`. |
-| `GCP_SCC_SOURCE_NAME`, `GCP_PROJECT_ID` | — | Required for `scc`. |
+| Variable                                                   | Default                          | Description                                                                                                              |
+| ---------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `POSTURE_EMITTER_ENABLED`                                  | `false`                          | Set `true` to activate.                                                                                                  |
+| `POSTURE_EMITTER_PLUGINS`                                  | `stdout`                         | Comma-separated plugin list: `stdout`, `defender-cspm`, `security-hub`, `scc`.                                           |
+| `POSTURE_DURABLE_QUEUE_PATH`                               | `:memory:` (error in production) | Path to the SQLite WAL queue on a persistent volume, e.g. `/var/lib/eunox/posture-queue.db`. **Required in production.** |
+| `POSTURE_DURABLE_POLL_INTERVAL_MS`                         | `1000`                           | Worker poll interval.                                                                                                    |
+| `POSTURE_DURABLE_MAX_ATTEMPTS`                             | `10`                             | Max delivery attempts before dead-lettering.                                                                             |
+| `POSTURE_DURABLE_BATCH_SIZE`                               | `50`                             | Events per poll tick.                                                                                                    |
+| `AZURE_SUBSCRIPTION_ID`                                    | —                                | Required when `defender-cspm` is in `POSTURE_EMITTER_PLUGINS`.                                                           |
+| `AWS_ACCOUNT_ID`, `AWS_REGION`, `SECURITY_HUB_PRODUCT_ARN` | —                                | Required for `security-hub`.                                                                                             |
+| `GCP_SCC_SOURCE_NAME`, `GCP_PROJECT_ID`                    | —                                | Required for `scc`.                                                                                                      |
 
 ### 13.3 Field mapping (enforcement events)
 
 At enforcement time the gateway has the signed audit record but not the full
-capability manifest.  The posture records produced from enforcement events
+capability manifest. The posture records produced from enforcement events
 carry the following values:
 
-| `AgentInventoryRecord` field | Source |
-|---|---|
-| `agentId` | `SignedAuditEvidence.agentId` |
-| `owningTeam` | `SignedAuditEvidence.tenantId` (falls back to `'unknown'`) |
-| `capabilityManifestHash` | `SignedAuditEvidence.capabilityId` (token JTI — proxy) |
-| `runtime` | `'unknown'` — not available in enforcement evidence |
-| `region` | `'unknown'` — not available in enforcement evidence |
-| `firstSeen`, `lastSeen` | `SignedAuditEvidence.ts` |
+| `AgentInventoryRecord` field | Source                                                     |
+| ---------------------------- | ---------------------------------------------------------- |
+| `agentId`                    | `SignedAuditEvidence.agentId`                              |
+| `owningTeam`                 | `SignedAuditEvidence.tenantId` (falls back to `'unknown'`) |
+| `capabilityManifestHash`     | `SignedAuditEvidence.capabilityId` (token JTI — proxy)     |
+| `runtime`                    | `'unknown'` — not available in enforcement evidence        |
+| `region`                     | `'unknown'` — not available in enforcement evidence        |
+| `firstSeen`, `lastSeen`      | `SignedAuditEvidence.ts`                                   |
 
 For accurate `runtime`, `region`, and the real `capabilityManifestHash`,
 correlate enforcement records (keyed by `agentId`) with issuance records
@@ -2280,12 +2302,12 @@ produced by the capability issuer's own `PostureEmitter`.
 ### 13.4 Production deployment checklist
 
 - [ ] Set `POSTURE_EMITTER_ENABLED=true` and `POSTURE_EMITTER_PLUGINS` to
-  at least one production target.
-- [ ] Mount a persistent volume at `/var/lib/euno/` and set
-  `POSTURE_DURABLE_QUEUE_PATH=/var/lib/euno/posture-queue.db` so events
-  survive pod restarts.
+      at least one production target.
+- [ ] Mount a persistent volume at `/var/lib/eunox/` and set
+      `POSTURE_DURABLE_QUEUE_PATH=/var/lib/eunox/posture-queue.db` so events
+      survive pod restarts.
 - [ ] Set `AUDIT_PIPELINE_ENABLED=true` — the posture sink runs inside the
-  audit pipeline's `onSigned` callback.  Without an active pipeline the sink
-  is never called.
+      audit pipeline's `onSigned` callback. Without an active pipeline the sink
+      is never called.
 - [ ] Confirm the gateway's Prometheus scrape includes
-  `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.
+      `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.

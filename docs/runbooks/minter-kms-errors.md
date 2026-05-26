@@ -21,7 +21,7 @@
 1. Check the cloud provider's status page for KMS/HSM incidents.
 2. Inspect minter pod logs for the specific error class:
    ```bash
-   kubectl logs -n minter deployment/euno-minter --tail=200 | grep "KMS\|kms\|HSM"
+   kubectl logs -n minter deployment/eunox-minter --tail=200 | grep "KMS\|kms\|HSM"
    ```
 3. Verify the workload identity is valid:
    - Azure: `az account get-access-token --resource https://vault.azure.net`
