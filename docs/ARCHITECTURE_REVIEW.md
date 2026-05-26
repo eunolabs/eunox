@@ -5,6 +5,8 @@
 **Date:** 2026-05-26
 **Scope:** Full system architecture, design, and implementation
 
+> **Authority note:** [`docs/formaltechnicalarchitecturereview.md`](./formaltechnicalarchitecturereview.md) remains the canonical architecture review for the staged Go reimplementation. This document is a supplemental repository-level review snapshot focused on current risks and design follow-ups that are not already captured there.
+
 ---
 
 ## Executive Summary
@@ -17,47 +19,47 @@ eunox is a Go monorepo implementing a capability-based governance system for AI 
 
 ## [!] Critical Risks
 
-### CR-1: KMS Signer Implementations Are Stubs
+### CR-1: Issuer KMS Wiring Falls Back to Software Keys
 
-**Location:** `cmd/issuer/main.go` (lines 160–172), `pkg/crypto/signer.go`
+**Location:** `cmd/issuer/main.go` (lines 160–172), `pkg/crypto/kms_aws.go`, `pkg/crypto/kms_azure.go`, `pkg/crypto/kms_gcp.go`
 **Severity:** Critical — Blocks production deployment
 **Impact:** Security & Reliability
 
-The signing providers for AWS KMS, Azure Key Vault, and GCP Cloud KMS are stub implementations. In production, private key material would either reside in-process (violating HSM requirements) or the service would fail to start. Any deployment relying on these integrations cannot guarantee key protection at rest.
+The repository already contains production-style signer implementations for AWS KMS, Azure Key Vault, and GCP Cloud KMS in `pkg/crypto`. The current production gap is wiring: `cmd/issuer/main.go`'s `buildSigner()` still generates an in-process software key even when `aws-kms`, `azure-keyvault`, or `gcp-cloudkms` is selected. As a result, deployments can appear to use external KMS while actually keeping signing keys in-process.
 
-**Recommendation:** Implement real KMS SDK integrations with integration tests against live KMS services. Add a startup validation that rejects `software` signing provider in production environments.
+**Recommendation:** Wire `buildSigner()` to the existing `NewRealAWSKMSSigner`, `NewRealAzureKeyVaultSigner`, and `NewRealGCPCloudKMSSigner` constructors. Add startup validation that rejects `software` signing in production unless it is explicitly intended.
 
 ---
 
-### CR-2: Context Propagation — 36 Instances of `context.Background()`
+### CR-2: Request/IO Paths Drop Caller Context
 
-**Location:** Multiple internal packages (gateway, issuer, audit pipeline)
+**Location:** Request and IO paths such as `internal/gateway/partner_did_redis.go`
 **Severity:** Critical — Impacts reliability and observability
 **Impact:** Reliability & Observability
 
-Using `context.Background()` instead of request-scoped contexts means:
+Some `context.Background()` usages are appropriate in tests or bounded startup/shutdown flows. The actionable issue is production request/IO code that uses `context.Background()` instead of propagating the caller context. In those paths:
 - No request-scoped cancellation (stale work continues after client disconnect)
 - No timeout inheritance (unbounded operations possible)
 - Broken distributed tracing (spans are not linked to parent request)
 - No graceful degradation under load (cannot cancel in-flight work)
 
-**Recommendation:** Audit all 36 instances. Replace with request context from HTTP handlers. Establish a lint rule (`contextcheck`) to prevent regression.
+**Recommendation:** Audit request-driven and network/storage-backed code paths first, starting with Redis access in `internal/gateway/partner_did_redis.go`, and replace `context.Background()` with propagated request or lifecycle contexts. A lint rule such as `contextcheck` can help prevent regressions in those paths.
 
 ---
 
-### CR-3: Admin API Key Is Single Static Secret
+### CR-3: Gateway Admin Auth Still Permits Legacy Static Secret Fallback
 
-**Location:** `internal/gateway/app.go` (admin middleware), configuration
+**Location:** `internal/gateway/app.go`, `internal/gateway/admin_jwt.go`
 **Severity:** High — Security risk
 **Impact:** Security
 
-The `ADMIN_API_KEY` is a single static string. If compromised:
+The gateway already supports JWT-based admin authentication via `AdminJWKSURI` and `AdminJWTAudience`, with a static `ADMIN_API_KEY` fallback for legacy deployments. The remaining risk is that production environments can still rely on a single shared secret. If that fallback key is compromised:
 - No rotation mechanism without restart
 - No per-operator attribution in audit logs
 - No revocation of individual operator access
 - Shared secret across all operators
 
-**Recommendation:** Migrate to JWT-based admin authentication (as done in the minter service with `AdminJwtVerifier`). The minter already has the pattern — apply it uniformly.
+**Recommendation:** Treat JWT-based admin authentication as the production default and require it in hardened deployments. Keep the static key only as a deprecated compatibility path, with documentation and startup checks that discourage or block it in production.
 
 ---
 
@@ -90,12 +92,12 @@ The `PerReplicaPostgresLedgerBackend` mitigates this by partitioning chains per 
 
 ---
 
-### DI-2: Database Schema Is Minimal (2 Migrations Only)
+### DI-2: Audit Schema Migration Coverage Is Minimal
 
-**Location:** `migrations/audit/001_create_audit_records.up.sql`
+**Location:** `migrations/audit/001_create_audit_records.up.sql`, `migrations/minter/001_create_api_keys.up.sql`
 **Impact:** Maintainability & Scalability
 
-Only 2 migration files exist. As the system matures, the schema will grow. Without explicit migration tooling documentation and versioning strategy, schema evolution becomes risky.
+The repository currently has two migration sets (`audit` and `minter`), each with a single up/down pair. If the concern is the audit schema specifically, its migration history is still minimal. As the system matures, schema evolution will become riskier without clearer tooling and versioning guidance.
 
 **Recommendation:**
 - Document the migration framework (golang-migrate/v4 per the reimplementation plan)
@@ -116,14 +118,14 @@ Request body limits are hard-coded magic numbers. Different services may need di
 
 ---
 
-### DI-4: Issuer Service Lacks Health Endpoints
+### DI-4: Health Check Standardization Should Be Documented, Not Re-implemented
 
-**Location:** `internal/issuer/app.go`
+**Location:** `internal/gateway/app.go`, `internal/issuer/app.go`, other service routers
 **Impact:** Reliability
 
-The gateway exposes `/health/live` and `/health/ready`, but the issuer service's health endpoints are inconsistent or missing. Kubernetes readiness probes may not function correctly, leading to traffic being routed to unhealthy pods.
+The issuer service already exposes `/health/live` and `/health/ready`, matching the gateway and the other service routers. The remaining gap is documentation and enforcement of the convention, so future services keep the same health probe shape and semantics.
 
-**Recommendation:** Standardize health checks across all services using the `pkg/lifecycle` Manager (which already provides `HealthHandler()` and `ReadyHandler()`).
+**Recommendation:** Document the existing `/health/live` and `/health/ready` convention as a cross-service requirement and keep new services aligned with it, whether they use `pkg/lifecycle` directly or equivalent handlers.
 
 ---
 
