@@ -62,13 +62,13 @@ consistent `tenant_id` scoping across all data paths.
 
 ### Configuration
 
-Each service instance binds to exactly one tenant via environment variable:
+Tenant scoping is configured and enforced differently per service:
 
-| Service  | Variable           | Required | Default |
-|----------|--------------------|----------|---------|
-| Gateway  | `GATEWAY_TENANT_ID`| Yes      | —       |
-| Issuer   | `ISSUER_TENANT_ID` | Yes      | —       |
-| Minter   | `MINTER_TENANT_ID` | Yes      | —       |
+| Service  | Tenant Context Source | Required | Notes |
+|----------|-----------------------|----------|-------|
+| Gateway  | `GATEWAY_TENANT_ID`   | Yes      | Used for admin/auth scoping and tenant-scoped operations |
+| Issuer   | Identity token claims | Yes      | No dedicated `ISSUER_TENANT_ID` setting |
+| Minter   | Request/auth context  | Yes      | No dedicated `MINTER_TENANT_ID` setting |
 
 ### Token-Level Tenancy
 
@@ -124,7 +124,7 @@ Redis keys are namespaced by tenant where applicable:
 |-------------------------------------|----------------------------|
 | `kill_switch:{tenant_id}`           | Per-tenant kill switch     |
 | `revocations:{tenant_id}:{jti}`     | Token revocation entries   |
-| `callcounter:{tenant_id}:{key_id}`  | API call counting          |
+| `callcounter:{key}:{windowSec}`     | API call counting          |
 | `partner_dids`                      | Global (cross-tenant)      |
 
 ### Cross-Tenant Safeguards
@@ -133,7 +133,7 @@ The gateway admin API implements a **cross-tenant acknowledgement gate** for
 operations that may affect multiple tenants (e.g., global usage resets):
 
 ```json
-POST /admin/v1/usage/reset
+POST /admin/usage/reset
 {
   "acknowledgesCrossTenantImpact": true,
   "reason": "billing cycle reset"
@@ -141,7 +141,7 @@ POST /admin/v1/usage/reset
 ```
 
 Operations lacking this flag that would affect data outside the configured
-tenant are rejected with HTTP 400.
+tenant are rejected with HTTP 403.
 
 ---
 
@@ -172,9 +172,10 @@ Tenant B: gateway-b (JWKS → issuer-b keys)
 
 ### Shared-Issuer Deployments
 
-When a single issuer serves multiple tenants (e.g., SaaS platform), the
-`tenantId` in token claims distinguishes ownership but enforcement relies on
-the gateway's configured `GATEWAY_TENANT_ID` matching the token's tenant.
+When a single issuer serves multiple tenants (e.g., SaaS platform), current
+gateway enforcement paths do not enforce token tenant matching during
+enforcement decisions. Treat shared-issuer multi-tenant enforcement as unsafe
+unless additional tenant checks are implemented.
 
 ---
 
@@ -188,7 +189,6 @@ Admin JWT tokens include a tenant claim:
 type AdminIdentity struct {
     OperatorID string
     TenantID   string
-    Roles      []string
 }
 ```
 
@@ -225,7 +225,7 @@ key minter. Each API key belongs to a tenant, and its call counter enforces
 the configured quota:
 
 ```
-HMAC(pepper, api_key_secret) → key_id → callcounter:{tenant_id}:{key_id}
+maxcalls:{sessionId}:{toolName} → callcounter:{key}:{windowSec}
 ```
 
 ### Fair Use Enforcement

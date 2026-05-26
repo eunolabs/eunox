@@ -150,31 +150,35 @@ ETA: [Expected resolution time]
 UPDATES: Every [15/30/60] minutes until resolved
 ```
 
-## Scenario 5: Corrupted Audit HMAC Chain
+## Scenario 5: Corrupted Audit Chain
 
 ### Symptoms
 
-- Chain verification endpoint returns `chain_valid: false`
-- Alert: `eunox_audit_chain_verification_failures > 0`
+- Chain verification endpoint returns `valid: false`
+- Alerting/logs indicate repeated chain-proof validation failures
 - Audit export returns errors for specific sequence ranges
 
 ### Diagnosis
 
 ```bash
 # 1. Identify the break point
-BREAK_POINT=$(curl -s https://gateway.internal:3003/admin/v1/audit/chain-proof \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY" | jq '.first_invalid_sequence')
+REPLICA_ID="replica-1"
+FROM_SEQ=1
+TO_SEQ=1000000
+BREAK_POINT=$(curl -s "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******" | jq '.broken_at_seq')
 
 # 2. Inspect the corrupted record
 psql -c "SELECT id, sequence_num, chain_hash, previous_hash
          FROM audit_records
-         WHERE sequence_num = $BREAK_POINT
+         WHERE replica_id = '$REPLICA_ID' AND sequence_num = $BREAK_POINT
          ORDER BY sequence_num;"
 
 # 3. Check if corruption is in a single record or a range
 psql -c "SELECT sequence_num, chain_hash
          FROM audit_records
-         WHERE sequence_num BETWEEN $((BREAK_POINT - 5)) AND $((BREAK_POINT + 5))
+         WHERE replica_id = '$REPLICA_ID'
+           AND sequence_num BETWEEN $((BREAK_POINT - 5)) AND $((BREAK_POINT + 5))
          ORDER BY sequence_num;"
 ```
 
@@ -190,18 +194,16 @@ CORRUPTION_TIME=$(psql -t -c "SELECT timestamp FROM audit_records WHERE sequence
 # Use recovery_target_time slightly before $CORRUPTION_TIME
 
 # 3. Verify chain integrity after restore
-curl https://gateway.internal:3003/admin/v1/audit/chain-proof \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
+curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
 ```
 
 **Option B: Anchor-based isolation (if corruption is older)**
 
 ```bash
-# 1. Create anchors around the corrupted segment
-# Anchor BEFORE the corrupted records
-curl -X POST https://gateway.internal:3003/admin/v1/audit/anchor \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
-  -d "{\"sequence_num\": $((BREAK_POINT - 1)), \"backend\": \"s3\"}"
+# 1. Create anchor metadata via an offline anchoring job
+# (there is no HTTP /admin audit anchor endpoint in gateway)
+# Use tooling around pkg/audit/anchor.go to persist the checkpoint.
 
 # 2. Document the gap as a known integrity exception
 # Add to the incident log with the sequence range and root cause
@@ -210,35 +212,19 @@ curl -X POST https://gateway.internal:3003/admin/v1/audit/anchor \
 # Historical queries spanning the gap will note the integrity exception
 ```
 
-**Option C: Full chain rebuild (last resort, requires HMAC secret)**
+**Option C: Full chain restore (last resort)**
 
 ```bash
-# WARNING: This recalculates all chain hashes. Only use if you have
-# verified that record CONTENT (signatures) is intact and only the
-# chain linkage is corrupted.
-
-# 1. Stop all writers (gateway pods)
+# 1. Stop writers and restore a clean audit DB snapshot
 kubectl -n eunox-system scale deployment eunox-gateway --replicas=0
+# Restore from backup / PITR to a known-good point (see Scenario 2)
 
-# 2. Run chain rebuild (custom migration script)
-go run ./cmd/tools/rebuild-chain \
-  --database-url="$AUDIT_DB_URL" \
-  --hmac-secret="$AUDIT_HMAC_SECRET" \
-  --start-sequence=1 \
-  --dry-run=true  # Verify first
-
-# 3. If dry-run looks correct, run for real
-go run ./cmd/tools/rebuild-chain \
-  --database-url="$AUDIT_DB_URL" \
-  --hmac-secret="$AUDIT_HMAC_SECRET" \
-  --start-sequence=1
-
-# 4. Restart gateway
+# 2. Restart gateway
 kubectl -n eunox-system scale deployment eunox-gateway --replicas=3
 
-# 5. Verify
-curl https://gateway.internal:3003/admin/v1/audit/chain-proof \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
+# 3. Verify
+curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
 ```
 
 ---
@@ -291,8 +277,11 @@ kubectl --context dr-cluster -n eunox-system get pods
 # 6. Verify audit chain continuity
 # Note: There may be a gap if writes were in-flight during failover.
 # This is acceptable — document the gap window.
-curl https://gateway-dr:3003/admin/v1/audit/chain-proof \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
+REPLICA_ID="replica-1"
+FROM_SEQ=1
+TO_SEQ=1000000
+curl "https://gateway-dr:3002/api/v1/audit/chain-proof?replica_id=${REPLICA_ID}&from_seq=${FROM_SEQ}&to_seq=${TO_SEQ}" \
+  -H "Authorization: ******"
 ```
 
 ### Failback Procedure
@@ -308,37 +297,32 @@ curl https://gateway-dr:3003/admin/v1/audit/chain-proof \
 
 ---
 
-## Scenario 7: HMAC Secret Compromise
+## Scenario 7: Audit Integrity Compromise
 
 ### Symptoms
 
-- Unauthorized party may have obtained the audit HMAC secret
-- This enables them to forge chain hashes (but NOT record signatures)
+- Unauthorized write access to the audit database or signing system is suspected
+- Chain integrity may be affected, but record signatures still provide tamper evidence
 
 ### Impact Assessment
 
 - **Chain integrity:** Compromised (attacker could insert/modify records
   with valid chain hashes)
-- **Record signatures:** NOT compromised (signatures use KMS keys, not HMAC
-  secret)
-- **Detectability:** Forged records will lack valid KMS signatures
+- **Record signatures:** NOT compromised if signing keys remain secure
+- **Detectability:** Forged or altered records will fail signature validation
 
 ### Recovery
 
 ```bash
-# 1. Immediately rotate the HMAC secret
-# Follow: docs/runbooks/ledger-hmac-rotation.md
+# 1. Rotate/disable compromised credentials (DB access, signing keys as applicable)
 
-# 2. Verify all existing records have valid KMS signatures
-# (HMAC may be forged, but signatures cannot be)
-curl https://gateway.internal:3003/admin/v1/audit/verify-signatures \
-  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
+# 2. Verify record signatures offline using the published signing keys
+curl https://gateway:3002/api/v1/audit/signing-keys -H "Authorization: ******"
+curl "https://gateway:3002/api/v1/audit/export?tenant_id=$TENANT_ID" -H "Authorization: ******" > audit-export.json
 
-# 3. Create a new audit table with the new secret
-# (Strategy A from ledger-hmac-rotation.md)
+# 3. Restore from last known-good snapshot if tampering is confirmed
 
-# 4. Mark the old chain as "pre-rotation" in monitoring
-# Records with valid signatures are trustworthy regardless of HMAC state
+# 4. Mark the affected sequence range in incident records and monitoring
 ```
 
 ---
@@ -362,7 +346,7 @@ curl https://gateway.internal:3003/admin/v1/audit/verify-signatures \
 - [ ] All services healthy (`kubectl get pods -n eunox-system`)
 - [ ] End-to-end token issuance and enforcement working
 - [ ] Audit trail intact (no gaps, or gaps documented)
-- [ ] HMAC chain verification passing
+- [ ] Audit chain verification passing
 - [ ] Monitoring/alerting functional
 - [ ] Redis state rebuilt (kill switch, revocations)
 - [ ] Partner DID cache warm (federation working)

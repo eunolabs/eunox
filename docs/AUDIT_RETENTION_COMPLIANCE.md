@@ -338,13 +338,12 @@ Retention is managed via object storage lifecycle policies. Example for AWS:
 # 1. Identify prune boundary (records older than 90 days)
 BOUNDARY_SEQ=$(psql -t -c "SELECT max(sequence_num) FROM audit_records WHERE timestamp < NOW() - INTERVAL '90 days'")
 
-# 2. Create anchor at boundary
-curl -X POST https://gateway.internal:3003/admin/v1/audit/anchor \
-  -H "Authorization: ******" \
-  -d "{\"sequence_num\": $BOUNDARY_SEQ, \"backend\": \"s3\"}"
+# 2. Create anchor at boundary via offline anchoring job
+# (gateway does not currently expose an HTTP /admin audit anchor endpoint)
+# Use tooling built on pkg/audit/anchor.go.
 
 # 3. Export and archive records
-curl "https://gateway.internal:3003/admin/v1/audit/export?before_seq=$BOUNDARY_SEQ" \
+curl "https://gateway:3002/api/v1/audit/export?tenant_id=$TENANT_ID" \
   -H "Authorization: ******" \
   -o "archive-segment.jsonl.gz"
 
@@ -365,14 +364,14 @@ psql -c "DELETE FROM audit_records WHERE sequence_num <= $BOUNDARY_SEQ"
 
 ```bash
 # Verify current chain
-curl https://gateway:3002/api/v1/audit/chain-proof \
+curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=replica-1&from_seq=1&to_seq=1000000" \
   -H "Authorization: ******"
 
 # Response includes:
-# - chain_valid: true/false
-# - records_verified: count
-# - first_record / last_record timestamps
-# - gaps (if any segments pruned)
+# - replica_id, from_seq, to_seq
+# - count, valid
+# - broken_at_seq (when valid=false)
+# - first_hash / last_hash
 ```
 
 ---
@@ -395,8 +394,8 @@ Archived segments can be verified independently:
 
 1. **Signature verification:** Each record's signature is verifiable with
    the signing public key (exported via `/api/v1/audit/signing-keys`)
-2. **Chain verification:** Recompute HMAC chain from the segment's anchor
-   hash forward (requires HMAC secret or delegated verifier)
+2. **Chain verification:** Recompute chain hashes from the segment's anchor
+   hash forward (no deploy-time secret is required)
 3. **Merkle verification:** Recompute Merkle root and compare with anchor
 
 ### Tamper Detection
@@ -411,7 +410,10 @@ Archived segments can be verified independently:
 
 ---
 
-## Configuration Reference
+## Configuration Reference (Proposed / Future)
+
+> The following variables describe a proposed automation surface. They are
+> not currently wired in the Go runtime configuration.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

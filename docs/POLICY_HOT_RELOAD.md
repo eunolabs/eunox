@@ -31,8 +31,8 @@ requiring a restart or dropping in-flight requests.
 Hot-reload is safe by design:
 - **Atomic swap:** New policies are fully validated before replacing the
   active set
-- **Non-blocking:** Read operations (token issuance) use an `RWMutex` and
-  are never blocked during reload
+- **Low-blocking:** Read operations (token issuance) use an `RWMutex` and
+  are only briefly blocked during the atomic swap
 - **Fail-safe:** If the new file is malformed, the previous policies remain
   active and an error is logged
 
@@ -40,7 +40,7 @@ Hot-reload is safe by design:
 
 ## Policy File Format
 
-Policies are defined in a JSON file referenced by `ISSUER_ROLE_POLICY_FILE`:
+Policies are defined in a JSON file referenced by `ROLE_POLICY_FILE`:
 
 ```json
 {
@@ -218,10 +218,9 @@ token issuance latency is unaffected by hot-reload.
 Before replacing the active policy set, the engine validates:
 
 1. **JSON syntax:** File must be valid JSON
-2. **Schema compliance:** Required fields present, correct types
-3. **Non-empty capabilities:** Each role must define at least one capability
-4. **Version field:** Must be present (currently only `"1"` supported)
-5. **Role uniqueness:** Duplicate role names are rejected
+2. **Parseability into policy structures:** Data must unmarshal into the policy file types
+
+Additional semantic constraints (for example role uniqueness, non-empty capabilities, or strict version enforcement) are not currently enforced in `reload()`.
 
 ### Failure Modes
 
@@ -230,7 +229,7 @@ Before replacing the active policy set, the engine validates:
 | File deleted | `os.Stat` fails → error logged, old policies retained | Restore file |
 | File empty | JSON parse fails → error logged, old policies retained | Fix file content |
 | Invalid JSON | Parse error → logged, old policies retained | Fix syntax |
-| Missing required field | Validation error → logged, old policies retained | Add field |
+| Missing/weak semantic constraints | File may still load if JSON parses | Validate policy content in CI/operator checks |
 | Permission denied | `os.Open` fails → error logged, old policies retained | Fix permissions |
 | Disk full (new file) | Write may fail → old file still valid | Free disk space |
 
@@ -479,9 +478,9 @@ curl -X POST https://issuer:3001/admin/role-policy/developer \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ISSUER_ROLE_POLICY_FILE` | — | Path to policy JSON file (empty = no file-based policies) |
-| `ISSUER_DEFAULT_TOKEN_TTL` | `900` | Default token TTL in seconds |
-| `ISSUER_MAX_TOKEN_TTL` | `86400` | Maximum token TTL in seconds |
+| `ROLE_POLICY_FILE` | — | Path to policy JSON file (empty = no file-based policies) |
+| `DEFAULT_TOKEN_TTL` | `900` | Default token TTL in seconds |
+| `MAX_TOKEN_TTL` | `86400` | Maximum token TTL in seconds |
 
 ### Engine Options (Code-Level)
 

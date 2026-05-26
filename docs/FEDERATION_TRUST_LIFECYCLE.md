@@ -96,8 +96,8 @@ Partner B DID: did:ion:EiC9R5...
 An operator registers the partner DID via the admin API:
 
 ```bash
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids \
-  -H "Authorization: ******" \
+curl -X POST https://gateway.internal:3003/admin/partner-dids/ \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "did": "did:web:partner-a.example.com",
@@ -109,10 +109,9 @@ curl -X POST https://gateway.internal:3003/admin/v1/partner-dids \
 **Response:**
 ```json
 {
+  "status": "registered",
   "did": "did:web:partner-a.example.com",
-  "name": "Partner A",
-  "status": "pending",
-  "registeredAt": "2026-05-26T10:00:00Z"
+  "name": "Partner A"
 }
 ```
 
@@ -128,16 +127,15 @@ multi-replica consistency.
 A separate operator (ideally with elevated privileges) approves the partner:
 
 ```bash
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:partner-a.example.com/approve \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner-a.example.com/approve \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 ```
 
 **Response:**
 ```json
 {
   "did": "did:web:partner-a.example.com",
-  "status": "approved",
-  "approvedAt": "2026-05-26T10:15:00Z"
+  "status": "approved"
 }
 ```
 
@@ -178,12 +176,12 @@ automatically picks up new keys on the next cache miss:
 **Manual cache invalidation** (for urgent rotations):
 
 ```bash
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:partner-a.example.com/refresh \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner-a.example.com/refresh \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 ```
 
 This invalidates the DID cache entry, forcing immediate re-resolution.
-Status changes to `refreshed` temporarily, then back to `approved`.
+Status changes to `refreshed` until an explicit status update occurs.
 
 ### Stage 6: Revocation
 
@@ -191,8 +189,8 @@ When trust must be withdrawn (compromise, contract termination, policy
 violation):
 
 ```bash
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:partner-a.example.com/revoke \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner-a.example.com/revoke \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 ```
 
 **Effect:**
@@ -373,9 +371,9 @@ CLOSED ──(5 failures)──▶ OPEN ──(30s cooldown)──▶ HALF-OPEN
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `eunox_federation_circuit_breaker_state` | Gauge | `method`, `state` |
-| `eunox_federation_resolution_total` | Counter | `method`, `outcome` |
-| `eunox_federation_resolution_duration_seconds` | Histogram | `method` |
+| `euno_partner_did_circuit_breaker_state` | Gauge | `did_method`, `state` |
+| `euno_partner_did_resolution_total` | Counter | `did_method`, `outcome` |
+| `euno_partner_did_resolution_duration_seconds` | Histogram | `did_method` |
 
 ---
 
@@ -398,9 +396,9 @@ If a partner's DID document or signing key is compromised:
 
 | Step | Action | Command |
 |------|--------|---------|
-| 1 | Revoke partner DID | `POST /admin/v1/partner-dids/{did}/revoke` |
+| 1 | Revoke partner DID | `POST /admin/partner-dids/{did}/revoke` |
 | 2 | Activate kill switch (if widespread) | See [kill-switch runbook](./runbooks/kill-switch.md) |
-| 3 | Bulk-revoke affected tokens | `POST /admin/v1/revocations/bulk` |
+| 3 | Revoke affected JTIs individually | `POST /admin/revoke/{jti}` |
 | 4 | Notify partner of compromise | Out-of-band communication |
 | 5 | Partner rotates keys in DID document | Partner responsibility |
 | 6 | Re-register and re-approve after verification | Repeat Stage 2–3 |
@@ -429,13 +427,13 @@ ledger:
 curl -s https://partner.example.com/.well-known/did.json | jq .id
 
 # 2. Register the partner
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids \
-  -H "Authorization: ******" \
+curl -X POST https://gateway.internal:3003/admin/partner-dids/ \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
   -d '{"did": "did:web:partner.example.com", "name": "Partner Corp"}'
 
 # 3. Approve (separate operator recommended)
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:partner.example.com/approve \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner.example.com/approve \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 
 # 4. Verify by testing a partner-issued token
 curl -X POST https://gateway:3002/api/v1/enforce \
@@ -448,20 +446,20 @@ No operator action required — DID cache auto-expires. For immediate
 rotation:
 
 ```bash
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:partner.example.com/refresh \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner.example.com/refresh \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 ```
 
 ### Emergency Revocation
 
 ```bash
 # Immediately revoke trust
-curl -X POST https://gateway.internal:3003/admin/v1/partner-dids/did:web:compromised.example.com/revoke \
-  -H "Authorization: ******"
+curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:compromised.example.com/revoke \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY"
 
-# Verify revocation (should return 404 or status: revoked)
-curl https://gateway.internal:3003/admin/v1/partner-dids/did:web:compromised.example.com \
-  -H "Authorization: ******"
+# Verify revocation by listing and filtering for the DID
+curl -s https://gateway.internal:3003/admin/partner-dids/ \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" | jq '.partners[] | select(.did=="did:web:compromised.example.com")'
 ```
 
 ---
@@ -472,9 +470,9 @@ curl https://gateway.internal:3003/admin/v1/partner-dids/did:web:compromised.exa
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
-| Federation circuit breaker open | `eunox_federation_circuit_breaker_state{state="open"} > 0` | Warning |
-| High partner resolution failures | `rate(eunox_federation_resolution_total{outcome="error"}[5m]) > 0.1` | Warning |
-| Partner resolution latency spike | `histogram_quantile(0.99, eunox_federation_resolution_duration_seconds) > 5` | Warning |
+| Federation circuit breaker open | `euno_partner_did_circuit_breaker_state{state="open"} > 0` | Warning |
+| High partner resolution failures | `rate(euno_partner_did_resolution_total{outcome="error"}[5m]) > 0.1` | Warning |
+| Partner resolution latency spike | `histogram_quantile(0.99, sum by (le) (rate(euno_partner_did_resolution_duration_seconds_bucket[5m]))) > 5` | Warning |
 | Partner token rejection spike | Increase in 401/403 for cross-org tokens | Info |
 
 ### Dashboard Panels
