@@ -106,7 +106,7 @@ func TestRuntime_GetToken(t *testing.T) {
 }
 
 func TestRuntime_InvokeTool(t *testing.T) {
-	client := NewMockHTTPClient(func(req *HTTPRequest) (*HTTPResponse, error) { //nolint:revive // req used in body
+	client := NewMockHTTPClient(func(req *HTTPRequest) (*HTTPResponse, error) {
 		if req.URL == "https://issuer.example.com/api/v1/issue" {
 			return newTestTokenResponse(3600), nil
 		}
