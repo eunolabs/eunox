@@ -256,16 +256,17 @@ func (s *SCIMStore) syncUserGroupsForGroup(groupID string) {
 			}
 		}
 
-		if shouldHaveGroup && !hasGroup {
+		switch {
+		case shouldHaveGroup && !hasGroup:
 			// Add group to user
 			user.Groups = append(user.Groups, SCIMGroupRef{
 				Value:   groupID,
 				Display: group.DisplayName,
 			})
-		} else if !shouldHaveGroup && hasGroup {
+		case !shouldHaveGroup && hasGroup:
 			// Remove group from user
 			user.Groups = append(user.Groups[:groupIdx], user.Groups[groupIdx+1:]...)
-		} else if shouldHaveGroup && hasGroup {
+		case shouldHaveGroup && hasGroup:
 			// Update display name if changed
 			user.Groups[groupIdx].Display = group.DisplayName
 		}
