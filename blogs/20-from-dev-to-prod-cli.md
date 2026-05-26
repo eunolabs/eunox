@@ -1,6 +1,6 @@
 # From Dev to Prod: The euno CLI Experience
 
-*Second post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML manifest format itself — the artifact you're authoring when you use these commands. [Post 8](./08-local-to-hosted.md) covers the architectural story of the migration from local to hosted enforcement; this post is about the CLI experience of living through that journey day-to-day. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Second post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML manifest format itself — the artifact you're authoring when you use these commands. [Post 8](./08-local-to-hosted.md) covers the architectural story of the migration from local to hosted enforcement; this post is about the CLI experience of living through that journey day-to-day. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -47,9 +47,13 @@ The default transport is stdio, which is what you need when configuring Claude D
       "command": "euno-mcp",
       "args": [
         "proxy",
-        "--policy", "/path/to/euno.policy.yaml",
+        "--policy",
+        "/path/to/euno.policy.yaml",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp"
       ]
     }
   }
@@ -290,4 +294,4 @@ For production deployments, the hosted gateway uses KMS-backed signing, which ad
 
 ---
 
-*Previous: [post 19 — One YAML file: the design philosophy behind euno's policy format](./19-one-yaml-file.md). Next: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 19 — One YAML file: the design philosophy behind euno's policy format](./19-one-yaml-file.md). Next: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

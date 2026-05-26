@@ -184,7 +184,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
 ## Runtime sandboxing and OS-level controls
 
 31. **Locking down the agent runtime: a field guide to sandboxing every tool call**
-    Comprehensive treatment of how to make the Tool Gateway the *only*
+    Comprehensive treatment of how to make the Tool Gateway the _only_
     structurally enforced egress path for an agent process, across every deployment
     topology: plain containers, Kubernetes with gVisor or Kata Containers,
     Firecracker microVMs for bare-metal, and constrained edge environments.

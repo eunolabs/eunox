@@ -25,20 +25,20 @@ The eunox capability governance system implements a clean adapter pattern for id
 
 **Identity Providers**
 
-| Type | Implementation | Package |
-|------|---------------|---------|
-| `oidc` | Generic OIDC provider with JWKS discovery | `pkg/identity` (`OIDCProvider`) |
-| `azure-ad` | Azure Active Directory / Microsoft Entra ID | `pkg/identity` (`AzureADProvider`) |
-| `cognito` | Amazon Cognito user pools | `pkg/identity` (`CognitoProvider`) |
-| `gcp-identity` | Google Cloud Identity / Workforce Identity Federation | `pkg/identity` (`GCPProvider`) |
-| `did` | W3C DID Documents (`did:web`, `did:ion`, `did:key`) | `pkg/identity` (`DIDProvider`) |
+| Type           | Implementation                                        | Package                            |
+| -------------- | ----------------------------------------------------- | ---------------------------------- |
+| `oidc`         | Generic OIDC provider with JWKS discovery             | `pkg/identity` (`OIDCProvider`)    |
+| `azure-ad`     | Azure Active Directory / Microsoft Entra ID           | `pkg/identity` (`AzureADProvider`) |
+| `cognito`      | Amazon Cognito user pools                             | `pkg/identity` (`CognitoProvider`) |
+| `gcp-identity` | Google Cloud Identity / Workforce Identity Federation | `pkg/identity` (`GCPProvider`)     |
+| `did`          | W3C DID Documents (`did:web`, `did:ion`, `did:key`)   | `pkg/identity` (`DIDProvider`)     |
 
 **Token Signers**
 
-| Type | Implementation | Package |
-|------|---------------|---------|
-| Software keys | In-memory private key signing (RSA, ECDSA, EdDSA) | `pkg/crypto` (`SoftwareSigner`) |
-| KMS stubs | Placeholder for future Azure Key Vault, AWS KMS, GCP Cloud KMS | `pkg/crypto` (`KMSSigner`) |
+| Type          | Implementation                                                 | Package                         |
+| ------------- | -------------------------------------------------------------- | ------------------------------- |
+| Software keys | In-memory private key signing (RSA, ECDSA, EdDSA)              | `pkg/crypto` (`SoftwareSigner`) |
+| KMS stubs     | Placeholder for future Azure Key Vault, AWS KMS, GCP Cloud KMS | `pkg/crypto` (`KMSSigner`)      |
 
 ---
 

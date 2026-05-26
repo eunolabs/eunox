@@ -1,6 +1,6 @@
 # Declarative, Not Transitive: The Partner Federation Trust Model
 
-*Third post in the "Design principles" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it's about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Third post in the "Design principles" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it's about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -12,7 +12,7 @@ The pattern is transitive trust. And it's why euno's partner federation model ex
 
 ## What transitive trust would look like
 
-If euno had transitive trust, the model would work like this: if Company A's gateway trusts Company B as a partner issuer, and Company B explicitly trusts Company C as *their* partner, then Company A would automatically trust Company C without requiring a separate registration.
+If euno had transitive trust, the model would work like this: if Company A's gateway trusts Company B as a partner issuer, and Company B explicitly trusts Company C as _their_ partner, then Company A would automatically trust Company C without requiring a separate registration.
 
 This has a certain logical appeal. It mirrors how web PKI works for domain certificates — if you trust a root CA, you automatically trust everything that root CA has signed. It mirrors how Kerberos works for Kerberos realms — realm A trusts realm B, realm B trusts realm C, and cross-realm tickets can traverse the path A → B → C.
 
@@ -49,7 +49,7 @@ Suppose Company B's private signing key is compromised. An attacker now has the 
 - Company C, which is in Company A's registry under its own DID, is unaffected
 - Company D, which Company A has never registered, could never present tokens that Company A's gateway would accept regardless of what Company B did
 
-In a transitive model, Company B's compromised key gives the attacker the ability to mint tokens that pass *through* Company B's trust relationship to reach Company A. The attacker can't directly mint tokens with Company B's key that claim Company C's `iss` — but they can create a token chain where a forged Company B token authorizes a Company C sub-token, if the system supports that kind of delegation.
+In a transitive model, Company B's compromised key gives the attacker the ability to mint tokens that pass _through_ Company B's trust relationship to reach Company A. The attacker can't directly mint tokens with Company B's key that claim Company C's `iss` — but they can create a token chain where a forged Company B token authorizes a Company C sub-token, if the system supports that kind of delegation.
 
 More practically: if Company B can approve new partner DIDs and Company A inherits those approvals transitively, the attacker who controls Company B's key can register a new "Company G" DID (attacker-controlled), approve it as a Company B partner, and then have Company A's gateway accept tokens from Company G. The attack works entirely at the federation layer; no SQL injection, no network intrusion, no key compromise of Company A is required.
 
@@ -186,7 +186,7 @@ The code path is direct:
 ```typescript
 const entry = await this.registry.findByDid(issClaim);
 if (!entry) {
-  return { allowed: false, reason: 'partner_did_not_registered' };
+  return { allowed: false, reason: "partner_did_not_registered" };
 }
 ```
 
@@ -208,4 +208,4 @@ The boring answer — explicit list, manual approval, no inheritance — is the 
 
 ---
 
-*Previous: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md). Next: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md). Next: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

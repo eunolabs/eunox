@@ -6,9 +6,9 @@
 
 This model has a direct precedent in internal enterprise systems. The Dynamic Validations Proposal for Titan services establishes that **Titan services rely exclusively on FD's token and will not conduct internal role validations**, in alignment with the agreement that the upstream issuer (FD) is responsible for authoring scenarios that determine what actions are permitted. This is architecturally identical to the capability model: the gateway validates the token, and downstream services trust the gateway's forwarded requests without re-parsing authorization credentials.
 
-To enforce gateway-only access without deep agent framework modifications, the recommended approach combines **network-level controls** (Kubernetes NetworkPolicies, host firewalls) with **proxy environment configuration** (HTTP\_PROXY/HTTPS\_PROXY injection). AKS natively supports this pattern: when configured with an HTTP proxy, both AKS nodes and Pods are automatically configured with proxy environment variables, so that standard HTTP clients route all external traffic through the designated proxy without code changes. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/coreinfrastructureandsecurityblog/controlling-aks-egress-using-an-http-proxy/4119407)
+To enforce gateway-only access without deep agent framework modifications, the recommended approach combines **network-level controls** (Kubernetes NetworkPolicies, host firewalls) with **proxy environment configuration** (HTTP_PROXY/HTTPS_PROXY injection). AKS natively supports this pattern: when configured with an HTTP proxy, both AKS nodes and Pods are automatically configured with proxy environment variables, so that standard HTTP clients route all external traffic through the designated proxy without code changes. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/coreinfrastructureandsecurityblog/controlling-aks-egress-using-an-http-proxy/4119407)
 
-***
+---
 
 ## 1. Centralized Token Validation at the Gateway
 
@@ -37,7 +37,7 @@ Tool-level validation is warranted only in narrow scenarios:
 
 **Long-term target:** Eliminate all direct agent-to-tool communication paths, making tool-level capability checks unnecessary. The signed-payload design from the Ghost Options Comparison demonstrates this principle: user intent, scope, and parameters are cryptographically bound into a signed request, and a compromised agent cannot mint new requests since it lacks signing material. The tool (in that case, the FD Agent on the host) validates the signed request — but in our model, this validation is performed by the gateway on behalf of all tools.
 
-***
+---
 
 ## 2. Ensuring Agents Use the Tools Gateway Without Heavy Framework Modifications
 
@@ -58,22 +58,22 @@ spec:
       role: agent
   policyTypes: ["Egress"]
   egress:
-  - to:
-    - podSelector:
-        matchLabels:
-          app: tools-gateway
-    ports:
-    - port: 8443
-      protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: tools-gateway
+      ports:
+        - port: 8443
+          protocol: TCP
 ```
 
 This ensures that even if an agent obtains the IP of an internal service and attempts a direct connection, the packet is dropped. The agent will see a network error or timeout — preventing misuse regardless of what the agent's code does.
 
 **Non-Kubernetes environments.** On VMs or bare-metal hosts:
 
-*   Create a **separate Linux network namespace** for the agent process or container.
-*   Use **iptables** or `nftables` rules to allow outbound connections only to the gateway's IP and port.
-*   Run an **HTTP proxy on the host** as the sole egress path, performing capability checks before forwarding.
+- Create a **separate Linux network namespace** for the agent process or container.
+- Use **iptables** or `nftables` rules to allow outbound connections only to the gateway's IP and port.
+- Run an **HTTP proxy on the host** as the sole egress path, performing capability checks before forwarding.
 
 The XPIA Risk Review Playbook explicitly requires that sandboxes must not permit arbitrary network ingress/egress. Network-level enforcement is the direct implementation of this requirement.
 
@@ -112,7 +112,7 @@ For database connections, gRPC, or custom TCP protocols that do not honor HTTP p
 
 **Recommended default:** Use **iptables REDIRECT** or a **sidecar proxy** for non-HTTP traffic. Both are transparent to the agent and do not require code changes — only infrastructure configuration managed by the platform team.
 
-***
+---
 
 ## 3. Preventing Agents from Calling Locally Accessible Tools
 
@@ -147,7 +147,7 @@ Agents should not have access to volumes shared with other workloads. Mount only
 
 The Fluid Web Previewer compliance checklist requires: no identity/tenant/Copilot context inside the container, network off-by-default with explicitly declared and policy-validated access, brokered host access via constrained messaging, and teardown guarantees between sessions. These requirements directly map to the isolation controls above.
 
-***
+---
 
 ## 4. Recommended Enforcement Stack
 
@@ -165,7 +165,7 @@ The Fluid Web Previewer compliance checklist requires: no identity/tenant/Copilo
 
 Ensure the agent's cloud identity (Managed Identity, service account) does **not** have permission to directly call protected APIs. The agent's identity should only be able to authenticate to the Capability Issuer (to request tokens) and to the tools gateway (to present tokens). Protected services should accept calls only from the gateway's identity. This ensures that even if an agent somehow obtained a direct network path, it would lack the identity credentials to authenticate to the target service.
 
-***
+---
 
 ## 5. Practical Agent Framework Integration
 
@@ -181,7 +181,7 @@ For common agent frameworks, the integration path is configuration-first:
 
 **Optional enhancement for deeper integration:** Provide an internal SDK library (e.g., `agentcap`) that wraps capability token retrieval and attachment. Agents import the library and call `agentcap.init()` at startup, which retrieves tokens from the Capability Issuer and configures the local environment. This is a **one-line addition** to agent code, not a deep framework modification.
 
-***
+---
 
 ## 6. Architecture Summary
 
@@ -189,7 +189,7 @@ The enforcement architecture operates in three layers, each independently preven
 
 1.  **Network layer (hard boundary):** The agent's network namespace permits egress only to the tools gateway. All other traffic is dropped by NetworkPolicy or firewall rules. This is the primary enforcement mechanism and cannot be bypassed by application-level techniques.
 
-2.  **Proxy layer (transparent routing):** HTTP\_PROXY/HTTPS\_PROXY environment variables route standard HTTP clients through the gateway automatically. This provides correct routing for well-behaved code without requiring awareness of the gateway. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/coreinfrastructureandsecurityblog/controlling-aks-egress-using-an-http-proxy/4119407)
+2.  **Proxy layer (transparent routing):** HTTP_PROXY/HTTPS_PROXY environment variables route standard HTTP clients through the gateway automatically. This provides correct routing for well-behaved code without requiring awareness of the gateway. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/coreinfrastructureandsecurityblog/controlling-aks-egress-using-an-http-proxy/4119407)
 
 3.  **OS layer (containment):** seccomp, AppArmor, non-root execution, and read-only filesystems prevent the agent from manipulating its own networking configuration, spawning privileged processes, or accessing host resources that could enable bypass.
 

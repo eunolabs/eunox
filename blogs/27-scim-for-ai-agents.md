@@ -1,6 +1,6 @@
 # SCIM 2.0 for AI Agents: Bringing Enterprise Directory Provisioning to Capability Tokens
 
-*Fifth and final post in the "Technology choices" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fifth and final post in the "Technology choices" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -28,23 +28,23 @@ With SCIM, deprovisioning is automatic. The moment the contractor's account is d
 
 Euno's SCIM implementation exposes the endpoints defined in RFC 7644:
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/scim/v2/Users` | List or search users |
-| `GET` | `/scim/v2/Users/{id}` | Get a specific user |
-| `POST` | `/scim/v2/Users` | Create a user |
-| `PUT` | `/scim/v2/Users/{id}` | Replace a user |
-| `PATCH` | `/scim/v2/Users/{id}` | Update a user (partial) |
-| `DELETE` | `/scim/v2/Users/{id}` | Delete a user |
-| `GET` | `/scim/v2/Groups` | List or search groups |
-| `GET` | `/scim/v2/Groups/{id}` | Get a specific group |
-| `POST` | `/scim/v2/Groups` | Create a group |
-| `PUT` | `/scim/v2/Groups/{id}` | Replace a group |
-| `PATCH` | `/scim/v2/Groups/{id}` | Update a group (partial) |
-| `DELETE` | `/scim/v2/Groups/{id}` | Delete a group |
-| `GET` | `/scim/v2/ServiceProviderConfig` | Advertise capabilities |
-| `GET` | `/scim/v2/Schemas` | List supported schemas |
-| `GET` | `/scim/v2/ResourceTypes` | List resource types |
+| Method   | Path                             | Purpose                  |
+| -------- | -------------------------------- | ------------------------ |
+| `GET`    | `/scim/v2/Users`                 | List or search users     |
+| `GET`    | `/scim/v2/Users/{id}`            | Get a specific user      |
+| `POST`   | `/scim/v2/Users`                 | Create a user            |
+| `PUT`    | `/scim/v2/Users/{id}`            | Replace a user           |
+| `PATCH`  | `/scim/v2/Users/{id}`            | Update a user (partial)  |
+| `DELETE` | `/scim/v2/Users/{id}`            | Delete a user            |
+| `GET`    | `/scim/v2/Groups`                | List or search groups    |
+| `GET`    | `/scim/v2/Groups/{id}`           | Get a specific group     |
+| `POST`   | `/scim/v2/Groups`                | Create a group           |
+| `PUT`    | `/scim/v2/Groups/{id}`           | Replace a group          |
+| `PATCH`  | `/scim/v2/Groups/{id}`           | Update a group (partial) |
+| `DELETE` | `/scim/v2/Groups/{id}`           | Delete a group           |
+| `GET`    | `/scim/v2/ServiceProviderConfig` | Advertise capabilities   |
+| `GET`    | `/scim/v2/Schemas`               | List supported schemas   |
+| `GET`    | `/scim/v2/ResourceTypes`         | List resource types      |
 
 The discovery endpoints (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`) are important in practice. When you configure euno as a SCIM target in Okta or Azure AD, the IdP fetches `ServiceProviderConfig` first to understand what operations and filters are supported. If the config says you don't support `PATCH`, the IdP will use `PUT` for all updates — which is more expensive because it requires the IdP to maintain a full copy of user state. We implement `PATCH` fully because it's the efficient path.
 
@@ -94,11 +94,11 @@ function lookupUser(scimPayload):
   if scimPayload.externalId:
     user = findByExternalId(scimPayload.externalId)
     if user: return user
-    
+
   if scimPayload.userName:
     user = findByUserName(scimPayload.userName)
     if user: return user
-  
+
   return null
 ```
 
@@ -133,9 +133,7 @@ And to remove one or more members by value list:
     {
       "op": "remove",
       "path": "members",
-      "value": [
-        { "value": "user-scim-id-abc123" }
-      ]
+      "value": [{ "value": "user-scim-id-abc123" }]
     }
   ]
 }
@@ -198,6 +196,7 @@ The action we take on SCIM DELETE is: set a revocation epoch keyed on the user's
 **TTL:** `maxTokenTtlSeconds × 2` (double the max TTL to handle clock skew)
 
 On every token verification, after signature validation, the gateway checks:
+
 1. Is there an epoch for this token's `sub` (subject)?
 2. If so, was the token issued (`iat`) before the epoch timestamp?
 3. If both yes → reject with `TOKEN_REVOKED_BY_EPOCH`.
@@ -231,6 +230,7 @@ Some IdPs periodically do a full sync — they push the complete state of all us
 A naïve implementation of SCIM CREATE will create duplicate user records if the same user is pushed again with a new SCIM resource ID. IdPs sometimes change their internal IDs for a user across full syncs (particularly if the IdP configuration changed between syncs).
 
 Our current handling is stricter:
+
 1. On `POST /scim/v2/Users`, attempt to create a new record.
 2. If uniqueness constraints are hit, return `409 User already exists`.
 3. Use PUT/PATCH flows for updates to existing users.
@@ -280,4 +280,4 @@ The `externalId` / `userName` fallback is right in principle but the implementat
 
 ---
 
-*Previous: [post 26 — Redis as a shared enforcement substrate](./26-redis-enforcement-substrate.md). The "Technology choices" series is complete. Next up: the "Compliance and enterprise" series beginning with [post 28 — Building for SOC 2: mapping CC6 and CC7 controls to an AI governance platform](../blog-articles.md#compliance-and-enterprise).*
+_Previous: [post 26 — Redis as a shared enforcement substrate](./26-redis-enforcement-substrate.md). The "Technology choices" series is complete. Next up: the "Compliance and enterprise" series beginning with [post 28 — Building for SOC 2: mapping CC6 and CC7 controls to an AI governance platform](../blog-articles.md#compliance-and-enterprise)._

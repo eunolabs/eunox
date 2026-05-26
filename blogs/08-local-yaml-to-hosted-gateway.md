@@ -1,6 +1,6 @@
 # From local YAML to hosted policy store: euno's migration story
 
-*Audience: developers and platform engineers scaling agent governance beyond a single machine*
+_Audience: developers and platform engineers scaling agent governance beyond a single machine_
 
 ---
 
@@ -36,15 +36,15 @@ The hosted gateway is a different architecture, not a replacement philosophy. Th
 
 Here's the side-by-side:
 
-| Concern | Local mode | Hosted mode |
-|---|---|---|
-| Policy storage | YAML file on disk | Gateway policy store (versioned, hash-verified) |
-| Call counters | In-memory, per-process | Redis, shared across all agent instances |
-| Kill-switch | In-memory, per-process | Redis global flag, instant effect everywhere |
-| Revocation list | In-memory, per-process | Redis, checked per call across all sessions |
-| Audit log | `~/.euno/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable) |
-| Token signing | Simplified / skipped | Full JWT signed by HSM-backed tenant key |
-| Multi-user | Not designed for it | Native multi-tenancy with per-tenant isolation |
+| Concern         | Local mode                           | Hosted mode                                     |
+| --------------- | ------------------------------------ | ----------------------------------------------- |
+| Policy storage  | YAML file on disk                    | Gateway policy store (versioned, hash-verified) |
+| Call counters   | In-memory, per-process               | Redis, shared across all agent instances        |
+| Kill-switch     | In-memory, per-process               | Redis global flag, instant effect everywhere    |
+| Revocation list | In-memory, per-process               | Redis, checked per call across all sessions     |
+| Audit log       | `~/.euno/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable)           |
+| Token signing   | Simplified / skipped                 | Full JWT signed by HSM-backed tenant key        |
+| Multi-user      | Not designed for it                  | Native multi-tenancy with per-tenant isolation  |
 
 The policy format is identical. That's the single most important architectural decision in the whole migration story, and I'll explain why it was hard to maintain and why we held the line on it.
 
@@ -145,20 +145,37 @@ The recommended approach is to run both modes in parallel briefly before committ
   "mcpServers": {
     "database-local": {
       "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/path/to/euno.policy.yaml",
-               "--", "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
+      "args": [
+        "-y",
+        "@euno/mcp",
+        "proxy",
+        "--policy",
+        "/path/to/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics",
+      ],
     },
     "database-hosted": {
       "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--enforcer-url", "https://gateway.euno.example",
-               "--enforcer-api-key", "sk-x7Kp9mRq...",
-               "--", "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
-    }
-  }
+      "args": [
+        "-y",
+        "@euno/mcp",
+        "proxy",
+        "--enforcer-url",
+        "https://gateway.euno.example",
+        "--enforcer-api-key",
+        "sk-x7Kp9mRq...",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics",
+      ],
+    },
+  },
 }
 ```
 
@@ -171,6 +188,7 @@ A day or two of parallel running tells you quickly if there are any policy edge 
 Moving to hosted mode means tool call arguments leave your network on their way to the gateway's policy evaluation engine. This is worth being explicit about for anyone doing a SOC 2 review or GDPR analysis.
 
 What goes to the gateway on every tool call:
+
 - Tool name
 - Tool arguments (raw — these are evaluated for policy conditions like `allowedOperations`, `argumentSchema`, `recipientDomain`)
 - Session identifier
@@ -178,6 +196,7 @@ What goes to the gateway on every tool call:
 - Timestamp
 
 What stays on your network:
+
 - The upstream MCP server's response — the gateway never sees it
 - Raw tool arguments after evaluation — only a SHA-256 hash (`argsHash`) is written to the audit ledger, not the raw arguments
 - Your policy YAML content — uploaded once at setup, not re-transmitted per call
@@ -229,6 +248,6 @@ That flexibility is what makes the architecture useful in practice. Not everyone
 
 ---
 
-*Previous: [Drop-in governance: adding @euno/mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop.md)*
+_Previous: [Drop-in governance: adding @euno/mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop.md)_
 
-*Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+_Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)_

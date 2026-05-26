@@ -1,6 +1,6 @@
 # Why OCSF? Choosing a Schema for AI Agent Audit Events
 
-*First post in the "Technology choices" series. [Post 11](./11-tamper-evident-audit-logs.md) covers how the audit records are protected with HMAC chaining and KMS signatures. [Post 10](./10-tool-gateway-pdp.md) explains when and why each record is emitted. If you haven't read those, they provide the "what" behind the records this post explains the shape of. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_First post in the "Technology choices" series. [Post 11](./11-tamper-evident-audit-logs.md) covers how the audit records are protected with HMAC chaining and KMS signatures. [Post 10](./10-tool-gateway-pdp.md) explains when and why each record is emitted. If you haven't read those, they provide the "what" behind the records this post explains the shape of. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -47,10 +47,10 @@ The framework ships with categories and classes for the most common security eve
 
 For euno, the two classes we emit are:
 
-| Class | `class_uid` | Used for |
-|---|---|---|
-| **Authorization** | `3003` | Token issuance, attenuation, renewal, revocation |
-| **API Activity** | `6003` | Every enforcement decision at the gateway or local proxy |
+| Class             | `class_uid` | Used for                                                 |
+| ----------------- | ----------- | -------------------------------------------------------- |
+| **Authorization** | `3003`      | Token issuance, attenuation, renewal, revocation         |
+| **API Activity**  | `6003`      | Every enforcement decision at the gateway or local proxy |
 
 When I say "emit," I mean we produce JSON records conforming to these class definitions, with all mandatory fields populated. When a SIEM vendor says "we support OCSF," they mean their ingestion pipeline knows these field names and class UIDs without requiring a customer-specific mapping configuration.
 
@@ -107,7 +107,9 @@ An agent calls the `query_db` tool with a SQL query. The gateway evaluates the c
       "flags": ["tool_call"],
       "data": {
         "tool": "query_db",
-        "arguments": { "query": "SELECT id, name FROM customers WHERE region = 'EMEA'" }
+        "arguments": {
+          "query": "SELECT id, name FROM customers WHERE region = 'EMEA'"
+        }
       }
     },
     "response": {
@@ -201,7 +203,11 @@ Not every event is a tool call. The Authorization class (`class_uid: 3003`) cove
   "status": "Success",
   "metadata": { "uid": "evt_b2c3d4e5f6a7b8c9" },
   "actor": {
-    "user": { "uid": "operator:alice@example.com", "type": "User", "type_id": 1 }
+    "user": {
+      "uid": "operator:alice@example.com",
+      "type": "User",
+      "type_id": 1
+    }
   },
   "policy": {
     "name": "sales-research-bot-policy",
@@ -263,4 +269,4 @@ The bottom line: OCSF adds verbosity and schema discipline overhead. What it giv
 
 ---
 
-*Next in this series: [post 24 — W3C DIDs in production: lessons from building a partner federation layer](./24-w3c-dids-in-production.md), which covers `did:web` and `did:ion` resolution in detail including the reliability challenges we didn't anticipate. [Post 11](./11-tamper-evident-audit-logs.md) covers how the OCSF records described here are protected with HMAC chaining and KMS signatures.*
+_Next in this series: [post 24 — W3C DIDs in production: lessons from building a partner federation layer](./24-w3c-dids-in-production.md), which covers `did:web` and `did:ion` resolution in detail including the reliability challenges we didn't anticipate. [Post 11](./11-tamper-evident-audit-logs.md) covers how the OCSF records described here are protected with HMAC chaining and KMS signatures._

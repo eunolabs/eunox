@@ -1,6 +1,6 @@
 # Redis as a Shared Enforcement Substrate: Call Counters, Kill-Switch, and DPoP Replay
 
-*Fourth post in the "Technology choices" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fourth post in the "Technology choices" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -227,4 +227,4 @@ The Prometheus metrics I watch most closely for Redis health:
 
 ---
 
-*Previous: [post 25 — KMS-backed JWT signing](./25-kms-backed-jwt-signing.md). Next: [post 27 — SCIM 2.0 for AI agents: bringing enterprise directory provisioning to capability tokens](./27-scim-for-ai-agents.md).*
+_Previous: [post 25 — KMS-backed JWT signing](./25-kms-backed-jwt-signing.md). Next: [post 27 — SCIM 2.0 for AI agents: bringing enterprise directory provisioning to capability tokens](./27-scim-for-ai-agents.md)._

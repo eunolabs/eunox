@@ -1,6 +1,6 @@
 # Fail Closed, Not Fail Open: The Most Important Decision in Security Software
 
-*First post in the "Design principles" series. The previous series — "Architecture deep-dives" — ended with [post 14 on AGT](./14-agt-defense-in-depth.md), the in-process guard that sits inside the agent. This post zooms out from implementation details and examines the single design principle that shapes every layer of euno: when something unexpected happens, what should the system do? See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_First post in the "Design principles" series. The previous series — "Architecture deep-dives" — ended with [post 14 on AGT](./14-agt-defense-in-depth.md), the in-process guard that sits inside the agent. This post zooms out from implementation details and examines the single design principle that shapes every layer of euno: when something unexpected happens, what should the system do? See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -47,7 +47,7 @@ The correct answer is: **reject the token immediately**.
 if (!this.handlers.has(condition.type)) {
   return {
     allowed: false,
-    denialCode: 'unknown_condition_type',
+    denialCode: "unknown_condition_type",
     reason: `Condition type '${condition.type}' is not registered in this enforcement engine`,
   };
 }
@@ -75,12 +75,12 @@ A few categories euno specifically handles as hard failures:
 
 ```typescript
 export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
-  CAPABILITY_TOKEN_SCHEMA_VERSION,  // currently "1.0"
+  CAPABILITY_TOKEN_SCHEMA_VERSION, // currently "1.0"
 ]);
 
 // At enforcement time:
 if (!SUPPORTED_SCHEMA_VERSIONS.has(payload.schemaVersion)) {
-  return deny('unsupported_schema_version');
+  return deny("unsupported_schema_version");
 }
 ```
 
@@ -98,9 +98,9 @@ No. No fallback mode.
 
 When the tool gateway is unreachable, tool calls fail. Full stop. This is not a bug; it's the intended behavior and it follows directly from the security architecture.
 
-The gateway is the enforcement boundary. Every tool call is a request that has not yet been authorized. The gateway is the thing that authorizes it. Without the gateway, you don't have "no authorization check" — you have "no authorization at all." Those are different states. "No authorization" means *nothing checked the call*. That's a security failure, not a availability trade-off.
+The gateway is the enforcement boundary. Every tool call is a request that has not yet been authorized. The gateway is the thing that authorizes it. Without the gateway, you don't have "no authorization check" — you have "no authorization at all." Those are different states. "No authorization" means _nothing checked the call_. That's a security failure, not a availability trade-off.
 
-I've thought hard about whether there's a principled way to build a "local policy cache" fallback — where the agent retains a copy of the most recently evaluated policy and uses it when the gateway is unreachable. The problem is that "most recently evaluated policy" is stale the moment the gateway goes down. The gateway might have been going down *because* an operator was activating a kill switch. The most recent policy might be the thing you most urgently need to stop enforcing.
+I've thought hard about whether there's a principled way to build a "local policy cache" fallback — where the agent retains a copy of the most recently evaluated policy and uses it when the gateway is unreachable. The problem is that "most recently evaluated policy" is stale the moment the gateway goes down. The gateway might have been going down _because_ an operator was activating a kill switch. The most recent policy might be the thing you most urgently need to stop enforcing.
 
 There's also the revocation problem. The gateway checks the revocation list on every call (through the in-memory `RevocationStore` backed by Redis). A local fallback has no way to check revocation in real time. A token that was revoked thirty seconds before the gateway went down would be treated as valid by the local fallback. That's unacceptable.
 
@@ -123,9 +123,9 @@ The correct behavior is: **no calls proceed until a valid, non-expired token is 
 const token = await options.tokenSupplier();
 if (!token) {
   return {
-    guardResult: 'deny',
-    denyReason: 'policy_evaluation_error',
-    message: 'tokenSupplier returned null/undefined — token not available',
+    guardResult: "deny",
+    denyReason: "policy_evaluation_error",
+    message: "tokenSupplier returned null/undefined — token not available",
   };
 }
 ```
@@ -173,11 +173,11 @@ Post 10 covered the argument validator briefly, but there's a configuration opti
 
 By default, a capability that doesn't declare an `argumentSchema` imposes no argument-level constraints. The tool call can pass any arguments it wants, and the gateway only enforces the token-level conditions (`allowedOperations`, etc.) but not argument-level schema validation.
 
-With `argumentSchemaRequired: true`, a capability that *doesn't* declare an `argumentSchema` is denied outright:
+With `argumentSchemaRequired: true`, a capability that _doesn't_ declare an `argumentSchema` is denied outright:
 
 ```typescript
 if (options.argumentSchemaRequired && !capability.argumentSchema) {
-  return deny('argument_schema_required_but_missing');
+  return deny("argument_schema_required_but_missing");
 }
 ```
 
@@ -217,9 +217,9 @@ These are real costs. I don't want to wave them away. But they're manageable cos
 
 ## The cumulative property
 
-Here's the thing about defense in depth: the value of fail-closed at any individual layer is modest. The value of fail-closed at *every* layer is qualitatively different.
+Here's the thing about defense in depth: the value of fail-closed at any individual layer is modest. The value of fail-closed at _every_ layer is qualitatively different.
 
-If the gateway fails closed on unknown conditions, and also on malformed tokens, and also on Redis unavailability, and also on token refresh failures, and also on kill-switch check failures — then an attacker needs to simultaneously defeat all of those defenses to get a tool call through without authorization. That's not four times harder than defeating one. It's *multiplicatively* harder, because each layer is independently correct and would have to fail independently.
+If the gateway fails closed on unknown conditions, and also on malformed tokens, and also on Redis unavailability, and also on token refresh failures, and also on kill-switch check failures — then an attacker needs to simultaneously defeat all of those defenses to get a tool call through without authorization. That's not four times harder than defeating one. It's _multiplicatively_ harder, because each layer is independently correct and would have to fail independently.
 
 The [AGT guard in post 14](./14-agt-defense-in-depth.md) is another layer that fails closed. The network policy that restricts the agent's egress to only the gateway URL is another. The read-only database credentials for the audit ledger are another.
 
@@ -239,4 +239,4 @@ The local mode is the first stage of what might become a fully hosted deployment
 
 ---
 
-*This post is the first in the "Design principles" series. Next: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md), which covers why `@euno/mcp`, `@euno/langchain`, and the gateway share a single `AgentCapabilityManifest` type and why that Apache-2.0 contract is public. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_This post is the first in the "Design principles" series. Next: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md), which covers why `@euno/mcp`, `@euno/langchain`, and the gateway share a single `AgentCapabilityManifest` type and why that Apache-2.0 contract is public. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

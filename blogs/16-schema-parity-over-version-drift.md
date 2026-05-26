@@ -1,6 +1,6 @@
 # Schema Parity Over Version Drift: Keeping the YAML Format Honest
 
-*Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the Apache-2.0 / BUSL-1.1 license split has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the Apache-2.0 / BUSL-1.1 license split has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -100,6 +100,7 @@ capabilities:
 ...you're not just documenting that the `query_db` tool takes a `query` string. You're specifying a constraint that the gateway will evaluate and enforce. If the agent passes a `query` that's 5000 characters, the gateway rejects the call. If the agent passes an extra field not in `properties`, the gateway rejects the call (because `additionalProperties` defaults to `false`).
 
 The enforcement is done by `validateArguments()` from `@euno/common-core`. The same function runs in:
+
 - The `euno validate` CLI command, when you're testing your policy locally before deployment
 - The capability issuer, which validates the schema at token mint time
 - The gateway enforcement engine, which validates arguments at call time
@@ -128,7 +129,7 @@ The practical benefit: enterprise security teams can audit the policy contract. 
 
 ## The `euno validate` CLI as a schema contract test
 
-One of the things I'm most glad exists is the `euno validate` command. On the surface it looks like a linter — you point it at a policy YAML and it tells you if the policy is valid. But the value isn't the linting. It's the *guarantee* that the same validator runs in development and production.
+One of the things I'm most glad exists is the `euno validate` command. On the surface it looks like a linter — you point it at a policy YAML and it tells you if the policy is valid. But the value isn't the linting. It's the _guarantee_ that the same validator runs in development and production.
 
 Before I had `euno validate`, policy authors had two paths to find out whether their policy was valid: test it locally with `@euno/mcp` (which might have a slightly different implementation from the gateway) or deploy to staging and wait for errors. Neither was great.
 
@@ -171,13 +172,18 @@ The lesson from this migration: **schema versioning is not just for humans**. Th
 The condition registry (`ConditionRegistry`) supports runtime registration of custom handlers:
 
 ```typescript
-import { defaultConditionRegistry } from '@euno/common-core';
+import { defaultConditionRegistry } from "@euno/common-core";
 
-defaultConditionRegistry.register('my-data-classification', (condition, context) => {
-  const classification = context.requestMetadata?.dataClassification;
-  const allowed = condition.allowedClassifications.includes(classification);
-  return allowed ? { allowed: true } : { allowed: false, denialCode: 'classification_denied' };
-});
+defaultConditionRegistry.register(
+  "my-data-classification",
+  (condition, context) => {
+    const classification = context.requestMetadata?.dataClassification;
+    const allowed = condition.allowedClassifications.includes(classification);
+    return allowed
+      ? { allowed: true }
+      : { allowed: false, denialCode: "classification_denied" };
+  },
+);
 ```
 
 When you do this, you're extending the shared registry. The local proxy, the AGT guard, and the gateway will all use the registered handler if they've loaded the same registration code. The key constraint: you have to register the handler in every consumer that processes tokens with your custom condition. If you register it in the gateway but not in the local proxy, `euno validate` will correctly reject policies that use your custom condition (because the registry doesn't know about it at validate time). That failure is intentional — it surfaces the registration gap before you deploy.
@@ -208,4 +214,4 @@ Usually you can. The times when you can't are usually signals that `@euno/common
 
 ---
 
-*Previous: [post 15 — Fail closed, not fail open: the most important decision in security software](./15-fail-closed-not-fail-open.md). Next: [post 17 — Declarative, not transitive: the partner federation trust model](./17-declarative-not-transitive.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 15 — Fail closed, not fail open: the most important decision in security software](./15-fail-closed-not-fail-open.md). Next: [post 17 — Declarative, not transitive: the partner federation trust model](./17-declarative-not-transitive.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

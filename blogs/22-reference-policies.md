@@ -1,10 +1,10 @@
 # Reference Policies: Copy-Paste Guardrails for Common MCP Servers
 
-*Fourth and final post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fourth and final post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-One of the things I spent a lot of time on before shipping euno was the set of reference policies that ship with the package. Not because they're technically complex — the YAML isn't complicated. Because getting the constraints *right* requires thinking carefully about what each MCP server can do, what can go wrong, and what reasonable defaults look like for an operator who hasn't thought deeply about AI agent security for their specific tool.
+One of the things I spent a lot of time on before shipping euno was the set of reference policies that ship with the package. Not because they're technically complex — the YAML isn't complicated. Because getting the constraints _right_ requires thinking carefully about what each MCP server can do, what can go wrong, and what reasonable defaults look like for an operator who hasn't thought deeply about AI agent security for their specific tool.
 
 The five policies that ship with `@euno/mcp` under `public/packages/mcp/policies/` cover the MCP servers we see deployed most often: filesystem, Postgres, GitHub, Slack, and fetch. This post walks through each one with detailed commentary on why specific constraints were chosen, what they protect against, and where the gaps are.
 
@@ -139,7 +139,6 @@ Read tools are unrestricted:
 
 - resource: list_branches
   actions: [call]
-
 # ... and so on for all read tools
 ```
 
@@ -196,7 +195,7 @@ If your agent has any possibility of calling these tools — even accidentally t
   actions: [call]
   conditions:
     - type: timeWindow
-      notBefore: "2099-01-01T00:00:00Z"  # intentionally unreachable — always denied
+      notBefore: "2099-01-01T00:00:00Z" # intentionally unreachable — always denied
 ```
 
 This is a somewhat unusual use of the `timeWindow` condition, but it produces the desired effect: the tool is listed in the policy with a condition that never passes, so calls to it are always denied.
@@ -301,6 +300,7 @@ Let me break down what the regex is doing:
 This means DNS rebinding attacks bypass it. A hostname like `internal.legit-company.com` passes the regex check — it doesn't match any of the blocked patterns. But if `internal.legit-company.com` is configured in DNS to resolve to `169.254.169.254` (which an attacker can do if they control the DNS for `legit-company.com`), the fetch will succeed and reach the metadata endpoint.
 
 For complete SSRF protection, combine this policy with network-level egress controls:
+
 - Run the fetch MCP server in a container or VM that has firewall rules blocking outbound connections to the RFC 1918 ranges and `169.254.169.254`.
 - Use a forward proxy that enforces these rules at the network level, not the application level.
 
@@ -369,4 +369,4 @@ The `version` field in the policy manifest is there precisely for this kind of t
 
 ---
 
-*Previous: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

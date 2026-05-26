@@ -13,12 +13,12 @@
 The adversary is the **agent process itself**, not an external attacker.
 Attack scenarios in scope:
 
-| Scenario | Vector |
-|----------|--------|
-| Prompt injection | Malicious tool output or user prompt causes the agent to issue unintended tool calls |
-| Supply-chain compromise | Malicious NPM package opens a reverse shell or exfiltrates tokens |
-| LLM-induced jailbreak | Agent LLM is instructed to exfiltrate the bearer/DPoP key |
-| Kernel exploit | Agent exploits a Node.js or Linux CVE to escape the container |
+| Scenario                | Vector                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| Prompt injection        | Malicious tool output or user prompt causes the agent to issue unintended tool calls |
+| Supply-chain compromise | Malicious NPM package opens a reverse shell or exfiltrates tokens                    |
+| LLM-induced jailbreak   | Agent LLM is instructed to exfiltrate the bearer/DPoP key                            |
+| Kernel exploit          | Agent exploits a Node.js or Linux CVE to escape the container                        |
 
 **Out of scope:** model alignment, content filtering, training-phase sandboxing.
 
@@ -34,18 +34,18 @@ exploits upward.
 The following controls were already implemented before the hardening described in
 this document:
 
-| Layer | Mechanism | File |
-|-------|-----------|------|
-| Network egress | Kubernetes `NetworkPolicy` — default-deny + explicit allow to gateway/issuer/DNS | `k8s/network-policies.yaml` |
-| Namespace PSA | `pod-security.kubernetes.io/enforce: restricted` | `k8s/pod-security-standards.yaml` |
-| Capabilities | `--cap-drop ALL` | `k8s/agent-runtime.yaml` |
-| Root filesystem | `readOnlyRootFilesystem: true` | `k8s/agent-runtime.yaml` |
-| Privilege escalation | `allowPrivilegeEscalation: false` | `k8s/agent-runtime.yaml` |
-| Non-root UID | UID/GID 1000 | `k8s/agent-runtime.yaml`, `Dockerfile` |
-| Seccomp | `RuntimeDefault` (Docker's default blocklist) | `k8s/agent-runtime.yaml` |
-| Soft policy pre-screen | AGT in-process guard — checks tool name against capability manifest | `src/agt-guard.ts` |
-| Hard enforcement | Tool Gateway — cryptographic token verification, audit chain | `tool-gateway` package |
-| DPoP (optional) | Sender-constrained tokens — stolen bearer is unusable without the private key | `src/runtime.ts` |
+| Layer                  | Mechanism                                                                        | File                                   |
+| ---------------------- | -------------------------------------------------------------------------------- | -------------------------------------- |
+| Network egress         | Kubernetes `NetworkPolicy` — default-deny + explicit allow to gateway/issuer/DNS | `k8s/network-policies.yaml`            |
+| Namespace PSA          | `pod-security.kubernetes.io/enforce: restricted`                                 | `k8s/pod-security-standards.yaml`      |
+| Capabilities           | `--cap-drop ALL`                                                                 | `k8s/agent-runtime.yaml`               |
+| Root filesystem        | `readOnlyRootFilesystem: true`                                                   | `k8s/agent-runtime.yaml`               |
+| Privilege escalation   | `allowPrivilegeEscalation: false`                                                | `k8s/agent-runtime.yaml`               |
+| Non-root UID           | UID/GID 1000                                                                     | `k8s/agent-runtime.yaml`, `Dockerfile` |
+| Seccomp                | `RuntimeDefault` (Docker's default blocklist)                                    | `k8s/agent-runtime.yaml`               |
+| Soft policy pre-screen | AGT in-process guard — checks tool name against capability manifest              | `src/agt-guard.ts`                     |
+| Hard enforcement       | Tool Gateway — cryptographic token verification, audit chain                     | `tool-gateway` package                 |
+| DPoP (optional)        | Sender-constrained tokens — stolen bearer is unusable without the private key    | `src/runtime.ts`                       |
 
 ---
 
@@ -53,15 +53,16 @@ this document:
 
 Mapping the five enforcement tiers from the threat model to current status:
 
-| Tier | Mechanism | Status |
-|------|-----------|--------|
-| 1 | Hypervisor-level tap iptables (Firecracker) | ❌ Not implemented — plain OCI |
-| 2 | Network namespace + iptables | ✅ Kubernetes `NetworkPolicy` (CNI-enforced) |
-| 3 | WASM capability grant | ❌ Not applicable (Node.js runtime) |
-| 4 | Landlock + custom seccomp allowlist | ✅ Custom seccomp allowlist (`k8s/seccomp/agent-runtime.json`) |
-| 5 | AppArmor/SELinux profiles | ⚠️ None defined for agent pods |
+| Tier | Mechanism                                   | Status                                                         |
+| ---- | ------------------------------------------- | -------------------------------------------------------------- |
+| 1    | Hypervisor-level tap iptables (Firecracker) | ❌ Not implemented — plain OCI                                 |
+| 2    | Network namespace + iptables                | ✅ Kubernetes `NetworkPolicy` (CNI-enforced)                   |
+| 3    | WASM capability grant                       | ❌ Not applicable (Node.js runtime)                            |
+| 4    | Landlock + custom seccomp allowlist         | ✅ Custom seccomp allowlist (`k8s/seccomp/agent-runtime.json`) |
+| 5    | AppArmor/SELinux profiles                   | ⚠️ None defined for agent pods                                 |
 
 ### Gap 1 — No gVisor / Kata runtime class (shared host kernel)
+
 Agent pods run on the host kernel. A Node.js CVE or kernel 0-day from inside
 the container is a full escape. `docs/sandboxing.md` calls for gVisor/Kata
 Containers but this is not wired in any manifest.
@@ -72,6 +73,7 @@ Containers but this is not wired in any manifest.
 pool configuration change and a one-line uncomment in the manifest.
 
 ### Gap 2 — Custom seccomp allowlist absent ✅ Fixed
+
 `RuntimeDefault` is Docker's blocklist of ~50 syscalls. A tailored Node.js 18
 allowlist blocks ~90% more of the exploitable syscall surface (e.g. `ptrace`,
 `mount`, `clone(CLONE_NEWUSER)`, `bpf`, `io_uring`, `keyctl`,
@@ -81,12 +83,14 @@ allowlist blocks ~90% more of the exploitable syscall surface (e.g. `ptrace`,
 switched from `RuntimeDefault` to `Localhost`.
 
 ### Gap 3 — `AUTH_TOKEN` in environment variable ✅ Fixed
+
 `AUTH_TOKEN` was a required field visible in `kubectl describe pod` and stored
 in a Kubernetes `Secret`. It should be obtained via projected workload identity
 (Azure Workload Identity, SPIRE SVID, or a short-TTL projected service account
 token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
 
 **Status:** Fully implemented:
+
 - `AUTH_TOKEN` is now optional in `AgentRuntimeConfigSchema`.
 - `AUTH_TOKEN_FILE` field added — path to a file the runtime reads on every
   capability-issuance call (token never persisted in memory between refreshes).
@@ -98,23 +102,27 @@ token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
   annotation block.
 
 ### Gap 4 — ServiceAccount token automounting ✅ Fixed
+
 The `agent-runtime` ServiceAccount had `automountServiceAccountToken` unset
 (defaults to `true`).
 
 **Status:** `automountServiceAccountToken: false` on the ServiceAccount.
 
 ### Gap 5 — Unbounded `emptyDir` volumes ✅ Fixed
+
 `/tmp`, `/app/tmp`, `/app/logs` had no `sizeLimit`.
 
 **Status:** All three volumes capped (`/tmp` 64 MiB, `/app/tmp` 64 MiB,
 `/app/logs` 128 MiB).
 
 ### Gap 6 — Plain HTTP to gateway ⚠️ Scaffolded
+
 `GATEWAY_URL` defaults to `http://envoy-shard-router:3002`. Network-level
 attackers inside the cluster can observe tool calls. DPoP mitigates bearer-token
 theft but not content confidentiality.
 
 **Status:** Infrastructure scaffolding committed; requires operator activation:
+
 - `k8s/agent-runtime.yaml` carries a commented cert-manager `Certificate` resource
   block for issuing a cluster-internal TLS certificate for the agent pod.
 - Commented `tls-ca` volume and `NODE_EXTRA_CA_CERTS` env var show exactly which
@@ -156,6 +164,7 @@ removes the projected Kubernetes API token from the pod filesystem entirely.
 ### 4.3 Volume size limits
 
 All `emptyDir` volumes are capped:
+
 - `/tmp` and `/app/tmp` — 64 MiB
 - `/app/logs` — 128 MiB
 
@@ -184,6 +193,7 @@ that reads the file at call time, so:
 
 The manifest carries a commented `sa-token` projected volume (audience-bound,
 1-hour TTL) and a commented `AUTH_TOKEN_FILE` env var. Enabling requires:
+
 1. Azure Workload Identity or SPIRE configured on the cluster.
 2. The ServiceAccount annotated with `azure.workload.identity/client-id`.
 3. Three comment blocks in `k8s/agent-runtime.yaml` uncommented.
@@ -230,13 +240,13 @@ TC layer. Add an L7 rule restricting the agent to `POST /api/v1/invoke` only
 
 ## 6. Environment Decision Matrix
 
-| Deployment scenario | Recommended primary sandbox | Secondary layers |
-|--------------------|-----------------------------|-----------------|
-| **AKS (current)** | AKS Pod Sandboxing (`kata-mshv-vm-isolation`) | NetworkPolicy ✅, cap-drop ✅, custom seccomp ✅ |
-| **Self-managed K8s** | gVisor node pool (`runtimeClassName: gvisor`) | same |
-| **On-prem / docker-compose** | Firecracker + jailer (host iptables on tap) | read-only rootfs, non-root UID |
-| **Edge** | WASM (wasmtime, if agent compiled to WASM) | Landlock + seccomp wrapper |
-| **Serverless (Fly, Lambda)** | Platform microVM (Firecracker-backed) | already provided |
+| Deployment scenario          | Recommended primary sandbox                   | Secondary layers                                 |
+| ---------------------------- | --------------------------------------------- | ------------------------------------------------ |
+| **AKS (current)**            | AKS Pod Sandboxing (`kata-mshv-vm-isolation`) | NetworkPolicy ✅, cap-drop ✅, custom seccomp ✅ |
+| **Self-managed K8s**         | gVisor node pool (`runtimeClassName: gvisor`) | same                                             |
+| **On-prem / docker-compose** | Firecracker + jailer (host iptables on tap)   | read-only rootfs, non-root UID                   |
+| **Edge**                     | WASM (wasmtime, if agent compiled to WASM)    | Landlock + seccomp wrapper                       |
+| **Serverless (Fly, Lambda)** | Platform microVM (Firecracker-backed)         | already provided                                 |
 
 The network enforcement layer (`NetworkPolicy`) is the critical piece — everything
 else is defence-in-depth that builds on it. The highest-value next step for this

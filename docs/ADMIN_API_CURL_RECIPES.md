@@ -251,23 +251,23 @@ admin action.
 
 **Environment variables:**
 
-| Variable | Values / notes |
-|----------|---------------|
-| `OCSF_TRANSPORT` | `stdout` · `file` · `http`. When unset OCSF emission is disabled. |
-| `OCSF_FILE_PATH` | Path to append events to. Required when `OCSF_TRANSPORT=file`. |
-| `OCSF_HTTP_URL` | Collector URL to POST events to. Required when `OCSF_TRANSPORT=http`. |
-| `OCSF_HTTP_HEADERS` | Optional JSON object of extra HTTP headers (`{"x-api-key":"..."}`). |
+| Variable            | Values / notes                                                        |
+| ------------------- | --------------------------------------------------------------------- |
+| `OCSF_TRANSPORT`    | `stdout` · `file` · `http`. When unset OCSF emission is disabled.     |
+| `OCSF_FILE_PATH`    | Path to append events to. Required when `OCSF_TRANSPORT=file`.        |
+| `OCSF_HTTP_URL`     | Collector URL to POST events to. Required when `OCSF_TRANSPORT=http`. |
+| `OCSF_HTTP_HEADERS` | Optional JSON object of extra HTTP headers (`{"x-api-key":"..."}`).   |
 
-| Action                   | activity_id | severity_id |
-|--------------------------|-------------|-------------|
-| Kill session / agent     | 2 (Revoke)  | 4 (High)    |
-| Revive session / agent   | 1 (Assign)  | 2 (Low)     |
-| Global kill activate     | 2 (Revoke)  | 5 (Critical)|
-| Global kill deactivate   | 1 (Assign)  | 2 (Low)     |
-| Reset all                | 99 (Other)  | 5 (Critical)|
-| Revoke token             | 2 (Revoke)  | 4 (High)    |
-| Set revocation epoch     | 2 (Revoke)  | 4 (High)    |
-| Cross-tenant rejection   | 2 (Revoke)  | 4 (High, Failure) |
+| Action                 | activity_id | severity_id       |
+| ---------------------- | ----------- | ----------------- |
+| Kill session / agent   | 2 (Revoke)  | 4 (High)          |
+| Revive session / agent | 1 (Assign)  | 2 (Low)           |
+| Global kill activate   | 2 (Revoke)  | 5 (Critical)      |
+| Global kill deactivate | 1 (Assign)  | 2 (Low)           |
+| Reset all              | 99 (Other)  | 5 (Critical)      |
+| Revoke token           | 2 (Revoke)  | 4 (High)          |
+| Set revocation epoch   | 2 (Revoke)  | 4 (High)          |
+| Cross-tenant rejection | 2 (Revoke)  | 4 (High, Failure) |
 
 The `unmapped.tenantId` field is populated in every OCSF event when
 `ADMIN_TENANT_ID` is set so SIEM queries can filter by tenant without parsing

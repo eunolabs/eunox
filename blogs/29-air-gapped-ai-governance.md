@@ -1,6 +1,6 @@
 # Air-gapped AI governance: deploying euno with no internet dependency
 
-*Audience: platform engineers and security architects deploying AI governance in regulated, restricted, or sovereign environments*
+_Audience: platform engineers and security architects deploying AI governance in regulated, restricted, or sovereign environments_
 
 ---
 
@@ -86,14 +86,14 @@ The `k8s/helm/euno/` directory contains the umbrella chart that deploys the full
 
 The services covered:
 
-| Service | Helm key | Purpose |
-|---|---|---|
-| tool-gateway | `gateway` | Enforcement engine, audit ledger writer |
-| capability-issuer | `issuer` | JWT minting, OIDC federation |
-| api-key-minter | `minter` | API key lifecycle, admin console |
-| db-token-service | `dbTokenService` | Database token brokering |
-| storage-grant-service | `storageGrantService` | Storage grant brokering |
-| posture-emitter | `postureEmitter` | System posture telemetry |
+| Service               | Helm key              | Purpose                                 |
+| --------------------- | --------------------- | --------------------------------------- |
+| tool-gateway          | `gateway`             | Enforcement engine, audit ledger writer |
+| capability-issuer     | `issuer`              | JWT minting, OIDC federation            |
+| api-key-minter        | `minter`              | API key lifecycle, admin console        |
+| db-token-service      | `dbTokenService`      | Database token brokering                |
+| storage-grant-service | `storageGrantService` | Storage grant brokering                 |
+| posture-emitter       | `postureEmitter`      | System posture telemetry                |
 
 Postgres and Redis are external dependencies by default, not services the umbrella chart installs automatically. For quick local evaluation you can enable the optional Bitnami subcharts with `--set postgresql.enabled=true --set redis.enabled=true`; for production air-gap deployments you normally vendor those upstream charts into your private Helm repository or point the services at operator-managed Postgres and Redis instead.
 
@@ -118,7 +118,7 @@ The relevant config values:
 ```yaml
 capabilityIssuer:
   oidc:
-    enabled: false  # disable OIDC federation
+    enabled: false # disable OIDC federation
   apiKeyAuth:
     enabled: true
 ```
