@@ -6,6 +6,7 @@ package agentruntime
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -98,7 +99,7 @@ func readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 		n, err := r.Read(tmp)
 		buf = append(buf, tmp[:n]...)
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return buf, nil
 			}
 			return buf, err

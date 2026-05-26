@@ -126,7 +126,11 @@ func defaultJitter(base time.Duration) time.Duration {
 		return 0
 	}
 	// Add 0-10% jitter
-	jitter := time.Duration(rand.Int64N(int64(base) / 10))
+	maxJitter := int64(base) / 10
+	if maxJitter <= 0 {
+		return 0
+	}
+	jitter := time.Duration(rand.Int64N(maxJitter))
 	return jitter
 }
 

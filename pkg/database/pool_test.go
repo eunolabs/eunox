@@ -6,6 +6,7 @@ package database
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/edgeobs/eunox/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
@@ -93,8 +94,8 @@ func TestDatabasePoolConfig_Durations(t *testing.T) {
 		ConnMaxLifetimeSeconds: 600,
 		ConnMaxIdleTimeSeconds: 120,
 	}
-	assert.Equal(t, 600_000_000_000, int(cfg.ConnMaxLifetime().Nanoseconds()))
-	assert.Equal(t, 120_000_000_000, int(cfg.ConnMaxIdleTime().Nanoseconds()))
+	assert.Equal(t, 10*time.Minute, cfg.ConnMaxLifetime())
+	assert.Equal(t, 2*time.Minute, cfg.ConnMaxIdleTime())
 }
 
 func TestPoolMetrics(t *testing.T) {
