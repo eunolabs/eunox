@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_posture_queue_next_attempt ON posture_queue(next_
 CREATE TABLE IF NOT EXISTS posture_dead_letter (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
 	original_id    INTEGER NOT NULL,
-	event_type     TEXT    NOT NULL,
+	event_type     TEXT    NOT NULL CHECK(event_type IN ('observed','revoked')),
 	payload        BLOB   NOT NULL,
 	inserted_at    INTEGER NOT NULL,
 	attempts       INTEGER NOT NULL,
@@ -84,6 +84,9 @@ func NewSQLiteQueue(path string) (*SQLiteQueue, error) {
 
 // Push enqueues a new event. Returns the assigned event ID.
 func (q *SQLiteQueue) Push(ctx context.Context, eventType EventType, payload []byte) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: push: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -110,6 +113,9 @@ func (q *SQLiteQueue) Push(ctx context.Context, eventType EventType, payload []b
 
 // Peek returns up to limit events that are ready for delivery (next_attempt_at <= now).
 func (q *SQLiteQueue) Peek(ctx context.Context, limit int) ([]QueuedEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("posture queue: peek: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -147,6 +153,9 @@ func (q *SQLiteQueue) Peek(ctx context.Context, limit int) ([]QueuedEvent, error
 
 // Ack removes a successfully delivered event from the queue.
 func (q *SQLiteQueue) Ack(ctx context.Context, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: ack: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -163,6 +172,9 @@ func (q *SQLiteQueue) Ack(ctx context.Context, id int64) error {
 
 // Nack reschedules a failed event for later retry.
 func (q *SQLiteQueue) Nack(ctx context.Context, id, nextAttemptAt int64, errMsg string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: nack: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -182,6 +194,9 @@ func (q *SQLiteQueue) Nack(ctx context.Context, id, nextAttemptAt int64, errMsg 
 
 // Depth returns the total number of events in the queue.
 func (q *SQLiteQueue) Depth(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: depth: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -199,6 +214,9 @@ func (q *SQLiteQueue) Depth(ctx context.Context) (int64, error) {
 
 // DeadLetter moves an event from the active queue to the dead-letter table.
 func (q *SQLiteQueue) DeadLetter(ctx context.Context, event *QueuedEvent) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("posture queue: dead-letter: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -242,6 +260,9 @@ func (q *SQLiteQueue) DeadLetter(ctx context.Context, event *QueuedEvent) error 
 
 // ListDeadLetters returns up to limit dead-lettered events, ordered by dead-letter time descending.
 func (q *SQLiteQueue) ListDeadLetters(ctx context.Context, limit int) ([]DeadLetteredEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -276,6 +297,9 @@ func (q *SQLiteQueue) ListDeadLetters(ctx context.Context, limit int) ([]DeadLet
 
 // DeadLetterDepth returns the total number of dead-lettered events.
 func (q *SQLiteQueue) DeadLetterDepth(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

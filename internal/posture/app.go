@@ -311,7 +311,7 @@ func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (app *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (app *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	depth, err := app.QueueDepth()
 	if err != nil {
 		if app.deps.Logger != nil {
@@ -321,9 +321,11 @@ func (app *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	activeRecords := app.recordStore.ListActive()
-	dlqDepth, dlqErr := app.queue.DeadLetterDepth(context.Background())
+	dlqDepth, dlqErr := app.queue.DeadLetterDepth(r.Context())
 	if dlqErr != nil {
-		slog.Warn("failed to read dead letter depth", slog.String("error", dlqErr.Error()))
+		if app.deps.Logger != nil {
+			app.deps.Logger.Warn("failed to read dead letter depth", slog.String("error", dlqErr.Error()))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -404,8 +406,8 @@ func (app *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 
-func (app *App) handleListDeadLetters(w http.ResponseWriter, _ *http.Request) {
-	events, err := app.queue.ListDeadLetters(context.Background(), 100)
+func (app *App) handleListDeadLetters(w http.ResponseWriter, r *http.Request) {
+	events, err := app.queue.ListDeadLetters(r.Context(), 100)
 	if err != nil {
 		if app.deps.Logger != nil {
 			app.deps.Logger.Error("posture emitter: failed to list dead letters", slog.String("error", err.Error()))
@@ -414,9 +416,11 @@ func (app *App) handleListDeadLetters(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	dlqDepth, dlqErr := app.queue.DeadLetterDepth(context.Background())
+	dlqDepth, dlqErr := app.queue.DeadLetterDepth(r.Context())
 	if dlqErr != nil {
-		slog.Warn("failed to read dead letter depth for listing", slog.String("error", dlqErr.Error()))
+		if app.deps.Logger != nil {
+			app.deps.Logger.Warn("failed to read dead letter depth for listing", slog.String("error", dlqErr.Error()))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

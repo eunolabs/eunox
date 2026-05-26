@@ -7,6 +7,7 @@ package posture
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -103,7 +104,7 @@ type DeadLetteredEvent struct {
 	// Type is the event type (observed or revoked).
 	Type EventType `json:"type"`
 	// Payload is the JSON-encoded event data.
-	Payload []byte `json:"payload"`
+	Payload json.RawMessage `json:"payload"`
 	// InsertedAt is when the event was originally enqueued (Unix milliseconds).
 	InsertedAt int64 `json:"insertedAt"`
 	// Attempts is the number of delivery attempts made.

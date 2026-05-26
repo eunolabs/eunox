@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,6 +23,7 @@ const (
 type RedisPartnerDIDStore struct {
 	client redis.Cmdable
 	now    func() time.Time
+	logger *slog.Logger
 }
 
 // NewRedisPartnerDIDStore creates a new Redis-backed partner DID store.
@@ -30,6 +32,12 @@ func NewRedisPartnerDIDStore(client redis.Cmdable) *RedisPartnerDIDStore {
 		client: client,
 		now:    time.Now,
 	}
+}
+
+// WithLogger sets an optional structured logger on the store for operational visibility.
+func (s *RedisPartnerDIDStore) WithLogger(logger *slog.Logger) *RedisPartnerDIDStore {
+	s.logger = logger
+	return s
 }
 
 // Register adds a new partner DID to the store.
@@ -74,13 +82,19 @@ func (s *RedisPartnerDIDStore) List() []PartnerDID {
 	ctx := context.Background()
 	result, err := s.client.HGetAll(ctx, redisPartnerDIDHashKey).Result()
 	if err != nil {
-		return nil
+		if s.logger != nil {
+			s.logger.Error("partner DID store: list failed", slog.String("error", err.Error()))
+		}
+		return []PartnerDID{}
 	}
 
 	partners := make([]PartnerDID, 0, len(result))
 	for _, data := range result {
 		var p PartnerDID
 		if err := json.Unmarshal([]byte(data), &p); err != nil {
+			if s.logger != nil {
+				s.logger.Error("partner DID store: unmarshal failed", slog.String("error", err.Error()))
+			}
 			continue
 		}
 		partners = append(partners, p)
@@ -93,6 +107,9 @@ func (s *RedisPartnerDIDStore) Get(did string) (*PartnerDID, bool) {
 	ctx := context.Background()
 	data, err := s.client.HGet(ctx, redisPartnerDIDHashKey, did).Result()
 	if err != nil {
+		if err != redis.Nil && s.logger != nil {
+			s.logger.Error("partner DID store: get failed", slog.String("did", did), slog.String("error", err.Error()))
+		}
 		return nil, false
 	}
 
