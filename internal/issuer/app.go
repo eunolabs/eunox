@@ -77,16 +77,18 @@ type Dependencies struct {
 
 // App is the issuer HTTP application.
 type App struct {
-	config Config
-	deps   Dependencies
-	router chi.Router
+	config    Config
+	deps      Dependencies
+	router    chi.Router
+	scimStore *SCIMStore
 }
 
 // New creates a new issuer App with the given configuration and dependencies.
 func New(cfg *Config, deps *Dependencies) *App {
 	app := &App{
-		config: *cfg,
-		deps:   *deps,
+		config:    *cfg,
+		deps:      *deps,
+		scimStore: NewSCIMStore(),
 	}
 	app.router = app.buildRouter()
 	return app
@@ -132,12 +134,8 @@ func (app *App) buildRouter() chi.Router {
 		r.Delete("/role-policy/{role}", app.handleDeleteRolePolicy)
 	})
 
-	// SCIM provisioning
-	r.Route("/scim/v2", func(r chi.Router) {
-		r.Use(app.requireAdminAuth)
-		r.Post("/Users", app.handleSCIMCreateUser)
-		r.Post("/Groups", app.handleSCIMCreateGroup)
-	})
+	// SCIM provisioning (full SCIM 2.0 compliance)
+	app.registerSCIMRoutes(r)
 
 	return r
 }
@@ -608,9 +606,10 @@ func (app *App) handleDeleteRolePolicy(w http.ResponseWriter, r *http.Request) {
 
 // SCIMUserRequest represents a SCIM user creation request.
 type SCIMUserRequest struct {
-	Schemas  []string `json:"schemas"`
-	UserName string   `json:"userName"`
-	Name     struct {
+	Schemas    []string `json:"schemas"`
+	UserName   string   `json:"userName"`
+	ExternalID string   `json:"externalId,omitempty"`
+	Name       struct {
 		GivenName  string `json:"givenName"`
 		FamilyName string `json:"familyName"`
 	} `json:"name"`
@@ -621,73 +620,15 @@ type SCIMUserRequest struct {
 	Active bool `json:"active"`
 }
 
-func (app *App) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req SCIMUserRequest
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
-		return
-	}
-
-	if req.UserName == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse("userName is required"))
-		return
-	}
-
-	// SCIM response
-	response := map[string]interface{}{
-		"schemas":  []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
-		"id":       uuid.New().String(),
-		"userName": req.UserName,
-		"name":     req.Name,
-		"emails":   req.Emails,
-		"active":   req.Active,
-		"meta": map[string]interface{}{
-			"resourceType": "User",
-			"created":      time.Now().UTC().Format(time.RFC3339),
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/scim+json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(response)
-}
-
 // SCIMGroupRequest represents a SCIM group creation request.
 type SCIMGroupRequest struct {
 	Schemas     []string `json:"schemas"`
 	DisplayName string   `json:"displayName"`
+	ExternalID  string   `json:"externalId,omitempty"`
 	Members     []struct {
 		Value   string `json:"value"`
 		Display string `json:"display"`
 	} `json:"members"`
-}
-
-func (app *App) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
-	var req SCIMGroupRequest
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
-		return
-	}
-
-	if req.DisplayName == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse("displayName is required"))
-		return
-	}
-
-	response := map[string]interface{}{
-		"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
-		"id":          uuid.New().String(),
-		"displayName": req.DisplayName,
-		"members":     req.Members,
-		"meta": map[string]interface{}{
-			"resourceType": "Group",
-			"created":      time.Now().UTC().Format(time.RFC3339),
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/scim+json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(response)
 }
 
 // --- Helper Methods ---
