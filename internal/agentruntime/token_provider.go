@@ -32,6 +32,8 @@ type AuthTokenProvider struct {
 	refreshTimer          *time.Timer
 	stopCh                chan struct{}
 	stopped               bool
+	lifecycleCtx          context.Context
+	lifecycleCancel       context.CancelFunc
 
 	// nowFunc for testing
 	nowFunc func() time.Time
@@ -62,6 +64,8 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 		cfg.RetryConfig = DefaultRetryConfig()
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &AuthTokenProvider{
 		issuerURL:             cfg.IssuerURL,
 		httpClient:            cfg.HTTPClient,
@@ -73,6 +77,8 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 		identityTokenProvider: cfg.IdentityTokenProvider,
 		logger:                cfg.Logger,
 		stopCh:                make(chan struct{}),
+		lifecycleCtx:          ctx,
+		lifecycleCancel:       cancel,
 		nowFunc:               time.Now,
 	}
 }
@@ -91,8 +97,13 @@ func (p *AuthTokenProvider) GetToken(ctx context.Context) (*TokenResponse, error
 	return p.refreshToken(ctx)
 }
 
-// Stop cancels any pending background refresh.
+// Stop cancels any pending background refresh and releases resources.
 func (p *AuthTokenProvider) Stop() {
+	// Cancel the lifecycle context first (before acquiring the lock) so that
+	// any in-flight refreshToken call holding the lock will have its context
+	// cancelled and can return promptly.
+	p.lifecycleCancel()
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -156,11 +167,16 @@ func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 		default:
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Derive from lifecycle context: cancelled when Stop() is called,
+		// preventing zombie refresh attempts during shutdown.
+		ctx, cancel := context.WithTimeout(p.lifecycleCtx, 30*time.Second)
 		defer cancel()
 
 		if _, err := p.refreshToken(ctx); err != nil {
-			p.logger.Warn("background token refresh failed", "error", err)
+			// Only log if we weren't stopped (context cancellation during shutdown is expected).
+			if p.lifecycleCtx.Err() == nil {
+				p.logger.Warn("background token refresh failed", "error", err)
+			}
 		}
 	})
 }
