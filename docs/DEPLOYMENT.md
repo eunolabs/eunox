@@ -60,7 +60,7 @@ cloud-specific guides.
 | Minter | 3004 | `cmd/minter` | API-key lifecycle management |
 | DB Token Service | 3005 | `cmd/db-token-svc` | Short-lived database credentials |
 | Storage Grant Service | 3006 | `cmd/storage-grant-svc` | Presigned URL generation |
-| Posture Emitter | 3008 | `cmd/posture-emitter` | Security posture reporting (requires CGO for SQLite) |
+| Posture Emitter | 3008 | `cmd/posture-emitter` | Security posture reporting (SQLite via pure-Go modernc.org/sqlite; no CGO required) |
 
 ---
 
