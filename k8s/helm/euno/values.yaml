@@ -229,6 +229,38 @@ postureEmitter:
   #   AWS_SECRET_ACCESS_KEY: ""    # required for security-hub plugin
   #   GCP_SCC_SOURCE_NAME: ""      # required for scc plugin
 
+# ── Ingress ──────────────────────────────────────────────────────────────────
+# Disabled by default. Enable and configure for production deployments.
+# Supports any Kubernetes Ingress controller (nginx, traefik, contour, etc.).
+ingress:
+  enabled: false
+  # Ingress class name (e.g., "nginx", "traefik", "contour").
+  className: ""
+  # Annotations applied to all Ingress resources.
+  annotations: {}
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  #   nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  #   nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  # TLS configuration — shared across all services unless overridden.
+  tls: []
+  #   - hosts:
+  #       - gateway.example.com
+  #       - issuer.example.com
+  #       - minter.example.com
+  #     secretName: euno-tls
+  gateway:
+    host: gateway.example.com
+    path: /
+    pathType: Prefix
+  issuer:
+    host: issuer.example.com
+    path: /
+    pathType: Prefix
+  minter:
+    host: minter.example.com
+    path: /
+    pathType: Prefix
+
 # ── Optional Postgres (bitnami — evaluation only; disabled by default) ───────
 postgresql:
   enabled: false
