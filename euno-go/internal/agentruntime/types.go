@@ -93,7 +93,7 @@ type Config struct {
 	// IdentityToken is the initial identity token for authentication with the issuer.
 	IdentityToken string
 	// IdentityTokenProvider optionally provides fresh identity tokens.
-	// If set, this is called for each token acquisition attempt.
+	// If set, this is called when acquiring a new token (not when returning a cached token).
 	IdentityTokenProvider func(ctx context.Context) (string, error)
 	// RefreshBeforeExpiry is the duration before token expiry to trigger proactive refresh.
 	// Default is 30 seconds.
