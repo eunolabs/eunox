@@ -346,12 +346,21 @@ Ordered by priority and dependency:
 
 ### Phase 2: Observability & Resilience (Priority: High, Effort: 1 week)
 
-| # | Item | Depends On | Effort | Owner |
-|---|------|-----------|--------|-------|
-| 6 | DI-3: Document audit drop-on-full overflow policy | — | 0.5 days | Platform |
-| 7 | DI-4: Log request ID in RequestLogging; propagate on outbound calls | — | 1 day | Observability |
-| 8 | DI-5: CORS wildcard production warning | — | 0.5 days | Security |
-| 9 | IF-7: Document admin rate limiter scope | — | 0.5 days | Docs |
+> **Status: ✅ COMPLETED** (2026-05-26)
+
+| # | Item | Depends On | Effort | Status |
+|---|------|-----------|--------|--------|
+| 6 | DI-3: Document audit drop-on-full overflow policy | — | 0.5 days | ✅ Done |
+| 7 | DI-4: Log request ID in RequestLogging; propagate on outbound calls | — | 1 day | ✅ Done |
+| 8 | DI-5: CORS wildcard production warning | — | 0.5 days | ✅ Done |
+| 9 | IF-7: Document admin rate limiter scope | — | 0.5 days | ✅ Done |
+
+**Implementation Summary:**
+
+- **DI-3:** Added explicit overflow policy documentation to `pkg/audit/transport.go` `Enqueue()` method and a comprehensive "Transport Buffer Overflow Policy" section in `docs/AUDIT_CHAIN_ARCHITECTURE.md` covering design rationale, operator implications (monitoring, reconciliation, buffer sizing), and alternative policies for future consideration.
+- **DI-4:** Created `GetRequestID()`, `SetRequestID()`, and `PropagateRequestID()` helpers in `pkg/observability/middleware.go`. `RequestLogging` middleware now includes `request_id` slog attribute when present (from chi's `chimiddleware.RequestID` or package-level context key). Outbound HTTP requests in audit transports (HTTP and Azure Sentinel) propagate `X-Request-Id` via `PropagateRequestID()`. Added 8 new tests covering request ID extraction, propagation, and logging.
+- **DI-5:** Gateway `New()` constructor now logs a warning when `AllowedOrigins` contains `"*"` and `Environment` is `"production"`. Added `Environment` field to `gateway.Config`, set from `cfg.NodeEnv` in `cmd/gateway/main.go`. Added 2 new tests verifying warning presence in production and absence in development.
+- **IF-7:** Added comprehensive documentation in `docs/DEPLOYMENT.md` under the "Rate Limiting" section explaining the in-memory, per-replica scope of the admin rate limiter and the security implications for multi-replica deployments with non-loopback admin endpoints.
 
 ### Phase 3: Documentation & Open Questions (Priority: Medium, Effort: 1–2 weeks)
 

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
 )
 
 // Transport errors.
@@ -157,6 +158,17 @@ func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger, opts ...HTT
 }
 
 // Enqueue adds a single record to the transport buffer for batched delivery.
+//
+// Overflow policy (DI-3): Enqueue is NON-BLOCKING. When the internal buffer is
+// full, it returns ErrBatchFull immediately and records a "dropped" metric via
+// audit_enqueue_total{status="dropped"}. The event is permanently lost from this
+// transport's perspective — it is NOT retried or written aside. Callers SHOULD
+// log the returned error with sufficient context (e.g., record ID, timestamp) to
+// enable manual reconciliation from the upstream audit ledger.
+//
+// This drop-on-full policy ensures the enforcement hot path is never blocked by
+// slow SIEM sinks. For high-assurance deployments requiring guaranteed delivery,
+// operators should increase BufferSize or deploy a write-aside disk queue upstream.
 func (t *HTTPTransport) Enqueue(evidence *SignedAuditEvidence) error {
 	t.mu.Lock()
 	if t.closed {

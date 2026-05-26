@@ -181,6 +181,47 @@ For long-running deployments, chain pruning with checkpoint preservation:
 
 ---
 
+## Transport Buffer Overflow Policy
+
+**Package:** `pkg/audit/transport.go`
+
+The OCSF audit transports (HTTP, Azure Sentinel) use a bounded, buffered channel for internal event queuing. The `Enqueue()` method is **non-blocking by design**:
+
+| Condition | Behavior | Metric |
+|-----------|----------|--------|
+| Buffer has capacity | Event queued for batched delivery | `audit_enqueue_total{status="success"}` |
+| Buffer is full | Event is **dropped immediately** — returns `ErrBatchFull` | `audit_enqueue_total{status="dropped"}` |
+| Transport is closed | Returns `ErrTransportClosed` | — |
+
+### Design Rationale
+
+The enforcement hot path (token validation → audit write → response) must not block on slow or unavailable SIEM sinks. A blocking `Enqueue` would cause latency spikes on the enforcement path when the transport sink is degraded, effectively coupling availability of the governance system to availability of the telemetry backend.
+
+### Operator Implications
+
+1. **Dropped events are permanently lost** from the transport's perspective. However, the primary audit record is always persisted to the PostgreSQL ledger backend *before* transport forwarding. The transport is a secondary fan-out mechanism for SIEM integration — the ledger is the source of truth.
+
+2. **Monitoring:** Operators MUST alert on `audit_enqueue_total{status="dropped"} > 0`. A non-zero drop rate indicates either:
+   - The SIEM sink is too slow (increase sink concurrency or throughput)
+   - The buffer is undersized for the burst pattern (increase `BufferSize` in `TransportConfig`)
+   - A network partition between the gateway and the SIEM endpoint
+
+3. **Reconciliation:** If drops occur, operators can reconcile by querying the PostgreSQL audit ledger (via `GET /api/v1/audit/export`) for the affected time window and re-ingesting into the SIEM.
+
+4. **Buffer sizing:** The default buffer size is 10,000 events. At a typical audit record size of ~2 KB, this represents ~20 MB of in-memory buffering. For sustained throughput of 1,000 events/sec with a 5-second flush interval, the buffer can absorb ~2 flush cycles of backpressure.
+
+### Alternative Policies (Not Currently Implemented)
+
+For deployments requiring zero audit event loss on the transport path:
+
+- **Disk write-aside:** On buffer full, write events to a local WAL file for later replay. Adds disk I/O to the hot path but guarantees eventual delivery.
+- **Synchronous delivery:** Block `Enqueue` until space is available. Couples enforcement latency to SIEM availability — not recommended for production.
+- **Back-pressure signaling:** Return a specific error that causes the caller to apply admission control (reject new requests until buffer drains).
+
+These alternatives are documented here for future consideration but are not implemented in the current release. The PostgreSQL ledger guarantees no audit data loss; the transport overflow policy only affects real-time SIEM forwarding.
+
+---
+
 ## Verification API
 
 Chain integrity can be verified via the `GetChainSegment` API:
