@@ -4,16 +4,49 @@
 package observability
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// RequestIDKey is the context key used to store the request ID for outbound propagation.
+// This is compatible with chi's middleware.RequestID; use GetRequestID to extract it.
+type requestIDKey struct{}
+
+// GetRequestID extracts the request ID from the context. It first checks chi's
+// middleware context key, then falls back to the observability package's own key.
+func GetRequestID(ctx context.Context) string {
+	// Prefer chi's request ID (set by chimiddleware.RequestID).
+	if id := chimiddleware.GetReqID(ctx); id != "" {
+		return id
+	}
+	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// SetRequestID returns a new context with the given request ID stored.
+func SetRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+// PropagateRequestID sets the X-Request-Id header on the outbound HTTP request
+// using the request ID from the context. This enables cross-service log correlation
+// without requiring a full distributed tracing backend.
+func PropagateRequestID(ctx context.Context, req *http.Request) {
+	if id := GetRequestID(ctx); id != "" {
+		req.Header.Set("X-Request-Id", id)
+	}
+}
 
 // responseWriter wraps http.ResponseWriter to capture status code.
 type responseWriter struct {
@@ -39,6 +72,8 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 // RequestLogging returns middleware that logs each HTTP request.
+// It includes the request ID (from chi's middleware.RequestID or X-Request-Id header)
+// in every log entry for cross-service correlation.
 func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,14 +83,20 @@ func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start)
-			logger.LogAttrs(r.Context(), slog.LevelInfo, "http request",
+			attrs := []slog.Attr{
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", rw.statusCode),
 				slog.Duration("duration", duration),
 				slog.Int64("bytes", rw.written),
 				slog.String("remote_addr", r.RemoteAddr),
-			)
+			}
+
+			if requestID := GetRequestID(r.Context()); requestID != "" {
+				attrs = append(attrs, slog.String("request_id", requestID))
+			}
+
+			logger.LogAttrs(r.Context(), slog.LevelInfo, "http request", attrs...)
 		})
 	}
 }

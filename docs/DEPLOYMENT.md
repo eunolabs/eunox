@@ -99,10 +99,28 @@ The gateway uses the `GATEWAY_` prefix for all configuration variables.
 
 #### Rate Limiting
 
-| Variable                          | Type | Default | Required | Description                  |
-| --------------------------------- | ---- | ------- | -------- | ---------------------------- |
-| `GATEWAY_RATE_LIMIT_WINDOW_MS`    | int  | `60000` | —        | Sliding window duration (ms) |
-| `GATEWAY_RATE_LIMIT_MAX_REQUESTS` | int  | `1000`  | —        | Max requests per window      |
+| Variable                                | Type | Default | Required | Description                        |
+| --------------------------------------- | ---- | ------- | -------- | ---------------------------------- |
+| `GATEWAY_RATE_LIMIT_WINDOW_MS`          | int  | `60000` | —        | Sliding window duration (ms)       |
+| `GATEWAY_RATE_LIMIT_MAX_REQUESTS`       | int  | `1000`  | —        | Max requests per window            |
+| `GATEWAY_ADMIN_RATE_LIMIT_PER_MINUTE`   | int  | `10`    | —        | Max admin requests per IP per min  |
+
+> **⚠️ Admin Rate Limiter Scope (IF-7):** The admin endpoint rate limiter uses an
+> **in-memory store per replica**. In a multi-replica deployment behind a load
+> balancer, each replica maintains independent rate limit state. This means an
+> attacker can distribute requests across N replicas to achieve N× the configured
+> limit.
+>
+> **This is acceptable** when the admin API is bound to `127.0.0.1` (the default),
+> because only local processes can reach it — the load balancer cannot route
+> external traffic to admin endpoints.
+>
+> **If you expose admin endpoints to a network** (by setting `GATEWAY_ADMIN_HOST`
+> to a non-loopback address), you MUST either:
+> 1. Route all admin traffic to a single replica (sticky sessions or dedicated admin replica), or
+> 2. Switch to a Redis-backed rate limiter for admin endpoints (not yet implemented; tracked as a future enhancement).
+>
+> See also: `internal/gateway/admin_ratelimit.go`
 
 #### Redis
 

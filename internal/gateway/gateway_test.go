@@ -618,6 +618,68 @@ func TestCORS_DisallowedOrigin(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
+func TestCORS_WildcardProductionWarning(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ks := killswitch.NewInMemory()
+	revStore := revocation.NewInMemory()
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		JWTVerifier: &mockJWTVerifier{},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	}
+
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  []string{"*"},
+		Environment:     "production",
+	}
+
+	_ = gateway.New(&cfg, &deps)
+
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "CORS wildcard origin '*' is configured in production")
+}
+
+func TestCORS_WildcardNoWarningInDevelopment(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ks := killswitch.NewInMemory()
+	revStore := revocation.NewInMemory()
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		JWTVerifier: &mockJWTVerifier{},
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	}
+
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  []string{"*"},
+		Environment:     "development",
+	}
+
+	_ = gateway.New(&cfg, &deps)
+
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "CORS wildcard")
+}
+
 func TestEnforce_GlobalKillSwitch(t *testing.T) {
 	claims := &capability.TokenPayload{
 		Subject:   "agent-1",

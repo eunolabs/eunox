@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	dto "github.com/prometheus/client_model/go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -204,6 +205,102 @@ func TestRequestLoggingMiddleware(t *testing.T) {
 	}
 	if _, ok := entry["duration"]; !ok {
 		t.Fatalf("expected duration field in log entry: %v", entry)
+	}
+}
+
+func TestRequestLoggingMiddleware_WithRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLogger(&LogConfig{Output: &buf})
+
+	// Wrap with chi's RequestID middleware first, then our logging.
+	chiReqID := chimiddleware.RequestID
+	loggingMW := RequestLogging(logger)
+
+	handler := chiReqID(loggingMW(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/api", http.NoBody)
+	req.Header.Set("X-Request-Id", "test-req-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); err != nil {
+		t.Fatalf("unmarshal request log: %v", err)
+	}
+	if entry["request_id"] != "test-req-123" {
+		t.Fatalf("request_id = %v, want test-req-123", entry["request_id"])
+	}
+}
+
+func TestRequestLoggingMiddleware_NoRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLogger(&LogConfig{Output: &buf})
+	middleware := RequestLogging(logger)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); err != nil {
+		t.Fatalf("unmarshal request log: %v", err)
+	}
+	// When no request ID middleware is present, the field should be absent.
+	if _, ok := entry["request_id"]; ok {
+		t.Fatalf("expected no request_id field, but got %v", entry["request_id"])
+	}
+}
+
+func TestGetRequestID_FromChiMiddleware(t *testing.T) {
+	var captured string
+	handler := chimiddleware.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		captured = GetRequestID(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.Header.Set("X-Request-Id", "chi-id-456")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if captured != "chi-id-456" {
+		t.Fatalf("GetRequestID = %q, want chi-id-456", captured)
+	}
+}
+
+func TestGetRequestID_FromSetRequestID(t *testing.T) {
+	ctx := SetRequestID(context.Background(), "manual-id-789")
+	if got := GetRequestID(ctx); got != "manual-id-789" {
+		t.Fatalf("GetRequestID = %q, want manual-id-789", got)
+	}
+}
+
+func TestGetRequestID_Empty(t *testing.T) {
+	if got := GetRequestID(context.Background()); got != "" {
+		t.Fatalf("GetRequestID = %q, want empty", got)
+	}
+}
+
+func TestPropagateRequestID(t *testing.T) {
+	ctx := SetRequestID(context.Background(), "propagate-id-001")
+	req := httptest.NewRequest(http.MethodPost, "/sink", http.NoBody)
+	PropagateRequestID(ctx, req)
+
+	if got := req.Header.Get("X-Request-Id"); got != "propagate-id-001" {
+		t.Fatalf("X-Request-Id header = %q, want propagate-id-001", got)
+	}
+}
+
+func TestPropagateRequestID_NoID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/sink", http.NoBody)
+	PropagateRequestID(context.Background(), req)
+
+	if got := req.Header.Get("X-Request-Id"); got != "" {
+		t.Fatalf("X-Request-Id header = %q, want empty", got)
 	}
 }
 

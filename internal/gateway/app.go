@@ -40,6 +40,10 @@ type Config struct {
 	TelemetryEnabled  bool
 	TelemetryFlushMS  int
 
+	// Environment is the deployment environment (development, staging, production).
+	// Used for security validation warnings (e.g., CORS wildcard in production).
+	Environment string
+
 	// AdminJWKSURI is the JWKS endpoint for admin JWT verification.
 	// When set, admin JWT auth is preferred over static key auth.
 	AdminJWKSURI string
@@ -161,6 +165,18 @@ func New(cfg *Config, deps *Dependencies) *App {
 
 	app.router = app.buildRouter()
 	app.adminRouter = app.buildAdminRouter()
+
+	// DI-5: Warn if CORS wildcard is configured in production.
+	if app.config.Environment == "production" {
+		for _, origin := range app.config.AllowedOrigins {
+			if origin == "*" {
+				if deps.Logger != nil {
+					deps.Logger.Warn("CORS wildcard origin '*' is configured in production; this disables cross-origin protection entirely. Use explicit origins for production deployments")
+				}
+				break
+			}
+		}
+	}
 
 	if cfg.BackendURL != "" {
 		target, err := url.Parse(cfg.BackendURL)
