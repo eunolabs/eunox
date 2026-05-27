@@ -272,7 +272,7 @@ func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
 		return nil
 	}
 	if adminJWKSURI == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in production; static admin key alone is insecure (see CR-3 in architecture-review.md)")
+		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in production; static admin key alone is insecure (see CR-3 in docs/architecture-review.md)")
 	}
 	if adminJWTAudience == "" {
 		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in production when admin JWT auth is enabled")
