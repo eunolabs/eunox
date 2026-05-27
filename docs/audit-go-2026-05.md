@@ -320,21 +320,23 @@ No tests for behavior of `Push` when the delivery worker is stalled, exposing th
 
 ## Prioritized Execution Plan
 
-| Priority | ID | Area | Action |
-|----------|----|----- |--------|
-| P0 | B-1 | Gateway `/validate` | Add revocation + kill-switch checks to `handleValidate` |
-| P0 | B-2 | Gateway `/validate` | Evaluate conditions in `handleValidate`, or gate and document clearly |
-| P0 | U-2 | Issuer `/renew` | Add `Revocation` dependency to issuer; check in `handleRenew` |
-| P0 | B-4 | DPoP replay | Store JTI claim as replay key, not composite hash |
-| P1 | B-5 | Kill-switch `Reset` | Return error from `Del` in `Reset()` |
-| P1 | B-3 | Gateway `/proxy` | Align kill-switch / revocation order with `handleEnforce` |
-| P1 | F-2 | Gateway proxy DPoP | Add DPoP enforcement to `handleProxy` |
-| P2 | B-6 | Audit transport | `defer cancel()` in `flushBuffer` batch loop |
-| P2 | S-1 | Kill-switch resilient | Remove duplicate `refreshState` call; expose `HealthStatus()` |
-| P2 | F-1 | Policy engine | Reject empty `capabilities` request; do not grant full policy defaults |
-| P2 | B-7 | Minter Postgres | Replace string-match with `pgconn.PgError` type assertion |
-| P3 | U-1 | dbtokensvc/storagegrantsvc | Provide bundled real cloud provider adapter implementations |
-| P3 | S-3 | Lifecycle manager | Use `errors.Join` to preserve both error values on concurrent server failure |
-| P3 | D-1 | Enforcement engine | Remove dead value-form `RedactFieldsCondition` type assertion |
-| P3 | D-3 / S-4 | Policy engine | Set `lastModified` in `LoadFromFile` |
-| P4 | T-1–T-6 | Tests | Add test cases for every bug and gap fixed above |
+**Note on Implementation Status:** This audit document catalogs all identified issues for tracking and awareness. **This PR (PR #302) includes fixes only for the following items:** B-3, B-5, B-6, B-7, F-1, F-2, and S-1 (7 of 20+ issues). The remaining P0/P1 items (B-1, B-2, B-4, U-2) are **not fixed in this PR** and remain as tracked security issues for future work. Issue numbers or follow-up PRs will be created for unfixed P0/P1 items to ensure they are addressed in subsequent releases.
+
+| Priority | ID | Area | Action | Status in PR #302 |
+|----------|----|----- |--------|--------------------|
+| P0 | B-1 | Gateway `/validate` | Add revocation + kill-switch checks to `handleValidate` | ❌ **Tracked for future** |
+| P0 | B-2 | Gateway `/validate` | Evaluate conditions in `handleValidate`, or gate and document clearly | ❌ **Tracked for future** |
+| P0 | U-2 | Issuer `/renew` | Add `Revocation` dependency to issuer; check in `handleRenew` | ❌ **Tracked for future** |
+| P0 | B-4 | DPoP replay | Store JTI claim as replay key, not composite hash | ❌ **Tracked for future** |
+| P1 | B-5 | Kill-switch `Reset` | Return error from `Del` in `Reset()` | ✅ **Fixed** |
+| P1 | B-3 | Gateway `/proxy` | Align kill-switch / revocation order with `handleEnforce` | ✅ **Fixed** (reordered to revocation → DPoP → kill-switch) |
+| P1 | F-2 | Gateway proxy DPoP | Add DPoP enforcement to `handleProxy` | ✅ **Fixed** (includes X-Forwarded-* header support) |
+| P2 | B-6 | Audit transport | `defer cancel()` in `flushBuffer` batch loop | ✅ **Fixed** |
+| P2 | S-1 | Kill-switch resilient | Remove duplicate `refreshState` call; expose `HealthStatus()` | ✅ **Fixed** |
+| P2 | F-1 | Policy engine | Reject empty `capabilities` request; do not grant full policy defaults | ✅ **Fixed** (breaking change) |
+| P2 | B-7 | Minter Postgres | Replace string-match with `pgconn.PgError` type assertion | ✅ **Fixed** |
+| P3 | U-1 | dbtokensvc/storagegrantsvc | Provide bundled real cloud provider adapter implementations | ❌ **Tracked for future** |
+| P3 | S-3 | Lifecycle manager | Use `errors.Join` to preserve both error values on concurrent server failure | ❌ **Tracked for future** |
+| P3 | D-1 | Enforcement engine | Remove dead value-form `RedactFieldsCondition` type assertion | ❌ **Tracked for future** |
+| P3 | D-3 / S-4 | Policy engine | Set `lastModified` in `LoadFromFile` | ❌ **Tracked for future** |
+| P4 | T-1–T-6 | Tests | Add test cases for every bug and gap fixed above | ⚠️ **Partial** (DPoP tests added; full coverage tracked for future) |
