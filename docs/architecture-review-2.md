@@ -227,3 +227,44 @@ All 28 findings from the first review cycle are confirmed resolved (see `docs/ar
 - **CI-1–CI-12:** All code-level fixes implemented ✅
 - **OQ-1–OQ-4:** All open questions resolved ✅
 - **OQ-5:** Documentation reconciliation (PR #298) 🔄 in progress
+
+---
+
+## Cycle 2 Resolution Status
+
+Resolved items from this review cycle (each addressed, tested, and merged to the main development branch):
+
+| ID | Description | Status |
+|---|---|---|
+| CR-1 | `ResilientRedisDPoPStore` implemented; startup blocked on multi-replica/production without Redis-backed DPoP store | ✅ Resolved |
+| CR-2 | `ResilientRedisLimiter` wired for public enforcement rate limiter; dedicated `RATE_LIMITER_REDIS_URL` added; validation requires shared Redis for multi-replica/production tiers | ✅ Resolved |
+| DI-1 | `handleValidate` routed through `enforcement.Engine.ValidateAction` — identical match semantics as `/enforce` | ✅ Resolved (pre-existing) |
+| DI-2 | Stale-on-error window added to `CachingResolver` — serves last-valid document during upstream outage | ✅ Resolved (pre-existing) |
+| DI-3 | `IdempotencyStore` background cleanup ticker replaces piggybacked O(N) scan in `Set()` | ✅ Resolved |
+| DI-4 | PostgreSQL driver migrated from `lib/pq` to `pgx/v5/stdlib`; pool metrics exposed as Prometheus gauges | ✅ Resolved |
+
+### Implementation notes
+
+**CR-1 (`RedisDPoPStore`):** Uses Redis `SET NX EX` for atomic JTI deduplication across replicas. `ResilientRedisDPoPStore` wraps it with fail-closed semantics — a Redis outage blocks all DPoP-protected requests rather than silently allowing replays. `EUNOX_DPOP_REDIS_URL` configures a dedicated Redis instance; falls back to `EUNOX_REDIS_URL` when a shared URL is configured. `validateRedisConfig` enforces the Redis-backed store requirement for multi-replica and production tiers.
+
+**CR-2 (`ResilientRedisLimiter`):** The public enforcement rate limiter uses `ratelimit.NewRedisCmdable(client, cfg)` when `EUNOX_RATE_LIMITER_REDIS_URL` or `EUNOX_REDIS_URL` is configured (supports `*redis.Client`, sentinel, or cluster clients). Falls back to `InMemoryLimiter` only when no Redis URL resolves for the rate limiter — suitable for single-replica or development deployments. Multi-replica and production tiers require a shared Redis-backed limiter (`RATE_LIMITER_REDIS_URL` or `REDIS_URL`) so the effective rate limit is not multiplied by the number of replicas. This contrasts intentionally with the fail-closed DPoP store.
+
+**DI-3 (IdempotencyStore cleanup):** `IdempotencyStore.Start(ctx)` launches a ticker goroutine (default 5-minute interval, configurable via `WithIdempotencyCleanupInterval`). `App.Start(ctx)` delegates to it and is called from `cmd/gateway/main.go` after construction. `Set()` is now a pure insert with no scan.
+
+**DI-4 (pgx migration):** `go.mod` no longer references `github.com/lib/pq`. Driver name updated from `"postgres"` to `"pgx"` in `database.OpenPool`. `database.PoolMetrics(db, reg, service)` registers a `prometheus.Collector` backed by `*sql.DB.Stats()` that emits five metrics: `db_pool_open_connections`, `db_pool_in_use_connections`, `db_pool_idle_connections`, `db_pool_wait_count_total`, and `db_pool_wait_duration_seconds_total`. `isUniqueViolation` uses `pgconn.PgError` (same SQLSTATE `23505`, different type).
+
+### Remaining open items
+
+The following findings from this cycle have **not** been addressed and remain as follow-up work:
+
+| ID | Description | Effort |
+|---|---|---|
+| CI-1 | Document revocation/kill-switch exclusion on `/api/v1/validate`; add checks if security-critical use cases require it | S |
+| CI-2 | Wrap `CountKeys` + `ListKeys` in a transaction or adopt cursor-based pagination | S |
+| CI-3 | Add trusted-proxy XFF extraction to minter `extractClientIP` | S |
+| CI-4 | Emit `Retry-After` header on all 429 responses | S |
+| CI-5 | Move `testcontainers-go` to a separate test module | S |
+| CI-6 | Use `singleflight` in `CachingResolver.Resolve` to deduplicate concurrent DID fetches | S |
+| OQ-1 | Clarify `Proofs.Signatures` enforcement contract; add verification if required | L |
+| OQ-2 | Define OTLP configuration interface; document in `DEPLOYMENT.md` | M |
+| OQ-3 | Document posture-emitter scaling model; define path to shared store if replicated | S |

@@ -91,12 +91,17 @@ func (a *StaticKeyAdminAuth) Authenticate(_ context.Context, r *http.Request) (*
 	}, nil
 }
 
+// defaultIdempotencyCleanupInterval is how often the background goroutine removes
+// expired entries from the IdempotencyStore.
+const defaultIdempotencyCleanupInterval = 5 * time.Minute
+
 // IdempotencyStore caches responses for mutating admin operations to prevent duplicate mutations.
 type IdempotencyStore struct {
-	mu      sync.Mutex
-	entries map[string]*idempotencyEntry
-	ttl     time.Duration
-	now     func() time.Time
+	mu              sync.Mutex
+	entries         map[string]*idempotencyEntry
+	ttl             time.Duration
+	now             func() time.Time
+	cleanupInterval time.Duration
 }
 
 type idempotencyEntry struct {
@@ -116,6 +121,17 @@ func WithIdempotencyTTL(ttl time.Duration) IdempotencyStoreOption {
 	}
 }
 
+// WithIdempotencyCleanupInterval overrides the background cleanup interval.
+// The default is 5 minutes.  Panics if d is not positive.
+func WithIdempotencyCleanupInterval(d time.Duration) IdempotencyStoreOption {
+	if d <= 0 {
+		panic(fmt.Sprintf("WithIdempotencyCleanupInterval: interval must be positive, got %v", d))
+	}
+	return func(s *IdempotencyStore) {
+		s.cleanupInterval = d
+	}
+}
+
 // WithIdempotencyTimeFunc sets a custom time function (for testing).
 func WithIdempotencyTimeFunc(fn func() time.Time) IdempotencyStoreOption {
 	return func(s *IdempotencyStore) {
@@ -126,14 +142,35 @@ func WithIdempotencyTimeFunc(fn func() time.Time) IdempotencyStoreOption {
 // NewIdempotencyStore creates a new idempotency store with 24h default TTL.
 func NewIdempotencyStore(opts ...IdempotencyStoreOption) *IdempotencyStore {
 	s := &IdempotencyStore{
-		entries: make(map[string]*idempotencyEntry),
-		ttl:     24 * time.Hour,
-		now:     time.Now,
+		entries:         make(map[string]*idempotencyEntry),
+		ttl:             24 * time.Hour,
+		now:             time.Now,
+		cleanupInterval: defaultIdempotencyCleanupInterval,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// Start launches a background goroutine that periodically removes expired entries
+// from the store.  The goroutine runs until ctx is cancelled.
+//
+// Start should be called once after construction.  Without it, expired entries
+// will only be evicted when they are accessed via Get.
+func (s *IdempotencyStore) Start(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(s.cleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.Cleanup()
+			}
+		}
+	}()
 }
 
 // Get retrieves a cached response by idempotency key. Returns nil if not found or expired.
@@ -159,18 +196,11 @@ func (s *IdempotencyStore) Set(key string, response []byte, statusCode int, head
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := s.now()
-	for existingKey, e := range s.entries {
-		if now.Sub(e.createdAt) > s.ttl {
-			delete(s.entries, existingKey)
-		}
-	}
-
 	s.entries[key] = &idempotencyEntry{
 		response:   response,
 		statusCode: statusCode,
 		headers:    headers.Clone(),
-		createdAt:  now,
+		createdAt:  s.now(),
 	}
 }
 

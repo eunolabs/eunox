@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/edgeobs/eunox/pkg/testutil"
 )
@@ -24,7 +24,7 @@ import (
 // the production schema rather than a potentially stale embedded copy.
 func migratePostgres(t *testing.T, dsn string) {
 	t.Helper()
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -59,7 +59,7 @@ func newTestPostgresStore(t *testing.T) (*PostgresKeyStore, *sql.DB) {
 
 	migratePostgres(t, pg.DSN)
 
-	db, err := sql.Open("postgres", pg.DSN)
+	db, err := sql.Open("pgx", pg.DSN)
 	if err != nil {
 		t.Fatalf("open pool: %v", err)
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/killswitch"
 	"github.com/edgeobs/eunox/pkg/lifecycle"
 	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/edgeobs/eunox/pkg/ratelimit"
 	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/edgeobs/eunox/pkg/revocation"
 )
@@ -113,12 +114,12 @@ func run() error {
 		starter.Start(ctx)
 	}
 
-	engine := enforcement.New(enforcement.WithCallCounter(backends.counter))
-	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	if cfg.NodeEnv == config.EnvProduction {
-		logger.Warn("DPoP replay protection: using in-memory store; DPoP nonces are not shared across replicas — deploy a single gateway replica or add a Redis-backed DPoP store")
+	// Start the DPoP store background cleanup if using an in-memory store.
+	if starter, ok := backends.dpopStore.(interface{ Start(context.Context) }); ok {
+		starter.Start(ctx)
 	}
-	dpopStore.Start(ctx)
+
+	engine := enforcement.New(enforcement.WithCallCounter(backends.counter))
 
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
 	var jwtVerifier gateway.JWTVerifier
@@ -143,14 +144,15 @@ func run() error {
 
 	// Build gateway app
 	deps := gateway.Dependencies{
-		Engine:          engine,
-		KillSwitch:      backends.killSwitch,
-		Revocation:      backends.revocation,
-		JWTVerifier:     jwtVerifier,
-		DPoPStore:       dpopStore,
-		PartnerDIDStore: backends.partnerDIDs,
-		Logger:          logger,
-		Metrics:         metrics,
+		Engine:            engine,
+		KillSwitch:        backends.killSwitch,
+		Revocation:        backends.revocation,
+		JWTVerifier:       jwtVerifier,
+		DPoPStore:         backends.dpopStore,
+		PartnerDIDStore:   backends.partnerDIDs,
+		PublicRateLimiter: backends.publicLimiter,
+		Logger:            logger,
+		Metrics:           metrics,
 	}
 
 	var allowedOrigins []string
@@ -229,6 +231,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("gateway configuration error: %w", err)
 	}
+
+	// Start background goroutines (idempotency store cleanup, etc.).
+	app.Start(ctx)
 
 	// Create main server
 	srv := &http.Server{
@@ -316,6 +321,19 @@ func hasSecurityRedisConfigured(cfg *config.GatewayConfig) bool {
 		(cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "")
 }
 
+// hasDPoPRedisConfigured returns true when the DPoP JTI store will be
+// Redis-backed (either via a dedicated URL or the shared REDIS_URL).
+func hasDPoPRedisConfigured(cfg *config.GatewayConfig) bool {
+	return cfg.DPoPRedisURL != "" || cfg.RedisURL != ""
+}
+
+// hasRateLimiterRedisConfigured returns true when the public enforcement rate
+// limiter will use a shared Redis-backed store (either via the dedicated
+// RATE_LIMITER_REDIS_URL or the shared REDIS_URL).
+func hasRateLimiterRedisConfigured(cfg *config.GatewayConfig) bool {
+	return cfg.RateLimiterRedisURL != "" || cfg.RedisURL != ""
+}
+
 // validateRedisConfig enforces tier-aware Redis requirements for the gateway.
 //
 // Single-replica deployments may run entirely in memory outside production. For
@@ -324,6 +342,11 @@ func hasSecurityRedisConfigured(cfg *config.GatewayConfig) bool {
 // they are not silently split per replica. Production remains stricter: every
 // stateful security backend must resolve to a Redis URL, either via REDIS_URL
 // or all required per-service URLs.
+//
+// DPoP replay protection and the public rate limiter are validated separately:
+// multi-replica and production tiers require Redis-backed stores so that nonces
+// cannot be replayed against a different gateway replica and the effective rate
+// limit is not multiplied by the number of replicas.
 func validateRedisConfig(cfg *config.GatewayConfig) error {
 	if cfg.NodeEnv != config.EnvProduction {
 		switch cfg.DeploymentTier {
@@ -331,31 +354,39 @@ func validateRedisConfig(cfg *config.GatewayConfig) error {
 			if !hasSecurityRedisConfigured(cfg) {
 				return fmt.Errorf("deployment tier %q requires Redis; multi-replica gateway state cannot fall back to per-replica memory", cfg.DeploymentTier)
 			}
+			if !hasDPoPRedisConfigured(cfg) {
+				return fmt.Errorf("deployment tier %q requires a Redis-backed DPoP store (set GATEWAY_DPOP_REDIS_URL or GATEWAY_REDIS_URL); DPoP nonces cannot be replayed across replicas without shared state", cfg.DeploymentTier)
+			}
+			if !hasRateLimiterRedisConfigured(cfg) {
+				return fmt.Errorf("deployment tier %q requires a Redis-backed rate limiter (set GATEWAY_RATE_LIMITER_REDIS_URL or GATEWAY_REDIS_URL); per-replica in-memory limiting multiplies the effective rate by the number of replicas", cfg.DeploymentTier)
+			}
 		}
 		return nil
 	}
-	// Shared URL covers every service.
+	// Shared URL covers every service (including DPoP and rate limiter).
 	if cfg.RedisURL != "" {
 		return nil
 	}
 	// All per-service URLs cover every service without requiring REDIS_URL.
-	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" {
+	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" && hasDPoPRedisConfigured(cfg) && hasRateLimiterRedisConfigured(cfg) {
 		return nil
 	}
 	return fmt.Errorf(
 		"in production, either REDIS_URL (shared fallback) or all per-service Redis URLs " +
-			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must be set; " +
-			"kill-switch and revocation state is lost on restart without Redis",
+			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL, DPOP_REDIS_URL, and RATE_LIMITER_REDIS_URL) " +
+			"must be set; kill-switch, revocation, DPoP state, and rate-limiter counts are lost on restart without Redis",
 	)
 }
 
 // gatewayBackends holds the stateful backends for the gateway.
 type gatewayBackends struct {
-	killSwitch  killswitch.Manager
-	revocation  revocation.Store
-	counter     callcounter.Store
-	partnerDIDs gateway.PartnerDIDStore
-	monitor     *redisfailover.Monitor
+	killSwitch    killswitch.Manager
+	revocation    revocation.Store
+	counter       callcounter.Store
+	partnerDIDs   gateway.PartnerDIDStore
+	dpopStore     gateway.DPoPJTIStore
+	publicLimiter gateway.RateLimiter
+	monitor       *redisfailover.Monitor
 }
 
 // buildGatewayBackends creates stateful backends for the gateway.
@@ -428,12 +459,63 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 		logger.Info("partner-dids: using Redis-backed store")
 	}
 
+	// DPoP JTI replay-detection store — fail-closed: treat all proofs as replayed
+	// when Redis is unreachable so that replay attacks cannot succeed during an
+	// outage.  Falls back to in-memory only when no Redis URL is configured
+	// (development / single-replica tier).
+	var dpopStore gateway.DPoPJTIStore
+	dpopURL := resolveRedisURL(cfg.DPoPRedisURL, cfg.RedisURL)
+	if dpopURL != "" {
+		client, err := newRedisClientFromURL(dpopURL)
+		if err != nil {
+			return nil, fmt.Errorf("dpop redis URL: %w", err)
+		}
+		inner := gateway.NewRedisDPoPStore(client, 5*time.Minute)
+		dpopStore = gateway.NewResilientRedisDPoPStore(inner, monitor.Register("dpop"), logger)
+		logger.Info("dpop: using Redis-backed JTI store")
+	} else {
+		logger.Warn("dpop: using in-memory JTI store; DPoP nonces are not shared across replicas")
+		dpopStore = gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	}
+
+	// Public enforcement rate limiter — fail-open: fall back to per-instance
+	// in-memory limiting when Redis is unreachable, so legitimate traffic is
+	// never completely blocked by a Redis outage.  However, during degraded mode
+	// the effective limit may be multiplied by the number of replicas.
+	var publicLimiter gateway.RateLimiter
+	pubRLURL := resolveRedisURL(cfg.RateLimiterRedisURL, cfg.RedisURL)
+	if pubRLURL != "" {
+		rateCfg := ratelimit.Config{
+			Rate:   cfg.RateLimitMaxRequests,
+			Window: time.Duration(cfg.RateLimitWindowMS) * time.Millisecond,
+			Burst:  cfg.RateLimitMaxRequests,
+		}
+		if rateCfg.Rate <= 0 {
+			rateCfg.Rate = 1000
+		}
+		if rateCfg.Window <= 0 {
+			rateCfg.Window = time.Minute
+		}
+		if rateCfg.Burst <= 0 {
+			rateCfg.Burst = rateCfg.Rate
+		}
+		rlClient, err := newRedisClientFromURL(pubRLURL)
+		if err != nil {
+			return nil, fmt.Errorf("public rate-limiter redis URL: %w", err)
+		}
+		redisLimiter := ratelimit.NewRedisCmdable(rlClient, rateCfg)
+		publicLimiter = ratelimit.NewResilientRedis(redisLimiter, rateCfg, monitor.Register("public-rate-limiter"))
+		logger.Info("public rate-limiter: using Redis-backed store")
+	}
+
 	return &gatewayBackends{
-		killSwitch:  ks,
-		revocation:  rev,
-		counter:     cc,
-		partnerDIDs: partnerDIDs,
-		monitor:     monitor,
+		killSwitch:    ks,
+		revocation:    rev,
+		counter:       cc,
+		partnerDIDs:   partnerDIDs,
+		dpopStore:     dpopStore,
+		publicLimiter: publicLimiter,
+		monitor:       monitor,
 	}, nil
 }
 

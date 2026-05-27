@@ -5,8 +5,12 @@ package gateway
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/redis/go-redis/v9"
 )
 
 // defaultDPoPCleanupInterval is the default interval between background
@@ -100,4 +104,92 @@ func (s *InMemoryDPoPStore) MarkUsed(_ context.Context, jti string) (bool, error
 	}
 
 	return false, nil
+}
+
+// RedisDPoPStore is a Redis-backed DPoP JTI replay detection store.
+//
+// Each JTI is stored as a Redis key with an expiry equal to the configured TTL,
+// using SET NX (set-if-not-exists) so that the first write succeeds and all
+// subsequent writes to the same key are rejected.  Redis manages expiry natively
+// — no background cleanup goroutine is required.
+type RedisDPoPStore struct {
+	client redis.Cmdable
+	ttl    time.Duration
+}
+
+// NewRedisDPoPStore creates a Redis-backed DPoP JTI replay detection store.
+// The client must already be connected; the caller retains ownership.
+func NewRedisDPoPStore(client redis.Cmdable, ttl time.Duration) *RedisDPoPStore {
+	return &RedisDPoPStore{client: client, ttl: ttl}
+}
+
+// MarkUsed sets the JTI in Redis with an NX flag.
+// Returns (true, nil) when the JTI was already present (replay detected).
+// Returns (false, nil) when the JTI was newly recorded.
+func (s *RedisDPoPStore) MarkUsed(ctx context.Context, jti string) (bool, error) {
+	key := "dpop:jti:" + jti
+	// SetNX returns true when the key did NOT previously exist (first use).
+	ok, err := s.client.SetNX(ctx, key, 1, s.ttl).Result()
+	if err != nil {
+		return false, err
+	}
+	// ok = true  → key was set (first use, not a replay)
+	// ok = false → key already existed (replay detected)
+	return !ok, nil
+}
+
+// ResilientRedisDPoPStore wraps a [RedisDPoPStore] with fail-closed semantics.
+//
+// When Redis is unreachable, MarkUsed returns (true, nil) — treating the proof
+// as already-used — so that DPoP-protected requests are denied rather than
+// silently bypassing replay protection.  This matches the kill-switch and
+// revocation fail-closed pattern used throughout the gateway.
+type ResilientRedisDPoPStore struct {
+	primary  *RedisDPoPStore
+	reporter *redisfailover.Reporter
+	logger   *slog.Logger
+}
+
+// NewResilientRedisDPoPStore creates a fail-closed resilient DPoP JTI store.
+func NewResilientRedisDPoPStore(primary *RedisDPoPStore, reporter *redisfailover.Reporter, logger *slog.Logger) *ResilientRedisDPoPStore {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &ResilientRedisDPoPStore{
+		primary:  primary,
+		reporter: reporter,
+		logger:   logger,
+	}
+}
+
+// MarkUsed checks replay protection against Redis.
+//
+// Failure policy: FAIL-CLOSED — when Redis is unreachable the method returns
+// (true, nil), signalling a replay to the caller so that the request is denied.
+// This is intentionally stricter than fail-open: a DPoP replay attack must not
+// succeed just because Redis is temporarily unavailable.
+func (s *ResilientRedisDPoPStore) MarkUsed(ctx context.Context, jti string) (bool, error) {
+	alreadyUsed, err := s.primary.MarkUsed(ctx, jti)
+	if err != nil {
+		s.reporter.MarkDegraded()
+		s.logger.Warn("DPoP store: Redis unavailable; failing closed — treating proof as replayed",
+			slog.String("jti_prefix", safeJTIPrefix(jti)))
+		// Fail-closed: deny the request by reporting the JTI as already used.
+		return true, nil
+	}
+	s.reporter.MarkHealthy()
+	return alreadyUsed, nil
+}
+
+// safeJTIPrefixLen is the number of characters of a JTI that are safe to log
+// for correlation without exposing the full token identifier.
+const safeJTIPrefixLen = 8
+
+// safeJTIPrefix returns the first safeJTIPrefixLen characters of a JTI for log context
+// without exposing the full value.
+func safeJTIPrefix(jti string) string {
+	if len(jti) <= safeJTIPrefixLen {
+		return jti
+	}
+	return jti[:safeJTIPrefixLen] + "…"
 }

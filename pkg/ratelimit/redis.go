@@ -46,7 +46,7 @@ return {allowed, count, earliest}
 `
 
 type redisEvaler interface {
-	Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error)
+	Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error)
 }
 
 type redisClientAdapter struct {
@@ -54,7 +54,26 @@ type redisClientAdapter struct {
 }
 
 // Eval delegates script execution to the underlying Redis client.
-func (a *redisClientAdapter) Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
+func (a *redisClientAdapter) Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error) {
+	result, err := a.client.Eval(ctx, script, keys, args...).Result()
+	if err != nil {
+		return nil, err
+	}
+	values, ok := result.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("ratelimit: unexpected redis result type %T", result)
+	}
+	return values, nil
+}
+
+// redisCmdableAdapter wraps any redis.Cmdable (UniversalClient, ClusterClient, etc.)
+// to satisfy the internal redisEvaler interface.
+type redisCmdableAdapter struct {
+	client redis.Cmdable
+}
+
+// Eval delegates script execution to the underlying redis.Cmdable.
+func (a *redisCmdableAdapter) Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error) {
 	result, err := a.client.Eval(ctx, script, keys, args...).Result()
 	if err != nil {
 		return nil, err
@@ -82,6 +101,24 @@ func NewRedis(client *redis.Client, cfg Config) *RedisLimiter {
 	}
 	if client != nil {
 		limiter.client = &redisClientAdapter{client: client}
+	}
+	return limiter
+}
+
+// NewRedisCmdable creates a Redis-backed distributed rate limiter from any
+// redis.Cmdable implementation (e.g. *redis.Client, *redis.ClusterClient,
+// *redis.UniversalClient, *redis.SentinelClient).
+//
+// Prefer [NewRedis] when you have a concrete *redis.Client; use this constructor
+// when the client originates from a URL parser that may return a cluster or
+// sentinel client.
+func NewRedisCmdable(client redis.Cmdable, cfg Config) *RedisLimiter {
+	limiter := &RedisLimiter{
+		cfg: cfg,
+		now: time.Now,
+	}
+	if client != nil {
+		limiter.client = &redisCmdableAdapter{client: client}
 	}
 	return limiter
 }

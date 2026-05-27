@@ -17,8 +17,8 @@ import (
 // configuration. It applies connection limits and lifetime settings to prevent
 // resource exhaustion in production.
 //
-// For PostgreSQL, use driver "postgres" with an appropriate driver import
-// (e.g., _ "github.com/lib/pq" or "github.com/jackc/pgx/v5/stdlib").
+// For PostgreSQL, use driver "pgx" with a side-effect import of
+// "github.com/jackc/pgx/v5/stdlib".
 //
 // The caller is responsible for calling db.Close() when done.
 func OpenPool(driver, dsn string, poolCfg *config.DatabasePoolConfig) (*sql.DB, error) {

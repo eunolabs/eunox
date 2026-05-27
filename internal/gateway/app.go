@@ -5,6 +5,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,6 +29,15 @@ import (
 
 const defaultAdminRateLimitPerMinute = 10
 const defaultPublicRateLimitPerMinute = 600
+
+// RateLimiter extends [ratelimit.DetailedLimiter] with lifecycle management.
+// Both [ratelimit.InMemoryLimiter] and [ratelimit.ResilientRedisLimiter]
+// satisfy this interface.
+type RateLimiter interface {
+	ratelimit.DetailedLimiter
+	// Close stops any background goroutines started by the limiter.
+	Close()
+}
 
 // Config holds the gateway application configuration.
 type Config struct {
@@ -86,6 +96,12 @@ type Dependencies struct {
 	Metrics         *observability.MetricsRegistry
 	Audit           *AuditDependencies
 
+	// PublicRateLimiter is used for the /api/v1/enforce and /validate endpoints.
+	// When nil, New() creates an in-memory limiter using Config.RateLimitRequests
+	// and Config.RateLimitWindow.  Supply a [ratelimit.ResilientRedisLimiter] in
+	// multi-replica deployments so that rate-limit state is shared across replicas.
+	PublicRateLimiter RateLimiter
+
 	// Partner federation (Stage 7).
 	PartnerResolver   *federation.PartnerIssuerResolver
 	IONResolver       *did.IONResolver
@@ -103,7 +119,7 @@ type App struct {
 	dpopStore         DPoPJTIStore
 	adminAuth         AdminAuthenticator
 	adminRateLimiter  *ratelimit.InMemoryLimiter
-	publicRateLimiter *ratelimit.InMemoryLimiter
+	publicRateLimiter RateLimiter
 	idempotency       *IdempotencyStore
 	usageTracker      *UsageTracker
 	adminDeps         AdminDependencies
@@ -211,19 +227,26 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 	// Initialize public API rate limiter.
 	// Keyed on client IP (respects trusted proxy CIDRs for XFF) to defend
 	// against unauthenticated callers hammering /api/v1/enforce or /validate.
-	publicRateLimit := cfg.RateLimitRequests
-	if publicRateLimit <= 0 {
-		publicRateLimit = defaultPublicRateLimitPerMinute
+	// When deps.PublicRateLimiter is provided (e.g. a ResilientRedisLimiter in
+	// multi-replica deployments) it is used as-is; otherwise we construct an
+	// in-memory limiter (suitable for single-replica / development only).
+	if deps.PublicRateLimiter != nil {
+		app.publicRateLimiter = deps.PublicRateLimiter
+	} else {
+		publicRateLimit := cfg.RateLimitRequests
+		if publicRateLimit <= 0 {
+			publicRateLimit = defaultPublicRateLimitPerMinute
+		}
+		publicRateLimitWindow := cfg.RateLimitWindow
+		if publicRateLimitWindow <= 0 {
+			publicRateLimitWindow = time.Minute
+		}
+		app.publicRateLimiter = ratelimit.NewInMemory(ratelimit.Config{
+			Rate:   publicRateLimit,
+			Window: publicRateLimitWindow,
+			Burst:  publicRateLimit,
+		})
 	}
-	publicRateLimitWindow := cfg.RateLimitWindow
-	if publicRateLimitWindow <= 0 {
-		publicRateLimitWindow = time.Minute
-	}
-	app.publicRateLimiter = ratelimit.NewInMemory(ratelimit.Config{
-		Rate:   publicRateLimit,
-		Window: publicRateLimitWindow,
-		Burst:  publicRateLimit,
-	})
 
 	app.router = app.buildRouter()
 	app.adminRouter = app.buildAdminRouter()
@@ -246,6 +269,17 @@ func (app *App) Handler() http.Handler {
 // AdminHandler returns the http.Handler for the admin API (bind to localhost).
 func (app *App) AdminHandler() http.Handler {
 	return app.adminRouter
+}
+
+// Start launches background goroutines required by the App, including the
+// idempotency store's periodic cleanup.  ctx controls the lifetime of these
+// goroutines — they stop when ctx is cancelled.
+//
+// Start should be called once after [New] and before serving requests.
+func (app *App) Start(ctx context.Context) {
+	if app.idempotency != nil {
+		app.idempotency.Start(ctx)
+	}
 }
 
 // Close releases resources held by the App, stopping background goroutines

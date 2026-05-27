@@ -11,16 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
-
-// dbQuerier is the minimal database interface required by PostgresKeyStore.
-// *sql.DB and *sql.Tx both satisfy this interface, enabling transactional use.
-type dbQuerier interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
 
 // PostgresKeyStore implements [KeyStore] backed by a PostgreSQL database.
 //
@@ -430,13 +422,13 @@ func scanPolicyRow(rows *sql.Rows) (*Policy, error) {
 }
 
 // isUniqueViolation detects PostgreSQL unique-constraint violations (SQLSTATE 23505)
-// using a typed assertion against *pq.Error (B-7 fix).  The previous string-
+// using a typed assertion against *pgconn.PgError.  The previous string-
 // match on err.Error() could produce false positives when a row value happened
 // to contain the digit sequence "23505".
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	var pgErr *pq.Error
+	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
