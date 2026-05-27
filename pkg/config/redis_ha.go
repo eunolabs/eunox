@@ -128,6 +128,8 @@ func CheckGatewayRedisHA(cfg *GatewayConfig) error {
 		"REVOCATION_REDIS_URL":   cfg.RevocationRedisURL,
 		"KILL_SWITCH_REDIS_URL":  cfg.KillSwitchRedisURL,
 		"CALL_COUNTER_REDIS_URL": cfg.CallCounterRedisURL,
+		"DPOP_REDIS_URL":         cfg.DPoPRedisURL,
+		"RATE_LIMITER_REDIS_URL": cfg.RateLimiterRedisURL,
 	}
 
 	errs := CheckRedisHA(cfg.NodeEnv, urls)

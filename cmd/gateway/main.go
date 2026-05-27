@@ -327,6 +327,13 @@ func hasDPoPRedisConfigured(cfg *config.GatewayConfig) bool {
 	return cfg.DPoPRedisURL != "" || cfg.RedisURL != ""
 }
 
+// hasRateLimiterRedisConfigured returns true when the public enforcement rate
+// limiter will use a shared Redis-backed store (either via the dedicated
+// RATE_LIMITER_REDIS_URL or the shared REDIS_URL).
+func hasRateLimiterRedisConfigured(cfg *config.GatewayConfig) bool {
+	return cfg.RateLimiterRedisURL != "" || cfg.RedisURL != ""
+}
+
 // validateRedisConfig enforces tier-aware Redis requirements for the gateway.
 //
 // Single-replica deployments may run entirely in memory outside production. For
@@ -336,9 +343,10 @@ func hasDPoPRedisConfigured(cfg *config.GatewayConfig) bool {
 // stateful security backend must resolve to a Redis URL, either via REDIS_URL
 // or all required per-service URLs.
 //
-// DPoP replay protection is validated separately: multi-replica and production
-// tiers require a Redis-backed DPoP store so that nonces cannot be replayed
-// against a different gateway replica.
+// DPoP replay protection and the public rate limiter are validated separately:
+// multi-replica and production tiers require Redis-backed stores so that nonces
+// cannot be replayed against a different gateway replica and the effective rate
+// limit is not multiplied by the number of replicas.
 func validateRedisConfig(cfg *config.GatewayConfig) error {
 	if cfg.NodeEnv != config.EnvProduction {
 		switch cfg.DeploymentTier {
@@ -349,21 +357,24 @@ func validateRedisConfig(cfg *config.GatewayConfig) error {
 			if !hasDPoPRedisConfigured(cfg) {
 				return fmt.Errorf("deployment tier %q requires a Redis-backed DPoP store (set GATEWAY_DPOP_REDIS_URL or GATEWAY_REDIS_URL); DPoP nonces cannot be replayed across replicas without shared state", cfg.DeploymentTier)
 			}
+			if !hasRateLimiterRedisConfigured(cfg) {
+				return fmt.Errorf("deployment tier %q requires a Redis-backed rate limiter (set GATEWAY_RATE_LIMITER_REDIS_URL or GATEWAY_REDIS_URL); per-replica in-memory limiting multiplies the effective rate by the number of replicas", cfg.DeploymentTier)
+			}
 		}
 		return nil
 	}
-	// Shared URL covers every service (including DPoP).
+	// Shared URL covers every service (including DPoP and rate limiter).
 	if cfg.RedisURL != "" {
 		return nil
 	}
 	// All per-service URLs cover every service without requiring REDIS_URL.
-	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" && hasDPoPRedisConfigured(cfg) {
+	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" && hasDPoPRedisConfigured(cfg) && hasRateLimiterRedisConfigured(cfg) {
 		return nil
 	}
 	return fmt.Errorf(
 		"in production, either REDIS_URL (shared fallback) or all per-service Redis URLs " +
-			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL, and DPOP_REDIS_URL) " +
-			"must be set; kill-switch, revocation, and DPoP state is lost on restart without Redis",
+			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL, DPOP_REDIS_URL, and RATE_LIMITER_REDIS_URL) " +
+			"must be set; kill-switch, revocation, DPoP state, and rate-limiter counts are lost on restart without Redis",
 	)
 }
 
@@ -472,7 +483,7 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 	// never completely blocked by a Redis outage.  However, during degraded mode
 	// the effective limit may be multiplied by the number of replicas.
 	var publicLimiter gateway.RateLimiter
-	pubRLURL := resolveRedisURL(cfg.RedisURL, "")
+	pubRLURL := resolveRedisURL(cfg.RateLimiterRedisURL, cfg.RedisURL)
 	if pubRLURL != "" {
 		rateCfg := ratelimit.Config{
 			Rate:   cfg.RateLimitMaxRequests,

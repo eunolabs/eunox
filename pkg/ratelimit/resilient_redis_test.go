@@ -138,46 +138,46 @@ func TestResilientRedisLimiter_PrometheusGauge_LabelIncludesComponent(t *testing
 // --- NewRedisCmdable tests ---
 
 func TestNewRedisCmdable_AllowsFirstRequest(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr := miniredis.RunT(t)
+	var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
-limiter := ratelimit.NewRedisCmdable(client, cfg)
+	cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+	limiter := ratelimit.NewRedisCmdable(client, cfg)
 
-allowed, err := limiter.Allow(context.Background(), "cmdable-key")
-require.NoError(t, err)
-assert.True(t, allowed)
+	allowed, err := limiter.Allow(context.Background(), "cmdable-key")
+	require.NoError(t, err)
+	assert.True(t, allowed)
 }
 
 func TestNewRedisCmdable_EnforcesLimit(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr := miniredis.RunT(t)
+	var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-cfg := ratelimit.Config{Rate: 2, Window: time.Minute}
-limiter := ratelimit.NewRedisCmdable(client, cfg)
+	cfg := ratelimit.Config{Rate: 2, Window: time.Minute}
+	limiter := ratelimit.NewRedisCmdable(client, cfg)
 
-ctx := context.Background()
-for i := range 2 {
-ok, err := limiter.Allow(ctx, "limited-key")
-require.NoError(t, err)
-assert.True(t, ok, "request %d should be allowed", i+1)
-}
+	ctx := context.Background()
+	for i := range 2 {
+		ok, err := limiter.Allow(ctx, "limited-key")
+		require.NoError(t, err)
+		assert.True(t, ok, "request %d should be allowed", i+1)
+	}
 
-ok, err := limiter.Allow(ctx, "limited-key")
-require.NoError(t, err)
-assert.False(t, ok, "third request must be rate-limited")
+	ok, err := limiter.Allow(ctx, "limited-key")
+	require.NoError(t, err)
+	assert.False(t, ok, "third request must be rate-limited")
 }
 
 func TestNewRedisCmdable_NilClientReturnsError(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
-limiter := ratelimit.NewRedisCmdable(nil, cfg)
+	cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+	limiter := ratelimit.NewRedisCmdable(nil, cfg)
 
-_, err := limiter.Allow(context.Background(), "nil-key")
-assert.ErrorContains(t, err, "redis client is nil")
+	_, err := limiter.Allow(context.Background(), "nil-key")
+	assert.ErrorContains(t, err, "redis client is nil")
 }

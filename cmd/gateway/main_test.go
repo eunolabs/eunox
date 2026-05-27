@@ -303,8 +303,23 @@ func TestValidateRedisConfig(t *testing.T) {
 				RevocationRedisURL:  "redis://rev:6379",
 				CallCounterRedisURL: "redis://cc:6379",
 				DPoPRedisURL:        "redis://dpop:6379",
+				RateLimiterRedisURL: "redis://rl:6379",
 			},
 			expectErr: false,
+		},
+		{
+			// Production with all per-service URLs but rate-limiter URL missing must fail.
+			name: "production_per_service_urls_missing_rate_limiter_fails",
+			cfg: config.GatewayConfig{
+				NodeEnv:             config.EnvProduction,
+				KillSwitchRedisURL:  "redis://ks:6379",
+				RevocationRedisURL:  "redis://rev:6379",
+				CallCounterRedisURL: "redis://cc:6379",
+				DPoPRedisURL:        "redis://dpop:6379",
+				// RateLimiterRedisURL not set, RedisURL not set
+			},
+			expectErr: true,
+			errMsg:    "RATE_LIMITER_REDIS_URL",
 		},
 		{
 			// Multi-replica with security Redis but no DPoP Redis must fail.
@@ -320,6 +335,21 @@ func TestValidateRedisConfig(t *testing.T) {
 			},
 			expectErr: true,
 			errMsg:    "Redis-backed DPoP store",
+		},
+		{
+			// Multi-replica with security+DPoP Redis but no rate-limiter Redis must fail.
+			name: "multi_replica_dpop_redis_but_no_rate_limiter_fails",
+			cfg: config.GatewayConfig{
+				NodeEnv:             config.EnvStaging,
+				DeploymentTier:      config.TierMultiReplica,
+				KillSwitchRedisURL:  "redis://ks:6379",
+				RevocationRedisURL:  "redis://rev:6379",
+				CallCounterRedisURL: "redis://cc:6379",
+				DPoPRedisURL:        "redis://dpop:6379",
+				// RateLimiterRedisURL and RedisURL both empty → per-replica in-memory limiter
+			},
+			expectErr: true,
+			errMsg:    "rate limiter",
 		},
 		{
 			// Multi-replica with shared REDIS_URL covers DPoP as well.

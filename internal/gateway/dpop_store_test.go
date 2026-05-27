@@ -111,130 +111,130 @@ func TestInMemoryDPoPStore_Start_StopsOnContextCancel(t *testing.T) {
 // --- RedisDPoPStore tests ---
 
 func TestRedisDPoPStore_MarkUsed_FirstUseNotReplay(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-store := NewRedisDPoPStore(client, 5*time.Minute)
-seen, err := store.MarkUsed(context.Background(), "jti-redis-1")
-require.NoError(t, err)
-assert.False(t, seen, "first use must not be reported as replay")
+	store := NewRedisDPoPStore(client, 5*time.Minute)
+	seen, err := store.MarkUsed(context.Background(), "jti-redis-1")
+	require.NoError(t, err)
+	assert.False(t, seen, "first use must not be reported as replay")
 }
 
 func TestRedisDPoPStore_MarkUsed_DetectsReplay(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-store := NewRedisDPoPStore(client, 5*time.Minute)
+	store := NewRedisDPoPStore(client, 5*time.Minute)
 
-_, err := store.MarkUsed(context.Background(), "jti-replay")
-require.NoError(t, err)
+	_, err := store.MarkUsed(context.Background(), "jti-replay")
+	require.NoError(t, err)
 
-seen, err := store.MarkUsed(context.Background(), "jti-replay")
-require.NoError(t, err)
-assert.True(t, seen, "second use of same JTI within TTL must be reported as replay")
+	seen, err := store.MarkUsed(context.Background(), "jti-replay")
+	require.NoError(t, err)
+	assert.True(t, seen, "second use of same JTI within TTL must be reported as replay")
 }
 
 func TestRedisDPoPStore_MarkUsed_AllowsAfterTTLExpiry(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-ttl := 1 * time.Second
-store := NewRedisDPoPStore(client, ttl)
+	ttl := 1 * time.Second
+	store := NewRedisDPoPStore(client, ttl)
 
-_, err := store.MarkUsed(context.Background(), "jti-expire")
-require.NoError(t, err)
+	_, err := store.MarkUsed(context.Background(), "jti-expire")
+	require.NoError(t, err)
 
-// Advance miniredis clock past the TTL.
-mr.FastForward(2 * time.Second)
+	// Advance miniredis clock past the TTL.
+	mr.FastForward(2 * time.Second)
 
-seen, err := store.MarkUsed(context.Background(), "jti-expire")
-require.NoError(t, err)
-assert.False(t, seen, "JTI must be re-accepted after Redis TTL expiry")
+	seen, err := store.MarkUsed(context.Background(), "jti-expire")
+	require.NoError(t, err)
+	assert.False(t, seen, "JTI must be re-accepted after Redis TTL expiry")
 }
 
 func TestRedisDPoPStore_MarkUsed_DifferentJTIsAreIndependent(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-store := NewRedisDPoPStore(client, 5*time.Minute)
+	store := NewRedisDPoPStore(client, 5*time.Minute)
 
-seen1, err := store.MarkUsed(context.Background(), "jti-a")
-require.NoError(t, err)
-seen2, err := store.MarkUsed(context.Background(), "jti-b")
-require.NoError(t, err)
+	seen1, err := store.MarkUsed(context.Background(), "jti-a")
+	require.NoError(t, err)
+	seen2, err := store.MarkUsed(context.Background(), "jti-b")
+	require.NoError(t, err)
 
-assert.False(t, seen1)
-assert.False(t, seen2, "different JTIs must be independently tracked")
+	assert.False(t, seen1)
+	assert.False(t, seen2, "different JTIs must be independently tracked")
 }
 
 // --- ResilientRedisDPoPStore tests ---
 
 func TestResilientRedisDPoPStore_FailClosedOnRedisError(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-// Start then immediately stop miniredis to simulate a broken connection.
-mr, err := miniredis.Run()
-require.NoError(t, err)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-mr.Close() // break the connection
-t.Cleanup(func() { _ = client.Close() })
+	// Start then immediately stop miniredis to simulate a broken connection.
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr.Close() // break the connection
+	t.Cleanup(func() { _ = client.Close() })
 
-monitor := redisfailover.NewMonitor()
-reporter := monitor.Register("dpop-test")
-inner := NewRedisDPoPStore(client, 5*time.Minute)
-store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("dpop-test")
+	inner := NewRedisDPoPStore(client, 5*time.Minute)
+	store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
 
-seen, err := store.MarkUsed(context.Background(), "jti-fail-closed")
-require.NoError(t, err, "resilient store must absorb the Redis error")
-assert.True(t, seen, "when Redis is down, store must fail closed (treat as replay)")
-assert.Equal(t, redisfailover.Degraded, reporter.State())
+	seen, err := store.MarkUsed(context.Background(), "jti-fail-closed")
+	require.NoError(t, err, "resilient store must absorb the Redis error")
+	assert.True(t, seen, "when Redis is down, store must fail closed (treat as replay)")
+	assert.Equal(t, redisfailover.Degraded, reporter.State())
 }
 
 func TestResilientRedisDPoPStore_HealthyWhenRedisAvailable(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-monitor := redisfailover.NewMonitor()
-reporter := monitor.Register("dpop-healthy")
-inner := NewRedisDPoPStore(client, 5*time.Minute)
-store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("dpop-healthy")
+	inner := NewRedisDPoPStore(client, 5*time.Minute)
+	store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
 
-seen, err := store.MarkUsed(context.Background(), "jti-healthy")
-require.NoError(t, err)
-assert.False(t, seen)
-assert.Equal(t, redisfailover.Healthy, reporter.State())
+	seen, err := store.MarkUsed(context.Background(), "jti-healthy")
+	require.NoError(t, err)
+	assert.False(t, seen)
+	assert.Equal(t, redisfailover.Healthy, reporter.State())
 }
 
 func TestResilientRedisDPoPStore_ReplayDetectedWhileHealthy(t *testing.T) {
-t.Parallel()
+	t.Parallel()
 
-mr := miniredis.RunT(t)
-client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-t.Cleanup(func() { _ = client.Close() })
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 
-monitor := redisfailover.NewMonitor()
-reporter := monitor.Register("dpop-replay")
-inner := NewRedisDPoPStore(client, 5*time.Minute)
-store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("dpop-replay")
+	inner := NewRedisDPoPStore(client, 5*time.Minute)
+	store := NewResilientRedisDPoPStore(inner, reporter, slog.Default())
 
-_, _ = store.MarkUsed(context.Background(), "jti-resilient")
+	_, _ = store.MarkUsed(context.Background(), "jti-resilient")
 
-seen, err := store.MarkUsed(context.Background(), "jti-resilient")
-require.NoError(t, err)
-assert.True(t, seen, "replay must be detected when Redis is healthy")
+	seen, err := store.MarkUsed(context.Background(), "jti-resilient")
+	require.NoError(t, err)
+	assert.True(t, seen, "replay must be detected when Redis is healthy")
 }

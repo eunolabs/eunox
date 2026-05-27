@@ -33,6 +33,11 @@ type GatewayConfig struct {
 	// a Redis-backed store is required so that replay tokens are rejected across
 	// all gateway instances.
 	DPoPRedisURL string `env:"DPOP_REDIS_URL"`
+	// RateLimiterRedisURL is the Redis URL for the public enforcement rate limiter.
+	// When empty, REDIS_URL is used as a fallback.  In multi-replica deployments
+	// a shared Redis-backed limiter is required so the effective rate limit is not
+	// multiplied by the number of replicas.
+	RateLimiterRedisURL string `env:"RATE_LIMITER_REDIS_URL"`
 
 	// Rate limiting
 	RateLimitWindowMS       int `env:"RATE_LIMIT_WINDOW_MS" default:"60000" min:"1"`

@@ -237,7 +237,7 @@ Resolved items from this review cycle (each addressed, tested, and merged to the
 | ID | Description | Status |
 |---|---|---|
 | CR-1 | `ResilientRedisDPoPStore` implemented; startup blocked on multi-replica/production without Redis-backed DPoP store | ✅ Resolved |
-| CR-2 | `ResilientRedisLimiter` wired for public enforcement rate limiter; in-memory fallback for `development` tier only | ✅ Resolved |
+| CR-2 | `ResilientRedisLimiter` wired for public enforcement rate limiter; dedicated `RATE_LIMITER_REDIS_URL` added; validation requires shared Redis for multi-replica/production tiers | ✅ Resolved |
 | DI-1 | `handleValidate` routed through `enforcement.Engine.ValidateAction` — identical match semantics as `/enforce` | ✅ Resolved (pre-existing) |
 | DI-2 | Stale-on-error window added to `CachingResolver` — serves last-valid document during upstream outage | ✅ Resolved (pre-existing) |
 | DI-3 | `IdempotencyStore` background cleanup ticker replaces piggybacked O(N) scan in `Set()` | ✅ Resolved |
@@ -247,11 +247,11 @@ Resolved items from this review cycle (each addressed, tested, and merged to the
 
 **CR-1 (`RedisDPoPStore`):** Uses Redis `SET NX EX` for atomic JTI deduplication across replicas. `ResilientRedisDPoPStore` wraps it with fail-closed semantics — a Redis outage blocks all DPoP-protected requests rather than silently allowing replays. `EUNOX_DPOP_REDIS_URL` configures a dedicated Redis instance; falls back to `EUNOX_REDIS_URL` when a shared URL is configured. `validateRedisConfig` enforces the Redis-backed store requirement for multi-replica and production tiers.
 
-**CR-2 (`ResilientRedisLimiter`):** The public enforcement rate limiter uses `ratelimit.NewRedisCmdable(client, cfg)` when `EUNOX_REDIS_URL` is configured (supports `*redis.Client`, sentinel, or cluster clients). Falls back to `InMemoryLimiter` only in the `development` tier — fail-open to avoid blocking legitimate traffic if Redis degrades. This contrasts intentionally with the fail-closed DPoP store.
+**CR-2 (`ResilientRedisLimiter`):** The public enforcement rate limiter uses `ratelimit.NewRedisCmdable(client, cfg)` when `EUNOX_RATE_LIMITER_REDIS_URL` or `EUNOX_REDIS_URL` is configured (supports `*redis.Client`, sentinel, or cluster clients). Falls back to `InMemoryLimiter` only when no Redis URL resolves for the rate limiter — suitable for single-replica or development deployments. Multi-replica and production tiers require a shared Redis-backed limiter (`RATE_LIMITER_REDIS_URL` or `REDIS_URL`) so the effective rate limit is not multiplied by the number of replicas. This contrasts intentionally with the fail-closed DPoP store.
 
 **DI-3 (IdempotencyStore cleanup):** `IdempotencyStore.Start(ctx)` launches a ticker goroutine (default 5-minute interval, configurable via `WithIdempotencyCleanupInterval`). `App.Start(ctx)` delegates to it and is called from `cmd/gateway/main.go` after construction. `Set()` is now a pure insert with no scan.
 
-**DI-4 (pgx migration):** `go.mod` no longer references `github.com/lib/pq`. Driver name updated from `"postgres"` to `"pgx"` in `database.OpenPool`. `database.PoolMetrics(reg)` registers `TotalConns`, `IdleConns`, and `AcquireCount` gauges against the Prometheus registry. `isUniqueViolation` uses `pgconn.PgError` (same SQLSTATE `23505`, different type).
+**DI-4 (pgx migration):** `go.mod` no longer references `github.com/lib/pq`. Driver name updated from `"postgres"` to `"pgx"` in `database.OpenPool`. `database.PoolMetrics(db, reg, service)` registers a `prometheus.Collector` backed by `*sql.DB.Stats()` that emits five metrics: `db_pool_open_connections`, `db_pool_in_use_connections`, `db_pool_idle_connections`, `db_pool_wait_count_total`, and `db_pool_wait_duration_seconds_total`. `isUniqueViolation` uses `pgconn.PgError` (same SQLSTATE `23505`, different type).
 
 ### Remaining open items
 

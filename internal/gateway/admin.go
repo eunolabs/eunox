@@ -122,8 +122,11 @@ func WithIdempotencyTTL(ttl time.Duration) IdempotencyStoreOption {
 }
 
 // WithIdempotencyCleanupInterval overrides the background cleanup interval.
-// The default is 5 minutes.
+// The default is 5 minutes.  Panics if d is not positive.
 func WithIdempotencyCleanupInterval(d time.Duration) IdempotencyStoreOption {
+	if d <= 0 {
+		panic(fmt.Sprintf("WithIdempotencyCleanupInterval: interval must be positive, got %v", d))
+	}
 	return func(s *IdempotencyStore) {
 		s.cleanupInterval = d
 	}
