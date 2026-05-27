@@ -79,7 +79,7 @@ func TestValidateAdminAuth(t *testing.T) {
 			},
 			tenantID:  "tenant-1",
 			expectErr: true,
-			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in staging",
+			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in \"staging\"",
 		},
 		{
 			name: "staging_missing_jwt_audience",
@@ -89,7 +89,7 @@ func TestValidateAdminAuth(t *testing.T) {
 			},
 			tenantID:  "tenant-1",
 			expectErr: true,
-			errMsg:    "GATEWAY_ADMIN_JWT_AUDIENCE is required in staging",
+			errMsg:    "GATEWAY_ADMIN_JWT_AUDIENCE is required in \"staging\"",
 		},
 		{
 			name: "staging_jwt_requires_tenant",
@@ -99,7 +99,7 @@ func TestValidateAdminAuth(t *testing.T) {
 				AdminJWTAudience: "gateway-admin",
 			},
 			expectErr: true,
-			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in staging",
+			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in \"staging\"",
 		},
 		{
 			name: "staging_with_full_jwt_config",
@@ -121,7 +121,7 @@ func TestValidateAdminAuth(t *testing.T) {
 			},
 			tenantID:  "tenant-1",
 			expectErr: true,
-			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in production",
+			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in \"production\"",
 		},
 		{
 			name: "production_missing_jwt_audience",
@@ -131,7 +131,7 @@ func TestValidateAdminAuth(t *testing.T) {
 			},
 			tenantID:  "tenant-1",
 			expectErr: true,
-			errMsg:    "GATEWAY_ADMIN_JWT_AUDIENCE is required in production",
+			errMsg:    "GATEWAY_ADMIN_JWT_AUDIENCE is required in \"production\"",
 		},
 		{
 			name: "production_missing_tenant_for_jwt_admin_auth",
@@ -141,7 +141,7 @@ func TestValidateAdminAuth(t *testing.T) {
 				AdminJWTAudience: "gateway-admin",
 			},
 			expectErr: true,
-			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in production",
+			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in \"production\"",
 		},
 		{
 			name: "production_with_jwks_uri",
