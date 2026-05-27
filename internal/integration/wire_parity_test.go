@@ -114,7 +114,7 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 	for _, fx := range fixtures {
 		t.Run(fx.Name, func(t *testing.T) {
 			dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-			app := gateway.New(&gateway.Config{
+			app, err := gateway.New(&gateway.Config{
 				GatewayAudience: "wire-test",
 				AdminAPIKey:     testAdminKey,
 			}, &gateway.Dependencies{
@@ -124,6 +124,7 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 				JWTVerifier: &staticClaimsVerifier{claims: fx.Claims},
 				DPoPStore:   dpopStore,
 			})
+			require.NoError(t, err)
 
 			resp := enforceAndGetResponse(t, app.Handler(), fx.RequestBody)
 
@@ -140,8 +141,8 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 			// Verify decidedAt is a valid ISO 8601 timestamp
 			decidedAtStr, ok := resp["decidedAt"].(string)
 			require.True(t, ok, "decidedAt must be a string")
-			_, err := time.Parse(time.RFC3339Nano, decidedAtStr)
-			assert.NoError(t, err, "decidedAt must be RFC3339")
+			_, parseErr := time.Parse(time.RFC3339Nano, decidedAtStr)
+			assert.NoError(t, parseErr, "decidedAt must be RFC3339")
 
 			// Verify requestId is a non-empty string
 			requestID, ok := resp["requestId"].(string)
@@ -164,7 +165,7 @@ func TestWireParity_EnforceResponseFormat(t *testing.T) {
 func TestWireParity_RequestIDPropagation(t *testing.T) {
 	makeHandler := func(claims *capability.TokenPayload, ks killswitch.Manager, revStore *revocation.InMemory) http.Handler {
 		dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-		app := gateway.New(&gateway.Config{
+		app, err := gateway.New(&gateway.Config{
 			GatewayAudience: "wire-test",
 			AdminAPIKey:     testAdminKey,
 		}, &gateway.Dependencies{
@@ -174,6 +175,7 @@ func TestWireParity_RequestIDPropagation(t *testing.T) {
 			JWTVerifier: &staticClaimsVerifier{claims: claims},
 			DPoPStore:   dpopStore,
 		})
+		require.NoError(t, err)
 
 		return app.Handler()
 	}
@@ -262,7 +264,7 @@ func TestWireParity_EnforceRequestValidation(t *testing.T) {
 		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
 		Capabilities: []capability.Constraint{{Resource: "*", Actions: []string{"*"}}},
 	}
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -272,6 +274,7 @@ func TestWireParity_EnforceRequestValidation(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	handler := app.Handler()
 
@@ -330,7 +333,7 @@ func TestWireParity_ObligationsFormat(t *testing.T) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -340,6 +343,7 @@ func TestWireParity_ObligationsFormat(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	resp := enforceAndGetResponse(t, app.Handler(), map[string]any{
 		"token": "test-token",
@@ -367,7 +371,7 @@ func TestWireParity_ObligationsFormat(t *testing.T) {
 // TestWireParity_HealthEndpoint verifies the health endpoint response format.
 func TestWireParity_HealthEndpoint(t *testing.T) {
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "wire-test",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -377,13 +381,14 @@ func TestWireParity_HealthEndpoint(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: nil},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	req := newJSONRequest(t, http.MethodGet, "/health/live", nil)
 	w := doRequest(app.Handler(), req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var health map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &health)
+	err = json.Unmarshal(w.Body.Bytes(), &health)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", health["status"])
 }

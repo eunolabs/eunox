@@ -40,7 +40,7 @@ func newConditionTestGateway(t *testing.T, claims *capability.TokenPayload, opts
 	ks := killswitch.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -50,6 +50,7 @@ func newConditionTestGateway(t *testing.T, claims *capability.TokenPayload, opts
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	return app.Handler()
 }

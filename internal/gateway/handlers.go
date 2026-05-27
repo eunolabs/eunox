@@ -173,7 +173,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 
 	// Fill in source IP from request if not provided
 	if payload.Request.Context.SourceIP == "" {
-		payload.Request.Context.SourceIP = extractClientIP(r)
+		payload.Request.Context.SourceIP = app.extractClientIP(r)
 	}
 
 	// Run enforcement engine
@@ -309,7 +309,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.Header.Get("X-Session-ID"),
 		ToolName:  r.Header.Get("X-Tool-Name"),
 		Context: capability.EnforceRequestContext{
-			SourceIP:  extractClientIP(r),
+			SourceIP:  app.extractClientIP(r),
 			Operation: r.Method,
 		},
 	}
@@ -361,20 +361,47 @@ func extractBearerToken(r *http.Request) string {
 	return ""
 }
 
-// extractClientIP returns the client IP address from the request, stripping the port
-// from r.RemoteAddr. If X-Forwarded-For is present, the first (original client) IP is used.
-func extractClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			xff = xff[:idx]
-		}
-		if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
-			return ip.String()
+// isTrustedProxy reports whether ip is within one of the configured trusted proxy CIDRs.
+func (app *App) isTrustedProxy(ip net.IP) bool {
+	for _, network := range app.trustedProxyNets {
+		if network.Contains(ip) {
+			return true
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	return false
+}
+
+// extractClientIP returns the real client IP address for enforcement.
+//
+// X-Forwarded-For is only trusted when the immediate peer (r.RemoteAddr) is
+// within one of the configured TrustedProxyCIDRs.  When no trusted proxies are
+// configured, or the peer is not trusted, RemoteAddr is used directly.
+func (app *App) extractClientIP(r *http.Request) string {
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		remoteHost = r.RemoteAddr
 	}
-	return host
+
+	if len(app.trustedProxyNets) > 0 {
+		if remoteIP := net.ParseIP(remoteHost); remoteIP != nil && app.isTrustedProxy(remoteIP) {
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				// Walk the XFF chain backwards (right to left), returning the
+				// first IP that is not in the trusted proxy list.  This prevents
+				// a client from spoofing the leftmost entry when a trusted proxy
+				// appends to (rather than overwrites) an incoming XFF header.
+				parts := strings.Split(xff, ",")
+				for i := len(parts) - 1; i >= 0; i-- {
+					ip := net.ParseIP(strings.TrimSpace(parts[i]))
+					if ip == nil {
+						continue
+					}
+					if !app.isTrustedProxy(ip) {
+						return ip.String()
+					}
+				}
+			}
+		}
+	}
+
+	return remoteHost
 }

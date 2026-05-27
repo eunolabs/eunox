@@ -52,7 +52,9 @@ func newAdminTestApp(t *testing.T) *gateway.App {
 		TenantID:        "tenant-1",
 	}
 
-	return gateway.New(&cfg, &deps)
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+	return app
 }
 
 func newAdminTestAppWithAudit(t *testing.T) *gateway.App {
@@ -83,7 +85,9 @@ func newAdminTestAppWithAudit(t *testing.T) *gateway.App {
 		TenantID:        "tenant-1",
 	}
 
-	return gateway.New(&cfg, &deps)
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+	return app
 }
 
 type mockAuditPipeline struct {
@@ -180,10 +184,11 @@ func TestAdmin_KeyConfiguredWithoutTenant_DisablesAdminAuth(t *testing.T) {
 		DPoPStore:   gateway.NewInMemoryDPoPStore(5 * time.Minute),
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &deps)
+	require.NoError(t, err)
 
 	req := adminReq(http.MethodGet, "/admin/kill-switch/status", nil)
 	w := httptest.NewRecorder()
@@ -775,7 +780,8 @@ func TestAdmin_Integration_KillAgentEnforcementFlow(t *testing.T) {
 		TenantID:        "tenant-1",
 	}
 
-	intApp := gateway.New(&cfg, &deps)
+	intApp, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
 
 	// 1. Enforce request succeeds
 	enforceBody := map[string]any{

@@ -112,7 +112,7 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 	engine := enforcement.New()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	gwApp := gateway.New(&gateway.Config{
+	gwApp, err := gateway.New(&gateway.Config{
 		GatewayAudience: "https://gateway.test",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -124,6 +124,7 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 		Logger:      logger,
 		Metrics:     metrics,
 	})
+	require.NoError(t, err)
 
 	enforcePayload := map[string]any{
 		"token": issueResp.Token,
@@ -242,7 +243,7 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	// Step 3: Use attenuated token at gateway
 	engine := enforcement.New()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	gwApp := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
+	gwApp, err := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
 		Engine:      engine,
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
@@ -250,6 +251,7 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 		DPoPStore:   dpopStore,
 		Logger:      logger,
 	})
+	require.NoError(t, err)
 
 	// file-read allowed
 	enforceBody, _ := json.Marshal(map[string]any{
@@ -423,7 +425,7 @@ func TestIssuance_ExpiredToken_DeniedAtGateway(t *testing.T) {
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	gwApp := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
+	gwApp, err := gateway.New(&gateway.Config{GatewayAudience: "https://gateway.test", AdminAPIKey: testAdminKey}, &gateway.Dependencies{
 		Engine:      enforcement.New(),
 		KillSwitch:  killswitch.NewInMemory(),
 		Revocation:  revocation.NewInMemory(),
@@ -431,6 +433,7 @@ func TestIssuance_ExpiredToken_DeniedAtGateway(t *testing.T) {
 		DPoPStore:   dpopStore,
 		Logger:      logger,
 	})
+	require.NoError(t, err)
 
 	enforceBody, _ := json.Marshal(map[string]any{
 		"token": "expired-token",

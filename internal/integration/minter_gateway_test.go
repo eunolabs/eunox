@@ -130,7 +130,8 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 		TenantID:        "tenant-integration",
 	}
 
-	gwApp := gateway.New(&gwCfg, &gwDeps)
+	gwApp, err := gateway.New(&gwCfg, &gwDeps)
+	require.NoError(t, err)
 
 	// --- Step 1: Mint an API key ---
 	mintReqBody := map[string]any{
@@ -236,7 +237,7 @@ func TestIntegration_MinterToGateway_ExpiredKeyRejected(t *testing.T) {
 	ks := killswitch.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
 
-	gwApp := gateway.New(&gateway.Config{
+	gwApp, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gw",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -247,6 +248,7 @@ func TestIntegration_MinterToGateway_ExpiredKeyRejected(t *testing.T) {
 		DPoPStore:   dpopStore,
 		Logger:      logger,
 	})
+	require.NoError(t, err)
 
 	// Try to enforce with expired key
 	enforcePayload := map[string]any{
