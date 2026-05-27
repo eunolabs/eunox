@@ -6,16 +6,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/edgeobs/eunox/internal/gateway"
@@ -24,6 +21,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/config"
 	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/edgeobs/eunox/pkg/killswitch"
+	"github.com/edgeobs/eunox/pkg/lifecycle"
 	"github.com/edgeobs/eunox/pkg/observability"
 	"github.com/edgeobs/eunox/pkg/revocation"
 )
@@ -36,6 +34,7 @@ var (
 )
 
 const (
+	drainDelay      = 5 * time.Second
 	shutdownTimeout = 30 * time.Second
 	readTimeout     = 10 * time.Second
 	writeTimeout    = 60 * time.Second
@@ -151,6 +150,14 @@ func run() error {
 		logger.Warn("static ADMIN_API_KEY is deprecated in production; use JWT admin auth (GATEWAY_ADMIN_JWKS_URI) exclusively. The static key will be removed in a future release")
 	}
 
+	// Build lifecycle manager with drain delay so that load balancers stop
+	// routing traffic before connections are torn down.
+	lm := lifecycle.New(
+		lifecycle.WithDrainDelay(drainDelay),
+		lifecycle.WithShutdownTimeout(shutdownTimeout),
+		lifecycle.WithLogger(logger),
+	)
+
 	appCfg := gateway.Config{
 		BackendURL:              cfg.BackendServiceURL,
 		GatewayAudience:         cfg.GatewayAudience,
@@ -169,6 +176,9 @@ func run() error {
 		MaxRequestBodySize:      int64(cfg.MaxRequestBodySize),
 		Environment:             string(cfg.NodeEnv),
 		TrustedProxyCIDRs:       cfg.TrustedProxyCIDRs,
+		// IsReady lets handleReady reflect the lifecycle drain state so that load
+		// balancers remove this instance from rotation before connections drain.
+		IsReady: lm.IsReady,
 	}
 
 	app, err := gateway.New(&appCfg, &deps)
@@ -186,10 +196,17 @@ func run() error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	// Create admin server (bound to localhost)
+	// Create admin server (bound to localhost). Pre-bind the listener so that
+	// we can restrict it to the loopback interface before handing it to the
+	// lifecycle manager's Serve call.
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", cfg.AdminPort)
 	if cfg.AdminHost != "" {
 		adminAddr = fmt.Sprintf("%s:%d", cfg.AdminHost, cfg.AdminPort)
+	}
+
+	adminLn, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", adminAddr)
+	if err != nil {
+		return fmt.Errorf("admin listener: %w", err)
 	}
 
 	adminSrv := &http.Server{
@@ -201,59 +218,15 @@ func run() error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	// Start servers
-	errCh := make(chan error, 2)
+	lm.AddServer("public", srv)
+	lm.AddServerWithListener("admin", adminSrv, adminLn)
 
-	go func() {
-		logger.Info("public server listening", slog.String("addr", srv.Addr))
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("public server: %w", err)
-		}
-	}()
+	// Mark the service ready only after all initialization is complete.  The
+	// lifecycle manager's SetNotReady → drain → shutdown sequence will flip
+	// IsReady back to false before connections are drained on shutdown.
+	lm.SetReady()
 
-	listenConfig := net.ListenConfig{}
-
-	go func() {
-		ln, err := listenConfig.Listen(context.Background(), "tcp", adminSrv.Addr)
-		if err != nil {
-			errCh <- fmt.Errorf("admin listener: %w", err)
-			return
-		}
-		logger.Info("admin server listening", slog.String("addr", adminSrv.Addr))
-		if err := adminSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("admin server: %w", err)
-		}
-	}()
-
-	// Wait for shutdown signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	select {
-	case sig := <-sigCh:
-		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
-	case err := <-errCh:
-		return err
-	}
-
-	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-
-	logger.Info("shutting down gracefully", slog.Duration("timeout", shutdownTimeout))
-
-	// Shutdown both servers
-	shutdownErr := srv.Shutdown(ctx)
-	if err := adminSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
-		shutdownErr = err
-	}
-
-	if shutdownErr != nil {
-		return fmt.Errorf("shutdown: %w", shutdownErr)
-	}
-
-	logger.Info("shutdown complete")
-	return nil
+	return lm.Run(context.Background())
 }
 
 func levelFromEnv(env config.Environment) string {

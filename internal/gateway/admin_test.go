@@ -523,7 +523,7 @@ func TestAdmin_PartnerDID_List(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 	}
 
-	// List
+	// List (default page)
 	req := adminReq(http.MethodGet, "/admin/partner-dids/", nil)
 	w := httptest.NewRecorder()
 	app.AdminHandler().ServeHTTP(w, req)
@@ -531,6 +531,57 @@ func TestAdmin_PartnerDID_List(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	result := parseJSON(t, w)
 	assert.Equal(t, float64(2), result["count"])
+	assert.Equal(t, float64(2), result["total_count"])
+	assert.Equal(t, float64(1), result["page"])
+	assert.Equal(t, float64(50), result["page_size"])
+	assert.Equal(t, false, result["has_more"])
+}
+
+func TestAdmin_PartnerDID_List_Pagination(t *testing.T) {
+	app := newAdminTestApp(t)
+
+	// Register 3 partners
+	dids := []string{"did:web:alpha.com", "did:web:beta.com", "did:web:gamma.com"}
+	for _, did := range dids {
+		body := map[string]any{"did": did, "name": "Partner " + did}
+		req := adminReq(http.MethodPost, "/admin/partner-dids/", body)
+		w := httptest.NewRecorder()
+		app.AdminHandler().ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+	}
+
+	// First page: page_size=2
+	req := adminReq(http.MethodGet, "/admin/partner-dids/?page_size=2&page=1", nil)
+	w := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	result := parseJSON(t, w)
+	assert.Equal(t, float64(2), result["count"])
+	assert.Equal(t, float64(3), result["total_count"])
+	assert.Equal(t, float64(1), result["page"])
+	assert.Equal(t, float64(2), result["page_size"])
+	assert.Equal(t, true, result["has_more"])
+
+	// Second page
+	req2 := adminReq(http.MethodGet, "/admin/partner-dids/?page_size=2&page=2", nil)
+	w2 := httptest.NewRecorder()
+	app.AdminHandler().ServeHTTP(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	result2 := parseJSON(t, w2)
+	assert.Equal(t, float64(1), result2["count"])
+	assert.Equal(t, float64(3), result2["total_count"])
+	assert.Equal(t, float64(2), result2["page"])
+	assert.Equal(t, false, result2["has_more"])
+
+	// Verify stable sort: both pages together should contain all 3 DIDs.
+	page1 := result["partners"].([]any)
+	page2 := result2["partners"].([]any)
+	all := make([]any, 0, len(page1)+len(page2))
+	all = append(all, page1...)
+	all = append(all, page2...)
+	assert.Len(t, all, 3)
 }
 
 func TestAdmin_PartnerDID_Unregister(t *testing.T) {

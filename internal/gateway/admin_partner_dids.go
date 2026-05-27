@@ -8,8 +8,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
+)
+
+// Partner DID list pagination defaults and limits (consistent with audit routes).
+const (
+	partnerDIDDefaultPageSize = 50
+	partnerDIDMaxPageSize     = 1000
 )
 
 // --- Partner DID Handlers ---
@@ -51,6 +59,14 @@ func (app *App) handlePartnerDIDRegister(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handlePartnerDIDList handles GET /admin/v1/partner-dids.
+//
+// Supports cursor-free, offset-based pagination via query parameters:
+//   - page_size (default 50, max 1000)
+//   - page      (1-indexed, default 1)
+//
+// The response always includes total_count, page, page_size, has_more, and
+// count (number of items on this page) for easy client pagination.
 func (app *App) handlePartnerDIDList(w http.ResponseWriter, r *http.Request) {
 	if app.adminDeps.PartnerDIDs == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse("partner DID store not configured"))
@@ -62,9 +78,47 @@ func (app *App) handlePartnerDIDList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse("failed to list partner DIDs"))
 		return
 	}
+
+	// Parse pagination parameters.
+	pageSize := partnerDIDDefaultPageSize
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= partnerDIDMaxPageSize {
+			pageSize = v
+		}
+	}
+	pageNum := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 1 {
+			pageNum = v
+		}
+	}
+
+	// Stable sort: by RegisteredAt ASC, then DID ASC as tiebreaker.
+	sort.Slice(partners, func(i, j int) bool {
+		if partners[i].RegisteredAt.Equal(partners[j].RegisteredAt) {
+			return partners[i].DID < partners[j].DID
+		}
+		return partners[i].RegisteredAt.Before(partners[j].RegisteredAt)
+	})
+
+	totalCount := len(partners)
+	offset := (pageNum - 1) * pageSize
+	if offset > totalCount {
+		offset = totalCount
+	}
+	end := offset + pageSize
+	if end > totalCount {
+		end = totalCount
+	}
+	page := partners[offset:end]
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"partners": partners,
-		"count":    len(partners),
+		"partners":    page,
+		"count":       len(page),
+		"total_count": totalCount,
+		"page":        pageNum,
+		"page_size":   pageSize,
+		"has_more":    end < totalCount,
 	})
 }
 

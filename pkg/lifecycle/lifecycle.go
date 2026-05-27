@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,8 +40,9 @@ type Manager struct {
 }
 
 type serverEntry struct {
-	name   string
-	server *http.Server
+	name     string
+	server   *http.Server
+	listener net.Listener // optional pre-bound listener; when set, Serve is used instead of ListenAndServe
 }
 
 // Option configures the Manager.
@@ -83,6 +85,16 @@ func (m *Manager) AddServer(name string, srv *http.Server) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.servers = append(m.servers, &serverEntry{name: name, server: srv})
+}
+
+// AddServerWithListener registers an HTTP server with a pre-bound listener.
+// The server is started with Serve(ln) instead of ListenAndServe, which allows
+// the caller to control the listening address and interface before startup
+// (e.g. binding the admin server to 127.0.0.1 only).
+func (m *Manager) AddServerWithListener(name string, srv *http.Server, ln net.Listener) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.servers = append(m.servers, &serverEntry{name: name, server: srv, listener: ln})
 }
 
 // OnStop registers a callback to be invoked during shutdown (after servers
@@ -158,8 +170,14 @@ func (m *Manager) Run(ctx context.Context) error {
 	for _, entry := range m.servers {
 		go func(e *serverEntry) {
 			m.logger.Info("starting server", slog.String("name", e.name), slog.String("addr", e.server.Addr))
-			if err := e.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("server %s: %w", e.name, err)
+			var serveErr error
+			if e.listener != nil {
+				serveErr = e.server.Serve(e.listener)
+			} else {
+				serveErr = e.server.ListenAndServe()
+			}
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("server %s: %w", e.name, serveErr)
 			}
 		}(entry)
 	}

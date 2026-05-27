@@ -66,6 +66,11 @@ type Config struct {
 	// the rightmost untrusted IP in XFF is used as the client IP for enforcement.
 	// When the list is empty, XFF is ignored and RemoteAddr is always used.
 	TrustedProxyCIDRs []string
+
+	// IsReady is an optional function consulted by the GET /health/ready handler.
+	// When nil the handler always returns 200; when non-nil it returns 503 while
+	// the function returns false (e.g. during the lifecycle drain delay).
+	IsReady func() bool
 }
 
 // Dependencies holds the injected backends for the gateway.

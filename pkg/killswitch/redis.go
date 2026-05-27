@@ -6,6 +6,7 @@ package killswitch
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -21,6 +22,7 @@ const (
 // Redis is a Redis-backed kill-switch manager with pub/sub propagation and local cache.
 type Redis struct {
 	client redis.Cmdable
+	logger *slog.Logger
 
 	// Local cache for fast reads (refreshed via pub/sub).
 	mu             sync.RWMutex
@@ -43,6 +45,13 @@ func NewRedis(client redis.Cmdable) *Redis {
 	return r
 }
 
+// WithLogger sets a structured logger on the kill-switch for operational visibility.
+// If set, initial state-refresh failures are logged as warnings rather than silently dropped.
+func (r *Redis) WithLogger(logger *slog.Logger) *Redis {
+	r.logger = logger
+	return r
+}
+
 // Start begins the pub/sub subscription for state synchronization.
 // It should be called once during application startup.
 func (r *Redis) Start(ctx context.Context) {
@@ -50,8 +59,15 @@ func (r *Redis) Start(ctx context.Context) {
 	r.lifecycleCtx = subCtx
 	r.cancel = cancel
 
-	// Load initial state
-	_ = r.refreshState(subCtx)
+	// Load initial state. A failure here is logged as a warning: the switch starts
+	// fail-open (all-allowed) and will self-correct on the next pub/sub event or
+	// full refresh triggered by an unknown message.
+	if err := r.refreshState(subCtx); err != nil {
+		if r.logger != nil {
+			r.logger.Warn("kill switch: initial state refresh failed; starting fail-open",
+				slog.String("error", err.Error()))
+		}
+	}
 
 	// Subscribe in background
 	if sub, ok := r.client.(interface {

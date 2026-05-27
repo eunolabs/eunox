@@ -88,6 +88,51 @@ func TestHealthReady(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "ready")
 }
 
+func TestHealthReady_NotReady(t *testing.T) {
+	t.Parallel()
+
+	verifier := &mockJWTVerifier{}
+	// Build app with IsReady returning false (simulates drain delay).
+	ready := false
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ks := killswitch.NewInMemory()
+	revStore := revocation.NewInMemory()
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		JWTVerifier: verifier,
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	}
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  []string{"http://localhost:3000"},
+		IsReady:         func() bool { return ready },
+	}
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+
+	// Not ready yet.
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "not_ready")
+
+	// Now simulate ready state.
+	ready = true
+	req2 := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
+	w2 := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Contains(t, w2.Body.String(), "ready")
+}
+
 func TestEnforce_MissingToken(t *testing.T) {
 	verifier := &mockJWTVerifier{}
 	app, _, _ := newTestApp(t, verifier)

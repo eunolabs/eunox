@@ -704,3 +704,142 @@ func TestSCIM_ErrorFormat(t *testing.T) {
 	assert.Equal(t, "404", errResp.Status)
 	assert.NotEmpty(t, errResp.Detail)
 }
+
+// --- Pagination ---
+
+func createSCIMUser(t *testing.T, app *App, userName, email string) SCIMUser {
+	t.Helper()
+	body := map[string]any{
+		"schemas":  []string{scimUserSchema},
+		"userName": userName,
+		"emails":   []map[string]any{{"value": email, "primary": true}},
+		"active":   true,
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "createSCIMUser %s", userName)
+	var user SCIMUser
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &user))
+	return user
+}
+
+func createSCIMGroup(t *testing.T, app *App, displayName string) SCIMGroup {
+	t.Helper()
+	body := map[string]any{
+		"schemas":     []string{scimGroupSchema},
+		"displayName": displayName,
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(adminAPIKeyHeader(), app.config.AdminAPIKey)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "createSCIMGroup %s", displayName)
+	var group SCIMGroup
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &group))
+	return group
+}
+
+func TestSCIM_ListUsers_DefaultPagination(t *testing.T) {
+	app := testApp(t)
+	for i := range 3 {
+		createSCIMUser(t, app, fmt.Sprintf("user%d", i), fmt.Sprintf("user%d@example.com", i))
+	}
+
+	w := doGet(app, "/scim/v2/Users")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp SCIMListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 3, resp.TotalResults)
+	assert.Equal(t, 1, resp.StartIndex)
+	assert.Equal(t, 3, resp.ItemsPerPage)
+}
+
+func TestSCIM_ListUsers_Pagination(t *testing.T) {
+	app := testApp(t)
+	for i := range 5 {
+		createSCIMUser(t, app, fmt.Sprintf("puser%d", i), fmt.Sprintf("puser%d@example.com", i))
+	}
+
+	// Page 1: count=2
+	w1 := doGet(app, "/scim/v2/Users?startIndex=1&count=2")
+	assert.Equal(t, http.StatusOK, w1.Code)
+	var resp1 SCIMListResponse
+	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &resp1))
+	assert.Equal(t, 5, resp1.TotalResults)
+	assert.Equal(t, 1, resp1.StartIndex)
+	assert.Equal(t, 2, resp1.ItemsPerPage)
+
+	// Page 2: startIndex=3, count=2
+	w2 := doGet(app, "/scim/v2/Users?startIndex=3&count=2")
+	assert.Equal(t, http.StatusOK, w2.Code)
+	var resp2 SCIMListResponse
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
+	assert.Equal(t, 5, resp2.TotalResults)
+	assert.Equal(t, 3, resp2.StartIndex)
+	assert.Equal(t, 2, resp2.ItemsPerPage)
+
+	// Last page: startIndex=5, count=2 — only 1 item
+	w3 := doGet(app, "/scim/v2/Users?startIndex=5&count=2")
+	assert.Equal(t, http.StatusOK, w3.Code)
+	var resp3 SCIMListResponse
+	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &resp3))
+	assert.Equal(t, 5, resp3.TotalResults)
+	assert.Equal(t, 5, resp3.StartIndex)
+	assert.Equal(t, 1, resp3.ItemsPerPage)
+}
+
+func TestSCIM_ListUsers_CountZero(t *testing.T) {
+	// RFC 7644: count=0 returns totalResults without resources.
+	app := testApp(t)
+	createSCIMUser(t, app, "countzero", "countzero@example.com")
+
+	w := doGet(app, "/scim/v2/Users?count=0")
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp SCIMListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.TotalResults)
+	assert.Equal(t, 0, resp.ItemsPerPage)
+}
+
+func TestSCIM_ListGroups_Pagination(t *testing.T) {
+	app := testApp(t)
+	for i := range 4 {
+		createSCIMGroup(t, app, fmt.Sprintf("Group%d", i))
+	}
+
+	// Page 1
+	w1 := doGet(app, "/scim/v2/Groups?startIndex=1&count=2")
+	assert.Equal(t, http.StatusOK, w1.Code)
+	var resp1 SCIMListResponse
+	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &resp1))
+	assert.Equal(t, 4, resp1.TotalResults)
+	assert.Equal(t, 2, resp1.ItemsPerPage)
+
+	// Page 2
+	w2 := doGet(app, "/scim/v2/Groups?startIndex=3&count=2")
+	assert.Equal(t, http.StatusOK, w2.Code)
+	var resp2 SCIMListResponse
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
+	assert.Equal(t, 4, resp2.TotalResults)
+	assert.Equal(t, 2, resp2.ItemsPerPage)
+}
+
+func TestSCIM_ListGroups_CountZero(t *testing.T) {
+	app := testApp(t)
+	createSCIMGroup(t, app, "GroupForCountZero")
+
+	w := doGet(app, "/scim/v2/Groups?count=0")
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp SCIMListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.TotalResults)
+	assert.Equal(t, 0, resp.ItemsPerPage)
+}
+
