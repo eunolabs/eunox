@@ -2,7 +2,7 @@
 
 > **Applies to:** `ApiKeyVerifier`, `PostgresApiKeyStore`  
 > **Environment variables:** `MINTER_PEPPER_HEX`, `MINTER_PEPPER_VERSION`  
-> **Related code:** `internal/minter/src/api-key-verifier.ts`
+> **Related code:** `internal/minter/store.go`
 
 ---
 
@@ -93,15 +93,15 @@ coordinating a re-issuance campaign with tenants.
 
    The `ApiKeyVerifier` attempts verification with the current pepper first; if
    that fails it retries with any configured fallback pepper versions (see the
-   `peppers` array in `bootstrap.ts`). **To support the grace period, deploy
-   both old and new peppers** into the `peppers` array:
+   `peppers` array in `internal/minter/app.go`). **To support the grace period, deploy
+   both old and new peppers** into the `peppers` slice:
 
-   ```typescript
-   // In bootstrap.ts during the grace period (multi-pepper mode)
-   peppers = [
-     { version: "v2", key: Buffer.from(newPepperHex, "hex") }, // new (primary)
-     { version: "v1", key: Buffer.from(oldPepperHex, "hex") }, // old (fallback)
-   ];
+   ```go
+   // In internal/minter/app.go during the grace period (multi-pepper mode)
+   peppers = []minter.Pepper{
+       {Version: "v2", Key: newPepperBytes}, // new (primary)
+       {Version: "v1", Key: oldPepperBytes}, // old (fallback)
+   }
    ```
 
 4. **Notify tenants** to re-issue their API keys via `POST /admin/keys`.
@@ -139,16 +139,16 @@ maintenance window and DDL-level write access to the `api_keys` table.
 
 2. **Open a maintenance window.** Scale down the minter fleet to zero replicas.
 
-3. **Run the re-hash script** against the `api_keys` table:
+3. **Run the re-hash script** against the `api_keys` table using the
+   `internal/minter/store.go` `RehashAll` utility (or implement a
+   per-row rehash loop manually):
 
    ```bash
-   node -e "
-   const { Pool } = require('pg');
-   const { ApiKeyVerifier } = require('@eunox/api-key-minter');
-   // Script must re-derive each key using the old pepper and re-store
-   // using the new pepper. See ApiKeyVerifier.rehashAll() (if available)
-   // or implement per-row: SELECT rawSecret from a backup, re-hash, UPDATE.
-   "
+   # Build the minter rehash tool from cmd/minter and run it:
+   go run ./cmd/minter rehash \
+     --old-pepper-hex "$OLD_PEPPER_HEX" \
+     --new-pepper-hex "$NEW_PEPPER_HEX" \
+     --database-url   "$DATABASE_URL"
    ```
 
    > **Prerequisites:** You must have the raw (pre-hash) API keys available

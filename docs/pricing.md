@@ -60,7 +60,7 @@ The table below maps every platform feature to the tier that gates it.
 | SCIM 2.0 agent provisioning (`/scim/v2/`)                    |  —  |        ✅         |        —        |        —         |        ✅        |
 | DB credential issuance (db-token-service)                    |  —  |        ✅         |        —        |        —         |        ✅        |
 | Storage-grant issuance (storage-grant-service)               |  —  |        ✅         |        —        |        —         |        ✅        |
-| AGT in-process guard (`createAgtGuard()`)                    |  —  |        ✅         |        —        |        —         |        ✅        |
+| AGT in-process guard (`agentruntime.New()`)                  |  —  |        ✅         |        —        |        —         |        ✅        |
 | Discovery endpoint v1.0.0 (`/.well-known/capability-issuer`) |  —  |        ✅         |        —        |        —         |        ✅        |
 | Helm chart + air-gap bundle (`k8s/helm/`)                    |  —  |        ✅         |        —        |        —         |        ✅        |
 | Posture emitter + CSPM plugin delivery                       |  —  |        ✅         |        —        |        —         |        ✅        |

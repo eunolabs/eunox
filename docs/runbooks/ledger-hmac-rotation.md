@@ -1,7 +1,7 @@
 # Runbook: Audit Ledger HMAC Secret Rotation
 
 > **Applies to:** `PostgresLedgerBackend` and `PerReplicaPostgresLedgerBackend`  
-> **File:** `pkg/src/ledger-signer.ts`
+> **File:** `pkg/audit/audit.go`
 
 ---
 
@@ -76,27 +76,23 @@ Create a new ledger table, configure the backend to write to it with the new sec
 
 ### Verification
 
-```bash
-# Verify recent rows in the new table (requires the new secret)
-AUDIT_LEDGER_TABLE=eunox_audit_ledger_v2 \
-AUDIT_LEDGER_HMAC_SECRET=<new-secret> \
-  node -e "
-const { PostgresLedgerBackend } = require('@eunox/common-infra');
-const { Pool } = require('pg');
-const pool = new Pool({ connectionString: process.env.POSTGRES_URL });
-const backend = new PostgresLedgerBackend({ pool, hmacSecret: process.env.AUDIT_LEDGER_HMAC_SECRET });
-// getEntries(fromSeq, toSeq) — both arguments are required positional numbers.
-backend.getEntries(1, 100).then(entries => {
-  for (const e of entries) {
-    // rowHmac is populated by getEntries() from the raw BYTEA column.
-    if (e.rowHmac) {
-      const ok = backend.verifyRowHmac(e, e.rowHmac);
-      console.log('seq', e.seq, ok ? 'OK' : 'TAMPERED');
-    }
-  }
-  pool.end();
-});
-"
+```sql
+-- Verify recent rows in the new table using pgcrypto (requires the new secret).
+-- Replace $NEW_SECRET_HEX with the 64-char hex-encoded new secret.
+-- The HMAC message format is: seq:previousHash:recordHash:replicaId
+SELECT
+  seq,
+  CASE
+    WHEN row_hmac = hmac(
+      (seq::text || ':' || previous_hash || ':' || record_hash || ':' || replica_id)::bytea,
+      decode('$NEW_SECRET_HEX', 'hex'),
+      'sha256'
+    ) THEN 'OK'
+    ELSE 'TAMPERED'
+  END AS hmac_status
+FROM eunox_audit_ledger_v2
+WHERE seq BETWEEN 1 AND 100
+ORDER BY seq;
 ```
 
 ---
@@ -112,8 +108,8 @@ For deployments that cannot tolerate table recreation, add a `verifyHmac(oldSecr
    ```sql
    -- CAUTION: requires AUDIT_LEDGER_WRITE_LOCK during this operation.
    -- Replace $NEW_SECRET_HEX with the hex-encoded new secret.
-   -- pgcrypto hmac() produces the same HMAC-SHA256 as Node.js
-   --   crypto.createHmac('sha256', secret).update(message).digest()
+   -- pgcrypto hmac() produces the same HMAC-SHA256 as Go's
+   --   hmac.New(sha256.New, secret).Write(message).Sum(nil)
    -- The message format matches the gateway: seq:previousHash:recordHash:replicaId
    UPDATE eunox_audit_ledger SET row_hmac = (
      hmac(

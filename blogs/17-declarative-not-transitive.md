@@ -183,11 +183,12 @@ The non-transitive model is also consistent with the fail-closed principle from 
 
 The code path is direct:
 
-```typescript
-const entry = await this.registry.findByDid(issClaim);
-if (!entry) {
-  return { allowed: false, reason: "partner_did_not_registered" };
+```go
+entry, ok := registry.Get(issClaim)
+if !ok || !registry.IsApproved(issClaim) {
+    return enforcement.DenyResult("partner_did_not_registered")
 }
+_ = entry
 ```
 
 No graph traversal, no transitive lookup, no "check if any registered DID trusts this one." The registry is a flat map from DID string to registration record. If the DID isn't a key in that map, the token is rejected.

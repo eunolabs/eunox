@@ -405,7 +405,7 @@ Automate this with an EventBridge rule that triggers a Lambda function on the
 ## 9. Native SDK integration — `AwsSecretsManagerSecretStore` (Phase 2)
 
 eunox now ships a native `AwsSecretsManagerSecretStore` implementation in
-`@eunox/common-core` that fetches secrets from Secrets Manager at runtime using
+`pkg/config` that fetches secrets from Secrets Manager at runtime using
 the standard AWS SDK v3 credential provider chain (IRSA, EC2 instance profile,
 `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` env vars).
 

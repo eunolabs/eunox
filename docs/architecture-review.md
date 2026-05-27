@@ -636,11 +636,11 @@ intended for an upcoming stage?
 
 ### OQ-5 — `docs/architecture.md` references TypeScript implementation details
 
-Several sequence diagrams and component names in `docs/architecture.md` reference
-TypeScript/Node.js constructs (`index.ts`, `CapabilityIssuerService.ts`,
-`@eunox/common`, `helmet`). The repository is now a pure Go codebase. Are these
-documents intentionally retained as conceptual references, or do they need updating
-to reflect the Go implementation?
+Several sequence diagrams and component names in `docs/architecture.md` previously
+referenced TypeScript/Node.js constructs (`index.ts`, `CapabilityIssuerService.ts`,
+`@eunox/common`, `helmet`). The repository is now a pure Go codebase. These
+documents have been updated to reflect the Go implementation (`internal/issuer/app.go`,
+`pkg/capability/`, `pkg/enforcement/`, etc.).
 
 ---
 

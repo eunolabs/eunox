@@ -121,26 +121,27 @@ if !SupportedSchemaVersions[token.SchemaVersion] {
 
 1. **Update Gateway** (Week 1-2)
 
-   ```typescript
-   // pkg//src/types.ts
-   export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
-     "1.0",
-     "1.1", // NEW
-   ]);
+   ```go
+   // pkg/capability/token.go
+   var SupportedSchemaVersions = map[string]bool{
+       "1.0": true,
+       "1.1": true, // NEW
+   }
    ```
 
-   - Add new version to `SUPPORTED_SCHEMA_VERSIONS`
+   - Add new version to `SupportedSchemaVersions`
    - Implement version-specific logic (if needed)
    - Deploy gateway updates
    - Verify all gateways updated
 
 2. **Update Issuer** (Week 3-4)
 
-   ```typescript
-   export const CAPABILITY_TOKEN_SCHEMA_VERSION = "1.1" as const;
+   ```go
+   // pkg/capability/token.go
+   const SchemaVersion = "1.1"
    ```
 
-   - Update `CAPABILITY_TOKEN_SCHEMA_VERSION`
+   - Update `SchemaVersion`
    - Deploy issuer updates
    - Monitor token distribution
 
@@ -272,8 +273,8 @@ The versioning system prioritizes security over availability:
 
 Version strings are validated via exact match against a static set:
 
-```typescript
-SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion);
+```go
+capability.SupportedSchemaVersions[token.SchemaVersion]
 ```
 
 **Security Properties:**

@@ -51,7 +51,7 @@ Document required tenant-side IdP hygiene (conditional access, app-role review c
 ### 1.1 What tokens can an attacker obtain?
 
 The issuer's `IssueController` issues tokens only after successfully completing all of
-the following steps in order (see `issuance/issue-controller.ts`):
+the following steps in order (see `internal/issuer/app.go::handleIssue`):
 
 1. **IdP token validation** — the caller's `authToken` is verified against the IdP's JWKS.
 2. **Role resolution** — roles are read from the verified IdP token's claims.
@@ -224,7 +224,7 @@ fetching, caching, and refresh internally. The caching behaviour:
   env var if operator-configurable TTL is required.
 - **Gateway-side JWKS (for verifying capability JWTs):** uses the existing
   `EUNOX_JWKS_CACHE_TTL_SECONDS` config variable (default 300 s; defined in
-  `pkg//src/config/schema.ts:923`).
+  `pkg/config/gateway.go`).
 
 A failed JWKS refresh does not invalidate the currently cached JWKS (fail-safe for
 transient JWKS endpoint flaps). The issuer rejects tokens only if no cached JWKS
@@ -241,20 +241,18 @@ verified IdP token, never from the request body. Test: a request that includes
 
 ### 3.1 Role derivation is always from the verified IdP token
 
-The issuance pipeline in `IssueController.handle()` derives capabilities as follows:
+The issuance pipeline in `App.handleIssue()` derives capabilities as follows:
 
-```typescript
+```go
 // Step 1: Validate the user's authentication token (IdP JWKS verification)
-const userContext = await this.identityProvider.validateToken(
-  request.authToken,
-);
+userCtx, err := app.deps.Identity.VerifyToken(r.Context(), req.AuthToken)
 
-// Step 2: Map roles from the VERIFIED userContext to capabilities
-let capabilities = mapRolesToCapabilitiesForPolicy(
-  userContext.roles, // <── from IdP token, never from request body
-  this.policy,
-  userContext.tenantId,
-);
+// Step 2: Map roles from the VERIFIED userCtx to capabilities
+capabilities := mapRolesToCapabilities(
+    userCtx.Roles,   // <── from IdP token, never from request body
+    app.deps.Policy,
+    userCtx.TenantID,
+)
 ```
 
 The `request.authToken` is the caller's IdP-issued token. The caller may not supply
@@ -274,7 +272,7 @@ A request where the JSON body includes `role: "admin"` (or any `requestedCapabil
 derived from admin roles) but whose IdP token contains only `roles: ["viewer"]` MUST
 resolve to the `viewer` capability set, not the `admin` set.
 
-This is covered by `internal/issuer/tests/issuer-role-privilege-escalation.test.ts`
+This is covered by `internal/issuer/app_test.go::TestIssue_PrivilegeEscalation`
 (to be created in Task 2 as part of the negative-test requirement). The test:
 
 1. Mocks an IdP token with `roles: ["viewer"]`.
@@ -421,8 +419,7 @@ out all cross-tenant bindings from the request and returns 403 for each.
 ### 5.2 Required tests (verbatim from §5)
 
 The following negative tests MUST be present in
-`internal/issuer/tests/template-cross-tenant.test.ts`
-(to be created in Task 6):
+`internal/issuer/app_test.go` (cross-tenant template tests):
 
 | Scenario                                                                            | Expected result                                                      |
 | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
