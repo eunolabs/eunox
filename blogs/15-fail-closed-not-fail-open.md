@@ -44,13 +44,21 @@ The correct answer is: **reject the token immediately**.
 
 ```go
 // From pkg/enforcement/engine.go
-if !e.handlers.Has(condition.Type) {
-    return &Decision{
-        Allowed:    false,
-        DenialCode: "unknown_condition_type",
-        Reason:     fmt.Sprintf("condition type %q is not registered in this enforcement engine", condition.Type),
-    }
+e.mu.RLock()
+handler, exists := e.handlers[condType]
+e.mu.RUnlock()
+
+if !exists {
+    return capability.EnforceResponse{
+        Decision: capability.DecisionDeny,
+        Denial: &capability.DenialInfo{
+            Code:          capability.ErrCodeConditionFailed,
+            ConditionType: condType,
+            Message:       fmt.Sprintf("unknown condition type: %s", condType),
+        },
+    }, nil
 }
+_ = handler
 ```
 
 An unknown condition is not a benign unknown. It's a constraint that this gateway cannot evaluate. If the token was issued with that constraint, the issuer intended it to be enforced. Running the token without enforcing all of its conditions is silently weakening the policy. The safe behavior — the only secure behavior — is to deny the call and let the operator know that there's a schema mismatch between the issuer and the gateway.

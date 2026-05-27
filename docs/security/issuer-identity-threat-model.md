@@ -245,14 +245,14 @@ The issuance pipeline in `App.handleIssue()` derives capabilities as follows:
 
 ```go
 // Step 1: Validate the user's authentication token (IdP JWKS verification)
-userCtx, err := app.deps.Identity.VerifyToken(r.Context(), req.AuthToken)
+userCtx, err := app.deps.Identity.VerifyToken(r.Context(), req.Token)
 
-// Step 2: Map roles from the VERIFIED userCtx to capabilities
-capabilities := mapRolesToCapabilities(
-    userCtx.Roles,   // <── from IdP token, never from request body
-    app.deps.Policy,
-    userCtx.TenantID,
-)
+// Step 2: Resolve role from VERIFIED userCtx, then intersect requested caps with policy.
+role := "default"
+if len(userCtx.Roles) > 0 {
+    role = userCtx.Roles[0]
+}
+capabilities, err := app.deps.PolicyEngine.IntersectCapabilities(role, req.Capabilities)
 ```
 
 The `request.authToken` is the caller's IdP-issued token. The caller may not supply
@@ -272,8 +272,9 @@ A request where the JSON body includes `role: "admin"` (or any `requestedCapabil
 derived from admin roles) but whose IdP token contains only `roles: ["viewer"]` MUST
 resolve to the `viewer` capability set, not the `admin` set.
 
-This is covered by `internal/issuer/app_test.go::TestIssue_PrivilegeEscalation`
-(to be created in Task 2 as part of the negative-test requirement). The test:
+This repository does not currently include a dedicated
+`TestIssue_PrivilegeEscalation` in `internal/issuer/app_test.go`. Add this
+explicit negative test to keep the guarantee auditable. The test should:
 
 1. Mocks an IdP token with `roles: ["viewer"]`.
 2. Sends a `POST /api/v1/issue` request body that includes `requestedCapabilities`

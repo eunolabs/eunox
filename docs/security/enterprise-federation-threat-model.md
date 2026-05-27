@@ -896,9 +896,7 @@ openssl ecparam -genkey -name prime256v1 -noout -out /secure-media/signing-key.p
 openssl ec -in /secure-media/signing-key.pem -pubout -out /secure-media/signing-key-pub.pem
 
 # Step 3: Compute the key thumbprint (RFC 7638, for JWKS kid)
-# Use the eunox CLI or any JWK thumbprint tool:
-eunox key thumbprint --key /secure-media/signing-key.pem
-# Alternatively, use the `jose` CLI:
+# Use a JWK thumbprint tool such as the `jose` CLI:
 # jose jwk thp -i /secure-media/signing-key.pem
 
 # Step 4: Set permissions before copying to the service

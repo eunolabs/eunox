@@ -214,8 +214,7 @@ curl https://<gateway>/.well-known/jwks.json > jwks.json
 # 2. Verify the commitment using any JWT library
 # The signature is a base64-encoded digital signature over SHA-256(canonicalJSON(commitment)).
 # The canonical form includes all commitment fields EXCEPT signature, keyId, and algorithm.
-# Example using the Go eunox CLI:
-eunox audit verify-commitment --commitment commit.json --jwks jwks.json
+# There is currently no built-in `eunox audit verify-commitment` CLI command.
 ```
 
 The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSON(commitment))` where the canonical form includes all `CrossChainCommitment` fields **excluding** `signature`, `keyId`, and `algorithm`. The signing key matches the gateway's evidence signing key (same `keyId`).

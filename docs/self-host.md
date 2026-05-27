@@ -1634,11 +1634,13 @@ curl -s "https://gateway.internal:3002/api/v1/audit/export?cursor=<cursor>" \
 #### 12.5.2 Offline evidence verification
 
 ```bash
-# Verify an evidenceJwt field against the issuer JWKS
-eunox audit verify-evidence \
-  --jwks https://issuer.internal:3001/.well-known/jwks.json \
-  --jwt "$EVIDENCE_JWT"
+# Fetch signing keys for offline verification of SignedAuditEvidence.signature
+curl -s "https://gateway.internal:3002/api/v1/audit/signing-keys" \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
 ```
+
+Use the returned keys to verify each exported `records[i].signature` against
+`records[i].record` with your JOSE verifier.
 
 See `docs/security/soc2-mapping.md` for the full OCSF `class_uid` to SOC2
 control mapping and the auditor-facing export procedure.

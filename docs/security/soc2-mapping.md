@@ -68,7 +68,7 @@ type SignedAuditEvidence struct {
     // OCSF record
     Record       LogEntry `json:"record"`
     // eunox extensions
-    Signature    string   `json:"signature"`   // JWT signed by gateway KMS key
+    Signature    string   `json:"signature"`   // Digital signature over canonical Record bytes
     Algorithm    string   `json:"algorithm"`
     KeyID        string   `json:"keyId"`
     ChainHash    string   `json:"chainHash"`   // HMAC chain hash

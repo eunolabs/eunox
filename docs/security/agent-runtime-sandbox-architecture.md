@@ -89,12 +89,12 @@ in a Kubernetes `Secret`. It should be obtained via projected workload identity
 (Azure Workload Identity, SPIRE SVID, or a short-TTL projected service account
 token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
 
-**Status:** Fully implemented:
+**Status:** Partially implemented:
 
-- `AUTH_TOKEN` is now optional in `AgentRuntimeConfigSchema`.
-- `AUTH_TOKEN_FILE` field added — path to a file the runtime reads on every
-  capability-issuance call (token never persisted in memory between refreshes).
-- `cmd/agent-runtime/main.go` builds a file-reader `authTokenProvider` when `AUTH_TOKEN_FILE` is set.
+- `internal/agentruntime/types.go` supports `IdentityTokenProvider` for dynamic
+  token fetch on issuance/refresh calls.
+- There is currently no built-in `AUTH_TOKEN_FILE` config field or
+  `cmd/agent-runtime/main.go` entrypoint in this repository.
 - `k8s/agent-runtime.yaml` carries a commented `sa-token` projected volume block
   (kubelet-managed, audience-bound, 1-hour expiry) and a `AUTH_TOKEN_FILE` env
   var commented with enablement instructions.
@@ -180,19 +180,21 @@ highest-confidence defence against container-escape exploits.
 **AKS:** enable `--workload-runtime KataMshvVmIsolation` on the agent node pool.
 **Self-managed K8s:** add a gVisor node pool; label it and schedule agent pods there.
 
-### 4.5 `AUTH_TOKEN_FILE` — file-based token provider (Gap 3)
+### 4.5 Identity token provider hook (Gap 3)
 
-`AUTH_TOKEN` is now optional. The new `AUTH_TOKEN_FILE` config variable accepts a
-filesystem path from which the runtime reads the token on every capability
-issuance/refresh call. When set, `cmd/agent-runtime/main.go` builds a `buildFileTokenProvider()`
-that reads the file at call time, so:
+`internal/agentruntime/runtime.go` supports dynamic token fetch through
+`Config.IdentityTokenProvider`. Embedding services can implement file-backed
+token reads in that callback if needed, so:
 
 1. No static credential sits in the environment or process memory between calls.
 2. The kubelet-managed token is automatically picked up after rotation (every hour
    for projected service-account tokens).
 
-The manifest carries a commented `sa-token` projected volume (audience-bound,
-1-hour TTL) and a commented `AUTH_TOKEN_FILE` env var. Enabling requires:
+The manifest carries a commented `sa-token` projected volume. Enabling a
+file-backed provider requires adding callback wiring in your embedding service
+entrypoint.
+
+In Kubernetes manifests, enabling this still requires:
 
 1. Azure Workload Identity or SPIRE configured on the cluster.
 2. The ServiceAccount annotated with `azure.workload.identity/client-id`.
@@ -215,7 +217,7 @@ Full activation steps are documented in the cert-manager `Certificate` block in
 
 ## 5. Remaining Recommendations
 
-### P3 — Landlock self-restriction in `cmd/agent-runtime/main.go`
+### P3 — Landlock self-restriction in runtime host entrypoint
 
 Compile a small `landlock-wrapper` binary (Rust or C) that installs Landlock
 network restrictions (port 3001 + 3002 only) then calls `execve()` to replace

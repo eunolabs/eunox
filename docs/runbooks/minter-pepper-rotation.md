@@ -91,18 +91,23 @@ coordinating a re-issuance campaign with tenants.
    MINTER_PEPPER_VERSION=v2
    ```
 
-   The `ApiKeyVerifier` attempts verification with the current pepper first; if
-   that fails it retries with any configured fallback pepper versions (see the
-   `peppers` array in `internal/minter/app.go`). **To support the grace period, deploy
-   both old and new peppers** into the `peppers` slice:
+   The verifier checks `Pepper.Current` first, then each value in `Pepper.Old`
+   (`internal/minter/store.go`). During a grace period, include the previous
+   pepper via `AddOldPepper`:
 
    ```go
-   // In internal/minter/app.go during the grace period (multi-pepper mode)
-   peppers = []minter.Pepper{
-       {Version: "v2", Key: newPepperBytes}, // new (primary)
-       {Version: "v1", Key: oldPepperBytes}, // old (fallback)
+   pepper, err := minter.NewPepperFromHex(newPepperHex) // Current
+   if err != nil {
+       return err
+   }
+   if err := pepper.AddOldPepper(oldPepperHex); err != nil {
+       return err
    }
    ```
+
+   The default `cmd/minter/main.go` bootstrap currently wires only
+   `MINTER_PEPPER_HEX` (single pepper). Dual-pepper startup wiring must be added
+   in your deployment entrypoint before using this grace-period flow.
 
 4. **Notify tenants** to re-issue their API keys via `POST /admin/keys`.
 
@@ -111,7 +116,8 @@ coordinating a re-issuance campaign with tenants.
    hit-rate drops to zero (all active keys have been re-issued), proceed to
    step 6.
 
-6. **Remove the old pepper** from the `peppers` array and redeploy. The old
+6. **Remove the old pepper** from `Pepper.Old` (or equivalent bootstrap wiring)
+   and redeploy. The old
    pepper can now be decommissioned in the secrets manager.
 
 7. **Verify** that no old-pepper keys remain in use:
@@ -139,17 +145,13 @@ maintenance window and DDL-level write access to the `api_keys` table.
 
 2. **Open a maintenance window.** Scale down the minter fleet to zero replicas.
 
-3. **Run the re-hash script** against the `api_keys` table using the
-   `internal/minter/store.go` `RehashAll` utility (or implement a
-   per-row rehash loop manually):
+3. **Run a manual per-row rehash procedure.**
 
-   ```bash
-   # Build the minter rehash tool from cmd/minter and run it:
-   go run ./cmd/minter rehash \
-     --old-pepper-hex "$OLD_PEPPER_HEX" \
-     --new-pepper-hex "$NEW_PEPPER_HEX" \
-     --database-url   "$DATABASE_URL"
-   ```
+   There is currently no built-in `cmd/minter rehash` subcommand and no
+   `RehashAll` helper in `internal/minter/store.go`. If you have escrowed raw
+   API key secrets, run an offline script that recomputes each hash with
+   `minter.NewPepperFromHex(newPepperHex).HashSecret(secret)` and updates
+   `api_keys.secret_hash` in a single maintenance window transaction.
 
    > **Prerequisites:** You must have the raw (pre-hash) API keys available
    > from a secure backup or key-escrow system. If raw keys are not available,
@@ -172,8 +174,8 @@ Strategy A (re-issuance).
 
 If the rotation causes unexpected failures:
 
-1. **Immediately re-add the old pepper** as the primary entry in the `peppers`
-   array (Strategy A) or revert the `MINTER_PEPPER_HEX` variable (Strategy B).
+1. **Immediately restore the old pepper** as `Pepper.Current` (Strategy A) or
+   revert the `MINTER_PEPPER_HEX` variable (Strategy B).
 2. Redeploy the minter fleet.
 3. Verify that existing keys pass verification again.
 4. File an incident report describing the failure mode before re-attempting.
