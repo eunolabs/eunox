@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/edgeobs/eunox/internal/minter"
 	"github.com/edgeobs/eunox/pkg/config"
@@ -84,11 +84,14 @@ func run() error {
 	var store minter.KeyStore
 	var readinessChecks []func(context.Context) error
 	if cfg.APIKeyDBURL != "" {
-		db, err := database.OpenPool("postgres", cfg.APIKeyDBURL, &cfg.DBPool)
+		db, err := database.OpenPool("pgx", cfg.APIKeyDBURL, &cfg.DBPool)
 		if err != nil {
 			return fmt.Errorf("open API key database pool: %w", err)
 		}
 		defer func() { _ = db.Close() }()
+		if _, err := database.PoolMetrics(db, metrics.Registry, "minter"); err != nil {
+			return fmt.Errorf("register pool metrics: %w", err)
+		}
 		store = minter.NewPostgresKeyStore(db)
 		readinessChecks = append(readinessChecks, func(ctx context.Context) error {
 			return db.PingContext(ctx)

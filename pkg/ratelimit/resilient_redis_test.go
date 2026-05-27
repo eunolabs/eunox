@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/edgeobs/eunox/pkg/ratelimit"
 	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,4 +133,51 @@ func TestResilientRedisLimiter_PrometheusGauge_LabelIncludesComponent(t *testing
 	require.Len(t, labels, 1)
 	assert.Equal(t, "component", labels[0].GetName())
 	assert.Equal(t, "mycomponent", labels[0].GetValue())
+}
+
+// --- NewRedisCmdable tests ---
+
+func TestNewRedisCmdable_AllowsFirstRequest(t *testing.T) {
+t.Parallel()
+
+mr := miniredis.RunT(t)
+var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+limiter := ratelimit.NewRedisCmdable(client, cfg)
+
+allowed, err := limiter.Allow(context.Background(), "cmdable-key")
+require.NoError(t, err)
+assert.True(t, allowed)
+}
+
+func TestNewRedisCmdable_EnforcesLimit(t *testing.T) {
+t.Parallel()
+
+mr := miniredis.RunT(t)
+var client redis.Cmdable = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+cfg := ratelimit.Config{Rate: 2, Window: time.Minute}
+limiter := ratelimit.NewRedisCmdable(client, cfg)
+
+ctx := context.Background()
+for i := range 2 {
+ok, err := limiter.Allow(ctx, "limited-key")
+require.NoError(t, err)
+assert.True(t, ok, "request %d should be allowed", i+1)
+}
+
+ok, err := limiter.Allow(ctx, "limited-key")
+require.NoError(t, err)
+assert.False(t, ok, "third request must be rate-limited")
+}
+
+func TestNewRedisCmdable_NilClientReturnsError(t *testing.T) {
+t.Parallel()
+
+cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+limiter := ratelimit.NewRedisCmdable(nil, cfg)
+
+_, err := limiter.Allow(context.Background(), "nil-key")
+assert.ErrorContains(t, err, "redis client is nil")
 }
