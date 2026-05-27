@@ -325,8 +325,8 @@ func TestComputeNextAttempt_LargeAttempts(t *testing.T) {
 		after := time.Now().Add(cfg.BackoffMax).UnixMilli()
 
 		// Result must be a future timestamp (positive backoff).
-		assert.Greater(t, result, before, "attempt=%d: backoff must be positive (result=%d)", attempts, result)
+		assert.Greater(t, result, before, "attempt=%d: expected next-attempt timestamp > now (%d), got %d", attempts, before, result)
 		// Result must not exceed now + BackoffMax.
-		assert.LessOrEqual(t, result, after, "attempt=%d: backoff must not exceed BackoffMax (result=%d)", attempts, result)
+		assert.LessOrEqual(t, result, after, "attempt=%d: expected next-attempt timestamp <= now+BackoffMax (%d), got %d", attempts, after, result)
 	}
 }

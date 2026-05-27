@@ -246,6 +246,9 @@ func (w *DeliveryWorker) computeNextAttempt(currentAttempts int) int64 {
 	// This avoids integer overflow regardless of MaxAttempts, BackoffBase, or architecture,
 	// since each doubling is checked before assignment.
 	backoff := w.config.BackoffBase
+	if backoff > w.config.BackoffMax {
+		backoff = w.config.BackoffMax
+	}
 	for i := 0; i < currentAttempts; i++ {
 		doubled := backoff * 2
 		if doubled <= 0 || doubled > w.config.BackoffMax {
@@ -253,9 +256,6 @@ func (w *DeliveryWorker) computeNextAttempt(currentAttempts int) int64 {
 			break
 		}
 		backoff = doubled
-	}
-	if backoff > w.config.BackoffMax {
-		backoff = w.config.BackoffMax
 	}
 	return time.Now().Add(backoff).UnixMilli()
 }
