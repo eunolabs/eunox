@@ -243,7 +243,8 @@ func (w *DeliveryWorker) deadLetter(event *QueuedEvent) {
 
 func (w *DeliveryWorker) computeNextAttempt(currentAttempts int) int64 {
 	// Exponential backoff: base * 2^attempts, capped at max.
-	backoff := w.config.BackoffBase * (1 << uint(currentAttempts))
+	// Cap the shift operand at 62 to prevent integer overflow for large attempt counts.
+	backoff := w.config.BackoffBase * (1 << min(uint(currentAttempts), 62))
 	if backoff > w.config.BackoffMax {
 		backoff = w.config.BackoffMax
 	}

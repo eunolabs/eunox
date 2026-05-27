@@ -90,7 +90,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check token expiry
-	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
 		resp := capability.EnforceResponse{
 			RequestID: requestID,
 			Decision:  capability.DecisionDeny,
@@ -272,7 +272,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check token expiry
-	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
 		writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
 		return
 	}
