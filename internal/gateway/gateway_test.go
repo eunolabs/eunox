@@ -879,3 +879,182 @@ func TestEnforce_RedactFieldsObligation(t *testing.T) {
 	assert.Equal(t, "redactFields", resp.Obligations[0].Type)
 	assert.Equal(t, []string{"$.ssn", "$.password"}, resp.Obligations[0].Paths)
 }
+
+// --- CI-1: Revocation and kill-switch checks in /validate ---
+
+// errRevocationStore is a revocation.Store whose IsRevoked always returns an
+// error, used to verify fail-closed behaviour in handleValidate.
+type errRevocationStore struct{}
+
+func (errRevocationStore) IsRevoked(_ context.Context, _ string) (bool, error) {
+	return false, assert.AnError
+}
+func (errRevocationStore) Revoke(_ context.Context, _ string, _ time.Duration) error { return nil }
+func (errRevocationStore) Unrevoke(_ context.Context, _ string) error                { return nil }
+
+// errKillSwitchManager is a killswitch.Manager whose ShouldBlock always returns
+// an error, used to verify fail-closed behaviour in handleValidate.
+type errKillSwitchManager struct{ *killswitch.InMemory }
+
+func (errKillSwitchManager) ShouldBlock(_ context.Context, _, _ string) (bool, error) {
+	return false, assert.AnError
+}
+
+func newTestAppWithStores(
+	t *testing.T,
+	verifier gateway.JWTVerifier,
+	ks killswitch.Manager,
+	rev revocation.Store,
+) *gateway.App {
+	t.Helper()
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  rev,
+		JWTVerifier: verifier,
+		DPoPStore:   dpopStore,
+		Logger:      logger,
+	}
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  []string{"http://localhost:3000"},
+	}
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+	return app
+}
+
+// TestValidate_RevokedToken verifies that /validate returns allowed=false when
+// the token's JTI has been revoked in the revocation store.
+func TestValidate_RevokedToken(t *testing.T) {
+	claims := &capability.TokenPayload{
+		JWTID:     "jti-revoked-validate",
+		Subject:   "agent-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Capabilities: []capability.Constraint{
+			{Resource: "tools/*", Actions: []string{"call"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	revStore := revocation.NewInMemory()
+	ks := killswitch.NewInMemory()
+
+	require.NoError(t, revStore.Revoke(context.Background(), "jti-revoked-validate", 0))
+	app := newTestAppWithStores(t, verifier, ks, revStore)
+
+	payload := map[string]interface{}{
+		"token":    "valid-token",
+		"action":   "call",
+		"resource": "tools/calculator",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp capability.ValidateActionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.Allowed, "revoked token must be denied by /validate")
+	assert.Equal(t, "token has been revoked", resp.Reason)
+}
+
+// TestValidate_KillSwitchBlocked verifies that /validate returns allowed=false
+// when the token's subject has been blocked by the kill-switch.
+func TestValidate_KillSwitchBlocked(t *testing.T) {
+	claims := &capability.TokenPayload{
+		JWTID:     "jti-ks",
+		Subject:   "agent-blocked",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Capabilities: []capability.Constraint{
+			{Resource: "tools/*", Actions: []string{"call"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	revStore := revocation.NewInMemory()
+	ks := killswitch.NewInMemory()
+
+	require.NoError(t, ks.KillAgent(context.Background(), "agent-blocked"))
+	app := newTestAppWithStores(t, verifier, ks, revStore)
+
+	payload := map[string]interface{}{
+		"token":    "valid-token",
+		"action":   "call",
+		"resource": "tools/calculator",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp capability.ValidateActionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.Allowed, "kill-switch blocked subject must be denied by /validate")
+	assert.Equal(t, "kill switch is active", resp.Reason)
+}
+
+// TestValidate_RevocationError verifies that /validate fails closed (503) when
+// the revocation store returns an error.
+func TestValidate_RevocationError(t *testing.T) {
+	claims := &capability.TokenPayload{
+		JWTID:     "jti-revoc-err",
+		Subject:   "agent-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Capabilities: []capability.Constraint{
+			{Resource: "tools/*", Actions: []string{"call"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	app := newTestAppWithStores(t, verifier, killswitch.NewInMemory(), errRevocationStore{})
+
+	payload := map[string]interface{}{
+		"token":    "valid-token",
+		"action":   "call",
+		"resource": "tools/calculator",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "/validate must fail closed on revocation store error")
+}
+
+// TestValidate_KillSwitchError verifies that /validate fails closed (503) when
+// the kill-switch returns an error.
+func TestValidate_KillSwitchError(t *testing.T) {
+	claims := &capability.TokenPayload{
+		JWTID:     "jti-ks-err",
+		Subject:   "agent-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Capabilities: []capability.Constraint{
+			{Resource: "tools/*", Actions: []string{"call"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	app := newTestAppWithStores(t, verifier, errKillSwitchManager{killswitch.NewInMemory()}, revocation.NewInMemory())
+
+	payload := map[string]interface{}{
+		"token":    "valid-token",
+		"action":   "call",
+		"resource": "tools/calculator",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "/validate must fail closed on kill-switch error")
+}

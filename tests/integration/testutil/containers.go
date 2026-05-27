@@ -1,8 +1,16 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-//go:build integration
-
+// Package testutil provides testcontainers-go helpers for integration tests
+// that require live Docker containers (PostgreSQL, Redis).
+//
+// This package lives in the github.com/edgeobs/eunox/tests/integration module,
+// keeping heavyweight container dependencies out of the main module's build
+// graph and reducing CI times for pure-unit builds.
+//
+// Usage:
+//
+//	go test ./... (from the tests/integration directory)
 package testutil
 
 import (

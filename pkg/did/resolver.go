@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Resolver resolves a DID URI to its DID Document.
@@ -80,6 +82,7 @@ func (d *Document) PublicKeys() []crypto.PublicKey {
 type CachingResolver struct {
 	inner       Resolver
 	mu          sync.RWMutex
+	sf          singleflight.Group
 	cache       map[string]*cacheEntry
 	ttl         time.Duration
 	staleWindow time.Duration
@@ -142,6 +145,10 @@ func NewCachingResolver(inner Resolver, opts ...CachingResolverOption) *CachingR
 
 // Resolve resolves a DID, using the cache if available and not expired.
 //
+// Concurrent calls for the same DID are deduplicated via a singleflight group:
+// at most one upstream fetch is in flight at a time per DID, and all waiting
+// goroutines share the result.
+//
 // If the upstream resolver returns an error and a stale window has been
 // configured (via [WithStaleWindow]), a recently-expired cache entry is
 // returned instead of the error.  This improves availability during transient
@@ -162,7 +169,13 @@ func (r *CachingResolver) Resolve(ctx context.Context, did string) (*Document, e
 	}
 	r.mu.RUnlock()
 
-	doc, err := r.inner.Resolve(ctx, did)
+	// Deduplicate concurrent upstream fetches for the same DID.  All goroutines
+	// that arrive here while a fetch is already in flight share the single result
+	// returned by the first goroutine, preventing thundering-herd cache stampedes.
+	v, err, _ := r.sf.Do(did, func() (interface{}, error) {
+		return r.inner.Resolve(ctx, did)
+	})
+
 	if err != nil {
 		// Serve a stale entry rather than propagating the error when the
 		// upstream is temporarily unavailable.
@@ -177,6 +190,8 @@ func (r *CachingResolver) Resolve(ctx context.Context, did string) (*Document, e
 		}
 		return nil, err
 	}
+
+	doc := v.(*Document)
 
 	r.mu.Lock()
 	// Evict expired entries if at capacity.

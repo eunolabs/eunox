@@ -84,6 +84,12 @@ type KeyStore interface {
 	CountKeys(ctx context.Context, tenantID string) (int, error)
 	// ListKeys returns keys for a tenant with pagination.
 	ListKeys(ctx context.Context, tenantID string, limit, offset int) ([]*APIKey, error)
+	// CountAndListKeys returns the total key count and a page of keys for a
+	// tenant in a single atomic operation.  Callers that need both values
+	// (e.g. paginated list endpoints) must use this method rather than calling
+	// CountKeys and ListKeys separately to avoid a TOCTOU race where a key is
+	// created or deleted between the two calls.
+	CountAndListKeys(ctx context.Context, tenantID string, limit, offset int) (int, []*APIKey, error)
 	// RevokeKey marks a key as revoked and returns the revoked key.
 	// The returned key reflects the state after revocation (RevokedAt is set).
 	// Returns ErrKeyNotFound if the key does not exist, ErrKeyRevoked if already revoked.

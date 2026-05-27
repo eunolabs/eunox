@@ -90,7 +90,7 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	minterAuth := &mockMinterAuth{operatorID: "test-operator"}
-	minterApp := minter.New(minter.Config{
+	minterApp, err := minter.New(&minter.Config{
 		Pepper:          pepper,
 		DefaultTenantID: "tenant-integration",
 	}, &minter.Dependencies{
@@ -99,6 +99,7 @@ func TestIntegration_MinterToGateway_KeyBasedAuthFlow(t *testing.T) {
 		Anomaly: minter.NewInMemoryAnomalyDetector(minter.VelocityConfig{MaxMintsPerWindow: 100, Window: time.Minute}, logger),
 		Logger:  logger,
 	})
+	require.NoError(t, err)
 
 	minterSrv := httptest.NewServer(minterApp.Handler())
 	defer minterSrv.Close()

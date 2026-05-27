@@ -111,6 +111,7 @@ func run() error {
 		DefaultTenantID:    "default",
 		ReadinessChecks:    readinessChecks,
 		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
+		TrustedProxyCIDRs:  cfg.TrustedProxyCIDRs,
 	}
 
 	deps := minter.Dependencies{
@@ -122,7 +123,10 @@ func run() error {
 		Metrics:     metrics,
 	}
 
-	app := minter.New(appCfg, &deps)
+	app, err := minter.New(&appCfg, &deps)
+	if err != nil {
+		return fmt.Errorf("create minter app: %w", err)
+	}
 
 	// Start HTTP server.
 	srv := &http.Server{

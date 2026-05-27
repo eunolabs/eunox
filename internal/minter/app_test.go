@@ -15,6 +15,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/edgeobs/eunox/pkg/ratelimit"
 )
 
 // mockAuth implements AdminAuthenticator for tests.
@@ -46,8 +48,8 @@ func newTestApp(t *testing.T) *App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(
-		Config{
+	app, err := New(
+		&Config{
 			Pepper:          pepper,
 			DefaultTenantID: "test-tenant",
 		}, &Dependencies{
@@ -56,7 +58,10 @@ func newTestApp(t *testing.T) *App {
 			Anomaly: &mockAnomalyDetector{},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		})
-
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
 }
 
 func TestApp_HealthLive(t *testing.T) {
@@ -138,13 +143,16 @@ func TestApp_CreateKey_CustomTenant(t *testing.T) {
 func TestApp_CreateKey_VelocityExceeded(t *testing.T) {
 	t.Parallel()
 	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	app := New(
-		Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
+	app, err := New(
+		&Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
 			Store:   NewInMemoryStore(),
 			Auth:    &mockAuth{operatorID: "op"},
 			Anomaly: &mockAnomalyDetector{velocityErr: ErrVelocityExceeded},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"description": "test"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/keys", bytes.NewBufferString(body))
@@ -160,13 +168,16 @@ func TestApp_CreateKey_VelocityExceeded(t *testing.T) {
 func TestApp_CreateKey_Unauthorized(t *testing.T) {
 	t.Parallel()
 	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	app := New(
-		Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
+	app, err := New(
+		&Config{Pepper: pepper, DefaultTenantID: "t"}, &Dependencies{
 			Store:   NewInMemoryStore(),
 			Auth:    &mockAuth{err: ErrUnauthorized},
 			Anomaly: &mockAnomalyDetector{},
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"description": "test"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/keys", bytes.NewBufferString(body))
@@ -481,11 +492,14 @@ func TestApp_ListPolicies_Empty(t *testing.T) {
 func TestExtractClientIP_IgnoresForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
+	// Without trusted proxies configured, XFF must always be ignored.
+	app := newTestApp(t)
+
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.RemoteAddr = "198.51.100.25:443"
 	req.Header.Set("X-Forwarded-For", "203.0.113.77")
 
-	if got := extractClientIP(req); got != "198.51.100.25" {
+	if got := app.extractClientIP(req); got != "198.51.100.25" {
 		t.Fatalf("expected remote addr IP, got %q", got)
 	}
 }
@@ -510,7 +524,7 @@ func createStoredKey(t *testing.T, app *App, tenantID, keyID string, createdAt t
 func TestApp_HealthReady_FailingCheck(t *testing.T) {
 	t.Parallel()
 	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	app := New(Config{
+	app, err := New(&Config{
 		Pepper:          pepper,
 		DefaultTenantID: "test-tenant",
 		ReadinessChecks: []func(context.Context) error{func(context.Context) error { return errors.New("db down") }},
@@ -520,6 +534,9 @@ func TestApp_HealthReady_FailingCheck(t *testing.T) {
 		Anomaly: &mockAnomalyDetector{},
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
 	w := httptest.NewRecorder()
@@ -620,5 +637,214 @@ func TestApp_ListKeys_EmptyResultSet(t *testing.T) {
 	keys := resp["keys"].([]interface{})
 	if len(keys) != 0 || int(resp["total"].(float64)) != 0 || resp["nextOffset"] != nil {
 		t.Fatalf("unexpected empty pagination response: %#v", resp)
+	}
+}
+
+// --- CI-2: CountAndListKeys atomicity ---
+
+// TestCountAndListKeys_Atomic verifies that CountAndListKeys returns a
+// consistent count and page within a single lock (InMemoryStore) or
+// read-committed transaction (PostgresKeyStore).  For the in-memory store we
+// insert N keys, call CountAndListKeys for a page that covers all of them, and
+// assert that total == len(page) == N with no key appearing twice.
+func TestCountAndListKeys_Atomic(t *testing.T) {
+	t.Parallel()
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	const n = 7
+	for i := range n {
+		err := store.CreateKey(ctx, &APIKey{
+			KeyID:      fmt.Sprintf("key-%d", i),
+			SecretHash: fmt.Sprintf("hash-%d", i),
+			TenantID:   "tenant-a",
+			CreatedBy:  "test",
+		})
+		if err != nil {
+			t.Fatalf("CreateKey: %v", err)
+		}
+	}
+
+	total, page, err := store.CountAndListKeys(ctx, "tenant-a", 20, 0)
+	if err != nil {
+		t.Fatalf("CountAndListKeys: %v", err)
+	}
+	if total != n {
+		t.Errorf("expected total=%d, got %d", n, total)
+	}
+	if len(page) != n {
+		t.Errorf("expected %d keys in page, got %d", n, len(page))
+	}
+
+	// Pagination: fetch page 2 (offset=3, limit=3) → 3 items; total still n.
+	total2, page2, err := store.CountAndListKeys(ctx, "tenant-a", 3, 3)
+	if err != nil {
+		t.Fatalf("CountAndListKeys page2: %v", err)
+	}
+	if total2 != n {
+		t.Errorf("page2: expected total=%d, got %d", n, total2)
+	}
+	if len(page2) != 3 {
+		t.Errorf("page2: expected 3 keys, got %d", len(page2))
+	}
+
+	// Past-end page: offset beyond total → 0 items; total unchanged.
+	total3, page3, err := store.CountAndListKeys(ctx, "tenant-a", 10, 100)
+	if err != nil {
+		t.Fatalf("CountAndListKeys past-end: %v", err)
+	}
+	if total3 != n {
+		t.Errorf("past-end: expected total=%d, got %d", n, total3)
+	}
+	if len(page3) != 0 {
+		t.Errorf("past-end: expected 0 keys, got %d", len(page3))
+	}
+}
+
+// --- CI-3: TrustedProxyCIDRs and extractClientIP method ---
+
+// TestNew_InvalidCIDR verifies that New returns an error when
+// TrustedProxyCIDRs contains a malformed CIDR — preventing silent XFF bypass.
+func TestNew_InvalidCIDR(t *testing.T) {
+	t.Parallel()
+	pepper, err := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(&Config{
+		Pepper:             pepper,
+		DefaultTenantID:    "tenant",
+		TrustedProxyCIDRs:  []string{"not-a-cidr"},
+	}, &Dependencies{
+		Store:   NewInMemoryStore(),
+		Auth:    &mockAuth{operatorID: "op"},
+		Anomaly: &mockAnomalyDetector{},
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid CIDR, got nil")
+	}
+}
+
+// TestExtractClientIP_TrustedProxyXFF verifies that when the real remote
+// address falls within a trusted CIDR, the rightmost public IP from
+// X-Forwarded-For is used as the client IP.
+func TestExtractClientIP_TrustedProxyXFF(t *testing.T) {
+	t.Parallel()
+	pepper, err := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(&Config{
+		Pepper:            pepper,
+		DefaultTenantID:   "tenant",
+		TrustedProxyCIDRs: []string{"10.0.0.0/8"},
+	}, &Dependencies{
+		Store:   NewInMemoryStore(),
+		Auth:    &mockAuth{operatorID: "op"},
+		Anomaly: &mockAnomalyDetector{},
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.RemoteAddr = "10.0.0.1:443" // trusted proxy
+	req.Header.Set("X-Forwarded-For", "203.0.113.77, 10.0.0.1")
+
+	// The rightmost non-trusted IP in XFF (203.0.113.77) should be returned.
+	if got := app.extractClientIP(req); got != "203.0.113.77" {
+		t.Fatalf("expected 203.0.113.77, got %q", got)
+	}
+}
+
+// TestExtractClientIP_UntrustedProxyIgnoresXFF verifies that when the remote
+// address is NOT in any trusted CIDR, X-Forwarded-For is ignored entirely.
+func TestExtractClientIP_UntrustedProxyIgnoresXFF(t *testing.T) {
+	t.Parallel()
+	pepper, err := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(&Config{
+		Pepper:            pepper,
+		DefaultTenantID:   "tenant",
+		TrustedProxyCIDRs: []string{"10.0.0.0/8"},
+	}, &Dependencies{
+		Store:   NewInMemoryStore(),
+		Auth:    &mockAuth{operatorID: "op"},
+		Anomaly: &mockAnomalyDetector{},
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.RemoteAddr = "198.51.100.25:443" // NOT in trusted range
+	req.Header.Set("X-Forwarded-For", "203.0.113.77")
+
+	// XFF must be ignored; RemoteAddr IP returned.
+	if got := app.extractClientIP(req); got != "198.51.100.25" {
+		t.Fatalf("expected 198.51.100.25, got %q", got)
+	}
+}
+
+// --- CI-4: Retry-After header on 429 ---
+
+// TestApp_Ping_RateLimited_RetryAfterHeader verifies that when the ping
+// endpoint rate-limits a request it responds with HTTP 429 and includes a
+// Retry-After header with a positive integer value.
+func TestApp_Ping_RateLimited_RetryAfterHeader(t *testing.T) {
+	t.Parallel()
+
+	pepper, err := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure a very tight rate limit so we can exhaust it quickly.
+	limiter := ratelimit.NewInMemory(ratelimit.Config{Rate: 1, Window: time.Hour})
+	t.Cleanup(limiter.Close)
+
+	app, err := New(&Config{
+		Pepper:          pepper,
+		DefaultTenantID: "tenant",
+	}, &Dependencies{
+		Store:       NewInMemoryStore(),
+		Auth:        &mockAuth{operatorID: "op"},
+		Anomaly:     &mockAnomalyDetector{},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PingLimiter: limiter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sendPing := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/ping", bytes.NewBufferString(`{"key":"sk-dummy.secret"}`))
+		req.Header.Set("Content-Type", "application/json")
+		app.Handler().ServeHTTP(w, req)
+		return w
+	}
+
+	// First request consumes the single allowed token (likely 401/400 because
+	// the key is invalid, but the rate-limit counter is still incremented).
+	sendPing()
+
+	// Second request should be rate-limited.
+	w := sendPing()
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", w.Code, w.Body.String())
+	}
+	ra := w.Header().Get("Retry-After")
+	if ra == "" {
+		t.Fatal("expected Retry-After header, got none")
+	}
+	val := 0
+	if _, err := fmt.Sscanf(ra, "%d", &val); err != nil || val <= 0 {
+		t.Fatalf("expected positive integer Retry-After, got %q", ra)
 	}
 }

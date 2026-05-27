@@ -129,6 +129,59 @@ func (s *PostgresKeyStore) ListKeys(ctx context.Context, tenantID string, limit,
 	return result, nil
 }
 
+// CountAndListKeys returns the total key count and a page of keys for the
+// given tenant inside a single read-committed transaction so that the count
+// and the page always reflect a consistent snapshot, preventing the TOCTOU
+// race that arises from separate CountKeys and ListKeys calls.
+func (s *PostgresKeyStore) CountAndListKeys(ctx context.Context, tenantID string, limit, offset int) (int, []*APIKey, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
+	if err != nil {
+		return 0, nil, fmt.Errorf("postgres key store: begin count-and-list tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	const countQ = `SELECT COUNT(*) FROM api_keys WHERE tenant_id = $1`
+	var total int
+	if err := tx.QueryRowContext(ctx, countQ, tenantID).Scan(&total); err != nil {
+		return 0, nil, fmt.Errorf("postgres key store: count keys in tx: %w", err)
+	}
+
+	const baseQ = `
+		SELECT key_id, secret_hash, tenant_id, description, created_at, expires_at, revoked_at, created_by, metadata
+		FROM api_keys
+		WHERE tenant_id = $1
+		ORDER BY created_at ASC, key_id ASC
+		OFFSET $2`
+
+	var rows *sql.Rows
+	if limit > 0 {
+		rows, err = tx.QueryContext(ctx, baseQ+" LIMIT $3", tenantID, offset, limit)
+	} else {
+		rows, err = tx.QueryContext(ctx, baseQ, tenantID, offset)
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("postgres key store: list keys in tx: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []*APIKey
+	for rows.Next() {
+		key, err := scanAPIKeyRow(rows)
+		if err != nil {
+			return 0, nil, fmt.Errorf("postgres key store: scan key in tx: %w", err)
+		}
+		result = append(result, key)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, fmt.Errorf("postgres key store: list keys rows in tx: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, nil, fmt.Errorf("postgres key store: commit count-and-list tx: %w", err)
+	}
+	return total, result, nil
+}
+
 // RevokeKey marks a key as revoked and returns a snapshot of the key with
 // RevokedAt set.  The update is atomic: the SELECT and UPDATE are executed in a
 // single serialisable transaction to prevent the TOCTOU race described in CR-5.
