@@ -245,7 +245,7 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	matched := app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
-	
+
 	validateResp := capability.ValidateActionResponse{
 		Allowed:            matched != nil,
 		MatchedCapability:  matched,
