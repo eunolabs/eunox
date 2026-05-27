@@ -27,6 +27,7 @@ type GatewayConfig struct {
 	RevocationRedisURL  string `env:"REVOCATION_REDIS_URL"`
 	KillSwitchRedisURL  string `env:"KILL_SWITCH_REDIS_URL"`
 	CallCounterRedisURL string `env:"CALL_COUNTER_REDIS_URL"`
+	PartnerDIDsRedisURL string `env:"PARTNER_DIDS_REDIS_URL"`
 
 	// Rate limiting
 	RateLimitWindowMS       int `env:"RATE_LIMIT_WINDOW_MS" default:"60000" min:"1"`

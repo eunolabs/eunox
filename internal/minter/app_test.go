@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // mockAuth implements AdminAuthenticator for tests.
@@ -484,5 +487,138 @@ func TestExtractClientIP_IgnoresForwardedHeaders(t *testing.T) {
 
 	if got := extractClientIP(req); got != "198.51.100.25" {
 		t.Fatalf("expected remote addr IP, got %q", got)
+	}
+}
+
+func createStoredKey(t *testing.T, app *App, tenantID, keyID string, createdAt time.Time) {
+	t.Helper()
+	store, ok := app.deps.Store.(*InMemoryStore)
+	if !ok {
+		t.Fatalf("expected InMemoryStore, got %T", app.deps.Store)
+	}
+	if err := store.CreateKey(context.Background(), &APIKey{
+		KeyID:      keyID,
+		SecretHash: "hash",
+		TenantID:   tenantID,
+		CreatedAt:  createdAt,
+		CreatedBy:  "tester",
+	}); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+}
+
+func TestApp_HealthReady_FailingCheck(t *testing.T) {
+	t.Parallel()
+	pepper, _ := NewPepperFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	app := New(Config{
+		Pepper:          pepper,
+		DefaultTenantID: "test-tenant",
+		ReadinessChecks: []func(context.Context) error{func(context.Context) error { return errors.New("db down") }},
+	}, &Dependencies{
+		Store:   NewInMemoryStore(),
+		Auth:    &mockAuth{operatorID: "test-operator"},
+		Anomaly: &mockAnomalyDetector{},
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", http.NoBody)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "not ready" || resp["reason"] != "db down" {
+		t.Fatalf("unexpected readiness response: %#v", resp)
+	}
+}
+
+func TestApp_ListKeys_Pagination(t *testing.T) {
+	t.Parallel()
+	app := newTestApp(t)
+	base := time.Unix(1700000000, 0)
+	createStoredKey(t, app, "test-tenant", "key-1", base)
+	createStoredKey(t, app, "test-tenant", "key-2", base.Add(time.Second))
+	createStoredKey(t, app, "test-tenant", "key-3", base.Add(2*time.Second))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/keys?tenantId=test-tenant&limit=2&offset=0", http.NoBody)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	keys := resp["keys"].([]interface{})
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 keys, got %d", len(keys))
+	}
+	if int(resp["total"].(float64)) != 3 || int(resp["limit"].(float64)) != 2 || int(resp["offset"].(float64)) != 0 {
+		t.Fatalf("unexpected pagination metadata: %#v", resp)
+	}
+	if int(resp["nextOffset"].(float64)) != 2 {
+		t.Fatalf("expected nextOffset=2, got %#v", resp["nextOffset"])
+	}
+	first := keys[0].(map[string]interface{})
+	second := keys[1].(map[string]interface{})
+	if first["keyId"] != "key-1" || second["keyId"] != "key-2" {
+		t.Fatalf("unexpected key order: %#v", keys)
+	}
+}
+
+func TestApp_ListKeys_LimitCapped(t *testing.T) {
+	t.Parallel()
+	app := newTestApp(t)
+	createStoredKey(t, app, "test-tenant", "key-1", time.Unix(1700000000, 0))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/keys?tenantId=test-tenant&limit=999", http.NoBody)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if int(resp["limit"].(float64)) != 200 {
+		t.Fatalf("expected capped limit 200, got %#v", resp["limit"])
+	}
+}
+
+func TestApp_ListKeys_InvalidParams(t *testing.T) {
+	t.Parallel()
+	app := newTestApp(t)
+
+	for _, raw := range []string{"limit=0", "limit=bad", "offset=-1", "offset=bad"} {
+		t.Run(raw, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/v1/keys?%s", raw), http.NoBody)
+			w := httptest.NewRecorder()
+			app.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d for %s", w.Code, raw)
+			}
+		})
+	}
+}
+
+func TestApp_ListKeys_EmptyResultSet(t *testing.T) {
+	t.Parallel()
+	app := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/keys?tenantId=missing&limit=10&offset=0", http.NoBody)
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	keys := resp["keys"].([]interface{})
+	if len(keys) != 0 || int(resp["total"].(float64)) != 0 || resp["nextOffset"] != nil {
+		t.Fatalf("unexpected empty pagination response: %#v", resp)
 	}
 }

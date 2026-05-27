@@ -145,6 +145,8 @@ already fetched.
 
 ### DI-1 — InMemoryPartnerDIDStore not persisted across restarts
 
+**Status:** Implemented
+
 **Files:** `internal/gateway/app.go:131`, `internal/gateway/admin_routes.go`
 
 Partner DID registrations (cross-org federation trust list) are stored in
@@ -159,6 +161,8 @@ the existing `audit` and `minter` schemas.
 ---
 
 ### DI-2 — `noopVerifier` silently accepts startup without JWKS; logging not guaranteed
+
+**Status:** Implemented
 
 **Files:** `cmd/gateway/main.go:91-104`
 
@@ -192,6 +196,8 @@ Wire `revocation.NewRedis(redisClient)` when `REDIS_URL` is set, with
 
 ### DI-4 — `handleListKeys` has a hard-coded `limit=100, offset=0`
 
+**Status:** Implemented
+
 **Files:** `internal/minter/app.go:178-191`
 
 The list-keys endpoint exposes no pagination cursor to callers and always fetches
@@ -206,6 +212,8 @@ in the response body.
 ---
 
 ### DI-5 — Database connection pool configured per service but never validated at startup
+
+**Status:** Implemented
 
 **Files:** `pkg/config/database.go`, `cmd/minter/main.go`, `cmd/issuer/main.go`
 
@@ -225,6 +233,8 @@ once the database is reachable.
 
 ### DI-6 — Audit transport uses `context.Background()` for background flush goroutines
 
+**Status:** Implemented
+
 **Files:** `pkg/audit/transport.go` (multiple `context.Background()` calls)
 
 Background flush goroutines in `OCSFHTTPTransport` are started with
@@ -242,6 +252,8 @@ ensure they are initialized from the caller's shutdown context rather than
 
 ### DI-7 — Enforcement engine `findMatchingCapability` uses first-match semantics with no priority ordering
 
+**Status:** Implemented
+
 **Files:** `pkg/enforcement/engine.go:93-100`
 
 The engine returns the _first_ capability that matches `(resource, action)`. If a
@@ -258,6 +270,8 @@ explicitly in `pkg/enforcement/engine.go`.
 ---
 
 ### DI-8 — No circuit breaker on the `capability.JWKSClient` JWKS fetch path
+
+**Status:** Implemented
 
 **Files:** `internal/gateway/jwks_verifier.go`, `pkg/capability/jwks.go`
 
@@ -277,6 +291,8 @@ per-request timeout budget.
 ---
 
 ### DI-9 — Key rotation relies on manual `Rotate()` / `Prune()` calls with no automation
+
+**Status:** Implemented
 
 **Files:** `internal/issuer/rotating_keystore.go`
 
@@ -591,6 +607,8 @@ webhook)? Are there GDPR implications for the `tenantId` field in telemetry even
 
 ### OQ-3 — `EUNO_DEPLOYMENT_TIER` configuration field is declared but never read
 
+**Status:** Implemented
+
 **Files:** `pkg/config/gateway.go:12`
 
 `DeploymentTier` is parsed from `EUNO_DEPLOYMENT_TIER` with valid enum values
@@ -632,23 +650,23 @@ Ordered by impact and dependency:
 | 2 | **CR-2** Add public-API rate limiting middleware to `/api/v1` | None | Small | ✅ Done |
 | 3 | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth) | None | Small | ✅ Done |
 | 4 | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix | None | Small | ✅ Done |
-| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small | |
+| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small | ✅ Done |
 | 6 | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set | CR-1 done first | Small | ✅ Done (part of CR-1) |
 | 7 | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern | None | Small | |
 | 8 | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore` | None | Small | |
 | 9 | **CR-3** Extend JWT admin auth requirement to staging | None | Trivial | ✅ Done |
 | 10 | **CI-2** Validate `X-Tool-Name` header before enforcement | None | Small | ✅ Done |
-| 11 | **DI-4** Add pagination parameters to `handleListKeys` | OQ-1 context | Small | |
-| 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small | |
+| 11 | **DI-4** Add pagination parameters to `handleListKeys` | OQ-1 context | Small | ✅ Done |
+| 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small | ✅ Done |
 | 13 | **CI-9** Propagate `X-Request-Id` to proxied backend requests | None | Trivial | ✅ Done |
-| 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium | |
-| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small | |
-| 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium | |
+| 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium | ✅ Done |
+| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small | ✅ Done |
+| 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium | ✅ Done |
 | 17 | **CI-4** Separate audit HMAC chain key from signing key | None | Medium | ✅ Done |
-| 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium | |
+| 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium | ✅ Done |
 | 19 | **CI-8** Anchor regex patterns unconditionally in config validation | None | Small | ✅ Done |
-| 20 | **DI-6** Fix audit transport lifecycle context | None | Small | |
-| 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small | |
+| 20 | **DI-6** Fix audit transport lifecycle context | None | Small | ✅ Done |
+| 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small | ✅ Done |
 | 22 | **OQ-5** Reconcile architecture docs with Go implementation | None | Small | |
 | 23 | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None | Small | |
 | 24 | **CI-11** Set `lock_timeout` on audit DB connection | None | Small | ✅ Done |

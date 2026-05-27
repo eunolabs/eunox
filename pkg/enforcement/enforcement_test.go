@@ -1007,3 +1007,60 @@ func TestValidateResourcePattern_Invalid(t *testing.T) {
 	err := enforcement.ValidateResourcePattern("tool:[abc")
 	assert.Error(t, err)
 }
+
+func TestEngine_MostSpecificMatch_NarrowCapabilityWins(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+	req := capability.EnforceRequest{ToolName: "email:send", Context: capability.EnforceRequestContext{Operation: "send"}}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "email:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "email:*", Actions: []string{"send"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_MostSpecificMatch_ExactResourceBeatsWildcard(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+	req := capability.EnforceRequest{ToolName: "email:send", Context: capability.EnforceRequestContext{Operation: "send"}}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "email:*", Actions: []string{"send"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "email:send", Actions: []string{"send"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_MostSpecificMatch_ActionSpecificityWins(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+	req := capability.EnforceRequest{ToolName: "tool:mail", Context: capability.EnforceRequestContext{Operation: "invoke"}}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "tool:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "tool:*", Actions: []string{"invoke"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_MostSpecificMatch_JWTOrderingDoesNotMatter(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+	req := capability.EnforceRequest{ToolName: "file:read", Context: capability.EnforceRequestContext{Operation: "read"}}
+	constraints := []capability.Constraint{
+		{Resource: "file:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "file:read", Actions: []string{"read"}},
+	}
+
+	respA, err := engine.ValidateAction(ctx, &req, constraints)
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, respA.Decision)
+
+	respB, err := engine.ValidateAction(ctx, &req, []capability.Constraint{constraints[1], constraints[0]})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, respB.Decision)
+}

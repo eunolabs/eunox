@@ -42,6 +42,7 @@ type Config struct {
 	MaxTokenTTL     int // seconds
 	Audience        string
 	AdminAPIKey     string
+	ReadinessChecks []func(ctx context.Context) error
 
 	// MaxRequestBodySize is the maximum size of request bodies in bytes.
 	// Defaults to 1 MB (1048576) if not set.
@@ -150,7 +151,19 @@ func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
+func (app *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	for _, check := range app.config.ReadinessChecks {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		err := check(ctx)
+		cancel()
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "not ready",
+				"reason": err.Error(),
+			})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 

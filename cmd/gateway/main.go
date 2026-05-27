@@ -18,6 +18,7 @@ import (
 	"github.com/edgeobs/eunox/internal/gateway"
 	"github.com/edgeobs/eunox/pkg/callcounter"
 	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 	"github.com/edgeobs/eunox/pkg/config"
 	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/edgeobs/eunox/pkg/killswitch"
@@ -42,6 +43,10 @@ const (
 	idleTimeout     = 120 * time.Second
 )
 
+var loadGatewayConfig = func() config.GatewayConfig {
+	return config.LoadOrExit[config.GatewayConfig]("GATEWAY")
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
@@ -56,7 +61,7 @@ func run() error {
 	defer cancel()
 
 	// Load config
-	cfg := config.LoadOrExit[config.GatewayConfig]("GATEWAY")
+	cfg := loadGatewayConfig()
 
 	// Initialize logger
 	logger := observability.NewLogger(&observability.LogConfig{
@@ -74,6 +79,11 @@ func run() error {
 		slog.String("date", date),
 		slog.String("env", string(cfg.NodeEnv)),
 	)
+	logger.Info("deployment tier", slog.String("tier", string(cfg.DeploymentTier)))
+
+	if cfg.NodeEnv == config.EnvProduction && cfg.IssuerJWKSURL == "" {
+		return fmt.Errorf("GATEWAY_ISSUER_JWKS_URL is required in production; missing JWKS URL means every enforcement call will fail (DI-2 in docs/architecture-review.md)")
+	}
 
 	// Production Redis HA validation (requires Sentinel/Cluster URLs; single-node is rejected).
 	if cfg.NodeEnv == config.EnvProduction {
@@ -114,12 +124,18 @@ func run() error {
 	var jwtVerifier gateway.JWTVerifier
 	if cfg.IssuerJWKSURL != "" {
 		logger.Info("configuring JWKS-based JWT verification", slog.String("url", cfg.IssuerJWKSURL))
+		jwksBreaker := circuitbreaker.New(circuitbreaker.Config{
+			FailureThreshold:  5,
+			CooldownDuration:  30 * time.Second,
+			HalfOpenMaxProbes: 2,
+		})
 		jwtVerifier = gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
 			JWKSURL:    cfg.IssuerJWKSURL,
 			Audience:   cfg.GatewayAudience,
 			RequireKID: cfg.RequireKID,
 			CacheTTL:   time.Duration(cfg.JWKSCacheTTL) * time.Second,
 			Logger:     logger,
+			Breaker:    jwksBreaker,
 		})
 	} else {
 		jwtVerifier = &noopVerifier{}
@@ -127,13 +143,14 @@ func run() error {
 
 	// Build gateway app
 	deps := gateway.Dependencies{
-		Engine:      engine,
-		KillSwitch:  backends.killSwitch,
-		Revocation:  backends.revocation,
-		JWTVerifier: jwtVerifier,
-		DPoPStore:   dpopStore,
-		Logger:      logger,
-		Metrics:     metrics,
+		Engine:          engine,
+		KillSwitch:      backends.killSwitch,
+		Revocation:      backends.revocation,
+		JWTVerifier:     jwtVerifier,
+		DPoPStore:       dpopStore,
+		PartnerDIDStore: backends.partnerDIDs,
+		Logger:          logger,
+		Metrics:         metrics,
 	}
 
 	var allowedOrigins []string
@@ -289,18 +306,28 @@ func resolveRedisURL(specificURL, fallbackURL string) string {
 	return fallbackURL
 }
 
-// validateRedisConfig returns an error if the gateway is starting in production
-// without any Redis configured.
+// validateRedisConfig enforces tier-aware Redis requirements for the gateway.
+// hasAnyRedisConfigured returns true when at least one Redis URL is set in cfg.
+func hasAnyRedisConfigured(cfg *config.GatewayConfig) bool {
+	return cfg.RedisURL != "" || cfg.KillSwitchRedisURL != "" ||
+		cfg.RevocationRedisURL != "" || cfg.CallCounterRedisURL != "" ||
+		cfg.PartnerDIDsRedisURL != ""
+}
+
 //
-// In production, stateful security components (kill-switch, revocation,
-// call counter) must be backed by Redis so that security state is not lost on
-// restart or scale-out (CR-1 in ARCHITECTURE_REVIEW.md).
-//
-// Either REDIS_URL (shared fallback) must be set, or all three per-service URLs
-// (KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must
-// be set so that every component has a URL to connect to.
+// Single-replica deployments may run entirely in memory outside production. For
+// multi-replica and multi-region-active-active tiers, at least one Redis URL must
+// be configured so stateful security components are not silently split per replica.
+// Production remains stricter: every stateful security backend must resolve to a
+// Redis URL, either via REDIS_URL or all required per-service URLs.
 func validateRedisConfig(cfg *config.GatewayConfig) error {
 	if cfg.NodeEnv != config.EnvProduction {
+		switch cfg.DeploymentTier {
+		case config.TierMultiReplica, config.TierMultiRegionActiveActive:
+			if !hasAnyRedisConfigured(cfg) {
+				return fmt.Errorf("deployment tier %q requires Redis; multi-replica gateway state cannot fall back to per-replica memory", cfg.DeploymentTier)
+			}
+		}
 		return nil
 	}
 	// Shared URL covers every service.
@@ -320,10 +347,11 @@ func validateRedisConfig(cfg *config.GatewayConfig) error {
 
 // gatewayBackends holds the stateful backends for the gateway.
 type gatewayBackends struct {
-	killSwitch killswitch.Manager
-	revocation revocation.Store
-	counter    callcounter.Store
-	monitor    *redisfailover.Monitor
+	killSwitch  killswitch.Manager
+	revocation  revocation.Store
+	counter     callcounter.Store
+	partnerDIDs gateway.PartnerDIDStore
+	monitor     *redisfailover.Monitor
 }
 
 // buildGatewayBackends creates stateful backends for the gateway.
@@ -385,11 +413,23 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 		cc = callcounter.NewInMemory()
 	}
 
+	var partnerDIDs gateway.PartnerDIDStore
+	partnerDIDsURL := resolveRedisURL(cfg.PartnerDIDsRedisURL, cfg.RedisURL)
+	if partnerDIDsURL != "" {
+		client, err := newRedisClientFromURL(partnerDIDsURL)
+		if err != nil {
+			return nil, fmt.Errorf("partner-dids redis URL: %w", err)
+		}
+		partnerDIDs = gateway.NewRedisPartnerDIDStore(client)
+		logger.Info("partner-dids: using Redis-backed store")
+	}
+
 	return &gatewayBackends{
-		killSwitch: ks,
-		revocation: rev,
-		counter:    cc,
-		monitor:    monitor,
+		killSwitch:  ks,
+		revocation:  rev,
+		counter:     cc,
+		partnerDIDs: partnerDIDs,
+		monitor:     monitor,
 	}, nil
 }
 
