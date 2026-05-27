@@ -90,7 +90,7 @@ type SecurityHubPlugin struct {
 // NewSecurityHubPlugin creates a new AWS Security Hub plugin.
 func NewSecurityHubPlugin(cfg SecurityHubPluginConfig) *SecurityHubPlugin {
 	if cfg.GeneratorID == "" {
-		cfg.GeneratorID = "euno/posture-emitter/v1"
+		cfg.GeneratorID = "eunox/posture-emitter/v1"
 	}
 
 	var client SecurityHubClient
@@ -115,7 +115,7 @@ func (p *SecurityHubPlugin) EmitObserved(ctx context.Context, record *AgentInven
 		return fmt.Errorf("security-hub plugin: client not configured")
 	}
 
-	findingID := fmt.Sprintf("euno-agent/%s", sanitizeID(record.AgentID))
+	findingID := fmt.Sprintf("eunox-agent/%s", sanitizeID(record.AgentID))
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	finding := SecurityHubFinding{
@@ -129,7 +129,7 @@ func (p *SecurityHubPlugin) EmitObserved(ctx context.Context, record *AgentInven
 		UpdatedAt:     now,
 		Severity:      FindingSeverity{Label: "INFORMATIONAL"},
 		Title:         fmt.Sprintf("AI Agent Inventory: %s", record.AgentID),
-		Description:   "Euno AI agent observed in posture inventory",
+		Description:   "Eunox AI agent observed in posture inventory",
 		RecordState:   "ACTIVE",
 		ProductFields: map[string]string{
 			"agentId":                record.AgentID,
@@ -161,7 +161,7 @@ func (p *SecurityHubPlugin) EmitRevoked(ctx context.Context, agentID string, _ t
 		return fmt.Errorf("security-hub plugin: client not configured")
 	}
 
-	findingID := fmt.Sprintf("euno-agent/%s", sanitizeID(agentID))
+	findingID := fmt.Sprintf("eunox-agent/%s", sanitizeID(agentID))
 
 	identifiers := []FindingIdentifier{
 		{

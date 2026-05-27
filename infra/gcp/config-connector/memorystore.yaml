@@ -1,4 +1,4 @@
-# Euno — Memorystore for Redis
+# Eunox — Memorystore for Redis
 # ---------------------------------------------------------------------------
 # Provisions the managed Redis instance used by tool-gateway for session
 # cache, rate-limit counters, kill-switch state, and call-counter storage.
@@ -8,14 +8,14 @@
 #   <YOUR_PROJECT_ID>     — your GCP project ID
 #   <YOUR_REGION>         — e.g. us-central1
 #   <YOUR_VPC_NETWORK>    — full resource name of your VPC, e.g.
-#                           projects/<YOUR_PROJECT_ID>/global/networks/euno-vpc
+#                           projects/<YOUR_PROJECT_ID>/global/networks/eunox-vpc
 # ---------------------------------------------------------------------------
 
 # Memorystore for Redis — STANDARD_HA tier (Redis 7.x), TLS + AUTH enabled.
 apiVersion: redis.cnrm.cloud.google.com/v1beta1
 kind: RedisInstance
 metadata:
-  name: euno-redis
+  name: eunox-redis
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
@@ -24,25 +24,25 @@ spec:
   tier: STANDARD_HA
   memorySizeGb: 4
   redisVersion: REDIS_7_0
-  displayName: "Euno session and rate-limit cache"
+  displayName: "Eunox session and rate-limit cache"
   authorizedNetworkRef:
     external: "<YOUR_VPC_NETWORK>"
-  # TLS is mandatory for production Euno deployments (GATEWAY_REDIS_TLS=true).
+  # TLS is mandatory for production Eunox deployments (GATEWAY_REDIS_TLS=true).
   transitEncryptionMode: SERVER_AUTHENTICATION
   authEnabled: true
   redisConfigs:
     maxmemory-policy: allkeys-lru
   labels:
-    product: euno
+    product: eunox
     component: capability-governance
 
 # After the RedisInstance is READY, retrieve the AUTH string and host:
 #
-#   AUTH=$(kubectl get redisinstance euno-redis -n config-connector \
+#   AUTH=$(kubectl get redisinstance eunox-redis -n config-connector \
 #     -o jsonpath='{.status.authString}')
-#   HOST=$(kubectl get redisinstance euno-redis -n config-connector \
+#   HOST=$(kubectl get redisinstance eunox-redis -n config-connector \
 #     -o jsonpath='{.status.host}')
-#   PORT=$(kubectl get redisinstance euno-redis -n config-connector \
+#   PORT=$(kubectl get redisinstance eunox-redis -n config-connector \
 #     -o jsonpath='{.status.port}')
 #
 # Construct the REDIS_URL as:

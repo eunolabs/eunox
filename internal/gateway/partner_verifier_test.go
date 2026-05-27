@@ -57,11 +57,11 @@ func TestPartnerTokenVerifier_VerifyPartnerToken(t *testing.T) {
 
 	verifier := gateway.NewPartnerTokenVerifier(gateway.PartnerTokenVerifierConfig{
 		Resolver: pir,
-		Audience: "https://gateway.euno.ai",
+		Audience: "https://gateway.eunox.ai",
 	})
 
 	t.Run("valid partner token", func(t *testing.T) {
-		token := signPartnerToken(t, priv, "did:web:partner.example.com", "user-123", "https://gateway.euno.ai")
+		token := signPartnerToken(t, priv, "did:web:partner.example.com", "user-123", "https://gateway.eunox.ai")
 
 		result, err := verifier.VerifyPartnerToken(context.Background(), token)
 		require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestPartnerTokenVerifier_VerifyPartnerToken(t *testing.T) {
 
 	t.Run("expired token", func(t *testing.T) {
 		token := signPartnerTokenWithExp(t, priv, "did:web:partner.example.com", "user-1",
-			"https://gateway.euno.ai", time.Now().Add(-1*time.Hour).Unix())
+			"https://gateway.eunox.ai", time.Now().Add(-1*time.Hour).Unix())
 
 		_, err := verifier.VerifyPartnerToken(context.Background(), token)
 		require.Error(t, err)
@@ -115,7 +115,7 @@ func TestPartnerTokenVerifier_VerifyPartnerToken(t *testing.T) {
 func TestMultiIssuerVerifier_VerifyToken(t *testing.T) {
 	t.Run("local success", func(t *testing.T) {
 		claims := &capability.TokenPayload{
-			Issuer:  "https://local.euno.ai",
+			Issuer:  "https://local.eunox.ai",
 			Subject: "user-1",
 		}
 		local := &mockLocalJWTVerifier{claims: claims}

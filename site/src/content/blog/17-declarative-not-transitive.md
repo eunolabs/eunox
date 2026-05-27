@@ -1,22 +1,22 @@
 ---
 title: "Declarative, Not Transitive: The Partner Federation Trust Model"
-description: "Third post in the \"Design principles\" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it's about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Third post in the "Design principles" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it''s about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-05"
 ---
 
-*Third post in the "Design principles" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it's about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Third post in the "Design principles" series. [Post 13](./13-partner-did-federation.md) in the architecture series covered the mechanics of partner DID federation: how DID documents are resolved, how the two-eyes approval workflow enforces separation of duties, how per-DID circuit breakers protect you from flaky resolution endpoints. This post is different — it's about the explicit design decision not to support transitive trust, and why that decision produces a significantly stronger security model than the alternative. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
 I've been in security architecture long enough to have watched the following pattern play out multiple times: a system starts with a small, carefully curated set of trust relationships. Each one is reviewed, approved, and documented. Over time, the set grows — new partners, new integrations, new contexts — and someone builds a feature that makes it easier to add trust relationships without going through the full review. Often this feature is called "delegation" or "inheritance" or "federated trust" and it sounds like pure convenience. More often than not, it becomes the most-exploited feature in the system.
 
-The pattern is transitive trust. And it's why euno's partner federation model explicitly doesn't support it.
+The pattern is transitive trust. And it's why eunox's partner federation model explicitly doesn't support it.
 
 ---
 
 ## What transitive trust would look like
 
-If euno had transitive trust, the model would work like this: if Company A's gateway trusts Company B as a partner issuer, and Company B explicitly trusts Company C as *their* partner, then Company A would automatically trust Company C without requiring a separate registration.
+If eunox had transitive trust, the model would work like this: if Company A's gateway trusts Company B as a partner issuer, and Company B explicitly trusts Company C as _their_ partner, then Company A would automatically trust Company C without requiring a separate registration.
 
 This has a certain logical appeal. It mirrors how web PKI works for domain certificates — if you trust a root CA, you automatically trust everything that root CA has signed. It mirrors how Kerberos works for Kerberos realms — realm A trusts realm B, realm B trusts realm C, and cross-realm tickets can traverse the path A → B → C.
 
@@ -53,7 +53,7 @@ Suppose Company B's private signing key is compromised. An attacker now has the 
 - Company C, which is in Company A's registry under its own DID, is unaffected
 - Company D, which Company A has never registered, could never present tokens that Company A's gateway would accept regardless of what Company B did
 
-In a transitive model, Company B's compromised key gives the attacker the ability to mint tokens that pass *through* Company B's trust relationship to reach Company A. The attacker can't directly mint tokens with Company B's key that claim Company C's `iss` — but they can create a token chain where a forged Company B token authorizes a Company C sub-token, if the system supports that kind of delegation.
+In a transitive model, Company B's compromised key gives the attacker the ability to mint tokens that pass _through_ Company B's trust relationship to reach Company A. The attacker can't directly mint tokens with Company B's key that claim Company C's `iss` — but they can create a token chain where a forged Company B token authorizes a Company C sub-token, if the system supports that kind of delegation.
 
 More practically: if Company B can approve new partner DIDs and Company A inherits those approvals transitively, the attacker who controls Company B's key can register a new "Company G" DID (attacker-controlled), approve it as a Company B partner, and then have Company A's gateway accept tokens from Company G. The attack works entirely at the federation layer; no SQL injection, no network intrusion, no key compromise of Company A is required.
 
@@ -129,9 +129,9 @@ If you've worked with cloud-native identity (particularly SPIFFE, the Secure Pro
 
 SPIFFE's trust bundles are also explicit and non-transitive. If Service A's SPIFFE Verifiable Identity Document (SVID) is issued by SPIFFE Trust Domain `company-a.example.com`, and Service B's SVID is issued by `company-b.example.com`, then company A's workloads won't accept connections from company B unless company A has explicitly imported company B's CA bundle. There's no automatic trust derivation from "we both use SPIFFE."
 
-The SPIFFE design principle here is the same as euno's: **trust domains are explicitly federated, not implicitly derived**. The spec explicitly warns against transitive trust because it makes trust graphs non-auditable and creates implicit paths that don't correspond to intentional decisions.
+The SPIFFE design principle here is the same as eunox's: **trust domains are explicitly federated, not implicitly derived**. The spec explicitly warns against transitive trust because it makes trust graphs non-auditable and creates implicit paths that don't correspond to intentional decisions.
 
-Euno's partner federation model follows the same logic applied to AI agent tokens rather than workload identity certificates. The technical mechanisms are different (DIDs instead of X.509 CA hierarchies, JWT tokens instead of mTLS), but the structural principle is identical: explicit, auditable, non-transitive.
+Eunox's partner federation model follows the same logic applied to AI agent tokens rather than workload identity certificates. The technical mechanisms are different (DIDs instead of X.509 CA hierarchies, JWT tokens instead of mTLS), but the structural principle is identical: explicit, auditable, non-transitive.
 
 ---
 
@@ -165,7 +165,7 @@ A `did:key` DID is self-describing — the public key is encoded directly in the
 
 For production partner federation, the registered DIDs are `did:web` or `did:ion` because those methods have resolvable documents that can carry metadata and can be updated in a controlled way. The pin attestation mechanism (from [post 13](./13-partner-did-federation.md)) provides change detection on top of `did:web`'s mutability. The ION blockchain anchoring provides immutability for `did:ion`.
 
-Neither of these methods supports anything resembling transitive trust at the protocol level. The explicit-registry model in euno is consistent with the design of the DID methods it uses.
+Neither of these methods supports anything resembling transitive trust at the protocol level. The explicit-registry model in eunox is consistent with the design of the DID methods it uses.
 
 ---
 
@@ -190,7 +190,7 @@ The code path is direct:
 ```typescript
 const entry = await this.registry.findByDid(issClaim);
 if (!entry) {
-  return { allowed: false, reason: 'partner_did_not_registered' };
+  return { allowed: false, reason: "partner_did_not_registered" };
 }
 ```
 
@@ -212,4 +212,4 @@ The boring answer — explicit list, manual approval, no inheritance — is the 
 
 ---
 
-*Previous: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md). Next: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md). Next: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

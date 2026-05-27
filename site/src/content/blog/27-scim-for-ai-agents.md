@@ -1,14 +1,14 @@
 ---
 title: "SCIM 2.0 for AI Agents: Bringing Enterprise Directory Provisioning to Capability Tokens"
-description: "Fifth and final post in the \"Technology choices\" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Fifth and final post in the "Technology choices" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-15"
 ---
 
-*Fifth and final post in the "Technology choices" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fifth and final post in the "Technology choices" series. [Post 21](./21-operator-tooling.md) introduced the SCIM integration from an operator perspective — what the SCIM endpoint does and how the token lifecycle maps to SCIM events. This post goes deeper: the protocol details, the schema mapping, the edge cases that only appear with real IdP integrations, and the design decisions behind the `externalId` / `userName` fallback strategy. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-When I was talking to the first enterprise customer who had a fully managed identity provisioning workflow — Okta pushing SCIM events to every downstream system — the question was straightforward: "Can we provision euno the same way we provision every other SaaS tool we use?" The answer, at the time, was no. We had manual API calls for user management. I watched their face fall and I knew we needed SCIM.
+When I was talking to the first enterprise customer who had a fully managed identity provisioning workflow — Okta pushing SCIM events to every downstream system — the question was straightforward: "Can we provision eunox the same way we provision every other SaaS tool we use?" The answer, at the time, was no. We had manual API calls for user management. I watched their face fall and I knew we needed SCIM.
 
 Adding SCIM support sounds like a checkbox exercise: read the spec, implement the endpoints, call it done. What I didn't expect was how many corner cases the spec leaves underspecified, how differently each IdP interprets those underspecified areas, and how the intersection of SCIM lifecycle events with the stateful, cryptographic nature of capability tokens creates edge cases that have no parallel in ordinary SaaS provisioning.
 
@@ -22,47 +22,47 @@ SCIM 2.0 (RFC 7643, RFC 7644) is the protocol for automated user and group synch
 
 Every major enterprise IdP supports SCIM as an outbound provisioning protocol: Okta, Azure Active Directory (Entra ID), Ping Identity, OneLogin, JumpCloud. Your IdP is authoritative for who exists and what groups they belong to; SCIM is the sync protocol that propagates that state to downstream systems.
 
-For a system like euno, SCIM solves a specific governance problem: **orphaned access**. Without automated deprovisioning, a contractor who was granted access to an AI agent capability doesn't lose that access when they leave the organization — someone has to remember to revoke it manually. Manual processes fail. People are busy. The ex-contractor's access persists, and the AI agent tool calls they can make persist with it.
+For a system like eunox, SCIM solves a specific governance problem: **orphaned access**. Without automated deprovisioning, a contractor who was granted access to an AI agent capability doesn't lose that access when they leave the organization — someone has to remember to revoke it manually. Manual processes fail. People are busy. The ex-contractor's access persists, and the AI agent tool calls they can make persist with it.
 
-With SCIM, deprovisioning is automatic. The moment the contractor's account is deprovisioned in the IdP, the SCIM DELETE event arrives at euno, existing tokens are revoked, and the user's access is gone. The organizational process (HR deprovisioning the IdP account) automatically produces the security outcome (agent access revoked) without any additional human action.
+With SCIM, deprovisioning is automatic. The moment the contractor's account is deprovisioned in the IdP, the SCIM DELETE event arrives at eunox, existing tokens are revoked, and the user's access is gone. The organizational process (HR deprovisioning the IdP account) automatically produces the security outcome (agent access revoked) without any additional human action.
 
 ---
 
 ## The SCIM endpoint surface
 
-Euno's SCIM implementation exposes the endpoints defined in RFC 7644:
+Eunox's SCIM implementation exposes the endpoints defined in RFC 7644:
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/scim/v2/Users` | List or search users |
-| `GET` | `/scim/v2/Users/{id}` | Get a specific user |
-| `POST` | `/scim/v2/Users` | Create a user |
-| `PUT` | `/scim/v2/Users/{id}` | Replace a user |
-| `PATCH` | `/scim/v2/Users/{id}` | Update a user (partial) |
-| `DELETE` | `/scim/v2/Users/{id}` | Delete a user |
-| `GET` | `/scim/v2/Groups` | List or search groups |
-| `GET` | `/scim/v2/Groups/{id}` | Get a specific group |
-| `POST` | `/scim/v2/Groups` | Create a group |
-| `PUT` | `/scim/v2/Groups/{id}` | Replace a group |
-| `PATCH` | `/scim/v2/Groups/{id}` | Update a group (partial) |
-| `DELETE` | `/scim/v2/Groups/{id}` | Delete a group |
-| `GET` | `/scim/v2/ServiceProviderConfig` | Advertise capabilities |
-| `GET` | `/scim/v2/Schemas` | List supported schemas |
-| `GET` | `/scim/v2/ResourceTypes` | List resource types |
+| Method   | Path                             | Purpose                  |
+| -------- | -------------------------------- | ------------------------ |
+| `GET`    | `/scim/v2/Users`                 | List or search users     |
+| `GET`    | `/scim/v2/Users/{id}`            | Get a specific user      |
+| `POST`   | `/scim/v2/Users`                 | Create a user            |
+| `PUT`    | `/scim/v2/Users/{id}`            | Replace a user           |
+| `PATCH`  | `/scim/v2/Users/{id}`            | Update a user (partial)  |
+| `DELETE` | `/scim/v2/Users/{id}`            | Delete a user            |
+| `GET`    | `/scim/v2/Groups`                | List or search groups    |
+| `GET`    | `/scim/v2/Groups/{id}`           | Get a specific group     |
+| `POST`   | `/scim/v2/Groups`                | Create a group           |
+| `PUT`    | `/scim/v2/Groups/{id}`           | Replace a group          |
+| `PATCH`  | `/scim/v2/Groups/{id}`           | Update a group (partial) |
+| `DELETE` | `/scim/v2/Groups/{id}`           | Delete a group           |
+| `GET`    | `/scim/v2/ServiceProviderConfig` | Advertise capabilities   |
+| `GET`    | `/scim/v2/Schemas`               | List supported schemas   |
+| `GET`    | `/scim/v2/ResourceTypes`         | List resource types      |
 
-The discovery endpoints (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`) are important in practice. When you configure euno as a SCIM target in Okta or Azure AD, the IdP fetches `ServiceProviderConfig` first to understand what operations and filters are supported. If the config says you don't support `PATCH`, the IdP will use `PUT` for all updates — which is more expensive because it requires the IdP to maintain a full copy of user state. We implement `PATCH` fully because it's the efficient path.
+The discovery endpoints (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`) are important in practice. When you configure eunox as a SCIM target in Okta or Azure AD, the IdP fetches `ServiceProviderConfig` first to understand what operations and filters are supported. If the config says you don't support `PATCH`, the IdP will use `PUT` for all updates — which is more expensive because it requires the IdP to maintain a full copy of user state. We implement `PATCH` fully because it's the efficient path.
 
 ---
 
 ## The data model: users, groups, and capability roles
 
-SCIM models identities as Users and Groups. Euno's internal model has Users, Groups, and CapabilityRoles. The mapping is:
+SCIM models identities as Users and Groups. Eunox's internal model has Users, Groups, and CapabilityRoles. The mapping is:
 
-**SCIM User → euno User**: A SCIM User has a `userName` (usually an email), an `externalId` (the IdP's internal identifier), and extension attributes. Euno's User record adds `capabilityRoles: string[]` — the set of roles that determine which capability templates this user can request.
+**SCIM User → eunox User**: A SCIM User has a `userName` (usually an email), an `externalId` (the IdP's internal identifier), and extension attributes. Eunox's User record adds `capabilityRoles: string[]` — the set of roles that determine which capability templates this user can request.
 
-**SCIM Group → euno Group**: A SCIM Group has a `displayName` and `members`. Euno's Group record adds a `capabilityRole` mapping — the role that membership in this group grants.
+**SCIM Group → eunox Group**: A SCIM Group has a `displayName` and `members`. Eunox's Group record adds a `capabilityRole` mapping — the role that membership in this group grants.
 
-The role mapping is configured in the operator configuration, not inferred from the SCIM data. If your IdP has a group named `ai-ops-team`, you configure the mapping in euno:
+The role mapping is configured in the operator configuration, not inferred from the SCIM data. If your IdP has a group named `ai-ops-team`, you configure the mapping in eunox:
 
 ```yaml
 # config/scim-role-mapping.yaml
@@ -75,7 +75,7 @@ groupRoleMappings:
     capabilityRole: "full-access-agent"
 ```
 
-When SCIM pushes a new group membership for a user, euno looks up the role for that group, adds the role to the user's `capabilityRoles`, and the user's next token request will be authorized against that role's capability template.
+When SCIM pushes a new group membership for a user, eunox looks up the role for that group, adds the role to the user's `capabilityRoles`, and the user's next token request will be authorized against that role's capability template.
 
 ---
 
@@ -98,11 +98,11 @@ function lookupUser(scimPayload):
   if scimPayload.externalId:
     user = findByExternalId(scimPayload.externalId)
     if user: return user
-    
+
   if scimPayload.userName:
     user = findByUserName(scimPayload.userName)
     if user: return user
-  
+
   return null
 ```
 
@@ -137,9 +137,7 @@ And to remove one or more members by value list:
     {
       "op": "remove",
       "path": "members",
-      "value": [
-        { "value": "user-scim-id-abc123" }
-      ]
+      "value": [{ "value": "user-scim-id-abc123" }]
     }
   ]
 }
@@ -158,7 +156,7 @@ When a user requests a capability token, the flow is:
 3. The issuer finds the capability template for the requested role
 4. The token is issued with the scopes and conditions defined in the template
 
-The capability template is the bridge between the SCIM-side world (roles, groups) and the euno-side world (capability manifests, conditions). A capability template for the `ops-agent` role might look like:
+The capability template is the bridge between the SCIM-side world (roles, groups) and the eunox-side world (capability manifests, conditions). A capability template for the `ops-agent` role might look like:
 
 ```yaml
 # config/capability-templates/ops-agent.yaml
@@ -183,7 +181,7 @@ manifest:
   tokenTtlSeconds: 900
 ```
 
-The SCIM integration doesn't touch this template. It just manages which users have which roles. The operator controls the templates; the IdP administrator controls group membership; euno's SCIM integration keeps the two in sync.
+The SCIM integration doesn't touch this template. It just manages which users have which roles. The operator controls the templates; the IdP administrator controls group membership; eunox's SCIM integration keeps the two in sync.
 
 ---
 
@@ -195,13 +193,14 @@ The challenge is that capability tokens are stateless JWTs. The token verifier d
 
 The action we take on SCIM DELETE is: set a revocation epoch keyed on the user's subject identifier. The epoch structure is:
 
-**Key:** `euno:epoch:subject:{tenantId}:{userSubject}`
+**Key:** `eunox:epoch:subject:{tenantId}:{userSubject}`
 
 **Value:** Unix timestamp of the DELETE event
 
 **TTL:** `maxTokenTtlSeconds × 2` (double the max TTL to handle clock skew)
 
 On every token verification, after signature validation, the gateway checks:
+
 1. Is there an epoch for this token's `sub` (subject)?
 2. If so, was the token issued (`iat`) before the epoch timestamp?
 3. If both yes → reject with `TOKEN_REVOKED_BY_EPOCH`.
@@ -235,6 +234,7 @@ Some IdPs periodically do a full sync — they push the complete state of all us
 A naïve implementation of SCIM CREATE will create duplicate user records if the same user is pushed again with a new SCIM resource ID. IdPs sometimes change their internal IDs for a user across full syncs (particularly if the IdP configuration changed between syncs).
 
 Our current handling is stricter:
+
 1. On `POST /scim/v2/Users`, attempt to create a new record.
 2. If uniqueness constraints are hit, return `409 User already exists`.
 3. Use PUT/PATCH flows for updates to existing users.
@@ -264,11 +264,11 @@ For production readiness, also run the suite against the actual IdP in a staging
 
 For SCIM provisioning, the metrics I watch:
 
-**`euno_scim_operations_total`** (counter, labeled by operation and result): normal provisioning produces a steady rate of operations with `result=success`. A spike in `result=error` with `operation=patch` usually indicates a filter expression the parser doesn't handle, or an IdP sending a schema extension we don't support.
+**`eunox_scim_operations_total`** (counter, labeled by operation and result): normal provisioning produces a steady rate of operations with `result=success`. A spike in `result=error` with `operation=patch` usually indicates a filter expression the parser doesn't handle, or an IdP sending a schema extension we don't support.
 
-**`euno_scim_fallback_username_lookups_total`** (counter): if this is consistently non-zero, the IdP configuration is not sending `externalId`. Worth fixing before it causes duplicate-record edge cases.
+**`eunox_scim_fallback_username_lookups_total`** (counter): if this is consistently non-zero, the IdP configuration is not sending `externalId`. Worth fixing before it causes duplicate-record edge cases.
 
-**`euno_scim_role_reductions_total`** (counter): should be low in normal operations. A sudden spike means a large number of users are losing roles — which could be a legitimate group restructuring, or it could be a misconfiguration in the IdP group mapping. Either way, worth alerting on.
+**`eunox_scim_role_reductions_total`** (counter): should be low in normal operations. A sudden spike means a large number of users are losing roles — which could be a legitimate group restructuring, or it could be a misconfiguration in the IdP group mapping. Either way, worth alerting on.
 
 **Provisioning latency from SCIM event to token effect:** not a Prometheus metric, but a meaningful SLO to track. Measure: time from IdP-side deprovisioning event to "user's token is rejected at gateway." With SCIM DELETE triggering immediate revocation epoch, this should be under 10 seconds in normal operation (SCIM event arrives, epoch is set in Redis, next token verification check hits Redis and gets rejected). If you're seeing latency above a minute, investigate the SCIM event delivery latency from your IdP.
 
@@ -284,4 +284,4 @@ The `externalId` / `userName` fallback is right in principle but the implementat
 
 ---
 
-*Previous: [post 26 — Redis as a shared enforcement substrate](./26-redis-enforcement-substrate.md). The "Technology choices" series is complete. Next up: the "Compliance and enterprise" series beginning with [post 28 — Building for SOC 2: mapping CC6 and CC7 controls to an AI governance platform](../blog-articles.md#compliance-and-enterprise).*
+_Previous: [post 26 — Redis as a shared enforcement substrate](./26-redis-enforcement-substrate.md). The "Technology choices" series is complete. Next up: the "Compliance and enterprise" series beginning with [post 28 — Building for SOC 2: mapping CC6 and CC7 controls to an AI governance platform](../blog-articles.md#compliance-and-enterprise)._

@@ -2,10 +2,10 @@
 # ---------------------------------------------------------------------------
 # Apply this file on top of the base values.yaml when deploying on Amazon EKS:
 #
-#   helm install euno ./k8s/helm/euno \
-#     --namespace euno \
-#     -f k8s/helm/euno/values.yaml \
-#     -f k8s/helm/euno/values-aws.yaml
+#   helm install eunox ./k8s/helm/eunox \
+#     --namespace eunox \
+#     -f k8s/helm/eunox/values.yaml \
+#     -f k8s/helm/eunox/values-aws.yaml
 #
 # All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
 # should be sourced from AWS Secrets Manager rather than supplied here.
@@ -33,12 +33,12 @@ gateway:
   # call KMS and Secrets Manager without a static access key.
   # Replace with your actual role ARN (see docs/deploy-eks.md §3.2).
   serviceAccountAnnotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-gateway-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/eunox-gateway-role"
 
   # ── Non-sensitive configuration ──────────────────────────────────────────
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
     GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
@@ -50,20 +50,20 @@ gateway:
 
     # Cross-chain anchor to S3 Object Lock (optional; enables SOC 2 CC7.4).
     # ENABLE_CROSS_CHAIN_ANCHOR: "true"
-    # AUDIT_LEDGER_S3_BUCKET: "euno-audit-anchor-prod"
+    # AUDIT_LEDGER_S3_BUCKET: "eunox-audit-anchor-prod"
     # AUDIT_LEDGER_S3_REGION: "us-east-1"
     # AUDIT_LEDGER_S3_ENDPOINT: ""  # leave blank for standard S3; set for VPC endpoint
 
     # Secret store provider: uncomment to enable SDK-based Secrets Manager
     # lookup at startup instead of relying on env vars or ESO/ASCP injection.
     # SECRET_STORE_PROVIDER: aws-secrets-manager
-    # AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET: "arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/audit-ledger-hmac-secret"
-    # AWS_SECRETS_ARN_ADMIN_API_KEY: "arn:aws:secretsmanager:us-east-1:123456789012:secret:euno/prod/gateway-admin-api-key"
+    # AWS_SECRETS_ARN_AUDIT_LEDGER_HMAC_SECRET: "arn:aws:secretsmanager:us-east-1:123456789012:secret:eunox/prod/audit-ledger-hmac-secret"
+    # AWS_SECRETS_ARN_ADMIN_API_KEY: "arn:aws:secretsmanager:us-east-1:123456789012:secret:eunox/prod/gateway-admin-api-key"
 
   # ── Sensitive values ─────────────────────────────────────────────────────
   # When using ESO or ASCP (recommended), set existingSecret instead and
   # leave secretEnv empty.
-  # existingSecret: euno-gateway-secret
+  # existingSecret: eunox-gateway-secret
   secretEnv: {}
 
 # ── issuer ─────────────────────────────────────────────────────────
@@ -74,11 +74,11 @@ issuer:
     pullPolicy: IfNotPresent
 
   serviceAccountAnnotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/euno-issuer-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/eunox-issuer-role"
 
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
 
     # Identity provider: AWS Cognito.
     # See docs/issuer-idp-setup.md §3 for Cognito setup and §10 for SCIM.
@@ -99,7 +99,7 @@ issuer:
     # See docs/issuer-idp-setup.md §10 for the full SCIM bridge guide.
     # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
-  # existingSecret: euno-issuer-secret
+  # existingSecret: eunox-issuer-secret
   secretEnv: {}
 
 # ── minter ────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ minter:
 # ── db-token-service ──────────────────────────────────────────────────────────
 dbTokenService:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/db-token-service
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/db-token-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -131,7 +131,7 @@ dbTokenService:
 # ── storage-grant-service ─────────────────────────────────────────────────────
 storageGrantService:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/storage-grant-service
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/storage-grant-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -145,7 +145,7 @@ storageGrantService:
 # ── posture-emitter ───────────────────────────────────────────────────────────
 postureEmitter:
   image:
-    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/euno/posture-emitter
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/eunox/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

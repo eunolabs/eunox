@@ -111,7 +111,7 @@ gateway:
     ENABLE_CROSS_CHAIN_ANCHOR: "true"
     AUDIT_LEDGER_OBJECT_STORE_PROVIDER: azure-blob
     AUDIT_LEDGER_AZURE_CONTAINER: "eunox-audit-anchor-prod"
-    AUDIT_LEDGER_AZURE_ACCOUNT_NAME: "myeunosa"
+    AUDIT_LEDGER_AZURE_ACCOUNT_NAME: "myeunoxsa"
 ```
 
 ### Migrating secrets management from environment variables to native SDK

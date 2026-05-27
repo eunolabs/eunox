@@ -1,42 +1,42 @@
 # CODEOWNERS — eunox package ownership
 
 # Default owners
-*                                       @edgeobs/euno-leads
+*                                       @edgeobs/eunox-leads
 
 # Go services
-/cmd/gateway/                           @edgeobs/euno-dp
-/cmd/issuer/                            @edgeobs/euno-cp
-/cmd/minter/                            @edgeobs/euno-cp
-/cmd/db-token-svc/                      @edgeobs/euno-cp
-/cmd/storage-grant-svc/                 @edgeobs/euno-cp
-/cmd/posture-emitter/                   @edgeobs/euno-obs
+/cmd/gateway/                           @edgeobs/eunox-dp
+/cmd/issuer/                            @edgeobs/eunox-cp
+/cmd/minter/                            @edgeobs/eunox-cp
+/cmd/db-token-svc/                      @edgeobs/eunox-cp
+/cmd/storage-grant-svc/                 @edgeobs/eunox-cp
+/cmd/posture-emitter/                   @edgeobs/eunox-obs
 
 # Internal packages
-/internal/gateway/                      @edgeobs/euno-dp
-/internal/issuer/                       @edgeobs/euno-cp
-/internal/minter/                       @edgeobs/euno-cp
-/internal/dbtokensvc/                   @edgeobs/euno-cp
-/internal/storagegrantsvc/              @edgeobs/euno-cp
-/internal/agentruntime/                 @edgeobs/euno-dp
-/internal/posture/                      @edgeobs/euno-obs
+/internal/gateway/                      @edgeobs/eunox-dp
+/internal/issuer/                       @edgeobs/eunox-cp
+/internal/minter/                       @edgeobs/eunox-cp
+/internal/dbtokensvc/                   @edgeobs/eunox-cp
+/internal/storagegrantsvc/              @edgeobs/eunox-cp
+/internal/agentruntime/                 @edgeobs/eunox-dp
+/internal/posture/                      @edgeobs/eunox-obs
 
 # Public packages — shared across teams
-/pkg/                                   @edgeobs/euno-cp @edgeobs/euno-dp
+/pkg/                                   @edgeobs/eunox-cp @edgeobs/eunox-dp
 
 # Infrastructure & deployment
-/infra/                                 @edgeobs/euno-obs
-/k8s/                                   @edgeobs/euno-obs
+/infra/                                 @edgeobs/eunox-obs
+/k8s/                                   @edgeobs/eunox-obs
 
 # Documentation
-/docs/                                  @edgeobs/euno-leads
-/README.md                              @edgeobs/euno-leads
+/docs/                                  @edgeobs/eunox-leads
+/README.md                              @edgeobs/eunox-leads
 
 # Website
-/web/                                   @edgeobs/euno-dx
-/site/                                  @edgeobs/euno-dx
+/web/                                   @edgeobs/eunox-dx
+/site/                                  @edgeobs/eunox-dx
 
 # Repository configuration
-/CODEOWNERS                             @edgeobs/euno-leads
-/Makefile                               @edgeobs/euno-leads
-/go.mod                                 @edgeobs/euno-leads
-/.github/                               @edgeobs/euno-leads
+/CODEOWNERS                             @edgeobs/eunox-leads
+/Makefile                               @edgeobs/eunox-leads
+/go.mod                                 @edgeobs/eunox-leads
+/.github/                               @edgeobs/eunox-leads

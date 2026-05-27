@@ -1,17 +1,17 @@
-# Euno AWS CDK Constructs
+# Eunox AWS CDK Constructs
 
-TypeScript CDK constructs for deploying the Euno Capability-Native Agent
-Governance platform on AWS.  Three stacks are provided, ordered from smallest
+TypeScript CDK constructs for deploying the Eunox Capability-Native Agent
+Governance platform on AWS. Three stacks are provided, ordered from smallest
 to largest scope:
 
-| Stack | Description |
-|---|---|
-| `EunoGatewayStack` | Core infrastructure: EKS Fargate, RDS, ElastiCache, KMS, S3 Object Lock, Secrets Manager, IAM, ECR |
-| `EunoIssuerStack` | Extends gateway with Cognito User Pool, SCIM endpoint wiring, issuer IRSA role |
-| `EunoEnterpriseStack` | Extends issuer with partner DID registry, SOC 2 audit pipeline, Security Hub, CloudWatch alarms |
+| Stack                  | Description                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| `EunoxGatewayStack`    | Core infrastructure: EKS Fargate, RDS, ElastiCache, KMS, S3 Object Lock, Secrets Manager, IAM, ECR |
+| `EunoxIssuerStack`     | Extends gateway with Cognito User Pool, SCIM endpoint wiring, issuer IRSA role                     |
+| `EunoxEnterpriseStack` | Extends issuer with partner DID registry, SOC 2 audit pipeline, Security Hub, CloudWatch alarms    |
 
-Each stack is a superset of the previous one — deploy `EunoEnterpriseStack`
-to get all resources, or deploy `EunoGatewayStack` alone for a minimal
+Each stack is a superset of the previous one — deploy `EunoxEnterpriseStack`
+to get all resources, or deploy `EunoxGatewayStack` alone for a minimal
 tool-gateway deployment.
 
 ---
@@ -35,50 +35,50 @@ npm install
 # 2. Configure deployment
 export CDK_DEFAULT_ACCOUNT=123456789012
 export CDK_DEFAULT_REGION=us-east-1
-export EUNO_NAME_PREFIX=euno
-export EUNO_ENVIRONMENT=prod
+export EUNOX_NAME_PREFIX=eunox
+export EUNOX_ENVIRONMENT=prod
 
 # 3. Preview changes
-EUNO_CDK_STACK=enterprise cdk diff EunoEnterprise
+EUNOX_CDK_STACK=enterprise cdk diff EunoxEnterprise
 
 # 4. Deploy
-EUNO_CDK_STACK=enterprise cdk deploy EunoEnterprise
+EUNOX_CDK_STACK=enterprise cdk deploy EunoxEnterprise
 ```
 
 ---
 
 ## Stacks
 
-### EunoGatewayStack
+### EunoxGatewayStack
 
 Provisions the core runtime infrastructure:
 
 - **VPC** — 3-AZ, public/private/isolated subnets, 3 NAT gateways
-- **EKS Fargate cluster** — `euno-system` Fargate profile, OIDC issuer for IRSA
+- **EKS Fargate cluster** — `eunox-system` Fargate profile, OIDC issuer for IRSA
 - **RDS PostgreSQL 15** — Multi-AZ, encrypted, audit-ledger + API-key databases
 - **ElastiCache Redis 7** — HA replication group, TLS + auth token
 - **KMS RSA-2048 key** — `SIGN_VERIFY` for capability-token signing
 - **S3 Object Lock bucket** — COMPLIANCE mode, ~7-year retention (SOC 2 CC7.4)
 - **Secrets Manager** — HMAC key, admin API key, Redis auth token
-- **ECR repositories** — one per Euno service image (immutable tags)
+- **ECR repositories** — one per Eunox service image (immutable tags)
 - **IAM IRSA role for tool-gateway** — KMS Verify, Secrets Manager read, S3 PutObject
-- **CloudWatch log groups** — `/euno/runtime` and `/euno/audit`
+- **CloudWatch log groups** — `/eunox/runtime` and `/eunox/audit`
 
 ```typescript
-import * as cdk from 'aws-cdk-lib';
-import { EunoGatewayStack } from '@euno/aws-cdk';
+import * as cdk from "aws-cdk-lib";
+import { EunoxGatewayStack } from "@eunox/aws-cdk";
 
 const app = new cdk.App();
-new EunoGatewayStack(app, 'EunoGateway', {
-  env: { account: '123456789012', region: 'us-east-1' },
-  namePrefix: 'euno',
-  environment: 'prod',
+new EunoxGatewayStack(app, "EunoxGateway", {
+  env: { account: "123456789012", region: "us-east-1" },
+  namePrefix: "eunox",
+  environment: "prod",
 });
 ```
 
-### EunoIssuerStack
+### EunoxIssuerStack
 
-Extends `EunoGatewayStack` with:
+Extends `EunoxGatewayStack` with:
 
 - **Cognito User Pool** — MFA optional, email-verified, operator/agent-user groups
 - **Cognito App Client** — `ALLOW_USER_SRP_AUTH`, 15-min access token TTL
@@ -89,9 +89,9 @@ Extends `EunoGatewayStack` with:
 
 See `docs/issuer-idp-setup.md §10` for the Cognito SCIM bridge wiring guide.
 
-### EunoEnterpriseStack
+### EunoxEnterpriseStack
 
-Extends `EunoIssuerStack` with:
+Extends `EunoxIssuerStack` with:
 
 - **Partner DID registry** — DynamoDB table with `ByStatus` GSI for
   circuit-breaker queries (consumed by `PartnerIssuerResolver`)
@@ -108,14 +108,14 @@ Extends `EunoIssuerStack` with:
 
 ## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `EUNO_CDK_STACK` | (all) | Stack tier: `gateway`, `issuer`, or `enterprise` |
-| `EUNO_NAME_PREFIX` | `euno` | Resource name prefix (3-12 lowercase chars) |
-| `EUNO_ENVIRONMENT` | `pilot` | Deployment environment label |
-| `EUNO_ALARM_EMAIL` | — | Email address for CloudWatch alarm SNS topic |
-| `CDK_DEFAULT_ACCOUNT` | (from AWS credentials) | AWS account ID |
-| `CDK_DEFAULT_REGION` | (from AWS credentials) | AWS region |
+| Variable              | Default                | Description                                      |
+| --------------------- | ---------------------- | ------------------------------------------------ |
+| `EUNOX_CDK_STACK`     | (all)                  | Stack tier: `gateway`, `issuer`, or `enterprise` |
+| `EUNOX_NAME_PREFIX`   | `eunox`                | Resource name prefix (3-12 lowercase chars)      |
+| `EUNOX_ENVIRONMENT`   | `pilot`                | Deployment environment label                     |
+| `EUNOX_ALARM_EMAIL`   | —                      | Email address for CloudWatch alarm SNS topic     |
+| `CDK_DEFAULT_ACCOUNT` | (from AWS credentials) | AWS account ID                                   |
+| `CDK_DEFAULT_REGION`  | (from AWS credentials) | AWS region                                       |
 
 ---
 
@@ -125,13 +125,13 @@ After deploying, retrieve the stack outputs and wire them into the Helm chart:
 
 ```bash
 # Get outputs
-cdk --outputs-file cdk-outputs.json deploy EunoEnterprise
+cdk --outputs-file cdk-outputs.json deploy EunoxEnterprise
 
 # Apply to Helm (EKS)
-helm upgrade --install euno ./k8s/helm/euno \
-  --namespace euno \
-  -f k8s/helm/euno/values.yaml \
-  -f k8s/helm/euno/values-aws.yaml \
+helm upgrade --install eunox ./k8s/helm/eunox \
+  --namespace eunox \
+  -f k8s/helm/eunox/values.yaml \
+  -f k8s/helm/eunox/values-aws.yaml \
   --set gateway.serviceAccountAnnotations."eks\.amazonaws\.com/role-arn"=<GatewayRoleArn> \
   --set issuer.serviceAccountAnnotations."eks\.amazonaws\.com/role-arn"=<IssuerRoleArn>
 ```
@@ -149,7 +149,7 @@ npm test
 ```
 
 Tests use `aws-cdk-lib/assertions` to synthesize each stack into a
-CloudFormation template and assert on the resources produced.  No AWS
+CloudFormation template and assert on the resources produced. No AWS
 credentials are required to run the tests.
 
 ---

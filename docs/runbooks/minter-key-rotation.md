@@ -3,7 +3,7 @@
 > **Alert:** `MinterEmergencyKeyRotation` — severity **critical**
 >
 > **Condition:** An emergency key rotation event has been recorded for the minter signing
-> key (`euno_minter_key_rotation_total{reason="emergency"}` increases).
+> key (`eunox_minter_key_rotation_total{reason="emergency"}` increases).
 >
 > **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 5).
 

@@ -1,15 +1,15 @@
 /**
- * Public exports for the @euno/aws-cdk package.
+ * Public exports for the @eunox/aws-cdk package.
  *
  * Import any or all three stacks into your CDK app:
  *
  *   import {
- *     EunoGatewayStack,
- *     EunoIssuerStack,
- *     EunoEnterpriseStack,
- *   } from '@euno/aws-cdk';
+ *     EunoxGatewayStack,
+ *     EunoxIssuerStack,
+ *     EunoxEnterpriseStack,
+ *   } from '@eunox/aws-cdk';
  */
 
-export { EunoGatewayStack, EunoGatewayStackProps } from './stacks/gateway-stack';
-export { EunoIssuerStack, EunoIssuerStackProps } from './stacks/issuer-stack';
-export { EunoEnterpriseStack, EunoEnterpriseStackProps } from './stacks/enterprise-stack';
+export { EunoxGatewayStack, EunoxGatewayStackProps } from './stacks/gateway-stack';
+export { EunoxIssuerStack, EunoxIssuerStackProps } from './stacks/issuer-stack';
+export { EunoxEnterpriseStack, EunoxEnterpriseStackProps } from './stacks/enterprise-stack';

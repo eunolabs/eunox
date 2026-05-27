@@ -6,7 +6,7 @@ _First post in the "Technology choices" series. [Post 11](./11-tamper-evident-au
 
 There's a moment in every non-trivial platform project where you have to decide how to structure your audit data. The shape of an audit record sounds like a minor implementation detail. In my experience it's one of the decisions with the longest tail — it affects SIEM integration, SOC 2 audit scope, incident response tooling, customer buy-in, and your own ability to query what happened in production. Getting it wrong means either re-designing the schema under load or carrying technical debt through every audit report and integration you ever ship.
 
-For euno, I chose the [Open Cybersecurity Schema Framework (OCSF)](https://schema.ocsf.io). This post explains why, how the mapping works in practice, where the friction is, and what I'd tell someone starting from scratch today.
+For eunox, I chose the [Open Cybersecurity Schema Framework (OCSF)](https://schema.ocsf.io). This post explains why, how the mapping works in practice, where the friction is, and what I'd tell someone starting from scratch today.
 
 ---
 
@@ -45,7 +45,7 @@ The framework ships with categories and classes for the most common security eve
 - **Category 3: Identity & Access Management** — authentication events, token issuance, authorization decisions
 - **Category 6: Application Activity** — API calls, database queries, file access
 
-For euno, the two classes we emit are:
+For eunox, the two classes we emit are:
 
 | Class             | `class_uid` | Used for                                                 |
 | ----------------- | ----------- | -------------------------------------------------------- |
@@ -77,13 +77,13 @@ An agent calls the `query_db` tool with a SQL query. The gateway evaluates the c
   "metadata": {
     "version": "1.1.0",
     "product": {
-      "name": "euno",
-      "vendor_name": "euno",
+      "name": "eunox",
+      "vendor_name": "eunox",
       "version": "5.0.0"
     },
     "uid": "evt_a3f2b1c4d5e6f7a8",
-    "log_name": "euno-audit",
-    "log_provider": "euno-gateway"
+    "log_name": "eunox-audit",
+    "log_provider": "eunox-gateway"
   },
   "actor": {
     "user": {
@@ -188,7 +188,7 @@ An allowed call is interesting. A denied call is the record that actually gets s
 
 The `status: "Failure"` with `status_id: 2` is OCSF standard. The `api.response.error` field is the normalized denial code. The `severity_id: 3` (Medium) on denials is a deliberate choice — not every denial is an attack; agents probe boundaries naturally during normal operation. But denials cluster analysis in a SIEM benefits from having some severity attached. A single denial is informational; twenty denials in thirty seconds from the same session is worth a page.
 
-The `unmapped.conditionType` and `unmapped.denialCode` fields are the most useful for euno-specific queries. If you're investigating "why did the agent fail?" in your SIEM, filtering on `unmapped.conditionType = "maxCalls"` vs `unmapped.conditionType = "allowedOperations"` immediately partitions the investigation space.
+The `unmapped.conditionType` and `unmapped.denialCode` fields are the most useful for eunox-specific queries. If you're investigating "why did the agent fail?" in your SIEM, filtering on `unmapped.conditionType = "maxCalls"` vs `unmapped.conditionType = "allowedOperations"` immediately partitions the investigation space.
 
 ---
 
@@ -231,7 +231,7 @@ The SOC 2 CC6 scope query (`?scope=soc2-cc6`) returns exactly these records for 
 
 OCSF as of version 1.1.0 does not have an "AI agent" profile. The framework was designed with human-initiated API activity in mind, and some fields don't have natural AI equivalents. The `actor.user` field has `type_id` values like `System`, `User`, `Unknown` — there's no `Agent` type. We use `type_id: 2` (System) for agent actors, which is accurate but loses the semantic distinction between a human operator running an API call and an autonomous LLM-driven agent running a tool call.
 
-I've been watching the OCSF working group discussions and there's active interest in an AI/ML event profile. When that lands, euno will have a migration to do. The `type_uid` namespace will extend cleanly; the `actor` structure is the part I'm least confident about. But forward compatibility with a schema that has a proper standards body behind it is vastly better than forward compatibility with something I wrote myself.
+I've been watching the OCSF working group discussions and there's active interest in an AI/ML event profile. When that lands, eunox will have a migration to do. The `type_uid` namespace will extend cleanly; the `actor` structure is the part I'm least confident about. But forward compatibility with a schema that has a proper standards body behind it is vastly better than forward compatibility with something I wrote myself.
 
 For now, the `unmapped` fields fill the gap. Every AI-specific attribute (agent framework, model identifier, prompt hash, session turn number) lives in `unmapped`. When the OCSF AI profile exists, we'll migrate those fields to first-class schema positions. The SIEM queries that currently filter on `unmapped.agent_framework` will need updates, but the records will all be there, queryable both ways during a transition period.
 
@@ -241,9 +241,9 @@ For now, the `unmapped` fields fill the gap. Every AI-specific attribute (agent 
 
 The payoff comes at ingestion time. When I send an OCSF `class_uid: 6003` record to a Splunk SIEM configured with the OCSF technology add-on, no field mapping configuration is required. `time`, `severity_id`, `status`, `actor.user.uid`, `api.operation` — these are recognized. The customer security team can immediately write detection rules using the same field names they use for all their other OCSF sources, without reading our documentation.
 
-Microsoft Sentinel has had native OCSF ingestion support since 2023. The Advanced SIEM Information Model (ASIM) normalization tables accept OCSF events with minimal transformation. This matters for Microsoft-heavy customers, who make up a substantial portion of enterprise deployments — their SIEM is already configured to ingest OCSF from their Azure services; euno just becomes another source in the same stream.
+Microsoft Sentinel has had native OCSF ingestion support since 2023. The Advanced SIEM Information Model (ASIM) normalization tables accept OCSF events with minimal transformation. This matters for Microsoft-heavy customers, who make up a substantial portion of enterprise deployments — their SIEM is already configured to ingest OCSF from their Azure services; eunox just becomes another source in the same stream.
 
-The commodity case — "ingest logs into any S3-compatible store and query with Athena or BigQuery" — also benefits. OCSF has Parquet schema definitions maintained by AWS that map directly to Athena external table definitions. If a customer is aggregating security events into a data lake, the euno records land in the same table format as their CloudTrail and GuardDuty events. The query you write to ask "show me all authorization failures in the last 30 days across all event sources" works with euno records without modification.
+The commodity case — "ingest logs into any S3-compatible store and query with Athena or BigQuery" — also benefits. OCSF has Parquet schema definitions maintained by AWS that map directly to Athena external table definitions. If a customer is aggregating security events into a data lake, the eunox records land in the same table format as their CloudTrail and GuardDuty events. The query you write to ask "show me all authorization failures in the last 30 days across all event sources" works with eunox records without modification.
 
 ---
 
@@ -253,7 +253,7 @@ It's not free. The verbosity is real — a minimal custom audit record might be 
 
 The schema discipline also requires discipline in the team. Every new event type, every new field, goes through a mapping exercise: does this fit in an existing OCSF field, or does it go into `unmapped`? Getting that wrong in either direction is a problem. Over-mapping (forcing something into a standard field where it doesn't fit) creates confusion for security teams who see a familiar field name with a non-standard meaning. Under-mapping (putting everything in `unmapped` because it's easier) undermines the integration value entirely.
 
-The rule I use: if a field has a direct semantic equivalent in the OCSF schema, use the OCSF field. If it's AI-specific or euno-specific and has no OCSF equivalent, put it in `unmapped` using our existing camelCase extension naming. Keeping that naming consistent makes it immediately clear, in any SIEM query, which fields are OCSF standard and which are euno-specific extensions.
+The rule I use: if a field has a direct semantic equivalent in the OCSF schema, use the OCSF field. If it's AI-specific or eunox-specific and has no OCSF equivalent, put it in `unmapped` using our existing camelCase extension naming. Keeping that naming consistent makes it immediately clear, in any SIEM query, which fields are OCSF standard and which are eunox-specific extensions.
 
 ---
 

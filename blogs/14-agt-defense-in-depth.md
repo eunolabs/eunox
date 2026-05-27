@@ -4,11 +4,11 @@ _The final post in the "Architecture deep-dives" series. The previous posts cove
 
 ---
 
-One of the architectural tensions I've wrestled with throughout building euno is this: the gateway is the correct enforcement boundary. It's cryptographic, audited, and impossible for the agent to bypass as long as network controls are in place. It is, in the security architecture sense, the right place to enforce policy.
+One of the architectural tensions I've wrestled with throughout building eunox is this: the gateway is the correct enforcement boundary. It's cryptographic, audited, and impossible for the agent to bypass as long as network controls are in place. It is, in the security architecture sense, the right place to enforce policy.
 
 But "the gateway will catch it" is not the same as "we checked it." There's a real gap between a system where the agent tries to call a tool, the call hits the network, the gateway rejects it, the rejection propagates back to the agent, and the agent recovers — and a system where the agent checks whether a call is permitted _before_ invoking any of that machinery. Both enforce the policy. They have different latency, cost, and observability properties.
 
-The in-process guard (`createAgtGuard()`, part of `@euno/agent-runtime`) is the answer to that gap. It's not a replacement for the gateway. It's an additional layer that runs earlier, cheaper, and with different failure modes.
+The in-process guard (`createAgtGuard()`, part of `@eunox/agent-runtime`) is the answer to that gap. It's not a replacement for the gateway. It's an additional layer that runs earlier, cheaper, and with different failure modes.
 
 ---
 
@@ -57,7 +57,7 @@ The guard is a first line of defense against the most obvious violations, optimi
 ## The API
 
 ```typescript
-import { createAgtGuard, HttpToolTransport } from "@euno/agent-runtime";
+import { createAgtGuard, HttpToolTransport } from "@eunox/agent-runtime";
 
 const guard = createAgtGuard(
   {
@@ -134,7 +134,7 @@ import {
   createAgtGuard,
   HttpToolTransport,
   InProcessToolTransport,
-} from "@euno/agent-runtime";
+} from "@eunox/agent-runtime";
 
 // In production
 const guard = createAgtGuard(
@@ -152,7 +152,7 @@ The `InProcessToolTransport` was one of those features that seemed like a testin
 
 ## Where the guard fits in the deployment topology
 
-The guard lives inside `@euno/agent-runtime`, which is the BUSL-licensed library that wraps your AI agent framework code. The typical deployment looks like:
+The guard lives inside `@eunox/agent-runtime`, which is the BUSL-licensed library that wraps your AI agent framework code. The typical deployment looks like:
 
 ```
 Agent process (sandboxed runtime)

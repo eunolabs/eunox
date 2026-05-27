@@ -4,20 +4,20 @@ db-token-service Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "euno.fullname" . }}-db-token-service
+  name: {{ include "eunox.fullname" . }}-db-token-service
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: db-token-service
 spec:
   replicas: {{ .Values.dbTokenService.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-db-token-service
+      app.kubernetes.io/name: eunox-db-token-service
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: euno-db-token-service
+        app.kubernetes.io/name: eunox-db-token-service
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: db-token-service
     spec:
@@ -43,19 +43,19 @@ spec:
             periodSeconds: 5
           envFrom:
             - configMapRef:
-                name: {{ include "euno.fullname" . }}-db-token-service-config
+                name: {{ include "eunox.fullname" . }}-db-token-service-config
             {{- if .Values.dbTokenService.secretEnv }}
             - secretRef:
-                name: {{ include "euno.fullname" . }}-db-token-service-secret
+                name: {{ include "eunox.fullname" . }}-db-token-service-secret
             {{- end }}
           resources: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "euno.fullname" . }}-db-token-service
+  name: {{ include "eunox.fullname" . }}-db-token-service
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: db-token-service
 spec:
   type: {{ .Values.dbTokenService.service.type }}
@@ -65,15 +65,15 @@ spec:
       targetPort: http
       protocol: TCP
   selector:
-    app.kubernetes.io/name: euno-db-token-service
+    app.kubernetes.io/name: eunox-db-token-service
     app.kubernetes.io/instance: {{ .Release.Name }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "euno.fullname" . }}-db-token-service-config
+  name: {{ include "eunox.fullname" . }}-db-token-service-config
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: db-token-service
 data:
   {{- range $key, $val := .Values.dbTokenService.env }}
@@ -84,9 +84,9 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "euno.fullname" . }}-db-token-service-secret
+  name: {{ include "eunox.fullname" . }}-db-token-service-secret
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: db-token-service
 type: Opaque
 stringData:

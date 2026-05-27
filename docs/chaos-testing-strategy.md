@@ -1,13 +1,13 @@
 # Chaos Testing Strategy
 
 This document describes the chaos testing strategy, coverage matrix, and release
-gates for the Euno platform.
+gates for the Eunox platform.
 
 ---
 
 ## 1. Overview
 
-Euno includes a chaos engineering framework (`internal/chaos/`) for verifying
+Eunox includes a chaos engineering framework (`internal/chaos/`) for verifying
 system resilience under fault conditions. The framework enables deterministic,
 reproducible fault injection in unit and integration tests — ensuring that
 circuit breakers, retry logic, stale-token grace periods, and graceful

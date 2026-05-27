@@ -4,7 +4,7 @@ _Third post in the "User experience and developer ergonomics" series. [Post 9](.
 
 ---
 
-Building the enforcement engine is the architecturally interesting part of a system like euno. Writing the operator tooling — the parts that let humans intervene at runtime — is the part that decides whether the system is actually useful in a real organization.
+Building the enforcement engine is the architecturally interesting part of a system like eunox. Writing the operator tooling — the parts that let humans intervene at runtime — is the part that decides whether the system is actually useful in a real organization.
 
 I've been in incident response situations where the question is: "We believe this agent has been compromised. How do we stop it right now, and how do we prevent any tokens it may have exfiltrated from being used?" The answer to that question needs to be measured in seconds, not minutes. The tooling covered in this post is what makes that kind of rapid response possible.
 
@@ -12,7 +12,7 @@ I've been in incident response situations where the question is: "We believe thi
 
 ## The kill switch hierarchy
 
-Euno's kill switch operates at three levels of granularity. Understanding when to use each one is the key to effective incident response.
+Eunox's kill switch operates at three levels of granularity. Understanding when to use each one is the key to effective incident response.
 
 **Session-level kill** targets a specific agent session identified by its session ID. A session is a single invocation of the proxy — one process, one conversation. This is the most surgical option: it stops exactly one running agent without touching anything else.
 
@@ -207,17 +207,17 @@ When `OCSF_TRANSPORT` is configured on the gateway, these events also go to your
 
 The kill switch and revocation APIs handle the emergency response layer. SCIM handles the provisioning layer — the mechanism for automatically keeping capability grants in sync with your identity directory.
 
-SCIM 2.0 (System for Cross-domain Identity Management) is the protocol that enterprise identity providers (Okta, Azure AD, Ping Identity) use to push user and group changes to downstream systems. Euno's SCIM implementation receives these pushes and translates them into capability token policy.
+SCIM 2.0 (System for Cross-domain Identity Management) is the protocol that enterprise identity providers (Okta, Azure AD, Ping Identity) use to push user and group changes to downstream systems. Eunox's SCIM implementation receives these pushes and translates them into capability token policy.
 
 The model works like this:
 
-1. Your IdP defines groups. Groups have members. Euno has a role mapping that says "the group named `ai-ops-team` maps to the capability role `ops-agent`."
+1. Your IdP defines groups. Groups have members. Eunox has a role mapping that says "the group named `ai-ops-team` maps to the capability role `ops-agent`."
 
-2. When a new user is added to `ai-ops-team` in your IdP, the IdP pushes a SCIM CREATE User event to Euno's SCIM endpoint. Euno creates a user record with the appropriate capability role assignment.
+2. When a new user is added to `ai-ops-team` in your IdP, the IdP pushes a SCIM CREATE User event to Eunox's SCIM endpoint. Eunox creates a user record with the appropriate capability role assignment.
 
-3. When that user is later removed from the group, the IdP pushes a SCIM group membership update. Euno updates the user's role assignment. Their next token request will reflect the new (reduced) role.
+3. When that user is later removed from the group, the IdP pushes a SCIM group membership update. Eunox updates the user's role assignment. Their next token request will reflect the new (reduced) role.
 
-4. When a user is deprovisioned entirely (removed from the IdP), the IdP pushes a SCIM DELETE User event. Euno revokes any active tokens for that user and removes the user record.
+4. When a user is deprovisioned entirely (removed from the IdP), the IdP pushes a SCIM DELETE User event. Eunox revokes any active tokens for that user and removes the user record.
 
 The SCIM endpoint supports both `userName` lookup (the standard SCIM attribute) and `externalId` lookup as a fallback, because different IdPs use these fields differently. The fallback strategy means you don't have to perfectly align your IdP configuration before provisioning starts working.
 
@@ -227,7 +227,7 @@ The SCIM endpoint supports both `userName` lookup (the standard SCIM attribute) 
 
 Understanding how SCIM events translate into token lifecycle events is important for getting provisioning right.
 
-**SCIM CREATE User** — A new user appears in the directory, assigned to groups that map to euno capability roles. The user record is created in euno's user store. Their first token request will succeed if the policy for their role permits it.
+**SCIM CREATE User** — A new user appears in the directory, assigned to groups that map to eunox capability roles. The user record is created in eunox's user store. Their first token request will succeed if the policy for their role permits it.
 
 **SCIM UPDATE User / group membership change** — This is the most complex case. If the update reduces the user's role (removes a group membership), existing tokens issued under the old role continue to be valid until they expire, unless you explicitly revoke them. The SCIM update does not automatically revoke in-flight tokens — that would require a revocation epoch on any token issued before the SCIM update time.
 
@@ -239,56 +239,56 @@ This is a deliberate design choice. Automatic revocation on role change would me
 
 ## Prometheus metrics and alert examples
 
-For production deployments, euno exposes Prometheus metrics on the admin port's `/metrics` endpoint. Several of these are directly relevant to kill-switch and revocation monitoring.
+For production deployments, eunox exposes Prometheus metrics on the admin port's `/metrics` endpoint. Several of these are directly relevant to kill-switch and revocation monitoring.
 
 **Kill switch state:**
 
 ```
 # Gauge: 1 if global kill switch is active, 0 otherwise
-euno_kill_switch_global_active
+eunox_kill_switch_global_active
 
 # Gauge: number of currently killed agent IDs
-euno_kill_switch_agents_active_total
+eunox_kill_switch_agents_active_total
 
 # Gauge: number of currently killed session IDs
-euno_kill_switch_sessions_active_total
+eunox_kill_switch_sessions_active_total
 ```
 
 **Revocation:**
 
 ```
 # Counter: total token revocations recorded since startup
-euno_token_revocations_total
+eunox_token_revocations_total
 
 # Counter: total revocation epoch records set since startup
-euno_revocation_epochs_total
+eunox_revocation_epochs_total
 
 # Counter: enforcement decisions that hit the revocation list
-euno_enforcement_revoked_total
+eunox_enforcement_revoked_total
 ```
 
 **Circuit breaker state for partner DIDs (see [post 13](./13-partner-did-federation.md)):**
 
 ```
 # Gauge: per-DID circuit breaker state (0=closed, 1=half-open, 2=open)
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="open"}
+eunox_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="open"}
 ```
 
 Useful Prometheus alerting rules for a production deployment:
 
 ```yaml
 # Alert immediately when the global kill switch is activated
-- alert: EunoGlobalKillSwitchActive
-  expr: euno_kill_switch_global_active == 1
+- alert: EunoxGlobalKillSwitchActive
+  expr: eunox_kill_switch_global_active == 1
   labels:
     severity: critical
   annotations:
-    summary: "Euno global kill switch is active — all agent traffic is denied"
+    summary: "Eunox global kill switch is active — all agent traffic is denied"
     description: "Check the admin audit log to identify who activated it and why."
 
 # Alert if revocation volume spikes (may indicate a key compromise response)
-- alert: EunoRevocationSpike
-  expr: rate(euno_token_revocations_total[5m]) > 10
+- alert: EunoxRevocationSpike
+  expr: rate(eunox_token_revocations_total[5m]) > 10
   labels:
     severity: warning
   annotations:
@@ -296,8 +296,8 @@ Useful Prometheus alerting rules for a production deployment:
     description: "{{ $value }} revocations per second over the last 5 minutes."
 
 # Alert if enforcement is hitting revoked tokens at unusual volume
-- alert: EunoRevokedTokenHits
-  expr: rate(euno_enforcement_revoked_total[5m]) > 5
+- alert: EunoxRevokedTokenHits
+  expr: rate(eunox_enforcement_revoked_total[5m]) > 5
   labels:
     severity: warning
   annotations:
@@ -344,4 +344,4 @@ The operator JWT authentication (`MINTER_ADMIN_JWKS_URI`) is the recommended alt
 
 ---
 
-_Previous: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). Next: [post 22 — Reference policies: copy-paste guardrails for common MCP servers](./22-reference-policies.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
+_Previous: [post 20 — From dev to prod: the eunox CLI experience](./20-from-dev-to-prod-cli.md). Next: [post 22 — Reference policies: copy-paste guardrails for common MCP servers](./22-reference-policies.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

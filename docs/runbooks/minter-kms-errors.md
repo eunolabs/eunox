@@ -6,7 +6,7 @@
 > ≥ 1 minute.
 >
 > **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 3).
-> Use `euno_minter_kms_error_total{error_class="..."}` to break down by error class
+> Use `eunox_minter_kms_error_total{error_class="..."}` to break down by error class
 > (`sign_failed`, `auth_error`, `timeout`, `unavailable`).
 
 ## Likely causes

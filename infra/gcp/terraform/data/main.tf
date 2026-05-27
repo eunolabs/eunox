@@ -88,14 +88,14 @@ resource "google_sql_database_instance" "main" {
   }
 }
 
-resource "google_sql_database" "euno" {
-  name     = "euno"
+resource "google_sql_database" "eunox" {
+  name     = "eunox"
   project  = var.project_id
   instance = google_sql_database_instance.main.name
 }
 
-resource "google_sql_user" "euno" {
-  name     = "euno"
+resource "google_sql_user" "eunox" {
+  name     = "eunox"
   project  = var.project_id
   instance = google_sql_database_instance.main.name
   password = random_password.db_password.result
@@ -112,7 +112,7 @@ resource "google_redis_instance" "main" {
   tier           = var.redis_tier
 
   redis_version      = "REDIS_7_0"
-  display_name       = "Euno session/rate-limit cache"
+  display_name       = "Eunox session/rate-limit cache"
   authorized_network = var.network_id
 
   # TLS and AUTH are mandatory in production.
@@ -140,7 +140,7 @@ output "db_private_ip" {
 }
 
 output "gateway_db_url" {
-  value       = "postgresql://euno:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/euno?sslmode=require"
+  value       = "postgresql://eunox:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/eunox?sslmode=require"
   description = "PostgreSQL connection URL — use as AUDIT_LEDGER_PG_URL / ISSUER_DB_URL."
   sensitive   = true
 }

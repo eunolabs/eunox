@@ -1,10 +1,10 @@
-# One YAML File: The Design Philosophy Behind euno's Policy Format
+# One YAML File: The Design Philosophy Behind eunox's Policy Format
 
 _First post in the "User experience and developer ergonomics" series. [Post 16](./16-schema-parity-over-version-drift.md) in the "Design principles" series explains why the schema behind this YAML is defined exactly once and shared by every component that processes it. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that reads these files at runtime. This post is about the deliberate design choices in the format itself — why it looks the way it does, and what that makes possible for the teams writing and reviewing it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-Every time I demo euno to a new team, the thing that gets the most comments is not the gateway, not the cryptographic audit chain, not the DID federation. It's the YAML file.
+Every time I demo eunox to a new team, the thing that gets the most comments is not the gateway, not the cryptographic audit chain, not the DID federation. It's the YAML file.
 
 Not because it's clever. Because it's boring. It's just a YAML file. You open it in VS Code. You can read it without a decoder ring. You can diff two versions. You can put it in pull request review. You can copy it into a Confluence doc and your security team will understand what it says.
 
@@ -76,7 +76,7 @@ The `conditions` array narrows what an otherwise-permitted action is allowed to 
 
 ## The eight built-in condition types
 
-The conditions that ship with euno cover the situations that come up repeatedly across real deployments. I'll describe each one with the concrete scenario it solves.
+The conditions that ship with eunox cover the situations that come up repeatedly across real deployments. I'll describe each one with the concrete scenario it solves.
 
 **`maxCalls`** — rate limiting. This is the most widely used condition. An agent with `count: 100, windowSeconds: 60` can make at most 100 calls to this resource in any 60-second window. The window is sliding, not fixed. The counter is per-session in local mode, or per-tenant across all sessions in hosted mode (backed by a distributed Redis counter). See the [series index](../blog-articles.md) for the upcoming post on how that distributed counter works.
 
@@ -94,7 +94,7 @@ The conditions that ship with euno cover the situations that come up repeatedly 
   notAfter: "2026-12-31T23:59:59Z"
 ```
 
-**`ipRange`** — source IP allowlist. Useful when your agent runs from a known infrastructure range. In HTTP proxy mode, works with `--trust-forwarded-for` when a reverse proxy sits in front of euno. In production, this should be a backup defense, not your primary access control — but it adds meaningful defense in depth.
+**`ipRange`** — source IP allowlist. Useful when your agent runs from a known infrastructure range. In HTTP proxy mode, works with `--trust-forwarded-for` when a reverse proxy sits in front of eunox. In production, this should be a backup defense, not your primary access control — but it adds meaningful defense in depth.
 
 ```yaml
 - type: ipRange
@@ -189,9 +189,9 @@ The audit log (covered in [post 11](./11-tamper-evident-audit-logs.md)) records 
 
 The intended workflow is:
 
-1. Developer writes or modifies `euno.policy.yaml` in the agent's repo.
+1. Developer writes or modifies `eunox.policy.yaml` in the agent's repo.
 2. PR is submitted. Security team reviews the diff.
-3. On merge and deploy, the manifest is loaded by `euno-mcp proxy --policy ./euno.policy.yaml` (local mode) or uploaded to the hosted policy store (hosted mode). Either way, the `version` field in the file records which commit this corresponds to.
+3. On merge and deploy, the manifest is loaded by `eunox-mcp proxy --policy ./eunox.policy.yaml` (local mode) or uploaded to the hosted policy store (hosted mode). Either way, the `version` field in the file records which commit this corresponds to.
 
 This is different from the traditional "policy database" approach where policies are rows in a table updated by an admin console. Tables are hard to diff and review. The YAML-in-git approach makes the policy as reviewable and auditable as the code itself.
 
@@ -215,7 +215,7 @@ The [`capability-manifest-guide.md`](../capability-manifest-guide.md) in the doc
 
 I want to address the failure modes because understanding them makes you a better policy author.
 
-If the YAML fails schema validation, `euno-mcp proxy` exits immediately with a clear error message — it will not start in an unknown state. The error messages from the validator are designed to be human-readable: "Required field 'actions' missing from capability at index 2" rather than a raw Zod error.
+If the YAML fails schema validation, `eunox-mcp proxy` exits immediately with a clear error message — it will not start in an unknown state. The error messages from the validator are designed to be human-readable: "Required field 'actions' missing from capability at index 2" rather than a raw Zod error.
 
 If a condition type is unrecognized, the manifest validation fails. There's no "soft ignore" path. If you spell `allowedOpetations` (note the typo), the validator tells you `"allowedOpetations" is not a recognized condition type` and exits. The fail-closed principle from [post 15](./15-fail-closed-not-fail-open.md) applies to policy authoring as well as runtime enforcement: a malformed policy doesn't produce a permissive agent, it produces a non-starting agent.
 
@@ -225,7 +225,7 @@ If the `argumentSchema` pattern is invalid regex, validation fails at startup. I
 
 ## The thing I hear most often
 
-When I talk to teams that have deployed euno, the feedback I hear most consistently is: "we were surprised how quickly the security team got comfortable reviewing it."
+When I talk to teams that have deployed eunox, the feedback I hear most consistently is: "we were surprised how quickly the security team got comfortable reviewing it."
 
 That's what the format was designed to produce. Not a document that security teams rubber-stamp because they can't read it. A document they can actually reason about. One that makes the approval conversation productive rather than ceremonial.
 
@@ -233,4 +233,4 @@ The YAML file is boring on purpose. Boring is what scales.
 
 ---
 
-_Previous: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). Next: [post 20 — From dev to prod: the euno CLI experience](./20-from-dev-to-prod-cli.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
+_Previous: [post 18 — Defense-in-depth for SQL injection through an LLM](./18-defense-in-depth-sql-injection.md). Next: [post 20 — From dev to prod: the eunox CLI experience](./20-from-dev-to-prod-cli.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

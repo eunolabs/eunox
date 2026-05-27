@@ -6,7 +6,7 @@
 > tenant exceeds 50% over 5 minutes.
 >
 > **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 4); also fires via
-> `euno_minter_anomaly_alerts_total{rule="failure_clustering"}` for sub-minute in-process detection.
+> `eunox_minter_anomaly_alerts_total{rule="failure_clustering"}` for sub-minute in-process detection.
 
 ## Likely causes
 

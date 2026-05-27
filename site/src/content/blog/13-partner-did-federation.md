@@ -1,6 +1,6 @@
 ---
 title: "Partner DID Federation: Cross-Org Trust Without Shared Secrets"
-description: "Part of the \"Architecture deep-dives\" series. [Post 12](./12-pluggable-adapters.md) covered the pluggable identity and signing adapters. This post goes into the cross-organization federation scenario — what happens when the agent presenting a capability token was issued by a *different* organization's issuer, not your own."
+description: 'Part of the "Architecture deep-dives" series. [Post 12](./12-pluggable-adapters.md) covered the pluggable identity and signing adapters. This post goes into the cross-organization federation scenario — what happens when the agent presenting a capability token was issued by a *different* organization''s issuer, not your own.'
 pubDate: "2026-06-01"
 ---
 
@@ -8,7 +8,7 @@ pubDate: "2026-06-01"
 
 ---
 
-Here's a scenario that comes up in enterprise accounts more often than I expected: two companies want their AI agents to collaborate. Company A runs its own euno capability issuer. Company B runs its own. An agent from Company B needs to make tool calls against a resource that Company A's gateway protects. How does Company A's gateway trust Company B's tokens?
+Here's a scenario that comes up in enterprise accounts more often than I expected: two companies want their AI agents to collaborate. Company A runs its own eunox capability issuer. Company B runs its own. An agent from Company B needs to make tool calls against a resource that Company A's gateway protects. How does Company A's gateway trust Company B's tokens?
 
 The naive answer is: exchange API keys. Give Company B a credential that Company A's gateway accepts. This works for a pilot. It falls apart at scale — key rotation becomes a coordination problem, a compromised key at Company B is Company A's problem too, and the blast radius of any single leaked credential spans both organizations.
 
@@ -53,7 +53,7 @@ X-Admin-Operator: alice@example.com
 Body: { "did": "did:web:partner.example.com" }
 ```
 
-This creates the proposal but does *not* activate it. A different operator (different identity from `alice@example.com`) must then approve:
+This creates the proposal but does _not_ activate it. A different operator (different identity from `alice@example.com`) must then approve:
 
 ```
 POST /admin/partner-dids/proposals/did:web:partner.example.com/approve
@@ -85,21 +85,21 @@ Pin attestation is **mandatory for production partner registrations**. Developme
 
 ## Per-DID circuit breakers
 
-DID resolution involves a network call — fetching the `did.json` over HTTPS, or querying an ION node. Like any network call, it can fail. An upstream partner's server might be slow, their DNS might have a TTL anomaly, the ION node might be unreachable. None of these failure modes should cause euno's gateway to start accepting everything (fail-open) or rejecting everything (fail-closed gateway for all tenants).
+DID resolution involves a network call — fetching the `did.json` over HTTPS, or querying an ION node. Like any network call, it can fail. An upstream partner's server might be slow, their DNS might have a TTL anomaly, the ION node might be unreachable. None of these failure modes should cause eunox's gateway to start accepting everything (fail-open) or rejecting everything (fail-closed gateway for all tenants).
 
 The solution is a per-DID circuit breaker. Each partner DID has its own circuit breaker state (`closed`, `open`, `half-open`) tracked independently. When a DID resolution fails:
 
 - If the failure looks like a **fault** (network timeout, DNS failure, HTTP 5xx from the DID hosting server) — it counts against the circuit breaker failure threshold. After `PARTNER_DID_CB_FAILURE_THRESHOLD` failures within `PARTNER_DID_CB_WINDOW_MS`, the circuit opens. While open, resolution fails immediately without a network call, and tokens with that `iss` are rejected.
 
-- If the failure looks like a **non-fault error** (signature verification failed, pin mismatch, malformed DID document) — it does *not* count against the circuit breaker. This is a deliberate design choice.
+- If the failure looks like a **non-fault error** (signature verification failed, pin mismatch, malformed DID document) — it does _not_ count against the circuit breaker. This is a deliberate design choice.
 
 That second rule is important, so let me explain the reasoning. A signature verification failure means the DID document resolved successfully but the token's signature is invalid. That's not a flaky network — that's either a legitimate rejection or an active attack. Tripping the circuit breaker on signature failures would let an attacker knock out a partner's token acceptance by sending a stream of malformed tokens. The circuit breaker is a reliability mechanism against infrastructure instability, not a rate limiter for bad tokens.
 
 The circuit breaker state is exported as a Prometheus gauge:
 
 ```
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="closed"} 1
-euno_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="open"} 0
+eunox_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="closed"} 1
+eunox_partner_did_circuit_breaker_state{did="did:web:partner.example.com", state="open"} 0
 ```
 
 An alert on `state="open"` persisting for more than one minute is a reasonable starting threshold. You want to know about it; you also don't want to page someone for a transient blip that the circuit breaker recovers from on its own.
@@ -180,9 +180,9 @@ The audit event for a revocation fires a `PARTNER_DID_REVOKED` record in the OCS
 
 ## The non-goal: transitive trust
 
-One design decision I want to be explicit about, because it's occasionally pushed back on: euno's partner federation model does not support transitive trust.
+One design decision I want to be explicit about, because it's occasionally pushed back on: eunox's partner federation model does not support transitive trust.
 
-If Company A trusts Company B, and Company B trusts Company C, that does *not* mean Company A's gateway trusts Company C. Company C must be explicitly registered in Company A's `PartnerDidRegistry` through the two-eyes workflow. There is no automatic inference of trust.
+If Company A trusts Company B, and Company B trusts Company C, that does _not_ mean Company A's gateway trusts Company C. Company C must be explicitly registered in Company A's `PartnerDidRegistry` through the two-eyes workflow. There is no automatic inference of trust.
 
 This is intentional and it has a clear security property: the set of trusted issuers is always explicit, auditable, and requires deliberate human action to expand. There is no path by which an attacker who compromises a trusted partner can use that relationship to bootstrap trust for an additional entity. See [post 17 in this series](../blog-articles.md#design-principles) for a longer treatment of why declarative-not-transitive is the right model for cross-org AI agent governance.
 
@@ -196,4 +196,4 @@ There's a third DID method we support: `did:key`. These are self-describing DIDs
 
 ---
 
-*Previous: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md). Next: [post 14 — AGT: defense in depth inside the agent process](./14-agt-defense-in-depth.md).*
+_Previous: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md). Next: [post 14 — AGT: defense in depth inside the agent process](./14-agt-defense-in-depth.md)._

@@ -491,14 +491,14 @@ that deletes rows creates a detectable gap in the Merkle chain.
 The minter exposes the following Prometheus metrics (consistent with the naming convention
 in `pkg//src/metrics.ts`):
 
-| Metric                                 | Type      | Labels                                     | Description                                                                          |
-| -------------------------------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `euno_minter_mint_total`               | Counter   | `tenant`, `result` (`ok`/`denied`/`error`) | Total mint calls                                                                     |
-| `euno_minter_mint_latency_seconds`     | Histogram | `tenant`                                   | End-to-end mint latency                                                              |
-| `euno_minter_kms_sign_latency_seconds` | Histogram | `provider`                                 | HSM sign latency                                                                     |
-| `euno_minter_kms_error_total`          | Counter   | `provider`, `error_class`                  | KMS errors                                                                           |
-| `euno_minter_anomaly_alerts_total`     | Counter   | `tenant`, `rule`, `replica`                | Times an anomaly rule fired (`replica` label for per-instance discrepancy detection) |
-| `euno_minter_key_rotation_total`       | Counter   | `kid`, `reason`                            | Key rotations (scheduled / emergency)                                                |
+| Metric                                  | Type      | Labels                                     | Description                                                                          |
+| --------------------------------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `eunox_minter_mint_total`               | Counter   | `tenant`, `result` (`ok`/`denied`/`error`) | Total mint calls                                                                     |
+| `eunox_minter_mint_latency_seconds`     | Histogram | `tenant`                                   | End-to-end mint latency                                                              |
+| `eunox_minter_kms_sign_latency_seconds` | Histogram | `provider`                                 | HSM sign latency                                                                     |
+| `eunox_minter_kms_error_total`          | Counter   | `provider`, `error_class`                  | KMS errors                                                                           |
+| `eunox_minter_anomaly_alerts_total`     | Counter   | `tenant`, `rule`, `replica`                | Times an anomaly rule fired (`replica` label for per-instance discrepancy detection) |
+| `eunox_minter_key_rotation_total`       | Counter   | `kid`, `reason`                            | Key rotations (scheduled / emergency)                                                |
 
 ### Alerting rules
 
@@ -512,8 +512,8 @@ are tested against a synthetic test tenant.
 # Fires when a single tenant's mint rate exceeds 10× its 1-hour rolling average.
 alert: MinterRateSpike
 expr: |
-  sum by (tenant) (rate(euno_minter_mint_total{result="ok"}[5m]))
-  > 10 * sum by (tenant) (avg_over_time(rate(euno_minter_mint_total{result="ok"}[5m])[1h:5m]))
+  sum by (tenant) (rate(eunox_minter_mint_total{result="ok"}[5m]))
+  > 10 * sum by (tenant) (avg_over_time(rate(eunox_minter_mint_total{result="ok"}[5m])[1h:5m]))
 for: 2m
 labels:
   severity: critical
@@ -529,9 +529,9 @@ annotations:
 alert: MinterOffHoursMint
 expr: |
   (
-    sum by (tenant) (increase(euno_minter_mint_total{result="ok"}[5m])) > 0
+    sum by (tenant) (increase(eunox_minter_mint_total{result="ok"}[5m])) > 0
     and on(tenant) (
-      sum by (tenant) (increase(euno_minter_mint_total{result="ok"}[7d])) < 10
+      sum by (tenant) (increase(eunox_minter_mint_total{result="ok"}[7d])) < 10
     )
   )
   and (hour() >= 22 or hour() < 6)
@@ -548,7 +548,7 @@ annotations:
 ```yaml
 # Fires when more than 5 KMS errors occur in 1 minute summed across all providers.
 alert: MinterKmsErrorCluster
-expr: sum(rate(euno_minter_kms_error_total[1m])) > 5
+expr: sum(rate(eunox_minter_kms_error_total[1m])) > 5
 for: 1m
 labels:
   severity: critical
@@ -564,9 +564,9 @@ annotations:
 # which may indicate a credential stuffing or API-key enumeration attack.
 alert: MinterHighFailureRate
 expr: |
-  sum by (tenant) (rate(euno_minter_mint_total{result=~"denied|error"}[5m]))
+  sum by (tenant) (rate(eunox_minter_mint_total{result=~"denied|error"}[5m]))
   /
-  sum by (tenant) (rate(euno_minter_mint_total[5m]))
+  sum by (tenant) (rate(eunox_minter_mint_total[5m]))
   > 0.5
 for: 2m
 labels:
@@ -581,7 +581,7 @@ annotations:
 ```yaml
 # Fires immediately when an emergency key rotation is recorded.
 alert: MinterEmergencyKeyRotation
-expr: increase(euno_minter_key_rotation_total{reason="emergency"}[5m]) > 0
+expr: increase(eunox_minter_key_rotation_total{reason="emergency"}[5m]) > 0
 for: 0m
 labels:
   severity: critical
@@ -600,13 +600,13 @@ annotations:
 alert: MinterAnomalyReplicaSkew
 expr: |
   (
-    sum by (replica) (rate(euno_minter_anomaly_alerts_total[10m]))
+    sum by (replica) (rate(eunox_minter_anomaly_alerts_total[10m]))
   )
   < 0.5 * avg(
-      sum by (replica) (rate(euno_minter_anomaly_alerts_total[10m]))
+      sum by (replica) (rate(eunox_minter_anomaly_alerts_total[10m]))
     )
   and
-  sum(rate(euno_minter_anomaly_alerts_total[10m])) > 0.01
+  sum(rate(eunox_minter_anomaly_alerts_total[10m])) > 0.01
 for: 5m
 labels:
   severity: warning
@@ -625,7 +625,7 @@ annotations:
 >    `RedisAnomalyDetector` (`src/redis-anomaly-detector.ts`), which stores
 >    bucket state in Redis hashes so all replicas share a coherent view.
 >    HINCRBY ensures atomic increments with no write contention.
-> 2. **Per-replica label:** `euno_minter_anomaly_alerts_total` carries a
+> 2. **Per-replica label:** `eunox_minter_anomaly_alerts_total` carries a
 >    `replica` label (set from `MINTER_REPLICA_ID` env var or `os.hostname()`).
 >    The `MinterAnomalyReplicaSkew` Prometheus alert fires when one replica's
 >    anomaly rate significantly diverges from the fleet average, making

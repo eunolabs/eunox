@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------
-# Euno Capability-Native Agent Governance — GCP Terraform deployment
+# Eunox Capability-Native Agent Governance — GCP Terraform deployment
 # ----------------------------------------------------------------------------
 #
 # Sprint-1 multi-cloud parity for `infra/bicep/main.bicep`.  Provisions every
@@ -8,7 +8,7 @@
 #   * Cloud Logging log bucket  (parity with Log Analytics Workspace)
 #   * Cloud KMS asymmetric signing key  (parity with Key Vault RSA key)
 #   * Identity Platform tenant inputs (parity with Azure AD app registration —
-#     consumed by GCPIdentityProvider in @euno/capability-issuer)
+#     consumed by GCPIdentityProvider in @eunox/capability-issuer)
 #   * Workload Identity Federation binding for the Capability Issuer
 #     ServiceAccount (parity with Azure user-assigned managed identity)
 #   * Service account for Tool Gateway with Cloud Logging write permission
@@ -47,14 +47,14 @@ provider "google" {
 # Inputs
 # ---------------------------------------------------------------------------
 variable "project_id" {
-  description = "GCP project ID hosting the Euno deployment."
+  description = "GCP project ID hosting the Eunox deployment."
   type        = string
 }
 
 variable "name_prefix" {
   description = "Short prefix used to name all resources (3-12 lowercase chars)."
   type        = string
-  default     = "euno"
+  default     = "eunox"
   validation {
     condition     = length(var.name_prefix) >= 3 && length(var.name_prefix) <= 12
     error_message = "name_prefix must be 3-12 characters."
@@ -77,7 +77,7 @@ variable "labels" {
   description = "Labels applied to all resources."
   type        = map(string)
   default = {
-    product   = "euno"
+    product   = "eunox"
     component = "capability-governance"
   }
 }
@@ -226,7 +226,7 @@ resource "google_logging_project_bucket_config" "runtime" {
   location       = var.gcp_region
   retention_days = var.log_retention_days
   bucket_id      = local.log_bucket_name
-  description    = "Euno runtime logs (parity with Azure Log Analytics)."
+  description    = "Eunox runtime logs (parity with Azure Log Analytics)."
 }
 
 resource "google_logging_project_bucket_config" "audit" {
@@ -234,14 +234,14 @@ resource "google_logging_project_bucket_config" "audit" {
   location       = var.gcp_region
   retention_days = var.log_retention_days
   bucket_id      = local.audit_log_bucket
-  description    = "Euno audit logs (logType=audit) — used by SCC custom modules."
+  description    = "Eunox audit logs (logType=audit) — used by SCC custom modules."
 }
 
 # Sink the audit-tagged logs into the dedicated bucket.
 resource "google_logging_project_sink" "audit" {
   name        = "${var.name_prefix}-audit-sink"
   destination = "logging.googleapis.com/projects/${var.project_id}/locations/${var.gcp_region}/buckets/${local.audit_log_bucket}"
-  # jsonPayload.logType is set by createAuditLogger() in @euno/common.
+  # jsonPayload.logType is set by createAuditLogger() in @eunox/common.
   filter                 = "jsonPayload.logType=\"audit\""
   unique_writer_identity = true
   depends_on             = [google_logging_project_bucket_config.audit]
@@ -275,7 +275,7 @@ resource "google_kms_crypto_key" "capability_signing" {
 resource "google_artifact_registry_repository" "images" {
   location      = var.gcp_region
   repository_id = local.artifact_repo
-  description   = "Euno service container images."
+  description   = "Eunox service container images."
   format        = "DOCKER"
   labels        = local.common_labels
   depends_on    = [google_project_service.required]
@@ -287,13 +287,13 @@ resource "google_artifact_registry_repository" "images" {
 # ---------------------------------------------------------------------------
 resource "google_service_account" "issuer" {
   account_id   = local.issuer_sa_id
-  display_name = "Euno Capability Issuer"
+  display_name = "Eunox Capability Issuer"
   description  = "Used by capability-issuer pods via GKE Workload Identity."
 }
 
 resource "google_service_account" "gateway" {
   account_id   = local.gateway_sa_id
-  display_name = "Euno Tool Gateway"
+  display_name = "Eunox Tool Gateway"
   description  = "Used by tool-gateway pods via GKE Workload Identity."
 }
 
@@ -341,13 +341,13 @@ resource "google_project_iam_member" "gateway_logging" {
 resource "google_service_account_iam_member" "issuer_wi" {
   service_account_id = google_service_account.issuer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[euno-system/capability-issuer]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[eunox-system/capability-issuer]"
 }
 
 resource "google_service_account_iam_member" "gateway_wi" {
   service_account_id = google_service_account.gateway.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[euno-system/tool-gateway]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[eunox-system/tool-gateway]"
 }
 
 # Allow either workload to pull images from Artifact Registry.
@@ -453,15 +453,15 @@ resource "google_pubsub_topic" "scc_findings" {
   depends_on = [google_project_service.required]
 }
 
-resource "google_scc_notification_config" "euno" {
+resource "google_scc_notification_config" "eunox" {
   count        = var.enable_scc_notification ? 1 : 0
   config_id    = "${var.name_prefix}-findings"
   organization = var.scc_organization_id
-  description  = "Euno capability-governance findings → Pub/Sub for alerting."
+  description  = "Eunox capability-governance findings → Pub/Sub for alerting."
   pubsub_topic = google_pubsub_topic.scc_findings.id
 
   streaming_config {
-    filter = "category=\"EUNO_DENIAL_SPIKE\" OR category=\"EUNO_INVALID_TOKEN_BURST\" OR category=\"EUNO_KILL_SWITCH\""
+    filter = "category=\"EUNOX_DENIAL_SPIKE\" OR category=\"EUNOX_INVALID_TOKEN_BURST\" OR category=\"EUNOX_KILL_SWITCH\""
   }
 }
 

@@ -34,7 +34,7 @@
 #   kind: HorizontalPodAutoscaler
 #   metadata:
 #     name: gateway-hpa
-#     namespace: euno-system
+#     namespace: eunox-system
 #   spec:
 #     scaleTargetRef:
 #       apiVersion: apps/v1
@@ -49,7 +49,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: issuer-pdb
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
     component: control-plane
@@ -64,7 +64,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: issuer-hpa
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
     component: control-plane
@@ -111,7 +111,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: gateway-pdb
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
     component: data-plane

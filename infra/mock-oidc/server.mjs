@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 
 const PORT = parseInt(process.env.PORT || '3003', 10);
 const ISSUER = (process.env.MOCK_OIDC_ISSUER || `http://mock-oidc:${PORT}`).replace(/\/$/, '');
-const CLIENT_ID = process.env.MOCK_OIDC_CLIENT_ID || 'euno-smoke-client';
+const CLIENT_ID = process.env.MOCK_OIDC_CLIENT_ID || 'eunox-smoke-client';
 const KID = 'mock-oidc-key-1';
 
 // ── Key generation ───────────────────────────────────────────────────────────

@@ -107,16 +107,16 @@ aws iam create-role \
 # KMS signing (attach if SIGNING_PROVIDER=aws-kms)
 aws iam attach-role-policy \
   --role-name eunox-issuer-role \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoKmsSigningPolicy
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoxKmsSigningPolicy
 
 # Secrets Manager read (attach if using ASCP or if the app reads directly)
 aws iam attach-role-policy \
   --role-name eunox-issuer-role \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoSecretsReadPolicy
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoxSecretsReadPolicy
 ```
 
-See [`docs/secrets-aws.md`](./secrets-aws.md) §3 for the `EunoSecretsReadPolicy`
-(`§3.1`) and `EunoKmsSigningPolicy` (`§3.2`) IAM policy documents.
+See [`docs/secrets-aws.md`](./secrets-aws.md) §3 for the `EunoxSecretsReadPolicy`
+(`§3.1`) and `EunoxKmsSigningPolicy` (`§3.2`) IAM policy documents.
 
 ### 3.2 `tool-gateway` IAM role
 
@@ -152,16 +152,16 @@ aws iam create-role \
 
 aws iam attach-role-policy \
   --role-name eunox-gateway-role \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoKmsSigningPolicy
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoxKmsSigningPolicy
 
 aws iam attach-role-policy \
   --role-name eunox-gateway-role \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoSecretsReadPolicy
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoxSecretsReadPolicy
 
 # S3 anchor (attach only if ENABLE_CROSS_CHAIN_ANCHOR=true)
 aws iam attach-role-policy \
   --role-name eunox-gateway-role \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoS3AnchorPolicy
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EunoxS3AnchorPolicy
 ```
 
 ### 3.3 Annotate Kubernetes ServiceAccounts
@@ -219,7 +219,7 @@ set -euo pipefail
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?set AWS_ACCOUNT_ID}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-EUNO_VERSION="${EUNO_VERSION:-1.0.0}"
+EUNOX_VERSION="${EUNOX_VERSION:-1.0.0}"
 
 IMAGES=(
   tool-gateway
@@ -234,8 +234,8 @@ aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
 for img in "${IMAGES[@]}"; do
-  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNO_VERSION}"
-  DST="${ECR_REGISTRY}/eunox/${img}:${EUNO_VERSION}"
+  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNOX_VERSION}"
+  DST="${ECR_REGISTRY}/eunox/${img}:${EUNOX_VERSION}"
   docker pull "${SRC}"
   docker tag  "${SRC}" "${DST}"
   docker push "${DST}"
@@ -487,11 +487,11 @@ spec:
         metric_declarations:
           - dimensions: [[ClusterName, Namespace]]
             metric_name_selectors:
-              - "euno_capability_tokens_issued_total"
-              - "euno_audit_events_total"
-              - "euno_tool_calls_denied_total"
-              - "euno_cross_chain_anchor_lag_seconds"
-              - "euno_partner_did_circuit_breaker_state"
+              - "eunox_capability_tokens_issued_total"
+              - "eunox_audit_events_total"
+              - "eunox_tool_calls_denied_total"
+              - "eunox_cross_chain_anchor_lag_seconds"
+              - "eunox_partner_did_circuit_breaker_state"
 
     service:
       pipelines:
@@ -503,13 +503,13 @@ spec:
 
 Key eunox metrics forwarded to CloudWatch:
 
-| Metric                                   | Description                       | CloudWatch dimension       |
-| ---------------------------------------- | --------------------------------- | -------------------------- |
-| `euno_capability_tokens_issued_total`    | Tokens issued per tenant          | `ClusterName`, `Namespace` |
-| `euno_audit_events_total`                | Signed audit events per tool      | `ClusterName`, `Namespace` |
-| `euno_tool_calls_denied_total`           | Denials per `denial_reason` label | `ClusterName`, `Namespace` |
-| `euno_cross_chain_anchor_lag_seconds`    | S3 anchor write lag               | `ClusterName`, `Namespace` |
-| `euno_partner_did_circuit_breaker_state` | ION circuit breaker state         | `ClusterName`, `Namespace` |
+| Metric                                    | Description                       | CloudWatch dimension       |
+| ----------------------------------------- | --------------------------------- | -------------------------- |
+| `eunox_capability_tokens_issued_total`    | Tokens issued per tenant          | `ClusterName`, `Namespace` |
+| `eunox_audit_events_total`                | Signed audit events per tool      | `ClusterName`, `Namespace` |
+| `eunox_tool_calls_denied_total`           | Denials per `denial_reason` label | `ClusterName`, `Namespace` |
+| `eunox_cross_chain_anchor_lag_seconds`    | S3 anchor write lag               | `ClusterName`, `Namespace` |
+| `eunox_partner_did_circuit_breaker_state` | ION circuit breaker state         | `ClusterName`, `Namespace` |
 
 ### 7.2 OCSF audit events → Security Hub findings
 
@@ -631,9 +631,9 @@ fields @timestamp, evidence.agentId, evidence.outcome
 #### Audit lag monitoring (cross-chain anchor)
 
 ```
-fields @timestamp, euno_cross_chain_anchor_lag_seconds
-| filter ispresent(euno_cross_chain_anchor_lag_seconds)
-| stats max(euno_cross_chain_anchor_lag_seconds) as max_lag_s by bin(5m)
+fields @timestamp, eunox_cross_chain_anchor_lag_seconds
+| filter ispresent(eunox_cross_chain_anchor_lag_seconds)
+| stats max(eunox_cross_chain_anchor_lag_seconds) as max_lag_s by bin(5m)
 | sort @timestamp desc
 ```
 
@@ -742,7 +742,7 @@ is set in the pod environment.
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EunoS3Anchor",
+      "Sid": "EunoxS3Anchor",
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:PutObjectRetention"],
       "Resource": "arn:aws:s3:::eunox-prod-audit-anchors/*"

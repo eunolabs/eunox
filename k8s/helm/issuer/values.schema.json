@@ -12,7 +12,7 @@
           "type": "string",
           "description": "Deployment environment. Used by logging and CORS to pick safe defaults."
         },
-        "EUNO_DEPLOYMENT_TIER": {
+        "EUNOX_DEPLOYMENT_TIER": {
           "type": "string",
           "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover."
         },
@@ -290,7 +290,7 @@
         },
         "ISSUER_REGION": {
           "type": "string",
-          "description": "Logical region tag for this issuer instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
+          "description": "Logical region tag for this issuer instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`eunox.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
         },
         "GATEWAY_AUDIENCE": {
           "type": "string",
@@ -298,7 +298,7 @@
         },
         "OCSF_TRANSPORT": {
           "type": "string",
-          "description": "Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: \"stdout\" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), \"file\" (append to OCSF_FILE_PATH), \"http\" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser."
+          "description": "Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: \"stdout\" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), \"file\" (append to OCSF_FILE_PATH), \"http\" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry emitted by the issuer is mirrored as an OCSF v1.1 Authorization (3003) event so any SIEM that speaks OCSF can ingest without writing a Eunox-specific parser."
         },
         "OCSF_FILE_PATH": {
           "type": "string",
@@ -322,7 +322,7 @@
         },
         "TRANSPARENCY_LOG_ID": {
           "type": "string",
-          "description": "Stable identifier of this issuer's transparency log (e.g. \"euno-prod-log-1\"). Required when TRANSPARENCY_LOG_ENABLED=true. Stamped on every SCT and used by the gateway to look up the log's trusted JWKS."
+          "description": "Stable identifier of this issuer's transparency log (e.g. \"eunox-prod-log-1\"). Required when TRANSPARENCY_LOG_ENABLED=true. Stamped on every SCT and used by the gateway to look up the log's trusted JWKS."
         },
         "TRANSPARENCY_LOG_KEY_KID": {
           "type": "string",
@@ -356,7 +356,7 @@
           "type": "string",
           "description": "Comma-separated list of host[:port] entries for which the did:web resolver is permitted to use plain HTTP instead of HTTPS. Default empty (HTTPS-only, fail-closed). Intended exclusively for local docker-compose / CI harnesses that cannot terminate TLS. MUST NOT be set in production. Example: partner-sim.local:4001,localhost:4002"
         },
-        "EUNO_DEPLOYMENT_REGION": {
+        "EUNOX_DEPLOYMENT_REGION": {
           "type": "string",
           "description": "Legacy alias for ISSUER_REGION. Provides the logical region tag for this issuer instance. ISSUER_REGION takes precedence when both are set. New deployments should use ISSUER_REGION instead."
         },

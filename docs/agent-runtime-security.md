@@ -1,7 +1,7 @@
 # Agent Runtime Security Model
 
 This document describes the security model, sandbox isolation boundaries, and
-blast radius containment mechanisms for the Euno agent runtime
+blast radius containment mechanisms for the Eunox agent runtime
 (`internal/agentruntime/`).
 
 ---
@@ -10,7 +10,7 @@ blast radius containment mechanisms for the Euno agent runtime
 
 The agent runtime is an embeddable Go library that AI agent frameworks (e.g.,
 LangChain, CrewAI) use to acquire capability tokens, generate DPoP proofs, and
-invoke tools through the Euno Tool Gateway. It operates under a **zero ambient
+invoke tools through the Eunox Tool Gateway. It operates under a **zero ambient
 authority** principle: an agent starts with no access and must prove possession
 of a valid, scoped capability token for every side-effecting operation.
 
@@ -120,20 +120,20 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      euno.io/role: agent
+      eunox.io/role: agent
   policyTypes: ["Egress"]
   egress:
     - to:
         - podSelector:
             matchLabels:
-              euno.io/role: gateway
+              eunox.io/role: gateway
       ports:
         - port: 3002
           protocol: TCP
     - to:
         - podSelector:
             matchLabels:
-              euno.io/role: issuer
+              eunox.io/role: issuer
       ports:
         - port: 3001
           protocol: TCP

@@ -1,10 +1,10 @@
 ---
 title: "Defense-in-Depth for SQL Injection Through an LLM"
-description: "Fourth and final post in the \"Design principles\" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../../blogs/03-agent-governance-failure-modes.md) (in the \"Why AI agents need guardrails\" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Fourth and final post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../../blogs/03-agent-governance-failure-modes.md) (in the "Why AI agents need guardrails" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-06"
 ---
 
-*Fourth and final post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../../blogs/03-agent-governance-failure-modes.md) (in the "Why AI agents need guardrails" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fourth and final post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle. [Post 3](../../blogs/03-agent-governance-failure-modes.md) (in the "Why AI agents need guardrails" series) walked through what goes wrong when you skip governance entirely. This post gets specific about one of the most dangerous failure modes: an LLM being manipulated into issuing SQL that your MCP database tool passes straight through to the database. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -42,7 +42,7 @@ You need defenses that operate at the SQL string level, before it reaches the da
 
 ## The five layers
 
-I'm going to walk through euno's layered defense against this attack vector in detail, including what each layer actually catches and what it doesn't. I want to be honest about the limitations rather than overselling the protection. A system that claims complete SQL injection prevention through AI is lying to you.
+I'm going to walk through eunox's layered defense against this attack vector in detail, including what each layer actually catches and what it doesn't. I want to be honest about the limitations rather than overselling the protection. A system that claims complete SQL injection prevention through AI is lying to you.
 
 The five layers:
 
@@ -72,11 +72,13 @@ capabilities:
 ...the enforcement engine extracts the first whitespace-delimited token from the SQL argument, uppercases it, and checks it against the allowlist. The extraction function looks for the SQL in a few common argument keys — `sql`, `query`, or `statement` — and takes the first matching one:
 
 ```typescript
-function extractSqlOperation(args: Record<string, unknown>): string | undefined {
-  const candidates = ['sql', 'query', 'statement'];
+function extractSqlOperation(
+  args: Record<string, unknown>,
+): string | undefined {
+  const candidates = ["sql", "query", "statement"];
   for (const key of candidates) {
     const val = args[key];
-    if (typeof val === 'string' && val.trim().length > 0) {
+    if (typeof val === "string" && val.trim().length > 0) {
       const verb = val.trim().split(/\s+/)[0]?.toUpperCase();
       if (verb) return verb;
     }
@@ -88,6 +90,7 @@ function extractSqlOperation(args: Record<string, unknown>): string | undefined 
 This catches the obvious cases. `DROP TABLE users` starts with `DROP`, which isn't in `["SELECT", "EXPLAIN"]`, so the call is denied. `INSERT INTO users...` starts with `INSERT`, denied. `DELETE FROM users...` starts with `DELETE`, denied. For agents whose legitimate workloads are purely read queries, this eliminates a large class of mutation attempts.
 
 **What it catches:**
+
 - Direct mutation SQL: `DROP TABLE`, `DELETE FROM`, `INSERT INTO`, `UPDATE`, `CREATE TABLE`, `ALTER TABLE`, `TRUNCATE`
 - Any query that starts with a verb not in the allowlist
 
@@ -136,9 +139,10 @@ capabilities:
       additionalProperties: false
 ```
 
-The `pattern` field in `ArgumentSchema` is a JavaScript regex pattern that the value must fully match. `'^(SELECT|EXPLAIN)\s'` anchors to the start of the string, requires the string to begin with either `SELECT` or `EXPLAIN` followed by whitespace. This gives you a second, independent gate that evaluates the regex pattern *before* the condition registry evaluates `allowedOperations`.
+The `pattern` field in `ArgumentSchema` is a JavaScript regex pattern that the value must fully match. `'^(SELECT|EXPLAIN)\s'` anchors to the start of the string, requires the string to begin with either `SELECT` or `EXPLAIN` followed by whitespace. This gives you a second, independent gate that evaluates the regex pattern _before_ the condition registry evaluates `allowedOperations`.
 
 **What this adds over Layer 1:**
+
 - The `allowedOperations` check extracts the first word. The `pattern` check evaluates the entire regex against the full query. A query like `SELECT id FROM t; DROP TABLE users` passes the `allowedOperations` first-word check but would not pass a pattern that anchors to the start and rejects semicolons:
 
 ```yaml
@@ -161,13 +165,14 @@ The pattern is also a capability-level constraint, not a database-level constrai
 
 ## Layer 3: Disable multi-statement execution in the database driver
 
-This is the layer that closes the semicolon-chaining bypass from Layer 1. The fix is in the upstream MCP server configuration, not in euno's policy engine — but it's part of the defense-in-depth posture and worth describing explicitly.
+This is the layer that closes the semicolon-chaining bypass from Layer 1. The fix is in the upstream MCP server configuration, not in eunox's policy engine — but it's part of the defense-in-depth posture and worth describing explicitly.
 
 Most database drivers have an option to disable multi-statement queries:
 
 **PostgreSQL (psycopg2):** Multi-statement queries are disabled by default. The driver rejects SQL strings with semicolons except as terminators at the very end. If you're using `pg` in Node.js, it also rejects multi-statement by default in parameterized queries, though plain `client.query(sql)` with a raw string will execute multiple statements if the database returns them.
 
 **MySQL (mysql2 in Node.js):**
+
 ```javascript
 const connection = mysql.createConnection({
   multipleStatements: false, // This is the default; make it explicit
@@ -178,6 +183,7 @@ const connection = mysql.createConnection({
 `multipleStatements: false` means a query string containing `;` will throw at the driver level, before the string reaches the database server. The agent-generated SQL `SELECT 1; DROP TABLE users` never executes the DROP.
 
 **SQLite:**
+
 ```python
 # The sqlite3 module's execute() only runs the first statement
 # executescript() allows multiple — use execute(), not executescript()
@@ -187,9 +193,11 @@ conn.execute("SELECT 1; DROP TABLE users")  # Only SELECT 1 runs
 The principle: configure the database driver to refuse multi-statement queries. This is typically the default secure configuration; the risk is in places where developers have explicitly enabled multi-statement support for convenience and haven't thought through the security implications.
 
 **What this catches:**
+
 - All semicolon-chaining bypass attempts that rely on the driver executing more than one statement
 
 **What it doesn't catch:**
+
 - SQL features that have side effects within a single statement (database-specific functions, certain CTEs)
 - Any attack that doesn't require multiple statements
 
@@ -208,18 +216,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_readonly
 ```
 
 If the MCP server connects as `mcp_readonly`, then:
+
 - `SELECT * FROM users` — succeeds
 - `INSERT INTO users...` — fails with `ERROR: permission denied for table users`
 - `DROP TABLE users` — fails with `ERROR: must be owner of table users`
 - `CREATE TABLE...` — fails with `ERROR: permission denied for schema public`
 
-The database-level privilege check happens entirely independently of everything else in the stack. An attacker who somehow bypasses all of Layers 1-3 still faces the database's own access control system. These are not euno controls — they're standard database security — but they're part of the layered defense.
+The database-level privilege check happens entirely independently of everything else in the stack. An attacker who somehow bypasses all of Layers 1-3 still faces the database's own access control system. These are not eunox controls — they're standard database security — but they're part of the layered defense.
 
 **What this catches:**
+
 - Any mutation SQL that requires write privileges, even if Layers 1-3 somehow failed
 - Entire classes of schema modification attacks
 
 **What it doesn't catch:**
+
 - Malicious queries that are still `SELECT` statements but are problematic for other reasons: extremely expensive queries, queries that access data the agent shouldn't see within the read scope, or queries that exploit application-level logic
 - In databases with `SECURITY DEFINER` functions, a SELECT might invoke a function that has elevated privileges and writes data
 
@@ -261,7 +272,7 @@ The fix is to either parameterize (where supported — most drivers don't suppor
 
 ```javascript
 // Safe: table name validated against a whitelist
-const allowedTables = ['orders', 'products', 'invoices'];
+const allowedTables = ["orders", "products", "invoices"];
 if (!allowedTables.includes(args.table)) {
   throw new Error(`Table '${args.table}' is not permitted`);
 }
@@ -269,7 +280,7 @@ const sql = `SELECT * FROM ${args.table} LIMIT ?`;
 const result = await db.execute(sql, [args.limit]);
 ```
 
-Note that this table allowlist in the server-side code is complementary to, not a replacement for, the `allowedTables` condition in the euno policy. The euno condition provides policy-level enforcement at the gateway before the call reaches the server. The server-side check provides defense-in-depth if the gateway is somehow bypassed or if the server is called through a different path.
+Note that this table allowlist in the server-side code is complementary to, not a replacement for, the `allowedTables` condition in the eunox policy. The eunox condition provides policy-level enforcement at the gateway before the call reaches the server. The server-side check provides defense-in-depth if the gateway is somehow bypassed or if the server is called through a different path.
 
 ---
 
@@ -314,7 +325,8 @@ Reading this top-to-bottom, here's what happens to a tool call:
 
 If any of these fail, the call is denied at the gateway. The database never sees it.
 
-Outside of euno:
+Outside of eunox:
+
 - The database connection uses read-only credentials
 - The driver has multi-statement execution disabled
 - The MCP server validates table names against a server-side allowlist before constructing SQL
@@ -333,7 +345,7 @@ I want to be explicit about the threat categories that this stack doesn't addres
 
 **Application-level logic bypasses.** If the application layer above the MCP server makes authorization decisions based on tool call results rather than based on its own independent checks, a compromised agent that issues valid-but-harmful queries within the permitted scope can still cause business logic problems.
 
-**Large language model-level prompt injection mitigations.** Everything I've described above is about what happens after the model generates SQL. There's a separate — and harder — question about preventing the model from being manipulated in the first place. That's a model-level problem (system prompt hardening, instruction prioritization, sandboxing of tool outputs so they don't re-enter the prompt in raw form). It's out of scope for euno and requires separate mitigations at the agent framework layer.
+**Large language model-level prompt injection mitigations.** Everything I've described above is about what happens after the model generates SQL. There's a separate — and harder — question about preventing the model from being manipulated in the first place. That's a model-level problem (system prompt hardening, instruction prioritization, sandboxing of tool outputs so they don't re-enter the prompt in raw form). It's out of scope for eunox and requires separate mitigations at the agent framework layer.
 
 ---
 
@@ -347,6 +359,7 @@ So what does this stack actually guarantee?
 - It produces an audit trail of every tool call, allowed or denied, so forensics after an incident are possible
 
 What it doesn't guarantee:
+
 - Prevention of all possible SQL injection attacks in all database drivers and SQL dialects
 - Prevention of malicious queries that stay within the permitted read scope
 - Prevention of attacks that exploit application-level logic with permitted queries
@@ -373,4 +386,4 @@ A few things I've learned from running these policies in production:
 
 ---
 
-*This post concludes the "Design principles" series. If you're building an AI governance deployment and thinking through the SQL injection threat, I'd suggest reading in order: [post 3 (what goes wrong when you skip governance)](../blog-articles.md), [post 10 (the enforcement pipeline)](../blog-articles.md), [post 15 (fail-closed at every layer)](./15-fail-closed-not-fail-open.md), and then this post. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_This post concludes the "Design principles" series. If you're building an AI governance deployment and thinking through the SQL injection threat, I'd suggest reading in order: [post 3 (what goes wrong when you skip governance)](../blog-articles.md), [post 10 (the enforcement pipeline)](../blog-articles.md), [post 15 (fail-closed at every layer)](./15-fail-closed-not-fail-open.md), and then this post. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

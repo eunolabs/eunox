@@ -95,14 +95,14 @@ single app registration (which it must not — see §1.4).
 
 ### 1.3 Detection capability
 
-| Signal                          | Source                                                 | Alert threshold                                                                                           |
-| ------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Issuance volume spike           | `euno_issuer_issue_total{tenantId}` Prometheus counter | >2× 1-hour moving average for the tenant → PagerDuty                                                      |
-| Issuance from new `userId`      | Issuer audit log `ISSUANCE` events                     | First appearance of a `userId` not seen in the prior 30 days → low-priority alert for operator review     |
-| Issuance outside business hours | Issuer audit log time-of-day                           | Off-hours spikes combined with new userId trigger medium-priority alert                                   |
-| IdP sign-in anomaly             | Azure AD Sign-in Logs / Cognito CloudTrail             | Cross-reference with issuer audit log to confirm whether anomalous sign-in resulted in a capability token |
-| KMS sign operation count        | Azure Monitor / CloudTrail / Cloud Audit Logs          | KMS sign-ops per tenant > threshold → same PagerDuty escalation as for the minter                         |
-| `kid` mismatches in gateway     | `euno_gateway_token_verify_error_total`                | A surge in `JWKS_KEY_NOT_FOUND` errors suggests tokens are being produced with an unknown key             |
+| Signal                          | Source                                                  | Alert threshold                                                                                           |
+| ------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Issuance volume spike           | `eunox_issuer_issue_total{tenantId}` Prometheus counter | >2× 1-hour moving average for the tenant → PagerDuty                                                      |
+| Issuance from new `userId`      | Issuer audit log `ISSUANCE` events                      | First appearance of a `userId` not seen in the prior 30 days → low-priority alert for operator review     |
+| Issuance outside business hours | Issuer audit log time-of-day                            | Off-hours spikes combined with new userId trigger medium-priority alert                                   |
+| IdP sign-in anomaly             | Azure AD Sign-in Logs / Cognito CloudTrail              | Cross-reference with issuer audit log to confirm whether anomalous sign-in resulted in a capability token |
+| KMS sign operation count        | Azure Monitor / CloudTrail / Cloud Audit Logs           | KMS sign-ops per tenant > threshold → same PagerDuty escalation as for the minter                         |
+| `kid` mismatches in gateway     | `eunox_gateway_token_verify_error_total`                | A surge in `JWKS_KEY_NOT_FOUND` errors suggests tokens are being produced with an unknown key             |
 
 The issuer writes one `ISSUANCE` audit row per token (logged as `AuditLogEntry` via the
 `auditLogger` injected into `IssueController`). The row includes:
@@ -223,7 +223,7 @@ fetching, caching, and refresh internally. The caching behaviour:
   `cooldownDuration` option to `createRemoteJWKSet()` and document the corresponding
   env var if operator-configurable TTL is required.
 - **Gateway-side JWKS (for verifying capability JWTs):** uses the existing
-  `EUNO_JWKS_CACHE_TTL_SECONDS` config variable (default 300 s; defined in
+  `EUNOX_JWKS_CACHE_TTL_SECONDS` config variable (default 300 s; defined in
   `pkg//src/config/schema.ts:923`).
 
 A failed JWKS refresh does not invalidate the currently cached JWKS (fail-safe for
@@ -362,15 +362,15 @@ misconfigured manifest that widens capabilities):
 2. **Active tokens:** Existing tokens already issued under the malicious template remain
    valid until their `exp`. Use the issuer's audit log to enumerate all `jti` values
    issued with the affected `policyHash` (the `ISSUANCE` audit row includes `policyHash`
-   in its `payload` JSONB). The issuer writes to the same `euno_audit_ledger` table used
+   in its `payload` JSONB). The issuer writes to the same `eunox_audit_ledger` table used
    by the gateway (configurable via `PostgresLedgerOptions.table`; default
-   `euno_audit_ledger`):
+   `eunox_audit_ledger`):
 
    ```sql
    SELECT payload->>'capabilityId' AS token_id,
           payload->>'userId'       AS user_id,
           payload->>'agentId'      AS agent_id
-   FROM euno_audit_ledger
+   FROM eunox_audit_ledger
    WHERE payload->>'policyHash' = :affected_policy_hash
      AND payload->>'decision'   = 'allow'
    ORDER BY created_at DESC;

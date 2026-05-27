@@ -16,7 +16,7 @@ Most systems log events by appending rows to a database table or writing lines t
 
 For a system whose entire value proposition is governance — _your AI agents don't do things they're not supposed to do, and we can prove it_ — this is not a theoretical concern. If an attacker compromises the gateway host, or if a rogue operator wants to cover their tracks, a mutable audit log gives them a clean exit. The absence of evidence becomes the evidence of absence.
 
-The classic answer from the security world is an append-only log with a cryptographic chain. Each entry hashes the previous one; modifying any entry breaks the chain for every entry that follows. This is how certificate transparency logs work, how blockchain systems work at their core, and how we built the euno audit ledger.
+The classic answer from the security world is an append-only log with a cryptographic chain. Each entry hashes the previous one; modifying any entry breaks the chain for every entry that follows. This is how certificate transparency logs work, how blockchain systems work at their core, and how we built the eunox audit ledger.
 
 ---
 
@@ -47,7 +47,7 @@ A typical allowed tool call produces a record that looks roughly like this:
   "status": "Success",
   "metadata": {
     "version": "1.1.0",
-    "product": { "name": "euno", "vendor_name": "euno", "version": "5.0.0" },
+    "product": { "name": "eunox", "vendor_name": "eunox", "version": "5.0.0" },
     "uid": "evt_a3f2b1c4..."
   },
   "actor": { "agent_uid": "agent_abc123", "tenant_id": "tenant_xyz" },
@@ -67,7 +67,7 @@ A denial adds `"status": "Failure"`, a `denialCode`, and a `conditionType` that 
 
 The append-only guarantee is enforced at two levels.
 
-At the database level, the `euno_audit_ledger` table is write-only from the application perspective: `INSERT` only, no `UPDATE` or `DELETE` in the application code, and in production deployments we recommend a Postgres role with only `INSERT` and `SELECT` grants for the gateway process. This is necessary but not sufficient — a database admin can still run `UPDATE` directly.
+At the database level, the `eunox_audit_ledger` table is write-only from the application perspective: `INSERT` only, no `UPDATE` or `DELETE` in the application code, and in production deployments we recommend a Postgres role with only `INSERT` and `SELECT` grants for the gateway process. This is necessary but not sufficient — a database admin can still run `UPDATE` directly.
 
 The cryptographic layer is what closes that gap. Every row carries a `row_hmac` column computed as:
 
@@ -122,11 +122,11 @@ To forge a record while defeating both layers, an attacker would need to simulta
 
 Posts 9 and 10 covered the gateway — the enterprise enforcement path. But the same OCSF schema is also used in `eunox-mcp`, the open-source local proxy.
 
-When you're running `eunox-mcp` locally (no gateway, no Postgres, just a YAML policy file and a stdio process), every tool call still gets logged to `~/.euno/audit.jsonl`. The format is the same OCSF API Activity shape. The difference is the signer: instead of a KMS-backed asymmetric key, the local log uses a locally-generated HMAC key stored in `~/.euno/key` (created on first run, mode 0600).
+When you're running `eunox-mcp` locally (no gateway, no Postgres, just a YAML policy file and a stdio process), every tool call still gets logged to `~/.eunox/audit.jsonl`. The format is the same OCSF API Activity shape. The difference is the signer: instead of a KMS-backed asymmetric key, the local log uses a locally-generated HMAC key stored in `~/.eunox/key` (created on first run, mode 0600).
 
 This is a deliberate design choice. The policy format is the same whether you're running locally or against the hosted gateway. The audit record format is the same. When you move from local development to a production gateway deployment, your tooling — log parsers, monitoring scripts, SIEM ingest rules — doesn't need to change. The only thing that changes is the signer and the sink.
 
-If you `tail -f ~/.euno/audit.jsonl` while running an agent locally, you're reading the same event schema that will end up in your SIEM in production. That observability continuity matters more than I initially appreciated; it's one of those things that seems like a minor implementation detail until the first time you're debugging a production policy issue by replaying the logic locally.
+If you `tail -f ~/.eunox/audit.jsonl` while running an agent locally, you're reading the same event schema that will end up in your SIEM in production. That observability continuity matters more than I initially appreciated; it's one of those things that seems like a minor implementation detail until the first time you're debugging a production policy issue by replaying the logic locally.
 
 ---
 
@@ -175,4 +175,4 @@ But for a governance layer over AI agent tool calls, where the threat model is "
 
 ---
 
-_Next in this series: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md), which covers how euno swaps between Azure AD + Key Vault, AWS Cognito + KMS, and GCP Cloud Identity + Cloud KMS without touching the enforcement core._
+_Next in this series: [post 12 — Pluggable adapters: building a cloud-portable identity and signing layer](./12-pluggable-adapters.md), which covers how eunox swaps between Azure AD + Key Vault, AWS Cognito + KMS, and GCP Cloud Identity + Cloud KMS without touching the enforcement core._

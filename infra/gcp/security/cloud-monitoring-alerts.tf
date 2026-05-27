@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------
-# Euno Sprint-1 OBS multi-cloud parity for infra/sentinel/analytic-rules.json
+# Eunox Sprint-1 OBS multi-cloud parity for infra/sentinel/analytic-rules.json
 # on GCP.  Materializes each Cloud Logging filter from
 # `cloud-logging-queries.json` as a `google_logging_metric` + a
 # `google_monitoring_alert_policy`.
@@ -19,7 +19,7 @@ terraform {
 }
 
 variable "project_id" {
-  description = "GCP project ID hosting the Euno deployment."
+  description = "GCP project ID hosting the Eunox deployment."
   type        = string
 }
 
@@ -36,7 +36,7 @@ provider "google" {
 locals {
   rules = {
     "deny-spike" = {
-      display = "Euno - Capability denial spike"
+      display = "Eunox - Capability denial spike"
       filter  = <<-EOT
         resource.type="k8s_container"
         labels."k8s-pod/app"=~"tool-gateway|capability-issuer|agent-runtime"
@@ -45,7 +45,7 @@ locals {
       threshold = 5
     }
     "write-in-readonly" = {
-      display = "Euno - Write attempt from a read-only session"
+      display = "Eunox - Write attempt from a read-only session"
       filter  = <<-EOT
         resource.type="k8s_container"
         jsonPayload.logType="audit"
@@ -56,7 +56,7 @@ locals {
       threshold = 1
     }
     "invalid-token-burst" = {
-      display = "Euno - Burst of invalid capability tokens"
+      display = "Eunox - Burst of invalid capability tokens"
       filter  = <<-EOT
         resource.type="k8s_container"
         (jsonPayload.message:"INVALID_TOKEN" OR jsonPayload.message:"EXPIRED_TOKEN" OR jsonPayload.message:"invalid signature")
@@ -64,7 +64,7 @@ locals {
       threshold = 20
     }
     "kill-switch-activated" = {
-      display = "Euno - Kill switch activated"
+      display = "Eunox - Kill switch activated"
       filter  = <<-EOT
         resource.type="k8s_container"
         (jsonPayload.message:"Kill switch activated" OR jsonPayload.message:"KILL_ALL_AGENTS" OR jsonPayload.message:"kill switch enabled")
@@ -72,7 +72,7 @@ locals {
       threshold = 1
     }
     "token-revocation-spike" = {
-      display = "Euno - Token revocation spike"
+      display = "Eunox - Token revocation spike"
       filter  = <<-EOT
         resource.type="k8s_container"
         jsonPayload.message:"Token revoked via admin API"
@@ -84,7 +84,7 @@ locals {
 
 resource "google_logging_metric" "rule" {
   for_each = local.rules
-  name     = "euno_${replace(each.key, "-", "_")}"
+  name     = "eunox_${replace(each.key, "-", "_")}"
   project  = var.project_id
   filter   = each.value.filter
 

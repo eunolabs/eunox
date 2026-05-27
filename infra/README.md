@@ -1,4 +1,4 @@
-# euno Infrastructure-as-Code
+# eunox Infrastructure-as-Code
 
 This directory contains the reproducible-provisioning artifacts for
 the Azure pilot deployment, plus the multi-cloud parity
@@ -84,11 +84,11 @@ See `eunox/packages/tool-gateway/.env.example` for the full reference.
 
 ```bash
 # 1. Pick a region and create the resource group
-az group create --name euno-pilot-rg --location eastus
+az group create --name eunox-pilot-rg --location eastus
 
 # 2. Deploy
 az deployment group create \
-  --resource-group euno-pilot-rg \
+  --resource-group eunox-pilot-rg \
   --template-file infra/bicep/main.bicep \
   --parameters @infra/bicep/main.parameters.example.json
 ```
@@ -118,7 +118,7 @@ Sprint-5 detection rules:
 
 ```bash
 az deployment group create \
-  --resource-group euno-pilot-rg \
+  --resource-group eunox-pilot-rg \
   --template-file infra/sentinel/analytic-rules.json \
   --parameters workspaceName=<your-law-name>
 ```
@@ -145,7 +145,7 @@ ls infra/aws/api-gateway/        # openapi.json + lambda-authorizer.js + README
 # Security analytics (parity with infra/sentinel/analytic-rules.json)
 aws cloudformation deploy \
   --template-file infra/aws/security/cloudwatch-alarms.yaml \
-  --stack-name euno-security-alerts \
+  --stack-name eunox-security-alerts \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 

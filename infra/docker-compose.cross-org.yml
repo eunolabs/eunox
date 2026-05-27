@@ -31,7 +31,7 @@ version: "3.9"
 services:
   partner-issuer-sim:
     image: eunox/partner-issuer-sim:dev
-    container_name: euno-partner-sim
+    container_name: eunox-partner-sim
     environment:
       PORT: "4001"
       # Stable DID across container restarts (deterministic key derivation).
@@ -58,7 +58,7 @@ services:
 
   our-issuer:
     image: eunox/issuer:dev
-    container_name: euno-our-issuer
+    container_name: eunox-our-issuer
     environment:
       PORT: "3000"
       ISSUER_DID: "did:web:our-issuer%3A3000"
@@ -73,7 +73,7 @@ services:
 
   our-gateway:
     image: eunox/gateway:dev
-    container_name: euno-our-gateway
+    container_name: eunox-our-gateway
     depends_on:
       partner-issuer-sim:
         condition: service_healthy

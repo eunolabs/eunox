@@ -1,9 +1,9 @@
 # Example tfvars for the GCP deployment.
 # Copy to terraform.tfvars and customize before `terraform apply`.
 
-project_id  = "euno-pilot-123456"
+project_id  = "eunox-pilot-123456"
 gcp_region  = "us-central1"
-name_prefix = "euno"
+name_prefix = "eunox"
 environment = "pilot"
 
 log_retention_days = 90
@@ -24,7 +24,7 @@ enable_scc_notification = false
 scc_organization_id     = ""
 
 labels = {
-  product   = "euno"
+  product   = "eunox"
   component = "capability-governance"
   owner     = "platform-team"
 }

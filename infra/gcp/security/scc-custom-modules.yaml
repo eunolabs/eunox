@@ -1,6 +1,6 @@
-# Security Command Center custom modules — Euno Sprint-1 OBS parity
+# Security Command Center custom modules — Eunox Sprint-1 OBS parity
 #
-# These custom modules teach SCC to surface Euno-specific findings derived
+# These custom modules teach SCC to surface Eunox-specific findings derived
 # from the Pub/Sub topic populated by the Cloud Monitoring alert policies
 # in `cloud-monitoring-alerts.tf`.  They are the GCP parity of the
 # AWS Security Hub insights in `../../aws/security/security-hub-insights.json`
@@ -22,12 +22,12 @@
 # `infra/terraform/gcp/main.tf` (var.enable_scc_notification = true).
 
 modules:
-  - displayName: "Euno - Capability denial spike"
+  - displayName: "Eunox - Capability denial spike"
     description: >
       Five or more capability-token denials within five minutes from the
       same agent or session.  Possible prompt-injection or runaway agent.
     severity: HIGH
-    category: EUNO_DENIAL_SPIKE
+    category: EUNOX_DENIAL_SPIKE
     customConfig:
       predicate:
         # Triggered when the corresponding alert policy fires.
@@ -43,11 +43,11 @@ modules:
         Inspect the offending sessionId via `kubectl logs`, revoke the
         capability via the admin API, and review the prompt for injection.
 
-  - displayName: "Euno - Write attempt from a read-only session"
+  - displayName: "Eunox - Write attempt from a read-only session"
     description: >
       An agent issued only read scopes attempted a write/delete/update/create.
     severity: HIGH
-    category: EUNO_WRITE_IN_READONLY
+    category: EUNOX_WRITE_IN_READONLY
     customConfig:
       predicate:
         expression: |
@@ -58,11 +58,11 @@ modules:
       resourceSelector:
         resourceTypes: ["k8s_container"]
 
-  - displayName: "Euno - Burst of invalid capability tokens"
+  - displayName: "Eunox - Burst of invalid capability tokens"
     description: >
       More than 20 invalid-signature or expired-token errors in 5 minutes.
     severity: MEDIUM
-    category: EUNO_INVALID_TOKEN_BURST
+    category: EUNOX_INVALID_TOKEN_BURST
     customConfig:
       predicate:
         expression: |
@@ -72,11 +72,11 @@ modules:
       resourceSelector:
         resourceTypes: ["k8s_container"]
 
-  - displayName: "Euno - Kill switch activated"
+  - displayName: "Eunox - Kill switch activated"
     description: >
       Operational event: an admin activated the kill switch.
     severity: MEDIUM
-    category: EUNO_KILL_SWITCH
+    category: EUNOX_KILL_SWITCH
     customConfig:
       predicate:
         expression: |
@@ -86,11 +86,11 @@ modules:
       resourceSelector:
         resourceTypes: ["k8s_container"]
 
-  - displayName: "Euno - Token revocation spike"
+  - displayName: "Eunox - Token revocation spike"
     description: >
       More than 10 admin-API token revocations in 5 minutes.
     severity: MEDIUM
-    category: EUNO_TOKEN_REVOCATION_SPIKE
+    category: EUNOX_TOKEN_REVOCATION_SPIKE
     customConfig:
       predicate:
         expression: |
@@ -105,9 +105,9 @@ modules:
 # detections as YARA-L 2.0 rules.  A minimal example for the denial-spike
 # rule:
 #
-#   rule euno_denial_spike {
+#   rule eunox_denial_spike {
 #     meta:
-#       author = "Euno OBS"
+#       author = "Eunox OBS"
 #       severity = "High"
 #     events:
 #       $e.metadata.product_name = "k8s_container" and

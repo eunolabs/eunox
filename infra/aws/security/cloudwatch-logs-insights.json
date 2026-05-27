@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://euno.dev/schemas/aws/cloudwatch-logs-insights-queries.json",
-  "title": "Euno - CloudWatch Logs Insights queries (Sprint-1 OBS parity)",
+  "$id": "https://eunox.dev/schemas/aws/cloudwatch-logs-insights-queries.json",
+  "title": "Eunox - CloudWatch Logs Insights queries (Sprint-1 OBS parity)",
   "description": "AWS multi-cloud parity for infra/sentinel/analytic-rules.json. These five queries detect the same Sprint-1 OBS patterns as the Sentinel rules: denial spikes, write attempts under read-only mode, invalid-token bursts, kill-switch activation, and token-revocation spikes. Run them either ad-hoc in the CloudWatch Logs Insights console or schedule them with `aws logs put-query-definition` / a CloudWatch Metric Filter + Alarm pair. The companion CloudFormation snippet in `cloudwatch-alarms.yaml` materializes alarm-driven incidents.",
   "logGroupNames": [
-    "/euno/runtime",
-    "/euno/audit",
-    "/aws/containerinsights/euno-eks-pilot/application"
+    "/eunox/runtime",
+    "/eunox/audit",
+    "/aws/containerinsights/eunox-eks-pilot/application"
   ],
   "queries": [
     {
-      "name": "euno-deny-spike",
+      "name": "eunox-deny-spike",
       "displayName": "Capability denial spike from a single agent/session",
       "severity": "HIGH",
       "description": "Five or more capability-token denials within five minutes from the same agent or session. Possible prompt-injection attempt or runaway agent loop.",
@@ -19,7 +19,7 @@
       "techniques": ["T1078"],
       "query": "fields @timestamp, @message\n| filter @message like /Action denied/ or @message like /AUTHORIZATION_FAILED/ or @message like /INVALID_TOKEN/\n| parse @message /(?<payloadJson>\\{.*\\})\\s*$/\n| filter ispresent(payloadJson)\n| fields jsonParse(payloadJson) as payload\n| filter ispresent(payload.agentId) or ispresent(payload.sessionId) or ispresent(payload.metadata.sessionId)\n| stats count() as denials by coalesce(payload.metadata.sessionId, payload.sessionId) as sessionId, payload.agentId as agentId, bin(5m)\n| filter denials >= 5",
       "alarm": {
-        "metricNamespace": "Euno/Security",
+        "metricNamespace": "Eunox/Security",
         "metricName": "DenialSpike",
         "threshold": 1,
         "periodSeconds": 300,
@@ -28,7 +28,7 @@
       }
     },
     {
-      "name": "euno-write-in-readonly",
+      "name": "eunox-write-in-readonly",
       "displayName": "Write attempt from a read-only session",
       "severity": "HIGH",
       "description": "An agent session that was issued only read scopes attempted a write operation. Indicates either a buggy agent or an active jailbreak attempt.",
@@ -37,7 +37,7 @@
       "techniques": ["T1068"],
       "query": "fields @timestamp, @message\n| parse @message /(?<payloadJson>\\{.*\\})\\s*$/\n| filter ispresent(payloadJson)\n| fields jsonParse(payloadJson) as payload\n| filter payload.logType = \"audit\"\n| filter payload.decision = \"deny\"\n| filter payload.action in [\"write\", \"delete\", \"update\", \"create\"]\n| filter (payload.reason like /Insufficient permissions/) or (payload.reason like /Invalid audience/)\n| filter ispresent(coalesce(payload.metadata.sessionId, payload.sessionId))\n| display @timestamp, payload.agentId as agentId, payload.action as action, payload.reason as reason",
       "alarm": {
-        "metricNamespace": "Euno/Security",
+        "metricNamespace": "Eunox/Security",
         "metricName": "WriteInReadOnly",
         "threshold": 1,
         "periodSeconds": 300,
@@ -46,7 +46,7 @@
       }
     },
     {
-      "name": "euno-invalid-token-burst",
+      "name": "eunox-invalid-token-burst",
       "displayName": "Burst of invalid capability tokens",
       "severity": "MEDIUM",
       "description": "More than 20 invalid-signature or expired-token errors in a 5-minute window. Possible token-forgery attempt or a clock-skew incident in the fleet.",
@@ -54,7 +54,7 @@
       "tactics": ["CredentialAccess"],
       "query": "fields @timestamp, @message, @logStream\n| filter @message like /INVALID_TOKEN/ or @message like /EXPIRED_TOKEN/ or @message like /invalid signature/\n| stats count() as invalid_tokens by bin(5m), @logStream\n| filter invalid_tokens > 20",
       "alarm": {
-        "metricNamespace": "Euno/Security",
+        "metricNamespace": "Eunox/Security",
         "metricName": "InvalidTokenBurst",
         "threshold": 20,
         "periodSeconds": 300,
@@ -63,7 +63,7 @@
       }
     },
     {
-      "name": "euno-kill-switch-activated",
+      "name": "eunox-kill-switch-activated",
       "displayName": "Kill switch activated",
       "severity": "MEDIUM",
       "description": "Operational event: an admin activated the global, session-scoped, or agent-scoped kill switch. Forwarded as a finding so the on-call channel always sees a record.",
@@ -71,7 +71,7 @@
       "tactics": ["Impact"],
       "query": "fields @timestamp, @message, @logStream\n| filter @message like /Kill switch activated/ or @message like /KILL_ALL_AGENTS/ or @message like /kill switch enabled/",
       "alarm": {
-        "metricNamespace": "Euno/Security",
+        "metricNamespace": "Eunox/Security",
         "metricName": "KillSwitchActivated",
         "threshold": 1,
         "periodSeconds": 300,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "name": "euno-token-revocation-spike",
+      "name": "eunox-token-revocation-spike",
       "displayName": "Token revocation spike",
       "severity": "MEDIUM",
       "description": "More than 10 token revocations through the admin API within 5 minutes. Could indicate an automated incident-response action or an attacker abusing operator credentials.",
@@ -88,7 +88,7 @@
       "tactics": ["Impact"],
       "query": "fields @timestamp, @message\n| filter @message like /Token revoked via admin API/\n| stats count() as revocations by bin(5m)\n| filter revocations > 10",
       "alarm": {
-        "metricNamespace": "Euno/Security",
+        "metricNamespace": "Eunox/Security",
         "metricName": "TokenRevocationSpike",
         "threshold": 10,
         "periodSeconds": 300,

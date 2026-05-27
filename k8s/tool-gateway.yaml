@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: gateway
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
     component: data-plane
@@ -92,7 +92,7 @@ spec:
           mountPath: /env
       containers:
       - name: gateway
-        image: eunoacr.azurecr.io/gateway:v1.0.0
+        image: eunoxacr.azurecr.io/gateway:v1.0.0
         imagePullPolicy: Always
         # Source the shard index written by the init container before
         # starting Node. The init container writes:
@@ -137,7 +137,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-        - name: EUNO_DEPLOYMENT_TIER
+        - name: EUNOX_DEPLOYMENT_TIER
           value: "multi-replica"
         # Horizontal sharding (H-1).  GATEWAY_SHARD_COUNT must match the
         # StatefulSet replica count above and the SHARD_COUNT in the Envoy
@@ -153,7 +153,7 @@ spec:
         - name: BACKEND_SERVICE_URL
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: backend-service-url
         - name: POLICY_VERSION
           value: "0.1.0"
@@ -162,14 +162,14 @@ spec:
         - name: REDIS_URL
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: redis-url
         - name: REVOCATION_FAIL_OPEN
           value: "false"
         - name: EVIDENCE_SIGNED_DECISIONS
           value: "deny"
         - name: EVIDENCE_SIGNING_KEY_FILE
-          value: "/var/run/secrets/euno/evidence-signing-key.pem"
+          value: "/var/run/secrets/eunox/evidence-signing-key.pem"
         - name: EVIDENCE_SIGNING_ALGORITHM
           value: "RS256"
         - name: ADMIN_API_KEY
@@ -208,7 +208,7 @@ spec:
         - name: tmp
           mountPath: /tmp
         - name: evidence-signing-key
-          mountPath: /var/run/secrets/euno
+          mountPath: /var/run/secrets/eunox
           readOnly: true
         - name: shard-env
           mountPath: /env
@@ -233,7 +233,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway-headless
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
 spec:
@@ -252,7 +252,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
 spec:
@@ -270,7 +270,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway-admin
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
 spec:
@@ -287,4 +287,4 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: gateway
-  namespace: euno-system
+  namespace: eunox-system

@@ -1,4 +1,4 @@
-# Euno — Cloud SQL for PostgreSQL
+# Eunox — Cloud SQL for PostgreSQL
 # ---------------------------------------------------------------------------
 # Provisions the managed PostgreSQL instance used by capability-issuer and
 # tool-gateway for the audit ledger and API key databases.
@@ -7,14 +7,14 @@
 #   <YOUR_PROJECT_ID>     — your GCP project ID
 #   <YOUR_REGION>         — e.g. us-central1
 #   <YOUR_VPC_NETWORK>    — full resource name of your VPC, e.g.
-#                           projects/<YOUR_PROJECT_ID>/global/networks/euno-vpc
+#                           projects/<YOUR_PROJECT_ID>/global/networks/eunox-vpc
 # ---------------------------------------------------------------------------
 
 # Cloud SQL instance — PostgreSQL 15, private IP, HA replica.
 apiVersion: sql.cnrm.cloud.google.com/v1beta1
 kind: SQLInstance
 metadata:
-  name: euno-postgres
+  name: eunox-postgres
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
@@ -47,45 +47,45 @@ spec:
       - name: cloudsql.iam_authentication
         value: "on"
     userLabels:
-      product: euno
+      product: eunox
       component: capability-governance
 
 ---
 
-# euno application database.
+# eunox application database.
 apiVersion: sql.cnrm.cloud.google.com/v1beta1
 kind: SQLDatabase
 metadata:
-  name: euno-db
+  name: eunox-db
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
 spec:
   instanceRef:
-    name: euno-postgres
+    name: eunox-postgres
     namespace: config-connector
   charset: UTF8
   collation: en_US.UTF8
 
 ---
 
-# euno database user.
+# eunox database user.
 # Store the password in Secret Manager and reference it via the
 # `passwordSecretRef` field rather than hard-coding it here.
 apiVersion: sql.cnrm.cloud.google.com/v1beta1
 kind: SQLUser
 metadata:
-  name: euno-db-user
+  name: eunox-db-user
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
 spec:
   instanceRef:
-    name: euno-postgres
+    name: eunox-postgres
     namespace: config-connector
   host: "%"
   # Reference the password from a Kubernetes Secret produced by ESO or
   # the Secret Manager Add-on — see docs/secrets-gcp.md.
   passwordRef:
-    name: euno-db-credentials
+    name: eunox-db-credentials
     key: password

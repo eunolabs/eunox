@@ -200,12 +200,12 @@ your threat model accepts that risk.
 **Production hard-failure:** when `REDIS_URL` is set and `ioredis` cannot be
 loaded, the gateway **refuses to start** in production
 (`NODE_ENV=production`) or multi-replica
-(`EUNO_DEPLOYMENT_TIER!=single-replica`) deployments.
+(`EUNOX_DEPLOYMENT_TIER!=single-replica`) deployments.
 
 ### Development / single-replica fallback
 
 `InMemoryRevocationStore` (a `Map<jti, expiryUnixSeconds>`) is available only
-when `REDIS_URL` is unset or when `EUNO_DEPLOYMENT_TIER=single-replica`. It is
+when `REDIS_URL` is unset or when `EUNOX_DEPLOYMENT_TIER=single-replica`. It is
 **not** shared across processes. `createRevocationStoreFromEnv` selects the
 appropriate backend automatically:
 
@@ -235,7 +235,7 @@ metadata:
 data:
   REDIS_URL: "redis://eunox-redis:6379"
   NODE_ENV: "production"
-  EUNO_DEPLOYMENT_TIER: "multi-replica"
+  EUNOX_DEPLOYMENT_TIER: "multi-replica"
 ```
 
 For managed Redis services:
@@ -266,12 +266,12 @@ See `k8s/redis.yaml` for an in-cluster Redis deployment.
 
 ### Monitoring
 
-| Metric                                      | Description                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `euno_gateway_revocation_list_size`         | In-memory store size (always 0 when Redis is in use)                |
-| `euno_gateway_revocation_unavailable_total` | Revocation checks that returned 401/503 due to Redis unavailability |
-| Redis `DBSIZE` / `KEYS revoked:*`           | Live revocation entries across the fleet                            |
-| Redis error logs                            | Logged at `error` level with fields `error`, `tokenId`, `failMode`  |
+| Metric                                       | Description                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------- |
+| `eunox_gateway_revocation_list_size`         | In-memory store size (always 0 when Redis is in use)                |
+| `eunox_gateway_revocation_unavailable_total` | Revocation checks that returned 401/503 due to Redis unavailability |
+| Redis `DBSIZE` / `KEYS revoked:*`            | Live revocation entries across the fleet                            |
+| Redis error logs                             | Logged at `error` level with fields `error`, `tokenId`, `failMode`  |
 
 ### Performance
 

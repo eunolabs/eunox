@@ -295,7 +295,7 @@ func (b *AzureConfidentialLedgerBackend) Anchor(ctx context.Context, anchor *Cha
 		return "", fmt.Errorf("audit: marshal anchor for ACL: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("%s/app/transactions?api-version=2022-05-13&collectionId=euno-audit",
+	endpoint := fmt.Sprintf("%s/app/transactions?api-version=2022-05-13&collectionId=eunox-audit",
 		b.config.Endpoint)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))

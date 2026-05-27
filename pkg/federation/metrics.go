@@ -18,19 +18,19 @@ type Metrics struct {
 func NewMetrics(registry prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		CircuitBreakerState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: "euno",
+			Namespace: "eunox",
 			Subsystem: "partner_did",
 			Name:      "circuit_breaker_state",
 			Help:      "Current circuit breaker state per DID method as one-hot gauges by state label (1=current state, 0=other states)",
 		}, []string{"did_method", "state"}),
 		ResolutionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "euno",
+			Namespace: "eunox",
 			Subsystem: "partner_did",
 			Name:      "resolution_total",
 			Help:      "Total DID resolution attempts by method and outcome",
 		}, []string{"did_method", "outcome"}),
 		ResolutionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: "euno",
+			Namespace: "eunox",
 			Subsystem: "partner_did",
 			Name:      "resolution_duration_seconds",
 			Help:      "Duration of DID resolution requests",

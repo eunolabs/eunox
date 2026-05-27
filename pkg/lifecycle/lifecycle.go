@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package lifecycle provides graceful startup and shutdown management for
-// Euno services, including connection draining, readiness gates, and
+// Eunox services, including connection draining, readiness gates, and
 // coordinated multi-server lifecycle.
 package lifecycle
 

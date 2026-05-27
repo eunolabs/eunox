@@ -21,7 +21,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gateway
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
     version: v1.0.0
@@ -38,7 +38,7 @@ spec:
         version: v1.0.0
       annotations:
         # Sprint 3: AppArmor profile annotation
-        container.apparmor.security.beta.kubernetes.io/gateway: localhost/euno-restricted
+        container.apparmor.security.beta.kubernetes.io/gateway: localhost/eunox-restricted
     spec:
       # Sprint 3: Service account with no API token (config injected via env)
       serviceAccountName: gateway-sa
@@ -88,13 +88,13 @@ spec:
         # SELinux options
         seLinuxOptions:
           level: "s0:c123,c456"
-          type: "euno_restricted.process"
+          type: "eunox_restricted.process"
         seccompProfile:
           type: RuntimeDefault
 
       containers:
       - name: gateway
-        image: eunoacr.azurecr.io/gateway:v1.0.0
+        image: eunoxacr.azurecr.io/gateway:v1.0.0
         imagePullPolicy: Always
 
         ports:
@@ -127,7 +127,7 @@ spec:
         # Declare the deployment availability tier so the gateway's
         # config schema enforces the matching infrastructure (REDIS_URL
         # is required for multi-replica).
-        - name: EUNO_DEPLOYMENT_TIER
+        - name: EUNOX_DEPLOYMENT_TIER
           value: "multi-replica"
         # read keys from the issuer JWKS endpoint, not the
         # deprecated single-key endpoint. Schema rejects production
@@ -184,7 +184,7 @@ spec:
         - name: EVIDENCE_SIGNED_DECISIONS
           value: "deny"
         - name: EVIDENCE_SIGNING_KEY_FILE
-          value: "/var/run/secrets/euno/evidence-signing-key.pem"
+          value: "/var/run/secrets/eunox/evidence-signing-key.pem"
         - name: EVIDENCE_SIGNING_ALGORITHM
           value: "RS256"
 
@@ -219,7 +219,7 @@ spec:
         # Evidence-signing private key, mounted read-only from a
         # Kubernetes Secret so it never sits on the image filesystem.
         - name: evidence-signing-key
-          mountPath: /var/run/secrets/euno
+          mountPath: /var/run/secrets/eunox
           readOnly: true
 
         # Health checks
@@ -274,7 +274,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: gateway-sa
-  namespace: euno-system
+  namespace: eunox-system
 automountServiceAccountToken: false
 
 ---
@@ -283,7 +283,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
 spec:
@@ -302,7 +302,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway-admin
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: gateway
 spec:
@@ -321,11 +321,11 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gateway-config
-  namespace: euno-system
+  namespace: eunox-system
 data:
   backend-service-url: "https://your-backend-service.com"
   # Distributed coordination (Redis) — REQUIRED so revocation, kill-switch,
   # maxCalls counters, and DPoP replay defense propagate across all
   # gateway replicas.  Defaults to the in-cluster Redis from
   # `redis.yaml`; override with a managed Redis URL for production.
-  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"
+  redis-url: "redis://redis.eunox-system.svc.cluster.local:6379"

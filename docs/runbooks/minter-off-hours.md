@@ -6,7 +6,7 @@
 > during 22:00–06:00 UTC.
 >
 > **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 2); also fires via
-> `euno_minter_anomaly_alerts_total{rule="off_hours_low_activity"}` for sub-minute in-process detection.
+> `eunox_minter_anomaly_alerts_total{rule="off_hours_low_activity"}` for sub-minute in-process detection.
 
 ## Likely causes
 

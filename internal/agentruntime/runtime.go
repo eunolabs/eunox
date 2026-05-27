@@ -11,7 +11,7 @@ import (
 )
 
 // Runtime manages the token lifecycle and tool invocation for agent applications.
-// It is the primary entry point for embedding the Euno agent runtime.
+// It is the primary entry point for embedding the Eunox agent runtime.
 type Runtime struct {
 	config        Config
 	tokenProvider *AuthTokenProvider

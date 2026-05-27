@@ -1,14 +1,14 @@
 {{/*
-minter Deployment
+issuer Deployment
 */}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "euno.fullname" . }}-minter
+  name: {{ include "eunox.fullname" . }}-issuer
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
-  {{- with .Values.minter.serviceAccountAnnotations }}
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
+  {{- with .Values.issuer.serviceAccountAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -17,27 +17,27 @@ automountServiceAccountToken: false
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "euno.fullname" . }}-minter
+  name: {{ include "eunox.fullname" . }}-issuer
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
 spec:
-  replicas: {{ .Values.minter.replicaCount }}
+  replicas: {{ .Values.issuer.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-minter
+      app.kubernetes.io/name: eunox-issuer
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: euno-minter
+        app.kubernetes.io/name: eunox-issuer
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: minter
-        {{- with .Values.minter.podLabels }}
+        app.kubernetes.io/component: issuer
+        {{- with .Values.issuer.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ include "euno.fullname" . }}-minter
+      serviceAccountName: {{ include "eunox.fullname" . }}-issuer
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -48,9 +48,9 @@ spec:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 45
       containers:
-        - name: minter
-          image: "{{ .Values.minter.image.repository }}:{{ .Values.minter.image.tag }}"
-          imagePullPolicy: {{ .Values.minter.image.pullPolicy }}
+        - name: issuer
+          image: "{{ .Values.issuer.image.repository }}:{{ .Values.issuer.image.tag }}"
+          imagePullPolicy: {{ .Values.issuer.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -58,7 +58,7 @@ spec:
               drop: ["ALL"]
           ports:
             - name: http
-              containerPort: {{ .Values.minter.service.port }}
+              containerPort: {{ .Values.issuer.service.port }}
               protocol: TCP
           startupProbe:
             httpGet:
@@ -82,71 +82,71 @@ spec:
             failureThreshold: 2
           envFrom:
             - configMapRef:
-                name: {{ include "euno.fullname" . }}-minter-config
-            {{- if .Values.minter.secretEnv }}
+                name: {{ include "eunox.fullname" . }}-issuer-config
+            {{- if .Values.issuer.secretEnv }}
             - secretRef:
-                name: {{ include "euno.fullname" . }}-minter-secret
+                name: {{ include "eunox.fullname" . }}-issuer-secret
             {{- end }}
           resources:
-            {{- toYaml .Values.minter.resources | nindent 12 }}
+            {{- toYaml .Values.issuer.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "euno.fullname" . }}-minter
+  name: {{ include "eunox.fullname" . }}-issuer
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
 spec:
-  type: {{ .Values.minter.service.type }}
+  type: {{ .Values.issuer.service.type }}
   ports:
     - name: http
-      port: {{ .Values.minter.service.port }}
+      port: {{ .Values.issuer.service.port }}
       targetPort: http
       protocol: TCP
   selector:
-    app.kubernetes.io/name: euno-minter
+    app.kubernetes.io/name: eunox-issuer
     app.kubernetes.io/instance: {{ .Release.Name }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "euno.fullname" . }}-minter-config
+  name: {{ include "eunox.fullname" . }}-issuer-config
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
 data:
-  {{- range $key, $val := .Values.minter.env }}
+  {{- range $key, $val := .Values.issuer.env }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
-{{- if .Values.minter.secretEnv }}
+{{- if .Values.issuer.secretEnv }}
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "euno.fullname" . }}-minter-secret
+  name: {{ include "eunox.fullname" . }}-issuer-secret
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
 type: Opaque
 stringData:
-  {{- range $key, $val := .Values.minter.secretEnv }}
+  {{- range $key, $val := .Values.issuer.secretEnv }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
 {{- end }}
-{{- if .Values.minter.pdb.enabled }}
+{{- if .Values.issuer.pdb.enabled }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "euno.fullname" . }}-minter
+  name: {{ include "eunox.fullname" . }}-issuer
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
-    app.kubernetes.io/component: minter
+    {{- include "eunox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: issuer
 spec:
-  minAvailable: {{ .Values.minter.pdb.minAvailable }}
+  minAvailable: {{ .Values.issuer.pdb.minAvailable }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-minter
+      app.kubernetes.io/name: eunox-issuer
       app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

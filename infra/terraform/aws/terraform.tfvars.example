@@ -1,7 +1,7 @@
 # Example tfvars for the AWS deployment.
 # Copy to terraform.tfvars and customize before `terraform apply`.
 
-name_prefix         = "euno"
+name_prefix         = "eunox"
 aws_region          = "us-east-1"
 environment         = "pilot"
 log_retention_days  = 90
@@ -22,7 +22,7 @@ private_subnet_cidrs = ["10.40.64.0/20", "10.40.80.0/20", "10.40.96.0/20"]
 enable_security_hub = true
 
 tags = {
-  product   = "euno"
+  product   = "eunox"
   component = "capability-governance"
   owner     = "platform-team"
 }

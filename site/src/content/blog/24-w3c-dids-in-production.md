@@ -1,10 +1,10 @@
 ---
 title: "W3C DIDs in Production: Lessons from Building a Partner Federation Layer"
-description: "Second post in the \"Technology choices\" series. [Post 13](./13-partner-did-federation.md) covers the federation architecture in depth — the two-eyes approval workflow, pin attestation, circuit breakers, and the trust model. This post is about the lower-level operational and reliability experience of actually running `did:web` and `did:ion` resolution in a production gateway. Read post 13 first if you haven't. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Second post in the "Technology choices" series. [Post 13](./13-partner-did-federation.md) covers the federation architecture in depth — the two-eyes approval workflow, pin attestation, circuit breakers, and the trust model. This post is about the lower-level operational and reliability experience of actually running `did:web` and `did:ion` resolution in a production gateway. Read post 13 first if you haven''t. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-12"
 ---
 
-*Second post in the "Technology choices" series. [Post 13](./13-partner-did-federation.md) covers the federation architecture in depth — the two-eyes approval workflow, pin attestation, circuit breakers, and the trust model. This post is about the lower-level operational and reliability experience of actually running `did:web` and `did:ion` resolution in a production gateway. Read post 13 first if you haven't. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Second post in the "Technology choices" series. [Post 13](./13-partner-did-federation.md) covers the federation architecture in depth — the two-eyes approval workflow, pin attestation, circuit breakers, and the trust model. This post is about the lower-level operational and reliability experience of actually running `did:web` and `did:ion` resolution in a production gateway. Read post 13 first if you haven't. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -42,12 +42,12 @@ Conversely, if we count every network error as a permanent ban rather than a cir
 
 The state machine I ended up with has four error categories with different handling:
 
-| Error type | Examples | Circuit breaker impact |
-|---|---|---|
-| **Fault** | DNS failure, TCP timeout, HTTP 5xx | Counts against failure threshold |
-| **Transport error** | TLS failure, connection reset | Exponential backoff, no circuit breaker |
-| **Auth error** | Pin mismatch, signature invalid, malformed document | Does not count; immediately logged as security event |
-| **Soft error** | HTTP 429, HTTP 503 with Retry-After | Respects Retry-After header; no circuit breaker |
+| Error type          | Examples                                            | Circuit breaker impact                               |
+| ------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| **Fault**           | DNS failure, TCP timeout, HTTP 5xx                  | Counts against failure threshold                     |
+| **Transport error** | TLS failure, connection reset                       | Exponential backoff, no circuit breaker              |
+| **Auth error**      | Pin mismatch, signature invalid, malformed document | Does not count; immediately logged as security event |
+| **Soft error**      | HTTP 429, HTTP 503 with Retry-After                 | Respects Retry-After header; no circuit breaker      |
 
 The security event logging on auth errors is important. A single signature verification failure might be a one-off bad token. A stream of signature verification failures on the same session is an active attack. Logging these as separate events (not just incrementing the circuit breaker counter) means the SIEM alerting logic can see the pattern.
 
@@ -115,7 +115,7 @@ One design question that came up: should `did:key` be allowed in production part
 
 After a few months running partner federation in production, this is the short list of signals I watch:
 
-**Circuit breaker state changes.** Any transition from `closed` to `open` on a partner DID is an immediate-attention alert. A `half-open` to `open` transition (probe attempt failed during recovery) is also alert-worthy but lower urgency. The Prometheus gauge `euno_partner_did_circuit_breaker_state{did="...", state="open"}` == 1 is the primary alert condition.
+**Circuit breaker state changes.** Any transition from `closed` to `open` on a partner DID is an immediate-attention alert. A `half-open` to `open` transition (probe attempt failed during recovery) is also alert-worthy but lower urgency. The Prometheus gauge `eunox_partner_did_circuit_breaker_state{did="...", state="open"}` == 1 is the primary alert condition.
 
 **Pin mismatch count.** Any pin mismatch above zero in a 5-minute window is a security alert. This can be a legitimate partner key rotation (and they forgot to tell us to update the pin), or it can be an active substitution attack. Either way, someone needs to look at it immediately.
 
@@ -127,4 +127,4 @@ None of these signals require custom instrumentation if you already have the Pro
 
 ---
 
-*Previous: [post 23 — Why OCSF? Choosing a schema for AI agent audit events](./23-why-ocsf.md). Next: [post 25 — KMS-backed JWT signing: trade-offs between Azure Key Vault, AWS KMS, and GCP Cloud KMS](./25-kms-backed-jwt-signing.md).*
+_Previous: [post 23 — Why OCSF? Choosing a schema for AI agent audit events](./23-why-ocsf.md). Next: [post 25 — KMS-backed JWT signing: trade-offs between Azure Key Vault, AWS KMS, and GCP Cloud KMS](./25-kms-backed-jwt-signing.md)._

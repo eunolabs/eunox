@@ -1,13 +1,13 @@
 # Multi-Region Consistency Model
 
 This document describes the consistency guarantees, partition tolerance behavior,
-and multi-region deployment model for the Euno platform.
+and multi-region deployment model for the Eunox platform.
 
 ---
 
 ## 1. Overview
 
-Euno supports three deployment tiers with increasing consistency complexity:
+Eunox supports three deployment tiers with increasing consistency complexity:
 
 | Tier                         | Redis                    | Consistency Model                    | Target SLA |
 | ---------------------------- | ------------------------ | ------------------------------------ | ---------- |
@@ -369,7 +369,7 @@ The DPoP JTI replay cache is **intentionally per-region** (not replicated):
 
 | Variable                          | Default          | Description                     |
 | --------------------------------- | ---------------- | ------------------------------- |
-| `EUNO_DEPLOYMENT_TIER`            | `single-replica` | Deployment tier                 |
+| `EUNOX_DEPLOYMENT_TIER`           | `single-replica` | Deployment tier                 |
 | `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30000            | Safety-net refresh interval     |
 | `KILL_SWITCH_PUBSUB_ENABLED`      | true             | Enable pub/sub propagation      |
 | `REVOCATION_UNAVAILABLE_MODE`     | `fail-closed`    | Behavior when Redis unreachable |

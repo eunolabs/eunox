@@ -1,11 +1,11 @@
 ---
 name: Stage 3 signal
-about: Report a "share policy across team", "see audit from another machine", or "hand-rolled
+about:
+  Report a "share policy across team", "see audit from another machine", or "hand-rolled
   cross-process audit" signal that counts toward the Stage 3 gate
 title: "[Stage 3 signal] "
 labels: stage-3-signal
-assignees: ''
-
+assignees: ""
 ---
 
 ## Signal type
@@ -32,7 +32,7 @@ assignees: ''
 
 ## Environment
 
-- `@euno/mcp` version:
+- `@eunox/mcp` version:
 - Transport: stdio / HTTP
 - Upstream MCP server (if known):
 - Agent framework (LangChain.js, raw MCP client, Claude Desktop, Cursor, other):

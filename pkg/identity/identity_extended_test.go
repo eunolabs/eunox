@@ -30,7 +30,7 @@ func TestOIDCProvider_WrongIssuer(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -41,7 +41,7 @@ func TestOIDCProvider_WrongIssuer(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   "https://evil.example.com",
 			Subject:  "user-1",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -108,7 +108,7 @@ func TestOIDCProvider_JWKSFetchFailure(t *testing.T) {
 	issuerURL := server.URL
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 		CacheTTL:  10 * time.Millisecond, // Short TTL to trigger refetch.
 	}, server.Client())
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestOIDCProvider_JWKSFetchFailure(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-1",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -160,7 +160,7 @@ func TestOIDCProvider_JWKSCacheTTL(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: server.URL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 		CacheTTL:  50 * time.Millisecond,
 	}, server.Client())
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestOIDCProvider_JWKSCacheTTL(t *testing.T) {
 			&jwt.Claims{
 				Issuer:   server.URL,
 				Subject:  "user-1",
-				Audience: jwt.Audience{"api://euno"},
+				Audience: jwt.Audience{"api://eunox"},
 				IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 				Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			}, nil)
@@ -204,7 +204,7 @@ func TestOIDCProvider_ConcurrentVerifyToken(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 		CacheTTL:  time.Hour,
 	}, server.Client())
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestOIDCProvider_ConcurrentVerifyToken(t *testing.T) {
 				&jwt.Claims{
 					Issuer:   issuerURL,
 					Subject:  "user-concurrent",
-					Audience: jwt.Audience{"api://euno"},
+					Audience: jwt.Audience{"api://eunox"},
 					IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 					Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 				}, nil)
@@ -260,7 +260,7 @@ func TestOIDCProvider_ContextCancellation(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: server.URL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 		CacheTTL:  10 * time.Millisecond,
 	}, server.Client())
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestOIDCProvider_ContextCancellation(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   server.URL,
 			Subject:  "user-1",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -296,7 +296,7 @@ func TestOIDCProvider_EmptyToken(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -328,7 +328,7 @@ func TestOIDCProvider_TokenWithNoKid(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -339,7 +339,7 @@ func TestOIDCProvider_TokenWithNoKid(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-no-kid",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -375,7 +375,7 @@ func TestOIDCProvider_MultipleKeysInJWKS(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: server.URL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -386,7 +386,7 @@ func TestOIDCProvider_MultipleKeysInJWKS(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   server.URL,
 			Subject:  "user-key2",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -407,7 +407,7 @@ func TestOIDCProvider_NoMatchingKidInJWKS(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -418,7 +418,7 @@ func TestOIDCProvider_NoMatchingKidInJWKS(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-1",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
@@ -502,7 +502,7 @@ func TestOIDCProvider_DiscoveryFailure(t *testing.T) {
 
 	_, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: server.URL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch OIDC discovery document")
@@ -540,7 +540,7 @@ func TestNewOIDCProviderWithJWKSClient_NilClient(t *testing.T) {
 
 	_, err := NewOIDCProviderWithJWKSClient(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "jwks client is required")
@@ -599,7 +599,7 @@ func TestOIDCProvider_RSAMultiAlgVerification(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL: issuerURL,
-		Audience:  "api://euno",
+		Audience:  "api://eunox",
 	}, server.Client())
 	require.NoError(t, err)
 
@@ -609,7 +609,7 @@ func TestOIDCProvider_RSAMultiAlgVerification(t *testing.T) {
 		&jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-eddsa",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)

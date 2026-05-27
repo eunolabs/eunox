@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://euno.dev/schemas/gcp/cloud-logging-queries.json",
-  "title": "Euno - Cloud Logging queries (Sprint-1 OBS parity)",
+  "$id": "https://eunox.dev/schemas/gcp/cloud-logging-queries.json",
+  "title": "Eunox - Cloud Logging queries (Sprint-1 OBS parity)",
   "description": "GCP multi-cloud parity for infra/sentinel/analytic-rules.json. These five log-based queries detect the same Sprint-1 OBS patterns as the Sentinel rules: denial spikes, write attempts under read-only mode, invalid-token bursts, kill-switch activation, and token-revocation spikes. Run them ad-hoc in the Logs Explorer, or use the companion Terraform module / `cloud-monitoring-alerts.tf` to materialize them as log-based metrics + alert policies.",
   "logResources": [
-    "projects/<PROJECT_ID>/logs/euno-runtime-logs-pilot",
-    "projects/<PROJECT_ID>/logs/euno-audit-logs-pilot"
+    "projects/<PROJECT_ID>/logs/eunox-runtime-logs-pilot",
+    "projects/<PROJECT_ID>/logs/eunox-audit-logs-pilot"
   ],
   "queries": [
     {
-      "name": "euno-deny-spike",
+      "name": "eunox-deny-spike",
       "displayName": "Capability denial spike from a single agent/session",
       "severity": "ERROR",
       "description": "Five or more capability-token denials within five minutes from the same agent or session. Possible prompt-injection attempt or runaway agent loop.",
@@ -18,7 +18,7 @@
       "techniques": ["T1078"],
       "filter": "resource.type=\"k8s_container\"\nlabels.\"k8s-pod/app\"=~\"tool-gateway|capability-issuer|agent-runtime\"\n(jsonPayload.message:\"Action denied\" OR jsonPayload.message:\"AUTHORIZATION_FAILED\" OR jsonPayload.message:\"INVALID_TOKEN\")",
       "metric": {
-        "name": "euno/deny_events",
+        "name": "eunox/deny_events",
         "description": "Count of denial log lines.",
         "labelExtractors": {
           "agentId":   "EXTRACT(jsonPayload.agentId)",
@@ -32,7 +32,7 @@
       }
     },
     {
-      "name": "euno-write-in-readonly",
+      "name": "eunox-write-in-readonly",
       "displayName": "Write attempt from a read-only session",
       "severity": "ERROR",
       "description": "An agent session that was issued only read scopes attempted a write operation. Indicates either a buggy agent or an active jailbreak attempt.",
@@ -41,7 +41,7 @@
       "techniques": ["T1068"],
       "filter": "resource.type=\"k8s_container\"\njsonPayload.logType=\"audit\"\njsonPayload.decision=\"deny\"\njsonPayload.action=(\"write\" OR \"delete\" OR \"update\" OR \"create\")\n(jsonPayload.reason:\"Insufficient permissions\" OR jsonPayload.reason:\"Invalid audience\")",
       "metric": {
-        "name": "euno/write_in_readonly",
+        "name": "eunox/write_in_readonly",
         "description": "Write attempt under a read-only session.",
         "metricKind": "DELTA",
         "valueType": "INT64",
@@ -50,7 +50,7 @@
       }
     },
     {
-      "name": "euno-invalid-token-burst",
+      "name": "eunox-invalid-token-burst",
       "displayName": "Burst of invalid capability tokens",
       "severity": "WARNING",
       "description": "More than 20 invalid-signature or expired-token errors in a 5-minute window.",
@@ -58,7 +58,7 @@
       "tactics": ["CredentialAccess"],
       "filter": "resource.type=\"k8s_container\"\n(jsonPayload.message:\"INVALID_TOKEN\" OR jsonPayload.message:\"EXPIRED_TOKEN\" OR jsonPayload.message:\"invalid signature\")",
       "metric": {
-        "name": "euno/invalid_tokens",
+        "name": "eunox/invalid_tokens",
         "metricKind": "DELTA",
         "valueType": "INT64",
         "alertThreshold": 20,
@@ -66,7 +66,7 @@
       }
     },
     {
-      "name": "euno-kill-switch-activated",
+      "name": "eunox-kill-switch-activated",
       "displayName": "Kill switch activated",
       "severity": "WARNING",
       "description": "Operational event: an admin activated the global, session-scoped, or agent-scoped kill switch.",
@@ -74,7 +74,7 @@
       "tactics": ["Impact"],
       "filter": "resource.type=\"k8s_container\"\n(jsonPayload.message:\"Kill switch activated\" OR jsonPayload.message:\"KILL_ALL_AGENTS\" OR jsonPayload.message:\"kill switch enabled\")",
       "metric": {
-        "name": "euno/kill_switch_activated",
+        "name": "eunox/kill_switch_activated",
         "metricKind": "DELTA",
         "valueType": "INT64",
         "alertThreshold": 1,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "name": "euno-token-revocation-spike",
+      "name": "eunox-token-revocation-spike",
       "displayName": "Token revocation spike",
       "severity": "WARNING",
       "description": "More than 10 token revocations through the admin API within 5 minutes.",
@@ -90,7 +90,7 @@
       "tactics": ["Impact"],
       "filter": "resource.type=\"k8s_container\"\njsonPayload.message:\"Token revoked via admin API\"",
       "metric": {
-        "name": "euno/token_revocations",
+        "name": "eunox/token_revocations",
         "metricKind": "DELTA",
         "valueType": "INT64",
         "alertThreshold": 10,

@@ -1,5 +1,5 @@
 /**
- * EunoEnterpriseStack — extends EunoIssuerStack with enterprise-grade features:
+ * EunoxEnterpriseStack — extends EunoxIssuerStack with enterprise-grade features:
  * partner DID registry, SOC 2 audit pipeline, Security Hub, and CloudTrail.
  *
  * Additional resources provisioned:
@@ -10,7 +10,7 @@
  *   - Kinesis Firehose delivery stream → S3 data lake for OCSF audit events
  *   - Security Hub enablement with CIS AWS Foundations Benchmark standard
  *   - CloudWatch alarms for SOC 2 alerting:
- *       • denial spike (euno_tool_call_denied_total)
+ *       • denial spike (eunox_tool_call_denied_total)
  *       • invalid-token burst
  *       • kill-switch activation
  *   - SNS topic for alarm notifications (plug in PagerDuty / Slack)
@@ -19,9 +19,9 @@
  * Usage:
  *
  *   const app = new cdk.App();
- *   new EunoEnterpriseStack(app, 'EunoEnterprise', {
+ *   new EunoxEnterpriseStack(app, 'EunoxEnterprise', {
  *     env: { account: '123456789012', region: 'us-east-1' },
- *     namePrefix: 'euno',
+ *     namePrefix: 'eunox',
  *     environment: 'prod',
  *     alarmNotificationEmail: 'ops@example.com',
  *   });
@@ -40,9 +40,9 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
-import { EunoIssuerStack, EunoIssuerStackProps } from './issuer-stack';
+import { EunoxIssuerStack, EunoxIssuerStackProps } from './issuer-stack';
 
-export interface EunoEnterpriseStackProps extends EunoIssuerStackProps {
+export interface EunoxEnterpriseStackProps extends EunoxIssuerStackProps {
   /**
    * Email address to receive CloudWatch alarm notifications.
    * When omitted, the SNS topic is created but has no subscriptions.
@@ -65,10 +65,10 @@ export interface EunoEnterpriseStackProps extends EunoIssuerStackProps {
 }
 
 /**
- * Euno Enterprise stack — adds partner DID registry, SOC 2 audit pipeline,
+ * Eunox Enterprise stack — adds partner DID registry, SOC 2 audit pipeline,
  * Security Hub, and enterprise alerting on top of the issuer infrastructure.
  */
-export class EunoEnterpriseStack extends EunoIssuerStack {
+export class EunoxEnterpriseStack extends EunoxIssuerStack {
   /** DynamoDB table storing partner DIDs and circuit-breaker state. */
   public readonly partnerDidRegistry: dynamodb.Table;
   /** S3 bucket for CloudTrail management / data event logs. */
@@ -84,7 +84,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
   /** SNS topic for CloudWatch alarm notifications. */
   public readonly alarmTopic: sns.Topic;
 
-  constructor(scope: Construct, id: string, props: EunoEnterpriseStackProps = {}) {
+  constructor(scope: Construct, id: string, props: EunoxEnterpriseStackProps = {}) {
     super(scope, id, props);
 
     const auditLakeRetentionDays = props.auditLakeRetentionDays ?? 2557;
@@ -229,7 +229,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
         autoEnableControls: true,
         controlFindingGenerator: 'SECURITY_CONTROL',
         tags: {
-          product: 'euno',
+          product: 'eunox',
           environment: this.deployEnv,
         },
       });
@@ -238,7 +238,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     // ── SNS alarm topic ───────────────────────────────────────────────────────
     this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
       topicName: `${this.namePrefix}-alarms-${this.deployEnv}`,
-      displayName: `Euno capability-governance alarms (${this.deployEnv})`,
+      displayName: `Eunox capability-governance alarms (${this.deployEnv})`,
     });
 
     if (props.alarmNotificationEmail) {
@@ -249,7 +249,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
 
     // ── CloudWatch alarms (SOC 2 CC7.3 — monitoring and alerting) ─────────────
     const denialSpikeMetric = new cloudwatch.Metric({
-      namespace: 'Euno/Gateway',
+      namespace: 'Eunox/Gateway',
       metricName: 'ToolCallDeniedTotal',
       dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
@@ -259,7 +259,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const denialSpikeAlarm = new cloudwatch.Alarm(this, 'DenialSpikeAlarm', {
       alarmName: `${this.namePrefix}-denial-spike-${this.deployEnv}`,
       alarmDescription:
-        'Euno capability-governance: unusual denial spike detected (CC7.3). ' +
+        'Eunox capability-governance: unusual denial spike detected (CC7.3). ' +
         'Check deny-reason histogram in CloudWatch Insights.',
       metric: denialSpikeMetric,
       threshold: 100,
@@ -270,7 +270,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     denialSpikeAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     const invalidTokenMetric = new cloudwatch.Metric({
-      namespace: 'Euno/Gateway',
+      namespace: 'Eunox/Gateway',
       metricName: 'InvalidTokenBurst',
       dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
@@ -280,7 +280,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const invalidTokenAlarm = new cloudwatch.Alarm(this, 'InvalidTokenBurstAlarm', {
       alarmName: `${this.namePrefix}-invalid-token-burst-${this.deployEnv}`,
       alarmDescription:
-        'Euno capability-governance: invalid-token burst detected (CC6.8). ' +
+        'Eunox capability-governance: invalid-token burst detected (CC6.8). ' +
         'May indicate a credential leak or misconfigured agent.',
       metric: invalidTokenMetric,
       threshold: 50,
@@ -291,7 +291,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     invalidTokenAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     const killSwitchMetric = new cloudwatch.Metric({
-      namespace: 'Euno/Gateway',
+      namespace: 'Eunox/Gateway',
       metricName: 'KillSwitchActivation',
       dimensionsMap: { environment: this.deployEnv },
       statistic: 'Sum',
@@ -301,7 +301,7 @@ export class EunoEnterpriseStack extends EunoIssuerStack {
     const killSwitchAlarm = new cloudwatch.Alarm(this, 'KillSwitchActivationAlarm', {
       alarmName: `${this.namePrefix}-kill-switch-${this.deployEnv}`,
       alarmDescription:
-        'Euno capability-governance: kill-switch was activated (CC7.5). ' +
+        'Eunox capability-governance: kill-switch was activated (CC7.5). ' +
         'All tool-call enforcement is paused — immediate operator attention required.',
       metric: killSwitchMetric,
       threshold: 1,

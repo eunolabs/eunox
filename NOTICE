@@ -9,169 +9,169 @@ the Business Source License 1.1. See LICENSE for details.
 This product includes the following third-party software:
 
 github.com/go-chi/chi/v5
-  License: MIT
-  Copyright (c) 2015-present Peter Kieltyka, Google Inc.
+License: MIT
+Copyright (c) 2015-present Peter Kieltyka, Google Inc.
 
 github.com/go-jose/go-jose/v4
-  License: Apache-2.0
-  Copyright (c) 2014 Square Inc.
+License: Apache-2.0
+Copyright (c) 2014 Square Inc.
 
 github.com/google/uuid
-  License: BSD-3-Clause
-  Copyright (c) 2009, 2014 Google Inc.
+License: BSD-3-Clause
+Copyright (c) 2009, 2014 Google Inc.
 
 github.com/prometheus/client_golang
-  License: Apache-2.0
-  Copyright (c) 2012-2015 The Prometheus Authors
+License: Apache-2.0
+Copyright (c) 2012-2015 The Prometheus Authors
 
 github.com/prometheus/client_model
-  License: Apache-2.0
-  Copyright (c) 2012-2015 The Prometheus Authors
+License: Apache-2.0
+Copyright (c) 2012-2015 The Prometheus Authors
 
 github.com/prometheus/common
-  License: Apache-2.0
-  Copyright (c) 2014 The Prometheus Authors
+License: Apache-2.0
+Copyright (c) 2014 The Prometheus Authors
 
 github.com/prometheus/procfs
-  License: Apache-2.0
-  Copyright (c) 2014 The Prometheus Authors
+License: Apache-2.0
+Copyright (c) 2014 The Prometheus Authors
 
 github.com/redis/go-redis/v9
-  License: BSD-2-Clause
-  Copyright (c) 2013 The github.com/redis/go-redis Authors.
+License: BSD-2-Clause
+Copyright (c) 2013 The github.com/redis/go-redis Authors.
 
 github.com/stretchr/testify
-  License: MIT
-  Copyright (c) 2012-2020 Mat Ryer, Tyler Bunnell and contributors.
+License: MIT
+Copyright (c) 2012-2020 Mat Ryer, Tyler Bunnell and contributors.
 
 go.opentelemetry.io/otel
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/otel/sdk
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/otel/trace
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/auto/sdk
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/otel/metric
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 go.opentelemetry.io/proto/otlp
-  License: Apache-2.0
-  Copyright The OpenTelemetry Authors
+License: Apache-2.0
+Copyright The OpenTelemetry Authors
 
 modernc.org/sqlite
-  License: BSD-3-Clause
-  Copyright (c) 2017 The Sqlite Authors.
+License: BSD-3-Clause
+Copyright (c) 2017 The Sqlite Authors.
 
 github.com/beorn7/perks
-  License: MIT
-  Copyright (c) 2013 Blake Mizerany
+License: MIT
+Copyright (c) 2013 Blake Mizerany
 
 github.com/cenkalti/backoff/v5
-  License: MIT
-  Copyright (c) 2014 Cenk Altı
+License: MIT
+Copyright (c) 2014 Cenk Altı
 
 github.com/cespare/xxhash/v2
-  License: MIT
-  Copyright (c) 2016 Caleb Spare
+License: MIT
+Copyright (c) 2016 Caleb Spare
 
 github.com/davecgh/go-spew
-  License: ISC
-  Copyright (c) 2012-2016 Dave Collins
+License: ISC
+Copyright (c) 2012-2016 Dave Collins
 
 github.com/dustin/go-humanize
-  License: MIT
-  Copyright (c) 2005-2008 Dustin Sallings
+License: MIT
+Copyright (c) 2005-2008 Dustin Sallings
 
 github.com/go-logr/logr
-  License: Apache-2.0
-  Copyright 2019 The logr Authors.
+License: Apache-2.0
+Copyright 2019 The logr Authors.
 
 github.com/go-logr/stdr
-  License: Apache-2.0
-  Copyright 2019 The logr Authors.
+License: Apache-2.0
+Copyright 2019 The logr Authors.
 
 github.com/grpc-ecosystem/grpc-gateway/v2
-  License: BSD-3-Clause
-  Copyright (c) 2015 Gengo, Inc.
+License: BSD-3-Clause
+Copyright (c) 2015 Gengo, Inc.
 
 github.com/mattn/go-isatty
-  License: MIT
-  Copyright (c) Yasuhiro MATSUMOTO
+License: MIT
+Copyright (c) Yasuhiro MATSUMOTO
 
 github.com/munnerz/goautoneg
-  License: BSD-3-Clause
-  Copyright (c) 2011, Open Knowledge Foundation Ltd.
+License: BSD-3-Clause
+Copyright (c) 2011, Open Knowledge Foundation Ltd.
 
 github.com/ncruces/go-strftime
-  License: MIT
-  Copyright (c) 2023 Nuno Cruces
+License: MIT
+Copyright (c) 2023 Nuno Cruces
 
 github.com/pmezard/go-difflib
-  License: BSD-3-Clause
-  Copyright (c) 2013 Patrick Mezard
+License: BSD-3-Clause
+Copyright (c) 2013 Patrick Mezard
 
 github.com/remyoudompheng/bigfft
-  License: BSD-3-Clause
-  Copyright (c) 2012 Rémy Oudompheng
+License: BSD-3-Clause
+Copyright (c) 2012 Rémy Oudompheng
 
 go.uber.org/atomic
-  License: MIT
-  Copyright (c) 2016 Uber Technologies, Inc.
+License: MIT
+Copyright (c) 2016 Uber Technologies, Inc.
 
 golang.org/x/net
-  License: BSD-3-Clause
-  Copyright (c) 2009 The Go Authors.
+License: BSD-3-Clause
+Copyright (c) 2009 The Go Authors.
 
 golang.org/x/sys
-  License: BSD-3-Clause
-  Copyright (c) 2009 The Go Authors.
+License: BSD-3-Clause
+Copyright (c) 2009 The Go Authors.
 
 golang.org/x/text
-  License: BSD-3-Clause
-  Copyright (c) 2009 The Go Authors.
+License: BSD-3-Clause
+Copyright (c) 2009 The Go Authors.
 
 google.golang.org/genproto/googleapis/api
-  License: Apache-2.0
-  Copyright (c) 2015 Google LLC
+License: Apache-2.0
+Copyright (c) 2015 Google LLC
 
 google.golang.org/genproto/googleapis/rpc
-  License: Apache-2.0
-  Copyright (c) 2015 Google LLC
+License: Apache-2.0
+Copyright (c) 2015 Google LLC
 
 google.golang.org/grpc
-  License: Apache-2.0
-  Copyright (c) 2014 Google Inc.
+License: Apache-2.0
+Copyright (c) 2014 Google Inc.
 
 google.golang.org/protobuf
-  License: BSD-3-Clause
-  Copyright (c) 2018 The Go Authors.
+License: BSD-3-Clause
+Copyright (c) 2018 The Go Authors.
 
 gopkg.in/yaml.v3
-  License: MIT and Apache-2.0
-  Copyright (c) 2006-2011 Kirill Simonov, 2011-2019 Canonical Ltd.
+License: MIT and Apache-2.0
+Copyright (c) 2006-2011 Kirill Simonov, 2011-2019 Canonical Ltd.
 
 modernc.org/libc
-  License: BSD-3-Clause
-  Copyright (c) 2020 The Libc Authors.
+License: BSD-3-Clause
+Copyright (c) 2020 The Libc Authors.
 
 modernc.org/mathutil
-  License: BSD-3-Clause
-  Copyright (c) 2014 The mathutil Authors.
+License: BSD-3-Clause
+Copyright (c) 2014 The mathutil Authors.
 
 modernc.org/memory
-  License: BSD-3-Clause
-  Copyright (c) 2017 The Memory Authors.
+License: BSD-3-Clause
+Copyright (c) 2017 The Memory Authors.

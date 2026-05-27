@@ -417,7 +417,7 @@ func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger, op
 		cfg.BufferSize = DefaultTransportConfig().BufferSize
 	}
 	if cfg.LogType == "" {
-		cfg.LogType = "EunoAudit"
+		cfg.LogType = "EunoxAudit"
 	}
 	if cfg.Endpoint == "" && cfg.WorkspaceID != "" {
 		cfg.Endpoint = fmt.Sprintf(

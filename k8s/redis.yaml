@@ -45,26 +45,26 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: redis
-  namespace: euno-system
+  namespace: eunox-system
 automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: redis
     component: coordination
     # Mark this Deployment as development/pilot only so infrastructure scanners
     # and admission controllers can enforce that production clusters do not run
     # single-node Redis.  See docs/deployment.md §"Redis HA for production".
-    euno.dev/dev-only: 'true'
+    eunox.dev/dev-only: 'true'
   annotations:
     # This single-node Redis is NOT suitable for production.  Replace with
     # a managed HA offering (Azure Cache for Redis Standard+, AWS ElastiCache
     # cluster mode, GCP Memorystore Standard tier, or Redis Sentinel/Cluster).
-    euno.dev/dev-only-reason: >-
+    eunox.dev/dev-only-reason: >-
       Single-node Redis with no replication or automatic failover.
       A pod restart causes all revocation, kill-switch, call-counter, and DPoP
       state to be lost and blocks enforcement until Redis recovers.
@@ -170,7 +170,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: redis
     component: coordination

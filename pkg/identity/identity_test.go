@@ -29,7 +29,7 @@ func TestOIDCProviderVerifyToken(t *testing.T) {
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		IssuerURL:      issuerURL,
-		Audience:       "api://euno",
+		Audience:       "api://eunox",
 		RequiredScopes: []string{"openid", "profile"},
 		RolesClaimPath: "realm_access.roles",
 		CacheTTL:       time.Hour,
@@ -39,7 +39,7 @@ func TestOIDCProviderVerifyToken(t *testing.T) {
 	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 		Issuer:   issuerURL,
 		Subject:  "user-123",
-		Audience: jwt.Audience{"api://euno"},
+		Audience: jwt.Audience{"api://eunox"},
 		IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}, map[string]interface{}{
@@ -184,13 +184,13 @@ func TestProviderErrors(t *testing.T) {
 	server, issuerURL, _ := newOIDCServer(t, "", &publicJWK)
 	defer server.Close()
 
-	provider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno"}, server.Client())
+	provider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://eunox"}, server.Client())
 	require.NoError(t, err)
 
 	validClaims := jwt.Claims{
 		Issuer:   issuerURL,
 		Subject:  "user-123",
-		Audience: jwt.Audience{"api://euno"},
+		Audience: jwt.Audience{"api://eunox"},
 		IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}
@@ -199,7 +199,7 @@ func TestProviderErrors(t *testing.T) {
 		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 			Issuer:   issuerURL,
 			Subject:  "user-123",
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-2 * time.Hour)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(-time.Hour)),
 		}, nil)
@@ -225,7 +225,7 @@ func TestProviderErrors(t *testing.T) {
 	t.Run("missing required claims", func(t *testing.T) {
 		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &jwt.Claims{
 			Issuer:   issuerURL,
-			Audience: jwt.Audience{"api://euno"},
+			Audience: jwt.Audience{"api://eunox"},
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}, nil)
 		_, err := provider.VerifyToken(context.Background(), token)
@@ -234,7 +234,7 @@ func TestProviderErrors(t *testing.T) {
 	})
 
 	t.Run("missing required scopes", func(t *testing.T) {
-		scopedProvider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://euno", RequiredScopes: []string{"openid"}}, server.Client())
+		scopedProvider, err := NewOIDCProvider(&OIDCConfig{IssuerURL: issuerURL, Audience: "api://eunox", RequiredScopes: []string{"openid"}}, server.Client())
 		require.NoError(t, err)
 		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), publicJWK.KeyID), &validClaims, map[string]interface{}{"scope": "email"})
 		_, err = scopedProvider.VerifyToken(context.Background(), token)

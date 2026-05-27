@@ -1,5 +1,5 @@
 /**
- * Unit tests for EunoIssuerStack.
+ * Unit tests for EunoxIssuerStack.
  *
  * Uses aws-cdk-lib/assertions to synthesize the stack and make assertions
  * about the CloudFormation template produced.
@@ -10,7 +10,7 @@
 
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { EunoIssuerStack } from '../src/stacks/issuer-stack';
+import { EunoxIssuerStack } from '../src/stacks/issuer-stack';
 
 const defaultEnv = {
   account: '123456789012',
@@ -18,18 +18,18 @@ const defaultEnv = {
 };
 
 function makeStack(
-  props: Partial<ConstructorParameters<typeof EunoIssuerStack>[2]> = {},
+  props: Partial<ConstructorParameters<typeof EunoxIssuerStack>[2]> = {},
 ) {
   const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
-  return new EunoIssuerStack(app, 'TestIssuer', {
+  return new EunoxIssuerStack(app, 'TestIssuer', {
     env: defaultEnv,
-    namePrefix: 'euno',
+    namePrefix: 'eunox',
     environment: 'test',
     ...props,
   });
 }
 
-describe('EunoIssuerStack', () => {
+describe('EunoxIssuerStack', () => {
   describe('inherits gateway resources', () => {
     test('includes the KMS signing key', () => {
       const stack = makeStack();
@@ -52,7 +52,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::ECR::Repository', {
-        RepositoryName: 'euno/capability-issuer',
+        RepositoryName: 'eunox/capability-issuer',
       });
     });
   });
@@ -61,9 +61,9 @@ describe('EunoIssuerStack', () => {
     test('throws a clear error when createCognitoUserPool=false without cognitoUserPoolArn', () => {
       const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
       expect(() => {
-        new EunoIssuerStack(app, 'MissingPoolArn', {
+        new EunoxIssuerStack(app, 'MissingPoolArn', {
           env: defaultEnv,
-          namePrefix: 'euno',
+          namePrefix: 'eunox',
           environment: 'test',
           createCognitoUserPool: false,
         });
@@ -74,7 +74,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Cognito::UserPool', {
-        UserPoolName: 'euno-users-test',
+        UserPoolName: 'eunox-users-test',
         MfaConfiguration: 'OPTIONAL',
       });
     });
@@ -115,7 +115,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
-        ClientName: 'euno-agent-runtime',
+        ClientName: 'eunox-agent-runtime',
         ExplicitAuthFlows: Match.arrayWith(['ALLOW_USER_SRP_AUTH']),
         AccessTokenValidity: 15,
         IdTokenValidity: 15,
@@ -127,7 +127,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Cognito::UserPoolDomain', {
-        Domain: 'euno-test',
+        Domain: 'eunox-test',
       });
     });
   });
@@ -137,7 +137,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'euno/test/partner-did-pin-secret',
+        Name: 'eunox/test/partner-did-pin-secret',
       });
     });
   });
@@ -147,7 +147,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SSM::Parameter', {
-        Name: '/euno/test/cognito-user-pool-id',
+        Name: '/eunox/test/cognito-user-pool-id',
         Type: 'String',
       });
     });
@@ -156,7 +156,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SSM::Parameter', {
-        Name: '/euno/test/cognito-client-id',
+        Name: '/eunox/test/cognito-client-id',
         Type: 'String',
       });
     });
@@ -167,7 +167,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::IAM::Role', {
-        RoleName: 'euno-issuer-irsa-test',
+        RoleName: 'eunox-issuer-irsa-test',
       });
     });
 
@@ -214,7 +214,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('IssuerRoleArn', {
-        Export: { Name: 'euno-test-issuer-role-arn' },
+        Export: { Name: 'eunox-test-issuer-role-arn' },
       });
     });
 
@@ -222,7 +222,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('CognitoUserPoolId', {
-        Export: { Name: 'euno-test-cognito-user-pool-id' },
+        Export: { Name: 'eunox-test-cognito-user-pool-id' },
       });
     });
 
@@ -230,7 +230,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('CognitoAppClientId', {
-        Export: { Name: 'euno-test-cognito-app-client-id' },
+        Export: { Name: 'eunox-test-cognito-app-client-id' },
       });
     });
 
@@ -238,7 +238,7 @@ describe('EunoIssuerStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('CognitoScimEndpoint', {
-        Export: { Name: 'euno-test-cognito-scim-endpoint' },
+        Export: { Name: 'eunox-test-cognito-scim-endpoint' },
       });
     });
   });

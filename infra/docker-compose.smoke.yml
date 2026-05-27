@@ -26,7 +26,7 @@ services:
       # to point at a real Cognito user pool during manual smoke testing.
       IDENTITY_PROVIDER:     ${IDENTITY_PROVIDER:-aws-cognito}
       AWS_COGNITO_ISSUER:    ${AWS_COGNITO_ISSUER:-http://mock-oidc:3003}
-      AWS_COGNITO_CLIENT_ID: ${AWS_COGNITO_CLIENT_ID:-euno-smoke-client}
+      AWS_COGNITO_CLIENT_ID: ${AWS_COGNITO_CLIENT_ID:-eunox-smoke-client}
       AWS_COGNITO_JWKS_URI:  ${AWS_COGNITO_JWKS_URI:-http://mock-oidc:3003/.well-known/jwks.json}
     depends_on:
       mock-oidc:

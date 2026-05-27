@@ -103,13 +103,13 @@ The blast radius is bounded to:
 
 ### 1.3 Detection path
 
-| Signal                                                                                       | Source                                                                        | Alert threshold                                                                                                                                                                                                    |
-| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `euno_partner_did_circuit_breaker_state{did="...", state="open"}`                            | Prometheus gauge (Task 3: `onCircuitStateChange` callback → Prometheus gauge) | Circuit opens after `PARTNER_DID_CB_FAILURE_THRESHOLD` failures within `PARTNER_DID_CB_WINDOW_MS`; transitions are logged at `warn` level and exported as a gauge. Alert threshold: state = `open` for > 1 minute. |
-| Abnormal issuance volume for partner `iss`                                                   | Gateway audit log `ENFORCEMENT_DECISION` events, filter `iss = <partner DID>` | >2× 1-hour moving average per partner DID → PagerDuty.                                                                                                                                                             |
-| `euno_gateway_token_verify_error_total{reason="AUTHENTICATION_FAILED", iss="<partner DID>"}` | Prometheus counter                                                            | Spike in verification errors from a specific partner DID suggests token replay or key rotation without cache invalidation. Alert on sudden increase.                                                               |
-| Partner DID re-resolve cache miss rate                                                       | Structured log `partner_did_cache_miss` events                                | High miss rate (> expected re-resolution frequency) may indicate forced cache invalidation attacks.                                                                                                                |
-| Admin API partner-registry mutation events                                                   | Audit log `PARTNER_DID_APPROVED`, `PARTNER_DID_REVOKED`                       | Any registry change outside a change-management window triggers an operator alert.                                                                                                                                 |
+| Signal                                                                                        | Source                                                                        | Alert threshold                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `eunox_partner_did_circuit_breaker_state{did="...", state="open"}`                            | Prometheus gauge (Task 3: `onCircuitStateChange` callback → Prometheus gauge) | Circuit opens after `PARTNER_DID_CB_FAILURE_THRESHOLD` failures within `PARTNER_DID_CB_WINDOW_MS`; transitions are logged at `warn` level and exported as a gauge. Alert threshold: state = `open` for > 1 minute. |
+| Abnormal issuance volume for partner `iss`                                                    | Gateway audit log `ENFORCEMENT_DECISION` events, filter `iss = <partner DID>` | >2× 1-hour moving average per partner DID → PagerDuty.                                                                                                                                                             |
+| `eunox_gateway_token_verify_error_total{reason="AUTHENTICATION_FAILED", iss="<partner DID>"}` | Prometheus counter                                                            | Spike in verification errors from a specific partner DID suggests token replay or key rotation without cache invalidation. Alert on sudden increase.                                                               |
+| Partner DID re-resolve cache miss rate                                                        | Structured log `partner_did_cache_miss` events                                | High miss rate (> expected re-resolution frequency) may indicate forced cache invalidation attacks.                                                                                                                |
+| Admin API partner-registry mutation events                                                    | Audit log `PARTNER_DID_APPROVED`, `PARTNER_DID_REVOKED`                       | Any registry change outside a change-management window triggers an operator alert.                                                                                                                                 |
 
 ### 1.4 Revocation path
 
@@ -380,9 +380,9 @@ role keys defined in `RoleCapabilityPolicy`. Example:
 
 ```json
 {
-  "EunoViewers": "viewer",
-  "EunoDevelopers": "developer",
-  "EunoOperators": "operator"
+  "EunoxViewers": "viewer",
+  "EunoxDevelopers": "developer",
+  "EunoxOperators": "operator"
 }
 ```
 
@@ -415,7 +415,7 @@ signal).
    POST /api/v1/admin/scim/group-role-map
    Authorization: Bearer <operator-JWT>
    X-Admin-Api-Key: <ISSUER_ADMIN_API_KEY>
-   Body: { "groupName": "EunoOperators", "role": "operator" }
+   Body: { "groupName": "EunoxOperators", "role": "operator" }
    ```
 
    This request is recorded in the issuer audit log with the operator

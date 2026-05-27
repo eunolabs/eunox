@@ -49,8 +49,8 @@ Both endpoints use the same rate limiter as `/api/v1/issue` but with a different
 
 Wire Prometheus alerts on:
 
-- `euno_issuer_issuance_rate_limit_denied_total` — spike indicates abuse or misconfiguration.
-- `euno_issuer_issuance_total{outcome="error"}` — sustained errors indicate KMS or IdP degradation.
+- `eunox_issuer_issuance_rate_limit_denied_total` — spike indicates abuse or misconfiguration.
+- `eunox_issuer_issuance_total{outcome="error"}` — sustained errors indicate KMS or IdP degradation.
 - p99 latency of `/api/v1/issue` > 2s — KMS or IdP degradation.
 
 ## Multi-Replica Considerations
@@ -63,12 +63,12 @@ which Redis becomes **required**, and the relevant env var.
 
 | Store                                                          | Default backing                                     | Redis-required at    | Env var                                                                   | Notes                                                                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------------- | --------------------------------------------------- | -------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Issuance rate limiter**                                      | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (or `ISSUANCE_RATE_LIMIT_KEY_PREFIX` for namespace isolation) | Without Redis each pod enforces the limit independently; effective budget is `ISSUANCE_RATE_LIMIT_MAX × replica-count`. `EUNO_DEPLOYMENT_TIER=multi-replica` with `NODE_ENV=production` **requires** `REDIS_URL` (schema-enforced).                                                                         |
+| **Issuance rate limiter**                                      | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (or `ISSUANCE_RATE_LIMIT_KEY_PREFIX` for namespace isolation) | Without Redis each pod enforces the limit independently; effective budget is `ISSUANCE_RATE_LIMIT_MAX × replica-count`. `EUNOX_DEPLOYMENT_TIER=multi-replica` with `NODE_ENV=production` **requires** `REDIS_URL` (schema-enforced).                                                                        |
 | **Storage-grant rate limiter**                                 | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (shared) or `STORAGE_GRANT_RATE_LIMIT_KEY_PREFIX`             | Same per-pod multiplication risk as the issuance limiter; enabled only when `STORAGE_GRANTS_ENABLED=true`.                                                                                                                                                                                                  |
 | **DB-token rate limiter**                                      | In-memory per replica                               | ≥ 2 replicas         | `REDIS_URL` (shared) or `DB_TOKEN_RATE_LIMIT_KEY_PREFIX`                  | Same per-pod multiplication risk; enabled only when `DB_TOKENS_ENABLED=true`.                                                                                                                                                                                                                               |
 | **OIDC state store** (nonce + ID-token-hash replay prevention) | In-memory per replica _(single-replica / dev only)_ | ≥ 2 replicas         | `OIDC_STATE_REDIS_URL` (preferred) or `REDIS_URL` (fallback)              | `RedisOidcStateStore` is now the default when either Redis URL is configured. Without Redis, a replay attack can succeed by targeting a pod that has not seen the original exchange. The factory emits a structured `warn` when falling back to in-memory so misconfigured deployments are visible in logs. |
 | **Usage meter** (gateway-side)                                 | In-memory per gateway replica                       | ≥ 2 gateway replicas | `USAGE_METER_REDIS_URL` or `REDIS_URL` on the gateway                     | The issuer itself does not hold a usage meter; metering is gateway-side. Under HA the gateway bootstraps a Redis-backed `UsageMeter` when a Redis URL is available, falling back to in-memory with a `warn`.                                                                                                |
-| **Issuer telemetry collector**                                 | In-memory per replica; flushed on graceful shutdown | All replica counts   | `EUNO_TELEMETRY=1` (opt-in); no Redis path                                | The `IssuerTelemetryCollector` aggregates counters in-process and ships them via the configured telemetry sink (HTTP/stdout) at shutdown. It is not fleet-wide; each replica reports independently. Aggregate fleet-level metrics require summing across replicas at the sink.                              |
+| **Issuer telemetry collector**                                 | In-memory per replica; flushed on graceful shutdown | All replica counts   | `EUNOX_TELEMETRY=1` (opt-in); no Redis path                               | The `IssuerTelemetryCollector` aggregates counters in-process and ships them via the configured telemetry sink (HTTP/stdout) at shutdown. It is not fleet-wide; each replica reports independently. Aggregate fleet-level metrics require summing across replicas at the sink.                              |
 
 ### Minimum viable multi-replica setup
 
@@ -77,7 +77,7 @@ For a two-replica issuer with no optional features:
 ```
 REDIS_URL=redis://redis:6379          # shared for rate limiter + OIDC state
 OIDC_STATE_REDIS_URL=redis://redis:6379   # explicit; overrides REDIS_URL for OIDC store
-EUNO_DEPLOYMENT_TIER=multi-replica    # enforces REDIS_URL at boot
+EUNOX_DEPLOYMENT_TIER=multi-replica    # enforces REDIS_URL at boot
 NODE_ENV=production
 ```
 
@@ -91,11 +91,11 @@ In this configuration:
 
 ### Single-replica exception
 
-`EUNO_DEPLOYMENT_TIER=single-replica` (the default) suppresses the
+`EUNOX_DEPLOYMENT_TIER=single-replica` (the default) suppresses the
 `REDIS_URL` requirement and leaves all stores in-memory. This is the
 intended configuration for development and for self-host operators
 who have accepted the single-point-of-failure trade-off. Setting
-`EUNO_DEPLOYMENT_TIER=single-replica` on a deployment that is actually
+`EUNOX_DEPLOYMENT_TIER=single-replica` on a deployment that is actually
 running multiple pods is a misconfiguration that silently degrades
 rate-limit enforcement and replay prevention.
 
@@ -140,7 +140,7 @@ To revoke a token:
 eunox revoke <token-jti>
 # or
 curl -X POST https://<gateway>/admin/revoke \
-  -H "X-Admin-Api-Key: $EUNO_ADMIN_API_KEY" \
+  -H "X-Admin-Api-Key: $EUNOX_ADMIN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tokenId": "<token-jti>"}'
 ```
@@ -163,11 +163,11 @@ AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS=60000    # optional, default 60 s
 
 The gateway auto-starts a `CrossChainAnchor` on boot. The anchor:
 
-1. Every `AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS` milliseconds, queries `euno_audit_ledger_v2` for every known replica's latest `(replicaId, seq, tipHash)`.
+1. Every `AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS` milliseconds, queries `eunox_audit_ledger_v2` for every known replica's latest `(replicaId, seq, tipHash)`.
 2. Sorts tips alphabetically by `replicaId` (deterministic leaf ordering).
 3. Computes a balanced binary Merkle root over `canonicalSha256(tip)` for each tip.
 4. Signs the `CrossChainCommitment` with the same KMS key used for per-record evidence (`AUDIT_SIGNING_KMS_PROVIDER`).
-5. Emits a `SignedCrossChainCommitment` to the in-memory ring buffer and to the `euno_cross_chain_anchor_lag_seconds` Prometheus gauge.
+5. Emits a `SignedCrossChainCommitment` to the in-memory ring buffer and to the `eunox_cross_chain_anchor_lag_seconds` Prometheus gauge.
 
 Commitments are stored in-process in a bounded ring buffer (≤ 10 000 entries ≈ 7 days at the default 60 s interval).
 
@@ -230,15 +230,15 @@ The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSO
 
 ### Prometheus metric
 
-| Metric                                | Type  | Description                                                                                                                                           |
-| ------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `euno_cross_chain_anchor_lag_seconds` | Gauge | Seconds since the last successful commitment. Zero until first commitment. Alert when this exceeds `2 × AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS / 1000`. |
+| Metric                                 | Type  | Description                                                                                                                                           |
+| -------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eunox_cross_chain_anchor_lag_seconds` | Gauge | Seconds since the last successful commitment. Zero until first commitment. Alert when this exceeds `2 × AUDIT_LEDGER_CROSS_CHAIN_INTERVAL_MS / 1000`. |
 
 **Alert rule example (Prometheus):**
 
 ```yaml
 - alert: CrossChainAnchorLag
-  expr: euno_cross_chain_anchor_lag_seconds > 120
+  expr: eunox_cross_chain_anchor_lag_seconds > 120
   for: 5m
   labels:
     severity: warning

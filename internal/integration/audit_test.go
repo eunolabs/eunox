@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/edgeobs/eunox/pkg/audit"
-	eunocrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/edgeobs/eunox/pkg/ocsf"
 )
 
@@ -49,7 +49,7 @@ func (b *inMemoryLedgerBackend) Close() error {
 func TestAudit_PipelineChainIntegrity(t *testing.T) {
 	ctx := context.Background()
 
-	signerKey, err := eunocrypto.GenerateECDSASigner("audit-key-1", eunocrypto.ES256)
+	signerKey, err := eunoxcrypto.GenerateECDSASigner("audit-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	evidenceSigner := audit.NewEvidenceSigner(signerKey)
@@ -95,7 +95,7 @@ func TestAudit_PipelineChainIntegrity(t *testing.T) {
 func TestAudit_PipelineTamperDetection(t *testing.T) {
 	ctx := context.Background()
 
-	signerKey, err := eunocrypto.GenerateECDSASigner("audit-key-2", eunocrypto.ES256)
+	signerKey, err := eunoxcrypto.GenerateECDSASigner("audit-key-2", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	evidenceSigner := audit.NewEvidenceSigner(signerKey)
@@ -135,7 +135,7 @@ func TestAudit_PipelineTamperDetection(t *testing.T) {
 func TestAudit_PipelineSignatures(t *testing.T) {
 	ctx := context.Background()
 
-	signerKey, err := eunocrypto.GenerateECDSASigner("audit-key-3", eunocrypto.ES256)
+	signerKey, err := eunoxcrypto.GenerateECDSASigner("audit-key-3", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	evidenceSigner := audit.NewEvidenceSigner(signerKey)
@@ -167,7 +167,7 @@ func TestAudit_PipelineSignatures(t *testing.T) {
 func TestAudit_PipelineReplicaIsolation(t *testing.T) {
 	ctx := context.Background()
 
-	signerKey, err := eunocrypto.GenerateECDSASigner("audit-key-4", eunocrypto.ES256)
+	signerKey, err := eunoxcrypto.GenerateECDSASigner("audit-key-4", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	evidenceSigner := audit.NewEvidenceSigner(signerKey)
@@ -204,7 +204,7 @@ func TestAudit_PipelineReplicaIsolation(t *testing.T) {
 func TestAudit_SequenceNumbers(t *testing.T) {
 	ctx := context.Background()
 
-	signerKey, err := eunocrypto.GenerateECDSASigner("audit-key-6", eunocrypto.ES256)
+	signerKey, err := eunoxcrypto.GenerateECDSASigner("audit-key-6", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	evidenceSigner := audit.NewEvidenceSigner(signerKey)

@@ -32,7 +32,7 @@ variable "db_instance_class" {
 variable "db_username" {
   description = "Master username for the RDS PostgreSQL instance."
   type        = string
-  default     = "euno_admin"
+  default     = "eunox_admin"
 }
 
 variable "db_multi_az" {

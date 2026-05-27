@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// Euno Capability-Native Agent Governance — Azure Bicep deployment
+// Eunox Capability-Native Agent Governance — Azure Bicep deployment
 // ----------------------------------------------------------------------------
 //
 // Provisions every Azure resource called out in the Sprint 5 production-pilot
@@ -19,7 +19,7 @@
 // Deploy with:
 //
 //   az deployment group create \
-//     --resource-group euno-rg \
+//     --resource-group eunox-rg \
 //     --template-file infra/bicep/main.bicep \
 //     --parameters @infra/bicep/main.parameters.example.json
 //
@@ -30,14 +30,14 @@
 @description('Short prefix used to name all resources (3-12 lowercase letters / digits).')
 @minLength(3)
 @maxLength(12)
-param namePrefix string = 'euno'
+param namePrefix string = 'eunox'
 
 @description('Azure region for all resources.')
 param location string = resourceGroup().location
 
 @description('Tags applied to all resources.')
 param tags object = {
-  product: 'euno'
+  product: 'eunox'
   component: 'capability-governance'
   environment: 'pilot'
 }

@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------------
 # Module: network
 # Provisions the VPC, subnet (with GKE secondary ranges), Cloud Router, and
-# Cloud NAT required by the Euno GKE deployment.
+# Cloud NAT required by the Eunox GKE deployment.
 # ----------------------------------------------------------------------------
 
 variable "project_id"    { type = string }

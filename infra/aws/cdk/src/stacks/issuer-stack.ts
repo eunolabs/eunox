@@ -1,5 +1,5 @@
 /**
- * EunoIssuerStack — extends EunoGatewayStack with the capability-issuer and
+ * EunoxIssuerStack — extends EunoxGatewayStack with the capability-issuer and
  * Cognito User Pool.
  *
  * Additional resources provisioned:
@@ -17,9 +17,9 @@
  * Usage:
  *
  *   const app = new cdk.App();
- *   new EunoIssuerStack(app, 'EunoIssuer', {
+ *   new EunoxIssuerStack(app, 'EunoxIssuer', {
  *     env: { account: '123456789012', region: 'us-east-1' },
- *     namePrefix: 'euno',
+ *     namePrefix: 'eunox',
  *     environment: 'prod',
  *   });
  */
@@ -30,9 +30,9 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
-import { EunoGatewayStack, EunoGatewayStackProps } from './gateway-stack';
+import { EunoxGatewayStack, EunoxGatewayStackProps } from './gateway-stack';
 
-export interface EunoIssuerStackProps extends EunoGatewayStackProps {
+export interface EunoxIssuerStackProps extends EunoxGatewayStackProps {
   /**
    * When true (default) the Cognito User Pool is created in this stack.
    * Set to false and provide cognitoUserPoolArn to reuse an existing pool.
@@ -51,10 +51,10 @@ export interface EunoIssuerStackProps extends EunoGatewayStackProps {
 }
 
 /**
- * Euno Issuer stack — adds Cognito User Pool and SCIM wiring on top of the
+ * Eunox Issuer stack — adds Cognito User Pool and SCIM wiring on top of the
  * core gateway infrastructure.
  */
-export class EunoIssuerStack extends EunoGatewayStack {
+export class EunoxIssuerStack extends EunoxGatewayStack {
   /** Cognito User Pool for agent-user and operator identity management. */
   public readonly userPool: cognito.IUserPool;
   /** Cognito App Client for agent-runtime auth flows (ALLOW_USER_SRP_AUTH). */
@@ -66,7 +66,7 @@ export class EunoIssuerStack extends EunoGatewayStack {
   /** Secrets Manager secret for the partner DID PIN. */
   public readonly partnerDidPinSecret: secretsmanager.Secret;
 
-  constructor(scope: Construct, id: string, props: EunoIssuerStackProps = {}) {
+  constructor(scope: Construct, id: string, props: EunoxIssuerStackProps = {}) {
     super(scope, id, props);
 
     const createPool = props.createCognitoUserPool ?? true;
@@ -135,13 +135,13 @@ export class EunoIssuerStack extends EunoGatewayStack {
     new cognito.CfnUserPoolGroup(this, 'OperatorsGroup', {
       userPoolId: this.userPool.userPoolId,
       groupName: 'operators',
-      description: 'Privileged Euno operators (mapped to admin capability).',
+      description: 'Privileged Eunox operators (mapped to admin capability).',
     });
 
     new cognito.CfnUserPoolGroup(this, 'AgentUsersGroup', {
       userPoolId: this.userPool.userPoolId,
       groupName: 'agent-users',
-      description: 'Standard Euno users (mapped to read/write capabilities).',
+      description: 'Standard Eunox users (mapped to read/write capabilities).',
     });
 
     // ── Secrets Manager — PARTNER_DID_PIN_SECRET ──────────────────────────────
@@ -175,7 +175,7 @@ export class EunoIssuerStack extends EunoGatewayStack {
     const issuerIrsaConditions = new cdk.CfnJson(this, 'IssuerIrsaConditions', {
       value: {
         [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
-          'system:serviceaccount:euno-system:capability-issuer',
+          'system:serviceaccount:eunox-system:capability-issuer',
         [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
           'sts.amazonaws.com',
       },

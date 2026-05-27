@@ -34,7 +34,7 @@ The additional operational dependency is the trade-off. Every production gateway
 
 The most frequently-accessed Redis key in the system is the `maxCalls` counter. Here's the data model:
 
-**Key:** `euno:call:{tenantId}:{tokenJti}:{toolName}`
+**Key:** `eunox:call:{tenantId}:{tokenJti}:{toolName}`
 
 **Value:** integer (current call count)
 
@@ -43,7 +43,7 @@ The most frequently-accessed Redis key in the system is the `maxCalls` counter. 
 The enforcement check happens like this:
 
 ```
-maxCallsKey = "euno:call:{tenantId}:{tokenJti}:{toolName}"
+maxCallsKey = "eunox:call:{tenantId}:{tokenJti}:{toolName}"
 currentCount = INCR maxCallsKey
 if currentCount == 1:
   TTL = tokenExp - now()
@@ -60,7 +60,7 @@ One subtlety: the `EXPIRE` call is a separate Redis operation from the `INCR`, w
 
 **What about bursting?** The `maxCalls` condition is a lifetime cap, not a rate limit. If a token has `maxCalls: 100`, the agent can use all 100 calls in the first second if it wants to. Rate limiting is a separate condition type (`maxCallsPerMinute`) with a different key structure:
 
-**Key:** `euno:rate:{tenantId}:{tokenJti}:{toolName}:{minuteBucket}`
+**Key:** `eunox:rate:{tenantId}:{tokenJti}:{toolName}:{minuteBucket}`
 
 **Value:** counter
 
@@ -74,11 +74,11 @@ The `{minuteBucket}` is `Math.floor(Date.now() / 60000)`. Rate limiting uses a s
 
 The kill-switch (described from an operator perspective in post 21) is backed by three Redis keys per granularity level:
 
-**Session kill:** `euno:kill:session:{tenantId}:{sessionId}` — `SET "1" EX {killTTL}`
+**Session kill:** `eunox:kill:session:{tenantId}:{sessionId}` — `SET "1" EX {killTTL}`
 
-**Agent kill:** `euno:kill:agent:{tenantId}:{agentId}` — `SET "1" EX {killTTL}`
+**Agent kill:** `eunox:kill:agent:{tenantId}:{agentId}` — `SET "1" EX {killTTL}`
 
-**Global kill:** `euno:kill:global:{tenantId}` — `SET "1"` (no TTL; must be explicitly cleared)
+**Global kill:** `eunox:kill:global:{tenantId}` — `SET "1"` (no TTL; must be explicitly cleared)
 
 The enforcement check is a three-key lookup on every tool call: `GET` session key, `GET` agent key, `GET` global key. All three are checked; any positive result triggers a deny. The `GET` operations can be pipelined into a single round trip using Redis pipelines, so the overhead is one network round trip regardless of how many kill-switch states are active.
 
@@ -98,7 +98,7 @@ DPoP (Demonstrating Proof of Possession) is a mechanism that binds an access tok
 
 The gateway checks that the nonce has not been seen before. If it has, the request is rejected as a replay attack. This requires storing every nonce the gateway has ever seen (within the token's validity window) and checking each incoming nonce against that set.
 
-**Key:** `euno:dpop:nonce:{tenantId}:{nonce}`
+**Key:** `eunox:dpop:nonce:{tenantId}:{nonce}`
 
 **Value:** `"1"`
 
@@ -118,7 +118,7 @@ The mitigation is rate limiting at the API level (before the DPoP check) and enf
 
 Token revocation (described in post 21) is the fourth enforcement state backed by Redis:
 
-**Key:** `euno:revoked:{tenantId}:{jti}`
+**Key:** `eunox:revoked:{tenantId}:{jti}`
 
 **Value:** ISO timestamp of revocation
 
@@ -211,13 +211,13 @@ Total Redis memory for a 10,000 req/second gateway: approximately 1.5-2GB includ
 
 The Prometheus metrics I watch most closely for Redis health:
 
-**`euno_redis_operation_latency_ms`** (histogram, labeled by operation and connection pool): the p99 for Redis operations should be under 5ms in a healthy deployment. If it creeps above 20ms, Redis is either overloaded or there's network latency between the gateway and the Redis cluster.
+**`eunox_redis_operation_latency_ms`** (histogram, labeled by operation and connection pool): the p99 for Redis operations should be under 5ms in a healthy deployment. If it creeps above 20ms, Redis is either overloaded or there's network latency between the gateway and the Redis cluster.
 
-**`euno_redis_errors_total`** (counter, labeled by operation and error type): any non-zero delta in Redis errors triggers investigation. Under fail-closed behavior, Redis errors translate directly to denied tool calls, so a spike in Redis errors will appear simultaneously in `euno_enforcement_denials_total{denial_code="REDIS_UNAVAILABLE"}`.
+**`eunox_redis_errors_total`** (counter, labeled by operation and error type): any non-zero delta in Redis errors triggers investigation. Under fail-closed behavior, Redis errors translate directly to denied tool calls, so a spike in Redis errors will appear simultaneously in `eunox_enforcement_denials_total{denial_code="REDIS_UNAVAILABLE"}`.
 
-**`euno_redis_pool_exhausted_total`** (counter): if the Redis connection pool is exhausted, new requests wait for a free connection. Under fail-closed behavior, a waiting request that times out returns `REDIS_UNAVAILABLE`. Pool exhaustion usually indicates either a connection leak (more rare) or insufficient pool sizing for the traffic volume (more common). The `REDIS_POOL_SIZE` environment variable controls this; the default (50) is appropriate for medium-traffic deployments.
+**`eunox_redis_pool_exhausted_total`** (counter): if the Redis connection pool is exhausted, new requests wait for a free connection. Under fail-closed behavior, a waiting request that times out returns `REDIS_UNAVAILABLE`. Pool exhaustion usually indicates either a connection leak (more rare) or insufficient pool sizing for the traffic volume (more common). The `REDIS_POOL_SIZE` environment variable controls this; the default (50) is appropriate for medium-traffic deployments.
 
-**`euno_call_counter_top_tokens`** (gauge): the top-N tokens by call count in the last 5 minutes. Not strictly a Redis health metric, but useful for identifying runaway agents before they hit the `maxCalls` limit.
+**`eunox_call_counter_top_tokens`** (gauge): the top-N tokens by call count in the last 5 minutes. Not strictly a Redis health metric, but useful for identifying runaway agents before they hit the `maxCalls` limit.
 
 ---
 

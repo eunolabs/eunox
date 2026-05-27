@@ -375,11 +375,11 @@ CLOSED ──(5 failures)──▶ OPEN ──(30s cooldown)──▶ HALF-OPEN
 
 ### Metrics
 
-| Metric                                         | Type      | Labels                  |
-| ---------------------------------------------- | --------- | ----------------------- |
-| `euno_partner_did_circuit_breaker_state`       | Gauge     | `did_method`, `state`   |
-| `euno_partner_did_resolution_total`            | Counter   | `did_method`, `outcome` |
-| `euno_partner_did_resolution_duration_seconds` | Histogram | `did_method`            |
+| Metric                                          | Type      | Labels                  |
+| ----------------------------------------------- | --------- | ----------------------- |
+| `eunox_partner_did_circuit_breaker_state`       | Gauge     | `did_method`, `state`   |
+| `eunox_partner_did_resolution_total`            | Counter   | `did_method`, `outcome` |
+| `eunox_partner_did_resolution_duration_seconds` | Histogram | `did_method`            |
 
 ---
 
@@ -474,12 +474,12 @@ curl -s https://gateway.internal:3003/admin/partner-dids/ \
 
 ### Recommended Alerts
 
-| Alert                            | Condition                                                                                                   | Severity |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
-| Federation circuit breaker open  | `euno_partner_did_circuit_breaker_state{state="open"} > 0`                                                  | Warning  |
-| High partner resolution failures | `rate(euno_partner_did_resolution_total{outcome="error"}[5m]) > 0.1`                                        | Warning  |
-| Partner resolution latency spike | `histogram_quantile(0.99, sum by (le) (rate(euno_partner_did_resolution_duration_seconds_bucket[5m]))) > 5` | Warning  |
-| Partner token rejection spike    | Increase in 401/403 for cross-org tokens                                                                    | Info     |
+| Alert                            | Condition                                                                                                    | Severity |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------- |
+| Federation circuit breaker open  | `eunox_partner_did_circuit_breaker_state{state="open"} > 0`                                                  | Warning  |
+| High partner resolution failures | `rate(eunox_partner_did_resolution_total{outcome="error"}[5m]) > 0.1`                                        | Warning  |
+| Partner resolution latency spike | `histogram_quantile(0.99, sum by (le) (rate(eunox_partner_did_resolution_duration_seconds_bucket[5m]))) > 5` | Warning  |
+| Partner token rejection spike    | Increase in 401/403 for cross-org tokens                                                                     | Info     |
 
 ### Dashboard Panels
 

@@ -18,7 +18,7 @@
         },
         "MINTER_ISSUER_DID": {
           "type": "string",
-          "description": "DID of the minter's capability issuer. Embedded in minted tokens as the `iss` claim. Default: did:web:minter.euno.local."
+          "description": "DID of the minter's capability issuer. Embedded in minted tokens as the `iss` claim. Default: did:web:minter.eunox.local."
         },
         "MINTER_GATEWAY_AUDIENCE": {
           "type": "string",

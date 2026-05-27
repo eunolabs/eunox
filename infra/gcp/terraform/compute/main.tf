@@ -28,26 +28,26 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# Service accounts — one per Euno service
+# Service accounts — one per Eunox service
 # ---------------------------------------------------------------------------
 resource "google_service_account" "issuer" {
   project      = var.project_id
   account_id   = local.issuer_sa_id
-  display_name = "Euno Capability Issuer"
+  display_name = "Eunox Capability Issuer"
   description  = "Used by capability-issuer pods via GKE Workload Identity."
 }
 
 resource "google_service_account" "gateway" {
   project      = var.project_id
   account_id   = local.gateway_sa_id
-  display_name = "Euno Tool Gateway"
+  display_name = "Eunox Tool Gateway"
   description  = "Used by tool-gateway pods via GKE Workload Identity."
 }
 
 resource "google_service_account" "nodes" {
   project      = var.project_id
   account_id   = local.node_sa_id
-  display_name = "Euno GKE Node Pool"
+  display_name = "Eunox GKE Node Pool"
   description  = "Used by GKE nodes with minimum runtime permissions."
 }
 
@@ -141,7 +141,7 @@ resource "google_artifact_registry_repository" "images" {
   project       = var.project_id
   location      = var.gcp_region
   repository_id = local.artifact_repo
-  description   = "Euno service container images."
+  description   = "Eunox service container images."
   format        = "DOCKER"
   labels        = var.labels
 }

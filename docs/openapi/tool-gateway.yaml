@@ -52,12 +52,12 @@ paths:
       description: |
         Exposes process and request-level metrics in the Prometheus text
         exposition format. Standard series include
-        `euno_http_request_duration_seconds` (latency histogram labelled
-        by method / route / status_code), `euno_http_requests_total`
+        `eunox_http_request_duration_seconds` (latency histogram labelled
+        by method / route / status_code), `eunox_http_requests_total`
         (request counter with the same labels),
-        `euno_gateway_decisions_total{decision}` (allow / deny counter
+        `eunox_gateway_decisions_total{decision}` (allow / deny counter
         emitted by the enforcement engine), and
-        `euno_gateway_revocation_list_size` (gauge sampled from the
+        `eunox_gateway_revocation_list_size` (gauge sampled from the
         in-process revocation store).
 
         The endpoint is unauthenticated and intentionally bypasses the
@@ -71,9 +71,9 @@ paths:
               schema:
                 type: string
               example: |
-                # HELP euno_http_requests_total Total HTTP requests handled, labelled by method, route and status code.
-                # TYPE euno_http_requests_total counter
-                euno_http_requests_total{service="tool-gateway",method="GET",route="/health",status_code="200"} 12
+                # HELP eunox_http_requests_total Total HTTP requests handled, labelled by method, route and status code.
+                # TYPE eunox_http_requests_total counter
+                eunox_http_requests_total{service="tool-gateway",method="GET",route="/health",status_code="200"} 12
 
   /api/v1/validate:
     post:

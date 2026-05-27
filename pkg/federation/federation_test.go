@@ -537,9 +537,9 @@ func TestPartnerIssuerResolver_MetricsWired_Success(t *testing.T) {
 	for _, f := range families {
 		familyNames[f.GetName()] = true
 	}
-	assert.True(t, familyNames["euno_partner_did_resolution_total"], "should emit resolution_total")
-	assert.True(t, familyNames["euno_partner_did_resolution_duration_seconds"], "should emit resolution_duration")
-	assert.True(t, familyNames["euno_partner_did_circuit_breaker_state"], "should emit circuit_breaker_state")
+	assert.True(t, familyNames["eunox_partner_did_resolution_total"], "should emit resolution_total")
+	assert.True(t, familyNames["eunox_partner_did_resolution_duration_seconds"], "should emit resolution_duration")
+	assert.True(t, familyNames["eunox_partner_did_circuit_breaker_state"], "should emit circuit_breaker_state")
 }
 
 func TestPartnerIssuerResolver_MetricsWired_Failure(t *testing.T) {
@@ -571,7 +571,7 @@ func TestPartnerIssuerResolver_MetricsWired_Failure(t *testing.T) {
 
 	foundErrorOutcome := false
 	for _, f := range families {
-		if f.GetName() == "euno_partner_did_resolution_total" {
+		if f.GetName() == "eunox_partner_did_resolution_total" {
 			require.NotEmpty(t, f.GetMetric())
 			for _, m := range f.GetMetric() {
 				metricHasError := false
@@ -624,7 +624,7 @@ func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
 
 	hasCircuitOpen := false
 	for _, f := range families {
-		if f.GetName() == "euno_partner_did_resolution_total" {
+		if f.GetName() == "eunox_partner_did_resolution_total" {
 			for _, m := range f.GetMetric() {
 				for _, lp := range m.GetLabel() {
 					if lp.GetName() == "outcome" && lp.GetValue() == "circuit_open" {
@@ -639,7 +639,7 @@ func TestPartnerIssuerResolver_MetricsWired_CircuitOpen(t *testing.T) {
 	// Verify circuit_breaker_state gauge shows "open" for ion.
 	foundIonOpen := false
 	for _, f := range families {
-		if f.GetName() == "euno_partner_did_circuit_breaker_state" {
+		if f.GetName() == "eunox_partner_did_circuit_breaker_state" {
 			for _, m := range f.GetMetric() {
 				method := ""
 				state := ""

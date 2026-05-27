@@ -1,14 +1,14 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package config provides configuration models, loading, and validation helpers for Euno services.
+// Package config provides configuration models, loading, and validation helpers for Eunox services.
 package config
 
 // MinterConfig holds the API-Key Minter configuration.
 type MinterConfig struct {
 	NodeEnv             Environment `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
 	Port                int         `env:"MINTER_PORT" default:"3004" min:"1" max:"65535"`
-	IssuerDID           string      `env:"MINTER_ISSUER_DID" default:"did:web:minter.euno.local"`
+	IssuerDID           string      `env:"MINTER_ISSUER_DID" default:"did:web:minter.eunox.local"`
 	GatewayAudience     string      `env:"MINTER_GATEWAY_AUDIENCE" default:"tool-gateway"`
 	TokenTTLSeconds     int         `env:"MINTER_TOKEN_TTL_SECONDS" default:"300" min:"1"`
 	AdminAPIKey         string      `env:"MINTER_ADMIN_API_KEY" production:"required,min_length:32,not:dev-admin-key"`

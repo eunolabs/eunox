@@ -31,7 +31,7 @@ variable "alarm_notification_email" {
 }
 
 variable "denial_spike_threshold" {
-  description = "CloudWatch alarm threshold for euno_tool_call_denied_total in a 5-minute window."
+  description = "CloudWatch alarm threshold for eunox_tool_call_denied_total in a 5-minute window."
   type        = number
   default     = 100
 }

@@ -3,6 +3,7 @@ title: "Drop-in governance: adding `eunox-mcp` to Claude Desktop in 5 minutes"
 description: "individual developers who want agent security without a DevOps project"
 pubDate: "2026-05-26"
 ---
+
 # Drop-in governance: adding `eunox-mcp` to Claude Desktop in 5 minutes
 
 _Audience: individual developers who want agent security without a DevOps project_
@@ -71,12 +72,12 @@ What we're going to do is insert `eunox-mcp` between Claude and the filesystem s
 
 ## Step 2: Write your policy file
 
-Create a file at `~/.euno/euno.policy.yaml`. (Or anywhere really — I'll reference this path in the config.) This is the file that defines what Claude is allowed to do.
+Create a file at `~/.eunox/eunox.policy.yaml`. (Or anywhere really — I'll reference this path in the config.) This is the file that defines what Claude is allowed to do.
 
 Here's a sensible starting policy for a filesystem server:
 
 ```yaml
-# ~/.euno/euno.policy.yaml
+# ~/.eunox/eunox.policy.yaml
 
 agentId: "claude-desktop"
 name: "Claude Desktop (local)"
@@ -144,7 +145,7 @@ Now we wire up the proxy. Here's the updated config:
       "args": [
         "proxy",
         "--policy",
-        "/Users/you/.euno/euno.policy.yaml",
+        "/Users/you/.eunox/eunox.policy.yaml",
         "--",
         "npx",
         "-y",
@@ -177,7 +178,7 @@ If you have multiple MCP servers, you wrap each one the same way — separate co
       "args": [
         "proxy",
         "--policy",
-        "/Users/you/.euno/euno.policy.yaml",
+        "/Users/you/.eunox/eunox.policy.yaml",
         "--",
         "npx",
         "-y",
@@ -190,7 +191,7 @@ If you have multiple MCP servers, you wrap each one the same way — separate co
       "args": [
         "proxy",
         "--policy",
-        "/Users/you/.euno/euno.policy.yaml",
+        "/Users/you/.eunox/eunox.policy.yaml",
         "--",
         "npx",
         "-y",
@@ -217,7 +218,7 @@ Now try one that should be blocked: if you have access to your database, ask Cla
 Check your local audit log:
 
 ```bash
-tail -20 ~/.euno/audit.jsonl | jq .
+tail -20 ~/.eunox/audit.jsonl | jq .
 ```
 
 You'll see JSONL records — one per tool call. Both allowed and denied calls are there. Each record has the tool name and resource, the decision, the denial code/condition type when denied, and the timestamp. This is the record that tells you what Claude has been doing and whether any of it looked unusual.
@@ -248,9 +249,9 @@ I want to be straight about the limits of the local mode setup.
 
 **Rate limits are per-process.** The `maxCalls` counters in local mode are in-memory in the proxy process. If you restart Claude Desktop, the counters reset. This is fine for a single-user local setup. For a shared or multi-user deployment, you need shared Redis-backed counters — which is what the hosted gateway provides. [The migration post](./08-local-yaml-to-hosted-gateway.md) covers that transition when you get there.
 
-**The audit log is local and mutable.** `~/.euno/audit.jsonl` is HMAC-chained, so tampering is detectable, but it's a file on your local machine. If someone has access to your machine, they have access to the audit log. For compliance use cases — SOC 2, regulatory requirements — you want a durable, centralised audit store, which again requires the hosted gateway.
+**The audit log is local and mutable.** `~/.eunox/audit.jsonl` is HMAC-chained, so tampering is detectable, but it's a file on your local machine. If someone has access to your machine, they have access to the audit log. For compliance use cases — SOC 2, regulatory requirements — you want a durable, centralised audit store, which again requires the hosted gateway.
 
-**Token signing is not in play in local mode.** The full euno security model involves signed JWT capability tokens issued by a capability issuer, which is a separate service. Local mode uses a simplified path: the policy YAML is evaluated directly without a cryptographically signed token. This is fine for individual developer use. It's not the full security model. When you migrate to the hosted gateway, you get the full cryptographic enforcement chain.
+**Token signing is not in play in local mode.** The full eunox security model involves signed JWT capability tokens issued by a capability issuer, which is a separate service. Local mode uses a simplified path: the policy YAML is evaluated directly without a cryptographically signed token. This is fine for individual developer use. It's not the full security model. When you migrate to the hosted gateway, you get the full cryptographic enforcement chain.
 
 **It won't catch everything.** A prompt injection that convinces Claude to call a permitted tool with permitted arguments will get through. If your policy allows `SELECT` queries on the `orders` table and an injection produces a `SELECT * FROM orders WHERE 1=1`, that passes. The policy constrains the blast radius; it doesn't eliminate it. Defence in depth — narrow schemas, careful data classification, prompt hardening — still matters.
 

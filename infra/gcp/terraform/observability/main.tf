@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------------
 # Module: observability
 # Provisions Cloud Monitoring dashboards, alerting policies, and the Cloud
-# Logging infrastructure needed to monitor the Euno runtime.
+# Logging infrastructure needed to monitor the Eunox runtime.
 # ----------------------------------------------------------------------------
 
 variable "project_id"         { type = string }
@@ -28,7 +28,7 @@ resource "google_logging_project_bucket_config" "runtime" {
   location       = var.gcp_region
   retention_days = var.log_retention_days
   bucket_id      = local.log_bucket_name
-  description    = "Euno runtime logs."
+  description    = "Eunox runtime logs."
 }
 
 resource "google_logging_project_bucket_config" "audit" {
@@ -36,7 +36,7 @@ resource "google_logging_project_bucket_config" "audit" {
   location       = var.gcp_region
   retention_days = var.log_retention_days
   bucket_id      = local.audit_bucket_id
-  description    = "Euno audit logs (logType=audit) — consumed by Security Command Center."
+  description    = "Eunox audit logs (logType=audit) — consumed by Security Command Center."
 }
 
 # Route audit-tagged entries to the dedicated audit bucket.
@@ -60,10 +60,10 @@ resource "google_project_iam_member" "audit_sink_writer" {
 # ---------------------------------------------------------------------------
 # Cloud Monitoring — runtime dashboard
 # ---------------------------------------------------------------------------
-resource "google_monitoring_dashboard" "euno_runtime" {
+resource "google_monitoring_dashboard" "eunox_runtime" {
   project        = var.project_id
   dashboard_json = jsonencode({
-    displayName = "Euno Runtime — ${var.environment}"
+    displayName = "Eunox Runtime — ${var.environment}"
     mosaicLayout = {
       columns = 12
       tiles = [
@@ -76,7 +76,7 @@ resource "google_monitoring_dashboard" "euno_runtime" {
               dataSets = [{
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "metric.type=\"logging.googleapis.com/user/euno_enforce_requests\" resource.type=\"k8s_container\""
+                    filter = "metric.type=\"logging.googleapis.com/user/eunox_enforce_requests\" resource.type=\"k8s_container\""
                     aggregation = {
                       alignmentPeriod  = "60s"
                       perSeriesAligner = "ALIGN_RATE"
@@ -97,7 +97,7 @@ resource "google_monitoring_dashboard" "euno_runtime" {
               dataSets = [{
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "metric.type=\"logging.googleapis.com/user/euno_denial_rate\" resource.type=\"k8s_container\""
+                    filter = "metric.type=\"logging.googleapis.com/user/eunox_denial_rate\" resource.type=\"k8s_container\""
                     aggregation = {
                       alignmentPeriod    = "60s"
                       perSeriesAligner   = "ALIGN_RATE"
@@ -120,7 +120,7 @@ resource "google_monitoring_dashboard" "euno_runtime" {
               dataSets = [{
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "metric.type=\"logging.googleapis.com/user/euno_enforce_latency_ms\" resource.type=\"k8s_container\""
+                    filter = "metric.type=\"logging.googleapis.com/user/eunox_enforce_latency_ms\" resource.type=\"k8s_container\""
                     aggregation = {
                       alignmentPeriod  = "60s"
                       perSeriesAligner = "ALIGN_PERCENTILE_99"
@@ -144,14 +144,14 @@ resource "google_monitoring_dashboard" "euno_runtime" {
 # Denial spike alert — mirrors the CloudWatch alarm in the AWS module.
 resource "google_monitoring_alert_policy" "denial_spike" {
   project      = var.project_id
-  display_name = "Euno — Denial Spike (${var.environment})"
+  display_name = "Eunox — Denial Spike (${var.environment})"
   combiner     = "OR"
   notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "Denial rate exceeds 50/min for 5 minutes"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/euno_denial_rate\" resource.type=\"k8s_container\""
+      filter          = "metric.type=\"logging.googleapis.com/user/eunox_denial_rate\" resource.type=\"k8s_container\""
       duration        = "300s"
       comparison      = "COMPARISON_GT"
       threshold_value = 50
@@ -173,14 +173,14 @@ resource "google_monitoring_alert_policy" "denial_spike" {
 # Invalid token burst alert.
 resource "google_monitoring_alert_policy" "invalid_token_burst" {
   project      = var.project_id
-  display_name = "Euno — Invalid Token Burst (${var.environment})"
+  display_name = "Eunox — Invalid Token Burst (${var.environment})"
   combiner     = "OR"
   notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "Invalid tokens exceed 20/min for 2 minutes"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/euno_invalid_token_rate\" resource.type=\"k8s_container\""
+      filter          = "metric.type=\"logging.googleapis.com/user/eunox_invalid_token_rate\" resource.type=\"k8s_container\""
       duration        = "120s"
       comparison      = "COMPARISON_GT"
       threshold_value = 20
@@ -202,14 +202,14 @@ resource "google_monitoring_alert_policy" "invalid_token_burst" {
 # Pod crash-loop alert.
 resource "google_monitoring_alert_policy" "pod_crash_loop" {
   project      = var.project_id
-  display_name = "Euno — Pod Crash Loop (${var.environment})"
+  display_name = "Eunox — Pod Crash Loop (${var.environment})"
   combiner     = "OR"
   notification_channels = var.notification_channel_ids
 
   conditions {
     display_name = "GKE pod restart count > 5 in 10 minutes"
     condition_threshold {
-      filter          = "metric.type=\"kubernetes.io/container/restart_count\" resource.type=\"k8s_container\" resource.labels.namespace_name=\"euno-system\""
+      filter          = "metric.type=\"kubernetes.io/container/restart_count\" resource.type=\"k8s_container\" resource.labels.namespace_name=\"eunox-system\""
       duration        = "600s"
       comparison      = "COMPARISON_GT"
       threshold_value = 5
@@ -243,6 +243,6 @@ output "audit_log_bucket_id" {
 }
 
 output "dashboard_name" {
-  value       = google_monitoring_dashboard.euno_runtime.id
+  value       = google_monitoring_dashboard.eunox_runtime.id
   description = "Cloud Monitoring dashboard resource name."
 }

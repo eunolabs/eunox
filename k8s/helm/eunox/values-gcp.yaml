@@ -3,10 +3,10 @@
 # Apply this file on top of the base values.yaml when deploying on Google
 # Kubernetes Engine (GKE):
 #
-#   helm install euno ./k8s/helm/euno \
-#     --namespace euno \
-#     -f k8s/helm/euno/values.yaml \
-#     -f k8s/helm/euno/values-gcp.yaml
+#   helm install eunox ./k8s/helm/eunox \
+#     --namespace eunox \
+#     -f k8s/helm/eunox/values.yaml \
+#     -f k8s/helm/eunox/values-gcp.yaml
 #
 # All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
 # should be sourced from GCP Secret Manager rather than supplied here.
@@ -35,12 +35,12 @@ gateway:
   # the pod can call Cloud KMS and Secret Manager via Workload Identity.
   # Replace with your actual service account (see docs/deploy-gke.md §3.4).
   serviceAccountAnnotations:
-    iam.gke.io/gcp-service-account: "euno-gateway@my-gcp-project.iam.gserviceaccount.com"
+    iam.gke.io/gcp-service-account: "eunox-gateway@my-gcp-project.iam.gserviceaccount.com"
 
   # ── Non-sensitive configuration ──────────────────────────────────────────
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
     GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
@@ -52,13 +52,13 @@ gateway:
     SIGNING_PROVIDER: gcp-cloudkms
     GCP_PROJECT_ID: "my-gcp-project"
     GCP_LOCATION_ID: global
-    GCP_KEYRING_ID: euno
+    GCP_KEYRING_ID: eunox
     GCP_CRYPTOKEY_ID: gateway-signing-key
     GCP_CRYPTOKEY_VERSION: "1"
 
     # Cross-chain anchor to GCS with retention policy (optional; SOC 2 CC7.4).
     # ENABLE_CROSS_CHAIN_ANCHOR: "true"
-    # AUDIT_LEDGER_GCS_BUCKET: "euno-audit-anchor-prod"
+    # AUDIT_LEDGER_GCS_BUCKET: "eunox-audit-anchor-prod"
     # (GCP_PROJECT_ID is already set above)
 
     # Secret store provider: uncomment to enable SDK-based Secret Manager
@@ -71,7 +71,7 @@ gateway:
   # ── Sensitive values ─────────────────────────────────────────────────────
   # When using ESO or the Secret Manager Add-on (recommended), set
   # existingSecret instead and leave secretEnv empty.
-  # existingSecret: euno-gateway-secret
+  # existingSecret: eunox-gateway-secret
   secretEnv: {}
 
 # ── issuer ─────────────────────────────────────────────────────────
@@ -82,23 +82,23 @@ issuer:
     pullPolicy: IfNotPresent
 
   serviceAccountAnnotations:
-    iam.gke.io/gcp-service-account: "euno-issuer@my-gcp-project.iam.gserviceaccount.com"
+    iam.gke.io/gcp-service-account: "eunox-issuer@my-gcp-project.iam.gserviceaccount.com"
 
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
 
     # Identity provider: GCP Cloud Identity / Firebase Auth.
     # See docs/issuer-idp-setup.md §4 for GCP Cloud Identity setup
     # and §11 for Google Workspace SCIM bridge.
     IDENTITY_PROVIDER: gcp-identity
     GCP_PROJECT_ID: "my-gcp-project"
-    GCP_IDENTITY_AUDIENCE: "https://issuer.euno.example.com"
+    GCP_IDENTITY_AUDIENCE: "https://issuer.eunox.example.com"
 
     # Token signing via Cloud KMS.
     SIGNING_PROVIDER: gcp-cloudkms
     GCP_LOCATION_ID: global
-    GCP_KEYRING_ID: euno
+    GCP_KEYRING_ID: eunox
     GCP_CRYPTOKEY_ID: issuer-signing-key
     GCP_CRYPTOKEY_VERSION: "1"
 
@@ -109,7 +109,7 @@ issuer:
     # See docs/issuer-idp-setup.md §11 for the full SCIM bridge guide.
     # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
-  # existingSecret: euno-issuer-secret
+  # existingSecret: eunox-issuer-secret
   secretEnv: {}
 
 # ── minter ────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ minter:
 # ── db-token-service ──────────────────────────────────────────────────────────
 dbTokenService:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/db-token-service
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/db-token-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -141,7 +141,7 @@ dbTokenService:
 # ── storage-grant-service ─────────────────────────────────────────────────────
 storageGrantService:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/storage-grant-service
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/storage-grant-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
@@ -155,7 +155,7 @@ storageGrantService:
 # ── posture-emitter ───────────────────────────────────────────────────────────
 postureEmitter:
   image:
-    repository: us-central1-docker.pkg.dev/my-gcp-project/euno/posture-emitter
+    repository: us-central1-docker.pkg.dev/my-gcp-project/eunox/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

@@ -38,7 +38,7 @@ You need defenses that operate at the SQL string level, before it reaches the da
 
 ## The five layers
 
-I'm going to walk through euno's layered defense against this attack vector in detail, including what each layer actually catches and what it doesn't. I want to be honest about the limitations rather than overselling the protection. A system that claims complete SQL injection prevention through AI is lying to you.
+I'm going to walk through eunox's layered defense against this attack vector in detail, including what each layer actually catches and what it doesn't. I want to be honest about the limitations rather than overselling the protection. A system that claims complete SQL injection prevention through AI is lying to you.
 
 The five layers:
 
@@ -161,7 +161,7 @@ The pattern is also a capability-level constraint, not a database-level constrai
 
 ## Layer 3: Disable multi-statement execution in the database driver
 
-This is the layer that closes the semicolon-chaining bypass from Layer 1. The fix is in the upstream MCP server configuration, not in euno's policy engine — but it's part of the defense-in-depth posture and worth describing explicitly.
+This is the layer that closes the semicolon-chaining bypass from Layer 1. The fix is in the upstream MCP server configuration, not in eunox's policy engine — but it's part of the defense-in-depth posture and worth describing explicitly.
 
 Most database drivers have an option to disable multi-statement queries:
 
@@ -218,7 +218,7 @@ If the MCP server connects as `mcp_readonly`, then:
 - `DROP TABLE users` — fails with `ERROR: must be owner of table users`
 - `CREATE TABLE...` — fails with `ERROR: permission denied for schema public`
 
-The database-level privilege check happens entirely independently of everything else in the stack. An attacker who somehow bypasses all of Layers 1-3 still faces the database's own access control system. These are not euno controls — they're standard database security — but they're part of the layered defense.
+The database-level privilege check happens entirely independently of everything else in the stack. An attacker who somehow bypasses all of Layers 1-3 still faces the database's own access control system. These are not eunox controls — they're standard database security — but they're part of the layered defense.
 
 **What this catches:**
 
@@ -276,7 +276,7 @@ const sql = `SELECT * FROM ${args.table} LIMIT ?`;
 const result = await db.execute(sql, [args.limit]);
 ```
 
-Note that this table allowlist in the server-side code is complementary to, not a replacement for, the `allowedTables` condition in the euno policy. The euno condition provides policy-level enforcement at the gateway before the call reaches the server. The server-side check provides defense-in-depth if the gateway is somehow bypassed or if the server is called through a different path.
+Note that this table allowlist in the server-side code is complementary to, not a replacement for, the `allowedTables` condition in the eunox policy. The eunox condition provides policy-level enforcement at the gateway before the call reaches the server. The server-side check provides defense-in-depth if the gateway is somehow bypassed or if the server is called through a different path.
 
 ---
 
@@ -321,7 +321,7 @@ Reading this top-to-bottom, here's what happens to a tool call:
 
 If any of these fail, the call is denied at the gateway. The database never sees it.
 
-Outside of euno:
+Outside of eunox:
 
 - The database connection uses read-only credentials
 - The driver has multi-statement execution disabled
@@ -341,7 +341,7 @@ I want to be explicit about the threat categories that this stack doesn't addres
 
 **Application-level logic bypasses.** If the application layer above the MCP server makes authorization decisions based on tool call results rather than based on its own independent checks, a compromised agent that issues valid-but-harmful queries within the permitted scope can still cause business logic problems.
 
-**Large language model-level prompt injection mitigations.** Everything I've described above is about what happens after the model generates SQL. There's a separate — and harder — question about preventing the model from being manipulated in the first place. That's a model-level problem (system prompt hardening, instruction prioritization, sandboxing of tool outputs so they don't re-enter the prompt in raw form). It's out of scope for euno and requires separate mitigations at the agent framework layer.
+**Large language model-level prompt injection mitigations.** Everything I've described above is about what happens after the model generates SQL. There's a separate — and harder — question about preventing the model from being manipulated in the first place. That's a model-level problem (system prompt hardening, instruction prioritization, sandboxing of tool outputs so they don't re-enter the prompt in raw form). It's out of scope for eunox and requires separate mitigations at the agent framework layer.
 
 ---
 

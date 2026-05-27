@@ -172,16 +172,16 @@ Contact us at [hello@eunox.dev](mailto:hello@eunox.dev) for pricing.
 All metering is handled server-side in the gateway. The following counters are
 exposed via Prometheus and the admin API:
 
-| Metric                                             | Description                                     |
-| -------------------------------------------------- | ----------------------------------------------- |
-| `euno_enforcement_requests_total{tenant,decision}` | Enforcement decisions (allow / deny) per tenant |
-| `euno_audit_records_total{tenant}`                 | Audit records written to the ledger             |
-| `euno_killswitch_invocations_total{tenant}`        | Kill-switch activations                         |
-| `euno_minter_mint_total{tenant,result}`            | API-key minter invocations                      |
-| `euno_posture_enqueued_total{event_type}`          | Posture events enqueued for CSPM delivery       |
+| Metric                                              | Description                                     |
+| --------------------------------------------------- | ----------------------------------------------- |
+| `eunox_enforcement_requests_total{tenant,decision}` | Enforcement decisions (allow / deny) per tenant |
+| `eunox_audit_records_total{tenant}`                 | Audit records written to the ledger             |
+| `eunox_killswitch_invocations_total{tenant}`        | Kill-switch activations                         |
+| `eunox_minter_mint_total{tenant,result}`            | API-key minter invocations                      |
+| `eunox_posture_enqueued_total{event_type}`          | Posture events enqueued for CSPM delivery       |
 
 Monthly enforcement-event counts are computed from
-`euno_enforcement_requests_total` and reset on the billing period boundary.
+`eunox_enforcement_requests_total` and reset on the billing period boundary.
 Self-hosters have access to the same metrics — retention and alerting are
 entirely under their control.
 

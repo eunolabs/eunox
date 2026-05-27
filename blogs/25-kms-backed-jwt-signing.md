@@ -8,7 +8,7 @@ Signing a JWT sounds like a solved problem. You have a private key, you call `si
 
 Because in production at enterprise scale, "you have a private key" is the part that's actually complicated. The private key needs to live somewhere it can't be exfiltrated. It needs to be available 24/7 at latencies that don't add noticeable overhead to every authentication and authorization event. It needs to be rotatable without downtime. It needs to be auditable. And it needs to work across the three major cloud providers, because our customers are split roughly three ways between Azure, AWS, and GCP, with a long tail of on-premises deployments that use hardware security modules directly.
 
-Key management services (KMS) from the three major clouds all solve this problem, but they solve it differently. This post is a practical comparison from having built and operated the euno signing layer across all three.
+Key management services (KMS) from the three major clouds all solve this problem, but they solve it differently. This post is a practical comparison from having built and operated the eunox signing layer across all three.
 
 ---
 
@@ -67,11 +67,11 @@ Authentication in AWS uses IAM roles. In EKS (Kubernetes on AWS), IRSA (IAM Role
 | RSA-4096 | 6ms | 14ms | 28ms |
 | EC P-256 | 4ms | 9ms  | 18ms |
 
-Marginally faster than Azure Key Vault in my benchmarks, but within the same order of magnitude. The difference is not meaningful for the typical euno deployment where signing happens during token issuance (a relatively infrequent operation compared to token verification, which is local and fast).
+Marginally faster than Azure Key Vault in my benchmarks, but within the same order of magnitude. The difference is not meaningful for the typical eunox deployment where signing happens during token issuance (a relatively infrequent operation compared to token verification, which is local and fast).
 
 **Key rotation in AWS KMS:** AWS KMS supports automatic annual key rotation as a managed feature — you enable it, and KMS rotates the underlying key material every year, with old key versions retained for decryption of existing ciphertext. For our use case (signing, not encryption), automatic rotation is less relevant because a JWT signed with an old key version is still verifiable as long as that key version's public key is in the JWKS endpoint. What matters is that when we rotate, we update the JWKS endpoint to include the new key version and keep old versions accessible for the duration of their maximum token TTL window.
 
-AWS KMS's `EnableKeyRotation` API enables or disables automatic rotation for eligible keys; it is not an on-demand rotate-now operation. In euno today there is no `POST /admin/v1/keys/rotate` endpoint in the minter. Operational rotation is handled through key/version configuration and rollout procedures (update key/version env config, restart issuer, verify JWKS publication), with JWKS updates allowing old and new keys to coexist through the token TTL window.
+AWS KMS's `EnableKeyRotation` API enables or disables automatic rotation for eligible keys; it is not an on-demand rotate-now operation. In eunox today there is no `POST /admin/v1/keys/rotate` endpoint in the minter. Operational rotation is handled through key/version configuration and rollout procedures (update key/version env config, restart issuer, verify JWKS publication), with JWKS updates allowing old and new keys to coexist through the token TTL window.
 
 **The AWS-specific gotcha:** AWS KMS pricing is per API call. At $0.03 per 10,000 requests for signing operations, a gateway handling 100,000 token issuances per month costs $0.30 in KMS fees, which is negligible. At 10 million issuances per month, it's $30. For high-volume deployments, this is still small relative to infrastructure costs, but it's worth knowing about — customers with aggressive cost optimization sometimes push back on per-call KMS pricing and want to understand alternatives. (There are no good alternatives if you want HSM-backed key storage. The cost of a compromised signing key vastly exceeds any savings from avoiding the KMS API.)
 
@@ -98,7 +98,7 @@ Consistent with Azure and AWS. The three services are within measurement noise o
 
 **Key rotation in Cloud KMS:** GCP Cloud KMS uses the concept of key "versions." Creating a new key version and setting it as primary is a two-step operation via API: `cryptoKeys.cryptoKeyVersions.create` followed by `cryptoKeys.patch` to set the new version as primary. We expose this through the admin rotation endpoint. One behavioral difference from AWS: GCP Cloud KMS does not automatically expose all key versions in a JWKS-compatible format — we maintain the JWKS cache ourselves, appending new key versions on rotation and purging versions that are past the maximum token TTL window.
 
-**The GCP-specific gotcha:** Cloud KMS key destruction is irreversible and has a mandatory 24-hour scheduled destruction window. If you accidentally create a key with the wrong spec and want to remove it, you schedule it for destruction and wait 24 hours. This is a safety feature (prevents accidental key loss) but is occasionally frustrating in dev/test environments. More importantly, Cloud KMS has a slightly quirky behavior with EC key import — if you're migrating an existing key pair into Cloud KMS from another system, the import process is well-documented but has more steps than the equivalent on Azure or AWS. For euno deployments that are starting fresh (which is the normal case), this doesn't matter; you generate the key in Cloud KMS from the start.
+**The GCP-specific gotcha:** Cloud KMS key destruction is irreversible and has a mandatory 24-hour scheduled destruction window. If you accidentally create a key with the wrong spec and want to remove it, you schedule it for destruction and wait 24 hours. This is a safety feature (prevents accidental key loss) but is occasionally frustrating in dev/test environments. More importantly, Cloud KMS has a slightly quirky behavior with EC key import — if you're migrating an existing key pair into Cloud KMS from another system, the import process is well-documented but has more steps than the equivalent on Azure or AWS. For eunox deployments that are starting fresh (which is the normal case), this doesn't matter; you generate the key in Cloud KMS from the start.
 
 ---
 
@@ -110,13 +110,13 @@ The `SigningAdapter` interface abstracts over this. An on-premises implementatio
 
 We don't ship a first-party PKCS#11 signing adapter in the public package, because the integration is so HSM-vendor-specific. The interface definition is in the `pkg/crypto` Go package (Apache-2.0), and the expected behavior is documented in `docs/adapters.md §Signing`. Enterprise customers with on-premises HSMs implement the adapter themselves; we provide reference code and integration testing support.
 
-The production design principle here: anyone with an HSM, regardless of vendor, should be able to plug into euno without forking or patching the platform. The adapter pattern exists precisely so that the enforcement core doesn't need to know whether the signing operation is happening in a cloud KMS, a hardware HSM, or a software key store. What the core knows is: call `signingAdapter.sign(payload)`, get back a signed JWT.
+The production design principle here: anyone with an HSM, regardless of vendor, should be able to plug into eunox without forking or patching the platform. The adapter pattern exists precisely so that the enforcement core doesn't need to know whether the signing operation is happening in a cloud KMS, a hardware HSM, or a software key store. What the core knows is: call `signingAdapter.sign(payload)`, get back a signed JWT.
 
 ---
 
 ## JWKS endpoint design: what verifiers actually need
 
-Every signing implementation eventually connects to the JWKS endpoint — the public-facing URL that verifiers use to fetch the public key(s) to verify JWT signatures. For euno, this is `GET /well-known/jwks` on the capability issuer.
+Every signing implementation eventually connects to the JWKS endpoint — the public-facing URL that verifiers use to fetch the public key(s) to verify JWT signatures. For eunox, this is `GET /well-known/jwks` on the capability issuer.
 
 The JWKS endpoint design interacts with key rotation in a specific way that's worth understanding. The endpoint must return all keys that might currently be verifying against — not just the current signing key, but also any key whose signed tokens might still be valid. If a token has a 15-minute TTL and we rotated the signing key 10 minutes ago, the old key still needs to be in the JWKS for the next 5 minutes (until all tokens signed with it expire).
 
@@ -130,7 +130,7 @@ One subtlety: the `kid` (key ID) field in the JWT header and the JWKS entry must
 
 This is worth clarifying because the latency numbers above might look alarming if you're thinking about the hot enforcement path. Signing does **not** happen on every tool call.
 
-Token signing happens at **token issuance time** — when a new capability token is minted, either through the PKCE flow or through the `euno request` CLI command. Once the token is issued, it's a signed JWT that any verifier can check locally using the public key from the JWKS endpoint. The enforcement hot path (the gateway evaluating a tool call) does local signature verification — a fast, in-process cryptographic operation with no network calls. The KMS is not involved in enforcement decisions.
+Token signing happens at **token issuance time** — when a new capability token is minted, either through the PKCE flow or through the `eunox request` CLI command. Once the token is issued, it's a signed JWT that any verifier can check locally using the public key from the JWKS endpoint. The enforcement hot path (the gateway evaluating a tool call) does local signature verification — a fast, in-process cryptographic operation with no network calls. The KMS is not involved in enforcement decisions.
 
 So the KMS latency is relevant for token issuance frequency, not enforcement frequency. In practice, tokens are issued at session start and renewed every 15 minutes. For an agent that runs 10,000 tool calls in a session, there are roughly 3-4 token issuance events. The KMS adds 10-30ms to those 3-4 events. Over the session lifetime, this is imperceptible.
 
@@ -144,7 +144,7 @@ My honest recommendation:
 
 **Use whatever KMS is native to your cloud deployment.** Don't use Azure Key Vault on AWS; don't use AWS KMS on GCP. The managed identity authentication story is the most important operational differentiator, and it's cleanest when everything is in the same cloud. Cross-cloud KMS access from a gateway on a different cloud adds credential management complexity that is almost never worth it.
 
-**If you have an existing KMS that your security team already manages** (whether cloud-native or on-premises HSM), use that. Security teams have strong preferences about key custody, and a deployment that uses an unfamiliar KMS will face friction in security review that a deployment using the existing KMS won't. Pick the battle that matters: the battle is getting euno deployed and governing your AI agents, not convincing your security team to adopt a new KMS.
+**If you have an existing KMS that your security team already manages** (whether cloud-native or on-premises HSM), use that. Security teams have strong preferences about key custody, and a deployment that uses an unfamiliar KMS will face friction in security review that a deployment using the existing KMS won't. Pick the battle that matters: the battle is getting eunox deployed and governing your AI agents, not convincing your security team to adopt a new KMS.
 
 **For new deployments without strong constraints**, EC P-256 with ES256 is my recommendation over RSA-4096 with RS256. Shorter tokens, faster signing, smaller JWKS payloads, and modern enough to be supported by every JWT library in active use. The only argument for RSA in new deployments is compatibility with extremely old JWT libraries, which you probably don't have.
 

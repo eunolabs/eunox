@@ -4,20 +4,20 @@ storage-grant-service Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "euno.fullname" . }}-storage-grant-service
+  name: {{ include "eunox.fullname" . }}-storage-grant-service
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: storage-grant-service
 spec:
   replicas: {{ .Values.storageGrantService.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-storage-grant-service
+      app.kubernetes.io/name: eunox-storage-grant-service
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: euno-storage-grant-service
+        app.kubernetes.io/name: eunox-storage-grant-service
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: storage-grant-service
     spec:
@@ -43,19 +43,19 @@ spec:
             periodSeconds: 5
           envFrom:
             - configMapRef:
-                name: {{ include "euno.fullname" . }}-storage-grant-service-config
+                name: {{ include "eunox.fullname" . }}-storage-grant-service-config
             {{- if .Values.storageGrantService.secretEnv }}
             - secretRef:
-                name: {{ include "euno.fullname" . }}-storage-grant-service-secret
+                name: {{ include "eunox.fullname" . }}-storage-grant-service-secret
             {{- end }}
           resources: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "euno.fullname" . }}-storage-grant-service
+  name: {{ include "eunox.fullname" . }}-storage-grant-service
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: storage-grant-service
 spec:
   type: {{ .Values.storageGrantService.service.type }}
@@ -65,15 +65,15 @@ spec:
       targetPort: http
       protocol: TCP
   selector:
-    app.kubernetes.io/name: euno-storage-grant-service
+    app.kubernetes.io/name: eunox-storage-grant-service
     app.kubernetes.io/instance: {{ .Release.Name }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "euno.fullname" . }}-storage-grant-service-config
+  name: {{ include "eunox.fullname" . }}-storage-grant-service-config
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: storage-grant-service
 data:
   {{- range $key, $val := .Values.storageGrantService.env }}
@@ -84,9 +84,9 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "euno.fullname" . }}-storage-grant-service-secret
+  name: {{ include "eunox.fullname" . }}-storage-grant-service-secret
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: storage-grant-service
 type: Opaque
 stringData:

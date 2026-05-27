@@ -210,7 +210,7 @@ set -euo pipefail
 GCP_PROJECT="${GCP_PROJECT:?set GCP_PROJECT}"
 GCP_REGION="${GCP_REGION:-us-central1}"
 AR_REGISTRY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/eunox"
-EUNO_VERSION="${EUNO_VERSION:-1.0.0}"
+EUNOX_VERSION="${EUNOX_VERSION:-1.0.0}"
 
 IMAGES=(
   tool-gateway
@@ -224,8 +224,8 @@ IMAGES=(
 gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
 for img in "${IMAGES[@]}"; do
-  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNO_VERSION}"
-  DST="${AR_REGISTRY}/${img}:${EUNO_VERSION}"
+  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNOX_VERSION}"
+  DST="${AR_REGISTRY}/${img}:${EUNOX_VERSION}"
   docker pull "${SRC}"
   docker tag  "${SRC}" "${DST}"
   docker push "${DST}"
@@ -487,13 +487,13 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 Key eunox metrics forwarded to Cloud Monitoring:
 
-| Metric                                   | Description                       | Cloud Monitoring metric type                                             |
-| ---------------------------------------- | --------------------------------- | ------------------------------------------------------------------------ |
-| `euno_capability_tokens_issued_total`    | Tokens issued per tenant          | `prometheus.googleapis.com/euno_capability_tokens_issued_total/counter`  |
-| `euno_audit_events_total`                | Signed audit events per tool      | `prometheus.googleapis.com/euno_audit_events_total/counter`              |
-| `euno_tool_calls_denied_total`           | Denials per `denial_reason` label | `prometheus.googleapis.com/euno_tool_calls_denied_total/counter`         |
-| `euno_cross_chain_anchor_lag_seconds`    | GCS anchor write lag              | `prometheus.googleapis.com/euno_cross_chain_anchor_lag_seconds/gauge`    |
-| `euno_partner_did_circuit_breaker_state` | ION circuit breaker state         | `prometheus.googleapis.com/euno_partner_did_circuit_breaker_state/gauge` |
+| Metric                                    | Description                       | Cloud Monitoring metric type                                              |
+| ----------------------------------------- | --------------------------------- | ------------------------------------------------------------------------- |
+| `eunox_capability_tokens_issued_total`    | Tokens issued per tenant          | `prometheus.googleapis.com/eunox_capability_tokens_issued_total/counter`  |
+| `eunox_audit_events_total`                | Signed audit events per tool      | `prometheus.googleapis.com/eunox_audit_events_total/counter`              |
+| `eunox_tool_calls_denied_total`           | Denials per `denial_reason` label | `prometheus.googleapis.com/eunox_tool_calls_denied_total/counter`         |
+| `eunox_cross_chain_anchor_lag_seconds`    | GCS anchor write lag              | `prometheus.googleapis.com/eunox_cross_chain_anchor_lag_seconds/gauge`    |
+| `eunox_partner_did_circuit_breaker_state` | ION circuit breaker state         | `prometheus.googleapis.com/eunox_partner_did_circuit_breaker_state/gauge` |
 
 ### 7.2 OCSF audit events → Security Command Center findings
 
@@ -587,7 +587,7 @@ denial-reason histograms.
 #### Create a log-based metric for denied tool calls
 
 ```bash
-gcloud logging metrics create euno_tool_calls_denied \
+gcloud logging metrics create eunox_tool_calls_denied \
   --project "${PROJECT_ID}" \
   --description "eunox tool call denials by denial reason" \
   --log-filter 'resource.type="k8s_container" jsonPayload.evidence.outcome="deny"' \
@@ -644,11 +644,11 @@ LIMIT 10
 ```sql
 SELECT
   timestamp,
-  JSON_VALUE(json_payload.euno_cross_chain_anchor_lag_seconds) AS lag_seconds
+  JSON_VALUE(json_payload.eunox_cross_chain_anchor_lag_seconds) AS lag_seconds
 FROM `my-gcp-project.global._Default._AllLogs`
 WHERE
   resource.type = 'k8s_container'
-  AND JSON_VALUE(json_payload.euno_cross_chain_anchor_lag_seconds) IS NOT NULL
+  AND JSON_VALUE(json_payload.eunox_cross_chain_anchor_lag_seconds) IS NOT NULL
 ORDER BY timestamp DESC
 LIMIT 100
 ```

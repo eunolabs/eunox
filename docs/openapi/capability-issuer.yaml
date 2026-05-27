@@ -46,9 +46,9 @@ paths:
       description: |
         Exposes process and request-level metrics in the Prometheus text
         exposition format. Standard series include
-        `euno_http_request_duration_seconds`,
-        `euno_http_requests_total`, and the issuer-specific
-        `euno_issuer_issuance_total{operation,outcome}` counter that
+        `eunox_http_request_duration_seconds`,
+        `eunox_http_requests_total`, and the issuer-specific
+        `eunox_issuer_issuance_total{operation,outcome}` counter that
         tracks `issue` / `attenuate` / `renew` calls labelled
         `success` or `error`.
 
@@ -63,9 +63,9 @@ paths:
               schema:
                 type: string
               example: |
-                # HELP euno_issuer_issuance_total Capability issuance attempts at the issuer.
-                # TYPE euno_issuer_issuance_total counter
-                euno_issuer_issuance_total{service="capability-issuer",operation="issue",outcome="success"} 42
+                # HELP eunox_issuer_issuance_total Capability issuance attempts at the issuer.
+                # TYPE eunox_issuer_issuance_total counter
+                eunox_issuer_issuance_total{service="capability-issuer",operation="issue",outcome="success"} 42
 
   /api/v1/issue:
     post:

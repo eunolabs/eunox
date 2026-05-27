@@ -1,7 +1,7 @@
-# Euno — GCP Terraform Modules
+# Eunox — GCP Terraform Modules
 
-This directory contains the **modular Terraform layout** for deploying Euno on
-Google Cloud Platform (GCP).  Each sub-module manages one infrastructure
+This directory contains the **modular Terraform layout** for deploying Eunox on
+Google Cloud Platform (GCP). Each sub-module manages one infrastructure
 concern and can be applied independently or composed together via the root
 module (`main.tf` in this directory).
 
@@ -25,7 +25,7 @@ infra/gcp/terraform/
 > **Relationship to `infra/terraform/gcp/`**
 >
 > The monolithic module at `infra/terraform/gcp/main.tf` was the Sprint-1
-> baseline that provisions the core GKE/KMS/Logging stack.  This directory
+> baseline that provisions the core GKE/KMS/Logging stack. This directory
 > provides a **production-ready modular layout** with additional managed
 > databases (`data/`), secrets (`security/`), and observability resources
 > (`observability/`) that are not included in the Sprint-1 baseline.
@@ -34,12 +34,12 @@ infra/gcp/terraform/
 
 ## Prerequisites
 
-| Tool | Minimum version |
-|---|---|
-| Terraform | 1.5.0 |
-| `gcloud` CLI | 455.0.0 |
-| `kubectl` | 1.28 |
-| `helm` | 3.14 |
+| Tool         | Minimum version |
+| ------------ | --------------- |
+| Terraform    | 1.5.0           |
+| `gcloud` CLI | 455.0.0         |
+| `kubectl`    | 1.28            |
+| `helm`       | 3.14            |
 
 Authenticate with Application Default Credentials (ADC) before applying:
 
@@ -71,7 +71,7 @@ At minimum set:
 ```hcl
 project_id  = "my-gcp-project-id"
 gcp_region  = "us-central1"
-name_prefix = "euno"
+name_prefix = "eunox"
 environment = "prod"
 ```
 
@@ -90,7 +90,7 @@ creates the `.terraform/` lock file.
 terraform plan -out=tfplan
 ```
 
-Review every resource Terraform intends to create.  Pay particular attention to:
+Review every resource Terraform intends to create. Pay particular attention to:
 
 - **`module.network`** — VPC CIDR ranges (ensure no overlap with existing
   networks).
@@ -114,13 +114,13 @@ gcloud container clusters get-credentials \
   --region $(terraform output -raw gcp_region)
 ```
 
-### 7. Deploy Euno via Helm
+### 7. Deploy Eunox via Helm
 
 ```bash
-helm install euno ./k8s/helm/euno \
-  --namespace euno --create-namespace \
-  -f k8s/helm/euno/values.yaml \
-  -f k8s/helm/euno/values-gcp.yaml \
+helm install eunox ./k8s/helm/eunox \
+  --namespace eunox --create-namespace \
+  -f k8s/helm/eunox/values.yaml \
+  -f k8s/helm/eunox/values-gcp.yaml \
   --set gateway.env.AUDIT_LEDGER_PG_URL="$(terraform output -raw gateway_db_url)" \
   --set gateway.env.REDIS_URL="$(terraform output -raw gateway_redis_url)"
 ```
@@ -131,81 +131,81 @@ helm install euno ./k8s/helm/euno \
 
 ### `module.network` — VPC, subnets, Cloud NAT
 
-| Resource | Description |
-|---|---|
-| `google_compute_network` | Custom-mode VPC |
+| Resource                    | Description                                                     |
+| --------------------------- | --------------------------------------------------------------- |
+| `google_compute_network`    | Custom-mode VPC                                                 |
 | `google_compute_subnetwork` | Regional subnet with secondary ranges for GKE pods and services |
-| `google_compute_router` | Cloud Router for NAT egress |
-| `google_compute_router_nat` | Cloud NAT for private node outbound traffic |
+| `google_compute_router`     | Cloud Router for NAT egress                                     |
+| `google_compute_router_nat` | Cloud NAT for private node outbound traffic                     |
 
 **Key inputs:**
 
-| Variable | Default | Description |
-|---|---|---|
-| `subnet_cidr` | `10.50.0.0/20` | Primary subnet CIDR |
-| `pods_cidr` | `10.52.0.0/14` | GKE pod secondary range |
+| Variable        | Default        | Description                 |
+| --------------- | -------------- | --------------------------- |
+| `subnet_cidr`   | `10.50.0.0/20` | Primary subnet CIDR         |
+| `pods_cidr`     | `10.52.0.0/14` | GKE pod secondary range     |
 | `services_cidr` | `10.56.0.0/20` | GKE service secondary range |
 
 ### `module.compute` — GKE, Workload Identity, autoscaling
 
-| Resource | Description |
-|---|---|
-| `google_container_cluster` | Regional GKE cluster (REGULAR release channel) |
-| `google_container_node_pool` | Node pool with cluster autoscaler enabled |
-| `google_service_account` × 2 | Dedicated GCP SAs for issuer and gateway pods |
-| `google_service_account_iam_member` × 2 | Workload Identity bindings (K8s SA → GCP SA) |
+| Resource                                | Description                                    |
+| --------------------------------------- | ---------------------------------------------- |
+| `google_container_cluster`              | Regional GKE cluster (REGULAR release channel) |
+| `google_container_node_pool`            | Node pool with cluster autoscaler enabled      |
+| `google_service_account` × 2            | Dedicated GCP SAs for issuer and gateway pods  |
+| `google_service_account_iam_member` × 2 | Workload Identity bindings (K8s SA → GCP SA)   |
 
 **Key inputs:**
 
-| Variable | Default | Description |
-|---|---|---|
-| `gke_node_machine_type` | `e2-standard-4` | Machine type for each node |
-| `gke_node_count` | `1` | Initial nodes per zone |
-| `gke_node_max_count` | `3` | Autoscaler upper bound per zone |
+| Variable                | Default         | Description                     |
+| ----------------------- | --------------- | ------------------------------- |
+| `gke_node_machine_type` | `e2-standard-4` | Machine type for each node      |
+| `gke_node_count`        | `1`             | Initial nodes per zone          |
+| `gke_node_max_count`    | `3`             | Autoscaler upper bound per zone |
 
 ### `module.data` — Cloud SQL, Memorystore
 
-| Resource | Description |
-|---|---|
-| `google_sql_database_instance` | Cloud SQL for PostgreSQL 15 (HA by default) |
-| `google_sql_database` | `euno` application database |
-| `google_sql_user` | `euno` database user |
-| `google_redis_instance` | Memorystore for Redis 7.x (STANDARD_HA tier) |
+| Resource                       | Description                                  |
+| ------------------------------ | -------------------------------------------- |
+| `google_sql_database_instance` | Cloud SQL for PostgreSQL 15 (HA by default)  |
+| `google_sql_database`          | `eunox` application database                 |
+| `google_sql_user`              | `eunox` database user                        |
+| `google_redis_instance`        | Memorystore for Redis 7.x (STANDARD_HA tier) |
 
 **Key inputs:**
 
-| Variable | Default | Description |
-|---|---|---|
-| `db_tier` | `db-g1-small` | Cloud SQL machine tier |
-| `db_ha_enabled` | `true` | Enable HA replica |
-| `redis_tier` | `STANDARD_HA` | Memorystore tier |
-| `redis_memory_size_gb` | `4` | Redis memory size |
+| Variable               | Default       | Description            |
+| ---------------------- | ------------- | ---------------------- |
+| `db_tier`              | `db-g1-small` | Cloud SQL machine tier |
+| `db_ha_enabled`        | `true`        | Enable HA replica      |
+| `redis_tier`           | `STANDARD_HA` | Memorystore tier       |
+| `redis_memory_size_gb` | `4`           | Redis memory size      |
 
 **Outputs used by Helm:**
 
-| Output | Description |
-|---|---|
-| `gateway_db_url` | `postgresql://` connection string for `AUDIT_LEDGER_PG_URL` |
-| `gateway_redis_url` | `rediss://` connection string for `REDIS_URL` |
+| Output              | Description                                                 |
+| ------------------- | ----------------------------------------------------------- |
+| `gateway_db_url`    | `postgresql://` connection string for `AUDIT_LEDGER_PG_URL` |
+| `gateway_redis_url` | `rediss://` connection string for `REDIS_URL`               |
 
 ### `module.security` — Cloud KMS, Secret Manager, IAM
 
-| Resource | Description |
-|---|---|
-| `google_kms_key_ring` | KMS key ring for signing keys |
-| `google_kms_crypto_key` | Asymmetric RSA-2048 signing key (`prevent_destroy = true`) |
+| Resource                           | Description                                                      |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `google_kms_key_ring`              | KMS key ring for signing keys                                    |
+| `google_kms_crypto_key`            | Asymmetric RSA-2048 signing key (`prevent_destroy = true`)       |
 | `google_secret_manager_secret` × N | Placeholders for HMAC secret, admin API key, and partner DID pin |
-| `google_kms_crypto_key_iam_member` | Signer/verifier bindings for issuer and gateway SAs |
-| `google_project_iam_member` | `roles/secretmanager.secretAccessor` for issuer and gateway |
+| `google_kms_crypto_key_iam_member` | Signer/verifier bindings for issuer and gateway SAs              |
+| `google_project_iam_member`        | `roles/secretmanager.secretAccessor` for issuer and gateway      |
 
 ### `module.observability` — Cloud Monitoring, alerting
 
-| Resource | Description |
-|---|---|
-| `google_monitoring_dashboard` | Euno runtime dashboard (denial rate, latency, error rate) |
-| `google_monitoring_alert_policy` × 3 | Denial spike, invalid token burst, pod crash-loop alerts |
-| `google_logging_project_bucket_config` × 2 | Runtime and audit log buckets |
-| `google_logging_project_sink` | Audit-tagged entries routed to the audit log bucket |
+| Resource                                   | Description                                                |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| `google_monitoring_dashboard`              | Eunox runtime dashboard (denial rate, latency, error rate) |
+| `google_monitoring_alert_policy` × 3       | Denial spike, invalid token burst, pod crash-loop alerts   |
+| `google_logging_project_bucket_config` × 2 | Runtime and audit log buckets                              |
+| `google_logging_project_sink`              | Audit-tagged entries routed to the audit log bucket        |
 
 ---
 
@@ -225,4 +225,4 @@ terraform destroy
 - [`infra/terraform/gcp/main.tf`](../../terraform/gcp/main.tf) — Sprint-1 monolithic baseline
 - [`infra/gcp/config-connector/`](../config-connector/) — Config Connector KRM alternative
 - [`docs/deploy-gke.md`](../../../docs/deploy-gke.md) — Full GKE deployment guide
-- [`k8s/helm/euno/values-gcp.yaml`](../../../k8s/helm/euno/values-gcp.yaml) — Helm overrides
+- [`k8s/helm/eunox/values-gcp.yaml`](../../../k8s/helm/eunox/values-gcp.yaml) — Helm overrides

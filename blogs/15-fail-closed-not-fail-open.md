@@ -1,14 +1,14 @@
 # Fail Closed, Not Fail Open: The Most Important Decision in Security Software
 
-_First post in the "Design principles" series. The previous series — "Architecture deep-dives" — ended with [post 14 on AGT](./14-agt-defense-in-depth.md), the in-process guard that sits inside the agent. This post zooms out from implementation details and examines the single design principle that shapes every layer of euno: when something unexpected happens, what should the system do? See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
+_First post in the "Design principles" series. The previous series — "Architecture deep-dives" — ended with [post 14 on AGT](./14-agt-defense-in-depth.md), the in-process guard that sits inside the agent. This post zooms out from implementation details and examines the single design principle that shapes every layer of eunox: when something unexpected happens, what should the system do? See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
 There's a moment in every security system's history where someone asks the question: "What happens when this breaks?" And the answer to that question tells you more about the security properties of the system than almost anything else in the design.
 
-I want to talk about that question in the context of euno, because fail-closed vs fail-open is not a choice you make once and move on. It's a philosophy that has to be re-applied at every layer, at every point where the system can encounter an unexpected state. And I've seen this go wrong — in other systems, in early versions of this one — in ways that were both subtle and catastrophic.
+I want to talk about that question in the context of eunox, because fail-closed vs fail-open is not a choice you make once and move on. It's a philosophy that has to be re-applied at every layer, at every point where the system can encounter an unexpected state. And I've seen this go wrong — in other systems, in early versions of this one — in ways that were both subtle and catastrophic.
 
-Let me start with some history before I get into the specifics of how euno handles it.
+Let me start with some history before I get into the specifics of how eunox handles it.
 
 ---
 
@@ -24,9 +24,9 @@ Each of these decisions has a justification. Each is, in some sense, a reasonabl
 
 ---
 
-## The choice euno makes everywhere
+## The choice eunox makes everywhere
 
-Every place in euno where something can go wrong — an unexpected input, an unavailable dependency, an unknown extension point, a malformed token — has the same default answer: **deny**.
+Every place in eunox where something can go wrong — an unexpected input, an unavailable dependency, an unknown extension point, a malformed token — has the same default answer: **deny**.
 
 This isn't a policy you configure. It's baked into the enforcement architecture at multiple levels. Let me walk through the specific cases because the categories are different and they're each worth understanding.
 
@@ -65,7 +65,7 @@ It also means that when you deploy a new condition type across a fleet of gatewa
 
 A JWT that fails signature verification is an obvious denial. But there are more subtle failure modes in JWT processing that some implementations handle... optimistically.
 
-A few categories euno specifically handles as hard failures:
+A few categories eunox specifically handles as hard failures:
 
 **Clock skew beyond tolerance.** If the token's `nbf` (not-before) or `exp` (expiration) claims put it outside the validity window plus the configured clock-skew tolerance, the token is rejected. There's no "just a few extra minutes, probably fine" tolerance beyond the configured window. The default tolerance is five minutes; operators can narrow it but not widen it beyond fifteen minutes. A token that's expired is expired.
 
@@ -161,7 +161,7 @@ Option 1 is dangerous. If someone pressed the kill switch because of an active b
 
 Option 2 causes false positives — benign Redis blips temporarily block legitimate tool calls. That's operationally disruptive.
 
-euno uses option 2. A kill-switch Redis lookup failure causes the request to be denied with a specific `kill_switch_check_failed` code. This appears in the audit log. An alert fires if it persists. The operator can investigate. But the tool calls don't go through.
+eunox uses option 2. A kill-switch Redis lookup failure causes the request to be denied with a specific `kill_switch_check_failed` code. This appears in the audit log. An alert fires if it persists. The operator can investigate. But the tool calls don't go through.
 
 This feels severe until you consider the threat model: the kill switch exists for scenarios where urgency matters more than availability. In those scenarios, the conservative failure is the right one.
 

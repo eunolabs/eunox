@@ -1,15 +1,15 @@
 # AWS security analytics rules (Sprint-1 OBS parity)
 
 This directory provides the **AWS** parity of
-`infra/sentinel/analytic-rules.json`.  The same five Sentinel rules
+`infra/sentinel/analytic-rules.json`. The same five Sentinel rules
 (denial spikes, write-in-readonly, invalid-token bursts, kill-switch
 activation, token-revocation spikes) are expressed three different ways:
 
-| File                                  | Format                          | Purpose                                                                                       |
-|---------------------------------------|---------------------------------|-----------------------------------------------------------------------------------------------|
-| `cloudwatch-logs-insights.json`       | CloudWatch Logs Insights JSON   | Authoritative queries, runnable in the console or via `aws logs get-query-results`.           |
-| `cloudwatch-alarms.yaml`              | CloudFormation template         | Materializes Metric Filters + Alarms + an SNS topic for incident routing.                     |
-| `security-hub-insights.json`          | Security Hub insight JSON       | Groups the alarm-derived findings into operational dashboards.                                |
+| File                            | Format                        | Purpose                                                                             |
+| ------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| `cloudwatch-logs-insights.json` | CloudWatch Logs Insights JSON | Authoritative queries, runnable in the console or via `aws logs get-query-results`. |
+| `cloudwatch-alarms.yaml`        | CloudFormation template       | Materializes Metric Filters + Alarms + an SNS topic for incident routing.           |
+| `security-hub-insights.json`    | Security Hub insight JSON     | Groups the alarm-derived findings into operational dashboards.                      |
 
 ## Deployment
 
@@ -19,7 +19,7 @@ activation, token-revocation spikes) are expressed three different ways:
    ```bash
    aws cloudformation deploy \
      --template-file infra/aws/security/cloudwatch-alarms.yaml \
-     --stack-name euno-security-alerts \
+     --stack-name eunox-security-alerts \
      --capabilities CAPABILITY_NAMED_IAM
    ```
 
@@ -37,10 +37,10 @@ activation, token-revocation spikes) are expressed three different ways:
 
 ## Mapping to `infra/sentinel/analytic-rules.json`
 
-| Sentinel rule (KQL)               | This directory                                                                       |
-|-----------------------------------|--------------------------------------------------------------------------------------|
-| `euno-deny-spike`                 | `DenialFilter` + `DenialSpikeAlarm` + first insight                                  |
-| `euno-write-in-readonly`          | `WriteInReadOnlyFilter` + `WriteInReadOnlyAlarm` + second insight                    |
-| `euno-invalid-token-burst`        | `InvalidTokenFilter` + `InvalidTokenBurstAlarm` + third insight                      |
-| `euno-kill-switch-activated`      | `KillSwitchFilter` + `KillSwitchAlarm` + fourth insight                              |
-| `euno-token-revocation-spike`     | `RevocationFilter` + `TokenRevocationSpikeAlarm` + fifth insight                     |
+| Sentinel rule (KQL)            | This directory                                                    |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `eunox-deny-spike`             | `DenialFilter` + `DenialSpikeAlarm` + first insight               |
+| `eunox-write-in-readonly`      | `WriteInReadOnlyFilter` + `WriteInReadOnlyAlarm` + second insight |
+| `eunox-invalid-token-burst`    | `InvalidTokenFilter` + `InvalidTokenBurstAlarm` + third insight   |
+| `eunox-kill-switch-activated`  | `KillSwitchFilter` + `KillSwitchAlarm` + fourth insight           |
+| `eunox-token-revocation-spike` | `RevocationFilter` + `TokenRevocationSpikeAlarm` + fifth insight  |

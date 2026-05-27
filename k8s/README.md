@@ -1,6 +1,6 @@
 # Kubernetes Deployment
 
-This directory contains Kubernetes manifests for deploying the euno capability governance system with sandboxed agent runtime.
+This directory contains Kubernetes manifests for deploying the eunox capability governance system with sandboxed agent runtime.
 
 ## Sprint 1 & Sprint 2 Sandboxing Implementation
 
@@ -55,11 +55,11 @@ kubectl apply -f namespace-and-config.yaml
 # Create secrets
 kubectl create secret generic issuer-secrets \
   --from-literal=azure-client-secret=<YOUR_SECRET> \
-  -n euno-system
+  -n eunox-system
 
 kubectl create secret generic gateway-secrets \
   --from-literal=admin-api-key=<YOUR_ADMIN_KEY> \
-  -n euno-system
+  -n eunox-system
 ```
 
 ### 2. Update ConfigMap
@@ -68,13 +68,15 @@ The **Capability Issuer** (Sprint 3 hardened variant) reads its configuration
 from the `issuer-config` ConfigMap that is **embedded at the bottom of
 `capability-issuer-deployment.yaml`** — not from `namespace-and-config.yaml`.
 Update the values there before applying:
+
 - `keyvault-url`: Your Azure Key Vault URL
 - `tenant-id`: Your Azure AD tenant ID
 - `client-id`: Your Azure AD application ID
 - `issuer-did`: Your DID (e.g., `did:web:yourdomain.com`)
 
 The **Tool Gateway** and agent runtime read their shared settings from
-`namespace-and-config.yaml` (`euno-config`).  Edit that file with your values:
+`namespace-and-config.yaml` (`eunox-config`). Edit that file with your values:
+
 - `keyvault-url`, `azure-tenant-id`, `azure-client-id`, `issuer-did`
 - `backend-service-url`: URL of backend services
 
@@ -85,12 +87,12 @@ kubectl apply -f namespace-and-config.yaml
 ### 3. Deploy Services
 
 > **Choose one manifest per component** — each component has two manifest
-> variants.  Applying both at the same time creates conflicting resources.
+> variants. Applying both at the same time creates conflicting resources.
 >
-> | Component | Production (recommended) | Alternative (simpler, no sharding) |
-> |---|---|---|
-> | Capability Issuer | `capability-issuer-deployment.yaml` | `capability-issuer.yaml` *(legacy, no Sprint 3 hardening)* |
-> | Tool Gateway | `tool-gateway.yaml` *(StatefulSet + Envoy shard router)* | `tool-gateway-deployment.yaml` *(plain Deployment)* |
+> | Component         | Production (recommended)                                 | Alternative (simpler, no sharding)                         |
+> | ----------------- | -------------------------------------------------------- | ---------------------------------------------------------- |
+> | Capability Issuer | `capability-issuer-deployment.yaml`                      | `capability-issuer.yaml` _(legacy, no Sprint 3 hardening)_ |
+> | Tool Gateway      | `tool-gateway.yaml` _(StatefulSet + Envoy shard router)_ | `tool-gateway-deployment.yaml` _(plain Deployment)_        |
 
 ```bash
 # Deploy Redis (distributed coordination backend — REQUIRED for HA)
@@ -130,10 +132,11 @@ kubectl apply -f ha-policies.yaml
 ```
 
 > **Admin API access:** the admin port (3003) is only reachable from pods
-> labelled `role=ops`.  Label your incident-response or operator pod
+> labelled `role=ops`. Label your incident-response or operator pod
 > before calling `/admin` endpoints:
+>
 > ```bash
-> kubectl label pod <ops-pod> role=ops -n euno-system
+> kubectl label pod <ops-pod> role=ops -n eunox-system
 > ```
 
 > **HA correctness:** the gateway and issuer run multiple replicas. Redis
@@ -142,20 +145,20 @@ kubectl apply -f ha-policies.yaml
 > issuance rate limiting share state across pods. Without `REDIS_URL`
 > each replica falls back to its own in-memory store and authorization
 > decisions split-brain across the cluster. Override `redis-url` in the
-> `euno-config`, `gateway-config`, and `issuer-config` ConfigMaps to
+> `eunox-config`, `gateway-config`, and `issuer-config` ConfigMaps to
 > point at a managed Redis in production.
 
 ### 4. Verify Deployment
 
 ```bash
 # Check all pods are running
-kubectl get pods -n euno-system
+kubectl get pods -n eunox-system
 
 # Check services
-kubectl get svc -n euno-system
+kubectl get svc -n eunox-system
 
 # Check network policies
-kubectl get networkpolicies -n euno-system
+kubectl get networkpolicies -n eunox-system
 ```
 
 ## Testing Sandbox Enforcement
@@ -164,7 +167,7 @@ kubectl get networkpolicies -n euno-system
 
 ```bash
 # Exec into agent pod
-kubectl exec -it -n euno-system <agent-pod-name> -- sh
+kubectl exec -it -n eunox-system <agent-pod-name> -- sh
 
 # Try to reach gateway (should work)
 wget -O- http://tool-gateway:3002/health
@@ -174,7 +177,7 @@ wget -O- http://tool-gateway:3002/health
 
 ```bash
 # Exec into agent pod
-kubectl exec -it -n euno-system <agent-pod-name> -- sh
+kubectl exec -it -n eunox-system <agent-pod-name> -- sh
 
 # Try to reach external URL (should FAIL - this is expected!)
 curl http://example.com
@@ -189,7 +192,7 @@ curl http://kubernetes.default.svc.cluster.local
 
 ```bash
 # Exec into agent pod
-kubectl exec -it -n euno-system <agent-pod-name> -- sh
+kubectl exec -it -n eunox-system <agent-pod-name> -- sh
 
 # Try to write to root filesystem (should FAIL)
 touch /test.txt
@@ -204,13 +207,13 @@ touch /tmp/test.txt
 
 ```bash
 # Check issuer logs
-kubectl logs -n euno-system -l app=capability-issuer --tail=50
+kubectl logs -n eunox-system -l app=capability-issuer --tail=50
 
 # Check gateway logs
-kubectl logs -n euno-system -l app=tool-gateway --tail=50
+kubectl logs -n eunox-system -l app=tool-gateway --tail=50
 
 # Check agent logs
-kubectl logs -n euno-system -l app=agent-runtime --tail=50
+kubectl logs -n eunox-system -l app=agent-runtime --tail=50
 ```
 
 ## Architecture
@@ -219,7 +222,7 @@ kubectl logs -n euno-system -l app=agent-runtime --tail=50
 ┌─────────────────────────────────────────────────┐
 │             Kubernetes Cluster                   │
 │  ┌──────────────────────────────────────────┐   │
-│  │         euno-system namespace            │   │
+│  │         eunox-system namespace            │   │
 │  │                                          │   │
 │  │  ┌──────────────┐                       │   │
 │  │  │    Agent     │ (NetworkPolicy)       │   │
@@ -254,23 +257,23 @@ kubectl logs -n euno-system -l app=agent-runtime --tail=50
 
 ```bash
 # Capability Issuer logs
-kubectl logs -n euno-system -l app=capability-issuer -f
+kubectl logs -n eunox-system -l app=capability-issuer -f
 
 # Tool Gateway logs
-kubectl logs -n euno-system -l app=tool-gateway -f
+kubectl logs -n eunox-system -l app=tool-gateway -f
 
 # Agent Runtime logs
-kubectl logs -n euno-system -l app=agent-runtime -f
+kubectl logs -n eunox-system -l app=agent-runtime -f
 ```
 
 ### Metrics
 
 ```bash
 # Pod resource usage
-kubectl top pods -n euno-system
+kubectl top pods -n eunox-system
 
 # Network policy status
-kubectl describe networkpolicy -n euno-system
+kubectl describe networkpolicy -n eunox-system
 ```
 
 ## Troubleshooting
@@ -278,35 +281,39 @@ kubectl describe networkpolicy -n euno-system
 ### Agent Can't Reach Gateway
 
 1. Check NetworkPolicy is applied:
+
    ```bash
-   kubectl get networkpolicy -n euno-system
+   kubectl get networkpolicy -n eunox-system
    ```
 
 2. Verify gateway service is running:
+
    ```bash
-   kubectl get svc tool-gateway -n euno-system
+   kubectl get svc tool-gateway -n eunox-system
    ```
 
 3. Check DNS resolution:
    ```bash
-   kubectl exec -it -n euno-system <agent-pod> -- nslookup tool-gateway
+   kubectl exec -it -n eunox-system <agent-pod> -- nslookup tool-gateway
    ```
 
 ### Token Acquisition Fails
 
 1. Check issuer is running:
+
    ```bash
-   kubectl get pods -n euno-system -l app=capability-issuer
+   kubectl get pods -n eunox-system -l app=capability-issuer
    ```
 
 2. Verify Azure credentials:
+
    ```bash
-   kubectl get secret issuer-secrets -n euno-system
+   kubectl get secret issuer-secrets -n eunox-system
    ```
 
 3. Check issuer logs:
    ```bash
-   kubectl logs -n euno-system -l app=capability-issuer --tail=100
+   kubectl logs -n eunox-system -l app=capability-issuer --tail=100
    ```
 
 ### Network Policy Not Working
@@ -315,7 +322,7 @@ kubectl describe networkpolicy -n euno-system
 2. Check if NetworkPolicy controller is running
 3. Test with a debug pod:
    ```bash
-   kubectl run -it --rm debug --image=alpine -n euno-system -- sh
+   kubectl run -it --rm debug --image=alpine -n eunox-system -- sh
    ```
 
 ## Security Considerations
@@ -335,11 +342,11 @@ failure-domain redundancy.
 
 ### What is configured
 
-| Rule type | Constraint | Effect |
-|---|---|---|
-| `topologySpreadConstraints` | `topology.kubernetes.io/zone`, `maxSkew: 1`, `DoNotSchedule` | Prevents scheduler from putting all replicas in the same availability zone |
-| `topologySpreadConstraints` | `kubernetes.io/hostname`, `maxSkew: 1`, `ScheduleAnyway` | Encourages spreading across nodes; `ScheduleAnyway` keeps dev/CI clusters schedulable |
-| `podAntiAffinity` | `requiredDuringSchedulingIgnoredDuringExecution`, `kubernetes.io/hostname` | Refuses to co-locate two replicas of the same workload on the same node |
+| Rule type                   | Constraint                                                                 | Effect                                                                                |
+| --------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `topologySpreadConstraints` | `topology.kubernetes.io/zone`, `maxSkew: 1`, `DoNotSchedule`               | Prevents scheduler from putting all replicas in the same availability zone            |
+| `topologySpreadConstraints` | `kubernetes.io/hostname`, `maxSkew: 1`, `ScheduleAnyway`                   | Encourages spreading across nodes; `ScheduleAnyway` keeps dev/CI clusters schedulable |
+| `podAntiAffinity`           | `requiredDuringSchedulingIgnoredDuringExecution`, `kubernetes.io/hostname` | Refuses to co-locate two replicas of the same workload on the same node               |
 
 ### Node count requirement
 
@@ -357,27 +364,26 @@ change `requiredDuringSchedulingIgnoredDuringExecution` to
 ### AZ-spread requirement
 
 The `DoNotSchedule` zone constraint ensures pods are spread across available
-zones with a maximum skew of 1.  It does **not** require a specific number of
+zones with a maximum skew of 1. It does **not** require a specific number of
 AZs — a 2-AZ cluster (e.g. 2+1 distribution for 3 replicas) fully satisfies
-the constraint.  For single-AZ environments, change the zone constraint from
+the constraint. For single-AZ environments, change the zone constraint from
 `DoNotSchedule` to `ScheduleAnyway`.
 
-
 The base `network-policies.yaml` contains **no `0.0.0.0/0` or `::/0` egress
-rules**.  All gateway and issuer egress is scoped to in-cluster pod selectors
+rules**. All gateway and issuer egress is scoped to in-cluster pod selectors
 (DNS, Redis, Capability Issuer).
 
 ### Production egress configuration
 
 Before deploying to production, add explicit `ipBlock` rules for each external
-endpoint your cluster needs to reach.  The key endpoints to configure are:
+endpoint your cluster needs to reach. The key endpoints to configure are:
 
-| Component | Endpoint type | Recommended approach |
-|---|---|---|
-| Gateway → managed Redis | Private endpoint | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
-| Gateway → backend services | Public or private | Add explicit backend CIDRs, or route via an egress gateway |
-| Issuer → Azure Key Vault / Azure AD | Private endpoint | Add `ipBlock` scoped to private endpoint IPs |
-| Issuer → managed Redis | Private endpoint | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
+| Component                           | Endpoint type     | Recommended approach                                            |
+| ----------------------------------- | ----------------- | --------------------------------------------------------------- |
+| Gateway → managed Redis             | Private endpoint  | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
+| Gateway → backend services          | Public or private | Add explicit backend CIDRs, or route via an egress gateway      |
+| Issuer → Azure Key Vault / Azure AD | Private endpoint  | Add `ipBlock` scoped to private endpoint IPs                    |
+| Issuer → managed Redis              | Private endpoint  | Add `ipBlock` scoped to the managed Redis private endpoint CIDR |
 
 See the commented-out examples in `network-policies.yaml` for the placeholder
 syntax.
@@ -393,8 +399,8 @@ kubectl apply -f network-policies-dev-overlay.yaml
 ```
 
 `network-policies-dev-overlay.yaml` adds separate NetworkPolicy objects labelled
-`euno.dev/dev-only: 'true'` that allow broad internet egress from gateway and
-issuer pods.  This file **must not** be applied in production clusters.
+`eunox.dev/dev-only: 'true'` that allow broad internet egress from gateway and
+issuer pods. This file **must not** be applied in production clusters.
 
 ### Kustomize / Helm integration
 

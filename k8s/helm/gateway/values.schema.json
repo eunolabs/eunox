@@ -12,7 +12,7 @@
           "type": "string",
           "description": "Deployment environment. Used by logging and CORS to pick safe defaults."
         },
-        "EUNO_DEPLOYMENT_TIER": {
+        "EUNOX_DEPLOYMENT_TIER": {
           "type": "string",
           "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover."
         },
@@ -45,11 +45,11 @@
           "enum": ["warn", "error"],
           "description": "Policy applied when the gateway detects an actionResolverHash mismatch with the issuer's /.well-known/capability-issuer document. 'warn' (default): log a warning and continue. 'error': abort startup — recommended for production."
         },
-        "EUNO_JWKS_CACHE_TTL_SECONDS": {
+        "EUNOX_JWKS_CACHE_TTL_SECONDS": {
           "type": "string",
           "description": "JWKS cache TTL in seconds. The gateway re-fetches /.well-known/jwks.json after this interval. Default 300 (5 min). Reduce for faster key-rotation propagation."
         },
-        "EUNO_REQUIRE_KID": {
+        "EUNOX_REQUIRE_KID": {
           "type": "string",
           "description": "Require a kid (key ID) in the JWT protected header. Default true (strict). Set to false only during the deprecation window when old tokens without kid are still in flight."
         },
@@ -97,7 +97,7 @@
           "type": "string",
           "description": "Evidence signing key id. Defaults to \"software-key\"."
         },
-        "EUNO_AUDIT_CHAIN_SEED_TOOL_GATEWAY": {
+        "EUNOX_AUDIT_CHAIN_SEED_TOOL_GATEWAY": {
           "type": "string",
           "description": "Seed the gateway audit chain with the previous run's terminal hash to maintain tamper-evidence continuity across restarts."
         },
@@ -155,7 +155,7 @@
         },
         "AUDIT_LEDGER_TABLE": {
           "type": "string",
-          "description": "PostgreSQL table name for the ledger backend. Default \"euno_audit_ledger\". Override when multiple gateway clusters share one PostgreSQL instance."
+          "description": "PostgreSQL table name for the ledger backend. Default \"eunox_audit_ledger\". Override when multiple gateway clusters share one PostgreSQL instance."
         },
         "AUDIT_LEDGER_RUN_MIGRATIONS": {
           "type": "string",
@@ -271,7 +271,7 @@
         },
         "PARTNER_DID_REGISTRY_KEY_PREFIX": {
           "type": "string",
-          "description": "Optional Redis key prefix for partner-DID registry entries. Default \"euno:gateway:partner-did\". Override when multiple gateway clusters share one Redis instance."
+          "description": "Optional Redis key prefix for partner-DID registry entries. Default \"eunox:gateway:partner-did\". Override when multiple gateway clusters share one Redis instance."
         },
         "PARTNER_DID_REGISTRY_REQUIRED": {
           "type": "string",
@@ -367,7 +367,7 @@
         },
         "GATEWAY_REGION": {
           "type": "string",
-          "description": "Logical region tag for this gateway instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
+          "description": "Logical region tag for this gateway instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on audit events and request span attributes (`eunox.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
         },
         "DPOP_REQUIRED": {
           "type": "string",
@@ -387,7 +387,7 @@
         },
         "OCSF_TRANSPORT": {
           "type": "string",
-          "description": "Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: \"stdout\" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), \"file\" (append to OCSF_FILE_PATH), \"http\" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Euno-specific parser."
+          "description": "Optional OCSF (Open Cybersecurity Schema Framework) audit sink. One of: \"stdout\" (one JSON-line per event written to stderr so existing stdout pipelines are untouched), \"file\" (append to OCSF_FILE_PATH), \"http\" (POST each event to OCSF_HTTP_URL). When unset (default), OCSF emission is disabled and existing winston logging is unchanged. Every AuditLogEntry and SignedAuditEvidence the gateway emits is mirrored as an OCSF v1.1 event (Authorization 3003 for issuance/revocation, API Activity 6003 for tool invocations) so any SIEM that speaks OCSF can ingest without writing a Eunox-specific parser."
         },
         "OCSF_FILE_PATH": {
           "type": "string",

@@ -53,7 +53,7 @@ PRIVATE_REGISTRY=registry.internal.example.com \
   sh scripts/pull-air-gap-images.sh
 ```
 
-After the script completes, every image in the manifest is available at your private registry. The umbrella chart currently overrides repositories per service, so the practical pattern is to point each service at your private registry in `values.yaml` (or start from the provider-specific values files under `k8s/helm/euno/`):
+After the script completes, every image in the manifest is available at your private registry. The umbrella chart currently overrides repositories per service, so the practical pattern is to point each service at your private registry in `values.yaml` (or start from the provider-specific values files under `k8s/helm/eunox/`):
 
 ```yaml
 gateway:
@@ -82,18 +82,18 @@ One thing to get right: verify the image digests. SHA-256 image digests are in t
 
 ## The Helm umbrella chart
 
-The `k8s/helm/euno/` directory contains the umbrella chart that deploys the full eunox stack. It renders the core service Deployments, Services, ConfigMaps, and Secrets directly from one chart and provides a single `values.yaml` interface for configuring the whole deployment; the only subcharts are the optional Postgres and Redis dependencies.
+The `k8s/helm/eunox/` directory contains the umbrella chart that deploys the full eunox stack. It renders the core service Deployments, Services, ConfigMaps, and Secrets directly from one chart and provides a single `values.yaml` interface for configuring the whole deployment; the only subcharts are the optional Postgres and Redis dependencies.
 
 The services covered:
 
-| Service               | Helm key              | Purpose                                 |
-| --------------------- | --------------------- | --------------------------------------- |
-| gateway               | `gateway`             | Enforcement engine, audit ledger writer |
-| issuer                | `issuer`              | JWT minting, OIDC federation            |
-| minter                | `minter`              | API key lifecycle, admin console        |
-| db-token-svc          | `dbTokenService`      | Database token brokering                |
-| storage-grant-svc     | `storageGrantService` | Storage grant brokering                 |
-| posture-emitter       | `postureEmitter`      | System posture telemetry                |
+| Service           | Helm key              | Purpose                                 |
+| ----------------- | --------------------- | --------------------------------------- |
+| gateway           | `gateway`             | Enforcement engine, audit ledger writer |
+| issuer            | `issuer`              | JWT minting, OIDC federation            |
+| minter            | `minter`              | API key lifecycle, admin console        |
+| db-token-svc      | `dbTokenService`      | Database token brokering                |
+| storage-grant-svc | `storageGrantService` | Storage grant brokering                 |
+| posture-emitter   | `postureEmitter`      | System posture telemetry                |
 
 Postgres and Redis are external dependencies by default, not services the umbrella chart installs automatically. For quick local evaluation you can enable the optional Bitnami subcharts with `--set postgresql.enabled=true --set redis.enabled=true`; for production air-gap deployments you normally vendor those upstream charts into your private Helm repository or point the services at operator-managed Postgres and Redis instead.
 
@@ -215,7 +215,7 @@ For reference, here's the sequence for a first-time air-gapped deployment:
 
 1. Run `scripts/pull-air-gap-images.sh` against the target private registry from an internet-connected machine
 2. Vendor the optional upstream Helm charts (postgres, redis) into your private chart repository if you plan to enable the bundled subcharts
-3. Override each service's `image.repository` in `values.yaml` (or start from `k8s/helm/euno/values-aws.yaml` / `values-gcp.yaml`) so the chart points at your private registry
+3. Override each service's `image.repository` in `values.yaml` (or start from `k8s/helm/eunox/values-aws.yaml` / `values-gcp.yaml`) so the chart points at your private registry
 4. Decide how the capability issuer will reach a supported signing provider (`azure-keyvault`, `aws-kms`, or `gcp-cloudkms`) from the restricted network
 5. Point `ISSUER_JWKS_URL` at an internal issuer JWKS endpoint
 6. Seed partner trust with `TRUSTED_PARTNER_DIDS` for bootstrap or the partner-DID registry workflow for production

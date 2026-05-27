@@ -702,7 +702,7 @@ manages the authoritative group memberships that drive SCIM provisioning.
 
    ```bash
    # Example group display names → eunox roles
-   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
    ```
 
 2. Assign users to the relevant groups in IAM Identity Center.
@@ -761,7 +761,7 @@ without an internet-facing ALB.
 # Issuer — enable SCIM 2.0
 ISSUER_DB_URL=postgres://issuer:secret@db:5432/issuer_db
 ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-from-secrets-manager>
-ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
 # Identity provider remains Cognito for runtime authentication:
 IDENTITY_PROVIDER=aws-cognito
@@ -897,8 +897,8 @@ and pushes changes to the eunox SCIM endpoint:
 // Sync Google Workspace users and groups to the eunox SCIM endpoint.
 import { google } from "googleapis";
 
-const EUNO_SCIM_BASE = process.env.EUNO_SCIM_BASE_URL;
-const EUNO_BEARER = process.env.ISSUER_SCIM_BEARER_TOKEN;
+const EUNOX_SCIM_BASE = process.env.EUNOX_SCIM_BASE_URL;
+const EUNOX_BEARER = process.env.ISSUER_SCIM_BEARER_TOKEN;
 const ADMIN_EMAIL = process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL;
 
 const auth = new google.auth.GoogleAuth({
@@ -917,10 +917,10 @@ const admin = google.admin({ version: "directory_v1", auth: client });
 async function syncUsers() {
   const { data } = await admin.users.list({ customer: "my_customer" });
   for (const user of data.users ?? []) {
-    await fetch(`${EUNO_SCIM_BASE}/Users`, {
+    await fetch(`${EUNOX_SCIM_BASE}/Users`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${EUNO_BEARER}`,
+        Authorization: `Bearer ${EUNOX_BEARER}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -946,7 +946,7 @@ async function syncUsers() {
 
    ```bash
    # Example group names → eunox roles
-   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+   ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
    ```
 
 2. Assign users to the relevant groups in Google Workspace Admin Console.
@@ -981,7 +981,7 @@ must push the same Google internal user ID as the SCIM `externalId`.
 # Issuer — enable SCIM 2.0
 ISSUER_DB_URL=postgres://issuer:secret@db:5432/issuer_db
 ISSUER_SCIM_BEARER_TOKEN=<at-least-32-chars-from-secret-manager>
-ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoReaders":"reader","EunoWriters":"writer","EunoAdmins":"admin"}'
+ISSUER_SCIM_GROUP_ROLE_MAP='{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
 # Identity provider remains GCP Cloud Identity for runtime authentication:
 IDENTITY_PROVIDER=gcp-identity

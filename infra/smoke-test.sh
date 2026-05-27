@@ -1,5 +1,5 @@
 #!/bin/sh
-# Euno Tool Gateway — smoke-test script
+# Eunox Tool Gateway — smoke-test script
 #
 # Exercises the core gateway endpoints to verify the local stack is healthy
 # after docker compose startup.  Designed to run inside the Alpine/curl
@@ -84,7 +84,7 @@ check_json_field() {
   fi
 }
 
-printf "=== Euno Smoke Test ===\n"
+printf "=== Eunox Smoke Test ===\n"
 printf "Gateway: %s\n" "$GATEWAY_URL"
 printf "Issuer JWKS: %s\n" "$ISSUER_JWKS_URL"
 if [ -n "$MOCK_OIDC_URL" ]; then
@@ -122,7 +122,7 @@ check_status "POST /api/v1/tools/invoke (no auth) → 401" "401" \
 check_status "POST /api/v1/enforce (no auth) → 401" "401" \
   -X POST "${GATEWAY_URL}/api/v1/enforce" \
   -H "Content-Type: application/json" \
-  -H "X-Euno-Protocol-Version: 1" \
+  -H "X-Eunox-Protocol-Version: 1" \
   -d '{"sessionId":"smoke","toolName":"test","arguments":{}}'
 
 # ── Metrics endpoint ──────────────────────────────────────────────────────────
@@ -133,8 +133,8 @@ METRICS_TMP=$(mktemp)
 check "GET /metrics contains gateway counter" \
   curl -sf "${GATEWAY_URL}/metrics" -o "${METRICS_TMP}"
 if [ -s "${METRICS_TMP}" ]; then
-  check "metrics: euno_gateway_decisions_total present" \
-    grep -q "euno_gateway_decisions_total" "${METRICS_TMP}"
+  check "metrics: eunox_gateway_decisions_total present" \
+    grep -q "eunox_gateway_decisions_total" "${METRICS_TMP}"
 fi
 rm -f "${METRICS_TMP}"
 
@@ -196,7 +196,7 @@ if [ -n "$MOCK_OIDC_URL" ]; then
         -X POST "${GATEWAY_URL}/api/v1/enforce" \
         -H "Authorization: Bearer ${CAP_TOKEN}" \
         -H "Content-Type: application/json" \
-        -H "X-Euno-Protocol-Version: 1" \
+        -H "X-Eunox-Protocol-Version: 1" \
         -d '{"sessionId":"smoke-issuance","toolName":"smoke-tool","arguments":{}}'
     fi
   fi

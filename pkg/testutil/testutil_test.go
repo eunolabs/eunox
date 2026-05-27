@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	eunocrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,12 +51,12 @@ func TestSignerKeyIDAndAlgorithm(t *testing.T) {
 	tests := []struct {
 		name              string
 		keyID             string
-		expectedAlgorithm eunocrypto.Algorithm
-		generate          func(string) (eunocrypto.Signer, eunocrypto.Verifier)
+		expectedAlgorithm eunoxcrypto.Algorithm
+		generate          func(string) (eunoxcrypto.Signer, eunoxcrypto.Verifier)
 	}{
-		{name: "rsa", keyID: "rsa-meta", expectedAlgorithm: eunocrypto.RS256, generate: MustGenerateRSASigner},
-		{name: "ecdsa", keyID: "ecdsa-meta", expectedAlgorithm: eunocrypto.ES256, generate: MustGenerateECDSASigner},
-		{name: "eddsa", keyID: "eddsa-meta", expectedAlgorithm: eunocrypto.EdDSA, generate: MustGenerateEdDSASigner},
+		{name: "rsa", keyID: "rsa-meta", expectedAlgorithm: eunoxcrypto.RS256, generate: MustGenerateRSASigner},
+		{name: "ecdsa", keyID: "ecdsa-meta", expectedAlgorithm: eunoxcrypto.ES256, generate: MustGenerateECDSASigner},
+		{name: "eddsa", keyID: "eddsa-meta", expectedAlgorithm: eunoxcrypto.EdDSA, generate: MustGenerateEdDSASigner},
 	}
 
 	for _, tt := range tests {

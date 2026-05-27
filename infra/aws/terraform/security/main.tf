@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno security module — KMS, S3 Object Lock, Secrets Manager, Cognito, IRSA
+# Eunox security module — KMS, S3 Object Lock, Secrets Manager, Cognito, IRSA
 # ---------------------------------------------------------------------------
 
 locals {
@@ -14,7 +14,7 @@ locals {
 # ── KMS signing key ───────────────────────────────────────────────────────────
 
 resource "aws_kms_key" "capability_signing" {
-  description              = "Euno capability-token signing key (${var.name_prefix}-${var.environment})"
+  description              = "Eunox capability-token signing key (${var.name_prefix}-${var.environment})"
   customer_master_key_spec = "RSA_2048"
   key_usage                = "SIGN_VERIFY"
   enable_key_rotation      = false # asymmetric KMS keys do not support automatic rotation
@@ -188,14 +188,14 @@ resource "aws_cognito_user_group" "operators" {
   count        = var.enable_cognito ? 1 : 0
   name         = "operators"
   user_pool_id = aws_cognito_user_pool.main[0].id
-  description  = "Privileged Euno operators (mapped to admin capability)."
+  description  = "Privileged Eunox operators (mapped to admin capability)."
 }
 
 resource "aws_cognito_user_group" "agent_users" {
   count        = var.enable_cognito ? 1 : 0
   name         = "agent-users"
   user_pool_id = aws_cognito_user_pool.main[0].id
-  description  = "Standard Euno users (mapped to read/write capabilities)."
+  description  = "Standard Eunox users (mapped to read/write capabilities)."
 }
 
 # ── IRSA role for capability-issuer ──────────────────────────────────────────
@@ -210,7 +210,7 @@ data "aws_iam_policy_document" "issuer_assume" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_issuer}:sub"
-      values   = ["system:serviceaccount:euno-system:capability-issuer"]
+      values   = ["system:serviceaccount:eunox-system:capability-issuer"]
     }
     condition {
       test     = "StringEquals"
@@ -302,7 +302,7 @@ data "aws_iam_policy_document" "gateway_assume" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_issuer}:sub"
-      values   = ["system:serviceaccount:euno-system:tool-gateway"]
+      values   = ["system:serviceaccount:eunox-system:tool-gateway"]
     }
     condition {
       test     = "StringEquals"

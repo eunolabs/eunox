@@ -15,7 +15,7 @@ import (
 )
 
 // HTTPAdapter adapts the agent runtime for generic HTTP/REST-based tool calls.
-// It wraps an upstream HTTP service with Euno enforcement.
+// It wraps an upstream HTTP service with Eunox enforcement.
 type HTTPAdapter struct {
 	runtime   *agentruntime.Runtime
 	baseURL   string

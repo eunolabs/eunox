@@ -1,7 +1,7 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-// Binary posture-emitter is the Euno Posture Emitter service for AI asset
+// Binary posture-emitter is the Eunox Posture Emitter service for AI asset
 // inventory reporting to cloud security platforms (CSPM).
 package main
 
@@ -67,7 +67,7 @@ func run() error {
 	)
 
 	// Initialize metrics.
-	metrics := observability.NewMetricsRegistry("euno", "posture")
+	metrics := observability.NewMetricsRegistry("eunox", "posture")
 
 	// Build plugins from configuration.
 	plugins, err := buildPlugins(&cfg, logger)

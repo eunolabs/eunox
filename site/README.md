@@ -1,4 +1,4 @@
-# euno website (Astro)
+# eunox website (Astro)
 
 The public-facing website for [eunolabs.ai](https://eunolabs.ai), built with [Astro](https://astro.build) as a static site generator.
 
@@ -55,16 +55,16 @@ npm run build:site
 
 ## Pages
 
-| URL | Source |
-|-----|--------|
-| `/` | `src/pages/index.astro` |
-| `/quickstart` | `src/pages/quickstart.astro` |
-| `/features` | `src/pages/features.astro` |
-| `/how-it-works` | `src/pages/how-it-works.astro` |
-| `/policies` | `src/pages/policies.astro` |
-| `/docs` | `src/pages/docs.astro` |
-| `/blog` | `src/pages/blog/index.astro` |
-| `/blog/[slug]` | `src/pages/blog/[...slug].astro` |
+| URL             | Source                           |
+| --------------- | -------------------------------- |
+| `/`             | `src/pages/index.astro`          |
+| `/quickstart`   | `src/pages/quickstart.astro`     |
+| `/features`     | `src/pages/features.astro`       |
+| `/how-it-works` | `src/pages/how-it-works.astro`   |
+| `/policies`     | `src/pages/policies.astro`       |
+| `/docs`         | `src/pages/docs.astro`           |
+| `/blog`         | `src/pages/blog/index.astro`     |
+| `/blog/[slug]`  | `src/pages/blog/[...slug].astro` |
 
 ## Blog posts
 
@@ -72,4 +72,4 @@ Blog posts live in `src/content/blog/` as Markdown files with YAML front matter 
 
 ## License
 
-Apache-2.0, same as the rest of the euno open-source project.
+Apache-2.0, same as the rest of the eunox open-source project.

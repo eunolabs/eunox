@@ -1,7 +1,7 @@
 {
-  "name": "@euno/aws-cdk",
+  "name": "@eunox/aws-cdk",
   "version": "1.0.0",
-  "description": "AWS CDK constructs for deploying Euno Capability-Native Agent Governance",
+  "description": "AWS CDK constructs for deploying Eunox Capability-Native Agent Governance",
   "private": true,
   "scripts": {
     "build": "tsc",

@@ -21,7 +21,7 @@ import (
 )
 
 func newTestMetricsRegistry() *observability.MetricsRegistry {
-	return observability.NewMetricsRegistry("euno", "audit")
+	return observability.NewMetricsRegistry("eunox", "audit")
 }
 
 func getCounterValue(t *testing.T, counter *prometheus.CounterVec, labels ...string) float64 {

@@ -1,13 +1,13 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package config provides configuration models, loading, and validation helpers for Euno services.
+// Package config provides configuration models, loading, and validation helpers for Eunox services.
 package config
 
 // IssuerConfig holds the Capability Issuer configuration.
 type IssuerConfig struct {
 	NodeEnv                 Environment      `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
-	DeploymentTier          DeploymentTier   `env:"EUNO_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
+	DeploymentTier          DeploymentTier   `env:"EUNOX_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
 	Port                    int              `env:"PORT" default:"3001" min:"1" max:"65535"`
 	SigningProvider         SigningProvider  `env:"SIGNING_PROVIDER" default:"azure-keyvault" enum:"azure-keyvault,aws-kms,gcp-cloudkms,software"`
 	IdentityProvider        IdentityProvider `env:"IDENTITY_PROVIDER" default:"azure-ad" enum:"azure-ad,aws-cognito,gcp-identity,did,oidc"`

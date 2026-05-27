@@ -438,7 +438,7 @@ func TestDefenderPlugin_EmitObserved(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "/subscriptions/sub-123", capturedResourceID)
-	assert.Equal(t, "euno-agent-test-agent", capturedName)
+	assert.Equal(t, "eunox-agent-test-agent", capturedName)
 	assert.Equal(t, "Healthy", capturedAssessment.Status)
 	assert.Equal(t, "test-agent", capturedAssessment.AdditionalData["agentId"])
 	assert.Equal(t, "team-x", capturedAssessment.AdditionalData["owningTeam"])
@@ -480,7 +480,7 @@ func TestSecurityHubPlugin_EmitObserved(t *testing.T) {
 	plugin := NewSecurityHubPlugin(SecurityHubPluginConfig{
 		AWSAccountID:  "123456789012",
 		Region:        "us-east-1",
-		ProductArn:    "arn:aws:securityhub:us-east-1:123456789012:product/euno/posture",
+		ProductArn:    "arn:aws:securityhub:us-east-1:123456789012:product/eunox/posture",
 		ClientFactory: func() SecurityHubClient { return client },
 	})
 
@@ -518,7 +518,7 @@ func TestSecurityHubPlugin_EmitRevoked(t *testing.T) {
 	plugin := NewSecurityHubPlugin(SecurityHubPluginConfig{
 		AWSAccountID:  "123456789012",
 		Region:        "us-east-1",
-		ProductArn:    "arn:aws:securityhub:us-east-1:123456789012:product/euno/posture",
+		ProductArn:    "arn:aws:securityhub:us-east-1:123456789012:product/eunox/posture",
 		ClientFactory: func() SecurityHubClient { return client },
 	})
 
@@ -558,7 +558,7 @@ func TestSccPlugin_EmitObserved(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "organizations/123/sources/456", capturedReq.Parent)
-	assert.Equal(t, "EUNO_AGENT_INVENTORY", capturedReq.Finding.Category)
+	assert.Equal(t, "EUNOX_AGENT_INVENTORY", capturedReq.Finding.Category)
 	assert.Equal(t, "OBSERVATION", capturedReq.Finding.FindingClass)
 	assert.Equal(t, "ACTIVE", capturedReq.Finding.State)
 	assert.Equal(t, "scc-agent", capturedReq.Finding.SourceProperties["agentId"])

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno compute module — EKS cluster, Fargate profile, IRSA OIDC provider
+# Eunox compute module — EKS cluster, Fargate profile, IRSA OIDC provider
 # ---------------------------------------------------------------------------
 
 locals {
@@ -118,7 +118,7 @@ resource "aws_eks_node_group" "system" {
   depends_on = [aws_iam_role_policy_attachment.eks_node]
 }
 
-# ── Fargate profile for euno-system namespace ─────────────────────────────────
+# ── Fargate profile for eunox-system namespace ─────────────────────────────────
 
 data "aws_iam_policy_document" "fargate_assume" {
   count = var.use_fargate ? 1 : 0
@@ -144,19 +144,19 @@ resource "aws_iam_role_policy_attachment" "fargate_pod" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
 }
 
-resource "aws_eks_fargate_profile" "euno_system" {
+resource "aws_eks_fargate_profile" "eunox_system" {
   count                  = var.use_fargate ? 1 : 0
   cluster_name           = aws_eks_cluster.main.name
-  fargate_profile_name   = "euno-system"
+  fargate_profile_name   = "eunox-system"
   pod_execution_role_arn = aws_iam_role.fargate_pod[0].arn
   subnet_ids             = var.private_subnet_ids
 
   selector {
-    namespace = "euno-system"
+    namespace = "eunox-system"
   }
 
   selector {
-    namespace = "euno-monitoring"
+    namespace = "eunox-monitoring"
   }
 
   tags = local.common_tags

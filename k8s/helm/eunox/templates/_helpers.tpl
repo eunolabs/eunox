@@ -1,18 +1,18 @@
 {{/*
-Euno umbrella chart — helper templates
+Eunox umbrella chart — helper templates
 */}}
 
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "euno.name" -}}
+{{- define "eunox.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "euno.fullname" -}}
+{{- define "eunox.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -28,15 +28,15 @@ Create a default fully qualified app name.
 {{/*
 Create chart label.
 */}}
-{{- define "euno.chart" -}}
+{{- define "eunox.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels shared by all resources.
 */}}
-{{- define "euno.labels" -}}
-helm.sh/chart: {{ include "euno.chart" . }}
+{{- define "eunox.labels" -}}
+helm.sh/chart: {{ include "eunox.chart" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/part-of: euno
+app.kubernetes.io/part-of: eunox
 {{- end }}

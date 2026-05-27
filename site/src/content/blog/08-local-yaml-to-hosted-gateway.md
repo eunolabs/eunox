@@ -3,13 +3,14 @@ title: "From local YAML to hosted policy store: eunox's migration story"
 description: "developers and platform engineers scaling agent governance beyond a single machine"
 pubDate: "2026-05-27"
 ---
+
 # From local YAML to hosted policy store: eunox's migration story
 
 _Audience: developers and platform engineers scaling agent governance beyond a single machine_
 
 ---
 
-Every system that goes through serious adoption has a moment where the early design runs out of runway. Not because the early design was wrong — it was right for what it was. But the assumptions it was built on stop holding, and you have to evolve. With euno, that moment arrived predictably: the day an agent deployment went from "one developer, one machine" to "multiple agents, multiple users, shared infrastructure."
+Every system that goes through serious adoption has a moment where the early design runs out of runway. Not because the early design was wrong — it was right for what it was. But the assumptions it was built on stop holding, and you have to evolve. With eunox, that moment arrived predictably: the day an agent deployment went from "one developer, one machine" to "multiple agents, multiple users, shared infrastructure."
 
 This post is about that transition — what breaks, what stays the same, and the specific decisions we made about how to bridge the gap without requiring everyone to rewrite their policies or relearn the system. If you've read [the drop-in governance tutorial](./07-drop-in-governance-claude-desktop.md), this is the follow-up: what happens when that setup grows up.
 
@@ -17,7 +18,7 @@ This post is about that transition — what breaks, what stays the same, and the
 
 ## The local mode design and its assumptions
 
-When you run `eunox-mcp proxy --policy ./euno.policy.yaml` in local mode, the whole governance stack is in one process. The policy YAML is loaded at startup. Conditions are evaluated in-memory. Call counters live in-memory. The audit log goes to a local file — `~/.euno/audit.jsonl`.
+When you run `eunox-mcp proxy --policy ./eunox.policy.yaml` in local mode, the whole governance stack is in one process. The policy YAML is loaded at startup. Conditions are evaluated in-memory. Call counters live in-memory. The audit log goes to a local file — `~/.eunox/audit.jsonl`.
 
 This design was deliberate. For a single developer using Claude Desktop, it's exactly right. There's no infrastructure to run, no services to keep up, no distributed state to worry about. You change a YAML file and restart. The feedback loop is tight. Onboarding takes five minutes, as [the previous post](./07-drop-in-governance-claude-desktop.md) demonstrates.
 
@@ -41,15 +42,15 @@ The hosted gateway is a different architecture, not a replacement philosophy. Th
 
 Here's the side-by-side:
 
-| Concern         | Local mode                           | Hosted mode                                     |
-| --------------- | ------------------------------------ | ----------------------------------------------- |
-| Policy storage  | YAML file on disk                    | Gateway policy store (versioned, hash-verified) |
-| Call counters   | In-memory, per-process               | Redis, shared across all agent instances        |
-| Kill-switch     | In-memory, per-process               | Redis global flag, instant effect everywhere    |
-| Revocation list | In-memory, per-process               | Redis, checked per call across all sessions     |
-| Audit log       | `~/.euno/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable)           |
-| Token signing   | Simplified / skipped                 | Full JWT signed by HSM-backed tenant key        |
-| Multi-user      | Not designed for it                  | Native multi-tenancy with per-tenant isolation  |
+| Concern         | Local mode                            | Hosted mode                                     |
+| --------------- | ------------------------------------- | ----------------------------------------------- |
+| Policy storage  | YAML file on disk                     | Gateway policy store (versioned, hash-verified) |
+| Call counters   | In-memory, per-process                | Redis, shared across all agent instances        |
+| Kill-switch     | In-memory, per-process                | Redis global flag, instant effect everywhere    |
+| Revocation list | In-memory, per-process                | Redis, checked per call across all sessions     |
+| Audit log       | `~/.eunox/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable)           |
+| Token signing   | Simplified / skipped                  | Full JWT signed by HSM-backed tenant key        |
+| Multi-user      | Not designed for it                   | Native multi-tenancy with per-tenant isolation  |
 
 The policy format is identical. That's the single most important architectural decision in the whole migration story, and I'll explain why it was hard to maintain and why we held the line on it.
 
@@ -57,7 +58,7 @@ The policy format is identical. That's the single most important architectural d
 
 ## The one-config-change promise
 
-When we designed the migration path, we had a strong requirement: the change from local to hosted mode should be a single config change. Not a policy rewrite, not a new YAML format, not a learning exercise. You change one thing in your MCP config — swap `--policy ./euno.policy.yaml` for `--enforcer-url https://gateway.example --enforcer-api-key sk-...` — and everything else is the same.
+When we designed the migration path, we had a strong requirement: the change from local to hosted mode should be a single config change. Not a policy rewrite, not a new YAML format, not a learning exercise. You change one thing in your MCP config — swap `--policy ./eunox.policy.yaml` for `--enforcer-url https://gateway.example --enforcer-api-key sk-...` — and everything else is the same.
 
 This turns out to be a surprisingly hard thing to commit to, because the two modes have different underlying security architectures. Local mode evaluates policy directly from a YAML file. Hosted mode requires a signed JWT capability token — a cryptographic artefact that the enforcement pipeline verifies before looking at anything else. These are not the same thing. You can't just swap one for the other without bridging the gap somewhere.
 
@@ -135,10 +136,10 @@ We built `eunox-mcp upgrade-to-hosted` to make the mechanics as smooth as the co
 
 ```bash
 eunox-mcp upgrade-to-hosted \
-  --gateway-url https://gateway.euno.example \
+  --gateway-url https://gateway.eunox.example \
   --api-key sk-x7Kp9mRq.bL3nYv2wQs... \
   --admin-key sk-adminKey... \
-  --policy ./euno.policy.yaml
+  --policy ./eunox.policy.yaml
 ```
 
 There's also a `--dry-run` flag that shows you what it would do without writing anything. Use it before the real run.
@@ -153,7 +154,7 @@ The recommended approach is to run both modes in parallel briefly before committ
       "args": [
         "proxy",
         "--policy",
-        "/path/to/euno.policy.yaml",
+        "/path/to/eunox.policy.yaml",
         "--",
         "npx",
         "-y",
@@ -166,7 +167,7 @@ The recommended approach is to run both modes in parallel briefly before committ
       "args": [
         "proxy",
         "--enforcer-url",
-        "https://gateway.euno.example",
+        "https://gateway.eunox.example",
         "--enforcer-api-key",
         "sk-x7Kp9mRq...",
         "--",

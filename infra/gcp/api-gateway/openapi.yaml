@@ -1,6 +1,6 @@
 swagger: "2.0"
 info:
-  title: "Euno Tool Gateway (GCP API Gateway profile)"
+  title: "Eunox Tool Gateway (GCP API Gateway profile)"
   description: |
     Sprint-1 multi-cloud parity for the Azure APIM `validate-jwt` policy.
     This OpenAPI 2.0 (Swagger) document is consumable by GCP API Gateway
@@ -17,7 +17,7 @@ info:
     itself (so the policy lives in one place — the same boundary as Azure
     APIM and AWS API Gateway).
   version: "0.1.0"
-  x-euno-parity: "infra/bicep/main.bicep + APIM validate-jwt"
+  x-eunox-parity: "infra/bicep/main.bicep + APIM validate-jwt"
 schemes:
   - https
 produces:
@@ -26,7 +26,7 @@ consumes:
   - application/json
 
 securityDefinitions:
-  euno_capability:
+  eunox_capability:
     # JWT auth backed by the Capability Issuer's JWKS endpoint.
     # API Gateway verifies signature + iss + aud + exp natively.
     authorizationUrl: ""
@@ -37,7 +37,7 @@ securityDefinitions:
     x-google-audiences: "tool-gateway"
 
 security:
-  - euno_capability: []
+  - eunox_capability: []
 
 x-google-backend:
   # Default backend — the in-cluster Tool Gateway, fronted by an internal

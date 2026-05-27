@@ -1,6 +1,6 @@
 # Capability tokens: a cryptographic contract between agent and operator
 
-_Audience: security architects and developers who want to understand the trust model at euno's core_
+_Audience: security architects and developers who want to understand the trust model at eunox's core_
 
 ---
 
@@ -227,6 +227,6 @@ The token is the contract. But a contract is only as useful as the paper trail t
 
 ---
 
-_Previous: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)_
+_Previous: [From local YAML to hosted policy store: eunox's migration story](./08-local-yaml-to-hosted-gateway.md)_
 
 _Next: [The Tool Gateway as a reference monitor: implementing PDP in practice](./10-tool-gateway-reference-monitor.md)_

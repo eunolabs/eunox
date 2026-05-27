@@ -1,13 +1,13 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package config provides configuration models, loading, and validation helpers for Euno services.
+// Package config provides configuration models, loading, and validation helpers for Eunox services.
 package config
 
 // EmitterConfig holds the Posture Emitter configuration.
 type EmitterConfig struct {
 	NodeEnv        Environment    `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
-	DeploymentTier DeploymentTier `env:"EUNO_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
+	DeploymentTier DeploymentTier `env:"EUNOX_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
 	Port           int            `env:"PORT" default:"3008" min:"1" max:"65535"`
 
 	// Emitter core
@@ -32,13 +32,13 @@ type EmitterConfig struct {
 
 	// Microsoft Defender CSPM
 	DefenderSubscriptionID       string `env:"DEFENDER_SUBSCRIPTION_ID"`
-	DefenderAssessmentNamePrefix string `env:"DEFENDER_ASSESSMENT_NAME_PREFIX" default:"euno-agent-"`
+	DefenderAssessmentNamePrefix string `env:"DEFENDER_ASSESSMENT_NAME_PREFIX" default:"eunox-agent-"`
 
 	// AWS Security Hub
 	AWSAccountID     string `env:"AWS_ACCOUNT_ID"`
 	AWSRegion        string `env:"AWS_REGION"`
 	SecurityHubArn   string `env:"SECURITY_HUB_PRODUCT_ARN"`
-	SecurityHubGenID string `env:"SECURITY_HUB_GENERATOR_ID" default:"euno/posture-emitter/v1"`
+	SecurityHubGenID string `env:"SECURITY_HUB_GENERATOR_ID" default:"eunox/posture-emitter/v1"`
 
 	// GCP Security Command Center
 	GCPSourceName string `env:"GCP_SCC_SOURCE_NAME"`

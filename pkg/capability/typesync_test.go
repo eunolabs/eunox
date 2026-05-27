@@ -3,7 +3,7 @@
 
 // Package capability provides a types-sync test that verifies all condition
 // type discriminators defined in the Go package match those in the upstream
-// TypeScript wire type definitions at github.com/eunolabs/euno.
+// TypeScript wire type definitions at github.com/eunolabs/eunox.
 package capability
 
 import (
@@ -19,9 +19,9 @@ import (
 
 const (
 	// upstreamWireURL is the raw URL of the canonical TypeScript wire definitions.
-	upstreamWireURL = "https://raw.githubusercontent.com/eunolabs/euno/main/packages/common/src/wire.ts"
+	upstreamWireURL = "https://raw.githubusercontent.com/eunolabs/eunox/main/packages/common/src/wire.ts"
 	// upstreamWireURLEnv overrides the URL for testing without network access.
-	upstreamWireURLEnv = "EUNO_WIRE_TS_URL"
+	upstreamWireURLEnv = "EUNOX_WIRE_TS_URL"
 )
 
 // goConditionTypes lists every condition type discriminator registered in Go.

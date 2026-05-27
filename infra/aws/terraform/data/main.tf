@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno data module — RDS PostgreSQL, ElastiCache Redis, subnet groups
+# Eunox data module — RDS PostgreSQL, ElastiCache Redis, subnet groups
 # ---------------------------------------------------------------------------
 
 locals {
@@ -10,7 +10,7 @@ locals {
 
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg-${var.environment}"
-  description = "Euno RDS PostgreSQL — allow EKS pods on port 5432 only."
+  description = "Eunox RDS PostgreSQL — allow EKS pods on port 5432 only."
   vpc_id      = var.vpc_id
   tags        = merge(local.common_tags, { Name = "${var.name_prefix}-rds-sg" })
 
@@ -25,7 +25,7 @@ resource "aws_security_group" "rds" {
 
 resource "aws_security_group" "redis" {
   name        = "${var.name_prefix}-redis-sg-${var.environment}"
-  description = "Euno ElastiCache Redis — allow EKS pods on port 6380 (TLS) only."
+  description = "Eunox ElastiCache Redis — allow EKS pods on port 6380 (TLS) only."
   vpc_id      = var.vpc_id
   tags        = merge(local.common_tags, { Name = "${var.name_prefix}-redis-sg" })
 
@@ -62,14 +62,14 @@ resource "aws_security_group_rule" "redis_from_eks" {
 resource "aws_db_subnet_group" "main" {
   name       = "${var.name_prefix}-db-subnet-${var.environment}"
   subnet_ids = var.isolated_subnet_ids
-  description = "Euno RDS subnet group (isolated subnets)."
+  description = "Eunox RDS subnet group (isolated subnets)."
   tags       = local.common_tags
 }
 
 resource "aws_db_parameter_group" "postgres15" {
   name        = "${var.name_prefix}-pg15-${var.environment}"
   family      = "postgres15"
-  description = "Euno PostgreSQL 15 parameter group — connection logging enabled."
+  description = "Eunox PostgreSQL 15 parameter group — connection logging enabled."
 
   parameter {
     name  = "log_connections"
@@ -96,7 +96,7 @@ resource "aws_db_instance" "postgres" {
   instance_class         = var.db_instance_class
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
-  db_name                = "euno"
+  db_name                = "eunox"
   username               = var.db_username
   manage_master_user_password = true
 
@@ -135,13 +135,13 @@ resource "aws_db_instance" "postgres" {
 resource "aws_elasticache_subnet_group" "main" {
   name        = "${var.name_prefix}-cache-subnet-${var.environment}"
   subnet_ids  = var.isolated_subnet_ids
-  description = "Euno ElastiCache Redis subnet group (isolated subnets)."
+  description = "Eunox ElastiCache Redis subnet group (isolated subnets)."
   tags        = local.common_tags
 }
 
 resource "aws_elasticache_replication_group" "redis" {
   replication_group_id       = "${var.name_prefix}-${var.environment}"
-  description                = "Euno HA Redis — ${var.name_prefix}-${var.environment}"
+  description                = "Eunox HA Redis — ${var.name_prefix}-${var.environment}"
   node_type                  = var.cache_node_type
   num_cache_clusters         = var.cache_num_replicas + 1 # 1 primary + N replicas
   engine                     = "redis"

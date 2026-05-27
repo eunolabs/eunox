@@ -15,7 +15,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: issuer
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
     component: control-plane
@@ -33,7 +33,7 @@ spec:
       serviceAccountName: issuer
       containers:
       - name: issuer
-        image: eunoacr.azurecr.io/issuer:v1.0.0
+        image: eunoxacr.azurecr.io/issuer:v1.0.0
         imagePullPolicy: Always
         ports:
         - name: http
@@ -49,29 +49,29 @@ spec:
         # is required for multi-replica). Switch to
         # "multi-region-active-active" and set ISSUER_REGION when adding
         # a second region.
-        - name: EUNO_DEPLOYMENT_TIER
+        - name: EUNOX_DEPLOYMENT_TIER
           value: "multi-replica"
         - name: AZURE_KEYVAULT_URL
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: keyvault-url
         - name: AZURE_KEYVAULT_KEY_NAME
           value: "capability-signing-key"
         - name: AZURE_AD_TENANT_ID
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: azure-tenant-id
         - name: AZURE_AD_CLIENT_ID
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: azure-client-id
         - name: ISSUER_DID
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: issuer-did
         - name: DEFAULT_TOKEN_TTL
           value: "900"
@@ -82,7 +82,7 @@ spec:
         - name: REDIS_URL
           valueFrom:
             configMapKeyRef:
-              name: euno-config
+              name: eunox-config
               key: redis-url
         - name: ISSUANCE_RATE_LIMIT_ENABLED
           value: "true"
@@ -131,7 +131,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: issuer
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
 spec:
@@ -148,6 +148,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: issuer
-  namespace: euno-system
+  namespace: eunox-system
   annotations:
     azure.workload.identity/client-id: "<AZURE_CLIENT_ID>"

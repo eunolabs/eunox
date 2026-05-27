@@ -7,9 +7,9 @@ Eunox services.
 
 Every service exposes two mandatory endpoints on its primary HTTP listener:
 
-| Path | Purpose | Success | Failure |
-|------|---------|---------|---------|
-| `GET /health/live` | Liveness probe — is the process alive? | `200 OK` | `503 Service Unavailable` |
+| Path                | Purpose                                           | Success  | Failure                   |
+| ------------------- | ------------------------------------------------- | -------- | ------------------------- |
+| `GET /health/live`  | Liveness probe — is the process alive?            | `200 OK` | `503 Service Unavailable` |
 | `GET /health/ready` | Readiness probe — can the service accept traffic? | `200 OK` | `503 Service Unavailable` |
 
 ### Response Format
@@ -17,20 +17,21 @@ Every service exposes two mandatory endpoints on its primary HTTP listener:
 All health endpoints return `Content-Type: application/json` with a JSON body:
 
 ```json
-{"status":"ok"}
+{ "status": "ok" }
 ```
 
 Possible `status` values depend on the endpoint:
+
 - **Liveness:** `"ok"` / `"healthy"` (200), `"unhealthy"` (503)
 - **Readiness:** `"ready"` (200), `"not_ready"` / `"degraded"` (503)
 
 ### Liveness vs Readiness
 
-| | Liveness | Readiness |
-|---|---|---|
-| **Purpose** | Should the orchestrator restart this pod? | Should the load balancer send traffic? |
-| **Checks** | Process is responsive | Dependencies are connected, startup complete |
-| **Failure action** | Container restart | Remove from service endpoints |
+|                    | Liveness                                  | Readiness                                    |
+| ------------------ | ----------------------------------------- | -------------------------------------------- |
+| **Purpose**        | Should the orchestrator restart this pod? | Should the load balancer send traffic?       |
+| **Checks**         | Process is responsive                     | Dependencies are connected, startup complete |
+| **Failure action** | Container restart                         | Remove from service endpoints                |
 
 ## Service Implementations
 
@@ -90,6 +91,7 @@ mgr.SetReady(true)
 ```
 
 The lifecycle handlers:
+
 - Return `Content-Type: application/json`
 - Use `200 OK` / `503 Service Unavailable` status codes
 - Track readiness independently from liveness
@@ -142,11 +144,13 @@ func readyHandler(breaker *circuitbreaker.Breaker) http.HandlerFunc {
 ## Monitoring
 
 Health endpoints are typically scraped by:
+
 - **Kubernetes** — kubelet probes for pod lifecycle
 - **Load balancers** — ALB/NLB target group health checks
 - **Prometheus** — `probe_success` metric via blackbox exporter
 - **Synthetic monitors** — uptime checks (e.g., Datadog, PagerDuty)
 
 For Prometheus monitoring of internal health state, services export:
-- `euno_service_healthy` (gauge, 0/1)
-- `euno_service_ready` (gauge, 0/1)
+
+- `eunox_service_healthy` (gauge, 0/1)
+- `eunox_service_ready` (gauge, 0/1)

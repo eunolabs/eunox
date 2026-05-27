@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: issuer
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
     version: v1.0.0
@@ -20,7 +20,7 @@ spec:
         version: v1.0.0
       annotations:
         # Sprint 3: AppArmor profile annotation
-        container.apparmor.security.beta.kubernetes.io/issuer: localhost/euno-restricted
+        container.apparmor.security.beta.kubernetes.io/issuer: localhost/eunox-restricted
     spec:
       # Sprint 3: Service account with no API token (config injected via env)
       serviceAccountName: issuer-sa
@@ -73,13 +73,13 @@ spec:
         # SELinux options
         seLinuxOptions:
           level: "s0:c123,c456"
-          type: "euno_restricted.process"
+          type: "eunox_restricted.process"
         seccompProfile:
           type: RuntimeDefault
 
       containers:
       - name: issuer
-        image: eunoacr.azurecr.io/issuer:v1.0.0
+        image: eunoxacr.azurecr.io/issuer:v1.0.0
         imagePullPolicy: Always
 
         ports:
@@ -99,7 +99,7 @@ spec:
         # is required for multi-replica). Switch to
         # "multi-region-active-active" and set ISSUER_REGION when adding
         # a second region.
-        - name: EUNO_DEPLOYMENT_TIER
+        - name: EUNOX_DEPLOYMENT_TIER
           value: "multi-replica"
 
         # Signing Provider Selection
@@ -305,7 +305,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: issuer-sa
-  namespace: euno-system
+  namespace: eunox-system
 automountServiceAccountToken: false
 
 ---
@@ -314,7 +314,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: issuer
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: issuer
 spec:
@@ -333,7 +333,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: issuer-config
-  namespace: euno-system
+  namespace: eunox-system
 data:
   # Signing Provider Selection
   # Options: azure-keyvault, aws-kms, gcp-cloudkms
@@ -365,4 +365,4 @@ data:
   # issuance rate limiter shares state across all issuer replicas.
   # Defaults to the in-cluster Redis from `redis.yaml`; override with a
   # managed Redis URL for production / multi-region.
-  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"
+  redis-url: "redis://redis.eunox-system.svc.cluster.local:6379"

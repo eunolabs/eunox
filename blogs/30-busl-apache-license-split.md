@@ -1,12 +1,12 @@
 # The BUSL / Apache split: open-source AI security with a sustainable license model
 
-_Audience: developers evaluating euno for integration or deployment, and anyone curious about how AI infrastructure companies think about licensing_
+_Audience: developers evaluating eunox for integration or deployment, and anyone curious about how AI infrastructure companies think about licensing_
 
 ---
 
 Licensing is one of those topics that developers historically avoided until it became unavoidable. Then HashiCorp relicensed Terraform. Redis changed its license. Elasticsearch sued Amazon. Suddenly everyone started reading the license file.
 
-If you've looked at euno's repository structure and noticed that parts of the codebase are Apache 2.0 and other parts are BUSL-1.1, you might have questions. What does the split mean? What can you do with each part? Why did we structure it this way? And what does "non-competing use" actually mean in practice?
+If you've looked at eunox's repository structure and noticed that parts of the codebase are Apache 2.0 and other parts are BUSL-1.1, you might have questions. What does the split mean? What can you do with each part? Why did we structure it this way? And what does "non-competing use" actually mean in practice?
 
 This post is the honest answer to those questions. I'll explain the decision, the Go monorepo architecture it created, what you can and can't do under each license, and why I think this model is actually better for the ecosystem than the alternatives.
 
@@ -22,7 +22,7 @@ The BUSL (Business Source License) was designed by MariaDB as a response to this
 
 BUSL is not open source by the OSI definition. I want to be clear about that. It has restrictions that OSI-compliant licenses don't have. But for many use cases — self-hosting, development, research, internal deployment — it behaves exactly like open source. The restriction is narrow and targeted: it specifically prevents hosted-service competition.
 
-The choice of BUSL for the platform components wasn't made lightly. We went back and forth on it. But the thing that resolved it was thinking about what happens to the project if we can't sustain it financially. An euno that isn't maintained, can't hire the people to advance it, and eventually stops responding to security issues is worse for users and the ecosystem than an euno with a license that prevents someone from undercutting us on managed hosting.
+The choice of BUSL for the platform components wasn't made lightly. We went back and forth on it. But the thing that resolved it was thinking about what happens to the project if we can't sustain it financially. An eunox that isn't maintained, can't hire the people to advance it, and eventually stops responding to security issues is worse for users and the ecosystem than an eunox with a license that prevents someone from undercutting us on managed hosting.
 
 ---
 
@@ -50,7 +50,7 @@ The most important decision in the whole licensing structure is this: the shared
 
 These packages contain the types that define the capability manifest schema — `AgentCapabilityManifest`, `Capability`, `Condition`, the condition interfaces, the OCSF event types. These are the contract between agents, policies, and enforcement. If you're building an AI agent that consumes capability tokens, or a policy authoring tool, or a SIEM integration, or a third-party gateway, you need these types.
 
-If those shared `pkg/` packages were BUSL, the entire ecosystem would be hamstrung. Every tool that needed to parse a capability manifest would need either a BUSL commercial license or would have to reverse-engineer the schema from documentation. That's a terrible outcome for interoperability, and it would mean euno becomes the only entity that can build things that understand euno policies. That's not a healthy ecosystem, and it would kill adoption.
+If those shared `pkg/` packages were BUSL, the entire ecosystem would be hamstrung. Every tool that needed to parse a capability manifest would need either a BUSL commercial license or would have to reverse-engineer the schema from documentation. That's a terrible outcome for interoperability, and it would mean eunox becomes the only entity that can build things that understand eunox policies. That's not a healthy ecosystem, and it would kill adoption.
 
 The Apache 2.0 license on the shared packages means:
 
@@ -71,20 +71,20 @@ The BUSL production use grant reads (paraphrased): you may use this software for
 
 What this prohibits:
 
-- Running euno's gateway, capability issuer, or minter as a hosted service and charging customers for access to it
-- Packaging euno's platform components as a managed product that you sell to enterprises
+- Running eunox's gateway, capability issuer, or minter as a hosted service and charging customers for access to it
+- Packaging eunox's platform components as a managed product that you sell to enterprises
 - Integrating the BUSL components into a competing hosted AI governance platform
 
 What this does NOT prohibit:
 
-- Deploying euno in your own organisation's infrastructure to govern your own AI agents
+- Deploying eunox in your own organisation's infrastructure to govern your own AI agents
 - Self-hosting the complete stack on-premises or in your own cloud account
-- Using euno to build your own AI products and services (the governance is for your use)
+- Using eunox to build your own AI products and services (the governance is for your use)
 - Contributing to the codebase (PRs welcome)
 - Forking for research, evaluation, or testing
 - Reading and studying the source code
 
-The practical summary: if you're deploying euno to govern AI agents in your organisation, you're fine under BUSL. If you're AWS and you want to offer "Amazon Euno Gateway" as a managed service to your customers, you need a commercial license.
+The practical summary: if you're deploying eunox to govern AI agents in your organisation, you're fine under BUSL. If you're AWS and you want to offer "Amazon Eunox Gateway" as a managed service to your customers, you need a commercial license.
 
 The "additional use grant" section of the BUSL file in this repository spells out the permitted production use explicitly. Read it — it's short, and it's written to be understood by engineers, not just lawyers.
 
@@ -92,15 +92,15 @@ The "additional use grant" section of the BUSL file in this repository spells ou
 
 ## The conversion timeline
 
-Every BUSL-licensed release specifies a conversion date — the date on which that version of the software automatically becomes Apache 2.0. For euno, the conversion period is four years from each release.
+Every BUSL-licensed release specifies a conversion date — the date on which that version of the software automatically becomes Apache 2.0. For eunox, the conversion period is four years from each release.
 
 This matters for a few reasons.
 
-First, it means BUSL is not a permanent restriction. Version 1.14.2 of the tool gateway, released today, will be Apache 2.0 in 2030. If euno hypothetically ceased to exist as a company, the software would eventually convert to open source, and anyone could fork and continue it. The community is not permanently locked out.
+First, it means BUSL is not a permanent restriction. Version 1.14.2 of the tool gateway, released today, will be Apache 2.0 in 2030. If eunox hypothetically ceased to exist as a company, the software would eventually convert to open source, and anyone could fork and continue it. The community is not permanently locked out.
 
 Second, it means the restriction is calibrated to a reasonable product lifecycle. Four years is long enough that a release is still commercially current by conversion. We're not releasing code that immediately becomes freely distributable as a managed service before we've had any commercial runway from it.
 
-Third, it creates a natural archive of the evolution of the platform. The 2028 versions of euno's gateway will include the 2024 code under open source terms. Researchers and developers who want to understand the design history will have full access.
+Third, it creates a natural archive of the evolution of the platform. The 2028 versions of eunox's gateway will include the 2024 code under open source terms. Researchers and developers who want to understand the design history will have full access.
 
 ---
 
@@ -143,13 +143,13 @@ The BUSL-licensed platform components don't get quite the same benefit — they'
 
 ## Practical questions developers ask
 
-**Can I use euno in my startup's product?**
+**Can I use eunox in my startup's product?**
 
 Yes. Install `eunox-mcp` (Apache 2.0) alongside your agent code. Self-host the gateway stack using the BUSL-licensed platform (you're deploying it for your own use, not selling it as a service to others). Build your product. No license issue.
 
-**Can I build a consultancy offering that deploys and operates euno for clients?**
+**Can I build a consultancy offering that deploys and operates eunox for clients?**
 
-This is a nuanced case. If you're deploying euno on a client's own infrastructure, within their own account, as an implementation service, that's generally fine — you're deploying for them, not offering euno as a service. If you're running the infrastructure yourself and billing clients for API access to it, that's the hosted-service restriction and requires a commercial license. When in doubt, reach out — the commercial license is designed for this case.
+This is a nuanced case. If you're deploying eunox on a client's own infrastructure, within their own account, as an implementation service, that's generally fine — you're deploying for them, not offering eunox as a service. If you're running the infrastructure yourself and billing clients for API access to it, that's the hosted-service restriction and requires a commercial license. When in doubt, reach out — the commercial license is designed for this case.
 
 **Can I fork the BUSL code and modify it for internal use?**
 
@@ -183,7 +183,7 @@ The license debate in infrastructure software isn't going away. There are now mu
 
 Each of these represents a different answer to the same question: how do you build financially sustainable open infrastructure without either closing it entirely or watching it get captured by hyperscalers?
 
-BUSL is one answer. It's not the only answer, and it's not universally correct. For euno, given the specific risk (a well-resourced entity offering our governance platform as a managed service that competes directly with our hosted offering) and the specific requirement (the enforcement client must be genuinely open for developer trust and security auditing), the split model makes sense.
+BUSL is one answer. It's not the only answer, and it's not universally correct. For eunox, given the specific risk (a well-resourced entity offering our governance platform as a managed service that competes directly with our hosted offering) and the specific requirement (the enforcement client must be genuinely open for developer trust and security auditing), the split model makes sense.
 
 As the AI agent governance space matures and more organisations need this infrastructure, we'll revisit the model. If the BUSL restriction is preventing legitimate adoption, we'll know from the questions we're getting. If the conversion timeline needs to move, we can adjust. Licenses aren't eternal commitments — they're decisions made in context, subject to revision as context changes.
 

@@ -1,8 +1,9 @@
 ---
 title: "From Dev to Prod: The eunox CLI Experience"
-description: "Second post in the \"User experience and developer ergonomics\" series. [Post 19](./19-one-yaml-file.md) covered the YAML manifest format itself — the artifact you're authoring when you use these commands. [Post 8](./08-local-to-hosted.md) covers the architectural story of the migration from local to hosted enforcement; this post is about the CLI experience of living through that journey day-to-day. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Second post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML manifest format itself — the artifact you''re authoring when you use these commands. [Post 8](./08-local-to-hosted.md) covers the architectural story of the migration from local to hosted enforcement; this post is about the CLI experience of living through that journey day-to-day. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-08"
 ---
+
 # From Dev to Prod: The eunox CLI Experience
 
 _Second post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML manifest format itself — the artifact you're authoring when you use these commands. [Post 8](./08-local-to-hosted.md) covers the architectural story of the migration from local to hosted enforcement; this post is about the CLI experience of living through that journey day-to-day. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
@@ -34,7 +35,7 @@ In the absence of a `--policy` flag, the proxy runs in passthrough mode: all too
 Once you have a policy file:
 
 ```bash
-eunox-mcp proxy --policy ./euno.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /tmp
+eunox-mcp proxy --policy ./eunox.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /tmp
 ```
 
 The proxy validates the manifest at startup. If validation fails, the proxy exits immediately with a human-readable error — it won't start in an ambiguous state. Once it starts, every tool call is checked against the policy before the upstream ever sees it.
@@ -55,7 +56,7 @@ The default transport is stdio, which is what you need when configuring Claude D
       "args": [
         "proxy",
         "--policy",
-        "/path/to/euno.policy.yaml",
+        "/path/to/eunox.policy.yaml",
         "--",
         "npx",
         "-y",
@@ -76,7 +77,7 @@ eunox-mcp proxy \
   --transport http \
   --port 3000 \
   --auth-token $(openssl rand -hex 32) \
-  --policy ./euno.policy.yaml \
+  --policy ./eunox.policy.yaml \
   -- node ./my-mcp-server.js
 ```
 
@@ -93,7 +94,7 @@ The `--upstream-timeout` flag is one I always recommend setting in production. B
 You don't need to start the proxy to validate a policy file. The `validate` command does exactly that:
 
 ```bash
-eunox-mcp validate ./euno.policy.yaml
+eunox-mcp validate ./eunox.policy.yaml
 ```
 
 On success:
@@ -118,7 +119,7 @@ The error messages try to be helpful. When we detect a string that's close to a 
 ```yaml
 # .github/workflows/validate-policy.yml
 - name: Validate eunox policy
-  run: eunox-mcp validate ./euno.policy.yaml
+  run: eunox-mcp validate ./eunox.policy.yaml
 ```
 
 The command exits with code 0 on success, non-zero on failure, so it works cleanly as a CI gate. We've seen teams add this to their PR checks so policy changes get validated before merge, not after deploy.
@@ -149,7 +150,7 @@ The kill target `all` is especially useful for chaos testing: start the proxy, r
 
 ## Inspecting audit records: `eunox-mcp validate-token`
 
-Every tool call that goes through the local proxy is recorded as an OCSF API Activity event in `~/.euno/audit.jsonl`, signed with an HMAC using a key stored at `~/.euno/key`. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit log design in detail.
+Every tool call that goes through the local proxy is recorded as an OCSF API Activity event in `~/.eunox/audit.jsonl`, signed with an HMAC using a key stored at `~/.eunox/key`. [Post 11](./11-tamper-evident-audit-logs.md) covers the audit log design in detail.
 
 The `validate-token` command gives you two ways to inspect those records.
 
@@ -217,7 +218,7 @@ Total denials: 72  |  Unique sessions: 3
 
 The histogram is designed to be readable at a glance and to answer the question: "Is my policy working as intended?" If you see zero denials, either the policy isn't being triggered (the agent isn't hitting the constrained tools), or the policy is too permissive. If you see unexpected denial categories at high volume, that's a signal to investigate.
 
-The `--since` flag is relative to the current time if you use a relative format like `2026-05-01`, or an absolute ISO-8601 timestamp. The command reads all audit log files including rotated ones (named `~/.euno/audit.jsonl.<ISO-timestamp>`), so you can analyze over a long time window even if the log has been rotated multiple times.
+The `--since` flag is relative to the current time if you use a relative format like `2026-05-01`, or an absolute ISO-8601 timestamp. The command reads all audit log files including rotated ones (named `~/.eunox/audit.jsonl.<ISO-timestamp>`), so you can analyze over a long time window even if the log has been rotated multiple times.
 
 I've started recommending that teams run `eunox-mcp stats` as part of their weekly agent review. Not as a deep audit — that's what the full JSONL is for — but as a five-second sanity check: what's being denied, at what rate, and is that what we expect?
 
@@ -229,7 +230,7 @@ Once you're comfortable with local enforcement and ready to migrate to the hoste
 
 ```bash
 eunox-mcp proxy \
-  --enforcer-url https://gateway.euno.example \
+  --enforcer-url https://gateway.eunox.example \
   --enforcer-api-key sk-x7Kp9.abc123... \
   -- node ./my-mcp-server.js
 ```
@@ -248,7 +249,7 @@ The migration from local to hosted enforcement isn't just a config change — th
 
 ```bash
 eunox-mcp upgrade-to-hosted \
-  --gateway-url https://gateway.euno.example \
+  --gateway-url https://gateway.eunox.example \
   --api-key sk-x7Kp9.abc123...
 ```
 
@@ -277,13 +278,13 @@ The workflow I recommend for developing a new agent policy looks like this:
 
 3. **Write the policy based on what you observed.** The audit log gives you exactly the resources, actions, and argument shapes the agent actually uses. You're constraining the real behavior, not a guess about it.
 
-4. **Validate the policy.** `eunox-mcp validate ./euno.policy.yaml`. Fix any schema errors.
+4. **Validate the policy.** `eunox-mcp validate ./eunox.policy.yaml`. Fix any schema errors.
 
 5. **Start the proxy with the policy.** Run the same workflows again. Check that nothing is blocked that should be allowed. Check that the things you intended to block are blocked.
 
 6. **Check `eunox-mcp stats`.** Make sure the denial count is what you expect.
 
-7. **Add the policy to your git repo and submit a PR.** Add `eunox-mcp validate ./euno.policy.yaml` as a CI step. Request security team review.
+7. **Add the policy to your git repo and submit a PR.** Add `eunox-mcp validate ./eunox.policy.yaml` as a CI step. Request security team review.
 
 8. **Upgrade to hosted when ready.** `eunox-mcp upgrade-to-hosted` handles the config transition.
 
@@ -293,9 +294,9 @@ The whole loop from "blank policy" to "reviewed and deployed" is designed to tak
 
 ## A note on the audit log key
 
-The local HMAC audit log uses a signing key at `~/.euno/key`. This key is created automatically on first use with secure random bytes. The file permissions are set to `0600` — readable only by the current user.
+The local HMAC audit log uses a signing key at `~/.eunox/key`. This key is created automatically on first use with secure random bytes. The file permissions are set to `0600` — readable only by the current user.
 
-If you're running the proxy in an automated context (CI, a container, a server), make sure the key path is consistent across invocations. If the key is regenerated for every run, you lose the ability to verify signatures from previous runs (the signature uses the key that existed when the record was written). The `--audit-log` flag lets you specify a custom log path; the signing key always remains at `~/.euno/key` regardless of where the log is written.
+If you're running the proxy in an automated context (CI, a container, a server), make sure the key path is consistent across invocations. If the key is regenerated for every run, you lose the ability to verify signatures from previous runs (the signature uses the key that existed when the record was written). The `--audit-log` flag lets you specify a custom log path; the signing key always remains at `~/.eunox/key` regardless of where the log is written.
 
 For production deployments, the hosted gateway uses KMS-backed signing, which addresses the key management complexity. But for local development, the file-based key is deliberately simple. The critical property is that you don't lose it between runs of the proxy.
 

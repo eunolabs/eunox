@@ -3,14 +3,14 @@
   "contentVersion": "0.1.0",
   "parameters": {
     "namePrefix": {
-      "value": "eunopilot"
+      "value": "eunoxpilot"
     },
     "location": {
       "value": "eastus"
     },
     "tags": {
       "value": {
-        "product": "euno",
+        "product": "eunox",
         "component": "capability-governance",
         "environment": "pilot",
         "owner": "platform-team"

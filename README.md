@@ -20,21 +20,21 @@
 
 ## What is eunox?
 
-eunox is the **Go reimplementation** of the Euno Platform enterprise services.
+eunox is the **Go reimplementation** of the Eunox Platform enterprise services.
 It provides a policy proxy for AI agents that speak the
 [Model Context Protocol](https://spec.modelcontextprotocol.io/), delivering
 improved performance, lower memory usage, and simplified deployment.
 
 ## Services
 
-| Service | Path | Description |
-|---------|------|-------------|
-| Gateway | `cmd/gateway/` | Enforcement gateway — policy evaluation, rate limiting, kill switch |
-| Issuer | `cmd/issuer/` | Capability token issuance, IdP integration |
-| Minter | `cmd/minter/` | API-key lifecycle, admin auth, anomaly detection |
-| DB Token Service | `cmd/db-token-svc/` | Short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL) |
-| Storage Grant Service | `cmd/storage-grant-svc/` | Presigned URLs (AWS S3, Azure Blob, GCP GCS) |
-| Posture Emitter | `cmd/posture-emitter/` | Security posture reporting |
+| Service               | Path                     | Description                                                         |
+| --------------------- | ------------------------ | ------------------------------------------------------------------- |
+| Gateway               | `cmd/gateway/`           | Enforcement gateway — policy evaluation, rate limiting, kill switch |
+| Issuer                | `cmd/issuer/`            | Capability token issuance, IdP integration                          |
+| Minter                | `cmd/minter/`            | API-key lifecycle, admin auth, anomaly detection                    |
+| DB Token Service      | `cmd/db-token-svc/`      | Short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL)      |
+| Storage Grant Service | `cmd/storage-grant-svc/` | Presigned URLs (AWS S3, Azure Blob, GCP GCS)                        |
+| Posture Emitter       | `cmd/posture-emitter/`   | Security posture reporting                                          |
 
 ## Project Structure
 
@@ -115,9 +115,9 @@ export GATEWAY_ISSUER_JWKS_URL="https://issuer.internal/.well-known/jwks.json"
 ### Kubernetes (Helm)
 
 ```bash
-helm install euno k8s/helm/euno/ \
-  --namespace euno-system --create-namespace \
-  -f k8s/helm/euno/values.yaml
+helm install eunox k8s/helm/eunox/ \
+  --namespace eunox-system --create-namespace \
+  -f k8s/helm/eunox/values.yaml
 ```
 
 See [`docs/deployment.md`](./docs/deployment.md) for the full configuration

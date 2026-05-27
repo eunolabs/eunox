@@ -1,8 +1,8 @@
 # ----------------------------------------------------------------------------
-# Euno — GCP Terraform root module
+# Eunox — GCP Terraform root module
 # ----------------------------------------------------------------------------
 # Composes the network, compute, data, security, and observability sub-modules
-# into a complete Euno deployment on GCP.
+# into a complete Eunox deployment on GCP.
 #
 # Usage:
 #   cd infra/gcp/terraform
@@ -34,14 +34,14 @@ provider "google" {
 # Shared inputs
 # ---------------------------------------------------------------------------
 variable "project_id" {
-  description = "GCP project ID hosting the Euno deployment."
+  description = "GCP project ID hosting the Eunox deployment."
   type        = string
 }
 
 variable "name_prefix" {
   description = "Short prefix used to name all resources (3-12 lowercase chars)."
   type        = string
-  default     = "euno"
+  default     = "eunox"
   validation {
     condition     = length(var.name_prefix) >= 3 && length(var.name_prefix) <= 12
     error_message = "name_prefix must be 3-12 characters."
@@ -64,7 +64,7 @@ variable "labels" {
   description = "Labels applied to all resources."
   type        = map(string)
   default = {
-    product   = "euno"
+    product   = "eunox"
     component = "capability-governance"
   }
 }
@@ -108,21 +108,21 @@ variable "gke_node_max_count" {
 }
 
 variable "k8s_namespace" {
-  description = "Kubernetes namespace where Euno is installed."
+  description = "Kubernetes namespace where Eunox is installed."
   type        = string
-  default     = "euno"
+  default     = "eunox"
 }
 
 variable "issuer_kubernetes_service_account_name" {
   description = "Kubernetes ServiceAccount name used by capability-issuer."
   type        = string
-  default     = "euno-issuer"
+  default     = "eunox-issuer"
 }
 
 variable "gateway_kubernetes_service_account_name" {
   description = "Kubernetes ServiceAccount name used by tool-gateway."
   type        = string
-  default     = "euno-gateway"
+  default     = "eunox-gateway"
 }
 
 # Data inputs forwarded to module.data

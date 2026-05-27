@@ -75,35 +75,35 @@ The gateway uses the `GATEWAY_` prefix for all configuration variables.
 
 #### Core
 
-| Variable                       | Type   | Default          | Required | Description                                                      |
-| ------------------------------ | ------ | ---------------- | -------- | ---------------------------------------------------------------- |
-| `GATEWAY_NODE_ENV`             | enum   | `development`    | —        | `development`, `staging`, `production`                           |
-| `GATEWAY_EUNO_DEPLOYMENT_TIER` | enum   | `single-replica` | —        | `single-replica`, `multi-replica`, `multi-region-active-active`  |
-| `GATEWAY_PORT`                 | int    | `3002`           | —        | Public HTTP listen port                                          |
-| `GATEWAY_ADMIN_PORT`           | int    | `3003`           | —        | Admin API listen port                                            |
-| `GATEWAY_ADMIN_HOST`           | string | —                | prod     | Bind address for admin API (non-wildcard required in production) |
-| `GATEWAY_ADMIN_API_KEY`        | string | —                | prod     | Shared secret for admin endpoints                                |
-| `GATEWAY_BACKEND_SERVICE_URL`  | string | —                | —        | Upstream service URL for proxied requests                        |
-| `GATEWAY_ALLOWED_ORIGINS`      | string | —                | —        | Comma-separated CORS origins                                     |
+| Variable                        | Type   | Default          | Required | Description                                                      |
+| ------------------------------- | ------ | ---------------- | -------- | ---------------------------------------------------------------- |
+| `GATEWAY_NODE_ENV`              | enum   | `development`    | —        | `development`, `staging`, `production`                           |
+| `GATEWAY_EUNOX_DEPLOYMENT_TIER` | enum   | `single-replica` | —        | `single-replica`, `multi-replica`, `multi-region-active-active`  |
+| `GATEWAY_PORT`                  | int    | `3002`           | —        | Public HTTP listen port                                          |
+| `GATEWAY_ADMIN_PORT`            | int    | `3003`           | —        | Admin API listen port                                            |
+| `GATEWAY_ADMIN_HOST`            | string | —                | prod     | Bind address for admin API (non-wildcard required in production) |
+| `GATEWAY_ADMIN_API_KEY`         | string | —                | prod     | Shared secret for admin endpoints                                |
+| `GATEWAY_BACKEND_SERVICE_URL`   | string | —                | —        | Upstream service URL for proxied requests                        |
+| `GATEWAY_ALLOWED_ORIGINS`       | string | —                | —        | Comma-separated CORS origins                                     |
 
 #### Token Verification
 
-| Variable                              | Type   | Default        | Required | Description                                                                                     |
-| ------------------------------------- | ------ | -------------- | -------- | ----------------------------------------------------------------------------------------------- |
-| `GATEWAY_ISSUER_JWKS_URL`             | string | —              | —        | JWKS endpoint for capability token verification                                                 |
-| `GATEWAY_EUNO_REQUIRE_KID`            | bool   | `true`         | —        | Require `kid` header in JWTs                                                                    |
-| `GATEWAY_EUNO_JWKS_CACHE_TTL_SECONDS` | int    | `300`          | —        | JWKS cache duration                                                                             |
-| `GATEWAY_GATEWAY_AUDIENCE`            | string | `tool-gateway` | —        | Expected `aud` claim value                                                                      |
-| `GATEWAY_HOSTED_MODE`                 | bool   | `false`        | —        | Enable hosted multi-tenant mode (requires unique `GATEWAY_GATEWAY_AUDIENCE`)                    |
-| `GATEWAY_TENANT_ID`                   | string | —              | prod     | Tenant identifier (fallback: `TENANT_ID` env var); required when `GATEWAY_ADMIN_API_KEY` is set |
+| Variable                               | Type   | Default        | Required | Description                                                                                     |
+| -------------------------------------- | ------ | -------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `GATEWAY_ISSUER_JWKS_URL`              | string | —              | —        | JWKS endpoint for capability token verification                                                 |
+| `GATEWAY_EUNOX_REQUIRE_KID`            | bool   | `true`         | —        | Require `kid` header in JWTs                                                                    |
+| `GATEWAY_EUNOX_JWKS_CACHE_TTL_SECONDS` | int    | `300`          | —        | JWKS cache duration                                                                             |
+| `GATEWAY_GATEWAY_AUDIENCE`             | string | `tool-gateway` | —        | Expected `aud` claim value                                                                      |
+| `GATEWAY_HOSTED_MODE`                  | bool   | `false`        | —        | Enable hosted multi-tenant mode (requires unique `GATEWAY_GATEWAY_AUDIENCE`)                    |
+| `GATEWAY_TENANT_ID`                    | string | —              | prod     | Tenant identifier (fallback: `TENANT_ID` env var); required when `GATEWAY_ADMIN_API_KEY` is set |
 
 #### Rate Limiting
 
-| Variable                                | Type | Default | Required | Description                        |
-| --------------------------------------- | ---- | ------- | -------- | ---------------------------------- |
-| `GATEWAY_RATE_LIMIT_WINDOW_MS`          | int  | `60000` | —        | Sliding window duration (ms)       |
-| `GATEWAY_RATE_LIMIT_MAX_REQUESTS`       | int  | `1000`  | —        | Max requests per window            |
-| `GATEWAY_ADMIN_RATE_LIMIT_PER_MINUTE`   | int  | `10`    | —        | Max admin requests per IP per min  |
+| Variable                              | Type | Default | Required | Description                       |
+| ------------------------------------- | ---- | ------- | -------- | --------------------------------- |
+| `GATEWAY_RATE_LIMIT_WINDOW_MS`        | int  | `60000` | —        | Sliding window duration (ms)      |
+| `GATEWAY_RATE_LIMIT_MAX_REQUESTS`     | int  | `1000`  | —        | Max requests per window           |
+| `GATEWAY_ADMIN_RATE_LIMIT_PER_MINUTE` | int  | `10`    | —        | Max admin requests per IP per min |
 
 > **⚠️ Admin Rate Limiter Scope (IF-7):** The admin endpoint rate limiter uses an
 > **in-memory store per replica**. In a multi-replica deployment behind a load
@@ -117,6 +117,7 @@ The gateway uses the `GATEWAY_` prefix for all configuration variables.
 >
 > **If you expose admin endpoints to a network** (by setting `GATEWAY_ADMIN_HOST`
 > to a non-loopback address), you MUST either:
+>
 > 1. Route all admin traffic to a single replica (sticky sessions or dedicated admin replica), or
 > 2. Switch to a Redis-backed rate limiter for admin endpoints (not yet implemented; tracked as a future enhancement).
 >
@@ -136,10 +137,10 @@ The gateway uses the `GATEWAY_` prefix for all configuration variables.
 
 #### Telemetry
 
-| Variable                     | Type | Default  | Required | Description                                              |
-| ---------------------------- | ---- | -------- | -------- | -------------------------------------------------------- |
-| `GATEWAY_EUNO_TELEMETRY`     | bool | `true`   | —        | Enable telemetry collection (override: `EUNO_TELEMETRY`) |
-| `GATEWAY_TELEMETRY_FLUSH_MS` | int  | `300000` | —        | Telemetry flush interval (min 1000ms)                    |
+| Variable                     | Type | Default  | Required | Description                                               |
+| ---------------------------- | ---- | -------- | -------- | --------------------------------------------------------- |
+| `GATEWAY_EUNOX_TELEMETRY`    | bool | `true`   | —        | Enable telemetry collection (override: `EUNOX_TELEMETRY`) |
+| `GATEWAY_TELEMETRY_FLUSH_MS` | int  | `300000` | —        | Telemetry flush interval (min 1000ms)                     |
 
 ---
 
@@ -149,16 +150,16 @@ The issuer reads environment variables without a service prefix.
 
 #### Core
 
-| Variable               | Type   | Default          | Required | Description                            |
-| ---------------------- | ------ | ---------------- | -------- | -------------------------------------- |
-| `NODE_ENV`             | enum   | `development`    | —        | `development`, `staging`, `production` |
-| `EUNO_DEPLOYMENT_TIER` | enum   | `single-replica` | —        | Deployment tier                        |
-| `PORT`                 | int    | `3001`           | —        | HTTP listen port                       |
-| `ADMIN_API_KEY`        | string | —                | prod     | Admin endpoint shared secret           |
-| `ISSUER_DID`           | string | —                | —        | Issuer DID identifier                  |
-| `ISSUER_URL`           | string | —                | —        | Public issuer URL                      |
-| `AUDIENCE`             | string | —                | —        | Default token audience                 |
-| `LOG_LEVEL`            | string | —                | —        | Logging level                          |
+| Variable                | Type   | Default          | Required | Description                            |
+| ----------------------- | ------ | ---------------- | -------- | -------------------------------------- |
+| `NODE_ENV`              | enum   | `development`    | —        | `development`, `staging`, `production` |
+| `EUNOX_DEPLOYMENT_TIER` | enum   | `single-replica` | —        | Deployment tier                        |
+| `PORT`                  | int    | `3001`           | —        | HTTP listen port                       |
+| `ADMIN_API_KEY`         | string | —                | prod     | Admin endpoint shared secret           |
+| `ISSUER_DID`            | string | —                | —        | Issuer DID identifier                  |
+| `ISSUER_URL`            | string | —                | —        | Public issuer URL                      |
+| `AUDIENCE`              | string | —                | —        | Default token audience                 |
+| `LOG_LEVEL`             | string | —                | —        | Logging level                          |
 
 #### Token Issuance
 
@@ -254,7 +255,7 @@ The minter uses the `MINTER_` prefix for most variables.
 | Variable                  | Type   | Default          | Required | Description                                                  |
 | ------------------------- | ------ | ---------------- | -------- | ------------------------------------------------------------ |
 | `NODE_ENV`                | enum   | `development`    | —        | `development`, `staging`, `production`                       |
-| `EUNO_DEPLOYMENT_TIER`    | enum   | `single-replica` | —        | Deployment tier                                              |
+| `EUNOX_DEPLOYMENT_TIER`   | enum   | `single-replica` | —        | Deployment tier                                              |
 | `PORT`                    | int    | `3008`           | —        | HTTP listen port                                             |
 | `POSTURE_EMITTER_ENABLED` | bool   | `true`           | —        | Enable posture emission                                      |
 | `POSTURE_EMITTER_PLUGINS` | string | `stdout`         | —        | Comma-separated: `defender`, `security-hub`, `scc`, `stdout` |

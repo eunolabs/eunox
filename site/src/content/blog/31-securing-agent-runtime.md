@@ -4,29 +4,30 @@ description: "This post builds on the architecture established in [post 14 (AGT:
 pubDate: "2026-06-19"
 ---
 
-*This post builds on the architecture established in [post 14 (AGT: defense in depth inside the agent process)](./14-agt-defense-in-depth.md) and the enforcement pipeline described in [post 10 (The Tool Gateway as a reference monitor)](../../blogs/10-tool-gateway-reference-monitor.md). If you haven't read those, the short version: every tool call an agent makes passes through a policy decision point — the Tool Gateway — that enforces capability tokens, conditions, and audit obligations before forwarding to the backend. This post is about the outer shell of that architecture: the OS and VM layer that makes bypassing the gateway physically impossible, not just policy-prohibited. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_This post builds on the architecture established in [post 14 (AGT: defense in depth inside the agent process)](./14-agt-defense-in-depth.md) and the enforcement pipeline described in [post 10 (The Tool Gateway as a reference monitor)](../../blogs/10-tool-gateway-reference-monitor.md). If you haven't read those, the short version: every tool call an agent makes passes through a policy decision point — the Tool Gateway — that enforces capability tokens, conditions, and audit obligations before forwarding to the backend. This post is about the outer shell of that architecture: the OS and VM layer that makes bypassing the gateway physically impossible, not just policy-prohibited. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-I want to start with an honest admission: for the first several months of building euno, I was thinking about security at the wrong layer.
+I want to start with an honest admission: for the first several months of building eunox, I was thinking about security at the wrong layer.
 
 I was focused on the gateway — making the enforcement logic correct, making the audit log tamper-evident, making conditions evaluate correctly. That work matters. But I was mentally modeling the agent as a cooperative participant. I was thinking: the agent will use our SDK, it will route tool calls through the gateway, and the gateway will enforce policy.
 
-What I wasn't sufficiently worried about was the scenario where the agent *doesn't* use our SDK. Or where a prompt injection attack coerces the agent into spawning a subprocess, opening a raw socket, or writing credentials to disk. Or where a compromised npm package in the agent's dependency tree exfiltrates data through a DNS side-channel before the gateway ever sees a tool call.
+What I wasn't sufficiently worried about was the scenario where the agent _doesn't_ use our SDK. Or where a prompt injection attack coerces the agent into spawning a subprocess, opening a raw socket, or writing credentials to disk. Or where a compromised npm package in the agent's dependency tree exfiltrates data through a DNS side-channel before the gateway ever sees a tool call.
 
-The gateway is necessary. It is not sufficient. The environment the agent process runs in has to make those escapes structurally impossible — not just policy-prohibited, not just logged, but *impossible at the kernel or hypervisor level*. That's what this post is about.
+The gateway is necessary. It is not sufficient. The environment the agent process runs in has to make those escapes structurally impossible — not just policy-prohibited, not just logged, but _impossible at the kernel or hypervisor level_. That's what this post is about.
 
 ---
 
 ## The threat model that changes everything
 
-Most agent security thinking assumes a cooperative agent. The agent is your code. It's running your SDK. It calls `invokeTool()` through the guard and the gateway like it's supposed to. The threat model is: what if the *model output* is adversarial? What if the LLM, having been prompt-injected, generates arguments that try to exploit the tool backend?
+Most agent security thinking assumes a cooperative agent. The agent is your code. It's running your SDK. It calls `invokeTool()` through the guard and the gateway like it's supposed to. The threat model is: what if the _model output_ is adversarial? What if the LLM, having been prompt-injected, generates arguments that try to exploit the tool backend?
 
 That's a real threat. [Post 18 covers SQL injection through an LLM in detail.](./18-defense-in-depth-sql-injection.md) But there's a harder threat model: **what if the agent process itself becomes adversarial?**
 
 A supply chain compromise in a popular Python or Node package can turn your agent's process into an attacker-controlled process. A jailbroken model with tool-use capability can attempt to spawn subprocesses, read `/proc`, or make raw network calls. A sufficiently sophisticated prompt injection can convince a code-execution agent to run arbitrary system commands. In any of these scenarios, the agent process is no longer cooperating with your SDK. It's actively trying to escape.
 
 When the agent process is adversarial, the gateway is not enough. An adversarial agent process can:
+
 - Make direct TCP connections to backends, bypassing the gateway entirely
 - Read credentials from environment variables or mounted secrets
 - Exfiltrate data through DNS lookups, which often bypass HTTP-level controls
@@ -45,7 +46,7 @@ The architecture I've landed on, after working through the threat models and the
 
 **Middle layer: the gateway reference monitor.** Every outbound operation goes through the gateway. The gateway verifies capability tokens, evaluates conditions, applies obligations, and writes tamper-evident audit records. [Post 10 covers this in detail.](../../blogs/10-tool-gateway-reference-monitor.md)
 
-**Inner layer: in-process policy checking.** The AGT guard runs inside the agent process, pre-screening tool calls against the capability manifest before they hit the network. [Post 14 covers this.](./14-agt-defense-in-depth.md) This layer is soft — it can be bypassed by a sufficiently adversarial agent — which is why it's the *inner* layer, not the outer one.
+**Inner layer: in-process policy checking.** The AGT guard runs inside the agent process, pre-screening tool calls against the capability manifest before they hit the network. [Post 14 covers this.](./14-agt-defense-in-depth.md) This layer is soft — it can be bypassed by a sufficiently adversarial agent — which is why it's the _inner_ layer, not the outer one.
 
 The security industry has spent 30 years figuring out how to make the outer layer right for traditional workloads. For AI agents, we're applying those lessons to a new kind of workload — one that generates behavior dynamically, can be influenced by its inputs, and may use general-purpose tool-execution capabilities that look a lot like shell access. The principles are the same; the parameterization is different.
 
@@ -61,7 +62,7 @@ When you run a Docker container without modification, you're getting:
 - Resource limits via cgroups
 - A separate filesystem via an overlay filesystem
 
-What you're *not* getting:
+What you're _not_ getting:
 
 - Syscall filtering (the container process can invoke any syscall the kernel supports)
 - Write protection against kernel exploits (the container shares the host kernel)
@@ -108,67 +109,258 @@ Here's an illustrative starting point (not a minimal profile) for what a restric
   "syscalls": [
     {
       "names": [
-        "read", "write", "close", "fstat", "mmap", "mprotect",
-        "munmap", "brk", "rt_sigaction", "rt_sigprocmask",
-        "rt_sigreturn", "ioctl", "access", "pipe", "select",
-        "sched_yield", "mremap", "msync", "madvise", "shmget",
-        "shmat", "shmctl", "dup", "dup2", "nanosleep", "getitimer",
-        "alarm", "setitimer", "getpid", "socket", "connect",
-        "accept", "sendto", "recvfrom", "sendmsg", "recvmsg",
-        "shutdown", "bind", "listen", "getsockname", "getpeername",
-        "socketpair", "setsockopt", "getsockopt", "clone", "fork",
-        "vfork", "execve", "exit", "wait4", "kill", "uname",
-        "fcntl", "flock", "fsync", "fdatasync", "truncate",
-        "ftruncate", "getcwd", "chdir", "rename", "mkdir", "rmdir",
-        "unlink", "symlink", "readlink", "chmod", "fchmod",
-        "chown", "fchown", "lchown", "umask", "gettimeofday",
-        "getrlimit", "getrusage", "sysinfo", "times", "getuid",
-        "syslog", "getgid", "getppid", "getpgrp", "geteuid",
-        "getegid", "getgroups", "setgroups", "getresuid",
-        "getresgid", "getpgid", "getsid", "capget", "capset",
-        "rt_sigpending", "rt_sigtimedwait", "rt_sigqueueinfo",
-        "rt_sigsuspend", "sigaltstack", "utime", "mknod",
-        "uselib", "personality", "ustat", "statfs", "fstatfs",
-        "sysfs", "getpriority", "setpriority", "sched_setparam",
-        "sched_getparam", "sched_setscheduler", "sched_getscheduler",
-        "sched_get_priority_max", "sched_get_priority_min",
-        "sched_rr_get_interval", "mlock", "munlock", "mlockall",
-        "munlockall", "vhangup", "pivot_root", "prctl",
-        "arch_prctl", "setrlimit", "sync", "acct", "settimeofday",
-        "quotactl", "gettid", "readahead", "setxattr", "lsetxattr",
-        "fsetxattr", "getxattr", "lgetxattr", "fgetxattr",
-        "listxattr", "llistxattr", "flistxattr", "removexattr",
-        "lremovexattr", "fremovexattr", "tkill", "futex",
-        "sched_setaffinity", "sched_getaffinity", "io_setup",
-        "io_destroy", "io_getevents", "io_submit", "io_cancel",
-        "exit_group", "epoll_create", "epoll_ctl", "epoll_wait",
-        "set_tid_address", "restart_syscall", "semtimedop",
-        "fadvise64", "timer_create", "timer_settime", "timer_gettime",
-        "timer_getoverrun", "timer_delete", "clock_settime",
-        "clock_gettime", "clock_getres", "clock_nanosleep",
-        "tgkill", "mbind", "set_mempolicy", "get_mempolicy",
-        "mq_open", "mq_unlink", "mq_timedsend", "mq_timedreceive",
-        "mq_notify", "mq_getsetattr", "waitid", "inotify_init",
-        "inotify_add_watch", "inotify_rm_watch", "openat",
-        "mkdirat", "mknodat", "fchownat", "futimesat", "newfstatat",
-        "unlinkat", "renameat", "linkat", "symlinkat", "readlinkat",
-        "fchmodat", "faccessat", "pselect6", "ppoll",
-        "set_robust_list", "get_robust_list", "splice", "tee",
-        "sync_file_range", "vmsplice", "move_pages",
-        "utimensat", "epoll_pwait", "signalfd", "timerfd_create",
-        "eventfd", "fallocate", "timerfd_settime", "timerfd_gettime",
-        "accept4", "signalfd4", "eventfd2", "epoll_create1",
-        "dup3", "pipe2", "inotify_init1", "preadv", "pwritev",
-        "rt_tgsigqueueinfo", "recvmmsg",
-        "prlimit64", "fanotify_init", "fanotify_mark",
-        "name_to_handle_at", "clock_adjtime",
-        "syncfs", "sendmmsg", "getcpu",
-        "kcmp", "finit_module", "sched_setattr", "sched_getattr",
-        "renameat2", "seccomp", "getrandom", "memfd_create",
-        "bpf", "execveat", "userfaultfd",
-        "membarrier", "mlock2", "copy_file_range", "preadv2",
-        "pwritev2", "pkey_mprotect", "pkey_alloc", "pkey_free",
-        "statx", "io_pgetevents", "rseq"
+        "read",
+        "write",
+        "close",
+        "fstat",
+        "mmap",
+        "mprotect",
+        "munmap",
+        "brk",
+        "rt_sigaction",
+        "rt_sigprocmask",
+        "rt_sigreturn",
+        "ioctl",
+        "access",
+        "pipe",
+        "select",
+        "sched_yield",
+        "mremap",
+        "msync",
+        "madvise",
+        "shmget",
+        "shmat",
+        "shmctl",
+        "dup",
+        "dup2",
+        "nanosleep",
+        "getitimer",
+        "alarm",
+        "setitimer",
+        "getpid",
+        "socket",
+        "connect",
+        "accept",
+        "sendto",
+        "recvfrom",
+        "sendmsg",
+        "recvmsg",
+        "shutdown",
+        "bind",
+        "listen",
+        "getsockname",
+        "getpeername",
+        "socketpair",
+        "setsockopt",
+        "getsockopt",
+        "clone",
+        "fork",
+        "vfork",
+        "execve",
+        "exit",
+        "wait4",
+        "kill",
+        "uname",
+        "fcntl",
+        "flock",
+        "fsync",
+        "fdatasync",
+        "truncate",
+        "ftruncate",
+        "getcwd",
+        "chdir",
+        "rename",
+        "mkdir",
+        "rmdir",
+        "unlink",
+        "symlink",
+        "readlink",
+        "chmod",
+        "fchmod",
+        "chown",
+        "fchown",
+        "lchown",
+        "umask",
+        "gettimeofday",
+        "getrlimit",
+        "getrusage",
+        "sysinfo",
+        "times",
+        "getuid",
+        "syslog",
+        "getgid",
+        "getppid",
+        "getpgrp",
+        "geteuid",
+        "getegid",
+        "getgroups",
+        "setgroups",
+        "getresuid",
+        "getresgid",
+        "getpgid",
+        "getsid",
+        "capget",
+        "capset",
+        "rt_sigpending",
+        "rt_sigtimedwait",
+        "rt_sigqueueinfo",
+        "rt_sigsuspend",
+        "sigaltstack",
+        "utime",
+        "mknod",
+        "uselib",
+        "personality",
+        "ustat",
+        "statfs",
+        "fstatfs",
+        "sysfs",
+        "getpriority",
+        "setpriority",
+        "sched_setparam",
+        "sched_getparam",
+        "sched_setscheduler",
+        "sched_getscheduler",
+        "sched_get_priority_max",
+        "sched_get_priority_min",
+        "sched_rr_get_interval",
+        "mlock",
+        "munlock",
+        "mlockall",
+        "munlockall",
+        "vhangup",
+        "pivot_root",
+        "prctl",
+        "arch_prctl",
+        "setrlimit",
+        "sync",
+        "acct",
+        "settimeofday",
+        "quotactl",
+        "gettid",
+        "readahead",
+        "setxattr",
+        "lsetxattr",
+        "fsetxattr",
+        "getxattr",
+        "lgetxattr",
+        "fgetxattr",
+        "listxattr",
+        "llistxattr",
+        "flistxattr",
+        "removexattr",
+        "lremovexattr",
+        "fremovexattr",
+        "tkill",
+        "futex",
+        "sched_setaffinity",
+        "sched_getaffinity",
+        "io_setup",
+        "io_destroy",
+        "io_getevents",
+        "io_submit",
+        "io_cancel",
+        "exit_group",
+        "epoll_create",
+        "epoll_ctl",
+        "epoll_wait",
+        "set_tid_address",
+        "restart_syscall",
+        "semtimedop",
+        "fadvise64",
+        "timer_create",
+        "timer_settime",
+        "timer_gettime",
+        "timer_getoverrun",
+        "timer_delete",
+        "clock_settime",
+        "clock_gettime",
+        "clock_getres",
+        "clock_nanosleep",
+        "tgkill",
+        "mbind",
+        "set_mempolicy",
+        "get_mempolicy",
+        "mq_open",
+        "mq_unlink",
+        "mq_timedsend",
+        "mq_timedreceive",
+        "mq_notify",
+        "mq_getsetattr",
+        "waitid",
+        "inotify_init",
+        "inotify_add_watch",
+        "inotify_rm_watch",
+        "openat",
+        "mkdirat",
+        "mknodat",
+        "fchownat",
+        "futimesat",
+        "newfstatat",
+        "unlinkat",
+        "renameat",
+        "linkat",
+        "symlinkat",
+        "readlinkat",
+        "fchmodat",
+        "faccessat",
+        "pselect6",
+        "ppoll",
+        "set_robust_list",
+        "get_robust_list",
+        "splice",
+        "tee",
+        "sync_file_range",
+        "vmsplice",
+        "move_pages",
+        "utimensat",
+        "epoll_pwait",
+        "signalfd",
+        "timerfd_create",
+        "eventfd",
+        "fallocate",
+        "timerfd_settime",
+        "timerfd_gettime",
+        "accept4",
+        "signalfd4",
+        "eventfd2",
+        "epoll_create1",
+        "dup3",
+        "pipe2",
+        "inotify_init1",
+        "preadv",
+        "pwritev",
+        "rt_tgsigqueueinfo",
+        "recvmmsg",
+        "prlimit64",
+        "fanotify_init",
+        "fanotify_mark",
+        "name_to_handle_at",
+        "clock_adjtime",
+        "syncfs",
+        "sendmmsg",
+        "getcpu",
+        "kcmp",
+        "finit_module",
+        "sched_setattr",
+        "sched_getattr",
+        "renameat2",
+        "seccomp",
+        "getrandom",
+        "memfd_create",
+        "bpf",
+        "execveat",
+        "userfaultfd",
+        "membarrier",
+        "mlock2",
+        "copy_file_range",
+        "preadv2",
+        "pwritev2",
+        "pkey_mprotect",
+        "pkey_alloc",
+        "pkey_free",
+        "statx",
+        "io_pgetevents",
+        "rseq"
       ],
       "action": "SCMP_ACT_ALLOW"
     }
@@ -192,7 +384,7 @@ For agent sandboxing, eBPF is useful in two complementary ways: observability an
 
 ### eBPF for observability
 
-The classic problem with agent workloads is that you can enforce a seccomp profile at container start, but you have no visibility into what the agent process is *attempting* to do. Did it try to call `ptrace` and get an EPERM? Did it open a network socket to an IP address you didn't expect? Did it try to exec a subprocess?
+The classic problem with agent workloads is that you can enforce a seccomp profile at container start, but you have no visibility into what the agent process is _attempting_ to do. Did it try to call `ptrace` and get an EPERM? Did it open a network socket to an IP address you didn't expect? Did it try to exec a subprocess?
 
 eBPF gives you that visibility without the overhead of audit frameworks like auditd (which can be surprisingly expensive at high event rates). A Falco rule or a Tetragon policy attached via eBPF can:
 
@@ -216,28 +408,28 @@ metadata:
   name: agent-network-egress
 spec:
   kprobes:
-  - call: "tcp_connect"
-    syscall: false
-    args:
-    - index: 0
-      type: "sock"
-    selectors:
-    - matchPIDs:
-      - operator: In
-        followForks: true
-        values:
-        - 1          # agent process PID (known at pod startup)
-      matchNamespaces:
-      - namespace: Net
-        operator: In
-        values:
-        - "agent-namespace"
-      matchActions:
-      - action: Sigkill
-        argError: -EPERM
+    - call: "tcp_connect"
+      syscall: false
+      args:
+        - index: 0
+          type: "sock"
+      selectors:
+        - matchPIDs:
+            - operator: In
+              followForks: true
+              values:
+                - 1 # agent process PID (known at pod startup)
+          matchNamespaces:
+            - namespace: Net
+              operator: In
+              values:
+                - "agent-namespace"
+          matchActions:
+            - action: Sigkill
+              argError: -EPERM
 ```
 
-This kills the agent process on any `tcp_connect` that doesn't match allowed selectors — an enforcement action that happens *before* the packet even reaches the network stack, at the kernel level. Combining this with Cilium network policies (which enforce at the pod level) gives you layered network enforcement: Cilium blocks at the pod network level, Tetragon blocks at the process syscall level.
+This kills the agent process on any `tcp_connect` that doesn't match allowed selectors — an enforcement action that happens _before_ the packet even reaches the network stack, at the kernel level. Combining this with Cilium network policies (which enforce at the pod level) gives you layered network enforcement: Cilium blocks at the pod network level, Tetragon blocks at the process syscall level.
 
 The operational tradeoff: eBPF-based enforcement adds kernel version and architecture dependencies. You need kernel 5.4+ for the eBPF features used by Cilium/Tetragon, and some of the newer Tetragon features (like full LSM hook coverage) require 5.15+. On managed Kubernetes, this is usually fine — EKS, GKE, and AKS are all on kernels that support what you need. On-prem with older kernels can be a constraint.
 
@@ -247,9 +439,10 @@ The operational tradeoff: eBPF-based enforcement adds kernel version and archite
 
 gVisor is Google's container sandbox: a user-space kernel that intercepts system calls from container processes and implements them in Go, without passing them to the host kernel. The container process thinks it's talking to a Linux kernel; it's actually talking to gVisor's kernel emulation layer (called `runsc`).
 
-The security property this provides: even if the container process exploits a vulnerability in the Linux kernel, it's exploiting gVisor's implementation of that kernel, not the host kernel. Escaping the container now requires exploiting both gVisor's user-space kernel *and* the host kernel. That's a substantially higher bar.
+The security property this provides: even if the container process exploits a vulnerability in the Linux kernel, it's exploiting gVisor's implementation of that kernel, not the host kernel. Escaping the container now requires exploiting both gVisor's user-space kernel _and_ the host kernel. That's a substantially higher bar.
 
 The operational tradeoffs are real:
+
 - **Performance**: System calls have higher overhead through gVisor because they're intercepted and emulated in user space. For I/O-bound workloads like network-heavy agents, this can add 10-30% latency on syscall-intensive paths. Inference itself (which doesn't involve syscalls) is unaffected.
 - **Compatibility**: Some syscalls, kernel features, or `/proc` entries that applications rely on aren't fully emulated in gVisor. Particularly: any use of raw sockets, some ioctls, and kernel module loading won't work. For most agent workloads (Node.js, Python, running inference via a model server), gVisor compatibility is fine.
 - **eBPF limitations**: gVisor intercepts syscalls before they reach the host kernel, which means eBPF probes on the host kernel don't see the agent's syscalls. You can't use Tetragon's kprobes to observe gVisor-sandboxed containers. If you want process-level observability on gVisor workloads, you need gVisor's own tracing mechanisms.
@@ -264,15 +457,15 @@ metadata:
 spec:
   runtimeClassName: gvisor
   containers:
-  - name: agent
-    image: your-registry/agent:latest
-    securityContext:
-      runAsNonRoot: true
-      runAsUser: 1000
-      readOnlyRootFilesystem: true
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: ["ALL"]
+    - name: agent
+      image: your-registry/agent:latest
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
 ```
 
 GKE's Sandbox (which is gVisor-based) is available as a node pool configuration. AKS offers pod sandboxing via Kata Containers (described below). EKS requires deploying gVisor manually.
@@ -313,20 +506,20 @@ metadata:
 spec:
   runtimeClassName: kata-mshv-vm-isolation
   containers:
-  - name: agent
-    image: your-registry/agent:latest
-    resources:
-      limits:
-        memory: "2Gi"
-        cpu: "2"
-    env:
-    - name: EUNO_GATEWAY_URL
-      value: "https://gateway.internal:8080"
-    - name: EUNO_AGENT_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: agent-token
-          key: token
+    - name: agent
+      image: your-registry/agent:latest
+      resources:
+        limits:
+          memory: "2Gi"
+          cpu: "2"
+      env:
+        - name: EUNOX_GATEWAY_URL
+          value: "https://gateway.internal:8080"
+        - name: EUNOX_AGENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: agent-token
+              key: token
 ```
 
 The mutual exclusion problem on GKE that the `sandboxing.md` doc references is real and worth understanding: on GKE, enabling GKE Sandbox (gVisor) on a node pool disables the ability to use eBPF-based network policies via Dataplane V2 (Cilium) on that same node pool. You have to choose between gVisor's syscall isolation and Cilium's eBPF-based network enforcement. The right answer for high-assurance workloads is to run agent pods on dedicated node pools with gVisor or Kata, and rely on VPC-level firewall rules (rather than Cilium network policies) for network enforcement on those nodes.
@@ -352,8 +545,8 @@ metadata:
 spec:
   podSelector: {}
   policyTypes:
-  - Ingress
-  - Egress
+    - Ingress
+    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -365,28 +558,28 @@ spec:
     matchLabels:
       role: agent
   policyTypes:
-  - Egress
+    - Egress
   egress:
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: gateway
-      podSelector:
-        matchLabels:
-          app: tool-gateway
-    ports:
-    - protocol: TCP
-      port: 8080
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: kube-system
-      podSelector:
-        matchLabels:
-          k8s-app: kube-dns
-    ports:
-    - protocol: UDP
-      port: 53    # DNS, scoped to cluster DNS only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: gateway
+          podSelector:
+            matchLabels:
+              app: tool-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53 # DNS, scoped to cluster DNS only
 ```
 
 This allows agent pods to reach the gateway and the cluster DNS resolver (for gateway hostname resolution) and nothing else. No public internet. No other cluster services. No databases directly. Backends are only accessible via the gateway, which enforces tool policies before forwarding.
@@ -440,26 +633,26 @@ My recommendation: co-locate the gateway as a sidecar when latency is the primar
 # Sidecar pattern
 spec:
   containers:
-  - name: agent
-    image: your-registry/agent:latest
-    env:
-    - name: EUNO_GATEWAY_URL
-      value: "http://localhost:8080"
-  - name: gateway
-    image: your-registry/tool-gateway:latest
-    ports:
-    - containerPort: 8080
-    env:
-    - name: REDIS_URL
-      valueFrom:
-        secretKeyRef:
-          name: gateway-config
-          key: redis-url
-    - name: AUDIT_DB_URL
-      valueFrom:
-        secretKeyRef:
-          name: gateway-config
-          key: audit-db-url
+    - name: agent
+      image: your-registry/agent:latest
+      env:
+        - name: EUNOX_GATEWAY_URL
+          value: "http://localhost:8080"
+    - name: gateway
+      image: your-registry/tool-gateway:latest
+      ports:
+        - containerPort: 8080
+      env:
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: gateway-config
+              key: redis-url
+        - name: AUDIT_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: gateway-config
+              key: audit-db-url
 ```
 
 Network policy in this case: the agent can only reach `localhost:8080` (its sidecar gateway); no direct egress. The gateway sidecar has egress to Redis and the audit ledger, but the agent cannot reach those services directly.
@@ -473,6 +666,7 @@ The hardest operational problem in agent sandboxing is: how does the agent get i
 The solution is workload identity. The agent shouldn't authenticate with a pre-issued token; it should authenticate with an attestation of its own identity that the runtime environment provides and the capability issuer can verify.
 
 In Kubernetes, this is workload identity federation:
+
 1. The pod's service account has a projected token from the Kubernetes API server
 2. The capability issuer accepts that projected token as a client credential
 3. The issuer verifies the token against the Kubernetes OIDC discovery endpoint
@@ -512,12 +706,14 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 ### Cloud Kubernetes (EKS / GKE / AKS)
 
 **Minimum baseline:**
+
 - Pod security context: `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`
 - Custom seccomp profile (via `seccompProfile.type: Localhost` and `seccompProfile.localhostProfile: profiles/agent-seccomp.json`) blocking `ptrace`, `process_vm_readv`, `perf_event_open`
 - Cilium NetworkPolicy with default-deny egress, allow only gateway + cluster DNS
 - Resource limits: set CPU and memory limits; enable LimitRange in the agent namespace
 
 **Elevated isolation (recommended for production agent workloads):**
+
 - RuntimeClass: `gvisor` (GKE) or `kata-mshv-vm-isolation` (AKS)
 - Dedicated node pool for agent workloads with node taints (`dedicated=agent:NoSchedule`)
 - Pod anti-affinity to prevent agents from co-scheduling on the same node
@@ -525,6 +721,7 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 - SPIFFE/SPIRE or cloud-native workload identity (GKE Workload Identity, AKS Workload Identity, EKS IRSA) for token acquisition
 
 **High assurance (sensitive workloads, external data sources):**
+
 - RuntimeClass: Kata Containers on AKS, or self-managed Kata on EKS/GKE
 - Separate VPC/VNet subnet for agent workloads, with NSG/SG enforcing egress to gateway only
 - Falco or Tetragon for host-level behavioral monitoring
@@ -533,6 +730,7 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 ### Standalone VM or bare-metal (non-Kubernetes)
 
 **Docker-based (development / low sensitivity):**
+
 - `--security-opt seccomp=agent-seccomp.json` — custom profile
 - `--cap-drop ALL` — drop all Linux capabilities
 - `--read-only` — read-only root filesystem, tmpfs for `/tmp`
@@ -540,6 +738,7 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 - `--user 1000:1000` — non-root
 
 **Firecracker microVM (production / high sensitivity):**
+
 - One microVM per agent session; destroy after session completes
 - Virtual network with single route to gateway IP; iptables on hypervisor host to enforce
 - SPIFFE/SPIRE for workload identity attestation
@@ -547,6 +746,7 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 - Minimal rootfs (Alpine-based, < 50MB); no package manager, no shell if possible
 
 **QEMU/KVM with full VM (highest isolation, highest overhead):**
+
 - Separate kernel per agent session
 - Virtio-net attached to isolated bridge; host iptables enforces gateway-only egress
 - Snapshot/restore for fast session start (pre-warmed VM snapshot)
@@ -557,9 +757,10 @@ Let me give concrete guidance for each deployment scenario, because the right ch
 Edge is a different problem. You're often on hardware that doesn't support KVM, can't run gVisor (no x86-64), and has limited memory. The sandboxing options are more limited.
 
 The viable path for constrained edge:
+
 - Seccomp filter + AppArmor/SELinux MAC policy (available on modern Linux even on ARM)
 - Network namespace isolation via `unshare --net` with a veth pair to a host-side proxy
-- The host-side proxy *is* the gateway interface — the agent has no network interface except a veth that terminates in a controlled proxy process on the host
+- The host-side proxy _is_ the gateway interface — the agent has no network interface except a veth that terminates in a controlled proxy process on the host
 - No microVM overhead; instead, rely on MAC policies and seccomp to restrict the agent's syscall surface
 
 ---
@@ -574,7 +775,7 @@ I want to be clear about what this architecture doesn't protect you against.
 
 **Gateway as single point of trust**: Everything above assumes the gateway is trustworthy. If the gateway itself is compromised, an attacker can grant arbitrary tool permissions. The gateway's security depends on correct deployment (mTLS for gateway-to-backend calls, proper Redis HA configuration as described in the gateway bootstrap, KMS-backed signing keys). [Post 29 on air-gapped deployments](../../blogs/29-air-gapped-ai-governance.md) covers the operator controls that protect the gateway itself.
 
-**The agent process's own memory**: If the agent's process is compromised, an attacker has access to everything in that process's memory: in-flight tool arguments, response data, the session token. Seccomp and network controls prevent the attacker from *exfiltrating* that data, but the data is still accessible to the compromised process. Per-invocation tokens with tight TTLs (as opposed to long-lived session tokens) limit the blast radius.
+**The agent process's own memory**: If the agent's process is compromised, an attacker has access to everything in that process's memory: in-flight tool arguments, response data, the session token. Seccomp and network controls prevent the attacker from _exfiltrating_ that data, but the data is still accessible to the compromised process. Per-invocation tokens with tight TTLs (as opposed to long-lived session tokens) limit the blast radius.
 
 ---
 
@@ -594,10 +795,10 @@ If you're starting from zero and need to prioritize, here's the ordering I'd use
 
 6. **eBPF behavioral monitoring (where compatible).** Falco or Tetragon on the host gives you visibility into what the agent process is actually doing, outside the agent's trust domain. Wire alerts to your SIEM.
 
-The gateway handles policy enforcement and produces your audit evidence. The OS and VM layer ensures that the gateway is the *only* path for the agent to affect the outside world. Both layers are necessary. Neither is sufficient alone.
+The gateway handles policy enforcement and produces your audit evidence. The OS and VM layer ensures that the gateway is the _only_ path for the agent to affect the outside world. Both layers are necessary. Neither is sufficient alone.
 
 ---
 
-*The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/euno umbrella chart. For deployment-specific guidance, see [`docs/deployment.md`](../deployment.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md)).*
+_The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/eunox umbrella chart. For deployment-specific guidance, see [`docs/deployment.md`](../deployment.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md))._
 
-*Previous post in the architecture series: [post 14 (AGT: defense in depth)](./14-agt-defense-in-depth.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full index.*
+_Previous post in the architecture series: [post 14 (AGT: defense in depth)](./14-agt-defense-in-depth.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full index._

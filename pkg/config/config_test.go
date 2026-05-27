@@ -165,7 +165,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadBooleanCoercion(t *testing.T) {
 	unsetEnv(t, gatewayEnvKeys...)
 	t.Setenv("HOSTED_MODE", "true")
-	t.Setenv("EUNO_REQUIRE_KID", "false")
+	t.Setenv("EUNOX_REQUIRE_KID", "false")
 
 	var cfg GatewayConfig
 	errs := Load("", &cfg)
@@ -230,15 +230,15 @@ func containsMessage(errs []ValidationError, want string) bool {
 
 var gatewayEnvKeys = []string{
 	"NODE_ENV",
-	"EUNO_DEPLOYMENT_TIER",
+	"EUNOX_DEPLOYMENT_TIER",
 	"PORT",
 	"ADMIN_PORT",
 	"ADMIN_HOST",
 	"ISSUER_JWKS_URL",
 	"BACKEND_SERVICE_URL",
 	"ADMIN_API_KEY",
-	"EUNO_REQUIRE_KID",
-	"EUNO_JWKS_CACHE_TTL_SECONDS",
+	"EUNOX_REQUIRE_KID",
+	"EUNOX_JWKS_CACHE_TTL_SECONDS",
 	"GATEWAY_AUDIENCE",
 	"HOSTED_MODE",
 	"TENANT_ID",
@@ -249,7 +249,7 @@ var gatewayEnvKeys = []string{
 	"RATE_LIMIT_WINDOW_MS",
 	"RATE_LIMIT_MAX_REQUESTS",
 	"ALLOWED_ORIGINS",
-	"EUNO_TELEMETRY",
+	"EUNOX_TELEMETRY",
 	"TELEMETRY_FLUSH_MS",
 }
 

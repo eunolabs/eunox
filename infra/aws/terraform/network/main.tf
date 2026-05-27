@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno network module — VPC, subnets, IGW, NAT gateways, route tables
+# Eunox network module — VPC, subnets, IGW, NAT gateways, route tables
 # ---------------------------------------------------------------------------
 
 data "aws_availability_zones" "available" {

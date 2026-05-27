@@ -111,7 +111,7 @@ One design question that came up: should `did:key` be allowed in production part
 
 After a few months running partner federation in production, this is the short list of signals I watch:
 
-**Circuit breaker state changes.** Any transition from `closed` to `open` on a partner DID is an immediate-attention alert. A `half-open` to `open` transition (probe attempt failed during recovery) is also alert-worthy but lower urgency. The Prometheus gauge `euno_partner_did_circuit_breaker_state{did="...", state="open"}` == 1 is the primary alert condition.
+**Circuit breaker state changes.** Any transition from `closed` to `open` on a partner DID is an immediate-attention alert. A `half-open` to `open` transition (probe attempt failed during recovery) is also alert-worthy but lower urgency. The Prometheus gauge `eunox_partner_did_circuit_breaker_state{did="...", state="open"}` == 1 is the primary alert condition.
 
 **Pin mismatch count.** Any pin mismatch above zero in a 5-minute window is a security alert. This can be a legitimate partner key rotation (and they forgot to tell us to update the pin), or it can be an active substitution attack. Either way, someone needs to look at it immediately.
 

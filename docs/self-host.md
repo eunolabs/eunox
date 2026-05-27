@@ -231,7 +231,7 @@ Create `/srv/eunox/issuer.env`:
 # Runtime
 NODE_ENV=production
 PORT=3001
-EUNO_DEPLOYMENT_TIER=single-replica
+EUNOX_DEPLOYMENT_TIER=single-replica
 
 # Signing: AWS KMS asymmetric key (ES256).
 # Replace the key ARN with the one from Step 1.
@@ -267,7 +267,7 @@ Create `/srv/eunox/gateway.env`:
 NODE_ENV=production
 PORT=3002
 ADMIN_PORT=3003
-EUNO_DEPLOYMENT_TIER=single-replica
+EUNOX_DEPLOYMENT_TIER=single-replica
 
 # Audience: must match GATEWAY_AUDIENCE in issuer.env
 GATEWAY_AUDIENCE=tool-gateway:my-team
@@ -496,7 +496,7 @@ provisioning procedure and the non-exportability verification steps.
 
 ### 5.2 Add Redis and Postgres
 
-For multi-replica production deployments set `EUNO_DEPLOYMENT_TIER=multi-replica`
+For multi-replica production deployments set `EUNOX_DEPLOYMENT_TIER=multi-replica`
 and provide:
 
 **Redis (call counters, kill-switch, revocation):**
@@ -519,7 +519,7 @@ REDIS_CIRCUIT_OPEN_MODE=fail-closed   # hosted default; change to fail-open for 
 ```bash
 # gateway.env
 AUDIT_LEDGER_BACKEND=postgres
-AUDIT_LEDGER_PG_URL=postgresql://audit_writer:pass@postgres.internal:5432/euno_audit
+AUDIT_LEDGER_PG_URL=postgresql://audit_writer:pass@postgres.internal:5432/eunox_audit
 AUDIT_LEDGER_HMAC_SECRET=<openssl rand -hex 32>   # per-row tamper-detection secret
 AUDIT_LEDGER_RUN_MIGRATIONS=true   # set to false after first run; manage schema externally in production
 ```
@@ -530,7 +530,7 @@ schema):
 
 ```sql
 -- Audit ledger (append-only)
-CREATE TABLE euno_audit_ledger (
+CREATE TABLE eunox_audit_ledger (
   seq           BIGINT PRIMARY KEY,
   record_id     TEXT NOT NULL UNIQUE,
   replica_id    TEXT NOT NULL,
@@ -542,7 +542,7 @@ CREATE TABLE euno_audit_ledger (
 );
 
 -- Kill-switch entries (row-presence = switch active)
-CREATE TABLE euno_kill_switch_entries (
+CREATE TABLE eunox_kill_switch_entries (
   entry_type TEXT NOT NULL,
   entry_id   TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -824,7 +824,7 @@ item in this checklist:
       a new `AUDIT_LEDGER_TABLE` name; never `UPDATE` existing audit rows.
 - [ ] **Redis TLS is enabled in production.** Use `rediss://` (not `redis://`)
       for `REDIS_URL` to prevent credential exposure in transit.
-- [ ] **`EUNO_DEPLOYMENT_TIER=multi-replica` when running more than one gateway
+- [ ] **`EUNOX_DEPLOYMENT_TIER=multi-replica` when running more than one gateway
       replica.** Single-replica mode uses in-process state that is not shared across
       pods; call-counter limits and kill-switch state will diverge silently if
       multiple replicas run in single-replica mode.
@@ -968,7 +968,7 @@ protected by one of two auth mechanisms — configure exactly one:
 | `ISSUANCE_RATE_LIMIT_WINDOW_SECONDS` | `60`      | Tumbling window (seconds) for the per-user rate limiter.                                        |
 | `ISSUER_REGION`                      | —         | Logical region tag stamped into issued tokens (`region` claim).                                 |
 | `DEFAULT_TOKEN_TTL`                  | `900`     | Default capability-token lifetime (seconds). Can be overridden per-request.                     |
-| `EUNO_TELEMETRY`                     | _(unset)_ | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNO_TELEMETRY_URL`).  |
+| `EUNOX_TELEMETRY`                    | _(unset)_ | Set to `1` to enable opt-in issuer telemetry (per-tenant 5-min flush to `EUNOX_TELEMETRY_URL`). |
 
 ### 11.3 Per-tenant IdP configuration
 
@@ -1351,17 +1351,17 @@ The enterprise self-host stack includes four additional services beyond the base
 
 #### Updated service list
 
-| Service                   | Package                 | Purpose                                                                                                      |
-| ------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Capability Issuer**     | `capability-issuer`     | Issues JWT capability tokens; includes SCIM endpoints and OIDC discovery v1.0.0                              |
-| **Tool Gateway**          | `tool-gateway`          | Enforces capability tokens; includes partner-DID verification, audit-export endpoint, chain-proof endpoint   |
-| **DB Token Service**      | `db-token-service`      | Exchanges a capability token for short-lived scoped database credentials                                     |
-| **Storage Grant Service** | `storage-grant-service` | Exchanges a capability token for short-lived presigned URLs or SAS tokens                                    |
-| **Posture Emitter**       | `posture-emitter`       | Durable WAL-queue that fans OCSF evidence records to compliance sinks                                        |
-| **Partner Issuer Sim**    | `partner-issuer-sim`    | Reference simulator for partner-org DID-backed issuers (integration harness)                                 |
-| **Redis**                 | BYO (>= 6.2)            | Revocation, kill-switch, call-counter, partner-DID circuit-breaker                                           |
-| **Postgres**              | BYO (>= 14)             | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`)       |
-| **KMS**                   | BYO                     | Signs capability tokens (issuer) and audit evidence (gateway)                                                |
+| Service                   | Package                 | Purpose                                                                                                    |
+| ------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Capability Issuer**     | `capability-issuer`     | Issues JWT capability tokens; includes SCIM endpoints and OIDC discovery v1.0.0                            |
+| **Tool Gateway**          | `tool-gateway`          | Enforces capability tokens; includes partner-DID verification, audit-export endpoint, chain-proof endpoint |
+| **DB Token Service**      | `db-token-service`      | Exchanges a capability token for short-lived scoped database credentials                                   |
+| **Storage Grant Service** | `storage-grant-service` | Exchanges a capability token for short-lived presigned URLs or SAS tokens                                  |
+| **Posture Emitter**       | `posture-emitter`       | Durable WAL-queue that fans OCSF evidence records to compliance sinks                                      |
+| **Partner Issuer Sim**    | `partner-issuer-sim`    | Reference simulator for partner-org DID-backed issuers (integration harness)                               |
+| **Redis**                 | BYO (>= 6.2)            | Revocation, kill-switch, call-counter, partner-DID circuit-breaker                                         |
+| **Postgres**              | BYO (>= 14)             | Audit ledger, kill-switch persistence, SCIM tables (`scim_users`, `scim_groups`, `scim_group_members`)     |
+| **KMS**                   | BYO                     | Signs capability tokens (issuer) and audit evidence (gateway)                                              |
 
 ---
 
@@ -1451,10 +1451,10 @@ See `docs/issuer-idp-setup.md` §"DID-based partner issuers" for the full
 #### 12.2.5 Prometheus circuit-breaker metrics
 
 ```
-euno_partner_did_circuit_breaker_state{did="...",state="open|closed|half-open"} 1
+eunox_partner_did_circuit_breaker_state{did="...",state="open|closed|half-open"} 1
 ```
 
-Alert on `euno_partner_did_circuit_breaker_state{state="open"} == 1` to
+Alert on `eunox_partner_did_circuit_breaker_state{state="open"} == 1` to
 detect a partner resolver outage within minutes.
 
 ---
@@ -1546,7 +1546,7 @@ live chain.
 ```env
 # Enable per-replica audit chains
 AUDIT_LEDGER_BACKEND=per-replica-postgres
-AUDIT_LEDGER_PG_URL=postgres://euno_audit:secret@db:5432/eunox
+AUDIT_LEDGER_PG_URL=postgres://eunox_audit:secret@db:5432/eunox
 AUDIT_LEDGER_HMAC_SECRET=<64-hex-chars from openssl rand -hex 32>
 AUDIT_LEDGER_RUN_MIGRATIONS=true       # single-replica / dev only
 
@@ -1712,8 +1712,8 @@ AWS_DB_TOKEN_ROLE_ARN=arn:aws:iam::123456789012:role/eunox-db-token-role
 {
   "default": {},
   "dbUsernamesByRole": {
-    "DataAnalyst": "euno_readonly",
-    "DBAdmin": "euno_readwrite"
+    "DataAnalyst": "eunox_readonly",
+    "DBAdmin": "eunox_readwrite"
   }
 }
 ```
@@ -1733,7 +1733,7 @@ curl -X POST https://db-token-service.internal:5050/api/v1/db-tokens \
 #       "provider": "azure-sql",
 #       "instanceId": "salesserver",
 #       "database": "salesdb",
-#       "username": "euno_readonly",
+#       "username": "eunox_readonly",
 #       "token": "<short-lived-AAD-access-token>",
 #       "expiresAt": "2026-05-19T06:15:00Z"
 #     }
@@ -1941,10 +1941,10 @@ helm install eunox-gateway ./k8s/helm/gateway \
   --set env.GATEWAY_AUDIENCE=my-org \
   --set env.REDIS_URL="rediss://redis.internal:6380" \
   --set env.AUDIT_LEDGER_BACKEND=per-replica-postgres \
-  --set env.AUDIT_LEDGER_PG_URL="postgres://euno_audit:secret@db.internal:5432/eunox" \
+  --set env.AUDIT_LEDGER_PG_URL="postgres://eunox_audit:secret@db.internal:5432/eunox" \
   --set env.AUDIT_LEDGER_HMAC_SECRET="<64-hex-chars>" \
   --set env.GATEWAY_ADMIN_API_KEY="<admin-key>" \
-  --set env.EUNO_DEPLOYMENT_TIER=multi-replica
+  --set env.EUNOX_DEPLOYMENT_TIER=multi-replica
 
 # Issuer
 helm install eunox-issuer ./k8s/helm/issuer \
@@ -1957,7 +1957,7 @@ helm install eunox-issuer ./k8s/helm/issuer \
   --set env.ISSUER_DB_URL="postgres://eunox:secret@db.internal:5432/eunox" \
   --set env.ISSUER_DB_SCHEMA_INIT=true \
   --set env.ISSUER_SCIM_BEARER_TOKEN="<scim-token>" \
-  --set env.EUNO_DEPLOYMENT_TIER=multi-replica
+  --set env.EUNOX_DEPLOYMENT_TIER=multi-replica
 ```
 
 Values schemas are located at `k8s/helm/*/values.schema.json`.
@@ -1977,7 +1977,7 @@ equivalents:
 | IdP (Entra ID / Cognito)                          | User authentication                      | On-prem OIDC provider                                                         |
 | SCIM source (Okta / Entra ID)                     | Group push                               | On-prem LDAP-to-SCIM bridge                                                   |
 | S3 Object-Lock bucket                             | Cross-chain anchor                       | MinIO with Object-Lock in the cluster                                         |
-| `EUNO_TELEMETRY_API`                              | Telemetry (opt-in only)                  | Set `EUNO_TELEMETRY=0` to disable                                             |
+| `EUNOX_TELEMETRY_API`                             | Telemetry (opt-in only)                  | Set `EUNOX_TELEMETRY=0` to disable                                            |
 
 > For completely disconnected deployments, use `did:key` or `did:web` with
 > `DID_WEB_ALLOW_HTTP_FOR_HOSTS` pointing at an in-cluster DID host.
@@ -1988,8 +1988,8 @@ equivalents:
 ```env
 # Shared
 NODE_ENV=production
-EUNO_DEPLOYMENT_TIER=single-replica
-EUNO_TELEMETRY=0
+EUNOX_DEPLOYMENT_TIER=single-replica
+EUNOX_TELEMETRY=0
 
 # Issuer
 IDENTITY_PROVIDER=azure-ad
@@ -2167,7 +2167,7 @@ Use for each new partner DID onboarding.
       `PARTNER_DID_CB_WINDOW_SECONDS`, `PARTNER_DID_CB_COOLDOWN_SECONDS` match
       the partner's SLA for DID document availability.
 - [ ] **Prometheus alert wired.**
-      `euno_partner_did_circuit_breaker_state{state="open"} == 1` fires a P2
+      `eunox_partner_did_circuit_breaker_state{state="open"} == 1` fires a P2
       alert within 5 minutes of circuit opening.
 - [ ] **Revocation procedure documented.** Removing the partner DID from the
       registry forces re-evaluation on every subsequent request. Runbook tested
@@ -2303,4 +2303,4 @@ produced by the capability issuer's own `PostureEmitter`.
       audit pipeline's `onSigned` callback. Without an active pipeline the sink
       is never called.
 - [ ] Confirm the gateway's Prometheus scrape includes
-      `euno_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.
+      `eunox_posture_emitter_*` gauges (queue depth, oldest lag) after wiring.

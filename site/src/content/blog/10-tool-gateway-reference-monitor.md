@@ -4,7 +4,7 @@ description: "security engineers and platform architects who want to understand 
 pubDate: "2026-05-29"
 ---
 
-*Audience: security engineers and platform architects who want to understand how enforcement is actually implemented*
+_Audience: security engineers and platform architects who want to understand how enforcement is actually implemented_
 
 ---
 
@@ -105,7 +105,7 @@ The matching logic:
 
 5. If multiple capabilities match (this can happen when conditions on the narrower one would fail): use the most-specific match. This prevents a broader, less-constrained capability from being used when a narrower one was intended.
 
-The resource URI mapping and pattern matching is the part that requires the most careful configuration — getting it wrong means either the agent can't do what it needs to do (false denials) or a capability ends up matching tools it shouldn't (false allows). For the built-in MCP servers that euno ships adapters for, the mapping is pre-configured. For custom tools, operators define the mapping as part of tool registration.
+The resource URI mapping and pattern matching is the part that requires the most careful configuration — getting it wrong means either the agent can't do what it needs to do (false denials) or a capability ends up matching tools it shouldn't (false allows). For the built-in MCP servers that eunox ships adapters for, the mapping is pre-configured. For custom tools, operators define the mapping as part of tool registration.
 
 ### Step 7: Condition evaluation
 
@@ -163,7 +163,7 @@ If anything failed: deny. The upstream server never sees the call. The agent rec
 
 ## The single-audit-entry invariant
 
-One property worth calling out explicitly because it comes up in multi-agent architectures: when a call is mediated by both an in-process guard (the AGT guard, used in agent runtimes that embed euno directly) and the gateway, there should be exactly one audit record for that call, not two.
+One property worth calling out explicitly because it comes up in multi-agent architectures: when a call is mediated by both an in-process guard (the AGT guard, used in agent runtimes that embed eunox directly) and the gateway, there should be exactly one audit record for that call, not two.
 
 The in-process guard checks policy before the network even sees the tool call. If it denies, it writes its own audit record and the gateway never sees the call — one record. If it allows, it forwards to the gateway. The gateway writes the authoritative audit record. One record. The in-process guard does not write a separate record for calls it allows and forwards.
 
@@ -194,6 +194,7 @@ The reference monitor concept is demanding not just about the design but about t
 When I explain this pipeline to teams that are new to agent governance, the reaction is sometimes: "that's a lot for a chat tool." And I understand the reaction — this is enterprise security infrastructure, not something you throw together in an afternoon.
 
 But consider what we're actually protecting against. An agent with database access, file system access, and email access has the capability to:
+
 - Read any database table the service account can access
 - Read any file the OS allows the process to read
 - Email anything to anyone
@@ -206,4 +207,4 @@ That's the right architecture for a system where the principal doing the request
 
 ---
 
-*Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+_Previous: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)_

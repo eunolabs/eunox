@@ -1,5 +1,5 @@
 /**
- * Euno Capability Authorizer — AWS API Gateway custom Lambda authorizer.
+ * Eunox Capability Authorizer — AWS API Gateway custom Lambda authorizer.
  *
  * This file is the AWS-side parity of the Azure APIM `validate-jwt` policy.
  * It performs the same edge-level capability-token verification that
@@ -32,7 +32,7 @@
  * Configuration (environment variables):
  *
  *   ISSUER_JWKS_URL      Required. URL of the issuer's JWKS endpoint
- *                        (e.g. https://issuer.euno.example/.well-known/jwks.json).
+ *                        (e.g. https://issuer.eunox.example/.well-known/jwks.json).
  *   EXPECTED_AUDIENCE    Required. Expected `aud` claim value
  *                        (typically `tool-gateway`).
  *   EXPECTED_ISSUER      Required. Expected `iss` claim value.
@@ -86,7 +86,7 @@ if (!Number.isFinite(JWKS_CACHE_MAX_AGE_MS) || JWKS_CACHE_MAX_AGE_MS < 0) {
   // NaN / negative values into `createRemoteJWKSet`, where they would
   // either disable caching entirely or produce confusing runtime errors.
   throw new Error(
-    `[euno-authorizer] Invalid JWKS_CACHE_MAX_AGE_MS=${String(RAW_JWKS_CACHE_MAX_AGE_MS)}; must be a finite, non-negative number of milliseconds.`
+    `[eunox-authorizer] Invalid JWKS_CACHE_MAX_AGE_MS=${String(RAW_JWKS_CACHE_MAX_AGE_MS)}; must be a finite, non-negative number of milliseconds.`
   );
 }
 
@@ -102,7 +102,7 @@ if (!ISSUER_JWKS_URL || !EXPECTED_AUDIENCE || !EXPECTED_ISSUER) {
     .filter(Boolean)
     .join(', ');
   throw new Error(
-    `[euno-authorizer] Missing required env vars: ${missing}. ` +
+    `[eunox-authorizer] Missing required env vars: ${missing}. ` +
       'Configure them on the Lambda before invocation.'
   );
 }
@@ -226,7 +226,7 @@ exports.handler = async (event) => {
     // verification-failure detail to attackers.
     // eslint-disable-next-line no-console
     console.warn(
-      '[euno-authorizer] token verification failed:',
+      '[eunox-authorizer] token verification failed:',
       err && err.code ? err.code : err && err.message ? err.message : 'unknown'
     );
     throw new Error('Unauthorized');
@@ -235,12 +235,12 @@ exports.handler = async (event) => {
   // Required-claim checks beyond what `jwtVerify` enforces.
   if (typeof payload.sub !== 'string' || !payload.sub) {
     // eslint-disable-next-line no-console
-    console.warn('[euno-authorizer] token missing required sub claim');
+    console.warn('[eunox-authorizer] token missing required sub claim');
     throw new Error('Unauthorized');
   }
   if (typeof payload.jti !== 'string' || !payload.jti) {
     // eslint-disable-next-line no-console
-    console.warn('[euno-authorizer] token missing required jti claim');
+    console.warn('[eunox-authorizer] token missing required jti claim');
     throw new Error('Unauthorized');
   }
   if (
@@ -249,7 +249,7 @@ exports.handler = async (event) => {
   ) {
     // eslint-disable-next-line no-console
     console.warn(
-      '[euno-authorizer] unsupported schemaVersion:',
+      '[eunox-authorizer] unsupported schemaVersion:',
       payload.schemaVersion
     );
     throw new Error('Unauthorized');

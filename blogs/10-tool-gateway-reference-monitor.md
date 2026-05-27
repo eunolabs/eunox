@@ -101,7 +101,7 @@ The matching logic:
 
 5. If multiple capabilities match (this can happen when conditions on the narrower one would fail): use the most-specific match. This prevents a broader, less-constrained capability from being used when a narrower one was intended.
 
-The resource URI mapping and pattern matching is the part that requires the most careful configuration — getting it wrong means either the agent can't do what it needs to do (false denials) or a capability ends up matching tools it shouldn't (false allows). For the built-in MCP servers that euno ships adapters for, the mapping is pre-configured. For custom tools, operators define the mapping as part of tool registration.
+The resource URI mapping and pattern matching is the part that requires the most careful configuration — getting it wrong means either the agent can't do what it needs to do (false denials) or a capability ends up matching tools it shouldn't (false allows). For the built-in MCP servers that eunox ships adapters for, the mapping is pre-configured. For custom tools, operators define the mapping as part of tool registration.
 
 ### Step 7: Condition evaluation
 
@@ -159,7 +159,7 @@ If anything failed: deny. The upstream server never sees the call. The agent rec
 
 ## The single-audit-entry invariant
 
-One property worth calling out explicitly because it comes up in multi-agent architectures: when a call is mediated by both an in-process guard (the AGT guard, used in agent runtimes that embed euno directly) and the gateway, there should be exactly one audit record for that call, not two.
+One property worth calling out explicitly because it comes up in multi-agent architectures: when a call is mediated by both an in-process guard (the AGT guard, used in agent runtimes that embed eunox directly) and the gateway, there should be exactly one audit record for that call, not two.
 
 The in-process guard checks policy before the network even sees the tool call. If it denies, it writes its own audit record and the gateway never sees the call — one record. If it allows, it forwards to the gateway. The gateway writes the authoritative audit record. One record. The in-process guard does not write a separate record for calls it allows and forwards.
 

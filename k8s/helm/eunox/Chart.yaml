@@ -18,10 +18,10 @@ description: |
   gateway.env.REDIS_URL, issuer.env.ISSUER_DB_URL).
   To evaluate the full stack locally, enable the optional bitnami sub-charts:
 
-    helm install eunox ./k8s/helm/euno \
+    helm install eunox ./k8s/helm/eunox \
       --set postgresql.enabled=true \
       --set redis.enabled=true \
-      -f k8s/helm/euno/values.yaml
+      -f k8s/helm/eunox/values.yaml
 
   See docs/deployment.md for the production installation guide.
 type: application

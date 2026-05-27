@@ -46,7 +46,7 @@ type DefenderPlugin struct {
 // NewDefenderPlugin creates a new Microsoft Defender CSPM plugin.
 func NewDefenderPlugin(cfg DefenderPluginConfig) *DefenderPlugin {
 	if cfg.AssessmentNamePrefix == "" {
-		cfg.AssessmentNamePrefix = "euno-agent-"
+		cfg.AssessmentNamePrefix = "eunox-agent-"
 	}
 
 	var client DefenderClient
@@ -77,7 +77,7 @@ func (p *DefenderPlugin) EmitObserved(ctx context.Context, record *AgentInventor
 	assessment := DefenderAssessment{
 		Status:      "Healthy",
 		DisplayName: fmt.Sprintf("AI Agent: %s", record.AgentID),
-		Description: "Euno AI agent inventory posture record",
+		Description: "Eunox AI agent inventory posture record",
 		AdditionalData: map[string]string{
 			"agentId":                record.AgentID,
 			"owningTeam":             record.OwningTeam,
@@ -104,7 +104,7 @@ func (p *DefenderPlugin) EmitRevoked(ctx context.Context, agentID string, revoke
 	assessment := DefenderAssessment{
 		Status:      "NotApplicable",
 		DisplayName: fmt.Sprintf("AI Agent: %s (revoked)", agentID),
-		Description: "Euno AI agent revoked",
+		Description: "Eunox AI agent revoked",
 		AdditionalData: map[string]string{
 			"agentId":   agentID,
 			"revokedAt": revokedAt.UTC().Format(time.RFC3339),

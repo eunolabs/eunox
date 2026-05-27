@@ -1,5 +1,5 @@
 /**
- * Unit tests for EunoGatewayStack.
+ * Unit tests for EunoxGatewayStack.
  *
  * Uses aws-cdk-lib/assertions to synthesize the stack and make assertions
  * about the CloudFormation template produced.
@@ -10,24 +10,24 @@
 
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { EunoGatewayStack } from '../src/stacks/gateway-stack';
+import { EunoxGatewayStack } from '../src/stacks/gateway-stack';
 
 const defaultEnv = {
   account: '123456789012',
   region: 'us-east-1',
 };
 
-function makeStack(props: Partial<ConstructorParameters<typeof EunoGatewayStack>[2]> = {}) {
+function makeStack(props: Partial<ConstructorParameters<typeof EunoxGatewayStack>[2]> = {}) {
   const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
-  return new EunoGatewayStack(app, 'TestGateway', {
+  return new EunoxGatewayStack(app, 'TestGateway', {
     env: defaultEnv,
-    namePrefix: 'euno',
+    namePrefix: 'eunox',
     environment: 'test',
     ...props,
   });
 }
 
-describe('EunoGatewayStack', () => {
+describe('EunoxGatewayStack', () => {
   describe('KMS signing key', () => {
     test('creates an RSA-2048 SIGN_VERIFY key', () => {
       const stack = makeStack();
@@ -43,7 +43,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::KMS::Alias', {
-        AliasName: 'alias/euno-capability-signing',
+        AliasName: 'alias/eunox-capability-signing',
       });
     });
   });
@@ -77,7 +77,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'euno/test/audit-ledger-hmac-secret',
+        Name: 'eunox/test/audit-ledger-hmac-secret',
       });
     });
 
@@ -85,7 +85,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'euno/test/gateway-admin-api-key',
+        Name: 'eunox/test/gateway-admin-api-key',
       });
     });
 
@@ -93,7 +93,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'euno/test/redis-auth-token',
+        Name: 'eunox/test/redis-auth-token',
       });
     });
   });
@@ -103,7 +103,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Logs::LogGroup', {
-        LogGroupName: '/euno/runtime',
+        LogGroupName: '/eunox/runtime',
       });
     });
 
@@ -111,22 +111,22 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Logs::LogGroup', {
-        LogGroupName: '/euno/audit',
+        LogGroupName: '/eunox/audit',
       });
     });
   });
 
   describe('ECR repositories', () => {
-    test('creates repositories for all Euno service images', () => {
+    test('creates repositories for all Eunox service images', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       const expectedImages = [
-        'euno/capability-issuer',
-        'euno/tool-gateway',
-        'euno/api-key-minter',
-        'euno/db-token-service',
-        'euno/storage-grant-service',
-        'euno/posture-emitter',
+        'eunox/capability-issuer',
+        'eunox/tool-gateway',
+        'eunox/api-key-minter',
+        'eunox/db-token-service',
+        'eunox/storage-grant-service',
+        'eunox/posture-emitter',
       ];
       for (const repositoryName of expectedImages) {
         template.hasResourceProperties('AWS::ECR::Repository', { RepositoryName: repositoryName });
@@ -191,7 +191,7 @@ describe('EunoGatewayStack', () => {
       const template = Template.fromStack(stack);
       template.hasResourceProperties('Custom::AWSCDK-EKS-Cluster', {
         Config: {
-          name: 'euno-eks-test',
+          name: 'eunox-eks-test',
           logging: {
             clusterLogging: [
               {
@@ -204,15 +204,15 @@ describe('EunoGatewayStack', () => {
       });
     });
 
-    test('creates a Fargate profile for euno-system namespace by default', () => {
+    test('creates a Fargate profile for eunox-system namespace by default', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('Custom::AWSCDK-EKS-FargateProfile', {
         Config: {
-          fargateProfileName: 'euno-system',
+          fargateProfileName: 'eunox-system',
           selectors: [
-            { namespace: 'euno-system' },
-            { namespace: 'euno-monitoring' },
+            { namespace: 'eunox-system' },
+            { namespace: 'eunox-monitoring' },
           ],
         },
       });
@@ -224,7 +224,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::IAM::Role', {
-        RoleName: 'euno-gateway-irsa-test',
+        RoleName: 'eunox-gateway-irsa-test',
       });
     });
 
@@ -266,7 +266,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('ClusterName', {
-        Export: { Name: 'euno-test-cluster-name' },
+        Export: { Name: 'eunox-test-cluster-name' },
       });
     });
 
@@ -274,7 +274,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('SigningKeyArn', {
-        Export: { Name: 'euno-test-signing-key-arn' },
+        Export: { Name: 'eunox-test-signing-key-arn' },
       });
     });
 
@@ -282,7 +282,7 @@ describe('EunoGatewayStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('AuditAnchorBucketName', {
-        Export: { Name: 'euno-test-audit-anchor-bucket' },
+        Export: { Name: 'eunox-test-audit-anchor-bucket' },
       });
     });
   });

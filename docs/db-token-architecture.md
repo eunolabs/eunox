@@ -91,7 +91,7 @@ and lifecycle models.
 
 | Dimension        | Capability Token (JWT)          | Database Token                                  |
 | ---------------- | ------------------------------- | ----------------------------------------------- |
-| **Issuer**       | Euno Capability Issuer          | Cloud provider (AWS/Azure/GCP)                  |
+| **Issuer**       | Eunox Capability Issuer         | Cloud provider (AWS/Azure/GCP)                  |
 | **Format**       | JWT (signed with KMS)           | Provider-specific (presigned URL, OAuth2 token) |
 | **Lifetime**     | 5–15 min (configurable)         | 15 min – 1 hour (provider-determined)           |
 | **Scope**        | Tools, resources, conditions    | Single database + username                      |

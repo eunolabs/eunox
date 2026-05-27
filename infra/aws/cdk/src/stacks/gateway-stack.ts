@@ -1,9 +1,9 @@
 /**
- * EunoGatewayStack — core infrastructure for the Euno tool-gateway.
+ * EunoxGatewayStack — core infrastructure for the Eunox tool-gateway.
  *
  * Provisions:
  *   - VPC with 3 AZs, public / private subnets, NAT gateways
- *   - EKS Fargate cluster (IRSA-enabled) for the euno-system namespace
+ *   - EKS Fargate cluster (IRSA-enabled) for the eunox-system namespace
  *   - RDS PostgreSQL (Multi-AZ, encrypted, audit-ledger + API-key databases)
  *   - ElastiCache Redis (TLS + auth-token, replication group for HA)
  *   - KMS asymmetric RSA-2048 key for capability-token signing
@@ -11,14 +11,14 @@
  *   - Secrets Manager secrets: HMAC key, admin API key, Redis auth token
  *   - IAM IRSA role for the tool-gateway pod
  *   - CloudWatch log groups (runtime + audit)
- *   - ECR repositories for all Euno service images
+ *   - ECR repositories for all Eunox service images
  *
  * Usage:
  *
  *   const app = new cdk.App();
- *   new EunoGatewayStack(app, 'EunoGateway', {
+ *   new EunoxGatewayStack(app, 'EunoxGateway', {
  *     env: { account: '123456789012', region: 'us-east-1' },
- *     namePrefix: 'euno',
+ *     namePrefix: 'eunox',
  *     environment: 'prod',
  *   });
  */
@@ -38,8 +38,8 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import { KubectlV30Layer } from '@aws-cdk/lambda-layer-kubectl-v30';
 import { Construct } from 'constructs';
 
-export interface EunoGatewayStackProps extends cdk.StackProps {
-  /** Short resource-name prefix (3-12 lowercase chars). Default: 'euno'. */
+export interface EunoxGatewayStackProps extends cdk.StackProps {
+  /** Short resource-name prefix (3-12 lowercase chars). Default: 'eunox'. */
   namePrefix?: string;
   /** Deployment environment label (pilot | staging | prod). Default: 'pilot'. */
   environment?: string;
@@ -70,15 +70,15 @@ export interface EunoGatewayStackProps extends cdk.StackProps {
 }
 
 /**
- * Core Euno Gateway stack — provisions VPC, EKS, databases, KMS key, S3
+ * Core Eunox Gateway stack — provisions VPC, EKS, databases, KMS key, S3
  * audit anchor, secrets, and ECR repositories on AWS.
  */
-export class EunoGatewayStack extends cdk.Stack {
-  /** VPC shared across all Euno services. */
+export class EunoxGatewayStack extends cdk.Stack {
+  /** VPC shared across all Eunox services. */
   public readonly vpc: ec2.Vpc;
-  /** EKS cluster hosting Euno workloads. */
+  /** EKS cluster hosting Eunox workloads. */
   public readonly cluster: eks.Cluster;
-  /** Fargate profile covering the euno-system namespace. */
+  /** Fargate profile covering the eunox-system namespace. */
   public readonly fargateProfile?: eks.FargateProfile;
   /** KMS key for asymmetric capability-token signing (RSA-2048). */
   public readonly signingKey: kms.Key;
@@ -107,17 +107,17 @@ export class EunoGatewayStack extends cdk.Stack {
   protected readonly deployEnv: string;
   protected readonly commonTags: Record<string, string>;
 
-  constructor(scope: Construct, id: string, props: EunoGatewayStackProps = {}) {
+  constructor(scope: Construct, id: string, props: EunoxGatewayStackProps = {}) {
     super(scope, id, props);
 
-    this.namePrefix = props.namePrefix ?? 'euno';
+    this.namePrefix = props.namePrefix ?? 'eunox';
     this.deployEnv = props.environment ?? 'pilot';
     this.commonTags = {
-      product: 'euno',
+      product: 'eunox',
       component: 'capability-governance',
       environment: this.deployEnv,
     };
-    cdk.Tags.of(this).add('product', 'euno');
+    cdk.Tags.of(this).add('product', 'eunox');
     cdk.Tags.of(this).add('component', 'capability-governance');
     cdk.Tags.of(this).add('environment', this.deployEnv);
 
@@ -193,7 +193,7 @@ export class EunoGatewayStack extends cdk.Stack {
 
     // ── KMS signing key ───────────────────────────────────────────────────────
     this.signingKey = new kms.Key(this, 'CapabilitySigningKey', {
-      description: `Euno capability-token signing key (${this.namePrefix}-${this.deployEnv})`,
+      description: `Eunox capability-token signing key (${this.namePrefix}-${this.deployEnv})`,
       keySpec: kms.KeySpec.RSA_2048,
       keyUsage: kms.KeyUsage.SIGN_VERIFY,
       enableKeyRotation: false, // asymmetric keys do not support rotation
@@ -271,13 +271,13 @@ export class EunoGatewayStack extends cdk.Stack {
     // ── Security groups ───────────────────────────────────────────────────────
     const dbSecurityGroup = new ec2.SecurityGroup(this, 'DbSecurityGroup', {
       vpc: this.vpc,
-      description: 'Euno RDS PostgreSQL — allow EKS pods only.',
+      description: 'Eunox RDS PostgreSQL — allow EKS pods only.',
       allowAllOutbound: false,
     });
 
     const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
       vpc: this.vpc,
-      description: 'Euno ElastiCache Redis — allow EKS pods only.',
+      description: 'Eunox ElastiCache Redis — allow EKS pods only.',
       allowAllOutbound: false,
     });
 
@@ -285,7 +285,7 @@ export class EunoGatewayStack extends cdk.Stack {
     const dbSubnetGroup = new rds.SubnetGroup(this, 'DbSubnetGroup', {
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      description: 'Euno RDS subnet group (isolated subnets).',
+      description: 'Eunox RDS subnet group (isolated subnets).',
     });
 
     this.database = new rds.DatabaseInstance(this, 'Database', {
@@ -307,18 +307,18 @@ export class EunoGatewayStack extends cdk.Stack {
       cloudwatchLogsRetention: logRetention,
       enablePerformanceInsights: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      databaseName: 'euno',
+      databaseName: 'eunox',
     });
 
     // ── ElastiCache Redis replication group ───────────────────────────────────
     const cacheSubnetGroup = new elasticache.CfnSubnetGroup(this, 'CacheSubnetGroup', {
-      description: 'Euno ElastiCache Redis subnet group (isolated subnets).',
+      description: 'Eunox ElastiCache Redis subnet group (isolated subnets).',
       subnetIds: this.vpc.isolatedSubnets.map((s) => s.subnetId),
       cacheSubnetGroupName: `${this.namePrefix}-cache-${this.deployEnv}`,
     });
 
     this.redisReplicationGroup = new elasticache.CfnReplicationGroup(this, 'Redis', {
-      replicationGroupDescription: `Euno HA Redis — ${this.namePrefix}-${this.deployEnv}`,
+      replicationGroupDescription: `Eunox HA Redis — ${this.namePrefix}-${this.deployEnv}`,
       replicationGroupId: `${this.namePrefix}-${this.deployEnv}`,
       atRestEncryptionEnabled: true,
       transitEncryptionEnabled: true,
@@ -357,12 +357,12 @@ export class EunoGatewayStack extends cdk.Stack {
     });
 
     if (fargate) {
-      this.fargateProfile = new eks.FargateProfile(this, 'EunoSystemFargateProfile', {
+      this.fargateProfile = new eks.FargateProfile(this, 'EunoxSystemFargateProfile', {
         cluster: this.cluster,
-        fargateProfileName: 'euno-system',
+        fargateProfileName: 'eunox-system',
         selectors: [
-          { namespace: 'euno-system' },
-          { namespace: 'euno-monitoring' },
+          { namespace: 'eunox-system' },
+          { namespace: 'eunox-monitoring' },
         ],
       });
     }
@@ -376,7 +376,7 @@ export class EunoGatewayStack extends cdk.Stack {
     const irsaConditions = new cdk.CfnJson(this, 'GatewayIrsaConditions', {
       value: {
         [`${oidcProvider.openIdConnectProviderIssuer}:sub`]:
-          'system:serviceaccount:euno-system:tool-gateway',
+          'system:serviceaccount:eunox-system:tool-gateway',
         [`${oidcProvider.openIdConnectProviderIssuer}:aud`]:
           'sts.amazonaws.com',
       },

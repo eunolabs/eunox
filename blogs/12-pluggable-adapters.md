@@ -4,7 +4,7 @@ _Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capabilit
 
 ---
 
-The question I get most often from enterprise architects evaluating euno isn't about the policy language or the audit log format. It's simpler than that: _"Does this run on AWS?"_ Or Azure. Or GCP. Or — increasingly — _"We have a private PKI and we're not putting signing keys in any public cloud KMS. Can you work with that?"_
+The question I get most often from enterprise architects evaluating eunox isn't about the policy language or the audit log format. It's simpler than that: _"Does this run on AWS?"_ Or Azure. Or GCP. Or — increasingly — _"We have a private PKI and we're not putting signing keys in any public cloud KMS. Can you work with that?"_
 
 The answer in every case is yes, and I want to explain exactly how, because the design here is one of the decisions I'm most satisfied with in the entire codebase. It's also one that took several iterations to get right.
 

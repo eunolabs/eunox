@@ -86,11 +86,11 @@ func (p *SccPlugin) EmitObserved(ctx context.Context, record *AgentInventoryReco
 
 	finding := SccFinding{
 		State:        "ACTIVE",
-		Category:     "EUNO_AGENT_INVENTORY",
+		Category:     "EUNOX_AGENT_INVENTORY",
 		FindingClass: "OBSERVATION",
 		EventTime:    record.LastSeen.UTC().Format(time.RFC3339),
 		Description:  fmt.Sprintf("AI agent %s observed in posture inventory", record.AgentID),
-		ResourceName: fmt.Sprintf("//euno.dev/agents/%s", record.AgentID),
+		ResourceName: fmt.Sprintf("//eunox.dev/agents/%s", record.AgentID),
 		SourceProperties: map[string]string{
 			"agentId":                record.AgentID,
 			"owningTeam":             record.OwningTeam,

@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------
-# Euno Capability-Native Agent Governance — AWS Terraform deployment
+# Eunox Capability-Native Agent Governance — AWS Terraform deployment
 # ----------------------------------------------------------------------------
 #
 # Sprint-1 multi-cloud parity for `infra/bicep/main.bicep`.  Provisions every
@@ -8,7 +8,7 @@
 #   * CloudWatch Log Group  (parity with Log Analytics Workspace)
 #   * KMS asymmetric signing key  (parity with Key Vault RSA key)
 #   * Cognito User Pool + App Client  (parity with Azure AD app registration —
-#     consumed by AWSCognitoIdentityProvider in @euno/capability-issuer)
+#     consumed by AWSCognitoIdentityProvider in @eunox/capability-issuer)
 #   * IAM role for the Capability Issuer pod with KMS Sign/Verify permissions
 #     (assumable via IRSA — parity with Azure user-assigned managed identity)
 #   * IAM role for the Tool Gateway pod with CloudWatch Logs PutLogEvents
@@ -22,7 +22,7 @@
 #
 #   cd infra/terraform/aws
 #   terraform init
-#   terraform apply -var="name_prefix=euno"
+#   terraform apply -var="name_prefix=eunox"
 #
 # All naming is parameterized so the same module can be re-applied for staging
 # / pilot / prod by changing `name_prefix` and `environment`.
@@ -52,7 +52,7 @@ provider "aws" {
 variable "name_prefix" {
   description = "Short prefix used to name all resources (3-12 lowercase chars)."
   type        = string
-  default     = "euno"
+  default     = "eunox"
   validation {
     condition     = length(var.name_prefix) >= 3 && length(var.name_prefix) <= 12
     error_message = "name_prefix must be 3-12 characters."
@@ -75,7 +75,7 @@ variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
   default = {
-    product   = "euno"
+    product   = "eunox"
     component = "capability-governance"
   }
 }
@@ -284,7 +284,7 @@ resource "aws_cloudwatch_log_group" "audit" {
 # KMS asymmetric signing key (parity with Key Vault RSA-2048 key)
 # ---------------------------------------------------------------------------
 resource "aws_kms_key" "capability_signing" {
-  description              = "Euno capability-token signing key (Sprint 1 parity with Azure Key Vault)"
+  description              = "Eunox capability-token signing key (Sprint 1 parity with Azure Key Vault)"
   customer_master_key_spec = "RSA_2048"
   key_usage                = "SIGN_VERIFY"
   enable_key_rotation      = false # asymmetric KMS keys do not support automatic rotation
@@ -362,13 +362,13 @@ resource "aws_cognito_user_pool_client" "agent_runtime" {
 resource "aws_cognito_user_group" "operators" {
   name         = "operators"
   user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Privileged Euno operators (mapped to admin capability)"
+  description  = "Privileged Eunox operators (mapped to admin capability)"
 }
 
 resource "aws_cognito_user_group" "agent_users" {
   name         = "agent-users"
   user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Standard Euno users (mapped to read/write capabilities)"
+  description  = "Standard Eunox users (mapped to read/write capabilities)"
 }
 
 # ---------------------------------------------------------------------------
@@ -495,7 +495,7 @@ data "aws_iam_policy_document" "issuer_assume" {
     condition {
       test     = "StringEquals"
       variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:euno-system:capability-issuer"]
+      values   = ["system:serviceaccount:eunox-system:capability-issuer"]
     }
     condition {
       test     = "StringEquals"
@@ -557,7 +557,7 @@ data "aws_iam_policy_document" "gateway_assume" {
     condition {
       test     = "StringEquals"
       variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:euno-system:tool-gateway"]
+      values   = ["system:serviceaccount:eunox-system:tool-gateway"]
     }
     condition {
       test     = "StringEquals"

@@ -77,8 +77,8 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 ## Monitoring
 
-- **Metric**: `euno_gateway_kill_switch_active{tenant}` gauge
-- **Alert**: `EunoKillSwitchActive` fires when kill switch has been active > 5 minutes without acknowledgment
+- **Metric**: `eunox_gateway_kill_switch_active{tenant}` gauge
+- **Alert**: `EunoxKillSwitchActive` fires when kill switch has been active > 5 minutes without acknowledgment
 - **Dashboard**: Grafana > eunox Operations > Kill Switch panel
 
 ## Post-Incident

@@ -1,14 +1,14 @@
 ---
 title: "Reference Policies: Copy-Paste Guardrails for Common MCP Servers"
-description: "Fourth and final post in the \"User experience and developer ergonomics\" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Fourth and final post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-10"
 ---
 
-*Fourth and final post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fourth and final post in the "User experience and developer ergonomics" series. [Post 19](./19-one-yaml-file.md) covered the YAML format itself. [Post 18](./18-defense-in-depth-sql-injection.md) explains the defense-in-depth rationale behind several of the constraints in the Postgres policy. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement engine that evaluates these policies at runtime. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
-One of the things I spent a lot of time on before shipping euno was the set of reference policies that ship with the package. Not because they're technically complex — the YAML isn't complicated. Because getting the constraints *right* requires thinking carefully about what each MCP server can do, what can go wrong, and what reasonable defaults look like for an operator who hasn't thought deeply about AI agent security for their specific tool.
+One of the things I spent a lot of time on before shipping eunox was the set of reference policies that ship with the package. Not because they're technically complex — the YAML isn't complicated. Because getting the constraints _right_ requires thinking carefully about what each MCP server can do, what can go wrong, and what reasonable defaults look like for an operator who hasn't thought deeply about AI agent security for their specific tool.
 
 The five policies that ship with `eunox-mcp` cover the MCP servers we see deployed most often: filesystem, Postgres, GitHub, Slack, and fetch. This post walks through each one with detailed commentary on why specific constraints were chosen, what they protect against, and where the gaps are.
 
@@ -18,7 +18,7 @@ I want to be honest about the gaps. A reference policy is a starting point, not 
 
 ## The default-allow caveat
 
-Before diving in: the euno-mcp PDP has a **default allow** behavior for tool calls that don't match any constraint in the manifest. This is worth internalizing before you read the individual policies.
+Before diving in: the eunox-mcp PDP has a **default allow** behavior for tool calls that don't match any constraint in the manifest. This is worth internalizing before you read the individual policies.
 
 If your manifest lists a `query` tool but not a `list_tables` tool, and the agent calls `list_tables`, that call is allowed. There's no implicit block for unlisted tools. The policy is a list of constraints on specific tools, not a whitelist that blocks everything else.
 
@@ -66,7 +66,7 @@ The extension check on reads is more permissive (also includes `.log`, `.xml`, `
 
 **Layer 3: Burst guards on destructive operations.** `delete_file` is limited to 5 calls per minute. This is a behavioral guardrail against a looping agent that repeatedly calls `delete_file` — a failure mode that can happen when the agent gets confused and enters a retry loop. `write_file` is limited to 100 calls per minute, which is generous for legitimate use but will catch runaway write loops.
 
-**The `move_file` edge case.** One nuance worth highlighting: the `move_file` tool takes `source` and `destination` arguments, not a `path` argument. The euno enforcement engine's `extractFilePath()` function recognizes common argument key names (`filePath`, `path`, `file`, `filename`) but not `source` and `destination`. This means the `allowedExtensions` condition can't be applied to `move_file` — the engine doesn't know which argument to check.
+**The `move_file` edge case.** One nuance worth highlighting: the `move_file` tool takes `source` and `destination` arguments, not a `path` argument. The eunox enforcement engine's `extractFilePath()` function recognizes common argument key names (`filePath`, `path`, `file`, `filename`) but not `source` and `destination`. This means the `allowedExtensions` condition can't be applied to `move_file` — the engine doesn't know which argument to check.
 
 The workaround is to encode the path confinement and extension restriction directly in the `argumentSchema` patterns:
 
@@ -143,7 +143,6 @@ Read tools are unrestricted:
 
 - resource: list_branches
   actions: [call]
-
 # ... and so on for all read tools
 ```
 
@@ -200,7 +199,7 @@ If your agent has any possibility of calling these tools — even accidentally t
   actions: [call]
   conditions:
     - type: timeWindow
-      notBefore: "2099-01-01T00:00:00Z"  # intentionally unreachable — always denied
+      notBefore: "2099-01-01T00:00:00Z" # intentionally unreachable — always denied
 ```
 
 This is a somewhat unusual use of the `timeWindow` condition, but it produces the desired effect: the tool is listed in the policy with a condition that never passes, so calls to it are always denied.
@@ -212,7 +211,7 @@ This is a somewhat unusual use of the `timeWindow` condition, but it produces th
 **File**: `public/packages/mcp/policies/slack.policy.yaml`
 **Upstream**: `@modelcontextprotocol/server-slack`
 
-The Slack policy demonstrates two things that don't come up in the other policies: the `recipientDomain` condition and the limitations of what euno can enforce for addressing that uses non-email identifiers.
+The Slack policy demonstrates two things that don't come up in the other policies: the `recipientDomain` condition and the limitations of what eunox can enforce for addressing that uses non-email identifiers.
 
 **Direct message restriction:**
 
@@ -242,7 +241,7 @@ This is one of the primary threat vectors for AI agents with communication capab
       windowSeconds: 3600
 ```
 
-`post_message` uses a Slack channel ID (e.g., `C12345678`) rather than an email address as its target. There's no domain concept for Slack channel IDs. This means `recipientDomain` is not applicable — euno can't tell from the channel ID whether the channel is internal or external.
+`post_message` uses a Slack channel ID (e.g., `C12345678`) rather than an email address as its target. There's no domain concept for Slack channel IDs. This means `recipientDomain` is not applicable — eunox can't tell from the channel ID whether the channel is internal or external.
 
 This is a genuine limitation that the policy comment is explicit about: "Channel access control should be handled at the Slack workspace level or via a custom condition." If you need to restrict which channels the agent can post to, you'd need to write a custom condition that checks the channel ID against an allowlist, or configure Slack permissions to restrict the bot's access at the workspace level.
 
@@ -305,6 +304,7 @@ Let me break down what the regex is doing:
 This means DNS rebinding attacks bypass it. A hostname like `internal.legit-company.com` passes the regex check — it doesn't match any of the blocked patterns. But if `internal.legit-company.com` is configured in DNS to resolve to `169.254.169.254` (which an attacker can do if they control the DNS for `legit-company.com`), the fetch will succeed and reach the metadata endpoint.
 
 For complete SSRF protection, combine this policy with network-level egress controls:
+
 - Run the fetch MCP server in a container or VM that has firewall rules blocking outbound connections to the RFC 1918 ranges and `169.254.169.254`.
 - Use a forward proxy that enforces these rules at the network level, not the application level.
 
@@ -338,7 +338,7 @@ A few things to always do when adapting a reference policy:
 
 4. **Review every comment about unlisted tools.** For each MCP server, there are tools that the reference policy intentionally doesn't constrain. Decide whether those need constraints in your context.
 
-5. **Run `euno-mcp validate` on your adapted policy.** Don't skip this step. The validator catches typos in condition type names, invalid regex patterns in `argumentSchema`, and structural errors. It's a cheap check that saves real debugging time.
+5. **Run `eunox-mcp validate` on your adapted policy.** Don't skip this step. The validator catches typos in condition type names, invalid regex patterns in `argumentSchema`, and structural errors. It's a cheap check that saves real debugging time.
 
 6. **Run the agent in passthrough mode first.** As described in [post 20](./20-from-dev-to-prod-cli.md), start without a policy file and observe what tools the agent actually calls. Adapt the reference policy to reflect actual behavior, not assumed behavior. Agents often call tools that you wouldn't predict.
 
@@ -346,7 +346,7 @@ A few things to always do when adapting a reference policy:
 
 ## A note on default-deny manifests
 
-The five reference policies all use euno's default-allow model: unlisted tools are permitted. But for high-assurance deployments — a privileged agent with access to sensitive infrastructure, for instance — you might want default-deny behavior: only explicitly listed tools are allowed.
+The five reference policies all use eunox's default-allow model: unlisted tools are permitted. But for high-assurance deployments — a privileged agent with access to sensitive infrastructure, for instance — you might want default-deny behavior: only explicitly listed tools are allowed.
 
 You can achieve this by adding a catch-all constraint that blocks everything not specifically listed. The cleanest way is a capability entry with a `timeWindow` condition set in the past:
 
@@ -355,7 +355,7 @@ You can achieve this by adding a catch-all constraint that blocks everything not
 # The resource wildcard is not supported; you'd need to enumerate each tool.
 ```
 
-Actually, there's a design limitation here: the euno policy model doesn't have a catch-all wildcard at the resource level. If you need default-deny behavior for a specific set of tools, you need to enumerate them. This is intentional — catch-all wildcards are how policies become permissive over time ("just add `*`") without anyone noticing.
+Actually, there's a design limitation here: the eunox policy model doesn't have a catch-all wildcard at the resource level. If you need default-deny behavior for a specific set of tools, you need to enumerate them. This is intentional — catch-all wildcards are how policies become permissive over time ("just add `*`") without anyone noticing.
 
 For default-deny, the pattern is: list every tool the server exposes in your manifest, with deny-by-condition constraints for the ones you don't want to allow, and permissive constraints for the ones you do. More verbose, but explicit.
 
@@ -373,4 +373,4 @@ The `version` field in the policy manifest is there precisely for this kind of t
 
 ---
 
-*Previous: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Previous: [post 21 — Operator tooling: kill switches, revocation, and SCIM provisioning](./21-operator-tooling.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

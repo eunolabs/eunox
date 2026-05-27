@@ -17,7 +17,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent-runtime
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: agent-runtime
     component: agent
@@ -62,7 +62,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: agent
-        image: eunoacr.azurecr.io/agent-runtime:v1.0.0
+        image: eunoxacr.azurecr.io/agent-runtime:v1.0.0
         imagePullPolicy: Always
         ports:
         - name: http
@@ -201,7 +201,7 @@ spec:
       #
       # ── Gap 6 / P2 — cert-manager internal CA certificate ──────────────────────
       # Uncomment when cert-manager is installed and has issued a ClusterIssuer
-      # (or Issuer) named 'cluster-internal-ca' in the euno-system namespace.
+      # (or Issuer) named 'cluster-internal-ca' in the eunox-system namespace.
       # This mounts the CA bundle so Node.js can validate the Envoy TLS certificate.
       # See the cert-manager Certificate resource section at the bottom of this file.
       #
@@ -216,7 +216,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: agent-runtime
-  namespace: euno-system
+  namespace: eunox-system
   labels:
     app: agent-runtime
 spec:
@@ -234,7 +234,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: agent-runtime
-  namespace: euno-system
+  namespace: eunox-system
   # ── Gap 3 / P1 — Azure Workload Identity annotation ────────────────────────
   # Uncomment and set the managed-identity client ID to enable Workload Identity.
   # The agent pod will receive an OIDC token at /var/run/service-account/token
@@ -269,18 +269,18 @@ automountServiceAccountToken: false
 # kind: Certificate
 # metadata:
 #   name: agent-runtime-tls
-#   namespace: euno-system
+#   namespace: eunox-system
 # spec:
 #   secretName: agent-runtime-tls
 #   duration: 24h
 #   renewBefore: 6h
 #   subject:
 #     organizations:
-#     - euno-system
-#   commonName: agent-runtime.euno-system.svc.cluster.local
+#     - eunox-system
+#   commonName: agent-runtime.eunox-system.svc.cluster.local
 #   dnsNames:
-#   - agent-runtime.euno-system.svc.cluster.local
-#   - agent-runtime.euno-system.svc
+#   - agent-runtime.eunox-system.svc.cluster.local
+#   - agent-runtime.eunox-system.svc
 #   issuerRef:
 #     name: cluster-internal-ca
 #     kind: ClusterIssuer

@@ -1,7 +1,7 @@
 // Copyright 2026 Eunox Authors
 // SPDX-License-Identifier: BUSL-1.1
 
-// Binary gateway is the Euno Tool Gateway service.
+// Binary gateway is the Eunox Tool Gateway service.
 package main
 
 import (
@@ -99,7 +99,7 @@ func run() error {
 	}
 
 	// Initialize metrics
-	metrics := observability.NewMetricsRegistry("euno", "gateway")
+	metrics := observability.NewMetricsRegistry("eunox", "gateway")
 
 	// Build stateful backends (Redis-backed when URLs are configured; in-memory fallback for dev).
 	backends, err := buildGatewayBackends(&cfg, logger)
@@ -167,7 +167,7 @@ func run() error {
 	}
 
 	telemetryEnabled := cfg.TelemetryEnabled
-	if raw, ok := os.LookupEnv("EUNO_TELEMETRY"); ok {
+	if raw, ok := os.LookupEnv("EUNOX_TELEMETRY"); ok {
 		switch strings.TrimSpace(raw) {
 		case "0":
 			telemetryEnabled = false
@@ -176,7 +176,7 @@ func run() error {
 		default:
 			parsed, err := strconv.ParseBool(raw)
 			if err != nil {
-				return fmt.Errorf("invalid EUNO_TELEMETRY value: %w", err)
+				return fmt.Errorf("invalid EUNOX_TELEMETRY value: %w", err)
 			}
 			telemetryEnabled = parsed
 		}

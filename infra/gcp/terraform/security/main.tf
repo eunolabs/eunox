@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------------
 # Module: security
 # Provisions Cloud KMS keyring + asymmetric signing key, Secret Manager
-# secrets for every Euno credential, and the IAM bindings that allow the
+# secrets for every Eunox credential, and the IAM bindings that allow the
 # issuer and gateway service accounts to consume them.
 # ----------------------------------------------------------------------------
 
@@ -57,7 +57,7 @@ resource "google_kms_crypto_key" "capability_signing" {
 }
 
 # ---------------------------------------------------------------------------
-# Secret Manager — one secret per Euno credential
+# Secret Manager — one secret per Eunox credential
 # ---------------------------------------------------------------------------
 resource "google_secret_manager_secret" "secrets" {
   for_each  = local.secret_names

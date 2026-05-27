@@ -89,12 +89,15 @@ admin key grants full kill-switch and revocation powers.
 
 **Remediation:**  
 Apply the same JWT-auth requirement to `staging`. The current check is:
+
 ```go
 if cfg.NodeEnv != config.EnvProduction {
     return nil
 }
 ```
+
 Change to:
+
 ```go
 if cfg.NodeEnv == config.EnvDevelopment {
     return nil
@@ -510,6 +513,7 @@ production.
 **Recommendation:**  
 Before calling `app.proxy.ServeHTTP(w, r)`, set the request ID on the outgoing
 request:
+
 ```go
 r.Header.Set("X-Request-Id", requestID)
 ```
@@ -522,11 +526,11 @@ distributed log correlation across gateway and backend services.
 
 ### CI-10 — Posture emitter is SQLite-backed and cannot scale beyond one replica
 
-**Files:** `cmd/posture-emitter/main.go`, `migrations/posture/`, `k8s/helm/euno/templates/posture-emitter.yaml`
+**Files:** `cmd/posture-emitter/main.go`, `migrations/posture/`, `k8s/helm/eunox/templates/posture-emitter.yaml`
 
 The posture emitter uses a SQLite database on a local named volume and relies on
 PostgreSQL advisory locks for single-writer semantics. The single-replica constraint
-is already enforced at the Helm chart level: `k8s/helm/euno/templates/posture-emitter.yaml`
+is already enforced at the Helm chart level: `k8s/helm/eunox/templates/posture-emitter.yaml`
 contains a render-time `fail` that aborts `helm install`/`upgrade` if
 `postureEmitter.replicaCount` is not exactly 1, along with a comment documenting the
 SQLite single-writer constraint.
@@ -605,13 +609,13 @@ webhook)? Are there GDPR implications for the `tenantId` field in telemetry even
 
 ---
 
-### OQ-3 — `EUNO_DEPLOYMENT_TIER` configuration field is declared but never read
+### OQ-3 — `EUNOX_DEPLOYMENT_TIER` configuration field is declared but never read
 
 **Status:** Implemented
 
 **Files:** `pkg/config/gateway.go:12`
 
-`DeploymentTier` is parsed from `EUNO_DEPLOYMENT_TIER` with valid enum values
+`DeploymentTier` is parsed from `EUNOX_DEPLOYMENT_TIER` with valid enum values
 (`single-replica`, `multi-replica`, `multi-region-active-active`) but is not used
 anywhere in the gateway startup logic. Is it intended to drive pool sizing, Redis
 HA requirements, or read-replica selection? If so, it should be integrated;
@@ -644,29 +648,29 @@ to reflect the Go implementation?
 
 Ordered by impact and dependency:
 
-| Priority | Item | Dependency | Effort | Status |
-|----------|------|------------|--------|--------|
-| 1 | **CR-1** Wire Redis backends for kill-switch, revocation, DPoP in production | None | Medium | ✅ Done |
-| 2 | **CR-2** Add public-API rate limiting middleware to `/api/v1` | None | Small | ✅ Done |
-| 3 | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth) | None | Small | ✅ Done |
-| 4 | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix | None | Small | ✅ Done |
-| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small | ✅ Done |
-| 6 | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set | CR-1 done first | Small | ✅ Done (part of CR-1) |
-| 7 | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern | None | Small | |
-| 8 | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore` | None | Small | |
-| 9 | **CR-3** Extend JWT admin auth requirement to staging | None | Trivial | ✅ Done |
-| 10 | **CI-2** Validate `X-Tool-Name` header before enforcement | None | Small | ✅ Done |
-| 11 | **DI-4** Add pagination parameters to `handleListKeys` | OQ-1 context | Small | ✅ Done |
-| 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small | ✅ Done |
-| 13 | **CI-9** Propagate `X-Request-Id` to proxied backend requests | None | Trivial | ✅ Done |
-| 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium | ✅ Done |
-| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small | ✅ Done |
-| 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium | ✅ Done |
-| 17 | **CI-4** Separate audit HMAC chain key from signing key | None | Medium | ✅ Done |
-| 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium | ✅ Done |
-| 19 | **CI-8** Anchor regex patterns unconditionally in config validation | None | Small | ✅ Done |
-| 20 | **DI-6** Fix audit transport lifecycle context | None | Small | ✅ Done |
-| 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small | ✅ Done |
-| 22 | **OQ-5** Reconcile architecture docs with Go implementation | None | Small | |
-| 23 | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None | Small | |
-| 24 | **CI-11** Set `lock_timeout` on audit DB connection | None | Small | ✅ Done |
+| Priority | Item                                                                                | Dependency      | Effort  | Status                 |
+| -------- | ----------------------------------------------------------------------------------- | --------------- | ------- | ---------------------- |
+| 1        | **CR-1** Wire Redis backends for kill-switch, revocation, DPoP in production        | None            | Medium  | ✅ Done                |
+| 2        | **CR-2** Add public-API rate limiting middleware to `/api/v1`                       | None            | Small   | ✅ Done                |
+| 3        | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth)         | None            | Small   | ✅ Done                |
+| 4        | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix                   | None            | Small   | ✅ Done                |
+| 5        | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production    | None            | Small   | ✅ Done                |
+| 6        | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set                         | CR-1 done first | Small   | ✅ Done (part of CR-1) |
+| 7        | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern                  | None            | Small   |                        |
+| 8        | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore`                    | None            | Small   |                        |
+| 9        | **CR-3** Extend JWT admin auth requirement to staging                               | None            | Trivial | ✅ Done                |
+| 10       | **CI-2** Validate `X-Tool-Name` header before enforcement                           | None            | Small   | ✅ Done                |
+| 11       | **DI-4** Add pagination parameters to `handleListKeys`                              | OQ-1 context    | Small   | ✅ Done                |
+| 12       | **DI-5** Add `db.PingContext` to readiness handler                                  | None            | Small   | ✅ Done                |
+| 13       | **CI-9** Propagate `X-Request-Id` to proxied backend requests                       | None            | Trivial | ✅ Done                |
+| 14       | **DI-7** Change `findMatchingCapability` to most-specific-match semantics           | None            | Medium  | ✅ Done                |
+| 15       | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set)              | None            | Small   | ✅ Done                |
+| 16       | **DI-1** Persist partner DID registrations in Redis or PostgreSQL                   | CR-1 done first | Medium  | ✅ Done                |
+| 17       | **CI-4** Separate audit HMAC chain key from signing key                             | None            | Medium  | ✅ Done                |
+| 18       | **DI-9** Automate key rotation scheduling in issuer                                 | None            | Medium  | ✅ Done                |
+| 19       | **CI-8** Anchor regex patterns unconditionally in config validation                 | None            | Small   | ✅ Done                |
+| 20       | **DI-6** Fix audit transport lifecycle context                                      | None            | Small   | ✅ Done                |
+| 21       | **OQ-3** Decide fate of `EUNOX_DEPLOYMENT_TIER` (integrate or remove)               | None            | Small   | ✅ Done                |
+| 22       | **OQ-5** Reconcile architecture docs with Go implementation                         | None            | Small   |                        |
+| 23       | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None            | Small   |                        |
+| 24       | **CI-11** Set `lock_timeout` on audit DB connection                                 | None            | Small   | ✅ Done                |

@@ -3,7 +3,7 @@
 
 // Package agentruntime implements the agent runtime library for embedding in
 // agent applications. It manages token lifecycle, DPoP proof generation, and
-// tool invocation through the Euno gateway.
+// tool invocation through the Eunox gateway.
 package agentruntime
 
 import (

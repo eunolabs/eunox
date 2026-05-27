@@ -5,17 +5,17 @@ parity of the Azure APIM `validate-jwt` policy referenced in the Sprint-1
 plan. It is the cloud-edge front door for the in-cluster Tool Gateway
 service (`eunox/packages/tool-gateway`).
 
-| File                 | Purpose                                                                                             |
-|----------------------|-----------------------------------------------------------------------------------------------------|
-| `openapi.json`       | OpenAPI 3.0 document with API Gateway extensions, importable via `aws apigateway import-rest-api`. |
-| `lambda-authorizer.js` | Lambda authorizer source (Node.js 20.x). Verifies the capability JWT at the edge.                 |
+| File                   | Purpose                                                                                            |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| `openapi.json`         | OpenAPI 3.0 document with API Gateway extensions, importable via `aws apigateway import-rest-api`. |
+| `lambda-authorizer.js` | Lambda authorizer source (Node.js 20.x). Verifies the capability JWT at the edge.                  |
 
 ## Flow
 
 ```
 client ──HTTPS──▶ API Gateway (REST)
                       │
-                      ├──▶ EunoCapabilityAuthorizer (Lambda)
+                      ├──▶ EunoxCapabilityAuthorizer (Lambda)
                       │       └─ jose.jwtVerify(token, JWKS, { iss, aud })
                       │
                       └──▶ VPC Link ──▶ Tool Gateway pod (EKS)
@@ -45,12 +45,12 @@ so the policy lives in exactly one place.
 
    ```bash
    aws lambda create-function \
-     --function-name euno-capability-authorizer \
+     --function-name eunox-capability-authorizer \
      --runtime nodejs20.x \
      --handler index.handler \
      --role <execution-role-arn> \
      --zip-file fileb://authorizer.zip \
-     --environment "Variables={ISSUER_JWKS_URL=https://issuer.euno.example/.well-known/jwks.json,EXPECTED_AUDIENCE=tool-gateway,EXPECTED_ISSUER=https://issuer.euno.example}"
+     --environment "Variables={ISSUER_JWKS_URL=https://issuer.eunox.example/.well-known/jwks.json,EXPECTED_AUDIENCE=tool-gateway,EXPECTED_ISSUER=https://issuer.eunox.example}"
    ```
 
 4. **Import the API**:
@@ -69,9 +69,9 @@ so the policy lives in exactly one place.
 
 The following exit criteria apply here:
 
-* Valid token with correct scope → action allowed (200 from upstream).
-* Missing/invalid/expired token → 401 from API Gateway directly.
-* Token verified but lacks scope → 403 from the Tool Gateway pod.
-* CloudWatch logs (the API Gateway `AWS::ApiGateway::Stage` access-log
+- Valid token with correct scope → action allowed (200 from upstream).
+- Missing/invalid/expired token → 401 from API Gateway directly.
+- Token verified but lacks scope → 403 from the Tool Gateway pod.
+- CloudWatch logs (the API Gateway `AWS::ApiGateway::Stage` access-log
   destination) record every authorization decision — see the Logs Insights
   queries in `infra/aws/security/cloudwatch-logs-insights.json`.

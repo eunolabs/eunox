@@ -1,6 +1,6 @@
-# Euno — Artifact Registry repository
+# Eunox — Artifact Registry repository
 # ---------------------------------------------------------------------------
-# Provisions the Docker repository used to host Euno container images on GCP.
+# Provisions the Docker repository used to host Eunox container images on GCP.
 # Mirrors the ECR repositories in the AWS deployment.
 #
 # Substitute:
@@ -11,16 +11,16 @@
 apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
 kind: ArtifactRegistryRepository
 metadata:
-  name: euno-images
+  name: eunox-images
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
 spec:
   location: "<YOUR_REGION>"
   format: DOCKER
-  description: "Euno service container images."
+  description: "Eunox service container images."
   labels:
-    product: euno
+    product: eunox
     component: capability-governance
 
 ---
@@ -29,7 +29,7 @@ spec:
 apiVersion: iam.cnrm.cloud.google.com/v1beta1
 kind: IAMPolicyMember
 metadata:
-  name: euno-issuer-registry-reader
+  name: eunox-issuer-registry-reader
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
@@ -37,10 +37,10 @@ spec:
   resourceRef:
     apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
     kind: ArtifactRegistryRepository
-    name: euno-images
+    name: eunox-images
     namespace: config-connector
   role: roles/artifactregistry.reader
-  member: "serviceAccount:euno-issuer-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
+  member: "serviceAccount:eunox-issuer-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
 
 ---
 
@@ -48,7 +48,7 @@ spec:
 apiVersion: iam.cnrm.cloud.google.com/v1beta1
 kind: IAMPolicyMember
 metadata:
-  name: euno-gateway-registry-reader
+  name: eunox-gateway-registry-reader
   namespace: config-connector
   annotations:
     cnrm.cloud.google.com/project-id: "<YOUR_PROJECT_ID>"
@@ -56,7 +56,7 @@ spec:
   resourceRef:
     apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
     kind: ArtifactRegistryRepository
-    name: euno-images
+    name: eunox-images
     namespace: config-connector
   role: roles/artifactregistry.reader
-  member: "serviceAccount:euno-gateway-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"
+  member: "serviceAccount:eunox-gateway-sa@<YOUR_PROJECT_ID>.iam.gserviceaccount.com"

@@ -6,9 +6,9 @@ Controlled by the top-level ingress.enabled value.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
   {{- with (merge (.Values.ingress.gateway.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
@@ -36,16 +36,16 @@ spec:
             pathType: {{ .Values.ingress.gateway.pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ include "euno.fullname" . }}-gateway
+                name: {{ include "eunox.fullname" . }}-gateway
                 port:
                   number: {{ .Values.gateway.service.port }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "euno.fullname" . }}-issuer
+  name: {{ include "eunox.fullname" . }}-issuer
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: issuer
   {{- with (merge (.Values.ingress.issuer.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
@@ -73,16 +73,16 @@ spec:
             pathType: {{ .Values.ingress.issuer.pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ include "euno.fullname" . }}-issuer
+                name: {{ include "eunox.fullname" . }}-issuer
                 port:
                   number: {{ .Values.issuer.service.port }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "euno.fullname" . }}-minter
+  name: {{ include "eunox.fullname" . }}-minter
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: minter
   {{- with (merge (.Values.ingress.minter.annotations | default dict) (.Values.ingress.annotations | default dict)) }}
   annotations:
@@ -110,7 +110,7 @@ spec:
             pathType: {{ .Values.ingress.minter.pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ include "euno.fullname" . }}-minter
+                name: {{ include "eunox.fullname" . }}-minter
                 port:
                   number: {{ .Values.minter.service.port }}
 {{- end }}

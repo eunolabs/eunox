@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno observability module — CloudWatch, Security Hub, CloudTrail, alarms
+# Eunox observability module — CloudWatch, Security Hub, CloudTrail, alarms
 # ---------------------------------------------------------------------------
 
 locals {
@@ -25,7 +25,7 @@ resource "aws_cloudwatch_log_group" "audit" {
 
 resource "aws_sns_topic" "alarms" {
   name         = "${var.name_prefix}-alarms-${var.environment}"
-  display_name = "Euno capability-governance alarms (${var.environment})"
+  display_name = "Eunox capability-governance alarms (${var.environment})"
   tags         = local.common_tags
 }
 
@@ -40,11 +40,11 @@ resource "aws_sns_topic_subscription" "alarm_email" {
 
 resource "aws_cloudwatch_metric_alarm" "denial_spike" {
   alarm_name          = "${var.name_prefix}-denial-spike-${var.environment}"
-  alarm_description   = "Euno capability-governance: unusual denial spike detected (SOC 2 CC7.3). Check denial_reason histogram in CloudWatch Insights."
+  alarm_description   = "Eunox capability-governance: unusual denial spike detected (SOC 2 CC7.3). Check denial_reason histogram in CloudWatch Insights."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 2
   metric_name         = "ToolCallDeniedTotal"
-  namespace           = "Euno/Gateway"
+  namespace           = "Eunox/Gateway"
   period              = 300 # 5 minutes
   statistic           = "Sum"
   threshold           = var.denial_spike_threshold
@@ -58,11 +58,11 @@ resource "aws_cloudwatch_metric_alarm" "denial_spike" {
 
 resource "aws_cloudwatch_metric_alarm" "invalid_token_burst" {
   alarm_name          = "${var.name_prefix}-invalid-token-burst-${var.environment}"
-  alarm_description   = "Euno capability-governance: invalid-token burst detected (SOC 2 CC6.8). May indicate a credential leak or misconfigured agent."
+  alarm_description   = "Eunox capability-governance: invalid-token burst detected (SOC 2 CC6.8). May indicate a credential leak or misconfigured agent."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "InvalidTokenBurst"
-  namespace           = "Euno/Gateway"
+  namespace           = "Eunox/Gateway"
   period              = 300
   statistic           = "Sum"
   threshold           = 50
@@ -76,11 +76,11 @@ resource "aws_cloudwatch_metric_alarm" "invalid_token_burst" {
 
 resource "aws_cloudwatch_metric_alarm" "kill_switch_activation" {
   alarm_name          = "${var.name_prefix}-kill-switch-${var.environment}"
-  alarm_description   = "Euno capability-governance: kill-switch was activated (SOC 2 CC7.5). All tool-call enforcement is paused — immediate operator attention required."
+  alarm_description   = "Eunox capability-governance: kill-switch was activated (SOC 2 CC7.5). All tool-call enforcement is paused — immediate operator attention required."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "KillSwitchActivation"
-  namespace           = "Euno/Gateway"
+  namespace           = "Eunox/Gateway"
   period              = 60 # 1 minute
   statistic           = "Sum"
   threshold           = 1

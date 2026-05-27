@@ -12,9 +12,9 @@ kind: Kustomization
 resources:
   - partner-issuer-sim.yaml
 
-namespace: euno-partner-sim
+namespace: eunox-partner-sim
 
 commonLabels:
   app.kubernetes.io/component: partner-issuer-sim
-  app.kubernetes.io/part-of: euno-cross-org-harness
+  app.kubernetes.io/part-of: eunox-cross-org-harness
   app.kubernetes.io/managed-by: kustomize

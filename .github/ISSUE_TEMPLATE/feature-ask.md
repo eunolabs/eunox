@@ -4,11 +4,10 @@ about: Request a new condition type, cross-process state, shared audit, or other
   feature beyond the Stage 1 scope
 title: "[Feature] "
 labels: stage-2-signal
-assignees: ''
-
+assignees: ""
 ---
 
-## What would you like `@euno/mcp` to do?
+## What would you like `@eunox/mcp` to do?
 
 <!-- A clear description of the feature you need. -->
 
@@ -24,7 +23,7 @@ assignees: ''
 
 ## Environment
 
-- `@euno/mcp` version:
+- `@eunox/mcp` version:
 - Transport: stdio / HTTP
 - Upstream MCP server (if known):
 - Agent framework (LangChain.js, raw MCP client, Claude Desktop, Cursor, other):

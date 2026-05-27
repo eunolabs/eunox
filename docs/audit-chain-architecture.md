@@ -43,11 +43,11 @@ Replica A: AcquireLock() → Append() → ... → ReleaseLock()
 Replica B: AcquireLock() → ErrLockContention (must retry or route elsewhere)
 ```
 
-| Property | Value |
-|----------|-------|
-| Consistency | Strong — single global chain |
-| Concurrency | Single-writer only |
-| Verification | Simple — linear chain traversal |
+| Property     | Value                                    |
+| ------------ | ---------------------------------------- |
+| Consistency  | Strong — single global chain             |
+| Concurrency  | Single-writer only                       |
+| Verification | Simple — linear chain traversal          |
 | Failure mode | `ErrLockContention` on competing writers |
 
 **When to use:**
@@ -76,12 +76,12 @@ Replica A (chain "replica-a"): Append(seqNum=1) → Append(seqNum=2) → ...
 Replica B (chain "replica-b"): Append(seqNum=1) → Append(seqNum=2) → ...
 ```
 
-| Property | Value |
-|----------|-------|
-| Consistency | Per-replica — eventual global via anchoring |
-| Concurrency | Unlimited (one chain per replica) |
-| Verification | Per-chain linear + cross-chain anchors |
-| Failure mode | Partition-tolerant |
+| Property     | Value                                       |
+| ------------ | ------------------------------------------- |
+| Consistency  | Per-replica — eventual global via anchoring |
+| Concurrency  | Unlimited (one chain per replica)           |
+| Verification | Per-chain linear + cross-chain anchors      |
+| Failure mode | Partition-tolerant                          |
 
 **When to use:**
 
@@ -131,29 +131,29 @@ CREATE TABLE chain_anchors (
 
 ## Choosing a Backend
 
-| Criteria | Single-Writer | Per-Replica |
-|----------|:---:|:---:|
-| Replicas | 1 | N |
-| Throughput (records/sec) | ≤ 1,000 | 1,000 × N |
-| Chain verification | Trivial | Per-replica + anchors |
-| Compliance (single chain of custody) | ✅ | ❌ (multiple chains) |
-| Zero lock contention | ❌ | ✅ |
-| Horizontal autoscaling | ❌ | ✅ |
-| Disaster recovery simplicity | Simple | Complex (per-replica restore) |
+| Criteria                             | Single-Writer |          Per-Replica          |
+| ------------------------------------ | :-----------: | :---------------------------: |
+| Replicas                             |       1       |               N               |
+| Throughput (records/sec)             |    ≤ 1,000    |           1,000 × N           |
+| Chain verification                   |    Trivial    |     Per-replica + anchors     |
+| Compliance (single chain of custody) |      ✅       |     ❌ (multiple chains)      |
+| Zero lock contention                 |      ❌       |              ✅               |
+| Horizontal autoscaling               |      ❌       |              ✅               |
+| Disaster recovery simplicity         |    Simple     | Complex (per-replica restore) |
 
 **Decision matrix:**
 
-- **`EUNO_DEPLOYMENT_TIER=single-replica`** → Use `PostgresLedgerBackend`
-- **`EUNO_DEPLOYMENT_TIER=multi-replica`** → Use `PerReplicaPostgresLedgerBackend`
-- **`EUNO_DEPLOYMENT_TIER=multi-region-active-active`** → Use `PerReplicaPostgresLedgerBackend` with regional anchoring
+- **`EUNOX_DEPLOYMENT_TIER=single-replica`** → Use `PostgresLedgerBackend`
+- **`EUNOX_DEPLOYMENT_TIER=multi-replica`** → Use `PerReplicaPostgresLedgerBackend`
+- **`EUNOX_DEPLOYMENT_TIER=multi-region-active-active`** → Use `PerReplicaPostgresLedgerBackend` with regional anchoring
 
 ---
 
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `EUNO_DEPLOYMENT_TIER` | `single-replica` | Determines backend selection |
+| Environment Variable    | Default          | Description                  |
+| ----------------------- | ---------------- | ---------------------------- |
+| `EUNOX_DEPLOYMENT_TIER` | `single-replica` | Determines backend selection |
 
 `AUDIT_ADVISORY_LOCK_ID`, `AUDIT_REPLICA_ID`, and `AUDIT_ANCHOR_INTERVAL_SECONDS` are architecture-level tuning concepts documented here, but they are not currently exposed as first-class environment variables in this Go codebase.
 
@@ -187,11 +187,11 @@ For long-running deployments, chain pruning with checkpoint preservation:
 
 The OCSF audit transports (HTTP, Azure Sentinel) use a bounded, buffered channel for internal event queuing. The `Enqueue()` method is **non-blocking by design**:
 
-| Condition | Behavior | Metric |
-|-----------|----------|--------|
-| Buffer has capacity | Event queued for batched delivery | `audit_enqueue_total{status="success"}` |
-| Buffer is full | Event is **dropped immediately** — returns `ErrBatchFull` | `audit_enqueue_total{status="dropped"}` |
-| Transport is closed | Returns `ErrTransportClosed` | — |
+| Condition           | Behavior                                                  | Metric                                  |
+| ------------------- | --------------------------------------------------------- | --------------------------------------- |
+| Buffer has capacity | Event queued for batched delivery                         | `audit_enqueue_total{status="success"}` |
+| Buffer is full      | Event is **dropped immediately** — returns `ErrBatchFull` | `audit_enqueue_total{status="dropped"}` |
+| Transport is closed | Returns `ErrTransportClosed`                              | —                                       |
 
 ### Design Rationale
 
@@ -199,7 +199,7 @@ The enforcement hot path (token validation → audit write → response) must no
 
 ### Operator Implications
 
-1. **Dropped events are permanently lost** from the transport's perspective. However, the primary audit record is always persisted to the PostgreSQL ledger backend *before* transport forwarding. The transport is a secondary fan-out mechanism for SIEM integration — the ledger is the source of truth.
+1. **Dropped events are permanently lost** from the transport's perspective. However, the primary audit record is always persisted to the PostgreSQL ledger backend _before_ transport forwarding. The transport is a secondary fan-out mechanism for SIEM integration — the ledger is the source of truth.
 
 2. **Monitoring:** Operators MUST alert on `audit_enqueue_total{status="dropped"} > 0`. A non-zero drop rate indicates either:
    - The SIEM sink is too slow (increase sink concurrency or throughput)
@@ -240,4 +240,4 @@ For cross-replica verification, verify each replica's chain independently, then 
 
 ---
 
-*See also: [architecture.md](./architecture.md), [schema-migrations.md](./schema-migrations.md)*
+_See also: [architecture.md](./architecture.md), [schema-migrations.md](./schema-migrations.md)_

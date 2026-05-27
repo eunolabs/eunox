@@ -50,6 +50,7 @@ cryptographic guarantees as the self-hosted stack but via a shared-infrastructur
 multi-tenant platform.
 
 The hosted service must preserve every security invariant that makes eunox valuable:
+
 - **Fail-closed enforcement** — a billing failure must never cause enforcement
   to fail-open. The enforcement hot path is isolated from the billing path.
 - **Cryptographic audit evidence** — each enforcement decision remains KMS-signed
@@ -195,17 +196,17 @@ The subscription model maps directly onto the tiers described in
 [`docs/pricing.md`](./pricing.md). The table below focuses on the system-level
 entitlement flags that the billing service writes to the tenant record:
 
-| Entitlement flag             | Free   | Team   | Enterprise |
-| ---------------------------- | ------ | ------ | ---------- |
-| `max_agents`                 | 5      | ∞      | ∞          |
-| `max_events_per_month`       | 50 000 | ∞      | ∞          |
-| `audit_retention_days`       | 7      | 90     | configurable |
-| `sso_enabled`                | false  | true   | true       |
-| `evidence_export_enabled`    | false  | false  | true       |
-| `partner_federation_enabled` | false  | false  | true       |
-| `scim_enabled`               | false  | false  | true       |
-| `sla_tier`                   | none   | 99.9%  | 99.99%     |
-| `dedicated_support`          | false  | false  | true       |
+| Entitlement flag             | Free   | Team  | Enterprise   |
+| ---------------------------- | ------ | ----- | ------------ |
+| `max_agents`                 | 5      | ∞     | ∞            |
+| `max_events_per_month`       | 50 000 | ∞     | ∞            |
+| `audit_retention_days`       | 7      | 90    | configurable |
+| `sso_enabled`                | false  | true  | true         |
+| `evidence_export_enabled`    | false  | false | true         |
+| `partner_federation_enabled` | false  | false | true         |
+| `scim_enabled`               | false  | false | true         |
+| `sla_tier`                   | none   | 99.9% | 99.99%       |
+| `dedicated_support`          | false  | false | true         |
 
 Entitlement flags are cached by the gateway at startup and refreshed on a
 configurable TTL (default 5 minutes). Changes take effect within one TTL window —
@@ -215,7 +216,7 @@ there is intentionally no hard real-time cutoff to avoid enforcement disruption.
 
 Quota enforcement operates in two modes:
 
-**Soft quota (Free tier):** When `euno_enforcement_requests_total{tenant}` crosses
+**Soft quota (Free tier):** When `eunox_enforcement_requests_total{tenant}` crosses
 90% of `max_events_per_month`, the billing service sends a warning email.
 At 100%, enforcement is **not blocked** — decisions continue to be served,
 but an overage flag is set on the tenant record. At the next billing cycle the
@@ -267,16 +268,16 @@ Stripe → Invoice → Payment
 
 **Schema: `metering_records`**
 
-| Column           | Type        | Notes                              |
-| ---------------- | ----------- | ---------------------------------- |
-| `id`             | UUID        | Primary key                        |
-| `tenant_id`      | text        | FK → tenants                       |
-| `event_type`     | text        | `enforce`, `audit_write`, `export` |
-| `count`          | bigint      | Aggregated count for the window    |
-| `window_start`   | timestamptz | Billing window start               |
-| `window_end`     | timestamptz | Billing window end                 |
-| `pushed_to_stripe` | boolean   | True once pushed to Stripe         |
-| `created_at`     | timestamptz |                                    |
+| Column             | Type        | Notes                              |
+| ------------------ | ----------- | ---------------------------------- |
+| `id`               | UUID        | Primary key                        |
+| `tenant_id`        | text        | FK → tenants                       |
+| `event_type`       | text        | `enforce`, `audit_write`, `export` |
+| `count`            | bigint      | Aggregated count for the window    |
+| `window_start`     | timestamptz | Billing window start               |
+| `window_end`       | timestamptz | Billing window end                 |
+| `pushed_to_stripe` | boolean     | True once pushed to Stripe         |
+| `created_at`       | timestamptz |                                    |
 
 ### 4.2 Billing service
 
@@ -298,15 +299,15 @@ uses a separate schema (`billing.*`) to isolate migrations.
 eunox uses [Stripe](https://stripe.com) as the payment processor. The integration
 uses the following Stripe primitives:
 
-| Stripe primitive        | Purpose                                          |
-| ----------------------- | ------------------------------------------------ |
-| `Customer`              | One per eunox tenant (created at provisioning)   |
-| `Subscription`          | Tracks tier, status, trial period                |
-| `Meter` (new Billing)   | Tracks enforcement events per tenant per month   |
-| `MeterEvent`            | Pushed by metering consumer after aggregation    |
-| `Invoice`               | Generated monthly by Stripe; sent to customer    |
-| `PaymentMethod`         | Card / ACH / SEPA stored in Stripe Vault         |
-| `Webhook`               | `customer.subscription.updated`, `invoice.paid`, `invoice.payment_failed` events → billing service |
+| Stripe primitive      | Purpose                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `Customer`            | One per eunox tenant (created at provisioning)                                                     |
+| `Subscription`        | Tracks tier, status, trial period                                                                  |
+| `Meter` (new Billing) | Tracks enforcement events per tenant per month                                                     |
+| `MeterEvent`          | Pushed by metering consumer after aggregation                                                      |
+| `Invoice`             | Generated monthly by Stripe; sent to customer                                                      |
+| `PaymentMethod`       | Card / ACH / SEPA stored in Stripe Vault                                                           |
+| `Webhook`             | `customer.subscription.updated`, `invoice.paid`, `invoice.payment_failed` events → billing service |
 
 **Key design decisions:**
 
@@ -337,13 +338,13 @@ Stripe handles dunning (payment retry and failure notification) automatically vi
 Smart Retries. The billing service listens for the following webhook events and
 acts on them:
 
-| Webhook event                       | Action                                              |
-| ----------------------------------- | --------------------------------------------------- |
-| `invoice.payment_succeeded`         | Set `subscription_status = active`                  |
-| `invoice.payment_failed`            | Set `subscription_status = past_due`; send warning  |
-| `customer.subscription.deleted`     | Downgrade tenant to Free tier; retain audit data    |
-| `customer.subscription.trial_will_end` | Email 3-day trial expiry notice                  |
-| `customer.subscription.updated`     | Refresh entitlement flags                           |
+| Webhook event                          | Action                                             |
+| -------------------------------------- | -------------------------------------------------- |
+| `invoice.payment_succeeded`            | Set `subscription_status = active`                 |
+| `invoice.payment_failed`               | Set `subscription_status = past_due`; send warning |
+| `customer.subscription.deleted`        | Downgrade tenant to Free tier; retain audit data   |
+| `customer.subscription.trial_will_end` | Email 3-day trial expiry notice                    |
+| `customer.subscription.updated`        | Refresh entitlement flags                          |
 
 When a subscription moves to `past_due`, enforcement continues uninterrupted for
 a **grace period of 14 days**. After the grace period, the tenant is downgraded to
@@ -362,15 +363,15 @@ releasable increment of the hosted service.
 **Goal:** Single-region, manually provisioned hosted service with Free and Team
 tiers. No self-serve billing; customers contact sales for Team.
 
-| Task | Owner    | Output |
-| ---- | -------- | ------ |
+| Task | Owner    | Output                                                                                     |
+| ---- | -------- | ------------------------------------------------------------------------------------------ |
 | 1.1  | Infra    | Kubernetes cluster in us-east-1 with gateway, issuer, minter; Redis HA; Postgres with PITR |
-| 1.2  | Platform | Automated tenant provisioning script (idempotent, KMS key creation, JWKS registration) |
-| 1.3  | Platform | Stripe customer creation wired into provisioning |
-| 1.4  | Platform | Console login (OIDC SSO via a managed IdP) and API-key display |
-| 1.5  | Platform | `eunox-mcp upgrade-to-hosted` pointing at the hosted gateway URL |
-| 1.6  | Ops      | Alerting: p99 enforcement latency, Redis HA health, Postgres WAL lag |
-| 1.7  | Docs     | Public `docs/hosted-service.md` (this document); pricing page on marketing site |
+| 1.2  | Platform | Automated tenant provisioning script (idempotent, KMS key creation, JWKS registration)     |
+| 1.3  | Platform | Stripe customer creation wired into provisioning                                           |
+| 1.4  | Platform | Console login (OIDC SSO via a managed IdP) and API-key display                             |
+| 1.5  | Platform | `eunox-mcp upgrade-to-hosted` pointing at the hosted gateway URL                           |
+| 1.6  | Ops      | Alerting: p99 enforcement latency, Redis HA health, Postgres WAL lag                       |
+| 1.7  | Docs     | Public `docs/hosted-service.md` (this document); pricing page on marketing site            |
 
 **Exit criteria:** 10 external beta tenants running enforcement through the hosted
 gateway; SLO dashboards green; zero P1 incidents for 5 consecutive days.
@@ -381,16 +382,16 @@ gateway; SLO dashboards green; zero P1 incidents for 5 consecutive days.
 
 **Goal:** Self-serve Free and Team subscriptions with automated billing.
 
-| Task | Owner    | Output |
-| ---- | -------- | ------ |
-| 2.1  | Platform | `cmd/metering-consumer`: Redis Streams → `metering_records` (Postgres) |
+| Task | Owner    | Output                                                                      |
+| ---- | -------- | --------------------------------------------------------------------------- |
+| 2.1  | Platform | `cmd/metering-consumer`: Redis Streams → `metering_records` (Postgres)      |
 | 2.2  | Platform | `cmd/billing`: Stripe Meter integration; `MeterEvent` push on billing cycle |
 | 2.3  | Platform | Stripe webhook handler: subscription lifecycle events → entitlement refresh |
-| 2.4  | Platform | Free-tier soft quota: warning email at 90%, overage flag at 100% |
-| 2.5  | Frontend | Self-serve signup flow: email → OIDC IdP → provisioning → Stripe checkout |
-| 2.6  | Frontend | Console billing page: current usage meter, plan, Stripe portal link |
-| 2.7  | Ops      | Metering pipeline monitoring: consumer lag, push success rate |
-| 2.8  | Security | PCI DSS scope review: confirm no card data touches eunox infra |
+| 2.4  | Platform | Free-tier soft quota: warning email at 90%, overage flag at 100%            |
+| 2.5  | Frontend | Self-serve signup flow: email → OIDC IdP → provisioning → Stripe checkout   |
+| 2.6  | Frontend | Console billing page: current usage meter, plan, Stripe portal link         |
+| 2.7  | Ops      | Metering pipeline monitoring: consumer lag, push success rate               |
+| 2.8  | Security | PCI DSS scope review: confirm no card data touches eunox infra              |
 
 **Exit criteria:** End-to-end self-serve signup → Free-tier enforcement → upgrade
 to Team → Stripe invoice generated and paid; metering consumer lag < 60 seconds.
@@ -402,17 +403,17 @@ to Team → Stripe invoice generated and paid; metering consumer lag < 60 second
 **Goal:** Enterprise tier fully operational with data residency, dedicated support,
 and compliance evidence export.
 
-| Task | Owner    | Output |
-| ---- | -------- | ------ |
-| 3.1  | Infra    | eu-west-1 region: full stack replica, independent Postgres, independent KMS |
-| 3.2  | Infra    | DNS geolocation routing: US tenants → us-east-1, EU tenants → eu-west-1 |
-| 3.3  | Platform | Topology C provisioning: dedicated Postgres and Redis per Enterprise tenant |
+| Task | Owner    | Output                                                                              |
+| ---- | -------- | ----------------------------------------------------------------------------------- |
+| 3.1  | Infra    | eu-west-1 region: full stack replica, independent Postgres, independent KMS         |
+| 3.2  | Infra    | DNS geolocation routing: US tenants → us-east-1, EU tenants → eu-west-1             |
+| 3.3  | Platform | Topology C provisioning: dedicated Postgres and Redis per Enterprise tenant         |
 | 3.4  | Platform | Evidence export API (`GET /api/v1/audit/export`) behind Enterprise entitlement flag |
-| 3.5  | Platform | Partner DID federation config in console (Enterprise) |
-| 3.6  | Platform | SCIM 2.0 provisioning endpoint behind Enterprise entitlement flag |
+| 3.5  | Platform | Partner DID federation config in console (Enterprise)                               |
+| 3.6  | Platform | SCIM 2.0 provisioning endpoint behind Enterprise entitlement flag                   |
 | 3.7  | Sales    | Custom invoicing support: purchase orders, NET-30 billing via manual Stripe entries |
-| 3.8  | Security | SOC 2 Type I readiness assessment; audit log evidence package |
-| 3.9  | Ops      | 99.99% SLA monitoring; dedicated PagerDuty rotation for Enterprise tenants |
+| 3.8  | Security | SOC 2 Type I readiness assessment; audit log evidence package                       |
+| 3.9  | Ops      | 99.99% SLA monitoring; dedicated PagerDuty rotation for Enterprise tenants          |
 
 **Exit criteria:** 3 paying Enterprise tenants in production; EU data-residency
 tested (audit records do not leave eu-west-1); SOC 2 Type I report issued.
@@ -424,16 +425,16 @@ tested (audit records do not leave eu-west-1); SOC 2 Type I report issued.
 **Goal:** Reach 1 000 paying tenants; SOC 2 Type II; HIPAA BAA; annual contract
 support.
 
-| Task | Owner    | Output |
-| ---- | -------- | ------ |
-| 4.1  | Platform | Annual subscription billing (Stripe billing cycles, prorated upgrades) |
-| 4.2  | Platform | Usage-based overages for Team: enforcement events above quota billed at per-1k rate |
-| 4.3  | Platform | Multi-region metering aggregation: single Stripe customer across regions |
-| 4.4  | Infra    | apac-southeast-1 region (Phase 4): Singapore / Australia data residency |
-| 4.5  | Security | SOC 2 Type II observation period (12 weeks) and report |
+| Task | Owner    | Output                                                                                  |
+| ---- | -------- | --------------------------------------------------------------------------------------- |
+| 4.1  | Platform | Annual subscription billing (Stripe billing cycles, prorated upgrades)                  |
+| 4.2  | Platform | Usage-based overages for Team: enforcement events above quota billed at per-1k rate     |
+| 4.3  | Platform | Multi-region metering aggregation: single Stripe customer across regions                |
+| 4.4  | Infra    | apac-southeast-1 region (Phase 4): Singapore / Australia data residency                 |
+| 4.5  | Security | SOC 2 Type II observation period (12 weeks) and report                                  |
 | 4.6  | Legal    | HIPAA Business Associate Agreement template; Topology C deployment guide for healthcare |
-| 4.7  | Sales    | Partner program: embedded licensing for ISVs building on eunox |
-| 4.8  | Platform | Admin JWT auth migration: deprecate X-Admin-Api-Key fully (was deprecated in Task 15) |
+| 4.7  | Sales    | Partner program: embedded licensing for ISVs building on eunox                          |
+| 4.8  | Platform | Admin JWT auth migration: deprecate X-Admin-Api-Key fully (was deprecated in Task 15)   |
 
 **Exit criteria:** 1 000 active tenants; SOC 2 Type II report issued; HIPAA BAA
 available; no hard quota incidents (unintentional enforcement blocks).
@@ -442,12 +443,12 @@ available; no hard quota incidents (unintentional enforcement blocks).
 
 ## Summary
 
-| Phase | Weeks | Milestone |
-| ----- | ----- | --------- |
-| 1 — Hosted MVP | 1–6 | Single-region hosted service; 10 beta tenants |
-| 2 — Billing | 7–12 | Self-serve Free and Team; Stripe metering live |
-| 3 — Enterprise | 13–20 | Multi-region; data residency; SOC 2 Type I |
-| 4 — Growth | 21–28 | 1 000 tenants; SOC 2 Type II; HIPAA BAA |
+| Phase          | Weeks | Milestone                                      |
+| -------------- | ----- | ---------------------------------------------- |
+| 1 — Hosted MVP | 1–6   | Single-region hosted service; 10 beta tenants  |
+| 2 — Billing    | 7–12  | Self-serve Free and Team; Stripe metering live |
+| 3 — Enterprise | 13–20 | Multi-region; data residency; SOC 2 Type I     |
+| 4 — Growth     | 21–28 | 1 000 tenants; SOC 2 Type II; HIPAA BAA        |
 
 The enforcement hot path remains architecturally isolated from all billing and
 provisioning components at every phase. Billing failures downgrade entitlements

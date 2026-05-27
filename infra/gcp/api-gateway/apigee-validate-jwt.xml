@@ -1,5 +1,5 @@
 <!--
-  Apigee X policy: validate the Euno capability JWT.
+  Apigee X policy: validate the Eunox capability JWT.
 
   Sprint-1 multi-cloud parity for the Azure APIM `validate-jwt` policy and
   the AWS API Gateway custom Lambda authorizer in
@@ -18,7 +18,7 @@
   lives in exactly one place.
 -->
 <VerifyJWT name="VerifyCapabilityToken" continueOnError="false" enabled="true">
-  <DisplayName>Verify Euno capability JWT</DisplayName>
+  <DisplayName>Verify Eunox capability JWT</DisplayName>
   <Algorithm>RS256</Algorithm>
   <Source>request.header.authorization.bearer</Source>
   <PublicKey>
@@ -26,9 +26,9 @@
       JWKS endpoint of the Capability Issuer.  Apigee handles caching,
       key rotation, and kid lookup automatically.
     -->
-    <JWKS uri="https://issuer.euno.example/.well-known/jwks.json"/>
+    <JWKS uri="https://issuer.eunox.example/.well-known/jwks.json"/>
   </PublicKey>
-  <Issuer>https://issuer.euno.example</Issuer>
+  <Issuer>https://issuer.eunox.example</Issuer>
   <Audience>tool-gateway</Audience>
   <AdditionalClaims>
     <!--

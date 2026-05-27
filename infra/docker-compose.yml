@@ -1,4 +1,4 @@
-# Euno Tool Gateway — canonical local stack
+# Eunox Tool Gateway — canonical local stack
 #
 # Usage
 # -----
@@ -104,7 +104,7 @@ services:
   # or production deployments.
   redis:
     image: redis:7-alpine
-    container_name: euno-redis
+    container_name: eunox-redis
     profiles: ["full", "smoke"]
     restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
@@ -126,20 +126,20 @@ services:
   # schema is created automatically; no separate migration step required.
   postgres:
     image: postgres:16-alpine
-    container_name: euno-postgres
+    container_name: eunox-postgres
     profiles: ["full", "smoke"]
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       ${POSTGRES_DB:-euno_audit}
-      POSTGRES_USER:     ${POSTGRES_USER:-euno}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-euno_dev_secret}
+      POSTGRES_DB:       ${POSTGRES_DB:-eunox_audit}
+      POSTGRES_USER:     ${POSTGRES_USER:-eunox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eunox_dev_secret}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
       # Expose locally for debugging; remove in production.
       - "${POSTGRES_EXPOSE_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-euno} -d ${POSTGRES_DB:-euno_audit}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eunox} -d ${POSTGRES_DB:-eunox_audit}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -157,7 +157,7 @@ services:
   # issuer boots without attempting to reach an unavailable IdP.
   capability-issuer:
     image: eunox/issuer:local
-    container_name: euno-capability-issuer
+    container_name: eunox-capability-issuer
     restart: unless-stopped
     environment:
       PORT:        ${ISSUER_PORT:-3001}
@@ -205,7 +205,7 @@ services:
   # Use --profile full for a durable stack (Redis + Postgres).
   gateway:
     <<: *gateway-build
-    container_name: euno-gateway
+    container_name: eunox-gateway
     profiles: ["dev"]
     depends_on:
       capability-issuer:
@@ -234,7 +234,7 @@ services:
   # Postgres backends and auto-runs schema migrations.
   gateway-full:
     <<: *gateway-build
-    container_name: euno-gateway-full
+    container_name: eunox-gateway-full
     profiles: ["full", "smoke"]
     depends_on:
       capability-issuer:
@@ -249,7 +249,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       # Postgres audit ledger — backed by the postgres service defined above.
       AUDIT_LEDGER_BACKEND: postgres
-      AUDIT_LEDGER_PG_URL: "postgresql://${POSTGRES_USER:-euno}:${POSTGRES_PASSWORD:-euno_dev_secret}@postgres:5432/${POSTGRES_DB:-euno_audit}"
+      AUDIT_LEDGER_PG_URL: "postgresql://${POSTGRES_USER:-eunox}:${POSTGRES_PASSWORD:-eunox_dev_secret}@postgres:5432/${POSTGRES_DB:-eunox_audit}"
       AUDIT_LEDGER_HMAC_SECRET: ${AUDIT_LEDGER_HMAC_SECRET:-dev-hmac-secret-change-in-production}
       AUDIT_LEDGER_RUN_MIGRATIONS: "true"
     healthcheck:
@@ -272,13 +272,13 @@ services:
       context: mock-oidc
       dockerfile: Dockerfile
     image: eunox/mock-oidc:local
-    container_name: euno-mock-oidc
+    container_name: eunox-mock-oidc
     profiles: ["smoke"]
     restart: unless-stopped
     environment:
       PORT: 3003
       MOCK_OIDC_ISSUER:    "http://mock-oidc:3003"
-      MOCK_OIDC_CLIENT_ID: "euno-smoke-client"
+      MOCK_OIDC_CLIENT_ID: "eunox-smoke-client"
     ports:
       - "${MOCK_OIDC_EXPOSE_PORT:-3004}:3003"
     healthcheck:
@@ -294,7 +294,7 @@ services:
   # See docs/self-host.md §12.6 for configuration reference.
   db-token-service:
     image: eunox/db-token-service:local
-    container_name: euno-db-token-service
+    container_name: eunox-db-token-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
     depends_on:
@@ -323,7 +323,7 @@ services:
   # See docs/self-host.md §12.7 for configuration reference.
   storage-grant-service:
     image: eunox/storage-grant-service:local
-    container_name: euno-storage-grant-service
+    container_name: eunox-storage-grant-service
     profiles: ["full", "smoke"]
     restart: unless-stopped
     depends_on:
@@ -353,7 +353,7 @@ services:
   # See docs/self-host.md §12.11 and §13 for configuration reference.
   posture-emitter:
     image: eunox/posture-emitter:local
-    container_name: euno-posture-emitter
+    container_name: eunox-posture-emitter
     profiles: ["full", "smoke"]
     restart: unless-stopped
     volumes:
@@ -371,7 +371,7 @@ services:
   #   docker compose --profile smoke up --abort-on-container-exit
   smoke-test:
     image: alpine/curl:latest
-    container_name: euno-smoke-test
+    container_name: eunox-smoke-test
     profiles: ["smoke"]
     depends_on:
       gateway-full:

@@ -4,15 +4,15 @@ description: "security architects, compliance engineers, and CISOs who need to d
 pubDate: "2026-06-16"
 ---
 
-*Audience: security architects, compliance engineers, and CISOs who need to demonstrate AI agent governance in a SOC 2 audit*
+_Audience: security architects, compliance engineers, and CISOs who need to demonstrate AI agent governance in a SOC 2 audit_
 
 ---
 
 SOC 2 is one of those standards that looks approachable from the outside and turns out to be more nuanced than it appears once you're actually preparing an audit package. The Trust Services Criteria are intentionally broad — they're designed to cover a wide range of systems — which means the real work is in the mapping: taking what your system actually does and explaining, with evidence, how it satisfies each criterion.
 
-I've been through this mapping exercise with euno a couple of times now, and the two criteria that generate the most questions are CC6 (Logical and Physical Access Controls) and CC7 (System Operations). CC6 because auditors immediately ask "how do you know only authorised agents can call these tools?", and CC7 because the question "how do you know something went wrong?" requires you to explain your monitoring, anomaly detection, and incident response posture.
+I've been through this mapping exercise with eunox a couple of times now, and the two criteria that generate the most questions are CC6 (Logical and Physical Access Controls) and CC7 (System Operations). CC6 because auditors immediately ask "how do you know only authorised agents can call these tools?", and CC7 because the question "how do you know something went wrong?" requires you to explain your monitoring, anomaly detection, and incident response posture.
 
-This post is a practical walkthrough of how euno's architecture maps to those two criteria, what the specific controls look like in the platform, and how to extract the evidence you need for an audit package. I'm going to reference the underlying technical details covered in earlier posts — particularly [the capability tokens post](./09-capability-tokens.md), [the reference monitor post](./10-tool-gateway-reference-monitor.md), and [the audit log post](../docs/blog/11-tamper-evident-audit-logs.md) — and focus here on connecting those mechanisms to the control language auditors actually use.
+This post is a practical walkthrough of how eunox's architecture maps to those two criteria, what the specific controls look like in the platform, and how to extract the evidence you need for an audit package. I'm going to reference the underlying technical details covered in earlier posts — particularly [the capability tokens post](./09-capability-tokens.md), [the reference monitor post](./10-tool-gateway-reference-monitor.md), and [the audit log post](../docs/blog/11-tamper-evident-audit-logs.md) — and focus here on connecting those mechanisms to the control language auditors actually use.
 
 ---
 
@@ -29,7 +29,7 @@ CC6 covers logical and physical access. The physical half is mostly about your h
 
 For a traditional web application, these map reasonably cleanly to your IAM setup, your VPC/firewall rules, your TLS configuration. For an AI agent platform, you have an additional layer that most auditors aren't familiar with yet: the question of what an AI agent is allowed to do once it's authenticated. A service account that can call your gateway is a valid principal, but "this service account exists and has a valid API key" doesn't tell you anything about which tool calls that agent is authorised to make, under what conditions, or what happens when it tries to exceed those bounds.
 
-This is the gap that euno's capability token model fills, and it's worth explaining to an auditor explicitly rather than assuming they'll see the connection.
+This is the gap that eunox's capability token model fills, and it's worth explaining to an auditor explicitly rather than assuming they'll see the connection.
 
 ---
 
@@ -37,7 +37,7 @@ This is the gap that euno's capability token model fills, and it's worth explain
 
 CC6.1 is the core access control criterion. The auditor wants to know: for any given resource, how do you decide whether a request is authorised?
 
-The euno answer has several components.
+The eunox answer has several components.
 
 **Identity establishment.** Before any tool call is evaluated, the agent session must present a valid JWT capability token. That token is signed by a KMS-backed key held by the capability issuer service — either Azure Key Vault, AWS KMS, or GCP Cloud KMS depending on your deployment. The token carries a `sub` claim that identifies the agent principal, an `iss` claim that identifies the issuer, and an `aud` claim that scopes the token to a specific gateway instance. A token that was not issued by a trusted issuer, or that was issued for a different gateway, fails signature verification and is denied. There is no path to tool access that bypasses this verification step.
 
@@ -59,12 +59,13 @@ This is not a broad permission grant — it's a narrow, per-session specificatio
 **Evidence for auditors.** The `GET /api/v1/audit/export` endpoint returns structured OCSF-formatted records for every tool call — allowed and denied — with the token identity, the matched capability, the conditions evaluated, and the decision. For CC6.1, you can produce an export that shows: here are all the tool calls made in this period, here is the identity of the agent making each call, here is the capability that authorised or denied the call. The decision rationale is in the record, not reconstructed from logs.
 
 **What to present.** For a CC6.1 finding, I'd present:
+
 1. The capability issuer service's architecture (JWT signing with KMS-backed key, JWKS endpoint, token lifetime)
 2. A sample decoded token showing the `capabilities` structure
 3. A redacted audit export showing the decision fields per call
 4. The enforcement pipeline documentation showing each verification step and its fail-closed behaviour
 
-The fail-closed property is worth emphasising explicitly. Some auditors will ask "what happens when your verification step can't reach the JWKS endpoint?" The answer — deny — is the right one for CC6.1, and it distinguishes euno from systems that fall back to permit during partial outages.
+The fail-closed property is worth emphasising explicitly. Some auditors will ask "what happens when your verification step can't reach the JWKS endpoint?" The answer — deny — is the right one for CC6.1, and it distinguishes eunox from systems that fall back to permit during partial outages.
 
 ---
 
@@ -78,9 +79,10 @@ For traditional systems this is your Joiner/Mover/Leaver process — user joins 
 
 **Deprovisioning.** There are two deprovisioning mechanisms. First, token expiry: JWT capability tokens are short-lived (five minutes or less in hosted mode). An agent session that isn't actively making calls will naturally lose its active token. Second, explicit revocation: `DELETE /admin/v1/keys/{prefix}` immediately revokes the API key in the minter, so future key-authenticated requests and fresh token minting attempts fail. Existing capability tokens remain bounded by their normal TTL, and JTI-based revocation remains a separate gateway-side incident-response control when you need to invalidate a specific token immediately.
 
-**SCIM integration.** For enterprise deployments, the SCIM 2.0 provisioning integration connects euno to your identity provider's Joiner/Mover/Leaver process directly. When a user is offboarded in your IdP, the SCIM deprovision event triggers capability template cleanup for any agents associated with that user. The SCIM bridge (described in detail in [the SCIM post](./27-scim-for-ai-agents.md)) handles group-to-capability-template mapping, so you can say "members of the data-analysts group get read-only analytics capabilities" and have that applied and revoked automatically when group membership changes.
+**SCIM integration.** For enterprise deployments, the SCIM 2.0 provisioning integration connects eunox to your identity provider's Joiner/Mover/Leaver process directly. When a user is offboarded in your IdP, the SCIM deprovision event triggers capability template cleanup for any agents associated with that user. The SCIM bridge (described in detail in [the SCIM post](./27-scim-for-ai-agents.md)) handles group-to-capability-template mapping, so you can say "members of the data-analysts group get read-only analytics capabilities" and have that applied and revoked automatically when group membership changes.
 
 **Evidence for auditors.** The admin audit log records every provisioning and deprovisioning event with timestamp, operator identity, and the key/token affected. For CC6.2, you can produce:
+
 1. Admin audit log exports showing key creation and revocation events
 2. SCIM event logs showing deprovision triggers and their effect on capability templates
 3. A demonstration of the revocation path (issue a key, revoke it, show that subsequent key-authenticated requests or token-minting attempts fail immediately, then pair that with short TTLs or JTI revocation for already-issued tokens)
@@ -123,17 +125,18 @@ For policy vulnerabilities, the `GET /api/v1/audit/export` data combined with th
 
 ## CC7.2 — Monitoring for anomalies
 
-This is where euno's audit infrastructure pays off directly for compliance. The OCSF API Activity records in the Postgres ledger are structured, queryable data about every decision the enforcement pipeline made. "How do you monitor for anomalies?" has a specific, defensible answer.
+This is where eunox's audit infrastructure pays off directly for compliance. The OCSF API Activity records in the Postgres ledger are structured, queryable data about every decision the enforcement pipeline made. "How do you monitor for anomalies?" has a specific, defensible answer.
 
-**Denial spike alerting.** A spike in denied calls signals that something is being attempted that the policy was designed to prevent. The gateway exposes the Prometheus counter `euno_gateway_decisions_total{decision="deny"}` for that top-line alert. To break the spike down by `conditionType` or `denialCode`, pivot into the structured audit records from `GET /api/v1/audit/records` or your exported OCSF events. An anomalous cluster of `allowedOperations` denials might mean an agent encountered an adversarial injection and is now attempting SQL operations it shouldn't.
+**Denial spike alerting.** A spike in denied calls signals that something is being attempted that the policy was designed to prevent. The gateway exposes the Prometheus counter `eunox_gateway_decisions_total{decision="deny"}` for that top-line alert. To break the spike down by `conditionType` or `denialCode`, pivot into the structured audit records from `GET /api/v1/audit/records` or your exported OCSF events. An anomalous cluster of `allowedOperations` denials might mean an agent encountered an adversarial injection and is now attempting SQL operations it shouldn't.
 
-**Call volume anomalies.** `euno_gateway_decisions_total{decision="allow"}` gives you the baseline allow volume at the gateway. Significant deviations from baseline are worth investigating. For tenant-, agent-, or resource-level drilldown, use the structured audit records rather than relying on Prometheus labels that don't exist on the counter. An agent that normally makes 20 database calls per hour suddenly making 2,000 is a signal — possibly a runaway loop, possibly an agent that's been manipulated.
+**Call volume anomalies.** `eunox_gateway_decisions_total{decision="allow"}` gives you the baseline allow volume at the gateway. Significant deviations from baseline are worth investigating. For tenant-, agent-, or resource-level drilldown, use the structured audit records rather than relying on Prometheus labels that don't exist on the counter. An agent that normally makes 20 database calls per hour suddenly making 2,000 is a signal — possibly a runaway loop, possibly an agent that's been manipulated.
 
-**Kill-switch state monitoring.** The gateway exports `euno_gateway_kill_switch_active{global_kill="0"|"1"}` as the primary kill-switch gauge, plus `euno_gateway_kill_switch_killed_sessions` and `euno_gateway_kill_switch_killed_agents` counters for scoped actions. If a kill-switch is activated and not cleared within your expected incident response window, that should generate a high-priority alert — either it was intentional and someone should have cleared it, or it was triggered automatically and someone needs to investigate the cause.
+**Kill-switch state monitoring.** The gateway exports `eunox_gateway_kill_switch_active{global_kill="0"|"1"}` as the primary kill-switch gauge, plus `eunox_gateway_kill_switch_killed_sessions` and `eunox_gateway_kill_switch_killed_agents` counters for scoped actions. If a kill-switch is activated and not cleared within your expected incident response window, that should generate a high-priority alert — either it was intentional and someone should have cleared it, or it was triggered automatically and someone needs to investigate the cause.
 
 **New agent identities.** The `sub` claim in capability tokens identifies the agent principal. Monitoring for new `sub` values that appear in the audit log without a corresponding provisioning event in the admin audit can catch agents that were deployed without going through your standard provisioning process.
 
 **Evidence for auditors.** For CC7.2, present:
+
 1. Your Prometheus dashboard (or alerting rules) showing the metrics you monitor
 2. The alert thresholds and escalation paths for each metric
 3. An example of an anomaly being detected and the resulting investigation record
@@ -144,9 +147,10 @@ This is where euno's audit infrastructure pays off directly for compliance. The 
 
 CC7.3 asks whether you can identify security incidents when they occur and whether you can classify their severity.
 
-The OCSF schema that euno uses for audit records maps naturally to incident classification. API Activity records carry `severity_id`, `status`, and `category_uid` fields. A denial event due to `allowedOperations` violation is OCSF category 6003 (API Activity), severity informational when isolated, severity high when clustered. You can write SIEM rules against the OCSF schema without custom field mapping.
+The OCSF schema that eunox uses for audit records maps naturally to incident classification. API Activity records carry `severity_id`, `status`, and `category_uid` fields. A denial event due to `allowedOperations` violation is OCSF category 6003 (API Activity), severity informational when isolated, severity high when clustered. You can write SIEM rules against the OCSF schema without custom field mapping.
 
 For automated incident identification, the policy violation record includes:
+
 - The full request arguments (subject to `redactFields` obligations)
 - The specific condition that failed
 - The token identity and session context
@@ -198,13 +202,13 @@ For auditors, the practical demonstration is: export the audit records, run the 
 
 ## What this doesn't solve
 
-No single platform covers all of SOC 2 on its own, and I'd be doing you a disservice by pretending otherwise. CC6 and CC7 have criteria that sit outside what euno controls:
+No single platform covers all of SOC 2 on its own, and I'd be doing you a disservice by pretending otherwise. CC6 and CC7 have criteria that sit outside what eunox controls:
 
 - Physical security of your hosting infrastructure is your CSP's responsibility
-- Identity provider configuration (SSO, MFA for human operators) is outside euno's scope
+- Identity provider configuration (SSO, MFA for human operators) is outside eunox's scope
 - Network-level access controls around the gateway and capability issuer are deployment-specific
 - Your incident response process, escalation paths, and communication procedures are yours to define and demonstrate
 
-What euno provides is the governance layer for agent activity specifically — the tamper-evident evidence that agents were operating within defined policy, the structured audit trail for access reviews, and the kill-switch and revocation mechanisms for incident response. Combined with your baseline cloud security posture and identity management, it fills the AI-agent-specific gap that traditional SOC 2 programs weren't designed to address.
+What eunox provides is the governance layer for agent activity specifically — the tamper-evident evidence that agents were operating within defined policy, the structured audit trail for access reviews, and the kill-switch and revocation mechanisms for incident response. Combined with your baseline cloud security posture and identity management, it fills the AI-agent-specific gap that traditional SOC 2 programs weren't designed to address.
 
 If you're preparing for a SOC 2 Type II audit and have questions about specific criteria mapping, the self-hosting reference in `docs/self-host.md` and the control-mapping guide in `docs/security/soc2-mapping.md` are the current in-repo references for export workflows and auditor questions. And if you're deploying on-premises rather than in the cloud, the air-gapped deployment post covers the infrastructure considerations that come with running this stack in an environment without internet access.

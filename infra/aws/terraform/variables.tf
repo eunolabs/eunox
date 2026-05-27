@@ -12,7 +12,7 @@ variable "aws_account_id" {
 variable "name_prefix" {
   description = "Short prefix used to name all resources (3-12 lowercase alphanumeric chars)."
   type        = string
-  default     = "euno"
+  default     = "eunox"
   validation {
     condition     = can(regex("^[a-z0-9]{3,12}$", var.name_prefix))
     error_message = "name_prefix must be 3-12 lowercase alphanumeric characters."
@@ -42,7 +42,7 @@ variable "kubernetes_version" {
 }
 
 variable "use_fargate" {
-  description = "When true, provision EKS Fargate for euno-system instead of a managed node group."
+  description = "When true, provision EKS Fargate for eunox-system instead of a managed node group."
   type        = bool
   default     = true
 }
@@ -56,7 +56,7 @@ variable "db_instance_class" {
 variable "db_username" {
   description = "Master username for the RDS PostgreSQL instance."
   type        = string
-  default     = "euno_admin"
+  default     = "eunox_admin"
 }
 
 variable "db_multi_az" {
@@ -117,7 +117,7 @@ variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
   default = {
-    product   = "euno"
+    product   = "eunox"
     component = "capability-governance"
   }
 }

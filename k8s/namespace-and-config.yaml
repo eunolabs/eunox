@@ -2,19 +2,19 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: euno-system
+  name: eunox-system
   labels:
-    name: euno-system
+    name: eunox-system
 ---
 # ConfigMap for common configuration
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: euno-config
-  namespace: euno-system
+  name: eunox-config
+  namespace: eunox-system
 data:
   # Azure Configuration
-  keyvault-url: "https://euno-keyvault.vault.azure.net/"
+  keyvault-url: "https://eunox-keyvault.vault.azure.net/"
   azure-tenant-id: "<AZURE_TENANT_ID>"
   azure-client-id: "<AZURE_CLIENT_ID>"
   issuer-did: "did:web:yourdomain.com"
@@ -32,13 +32,13 @@ data:
   # replicas.  Defaults to the in-cluster Redis shipped in `redis.yaml`;
   # override with a managed Redis URL (e.g. Azure Cache for Redis,
   # ElastiCache, Memorystore) for production.
-  redis-url: "redis://redis.euno-system.svc.cluster.local:6379"
+  redis-url: "redis://redis.eunox-system.svc.cluster.local:6379"
 ---
 # Secret placeholders (create these separately with actual values)
 # kubectl create secret generic issuer-secrets \
 #   --from-literal=azure-client-secret=<SECRET> \
-#   -n euno-system
+#   -n eunox-system
 #
 # kubectl create secret generic gateway-secrets \
 #   --from-literal=admin-api-key=<SECRET> \
-#   -n euno-system
+#   -n eunox-system

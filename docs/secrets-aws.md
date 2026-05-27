@@ -40,7 +40,7 @@ production deployments:
 | ------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
 | `eunox/prod/audit-ledger-hmac-secret` | `AUDIT_LEDGER_HMAC_SECRET` | 64-hex-char HMAC key for audit ledger integrity                                                    |
 | `eunox/prod/gateway-admin-api-key`    | `ADMIN_API_KEY`            | Gateway admin API key (≥ 32 chars; referred to as `GATEWAY_ADMIN_API_KEY` in the multi-cloud plan) |
-| `eunox/prod/partner-did-pin-secret`   | `PARTNER_DID_PIN_SECRET`   | Secret for partner DID pin derivation                                                                              |
+| `eunox/prod/partner-did-pin-secret`   | `PARTNER_DID_PIN_SECRET`   | Secret for partner DID pin derivation                                                              |
 | `eunox/prod/redis-url`                | `REDIS_URL`                | Redis connection string (incl. password)                                                           |
 | `eunox/prod/audit-ledger-pg-url`      | `AUDIT_LEDGER_PG_URL`      | PostgreSQL connection string for the audit ledger                                                  |
 | `eunox/prod/issuer-db-url`            | `ISSUER_DB_URL`            | PostgreSQL connection string for the capability issuer                                             |
@@ -66,7 +66,7 @@ aws secretsmanager create-secret \
 
 ## 3. IAM policies
 
-### 3.1 `EunoSecretsReadPolicy` — Secrets Manager read
+### 3.1 `EunoxSecretsReadPolicy` — Secrets Manager read
 
 Both ESO and ASCP require an IAM policy that permits `secretsmanager:GetSecretValue`
 on the relevant secrets.
@@ -76,7 +76,7 @@ on the relevant secrets.
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EunoSecretsRead",
+      "Sid": "EunoxSecretsRead",
       "Effect": "Allow",
       "Action": [
         "secretsmanager:GetSecretValue",
@@ -90,16 +90,16 @@ on the relevant secrets.
 }
 ```
 
-Save this as `EunoSecretsReadPolicy` (referenced in the IRSA setup in
+Save this as `EunoxSecretsReadPolicy` (referenced in the IRSA setup in
 [`docs/deploy-eks.md`](./deploy-eks.md) §3):
 
 ```bash
 aws iam create-policy \
-  --policy-name EunoSecretsReadPolicy \
+  --policy-name EunoxSecretsReadPolicy \
   --policy-document file://iam-policies/eunox-secrets-read.json
 ```
 
-### 3.2 `EunoKmsSigningPolicy` — KMS signing
+### 3.2 `EunoxKmsSigningPolicy` — KMS signing
 
 The `capability-issuer` and `tool-gateway` pods need KMS signing access when
 `SIGNING_PROVIDER=aws-kms`. This policy must be scoped to the specific key ARN.
@@ -109,7 +109,7 @@ The `capability-issuer` and `tool-gateway` pods need KMS signing access when
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EunoKmsSigning",
+      "Sid": "EunoxKmsSigning",
       "Effect": "Allow",
       "Action": ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"],
       "Resource": ["arn:aws:kms:us-east-1:123456789012:key/<key-id>"]
@@ -122,7 +122,7 @@ Create the policy:
 
 ```bash
 aws iam create-policy \
-  --policy-name EunoKmsSigningPolicy \
+  --policy-name EunoxKmsSigningPolicy \
   --policy-document file://iam-policies/eunox-kms-signing.json
 ```
 
@@ -388,7 +388,7 @@ Automate this with an EventBridge rule that triggers a Lambda function on the
 
 - [ ] All secrets listed in §2 are stored in AWS Secrets Manager — none are
       committed to source control or stored as plaintext in ConfigMaps.
-- [ ] The `EunoSecretsReadPolicy` IAM policy uses the principle of least
+- [ ] The `EunoxSecretsReadPolicy` IAM policy uses the principle of least
       privilege — only `GetSecretValue` and `DescribeSecret` on the
       `eunox/prod/*` prefix.
 - [ ] IRSA is used for pod authentication — no long-lived access keys in
@@ -440,7 +440,7 @@ Manager one at a time without changing the rest of the configuration.
 ### 9.2 IAM policy addition
 
 The pod's IRSA role needs `secretsmanager:GetSecretValue` on each pinned ARN.
-The existing `EunoSecretsReadPolicy` from §3.1 already covers the `eunox/prod/*`
+The existing `EunoxSecretsReadPolicy` from §3.1 already covers the `eunox/prod/*`
 prefix. If you use explicit ARNs outside that prefix, add them to the policy
 `Resource` array.
 
@@ -477,6 +477,6 @@ AWS_EDDSA_KEY_ID=partner-signing-key-v1   # JWT kid claim (optional; defaults to
 The `AwsEdDsaSigner` fetches the PEM from Secrets Manager on the first sign
 call, caches it in memory, and signs locally using `jose` (EdDSA / Ed25519).
 
-**IAM policy** — the same `EunoSecretsReadPolicy` covers the EdDSA key secret
+**IAM policy** — the same `EunoxSecretsReadPolicy` covers the EdDSA key secret
 if it is under the `eunox/prod/*` prefix. Add it to the `Resource` array if
 stored elsewhere.

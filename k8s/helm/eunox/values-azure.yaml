@@ -3,10 +3,10 @@
 # Apply this file on top of the base values.yaml when deploying on Azure
 # Kubernetes Service (AKS):
 #
-#   helm install euno ./k8s/helm/euno \
-#     --namespace euno \
-#     -f k8s/helm/euno/values.yaml \
-#     -f k8s/helm/euno/values-azure.yaml
+#   helm install eunox ./k8s/helm/eunox \
+#     --namespace eunox \
+#     -f k8s/helm/eunox/values.yaml \
+#     -f k8s/helm/eunox/values-azure.yaml
 #
 # All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
 # should be sourced from Azure Key Vault rather than supplied here.
@@ -48,21 +48,21 @@ gateway:
   # ── Non-sensitive configuration ──────────────────────────────────────────
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
     GATEWAY_AUDIENCE: gateway
     ADMIN_HOST: "127.0.0.1"
 
     # Azure Key Vault-backed audit evidence signing.
     # Set SIGNING_PROVIDER=azure-keyvault and supply the Key Vault URL.
     SIGNING_PROVIDER: azure-keyvault
-    AZURE_KEYVAULT_URL: "https://my-euno-keyvault.vault.azure.net/"
+    AZURE_KEYVAULT_URL: "https://my-eunox-keyvault.vault.azure.net/"
     AZURE_KEYVAULT_KEY_NAME: "capability-signing-key"
 
     # Cross-chain anchor to Azure Blob Storage (optional; SOC 2 CC7.4).
     # ENABLE_CROSS_CHAIN_ANCHOR: "true"
     # AUDIT_LEDGER_OBJECT_STORE_PROVIDER: azure-blob
-    # AUDIT_LEDGER_AZURE_CONTAINER: "euno-audit-anchor-prod"
-    # AUDIT_LEDGER_AZURE_ACCOUNT_NAME: "myeunosa"
+    # AUDIT_LEDGER_AZURE_CONTAINER: "eunox-audit-anchor-prod"
+    # AUDIT_LEDGER_AZURE_ACCOUNT_NAME: "myeunoxsa"
 
     # Secret store provider: uncomment to enable SDK-based Key Vault lookup
     # at startup instead of relying on env vars or ESO/CSI injection.
@@ -73,7 +73,7 @@ gateway:
   # When using ESO (External Secrets Operator) or the Azure Key Vault
   # Provider for Secrets Store CSI Driver (recommended), set existingSecret
   # and leave secretEnv empty.
-  # existingSecret: euno-gateway-secret
+  # existingSecret: eunox-gateway-secret
   secretEnv: {}
 
 # ── issuer ─────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ issuer:
 
   env:
     NODE_ENV: production
-    EUNO_DEPLOYMENT_TIER: multi-replica
+    EUNOX_DEPLOYMENT_TIER: multi-replica
 
     # Identity provider: Azure Active Directory (Entra ID).
     # See docs/issuer-idp-setup.md §1 for Azure AD setup and §9 for SCIM.
@@ -101,7 +101,7 @@ issuer:
 
     # Token signing via Azure Key Vault.
     SIGNING_PROVIDER: azure-keyvault
-    AZURE_KEYVAULT_URL: "https://my-euno-keyvault.vault.azure.net/"
+    AZURE_KEYVAULT_URL: "https://my-eunox-keyvault.vault.azure.net/"
     AZURE_KEYVAULT_KEY_NAME: "capability-signing-key"
 
     # Schema initialisation — run once on first deploy.
@@ -111,7 +111,7 @@ issuer:
     # See docs/issuer-idp-setup.md §9 for the full SCIM bridge guide.
     # ISSUER_SCIM_GROUP_ROLE_MAP: '{"EunoxReaders":"reader","EunoxWriters":"writer","EunoxAdmins":"admin"}'
 
-  # existingSecret: euno-issuer-secret
+  # existingSecret: eunox-issuer-secret
   secretEnv: {}
 
 # ── minter ────────────────────────────────────────────────────────────
@@ -135,35 +135,35 @@ minter:
 # ── db-token-service ──────────────────────────────────────────────────────────
 dbTokenService:
   image:
-    repository: myacr.azurecr.io/euno/db-token-service
+    repository: myacr.azurecr.io/eunox/db-token-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   env:
     NODE_ENV: production
     DB_TOKENS_ENABLED: "false"
-    # AZURE_KEYVAULT_URL: https://my-euno-keyvault.vault.azure.net/   # required when DB_TOKENS_ENABLED=true
+    # AZURE_KEYVAULT_URL: https://my-eunox-keyvault.vault.azure.net/   # required when DB_TOKENS_ENABLED=true
 
   secretEnv: {}
 
 # ── storage-grant-service ─────────────────────────────────────────────────────
 storageGrantService:
   image:
-    repository: myacr.azurecr.io/euno/storage-grant-service
+    repository: myacr.azurecr.io/eunox/storage-grant-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   env:
     NODE_ENV: production
     STORAGE_GRANTS_ENABLED: "false"
-    # AZURE_KEYVAULT_URL: https://my-euno-keyvault.vault.azure.net/   # required when STORAGE_GRANTS_ENABLED=true
+    # AZURE_KEYVAULT_URL: https://my-eunox-keyvault.vault.azure.net/   # required when STORAGE_GRANTS_ENABLED=true
 
   secretEnv: {}
 
 # ── posture-emitter ───────────────────────────────────────────────────────────
 postureEmitter:
   image:
-    repository: myacr.azurecr.io/euno/posture-emitter
+    repository: myacr.azurecr.io/eunox/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
 

@@ -335,14 +335,14 @@ func TestAzureSentinelTransport_Send_Success(t *testing.T) {
 		},
 		WorkspaceID: "ws-123",
 		SharedKey:   sharedKey,
-		LogType:     "EunoAudit",
+		LogType:     "EunoxAudit",
 		Endpoint:    server.URL,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer func() { _ = transport.Close() }()
 
 	err := transport.Send(context.Background(), records)
 	require.NoError(t, err)
-	assert.Equal(t, "EunoAudit", receivedLogType)
+	assert.Equal(t, "EunoxAudit", receivedLogType)
 	assert.NotEmpty(t, receivedDate)
 	assert.Equal(t, "/", receivedPath)
 	assert.Contains(t, receivedAuth, "SharedKey ws-123:")
@@ -389,7 +389,7 @@ func TestAzureSentinelTransport_DefaultLogType(t *testing.T) {
 		{Record: LogEntry{ID: "rec-1"}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "EunoAudit", receivedLogType)
+	assert.Equal(t, "EunoxAudit", receivedLogType)
 }
 
 func TestAzureSentinelTransport_CloseFlushesBufferedEvents(t *testing.T) {

@@ -4,7 +4,7 @@ description: "platform engineers, architects, and compliance teams building or d
 pubDate: "2026-06-20"
 ---
 
-*Audience: platform engineers, architects, and compliance teams building or deploying AI systems that operate across jurisdictions*
+_Audience: platform engineers, architects, and compliance teams building or deploying AI systems that operate across jurisdictions_
 
 ---
 
@@ -32,7 +32,7 @@ For AI agents operating in enterprise contexts: an AI agent that makes or influe
 
 **Minimal risk.** AI that doesn't pose meaningful risks — spam filters, AI in video games, AI-generated marketing content — is essentially unregulated under the Act. You're free to deploy with no specific compliance obligations beyond general law.
 
-**Where AI governance infrastructure sits.** A platform like euno — which doesn't make decisions itself but enforces policies around AI agent decisions — has an interesting regulatory position. The Act is primarily concerned with the AI system itself, not the governance infrastructure around it. But there are provisions about technical robustness and oversight of high-risk AI systems that point toward having exactly the kind of audit trail, policy enforcement, and human override capabilities that euno provides. The policy enforcement and tamper-evident audit discussed in [the SOC 2 post](./28-building-for-soc2.md) map directly to several EU AI Act Article 9 (risk management) and Article 12 (record-keeping) requirements.
+**Where AI governance infrastructure sits.** A platform like eunox — which doesn't make decisions itself but enforces policies around AI agent decisions — has an interesting regulatory position. The Act is primarily concerned with the AI system itself, not the governance infrastructure around it. But there are provisions about technical robustness and oversight of high-risk AI systems that point toward having exactly the kind of audit trail, policy enforcement, and human override capabilities that eunox provides. The policy enforcement and tamper-evident audit discussed in [the SOC 2 post](./28-building-for-soc2.md) map directly to several EU AI Act Article 9 (risk management) and Article 12 (record-keeping) requirements.
 
 **Foundation model provisions (GPAI rules).** The Act introduced specific provisions for general-purpose AI models — the Gemini, GPT, Claude class of systems. Providers of these models must maintain documentation, comply with copyright law, and (for high-impact models above a compute threshold) conduct adversarial testing and report incidents. This applies to model providers, not to organisations using those models via API, but it shapes what documentation and assurances you can demand from your LLM provider.
 
@@ -62,7 +62,7 @@ The US federal government has not enacted comprehensive AI legislation as of mid
 
 What exists instead:
 
-**NIST AI RMF (AI 100-1).** The AI Risk Management Framework is voluntary but widely referenced. It defines four core functions — Govern, Map, Measure, Manage — and provides a structured way to think about AI risk. The RMF is explicitly designed to complement sector-specific regulatory requirements. If you're engaging with US federal agencies or large enterprises that benchmark against NIST, familiarity with the RMF is worth the investment. The RMF's "GOVERN" function (building AI governance infrastructure, policies, and accountability mechanisms) is particularly relevant — it's describing the same problem space that euno addresses.
+**NIST AI RMF (AI 100-1).** The AI Risk Management Framework is voluntary but widely referenced. It defines four core functions — Govern, Map, Measure, Manage — and provides a structured way to think about AI risk. The RMF is explicitly designed to complement sector-specific regulatory requirements. If you're engaging with US federal agencies or large enterprises that benchmark against NIST, familiarity with the RMF is worth the investment. The RMF's "GOVERN" function (building AI governance infrastructure, policies, and accountability mechanisms) is particularly relevant — it's describing the same problem space that eunox addresses.
 
 **Sector-specific guidance.** The Office of the Comptroller of the Currency (OCC) and Federal Reserve have published guidance on AI in banking. The FDA has pathways for AI/ML-based medical devices. The EEOC has issued guidance on AI in employment decisions. The FTC has signalled active interest in AI-enabled deceptive practices. Each of these has its own requirements, its own enforcement mechanisms, and its own interpretation of what "responsible AI" looks like in that sector.
 
@@ -83,6 +83,7 @@ China has been an active AI regulator and has moved faster than any other jurisd
 **Deep Synthesis Regulations (2023).** Covers AI-generated synthetic content — deepfakes, voice synthesis, generated images and video. Mandatory watermarking and disclosure requirements for synthetic content. Applicable to any system that generates or outputs synthetic media.
 
 **Generative AI Regulations (August 2023).** This is the most directly relevant for LLM-based systems. Any service providing generative AI to users in China must:
+
 - Register with the Cyberspace Administration of China (CAC) and conduct a security assessment
 - Ensure training data quality and legitimacy (IP clearance for training data)
 - Label AI-generated content
@@ -100,6 +101,7 @@ The registration and security assessment requirement is significant. It's not ju
 Canada has been working on the Artificial Intelligence and Data Act (AIDA), which was introduced as part of Bill C-27 alongside updates to its privacy law. The legislative process has been slower than anticipated, but the framework's direction is clear.
 
 AIDA would create a risk-based framework similar in structure to the EU AI Act, with:
+
 - High-impact systems defined around contexts where decisions significantly affect individuals
 - Obligations around mitigation measures, record-keeping, and human oversight for high-impact systems
 - A prohibition on systems that "pose a serious risk of imminent harm"
@@ -124,6 +126,7 @@ For multinational deployments: the DPDPA's consent and data fiduciary obligation
 ## Brazil: the AI Bill and LGPD
 
 Brazil's AI Bill (PL 2338/2023) has been working through the legislative process, modelled in part on the EU AI Act. It would establish:
+
 - A risk-based classification (minimum, limited, high, excessive risk)
 - Requirements for transparency, human oversight, and impact assessments for high-risk systems
 - Data protection requirements referencing the existing LGPD (Brazil's GDPR-equivalent)
@@ -154,7 +157,7 @@ After working through all of this, here's what I'd pull out as practical implica
 
 **Human oversight mechanisms are becoming mandatory.** The EU AI Act's high-risk provisions require that high-risk AI systems be designed to allow human oversight and intervention. That means kill-switches, not just conceptually but specifically: mechanisms that allow operators to stop the AI system quickly when needed. The gateway's kill-switch (described in [the reference monitor post](./10-tool-gateway-reference-monitor.md)) is exactly this — a fast-path mechanism to suspend all agent activity without needing to track down individual instances.
 
-**Prepare for jurisdictional variation.** There is no single global standard, and there won't be one in the near term. An enterprise AI deployment in the EU, US, Canada, and India simultaneously faces four different frameworks with different requirements, different enforcement bodies, and different timelines. Building adaptable policy infrastructure — where you can adjust the conditions and constraints that govern agent behaviour without redeploying the enforcement stack — is much better than hard-coding compliance requirements. The YAML-based policy model that euno uses is specifically designed for this kind of adaptability.
+**Prepare for jurisdictional variation.** There is no single global standard, and there won't be one in the near term. An enterprise AI deployment in the EU, US, Canada, and India simultaneously faces four different frameworks with different requirements, different enforcement bodies, and different timelines. Building adaptable policy infrastructure — where you can adjust the conditions and constraints that govern agent behaviour without redeploying the enforcement stack — is much better than hard-coding compliance requirements. The YAML-based policy model that eunox uses is specifically designed for this kind of adaptability.
 
 **Foundation model transparency is becoming a due diligence requirement.** The EU AI Act's GPAI provisions require model providers to publish technical documentation. The US NIST AI RMF calls for transparency about training data, model architecture, and known limitations. As a deployer of AI using third-party models, you need to track this documentation for the models you use. When regulators ask "what do you know about the model you're using?", "I read the API docs" is not a sufficient answer.
 

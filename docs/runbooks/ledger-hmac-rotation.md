@@ -63,12 +63,12 @@ Create a new ledger table, configure the backend to write to it with the new sec
 2. **Create the new table** by pointing the backend at a new table name:
 
    ```bash
-   AUDIT_LEDGER_TABLE=euno_audit_ledger_v2   # new table name
+   AUDIT_LEDGER_TABLE=eunox_audit_ledger_v2   # new table name
    AUDIT_LEDGER_HMAC_SECRET=<new-secret>
    AUDIT_LEDGER_SCHEMA_INIT=true              # let the backend run CREATE TABLE IF NOT EXISTS
    ```
 
-3. **Deploy the new configuration.** New audit events are written to `euno_audit_ledger_v2` with HMACs computed using the new secret. Old events remain in `euno_audit_ledger` with HMACs verifiable using the old secret.
+3. **Deploy the new configuration.** New audit events are written to `eunox_audit_ledger_v2` with HMACs computed using the new secret. Old events remain in `eunox_audit_ledger` with HMACs verifiable using the old secret.
 
 4. **Keep the old secret available** for offline HMAC verification of historical rows until you no longer need to verify them (or until the retention window expires).
 
@@ -78,7 +78,7 @@ Create a new ledger table, configure the backend to write to it with the new sec
 
 ```bash
 # Verify recent rows in the new table (requires the new secret)
-AUDIT_LEDGER_TABLE=euno_audit_ledger_v2 \
+AUDIT_LEDGER_TABLE=eunox_audit_ledger_v2 \
 AUDIT_LEDGER_HMAC_SECRET=<new-secret> \
   node -e "
 const { PostgresLedgerBackend } = require('@eunox/common-infra');
@@ -115,7 +115,7 @@ For deployments that cannot tolerate table recreation, add a `verifyHmac(oldSecr
    -- pgcrypto hmac() produces the same HMAC-SHA256 as Node.js
    --   crypto.createHmac('sha256', secret).update(message).digest()
    -- The message format matches the gateway: seq:previousHash:recordHash:replicaId
-   UPDATE euno_audit_ledger SET row_hmac = (
+   UPDATE eunox_audit_ledger SET row_hmac = (
      hmac(
        (seq::text || ':' || previous_hash || ':' || record_hash || ':' || replica_id)::bytea,
        decode($NEW_SECRET_HEX, 'hex'),
@@ -153,7 +153,7 @@ A future enhancement would store a `secret_version` column alongside `row_hmac` 
 | Variable                   | Description                                                                                   |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
 | `AUDIT_LEDGER_HMAC_SECRET` | HMAC-SHA-256 secret (hex, base64, or UTF-8). Required when `ENABLE_CRYPTOGRAPHIC_AUDIT=true`. |
-| `AUDIT_LEDGER_TABLE`       | Postgres table name (default `euno_audit_ledger`). Change this for Strategy A rotation.       |
+| `AUDIT_LEDGER_TABLE`       | Postgres table name (default `eunox_audit_ledger`). Change this for Strategy A rotation.      |
 | `AUDIT_LEDGER_SCHEMA_INIT` | Set `true` to run `CREATE TABLE IF NOT EXISTS` on startup.                                    |
 
 ### Kubernetes / Helm

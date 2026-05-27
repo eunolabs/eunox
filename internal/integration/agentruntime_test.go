@@ -30,7 +30,7 @@ import (
 	"github.com/edgeobs/eunox/internal/issuer"
 	"github.com/edgeobs/eunox/internal/issuer/policy"
 	"github.com/edgeobs/eunox/pkg/capability"
-	eunocrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/edgeobs/eunox/pkg/identity"
 	"github.com/edgeobs/eunox/pkg/observability"
@@ -72,7 +72,7 @@ func (p *testIdentityProvider) VerifyToken(_ context.Context, tokenStr string) (
 
 // testJWTVerifier verifies capability tokens signed by the test issuer.
 type testJWTVerifier struct {
-	signingKey *eunocrypto.SoftwareSigner
+	signingKey *eunoxcrypto.SoftwareSigner
 }
 
 func (v *testJWTVerifier) VerifyToken(_ context.Context, tokenStr string) (*capability.TokenPayload, error) {
@@ -103,7 +103,7 @@ func (v *testJWTVerifier) VerifyToken(_ context.Context, tokenStr string) (*capa
 }
 
 // setupTestIssuer creates an issuer server for testing with the given capabilities policy.
-func setupTestIssuer(t *testing.T, signingKey *eunocrypto.SoftwareSigner, idKey *ecdsa.PrivateKey, caps []capability.Constraint) *httptest.Server {
+func setupTestIssuer(t *testing.T, signingKey *eunoxcrypto.SoftwareSigner, idKey *ecdsa.PrivateKey, caps []capability.Constraint) *httptest.Server {
 	t.Helper()
 
 	policyEngine := policy.New()
@@ -141,7 +141,7 @@ func setupTestIssuer(t *testing.T, signingKey *eunocrypto.SoftwareSigner, idKey 
 }
 
 // setupTestGateway creates a gateway server for testing.
-func setupTestGateway(t *testing.T, signingKey *eunocrypto.SoftwareSigner) *httptest.Server {
+func setupTestGateway(t *testing.T, signingKey *eunoxcrypto.SoftwareSigner) *httptest.Server {
 	t.Helper()
 
 	engine := enforcement.New()
@@ -191,7 +191,7 @@ func TestAgentRuntime_FullLoop(t *testing.T) {
 	ctx := context.Background()
 
 	// --- Setup signing key ---
-	signingKey, err := eunocrypto.GenerateECDSASigner("test-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("test-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	// --- Setup identity key ---
@@ -274,7 +274,7 @@ func TestAgentRuntime_FullLoop(t *testing.T) {
 // TestAgentRuntime_DPoPEndToEnd tests that DPoP proofs are correctly generated
 // and the JKT is bound to the issued token.
 func TestAgentRuntime_DPoPEndToEnd(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("test-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("test-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -324,7 +324,7 @@ func TestAgentRuntime_DPoPEndToEnd(t *testing.T) {
 
 // TestAgentRuntime_ManifestDrivenIssuance tests using a manifest to drive token requests.
 func TestAgentRuntime_ManifestDrivenIssuance(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("test-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("test-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -367,7 +367,7 @@ func TestAgentRuntime_ManifestDrivenIssuance(t *testing.T) {
 func TestAgentRuntime_HTTPAdapterFullLoop(t *testing.T) {
 	ctx := context.Background()
 
-	signingKey, err := eunocrypto.GenerateECDSASigner("test-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("test-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

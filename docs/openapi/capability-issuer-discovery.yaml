@@ -218,7 +218,7 @@ components:
           type: string
           description: >
             Optional deployment region tag.  Present only when
-            `ISSUER_REGION` or `EUNO_DEPLOYMENT_REGION` is configured.
+            `ISSUER_REGION` or `EUNOX_DEPLOYMENT_REGION` is configured.
             Omitted in single-region deployments.
           example: "us-east-1"
         partnerFederation:

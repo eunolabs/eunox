@@ -1,14 +1,14 @@
 ---
 title: "Pluggable Adapters: Building a Cloud-Portable Identity and Signing Layer"
-description: "Part of the \"Architecture deep-dives\" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable."
+description: 'Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.'
 pubDate: "2026-05-31"
 ---
 
-*Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.*
+_Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable._
 
 ---
 
-The question I get most often from enterprise architects evaluating euno isn't about the policy language or the audit log format. It's simpler than that: *"Does this run on AWS?"* Or Azure. Or GCP. Or — increasingly — *"We have a private PKI and we're not putting signing keys in any public cloud KMS. Can you work with that?"*
+The question I get most often from enterprise architects evaluating eunox isn't about the policy language or the audit log format. It's simpler than that: _"Does this run on AWS?"_ Or Azure. Or GCP. Or — increasingly — _"We have a private PKI and we're not putting signing keys in any public cloud KMS. Can you work with that?"_
 
 The answer in every case is yes, and I want to explain exactly how, because the design here is one of the decisions I'm most satisfied with in the entire codebase. It's also one that took several iterations to get right.
 
@@ -18,7 +18,7 @@ The answer in every case is yes, and I want to explain exactly how, because the 
 
 The first version of the capability issuer had Azure all the way through it. Token validation was Azure AD. Signing was Azure Key Vault. That was fine for the first customer, who was an Azure shop. The second customer used AWS. The third was GCP. By the time I was talking to the fourth, I'd already refactored twice and was staring at a codebase where "swap out the identity provider" meant a non-trivial amount of conditional logic woven through the core issuance path.
 
-The right solution wasn't more conditionals. It was treating identity validation and token signing as pluggable dependencies — defining an interface for what those operations *need to do* and letting the runtime supply the concrete implementation. This is the adapter pattern, and it's a textbook solution to exactly this problem. The reason I want to write about it here is that the details of applying it to a security-critical, multi-cloud system are not textbook.
+The right solution wasn't more conditionals. It was treating identity validation and token signing as pluggable dependencies — defining an interface for what those operations _need to do_ and letting the runtime supply the concrete implementation. This is the adapter pattern, and it's a textbook solution to exactly this problem. The reason I want to write about it here is that the details of applying it to a security-critical, multi-cloud system are not textbook.
 
 ---
 
@@ -55,19 +55,19 @@ Implementations are managed through registries:
 
 Both registries come pre-loaded with the built-in implementations:
 
-| Key | Identity implementation |
-|-----|------------------------|
-| `azure-ad` | Azure Active Directory / Microsoft Entra ID |
-| `aws-cognito` | Amazon Cognito user pools / compatible OIDC issuers |
+| Key            | Identity implementation                                |
+| -------------- | ------------------------------------------------------ |
+| `azure-ad`     | Azure Active Directory / Microsoft Entra ID            |
+| `aws-cognito`  | Amazon Cognito user pools / compatible OIDC issuers    |
 | `gcp-identity` | Google Identity tokens / Workforce Identity Federation |
-| `did` | W3C DID Documents (`did:web`, `did:ion`, `did:key`) |
+| `did`          | W3C DID Documents (`did:web`, `did:ion`, `did:key`)    |
 
-| Key | Signing implementation |
-|-----|-----------------------|
-| `azure-keyvault` | Azure Key Vault asymmetric key signing |
-| `aws-kms` | AWS KMS asymmetric key signing |
-| `gcp-cloudkms` | Google Cloud KMS asymmetric key signing |
-| `did` | DID-bound local/private-key signing |
+| Key              | Signing implementation                  |
+| ---------------- | --------------------------------------- |
+| `azure-keyvault` | Azure Key Vault asymmetric key signing  |
+| `aws-kms`        | AWS KMS asymmetric key signing          |
+| `gcp-cloudkms`   | Google Cloud KMS asymmetric key signing |
+| `did`            | DID-bound local/private-key signing     |
 
 The runtime picks the right implementations based on environment variables at startup — no conditional logic in the issuer service itself, just a registry lookup by key. The issuer code doesn't know or care whether the signing adapter is making TLS calls to Key Vault or to Cloud KMS; it just calls `sign(payload)`.
 
@@ -145,7 +145,7 @@ When I built the adapter pattern, I was thinking about multi-cloud portability. 
 
 **Test isolation.** The `InMemorySigningAdapter` (a test double that signs tokens with a locally generated key pair, never touching a network) made the unit test suite dramatically simpler. Tests that previously needed a mock KMS service or a live Key Vault account now just pass an in-memory signer. The 322 tests in `api-key-minter` and the 166 integration tests both run entirely without cloud credentials.
 
-**Fail-fast at startup.** Each adapter implements an `initialize()` method that's called at service startup. If the Azure Key Vault URL is wrong, or the IAM role doesn't have KMS permissions, or the GCP service account is misconfigured, you find out *before* the first user request arrives — at startup, not during a capability token issuance attempt in production. This is the kind of thing that sounds obvious but is easy to get wrong: a lot of cloud SDK clients fail lazily on first use.
+**Fail-fast at startup.** Each adapter implements an `initialize()` method that's called at service startup. If the Azure Key Vault URL is wrong, or the IAM role doesn't have KMS permissions, or the GCP service account is misconfigured, you find out _before_ the first user request arrives — at startup, not during a capability token issuance attempt in production. This is the kind of thing that sounds obvious but is easy to get wrong: a lot of cloud SDK clients fail lazily on first use.
 
 **The gateway and issuer share the signing adapter.** When the gateway signs audit evidence JWTs (see [post 11](./11-tamper-evident-audit-logs.md)), it uses the same `SigningAdapter` as the capability issuer. This means the JWKS endpoint for verifying audit evidence JWTs is the same endpoint as for verifying capability tokens. One key, one JWKS endpoint, one revocation concern. In a multi-service architecture, that's a meaningful simplification.
 
@@ -169,4 +169,4 @@ That story — how two organizations establish cross-org trust without sharing s
 
 ---
 
-*Previous in this series: [post 11 — Tamper-evident audit logs: OCSF, HMAC chaining, and KMS-signed evidence](./11-tamper-evident-audit-logs.md). Next: [post 13 — Partner DID federation: cross-org trust without shared secrets](./13-partner-did-federation.md).*
+_Previous in this series: [post 11 — Tamper-evident audit logs: OCSF, HMAC chaining, and KMS-signed evidence](./11-tamper-evident-audit-logs.md). Next: [post 13 — Partner DID federation: cross-org trust without shared secrets](./13-partner-did-federation.md)._

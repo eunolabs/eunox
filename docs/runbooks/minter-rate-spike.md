@@ -5,7 +5,7 @@
 > **Condition:** A single tenant's mint rate exceeds 10× its 1-hour rolling average for ≥ 2 minutes.
 >
 > **Alert source:** `prometheus/minter-alert-rules.yaml` (Rule 1); also fires via
-> `euno_minter_anomaly_alerts_total{rule="rate_spike"}` for sub-minute in-process detection.
+> `eunox_minter_anomaly_alerts_total{rule="rate_spike"}` for sub-minute in-process detection.
 
 ## Likely causes
 

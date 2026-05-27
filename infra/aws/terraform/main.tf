@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno AWS Terraform — root module
+# Eunox AWS Terraform — root module
 #
 # Wires the five sub-modules together:
 #   network      → VPC, subnets, NAT gateways

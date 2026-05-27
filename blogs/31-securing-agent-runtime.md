@@ -4,7 +4,7 @@ _This post builds on the architecture established in [post 14 (AGT: defense in d
 
 ---
 
-I want to start with an honest admission: for the first several months of building euno, I was thinking about security at the wrong layer.
+I want to start with an honest admission: for the first several months of building eunox, I was thinking about security at the wrong layer.
 
 I was focused on the gateway — making the enforcement logic correct, making the audit log tamper-evident, making conditions evaluate correctly. That work matters. But I was mentally modeling the agent as a cooperative participant. I was thinking: the agent will use our SDK, it will route tool calls through the gateway, and the gateway will enforce policy.
 
@@ -509,9 +509,9 @@ spec:
           memory: "2Gi"
           cpu: "2"
       env:
-        - name: EUNO_GATEWAY_URL
+        - name: EUNOX_GATEWAY_URL
           value: "https://gateway.internal:8080"
-        - name: EUNO_AGENT_TOKEN
+        - name: EUNOX_AGENT_TOKEN
           valueFrom:
             secretKeyRef:
               name: agent-token
@@ -632,7 +632,7 @@ spec:
     - name: agent
       image: your-registry/agent:latest
       env:
-        - name: EUNO_GATEWAY_URL
+        - name: EUNOX_GATEWAY_URL
           value: "http://localhost:8080"
     - name: gateway
       image: your-registry/tool-gateway:latest
@@ -795,6 +795,6 @@ The gateway handles policy enforcement and produces your audit evidence. The OS 
 
 ---
 
-_The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/euno umbrella chart. For deployment-specific guidance, see [`docs/deployment.md`](../deployment.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md))._
+_The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/eunox umbrella chart. For deployment-specific guidance, see [`docs/deployment.md`](../deployment.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md))._
 
 _Previous post in the architecture series: [post 14 (AGT: defense in depth)](./14-agt-defense-in-depth.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full index._

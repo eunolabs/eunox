@@ -1,5 +1,5 @@
 /**
- * Unit tests for EunoEnterpriseStack.
+ * Unit tests for EunoxEnterpriseStack.
  *
  * Uses aws-cdk-lib/assertions to synthesize the stack and make assertions
  * about the CloudFormation template produced.
@@ -10,7 +10,7 @@
 
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { EunoEnterpriseStack } from '../src/stacks/enterprise-stack';
+import { EunoxEnterpriseStack } from '../src/stacks/enterprise-stack';
 
 const defaultEnv = {
   account: '123456789012',
@@ -18,24 +18,24 @@ const defaultEnv = {
 };
 
 function makeStack(
-  props: Partial<ConstructorParameters<typeof EunoEnterpriseStack>[2]> = {},
+  props: Partial<ConstructorParameters<typeof EunoxEnterpriseStack>[2]> = {},
 ) {
   const app = new cdk.App({ outdir: '/tmp/cdk-test-out' });
-  return new EunoEnterpriseStack(app, 'TestEnterprise', {
+  return new EunoxEnterpriseStack(app, 'TestEnterprise', {
     env: defaultEnv,
-    namePrefix: 'euno',
+    namePrefix: 'eunox',
     environment: 'test',
     ...props,
   });
 }
 
-describe('EunoEnterpriseStack', () => {
+describe('EunoxEnterpriseStack', () => {
   describe('inherits issuer and gateway resources', () => {
     test('includes the Cognito User Pool', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::Cognito::UserPool', {
-        UserPoolName: 'euno-users-test',
+        UserPoolName: 'eunox-users-test',
       });
     });
 
@@ -53,7 +53,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::DynamoDB::Table', {
-        TableName: 'euno-partner-did-registry-test',
+        TableName: 'eunox-partner-did-registry-test',
         BillingMode: 'PAY_PER_REQUEST',
         PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
         DeletionProtectionEnabled: true,
@@ -87,7 +87,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::CloudTrail::Trail', {
-        TrailName: 'euno-audit-trail-test',
+        TrailName: 'eunox-audit-trail-test',
         IsMultiRegionTrail: true,
         EnableLogFileValidation: true,
         IncludeGlobalServiceEvents: true,
@@ -111,7 +111,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::KinesisFirehose::DeliveryStream', {
-        DeliveryStreamName: 'euno-audit-firehose-test',
+        DeliveryStreamName: 'eunox-audit-firehose-test',
         DeliveryStreamType: 'DirectPut',
       });
     });
@@ -165,7 +165,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::SNS::Topic', {
-        TopicName: 'euno-alarms-test',
+        TopicName: 'eunox-alarms-test',
       });
     });
 
@@ -192,7 +192,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::CloudWatch::Alarm', {
-        AlarmName: 'euno-denial-spike-test',
+        AlarmName: 'eunox-denial-spike-test',
         Threshold: 100,
         EvaluationPeriods: 2,
       });
@@ -202,7 +202,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::CloudWatch::Alarm', {
-        AlarmName: 'euno-invalid-token-burst-test',
+        AlarmName: 'eunox-invalid-token-burst-test',
         Threshold: 50,
         EvaluationPeriods: 1,
       });
@@ -212,7 +212,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasResourceProperties('AWS::CloudWatch::Alarm', {
-        AlarmName: 'euno-kill-switch-test',
+        AlarmName: 'eunox-kill-switch-test',
         Threshold: 1,
         EvaluationPeriods: 1,
       });
@@ -224,7 +224,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('PartnerDidRegistryTableName', {
-        Export: { Name: 'euno-test-partner-did-registry-table' },
+        Export: { Name: 'eunox-test-partner-did-registry-table' },
       });
     });
 
@@ -232,7 +232,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('AuditLakeBucketName', {
-        Export: { Name: 'euno-test-audit-lake-bucket' },
+        Export: { Name: 'eunox-test-audit-lake-bucket' },
       });
     });
 
@@ -240,7 +240,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('AuditFirehoseArn', {
-        Export: { Name: 'euno-test-audit-firehose-arn' },
+        Export: { Name: 'eunox-test-audit-firehose-arn' },
       });
     });
 
@@ -248,7 +248,7 @@ describe('EunoEnterpriseStack', () => {
       const stack = makeStack();
       const template = Template.fromStack(stack);
       template.hasOutput('AlarmTopicArn', {
-        Export: { Name: 'euno-test-alarm-topic-arn' },
+        Export: { Name: 'eunox-test-alarm-topic-arn' },
       });
     });
   });

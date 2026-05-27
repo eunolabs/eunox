@@ -25,7 +25,7 @@ import (
 	"github.com/edgeobs/eunox/internal/issuer"
 	"github.com/edgeobs/eunox/internal/issuer/policy"
 	"github.com/edgeobs/eunox/pkg/capability"
-	eunocrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/edgeobs/eunox/pkg/killswitch"
 	"github.com/edgeobs/eunox/pkg/observability"
@@ -41,7 +41,7 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 	_ = ctx
 
 	// --- Setup crypto ---
-	signingKey, err := eunocrypto.GenerateECDSASigner("round-trip-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("round-trip-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -171,7 +171,7 @@ func TestIssuance_FullRoundTrip(t *testing.T) {
 // TestIssuance_Attenuation_SubsetEnforcement verifies capability attenuation:
 // issue broad token → attenuate to subset → verify attenuated token only covers subset.
 func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("attenuation-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("attenuation-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -291,7 +291,7 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 
 // TestIssuance_JWKSEndpoint verifies the JWKS endpoint returns valid key material.
 func TestIssuance_JWKSEndpoint(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("jwks-key-1", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("jwks-key-1", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -327,9 +327,9 @@ func TestIssuance_JWKSEndpoint(t *testing.T) {
 // TestIssuance_KeyRotation verifies that after key rotation, tokens signed with
 // different keys are independently verifiable.
 func TestIssuance_KeyRotation(t *testing.T) {
-	key1, err := eunocrypto.GenerateECDSASigner("key-v1", eunocrypto.ES256)
+	key1, err := eunoxcrypto.GenerateECDSASigner("key-v1", eunoxcrypto.ES256)
 	require.NoError(t, err)
-	key2, err := eunocrypto.GenerateECDSASigner("key-v2", eunocrypto.ES256)
+	key2, err := eunoxcrypto.GenerateECDSASigner("key-v2", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -457,7 +457,7 @@ func TestIssuance_ExpiredToken_DeniedAtGateway(t *testing.T) {
 
 // TestIssuance_Discovery_Endpoint verifies the discovery endpoint returns correct metadata.
 func TestIssuance_Discovery_Endpoint(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("disc-key", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("disc-key", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -490,7 +490,7 @@ func TestIssuance_Discovery_Endpoint(t *testing.T) {
 
 // TestIssuance_InvalidIdentityToken verifies the issuer rejects invalid identity tokens.
 func TestIssuance_InvalidIdentityToken(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("inv-key", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("inv-key", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -524,7 +524,7 @@ func TestIssuance_InvalidIdentityToken(t *testing.T) {
 
 // TestIssuance_TokenRenewal verifies the renewal endpoint refreshes token expiry.
 func TestIssuance_TokenRenewal(t *testing.T) {
-	signingKey, err := eunocrypto.GenerateECDSASigner("renew-key", eunocrypto.ES256)
+	signingKey, err := eunoxcrypto.GenerateECDSASigner("renew-key", eunoxcrypto.ES256)
 	require.NoError(t, err)
 
 	idKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Euno AWS Terraform — example tfvars
+# Eunox AWS Terraform — example tfvars
 #
 # Copy to terraform.tfvars and fill in the values specific to your deployment.
 # Do NOT commit terraform.tfvars to version control (add to .gitignore).
@@ -8,7 +8,7 @@
 aws_region     = "us-east-1"
 aws_account_id = "123456789012"   # replace with your AWS account ID
 
-name_prefix = "euno"
+name_prefix = "eunox"
 environment = "prod"             # pilot | staging | prod
 
 # ── Networking ────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ use_fargate        = true        # set false to use managed node groups (e.g. de
 
 # ── Data stores ───────────────────────────────────────────────────────────────
 db_instance_class = "db.t3.medium"    # db.m6g.large recommended for production
-db_username       = "euno_admin"
+db_username       = "eunox_admin"
 db_multi_az       = true
 cache_node_type   = "cache.t3.medium" # cache.m6g.large recommended for production
 cache_num_replicas = 1
@@ -32,7 +32,7 @@ cache_num_replicas = 1
 
 # ── Identity ──────────────────────────────────────────────────────────────────
 enable_cognito        = true
-cognito_domain_prefix = "euno-prod"   # must be globally unique in the AWS region
+cognito_domain_prefix = "eunox-prod"   # must be globally unique in the AWS region
 
 # ── Observability ─────────────────────────────────────────────────────────────
 log_retention_days        = 90
@@ -41,7 +41,7 @@ enable_security_hub       = true
 
 # ── Resource tags ─────────────────────────────────────────────────────────────
 tags = {
-  product     = "euno"
+  product     = "eunox"
   component   = "capability-governance"
   environment = "prod"
   owner       = "platform-team"

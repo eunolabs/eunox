@@ -31,7 +31,7 @@ variable "enable_cognito" {
 }
 
 variable "cognito_domain_prefix" {
-  description = "Cognito User Pool domain prefix (e.g. 'euno-prod')."
+  description = "Cognito User Pool domain prefix (e.g. 'eunox-prod')."
   type        = string
   default     = ""
 }

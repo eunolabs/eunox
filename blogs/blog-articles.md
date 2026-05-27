@@ -1,4 +1,4 @@
-# Suggested Blog Articles for euno
+# Suggested Blog Articles for eunox
 
 A curated list of article ideas spanning background, context, architecture,
 user experience, technology choices, and design principles. Articles are
@@ -25,13 +25,13 @@ grouped by theme and roughly ordered from introductory to in-depth.
    agent. Audience: engineering managers and security architects.
 
 4. **Zero trust for AI agents: a practitioner's guide**
-   Frames euno's architecture in zero-trust terms — never trust, always
+   Frames eunox's architecture in zero-trust terms — never trust, always
    verify, enforce at the policy decision point before reaching the backend.
    Complements the Azure Tech Community post series.
 
 ---
 
-## The Model Context Protocol and where euno fits
+## The Model Context Protocol and where eunox fits
 
 5. **MCP explained: the USB-C moment for AI tooling**
    A plain-language introduction to the Model Context Protocol — what it
@@ -46,7 +46,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
    Step-by-step tutorial with screenshots. Audience: individual developers
    who have never thought about AI agent security.
 
-8. **From local YAML to hosted policy store: euno's migration story**
+8. **From local YAML to hosted policy store: eunox's migration story**
    Narrates the transition from a single-process YAML file to a gateway with
    shared Redis call counters, a Postgres audit ledger, and KMS-backed signing.
    Why the policy format stays identical across both modes.
@@ -71,7 +71,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
     chains together for SOC 2 evidence.
 
 12. **Pluggable adapters: building a cloud-portable identity and signing layer**
-    Describes the `IdentityAdapter` / `SigningAdapter` pattern that lets euno
+    Describes the `IdentityAdapter` / `SigningAdapter` pattern that lets eunox
     swap Azure AD + Key Vault, AWS Cognito + KMS, and GCP Cloud Identity +
     Cloud KMS without changing the enforcement core.
 
@@ -90,7 +90,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
 ## Design principles
 
 15. **Fail closed, not fail open: the most important decision in security software**
-    Examines how every layer of euno — unknown conditions, gateway
+    Examines how every layer of eunox — unknown conditions, gateway
     unavailability, malformed tokens, network errors — defaults to deny rather
     than allow. Contrasts with real-world systems that chose differently.
 
@@ -100,7 +100,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
     the Apache/BUSL license split exists to keep that contract public.
 
 17. **Declarative, not transitive: the partner federation trust model**
-    Articulates why euno's federation model requires an explicit operator
+    Articulates why eunox's federation model requires an explicit operator
     opt-in per partner DID rather than transitive trust chains, and the
     security properties this choice provides.
 
@@ -114,14 +114,14 @@ grouped by theme and roughly ordered from introductory to in-depth.
 
 ## User experience and developer ergonomics
 
-19. **One YAML file: the design philosophy behind euno's policy format**
+19. **One YAML file: the design philosophy behind eunox's policy format**
     Why YAML beats code: version-controllable, reviewable, diff-able, shareable
     between agent developers and security teams. Covers the manifest structure
     and the authoring guide.
 
-20. **From dev to prod: the euno CLI experience**
-    Walks through `euno init`, `euno validate`, `euno request` (PKCE flow),
-    `euno validate-token`, `euno audit export`, and `euno discover`. Emphasis
+20. **From dev to prod: the eunox CLI experience**
+    Walks through `eunox init`, `eunox validate`, `eunox request` (PKCE flow),
+    `eunox validate-token`, `eunox audit export`, and `eunox discover`. Emphasis
     on the developer feedback loop.
 
 21. **Operator tooling: kill switches, revocation, and SCIM provisioning**
@@ -139,7 +139,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
 
 23. **Why OCSF? Choosing a schema for AI agent audit events**
     Background on the Open Cybersecurity Schema Framework, why API Activity
-    was the right event class, and how euno maps tool calls into OCSF fields
+    was the right event class, and how eunox maps tool calls into OCSF fields
     for SIEM ingestion.
 
 24. **W3C DIDs in production: lessons from building a partner federation layer**
@@ -157,7 +157,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
     and what happens when Redis is unavailable (fail-closed fallback).
 
 27. **SCIM 2.0 for AI agents: bringing enterprise directory provisioning to capability tokens**
-    Walks through the SCIM user / group lifecycle, how euno maps groups to
+    Walks through the SCIM user / group lifecycle, how eunox maps groups to
     roles to capability templates, and the `externalId` / `userName` fallback
     lookup strategy.
 
@@ -167,10 +167,10 @@ grouped by theme and roughly ordered from introductory to in-depth.
 
 28. **Building for SOC 2: mapping CC6 and CC7 controls to an AI governance platform**
     Detailed mapping of SOC 2 CC6 (Logical and Physical Access) and CC7
-    (System Operations) controls to euno's audit evidence, signed bundles,
+    (System Operations) controls to eunox's audit evidence, signed bundles,
     and the `GET /api/v1/audit/export` endpoint.
 
-29. **Air-gapped AI governance: deploying euno with no internet dependency**
+29. **Air-gapped AI governance: deploying eunox with no internet dependency**
     Covers the Helm umbrella chart, the air-gap image list, pull scripts,
     offline DID resolution strategies, and on-premises KMS integration.
 

@@ -1,12 +1,12 @@
-# SELinux policy module for Euno services - Sprint 3 Sandbox Hardening
+# SELinux policy module for Eunox services - Sprint 3 Sandbox Hardening
 # This policy restricts container capabilities at the SELinux level
 #
 # To compile and install:
-# 1. checkmodule -M -m -o euno_restricted.mod euno_restricted.te
-# 2. semodule_package -o euno_restricted.pp -m euno_restricted.mod
-# 3. semodule -i euno_restricted.pp
+# 1. checkmodule -M -m -o eunox_restricted.mod eunox_restricted.te
+# 2. semodule_package -o eunox_restricted.pp -m eunox_restricted.mod
+# 3. semodule -i eunox_restricted.pp
 
-policy_module(euno_restricted, 0.1.0)
+policy_module(eunox_restricted, 0.1.0)
 
 require {
     type container_t;

@@ -4,9 +4,9 @@ gateway Deployment
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
   {{- with .Values.gateway.serviceAccountAnnotations }}
   annotations:
@@ -17,27 +17,27 @@ automountServiceAccountToken: false
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   replicas: {{ .Values.gateway.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-gateway
+      app.kubernetes.io/name: eunox-gateway
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: euno-gateway
+        app.kubernetes.io/name: eunox-gateway
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: gateway
         {{- with .Values.gateway.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ include "euno.fullname" . }}-gateway
+      serviceAccountName: {{ include "eunox.fullname" . }}-gateway
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -85,10 +85,10 @@ spec:
             failureThreshold: 2
           envFrom:
             - configMapRef:
-                name: {{ include "euno.fullname" . }}-gateway-config
+                name: {{ include "eunox.fullname" . }}-gateway-config
             {{- if .Values.gateway.secretEnv }}
             - secretRef:
-                name: {{ include "euno.fullname" . }}-gateway-secret
+                name: {{ include "eunox.fullname" . }}-gateway-secret
             {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
@@ -96,9 +96,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   type: {{ .Values.gateway.service.type }}
@@ -112,15 +112,15 @@ spec:
       targetPort: admin
       protocol: TCP
   selector:
-    app.kubernetes.io/name: euno-gateway
+    app.kubernetes.io/name: eunox-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway-config
+  name: {{ include "eunox.fullname" . }}-gateway-config
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 data:
   {{- range $key, $val := .Values.gateway.env }}
@@ -131,9 +131,9 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway-secret
+  name: {{ include "eunox.fullname" . }}-gateway-secret
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 type: Opaque
 stringData:
@@ -146,15 +146,15 @@ stringData:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "euno.fullname" . }}-gateway
+    name: {{ include "eunox.fullname" . }}-gateway
   minReplicas: {{ .Values.gateway.hpa.minReplicas }}
   maxReplicas: {{ .Values.gateway.hpa.maxReplicas }}
   metrics:
@@ -176,14 +176,14 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "euno.fullname" . }}-gateway
+  name: {{ include "eunox.fullname" . }}-gateway
   labels:
-    {{- include "euno.labels" . | nindent 4 }}
+    {{- include "eunox.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
 spec:
   minAvailable: {{ .Values.gateway.pdb.minAvailable }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: euno-gateway
+      app.kubernetes.io/name: eunox-gateway
       app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

@@ -4,7 +4,7 @@
 # tests (`packages/integration-tests/tests/cross-org.test.ts`) and the
 # `infra/docker-compose.cross-org.yml` developer workflow.
 #
-# It is intentionally provisioned in a SEPARATE namespace (`euno-partner-sim`)
+# It is intentionally provisioned in a SEPARATE namespace (`eunox-partner-sim`)
 # so that it cannot share secrets or service accounts with the gateway
 # operator's own production namespace.  It is also denied egress to anything
 # other than the gateway namespace via the NetworkPolicy below — a deliberate
@@ -16,9 +16,9 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: euno-partner-sim
+  name: eunox-partner-sim
   labels:
-    name: euno-partner-sim
+    name: eunox-partner-sim
     purpose: test-harness
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted
@@ -29,7 +29,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: partner-issuer-sim-seed
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
 type: Opaque
 stringData:
   # 32-byte hex seed.  Replace before deployment — committing the example
@@ -43,19 +43,19 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: partner-issuer-sim-config
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
 data:
-  PARTNER_ISSUER_DID: "did:web:partner-issuer-sim.euno-partner-sim.svc%3A4001"
+  PARTNER_ISSUER_DID: "did:web:partner-issuer-sim.eunox-partner-sim.svc%3A4001"
   PARTNER_AUDIENCE: "gateway"
   PARTNER_TOKEN_TTL: "900"
-  PARTNER_TRUSTED_ISSUER_DIDS: "did:web:issuer.euno-system.svc%3A3000"
+  PARTNER_TRUSTED_ISSUER_DIDS: "did:web:issuer.eunox-system.svc%3A3000"
 
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: partner-issuer-sim
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
 automountServiceAccountToken: false
 
 ---
@@ -63,7 +63,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: partner-issuer-sim
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
   labels:
     app: partner-issuer-sim
     purpose: test-harness
@@ -91,7 +91,7 @@ spec:
       - name: partner-issuer-sim
         # Built locally via `infra/docker-compose.cross-org.yml`; the test
         # cluster image registry path will vary by environment.
-        image: euno/partner-issuer-sim:dev
+        image: eunox/partner-issuer-sim:dev
         imagePullPolicy: IfNotPresent
         ports:
         - name: http
@@ -129,7 +129,7 @@ spec:
         # DID without TLS termination inside the cluster.  Production
         # deployments MUST leave this unset.
         - name: DID_WEB_ALLOW_HTTP_FOR_HOSTS
-          value: "issuer.euno-system.svc:3000"
+          value: "issuer.eunox-system.svc:3000"
         resources:
           requests:
             cpu: "50m"
@@ -166,7 +166,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: partner-issuer-sim
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
   labels:
     app: partner-issuer-sim
 spec:
@@ -184,7 +184,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: partner-issuer-sim
-  namespace: euno-partner-sim
+  namespace: eunox-partner-sim
 spec:
   podSelector:
     matchLabels:
@@ -197,7 +197,7 @@ spec:
   - from:
     - namespaceSelector:
         matchLabels:
-          name: euno-system
+          name: eunox-system
     ports:
     - protocol: TCP
       port: 4001
@@ -218,7 +218,7 @@ spec:
   - to:
     - namespaceSelector:
         matchLabels:
-          name: euno-system
+          name: eunox-system
     ports:
     - protocol: TCP
       port: 3000
