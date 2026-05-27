@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -152,7 +153,7 @@ func TestPostgresKeyStore_ListKeys(t *testing.T) {
 
 	for i := range 5 {
 		key := &APIKey{
-			KeyID:     "list-key-" + string(rune('a'+i)),
+			KeyID:     fmt.Sprintf("list-key-%d", i),
 			TenantID:  "tenant-list",
 			CreatedAt: time.Now().UTC(),
 		}

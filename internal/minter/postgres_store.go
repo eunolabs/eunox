@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -92,7 +93,7 @@ func (s *PostgresKeyStore) CountKeys(ctx context.Context, tenantID string) (int,
 }
 
 // ListKeys returns a page of keys for the given tenant ordered by created_at
-// ascending (stable ordering) then key_id for tie-breaking.  Both limit and
+// descending (newest first) then key_id for tie-breaking.  Both limit and
 // offset are applied server-side.  limit ≤ 0 disables the limit (returns all
 // remaining rows from offset).
 func (s *PostgresKeyStore) ListKeys(ctx context.Context, tenantID string, limit, offset int) ([]*APIKey, error) {
@@ -100,7 +101,7 @@ func (s *PostgresKeyStore) ListKeys(ctx context.Context, tenantID string, limit,
 		SELECT key_id, secret_hash, tenant_id, description, created_at, expires_at, revoked_at, created_by, metadata
 		FROM api_keys
 		WHERE tenant_id = $1
-		ORDER BY created_at ASC, key_id ASC
+		ORDER BY created_at DESC, key_id ASC
 		OFFSET $2`
 
 	var (
@@ -437,14 +438,5 @@ func containsSQLState(msg, code string) bool {
 	// pq wraps the error as "pq: ERROR: ... (SQLSTATE 23505)"
 	// or "ERROR: duplicate key value ... (SQLSTATE 23505)".
 	// A simple string search is vendor-neutral and avoids a direct pq import.
-	return len(msg) >= len(code) && findSubstring(msg, code)
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(msg, code)
 }
