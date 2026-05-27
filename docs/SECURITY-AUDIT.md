@@ -10,7 +10,7 @@
 
 The Eunox codebase demonstrates **strong security posture overall**. The most common vulnerability classes (SQL injection, command injection, path traversal) are absent. Authentication uses modern JWT + DPoP with constant-time key comparison. All HTTP clients and servers have explicit timeouts, and request body sizes are bounded.
 
-Three actionable findings were identified, all Medium severity or below.
+Four findings were identified (one Medium, three Low severity).
 
 ---
 
@@ -78,7 +78,7 @@ Note: Other call sites in the same file (lines 88, 168) correctly create timeout
 - **Location:** `internal/gateway/app.go:170-177`
 - **Severity:** Low (configuration-dependent)
 - **What:** The gateway allows `*` in `AllowedOrigins` for production, only emitting a warning log.
-- **Why it matters:** If an operator configures `AllowedOrigins: ["*"]` in production and the API sets `Access-Control-Allow-Credentials: true`, browsers will reject the response (CORS spec disallows wildcard + credentials). However, if credentials are not included, the wildcard allows any origin to make cross-origin requests, which could enable CSRF-like attacks on state-changing endpoints if the API relies solely on cookies (it doesn't — it uses ****** Given Bearer-token auth, the real risk is minimal.
+- **Why it matters:** If an operator configures `AllowedOrigins: ["*"]` in production and the API sets `Access-Control-Allow-Credentials: true`, browsers will reject the response (CORS spec disallows wildcard + credentials). However, if credentials are not included, the wildcard allows any origin to make cross-origin requests, which could enable CSRF-like attacks on state-changing endpoints if the API relies solely on cookies (it doesn't — it uses ****** auth). Given Bearer-token auth, the real risk is minimal.
 - **Fix:** Consider rejecting wildcard in production at startup (fail-closed) rather than warning:
 
 ```go
