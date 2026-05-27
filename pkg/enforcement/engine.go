@@ -262,12 +262,12 @@ func actionMatchScore(actions []string, req *capability.EnforceRequest) (int, bo
 			hasWildcard = true
 		}
 		score := -1
-		switch {
-		case a == operation:
+		switch a {
+		case operation:
 			score = 2
-		case a == req.ToolName:
+		case req.ToolName:
 			score = 1
-		case a == "*":
+		case "*":
 			score = 0
 		}
 		if score > bestScore {
