@@ -4,23 +4,23 @@
 > document have landed in code. See:
 >
 > - **Typed conditions:** `CapabilityCondition` discriminated union in
->   `pkg//src/types.ts` and the shared validate / enforce
->   pipeline in `pkg//src/condition-registry.ts`.
-> - **Issuance-time validation:** `CapabilityIssuerService.issueCapability`
->   and `attenuateCapability` reject malformed or unknown conditions
->   before signing (`internal/issuer/src/issuer-service.ts`).
-> - **Gateway enforcement:** `EnforcementEngine.validateAction` in
->   `internal/gateway/src/enforcement.ts` runs every typed
+>   `pkg/capability/condition.go` and the shared validate / enforce
+>   pipeline in `pkg/capability/validate.go` and `pkg/enforcement/engine.go`.
+> - **Issuance-time validation:** `IssuerApp.IssueCapability`
+>   and `AttenuateCapability` reject malformed or unknown conditions
+>   before signing (`internal/issuer/app.go`).
+> - **Gateway enforcement:** `Engine.ValidateAction` in
+>   `pkg/enforcement/engine.go` runs every typed
 >   condition; unknown types deny by default.
 > - **Distributed `maxCalls`:** `CallCounterStore` with in-memory and
 >   Redis-backed implementations in
->   `pkg//src/call-counter-store.ts`, wired into the gateway
->   entrypoint via `createCallCounterStoreFromEnv` (reuses the same
->   `REDIS_URL` as the kill-switch / revocation-store wiring).
+>   `pkg/callcounter/`, wired into the gateway
+>   entrypoint via the `REDIS_URL` environment variable (reuses the same
+>   Redis instance as the kill-switch / revocation-store).
 > - **Wildcard fix:** segment-aware `matchesResource` with scheme
->   equality enforcement in `pkg//src/utils.ts`.
+>   equality enforcement in `pkg/enforcement/engine.go`.
 > - **Action widening:** `Action = string` (legacy verbs preserved as
->   `LEGACY_ACTIONS`) so resource-specific verbs (`db:select`,
+>   `LegacyActions`) so resource-specific verbs (`db:select`,
 >   `s3:putObject`) are first-class.
 >
 > The project is pre-v1 with no production deployments; rather than
@@ -38,7 +38,7 @@ The capability model in the current codebase declares fine-grained, conditional 
 
 3.  **Wildcard semantics are simplistic.** Only trailing `/*` and `/**` are supported, both implemented identically as `startsWith(prefix)`. There is no path-segment distinction (a `/*` matches nested subdirectories the same as `/**`), no exclusion support, and no scheme or host validation at match time.
 
-4.  **Structured validators are disconnected from the type system.** `capability-validators.ts` already implements semantic checks (allowed extensions, table/column allowlists, resource-pattern rules), but these are hard-coded and not reflected in the `conditions` type. The result is two parallel constraint systems — one explicit but inert (the `conditions` field), one implicit but enforced (the validators) — with no connection between them.
+4.  **Structured validators are disconnected from the type system.** `pkg/capability/validate.go` already implements semantic checks (allowed extensions, table/column allowlists, resource-pattern rules), but these are hard-coded and not reflected in the `conditions` type. The result is two parallel constraint systems — one explicit but inert (the `conditions` field), one implicit but enforced (the validators) — with no connection between them.
 
 5.  **No issuance-time validation.** There is no schema check when a token is minted. Typos (`rate_limt`), wrong value types (`maxBytes: "10mb"` as a string), and unknown keys round-trip through signing into production tokens without error.
 

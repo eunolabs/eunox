@@ -208,7 +208,7 @@ Notable design choices visible in the code:
   `LEGACY_ACTIONS` tuple keeps the original five generic verbs
   meaningful for role mapping. Conditional-Access tiering (the
   former `actionToCaTier` heuristic) is now driven by the pluggable
-  **`ActionResolver`** in `@eunox/common` (R-7); the default resolver
+  **`ActionResolver`** in `pkg/enforcement`; the default resolver
   ships an explicit per-verb table and operators ship a JSON file via
   `ACTION_RESOLVER_FILE` to extend it for deployment-specific verbs
   without modifying source.
@@ -218,10 +218,10 @@ Notable design choices visible in the code:
 - **PIM cap on TTL** — `PIM_TTL_SAFETY_MARGIN_SECONDS = 30` clips token
   expiry to `min(requested_exp, PIM_endDateTime − 30s)` so a JIT role
   expiry always wins over a longer-lived capability.
-- **Schema version is mandatory** — `CAPABILITY_TOKEN_SCHEMA_VERSION =
-'1.0'`; gateways reject anything not in `SUPPORTED_SCHEMA_VERSIONS`
+- **Schema version is mandatory** — `capability.SchemaVersion = "1.0"`;
+  gateways reject anything not in `capability.SupportedSchemaVersions`
   (fail-closed evolution).
-- **JWKS endpoint (R-6)** — `GET /.well-known/jwks.json` exposes the
+- **JWKS endpoint** — `GET /.well-known/jwks.json` exposes the
   active signing key(s) as a standards-compliant JWK Set. Every minted
   token carries a `kid` in its JWS protected header that matches one of
   the published keys, enabling **key rotation without a synchronised
@@ -282,7 +282,7 @@ Notable design choices visible in the code:
      requests (`k8s/envoy-shard-router.yaml`) before they reach the gateway,
      providing a second enforcement point at the ingress layer.
 - **HTTP-method → action mapping** is supplied by the pluggable
-  `ActionResolver` in `pkg/enforcement` (R-7). The built-in default
+  `ActionResolver` in `pkg/enforcement`. The built-in default
   preserves the legacy table (`GET→read`, `POST/PUT/PATCH→write`,
   `DELETE→delete`); deployments override it by pointing the gateway
   at an `ACTION_RESOLVER_FILE` JSON config — the same file the issuer
@@ -692,7 +692,7 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | AuthN (services)     | Cloud-managed identity (workload identity / managed identity)                                                                                                                      | Issuer→KMS, gateway→Redis, etc.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | AuthZ (capabilities) | `pkg/enforcement/engine.go` + `pkg/capability/condition.go`                                                                                                                        | Single PDP+PEP at the gateway                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Crypto signing       | `pkg/crypto/signer.go` adapter; `kms_azure.go`, `kms_aws.go`, `kms_gcp.go`                                                                                                         | KMS never sees the message body — digest only                                                                                                                                                                                                                                                                                                                                                                                       |
-| Key rotation (R-6)   | `GET /.well-known/jwks.json` (issuer); `JwksVerifier` (gateway)                                                                                                                    | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default).                            |
+| Key rotation         | `GET /.well-known/jwks.json` (issuer); `JwksVerifier` (gateway)                                                                                                                    | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default).                            |
 | Audit                | `pkg/audit/audit.go` + `NewEvidenceSigner` + `EvidenceSigner`                                                                                                                      | Fail-closed: cannot enable crypto-audit without a signer                                                                                                                                                                                                                                                                                                                                                                            |
 | Observability        | `log/slog` + `pkg/observability/` + Sentinel rules                                                                                                                                 | W3C trace-context (`traceparent`/`tracestate`) wired via `go.opentelemetry.io/otel`. `tracingMiddleware` runs on every gateway and minter request; audit log entries carry `trace_id`/`span_id` when a span is active. Attaching an OTel SDK exporter (Jaeger, OTLP, etc.) is a config-only deployment change — no code modification required.                                                                                      |
 | Rate limiting        | Issuer: `IssuanceRateLimiter` backed by the shared call-counter store. Gateway: quota engine per token/action/resource when `GATEWAY_QUOTA_ENABLED=true`.                          | Issuer and gateway share counter abstractions from `pkg/callcounter`; Redis-backed production implementations live in `pkg/callcounter/redis.go`.                                                                                                                                                                                                                                                                                   |
@@ -715,8 +715,8 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
   kill switch (operator-controlled). Compromise of any single layer
   does not collapse the system.
 - **Pluggable everywhere it matters.** Identity, signing, and DID
-  resolution are all behind adapter interfaces in `@eunox/common-core`
-  with cloud-specific concretes in the platform packages.
+  resolution are all behind adapter interfaces in `pkg/identity` and `pkg/crypto`
+  with cloud-specific concretes in the same packages.
 - **Fail-closed by default.** Unknown condition `type`, unknown
   `schemaVersion`, missing call-counter store with a `maxCalls`
   capability, missing evidence signer with crypto-audit on — all hard
@@ -725,8 +725,8 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 **Properties this architecture does _not_ yet give you:**
 
 - A self-service UI for non-engineers to author manifests.
-- DPoP sender-constrained tokens (F-2).
-- OCSF-formatted audit transport (F-6).
+- DPoP sender-constrained tokens.
+- OCSF-formatted audit transport.
 
 ---
 
