@@ -230,6 +230,13 @@ func (app *App) handleIssue(w http.ResponseWriter, r *http.Request) {
 		role = user.Roles[0]
 	}
 
+	// Validate capabilities are specified (breaking change: empty capabilities
+	// now rejected instead of defaulting to full policy set — F-1 fix).
+	if len(req.Capabilities) == 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse("capabilities field is required and must be non-empty"))
+		return
+	}
+
 	// Intersect capabilities with policy
 	caps, err := app.deps.PolicyEngine.IntersectCapabilities(role, req.Capabilities)
 	if err != nil {
