@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 )
 
@@ -100,9 +101,13 @@ func verifyRSA(signingInput, signature []byte, alg string, jwk map[string]interf
 		return fmt.Errorf("RSA JWK e decode error: %w", err)
 	}
 
+	eBig := new(big.Int).SetBytes(eBytes)
+	if !eBig.IsInt64() || eBig.Int64() > math.MaxInt32 || eBig.Int64() < 1 {
+		return fmt.Errorf("RSA JWK: exponent out of safe range")
+	}
 	pubKey := &rsa.PublicKey{
 		N: new(big.Int).SetBytes(nBytes),
-		E: int(new(big.Int).SetBytes(eBytes).Int64()),
+		E: int(eBig.Int64()),
 	}
 
 	var hashFunc crypto.Hash

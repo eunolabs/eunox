@@ -242,10 +242,20 @@ func (w *DeliveryWorker) deadLetter(event *QueuedEvent) {
 }
 
 func (w *DeliveryWorker) computeNextAttempt(currentAttempts int) int64 {
-	// Exponential backoff: base * 2^attempts, capped at max.
-	backoff := w.config.BackoffBase * (1 << uint(currentAttempts))
+	// Exponential backoff via iterative doubling with saturation.
+	// This avoids integer overflow regardless of MaxAttempts, BackoffBase, or architecture,
+	// since each doubling is checked before assignment.
+	backoff := w.config.BackoffBase
 	if backoff > w.config.BackoffMax {
 		backoff = w.config.BackoffMax
+	}
+	for i := 0; i < currentAttempts; i++ {
+		doubled := backoff * 2
+		if doubled <= 0 || doubled > w.config.BackoffMax {
+			backoff = w.config.BackoffMax
+			break
+		}
+		backoff = doubled
 	}
 	return time.Now().Add(backoff).UnixMilli()
 }

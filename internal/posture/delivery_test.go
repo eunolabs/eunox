@@ -309,3 +309,24 @@ func TestDeliveryWorker_StopDrainsInFlight(t *testing.T) {
 	// All 5 events should have been delivered during the drain.
 	assert.Equal(t, 5, plugin.observedCount())
 }
+
+func TestComputeNextAttempt_LargeAttempts(t *testing.T) {
+	cfg := DeliveryWorkerConfig{
+		MaxAttempts: 10,
+		BackoffBase: 1 * time.Second,
+		BackoffMax:  5 * time.Minute,
+	}
+	worker := &DeliveryWorker{config: cfg}
+
+	largeCases := []int{0, 1, 10, 62, 63, 64, 100, 1000, 1<<30 - 1}
+	for _, attempts := range largeCases {
+		before := time.Now().UnixMilli()
+		result := worker.computeNextAttempt(attempts)
+		after := time.Now().Add(cfg.BackoffMax).UnixMilli()
+
+		// Result must be a future timestamp (positive backoff).
+		assert.Greater(t, result, before, "attempt=%d: expected next-attempt timestamp > now (%d), got %d", attempts, before, result)
+		// Result must not exceed now + BackoffMax.
+		assert.LessOrEqual(t, result, after, "attempt=%d: expected next-attempt timestamp <= now+BackoffMax (%d), got %d", attempts, after, result)
+	}
+}

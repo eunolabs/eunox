@@ -178,11 +178,12 @@ func run() error {
 
 	// Create main server
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      app.Handler(),
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           app.Handler(),
+		ReadHeaderTimeout: readTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	// Create admin server (bound to localhost)
@@ -192,11 +193,12 @@ func run() error {
 	}
 
 	adminSrv := &http.Server{
-		Addr:         adminAddr,
-		Handler:      app.AdminHandler(),
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+		Addr:              adminAddr,
+		Handler:           app.AdminHandler(),
+		ReadHeaderTimeout: readTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	// Start servers
