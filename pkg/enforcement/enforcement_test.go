@@ -848,3 +848,85 @@ func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionDeny, resp2.Decision)
 }
+
+func TestEngine_AllowedValues_Allow(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+tests := []struct {
+name     string
+argument string
+values   []interface{}
+args     map[string]interface{}
+}{
+{
+name:     "string match",
+argument: "format",
+values:   []interface{}{"json", "csv"},
+args:     map[string]interface{}{"format": "json"},
+},
+{
+name:     "boolean match",
+argument: "strict",
+values:   []interface{}{true},
+args:     map[string]interface{}{"strict": true},
+},
+{
+name:     "nil value in allowed list",
+argument: "filter",
+values:   []interface{}{nil, "all"},
+args:     map[string]interface{}{"filter": nil},
+},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "tool",
+Arguments: tt.args,
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{
+Resource: "tool",
+Actions:  []string{"*"},
+Conditions: []capability.Condition{
+&capability.AllowedValuesCondition{
+Argument: tt.argument,
+Values:   tt.values,
+},
+},
+},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionAllow, resp.Decision, tt.name)
+})
+}
+}
+
+func TestEngine_AllowedValues_Deny(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "tool",
+Arguments: map[string]interface{}{"format": "xml"},
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{
+Resource: "tool",
+Actions:  []string{"*"},
+Conditions: []capability.Condition{
+&capability.AllowedValuesCondition{
+Argument: "format",
+Values:   []interface{}{"json", "csv"},
+},
+},
+},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionDeny, resp.Decision)
+require.NotNil(t, resp.Denial)
+assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
+}

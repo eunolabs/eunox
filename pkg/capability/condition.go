@@ -13,6 +13,7 @@ const (
 	ConditionTypeMaxCalls          = "maxCalls"
 	ConditionTypeRecipientDomain   = "recipientDomain"
 	ConditionTypeRedactFields      = "redactFields"
+	ConditionTypeAllowedValues     = "allowedValues"
 	ConditionTypePolicy            = "policy"
 	ConditionTypeCustom            = "custom"
 )
@@ -79,6 +80,14 @@ type CustomCondition struct {
 	Config interface{} `json:"config"`
 }
 
+// AllowedValuesCondition limits a named argument to a fixed set of allowed values.
+// The Argument field names the key in EnforceRequest.Arguments to check.
+// Values contains the allowed scalar values (string, number, boolean, or null).
+type AllowedValuesCondition struct {
+	Argument string        `json:"argument"`
+	Values   []interface{} `json:"values"`
+}
+
 // ConditionType returns the time window discriminator.
 func (TimeWindowCondition) ConditionType() string { return ConditionTypeTimeWindow }
 
@@ -109,6 +118,9 @@ func (PolicyCondition) ConditionType() string { return ConditionTypePolicy }
 // ConditionType returns the custom discriminator.
 func (CustomCondition) ConditionType() string { return ConditionTypeCustom }
 
+// ConditionType returns the allowedValues discriminator.
+func (AllowedValuesCondition) ConditionType() string { return ConditionTypeAllowedValues }
+
 // MarshalJSON serializes TimeWindowCondition with its discriminator.
 func (c TimeWindowCondition) MarshalJSON() ([]byte, error) { return marshalCondition(c) }
 
@@ -138,3 +150,6 @@ func (c PolicyCondition) MarshalJSON() ([]byte, error) { return marshalCondition
 
 // MarshalJSON serializes CustomCondition with its discriminator.
 func (c CustomCondition) MarshalJSON() ([]byte, error) { return marshalCondition(c) }
+
+// MarshalJSON serializes AllowedValuesCondition with its discriminator.
+func (c AllowedValuesCondition) MarshalJSON() ([]byte, error) { return marshalCondition(c) }
