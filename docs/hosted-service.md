@@ -33,10 +33,10 @@
    - [Invoicing and receipts](#44-invoicing-and-receipts)
    - [Dunning and subscription lifecycle](#45-dunning-and-subscription-lifecycle)
 5. [Execution plan](#5-execution-plan)
-   - [Phase 1 — Hosted MVP (weeks 1–6)](#phase-1--hosted-mvp-weeks-16)
-   - [Phase 2 — Billing and metering (weeks 7–12)](#phase-2--billing-and-metering-weeks-712)
-   - [Phase 3 — Enterprise tier (weeks 13–20)](#phase-3--enterprise-tier-weeks-1320)
-   - [Phase 4 — Growth and compliance (weeks 21–28)](#phase-4--growth-and-compliance-weeks-2128)
+   - [Phase 1: Hosted MVP (weeks 1-6)](#phase-1-hosted-mvp-weeks-1-6)
+   - [Phase 2: Billing and metering (weeks 7-12)](#phase-2-billing-and-metering-weeks-7-12)
+   - [Phase 3: Enterprise tier (weeks 13-20)](#phase-3-enterprise-tier-weeks-13-20)
+   - [Phase 4: Growth and compliance (weeks 21-28)](#phase-4-growth-and-compliance-weeks-21-28)
 
 ---
 
@@ -312,7 +312,7 @@ uses the following Stripe primitives:
 
 - Payment-method data never enters eunox infrastructure. All card details are
   collected via Stripe Elements (Stripe-hosted widget) and stored in Stripe Vault.
-- Stripe webhook signatures are verified using `stripe.ConstructEvent` before
+- Stripe webhook signatures are verified using `webhook.ConstructEvent` before
   processing. Replayed or tampered events are rejected.
 - Stripe customer IDs are stored in the `tenants` table (`stripe_customer_id`).
   No PII from Stripe is mirrored into eunox.
@@ -357,7 +357,7 @@ window even after downgrade — data is never deleted due to billing status alon
 The execution plan is structured as four phases. Each phase delivers a
 releasable increment of the hosted service.
 
-### Phase 1 — Hosted MVP (weeks 1–6)
+### Phase 1: Hosted MVP (weeks 1-6)
 
 **Goal:** Single-region, manually provisioned hosted service with Free and Team
 tiers. No self-serve billing; customers contact sales for Team.
@@ -377,7 +377,7 @@ gateway; SLO dashboards green; zero P1 incidents for 5 consecutive days.
 
 ---
 
-### Phase 2 — Billing and metering (weeks 7–12)
+### Phase 2: Billing and metering (weeks 7-12)
 
 **Goal:** Self-serve Free and Team subscriptions with automated billing.
 
@@ -397,7 +397,7 @@ to Team → Stripe invoice generated and paid; metering consumer lag < 60 second
 
 ---
 
-### Phase 3 — Enterprise tier (weeks 13–20)
+### Phase 3: Enterprise tier (weeks 13-20)
 
 **Goal:** Enterprise tier fully operational with data residency, dedicated support,
 and compliance evidence export.
@@ -419,7 +419,7 @@ tested (audit records do not leave eu-west-1); SOC 2 Type I report issued.
 
 ---
 
-### Phase 4 — Growth and compliance (weeks 21–28)
+### Phase 4: Growth and compliance (weeks 21-28)
 
 **Goal:** Reach 1 000 paying tenants; SOC 2 Type II; HIPAA BAA; annual contract
 support.
