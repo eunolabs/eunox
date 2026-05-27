@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -394,7 +395,11 @@ func (e *Engine) handleAllowedValues(_ context.Context, cond capability.Conditio
 	}
 
 	if av.Argument == "" {
-		return nil
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedValues,
+			Message:       "allowedValues condition has empty argument name",
+		}
 	}
 
 	argValue, present := req.Arguments[av.Argument]
@@ -410,7 +415,7 @@ func (e *Engine) handleAllowedValues(_ context.Context, cond capability.Conditio
 	}
 
 	for _, allowed := range av.Values {
-		if fmt.Sprintf("%v", allowed) == fmt.Sprintf("%v", argValue) {
+		if reflect.DeepEqual(allowed, argValue) {
 			return nil
 		}
 	}
@@ -548,11 +553,11 @@ func asCustom(cond capability.Condition) (*capability.CustomCondition, bool) {
 }
 
 func asAllowedValues(cond capability.Condition) (*capability.AllowedValuesCondition, bool) {
-if t, ok := cond.(*capability.AllowedValuesCondition); ok {
-return t, true
-}
-if t, ok := cond.(capability.AllowedValuesCondition); ok {
-return &t, true
-}
-return nil, false
+	if t, ok := cond.(*capability.AllowedValuesCondition); ok {
+		return t, true
+	}
+	if t, ok := cond.(capability.AllowedValuesCondition); ok {
+		return &t, true
+	}
+	return nil, false
 }

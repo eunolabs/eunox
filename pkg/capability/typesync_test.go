@@ -53,11 +53,17 @@ func TestConditionTypesInSyncWithUpstreamTypeScript(t *testing.T) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url) //nolint:noctx
 	if err != nil {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("types-sync: cannot reach upstream in CI (%v)", err)
+		}
 		t.Skipf("skipping types-sync: cannot reach upstream (%v)", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("types-sync: upstream returned HTTP %d in CI", resp.StatusCode)
+		}
 		t.Skipf("skipping types-sync: upstream returned HTTP %d", resp.StatusCode)
 	}
 
@@ -172,9 +178,9 @@ func TestConditionTypeConstantsValid(t *testing.T) {
 }
 
 // TestAllConditionTypesHaveHandlers checks that every condition type constant
-// exposed by the capability package is also registered as a handler in the
-// enforcement engine. This is done by verifying a deny-by-default JSON payload
-// produces a recognisable enforcement result rather than an "unknown handler" error.
+// exposed by the capability package can be JSON-marshalled with its discriminator
+// and round-tripped through ConditionWrapper unmarshalling without error. It does
+// not verify enforcement-engine handler registration; see enforcement_test.go for that.
 func TestAllConditionTypesHaveHandlers(t *testing.T) {
 	for _, ct := range goConditionTypes {
 		ct := ct
