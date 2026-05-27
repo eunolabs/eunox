@@ -249,11 +249,21 @@ func actionMatchScore(actions []string, req *capability.EnforceRequest) (int, bo
 	if len(actions) == 0 {
 		return 0, true
 	}
+	// When no specific operation is set, treat toolName as the explicit operation,
+	// consistent with allowedOperations handling.
+	operation := req.Context.Operation
+	if operation == "" {
+		operation = req.ToolName
+	}
 	bestScore := -1
+	hasWildcard := false
 	for _, a := range actions {
+		if a == "*" {
+			hasWildcard = true
+		}
 		score := -1
 		switch {
-		case req.Context.Operation != "" && a == req.Context.Operation:
+		case a == operation:
 			score = 2
 		case a == req.ToolName:
 			score = 1
@@ -267,7 +277,18 @@ func actionMatchScore(actions []string, req *capability.EnforceRequest) (int, bo
 	if bestScore < 0 {
 		return 0, false
 	}
-	return bestScore, true
+	// Apply a breadth penalty so that a narrower action set beats a broader one at
+	// the same score level. Scale by 1000 so that levels remain strictly ordered even
+	// after the maximum possible penalty (≤999) is subtracted, preventing a large
+	// action list from flipping a level-2 match below a level-1 match.
+	penalty := len(actions)
+	if hasWildcard {
+		penalty += 10
+	}
+	if penalty > 999 {
+		penalty = 999
+	}
+	return bestScore*1000 - penalty, true
 }
 
 func resourceSpecificity(resource, toolName string) int {

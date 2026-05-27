@@ -260,8 +260,14 @@ func TestValidateRedisConfig(t *testing.T) {
 			errMsg:    "requires Redis",
 		},
 		{
-			name:      "staging_multi_region_allows_when_specific_redis_present",
+			name:      "staging_multi_region_partner_did_only_fails",
 			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierMultiRegionActiveActive, PartnerDIDsRedisURL: "redis://localhost:6379"},
+			expectErr: true,
+			errMsg:    "requires Redis",
+		},
+		{
+			name:      "staging_multi_region_allows_when_redis_url_present",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierMultiRegionActiveActive, RedisURL: "redis://localhost:6379"},
 			expectErr: false,
 		},
 		{

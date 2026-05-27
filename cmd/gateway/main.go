@@ -306,25 +306,29 @@ func resolveRedisURL(specificURL, fallbackURL string) string {
 	return fallbackURL
 }
 
-// validateRedisConfig enforces tier-aware Redis requirements for the gateway.
-// hasAnyRedisConfigured returns true when at least one Redis URL is set in cfg.
-func hasAnyRedisConfigured(cfg *config.GatewayConfig) bool {
-	return cfg.RedisURL != "" || cfg.KillSwitchRedisURL != "" ||
-		cfg.RevocationRedisURL != "" || cfg.CallCounterRedisURL != "" ||
-		cfg.PartnerDIDsRedisURL != ""
+// hasSecurityRedisConfigured returns true when the stateful security backends
+// (kill-switch, revocation, call-counter) are covered by a Redis URL.
+// REDIS_URL alone is sufficient; alternatively all three per-service URLs must
+// be set. PartnerDIDsRedisURL alone does not satisfy this requirement because
+// it does not cover the kill-switch, revocation, or call-counter stores.
+func hasSecurityRedisConfigured(cfg *config.GatewayConfig) bool {
+	return cfg.RedisURL != "" ||
+		(cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "")
 }
 
+// validateRedisConfig enforces tier-aware Redis requirements for the gateway.
 //
 // Single-replica deployments may run entirely in memory outside production. For
-// multi-replica and multi-region-active-active tiers, at least one Redis URL must
-// be configured so stateful security components are not silently split per replica.
-// Production remains stricter: every stateful security backend must resolve to a
-// Redis URL, either via REDIS_URL or all required per-service URLs.
+// multi-replica and multi-region-active-active tiers, the stateful security
+// backends (kill-switch, revocation, call-counter) must be backed by Redis so
+// they are not silently split per replica. Production remains stricter: every
+// stateful security backend must resolve to a Redis URL, either via REDIS_URL
+// or all required per-service URLs.
 func validateRedisConfig(cfg *config.GatewayConfig) error {
 	if cfg.NodeEnv != config.EnvProduction {
 		switch cfg.DeploymentTier {
 		case config.TierMultiReplica, config.TierMultiRegionActiveActive:
-			if !hasAnyRedisConfigured(cfg) {
+			if !hasSecurityRedisConfigured(cfg) {
 				return fmt.Errorf("deployment tier %q requires Redis; multi-replica gateway state cannot fall back to per-replica memory", cfg.DeploymentTier)
 			}
 		}

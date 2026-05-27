@@ -17,7 +17,7 @@ type IssuerConfig struct {
 	AdminAPIKey             string           `env:"ADMIN_API_KEY" production:"required"`
 	DefaultTokenTTL         int              `env:"DEFAULT_TOKEN_TTL" default:"900" min:"1"`
 	MaxTokenTTL             int              `env:"MAX_TOKEN_TTL" default:"86400" min:"1"`
-	KeyRotationIntervalDays int              `env:"KEY_ROTATION_INTERVAL_DAYS" default:"90" min:"1"`
+	KeyRotationIntervalDays int              `env:"ISSUER_KEY_ROTATION_INTERVAL_DAYS" default:"90" min:"1"`
 	RolePolicyFile          string           `env:"ROLE_POLICY_FILE"`
 
 	// Rate limiting

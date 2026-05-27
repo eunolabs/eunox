@@ -105,7 +105,11 @@ func run() error {
 		})
 		if err := prometheus.DefaultRegisterer.Register(keyAgeGauge); err != nil {
 			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
-				keyAgeGauge = are.ExistingCollector.(prometheus.Gauge)
+				existing, ok := are.ExistingCollector.(prometheus.Gauge)
+				if !ok {
+					return fmt.Errorf("register signing key age gauge: existing collector is not a Gauge (got %T)", are.ExistingCollector)
+				}
+				keyAgeGauge = existing
 			} else {
 				return fmt.Errorf("register signing key age gauge: %w", err)
 			}
