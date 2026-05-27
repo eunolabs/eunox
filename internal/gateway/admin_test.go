@@ -575,7 +575,7 @@ func TestAdmin_PartnerDID_List_Pagination(t *testing.T) {
 	assert.Equal(t, float64(2), result2["page"])
 	assert.Equal(t, false, result2["has_more"])
 
-	// Verify stable sort: both pages together should contain all 3 DIDs.
+	// Verify that both pages together contain all 3 DIDs (none duplicated or missing).
 	page1 := result["partners"].([]any)
 	page2 := result2["partners"].([]any)
 	all := make([]any, 0, len(page1)+len(page2))

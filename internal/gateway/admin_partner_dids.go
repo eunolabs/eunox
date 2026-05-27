@@ -59,7 +59,7 @@ func (app *App) handlePartnerDIDRegister(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// handlePartnerDIDList handles GET /admin/v1/partner-dids.
+// handlePartnerDIDList handles GET /admin/partner-dids.
 //
 // Supports cursor-free, offset-based pagination via query parameters:
 //   - page_size (default 50, max 1000)
@@ -82,7 +82,10 @@ func (app *App) handlePartnerDIDList(w http.ResponseWriter, r *http.Request) {
 	// Parse pagination parameters.
 	pageSize := partnerDIDDefaultPageSize
 	if ps := r.URL.Query().Get("page_size"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= partnerDIDMaxPageSize {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			if v > partnerDIDMaxPageSize {
+				v = partnerDIDMaxPageSize
+			}
 			pageSize = v
 		}
 	}

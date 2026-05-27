@@ -169,7 +169,11 @@ func (m *Manager) Run(ctx context.Context) error {
 	// Start servers.
 	for _, entry := range m.servers {
 		go func(e *serverEntry) {
-			m.logger.Info("starting server", slog.String("name", e.name), slog.String("addr", e.server.Addr))
+			addr := e.server.Addr
+			if e.listener != nil {
+				addr = e.listener.Addr().String()
+			}
+			m.logger.Info("starting server", slog.String("name", e.name), slog.String("addr", addr))
 			var serveErr error
 			if e.listener != nil {
 				serveErr = e.server.Serve(e.listener)
