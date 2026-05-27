@@ -64,14 +64,16 @@ type PostgresLedgerConfig struct {
 	// Default: 8675309 (arbitrary fixed ID for the audit ledger).
 	LockID int64
 
-	// LockTimeout is the maximum time to wait when attempting to acquire the
-	// advisory lock.  When non-zero, AcquireLock emits a PostgreSQL
-	// SET lock_timeout statement before calling TryLock, so that the database
-	// returns an error quickly (rather than blocking indefinitely) when another
-	// replica holds the lock.
+	// LockTimeout is the maximum time the database session is allowed to wait
+	// when acquiring the advisory lock.  When non-zero, AcquireLock emits a
+	// PostgreSQL SET lock_timeout statement before calling TryLock so that the
+	// database returns a lock_timeout error promptly if contention is detected,
+	// rather than waiting indefinitely.  This is only effective when the
+	// AdvisoryLock implementation uses a blocking lock call (e.g.
+	// pg_advisory_lock); implementations backed by pg_try_advisory_lock return
+	// immediately regardless of this setting.
 	//
-	// A value of 0 (the default) disables the timeout, preserving the previous
-	// behaviour where TryLock uses pg_try_advisory_lock (non-blocking).
+	// A value of 0 (the default) disables the timeout.
 	LockTimeout time.Duration
 }
 

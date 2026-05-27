@@ -413,10 +413,10 @@ Expose the `reporter.IsDegraded()` state as a Prometheus gauge
 readiness probe response so load balancers can drain degraded replicas if desired.
 
 **Status: Implemented** — `pkg/ratelimit/resilient_redis.go` adds a `WithPrometheusRegisterer`
-functional option. When provided, a `GaugeFunc` named `ratelimit_redis_degraded` with label
-`component="ratelimit"` is registered and reflects the live `reporter.IsDegraded()` state.
-Tests in `pkg/ratelimit/resilient_redis_test.go` verify the gauge reads 1 when degraded and 0
-when healthy.
+functional option that accepts a caller-supplied `component` label. When provided, a `GaugeFunc`
+named `ratelimit_redis_degraded` is registered and reflects the live degradation state
+(`reporter.State() == Degraded`). Tests in `pkg/ratelimit/resilient_redis_test.go` verify the
+gauge reads 1 when degraded and 0 when healthy, and that the component label is set correctly.
 
 ---
 
@@ -532,8 +532,7 @@ emission is required.
 
 **Status: Implemented** — `internal/posture/app.go` includes a comment block documenting
 the PostgreSQL migration path: replacing the SQLite driver and local volume with a shared
-PostgreSQL connection string, updating the Helm chart replica guard, and migrating via
-`golang-migrate`.
+PostgreSQL connection string and updating the queue backend wiring.
 
 ---
 
@@ -554,7 +553,7 @@ exceeds a threshold so alerts fire before the write backlog grows.
 
 **Status: Implemented** — `pkg/audit/backend.go` adds `LockTimeout time.Duration` to
 `PostgresLedgerConfig`. When non-zero, `AcquireLock` emits `SET lock_timeout = 'Nms'` before
-calling `pg_try_advisory_lock`, bounding the advisory lock wait. Tests in
+the advisory lock call, bounding the wait when a blocking lock implementation is used. Tests in
 `pkg/audit/audit_test.go` verify the `SET` statement is emitted in the correct order and
 skipped when `LockTimeout` is zero.
 
@@ -572,7 +571,7 @@ constructor guards and are acceptable, but they should be documented as invarian
 in the package godoc so callers are aware.
 
 **Status: Implemented** — `pkg/circuitbreaker/do.go` package-level godoc explicitly documents
-that `Do` and `DoWithFallback` panic on nil breaker as a programming-error invariant, and
+that `Do` and `DoVoid` panic on nil breaker as a programming-error invariant, and
 callers must ensure the breaker is constructed before use.
 
 ---

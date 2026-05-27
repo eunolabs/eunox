@@ -850,160 +850,160 @@ func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
 }
 
 func TestEngine_AllowedValues_Allow(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-tests := []struct {
-name     string
-argument string
-values   []interface{}
-args     map[string]interface{}
-}{
-{
-name:     "string match",
-argument: "format",
-values:   []interface{}{"json", "csv"},
-args:     map[string]interface{}{"format": "json"},
-},
-{
-name:     "boolean match",
-argument: "strict",
-values:   []interface{}{true},
-args:     map[string]interface{}{"strict": true},
-},
-{
-name:     "nil value in allowed list",
-argument: "filter",
-values:   []interface{}{nil, "all"},
-args:     map[string]interface{}{"filter": nil},
-},
-}
+	tests := []struct {
+		name     string
+		argument string
+		values   []interface{}
+		args     map[string]interface{}
+	}{
+		{
+			name:     "string match",
+			argument: "format",
+			values:   []interface{}{"json", "csv"},
+			args:     map[string]interface{}{"format": "json"},
+		},
+		{
+			name:     "boolean match",
+			argument: "strict",
+			values:   []interface{}{true},
+			args:     map[string]interface{}{"strict": true},
+		},
+		{
+			name:     "nil value in allowed list",
+			argument: "filter",
+			values:   []interface{}{nil, "all"},
+			args:     map[string]interface{}{"filter": nil},
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "tool",
-Arguments: tt.args,
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{
-Resource: "tool",
-Actions:  []string{"*"},
-Conditions: []capability.Condition{
-&capability.AllowedValuesCondition{
-Argument: tt.argument,
-Values:   tt.values,
-},
-},
-},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionAllow, resp.Decision, tt.name)
-})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := capability.EnforceRequest{
+				SessionID: "sess-1",
+				ToolName:  "tool",
+				Arguments: tt.args,
+			}
+			resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+				{
+					Resource: "tool",
+					Actions:  []string{"*"},
+					Conditions: []capability.Condition{
+						&capability.AllowedValuesCondition{
+							Argument: tt.argument,
+							Values:   tt.values,
+						},
+					},
+				},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, capability.DecisionAllow, resp.Decision, tt.name)
+		})
+	}
 }
 
 func TestEngine_AllowedValues_Deny(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "tool",
-Arguments: map[string]interface{}{"format": "xml"},
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{
-Resource: "tool",
-Actions:  []string{"*"},
-Conditions: []capability.Condition{
-&capability.AllowedValuesCondition{
-Argument: "format",
-Values:   []interface{}{"json", "csv"},
-},
-},
-},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionDeny, resp.Decision)
-require.NotNil(t, resp.Denial)
-assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Arguments: map[string]interface{}{"format": "xml"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{
+					Argument: "format",
+					Values:   []interface{}{"json", "csv"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
 }
 
 // CI-3: path.Match glob semantics tests.
 
 func TestEngine_ValidateAction_GlobQuestionMark(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "file:a",
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{Resource: "file:?", Actions: []string{"*"}},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "file:a",
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "file:?", Actions: []string{"*"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
 func TestEngine_ValidateAction_GlobQuestionMark_NoMatch(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "file:ab",
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{Resource: "file:?", Actions: []string{"*"}},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "file:ab",
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "file:?", Actions: []string{"*"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 }
 
 func TestEngine_ValidateAction_GlobCharacterClass(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "tool:b",
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{Resource: "tool:[abc]", Actions: []string{"*"}},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool:b",
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "tool:[abc]", Actions: []string{"*"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
 func TestEngine_ValidateAction_MidStringWildcard(t *testing.T) {
-engine := enforcement.New()
-ctx := context.Background()
+	engine := enforcement.New()
+	ctx := context.Background()
 
-req := capability.EnforceRequest{
-SessionID: "sess-1",
-ToolName:  "file:data.csv",
-}
-resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-{Resource: "file:*.csv", Actions: []string{"*"}},
-})
-require.NoError(t, err)
-assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "file:data.csv",
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{Resource: "file:*.csv", Actions: []string{"*"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
 func TestValidateResourcePattern_Valid(t *testing.T) {
-cases := []string{"*", "tool:*", "file:?.csv", "tool:[abc]", "email:send"}
-for _, c := range cases {
-t.Run(c, func(t *testing.T) {
-assert.NoError(t, enforcement.ValidateResourcePattern(c))
-})
-}
+	cases := []string{"*", "tool:*", "file:?.csv", "tool:[abc]", "email:send"}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			assert.NoError(t, enforcement.ValidateResourcePattern(c))
+		})
+	}
 }
 
 func TestValidateResourcePattern_Invalid(t *testing.T) {
-// Unclosed character class is a malformed pattern.
-err := enforcement.ValidateResourcePattern("tool:[abc")
-assert.Error(t, err)
+	// Unclosed character class is a malformed pattern.
+	err := enforcement.ValidateResourcePattern("tool:[abc")
+	assert.Error(t, err)
 }

@@ -82,53 +82,53 @@ func TestResilientRedisLimiter_Check_FallsBack(t *testing.T) {
 // CI-5: Prometheus gauge for degradation state.
 
 func TestResilientRedisLimiter_PrometheusGauge_DegradedWhenRedisDown(t *testing.T) {
-monitor := redisfailover.NewMonitor()
-reporter := monitor.Register("ratelimit-prom")
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("ratelimit-prom")
 
-cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
-primary := ratelimit.NewRedis(nil, cfg)
+	cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+	primary := ratelimit.NewRedis(nil, cfg)
 
-reg := prometheus.NewRegistry()
-resilient := ratelimit.NewResilientRedis(primary, cfg, reporter,
-ratelimit.WithPrometheusRegisterer(reg, "gateway"),
-)
-defer resilient.Close()
+	reg := prometheus.NewRegistry()
+	resilient := ratelimit.NewResilientRedis(primary, cfg, reporter,
+		ratelimit.WithPrometheusRegisterer(reg, "gateway"),
+	)
+	defer resilient.Close()
 
-// Initially healthy (no requests yet).
-gathered, err := reg.Gather()
-require.NoError(t, err)
-require.Len(t, gathered, 1)
-assert.Equal(t, 0.0, gathered[0].GetMetric()[0].GetGauge().GetValue())
+	// Initially healthy (no requests yet).
+	gathered, err := reg.Gather()
+	require.NoError(t, err)
+	require.Len(t, gathered, 1)
+	assert.Equal(t, 0.0, gathered[0].GetMetric()[0].GetGauge().GetValue())
 
-// Trigger a failure — gauge should become 1.
-_, _ = resilient.Allow(context.Background(), "k")
-gathered, err = reg.Gather()
-require.NoError(t, err)
-require.Len(t, gathered, 1)
-assert.Equal(t, 1.0, gathered[0].GetMetric()[0].GetGauge().GetValue())
+	// Trigger a failure — gauge should become 1.
+	_, _ = resilient.Allow(context.Background(), "k")
+	gathered, err = reg.Gather()
+	require.NoError(t, err)
+	require.Len(t, gathered, 1)
+	assert.Equal(t, 1.0, gathered[0].GetMetric()[0].GetGauge().GetValue())
 }
 
 func TestResilientRedisLimiter_PrometheusGauge_LabelIncludesComponent(t *testing.T) {
-monitor := redisfailover.NewMonitor()
-reporter := monitor.Register("ratelimit-label")
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("ratelimit-label")
 
-cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
-primary := ratelimit.NewRedis(nil, cfg)
+	cfg := ratelimit.Config{Rate: 5, Window: time.Minute}
+	primary := ratelimit.NewRedis(nil, cfg)
 
-reg := prometheus.NewRegistry()
-resilient := ratelimit.NewResilientRedis(primary, cfg, reporter,
-ratelimit.WithPrometheusRegisterer(reg, "mycomponent"),
-)
-defer resilient.Close()
+	reg := prometheus.NewRegistry()
+	resilient := ratelimit.NewResilientRedis(primary, cfg, reporter,
+		ratelimit.WithPrometheusRegisterer(reg, "mycomponent"),
+	)
+	defer resilient.Close()
 
-_, _ = resilient.Allow(context.Background(), "k")
+	_, _ = resilient.Allow(context.Background(), "k")
 
-gathered, err := reg.Gather()
-require.NoError(t, err)
-require.Len(t, gathered, 1)
+	gathered, err := reg.Gather()
+	require.NoError(t, err)
+	require.Len(t, gathered, 1)
 
-labels := gathered[0].GetMetric()[0].GetLabel()
-require.Len(t, labels, 1)
-assert.Equal(t, "component", labels[0].GetName())
-assert.Equal(t, "mycomponent", labels[0].GetValue())
+	labels := gathered[0].GetMetric()[0].GetLabel()
+	require.Len(t, labels, 1)
+	assert.Equal(t, "component", labels[0].GetName())
+	assert.Equal(t, "mycomponent", labels[0].GetValue())
 }

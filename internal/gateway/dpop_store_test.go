@@ -83,14 +83,13 @@ func TestInMemoryDPoPStore_Start_CleansUpExpiredEntries(t *testing.T) {
 	// Advance fake clock past TTL.
 	setNow(time.Now().Add(2 * time.Minute))
 
-	// Wait for at least one cleanup tick.
-	time.Sleep(200 * time.Millisecond)
-
-	store.mu.Lock()
-	_, exists := store.seen["jti-cleanup"]
-	store.mu.Unlock()
-
-	assert.False(t, exists, "cleanup goroutine should have removed the expired entry")
+	// Wait for the cleanup goroutine to evict the expired entry.
+	require.Eventually(t, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		_, exists := store.seen["jti-cleanup"]
+		return !exists
+	}, 2*time.Second, 10*time.Millisecond, "cleanup goroutine should have removed the expired entry")
 }
 
 func TestInMemoryDPoPStore_Start_StopsOnContextCancel(t *testing.T) {
