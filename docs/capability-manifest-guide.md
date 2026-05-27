@@ -37,7 +37,7 @@ metadata:
 Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
 are **not** part of the manifest. They are configured on the
 **Capability Issuer** (`DEFAULT_TOKEN_TTL`, `ISSUER_DID`) and stamped
-onto the JWT at issuance time — see [`SCHEMA_VERSIONING.md`](./SCHEMA_VERSIONING.md)
+onto the JWT at issuance time — see [`schema-versioning.md`](./schema-versioning.md)
 and the issuer environment template in `internal/issuer/`.
 
 ## 2. The capability list — the four golden patterns
@@ -268,6 +268,6 @@ fail builds on schema-version drift before they reach production.
 
 ## 8. Where this guide lives in the rest of the docs
 
-- **Token format and signing**: [`SCHEMA_VERSIONING.md`](./SCHEMA_VERSIONING.md)
+- **Token format and signing**: [`schema-versioning.md`](./schema-versioning.md)
 - **Why the gateway is the policy decision point**: [`enforcement.md`](./enforcement.md)
-- **Adapter pattern (custom identity / signers)**: [`ADAPTERS.md`](./ADAPTERS.md)
+- **Adapter pattern (custom identity / signers)**: [`adapters.md`](./adapters.md)

@@ -342,7 +342,7 @@ Tenant B → Gateway-B + Issuer-B → DB-B → Redis-B
 
 - **Data residency:** Deploy Topology C with per-region database instances
   to meet data residency requirements
-- **Right to erasure:** See [AUDIT_RETENTION_COMPLIANCE.md](./AUDIT_RETENTION_COMPLIANCE.md)
+- **Right to erasure:** See [audit-retention-compliance.md](./audit-retention-compliance.md)
   for chain-compatible data removal strategies
 - **Data minimization:** Tokens embed minimal claims; audit records use
   pseudonymized actor identifiers where possible

@@ -229,4 +229,4 @@ Current behavior in this codebase is CI/test-driven validation and explicit migr
 
 ---
 
-*See also: [AUDIT_CHAIN_ARCHITECTURE.md](./AUDIT_CHAIN_ARCHITECTURE.md), [DEPLOYMENT.md](./DEPLOYMENT.md)*
+*See also: [audit-chain-architecture.md](./audit-chain-architecture.md), [deployment.md](./deployment.md)*

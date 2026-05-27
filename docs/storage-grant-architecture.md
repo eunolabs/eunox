@@ -3,7 +3,7 @@
 This document describes the architecture, trust model, and audit integration
 for the Storage Grant Service (`cmd/storage-grant-svc`,
 `internal/storagegrantsvc`). It answers the questions posed in OQ-2 of the
-[Technical Architecture Review](TECHNICAL_REVIEW_2026_05_26.md).
+[Technical Architecture Review](technical-review-2026-05-26.md).
 
 ---
 
@@ -327,8 +327,8 @@ Key metrics to alert on:
 
 ## 10. Related Documents
 
-- [Agent Runtime Security](AGENT_RUNTIME_SECURITY.md) — How agents acquire and use tokens
-- [DB Token Architecture](DB_TOKEN_ARCHITECTURE.md) — Similar pattern for database credentials
-- [Architecture Overview](ARCHITECTURE.md) — System-wide component interactions
-- [Deployment Guide](DEPLOYMENT.md) — Production deployment patterns
+- [Agent Runtime Security](agent-runtime-security.md) — How agents acquire and use tokens
+- [DB Token Architecture](db-token-architecture.md) — Similar pattern for database credentials
+- [Architecture Overview](architecture.md) — System-wide component interactions
+- [Deployment Guide](deployment.md) — Production deployment patterns
 - [Multi-Cloud](multi-cloud.md) — Cross-cloud credential management

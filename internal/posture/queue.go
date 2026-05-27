@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_lett
 // # When to Use PostgreSQL
 //
 // For deployments exceeding ~100 events/s sustained posture throughput, switch to a
-// PostgreSQL-backed queue implementation (see docs/POSTURE_SCALING.md). PostgreSQL
+// PostgreSQL-backed queue implementation (see docs/posture-scaling.md). PostgreSQL
 // provides row-level locking, connection pooling, and horizontal read scaling.
 //
 // # Read/Write Split Evaluation

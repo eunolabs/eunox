@@ -8,7 +8,7 @@
 > **Related documents:**
 >
 > - [`docs/deploy-gke.md`](./deploy-gke.md) — full GKE deployment guide
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — environment-variable reference
+> - [`docs/deployment.md`](./deployment.md) — environment-variable reference
 
 ---
 

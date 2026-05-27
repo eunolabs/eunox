@@ -199,7 +199,7 @@ This is different from the traditional "policy database" approach where policies
 
 ## The authoring guide and common patterns
 
-The [`CAPABILITY_MANIFEST_GUIDE.md`](../CAPABILITY_MANIFEST_GUIDE.md) in the docs is the canonical authoring reference, and it's worth reading if you're writing your first manifest. But here are the patterns I see most often in real deployments:
+The [`capability-manifest-guide.md`](../capability-manifest-guide.md) in the docs is the canonical authoring reference, and it's worth reading if you're writing your first manifest. But here are the patterns I see most often in real deployments:
 
 **Pattern A: read-only research agent.** Just `read` actions, resources scoped to specific paths with `/*`, no write capabilities. The most common type. The security approval conversation is usually: "yes, this agent can read these resources."
 

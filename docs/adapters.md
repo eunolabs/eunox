@@ -456,7 +456,7 @@ provider, _ := identity.NewAzureADProvider(cfg, httpClient)
 
 ## Partner Federation
 
-Partner federation enables eunox to accept capability tokens issued by external partner organizations using W3C DIDs (`did:web`, `did:ion`, `did:key`). See [docs/ARCHITECTURE.md](./ARCHITECTURE.md) for the full architecture overview.
+Partner federation enables eunox to accept capability tokens issued by external partner organizations using W3C DIDs (`did:web`, `did:ion`, `did:key`). See [docs/architecture.md](./architecture.md) for the full architecture overview.
 
 ### Trust Model
 
