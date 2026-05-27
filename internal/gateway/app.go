@@ -63,8 +63,8 @@ type Config struct {
 	// TrustedProxyCIDRs is the list of CIDR blocks (e.g. "10.0.0.0/8") whose
 	// requests are permitted to set the X-Forwarded-For header.  When this list
 	// is non-empty and the immediate peer (RemoteAddr) matches one of the CIDRs,
-	// the first IP in XFF is used as the client IP for enforcement.  When the
-	// list is empty, XFF is ignored and RemoteAddr is always used.
+	// the rightmost untrusted IP in XFF is used as the client IP for enforcement.
+	// When the list is empty, XFF is ignored and RemoteAddr is always used.
 	TrustedProxyCIDRs []string
 }
 
