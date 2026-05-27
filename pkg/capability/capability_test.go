@@ -418,7 +418,8 @@ func TestIssuanceProofsRoundTrip(t *testing.T) {
 	assert.NotContains(t, string(emptyData), "signatures")
 }
 
-func TestUnknownConditionTypeReturnsError(t *testing.T) {	data := []byte(`{"resource":"tool:test","actions":["read"],"conditions":[{"type":"unknownKind","value":1}]}`)
+func TestUnknownConditionTypeReturnsError(t *testing.T) {
+	data := []byte(`{"resource":"tool:test","actions":["read"],"conditions":[{"type":"unknownKind","value":1}]}`)
 
 	var constraint Constraint
 	err := json.Unmarshal(data, &constraint)
