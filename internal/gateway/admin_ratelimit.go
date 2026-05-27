@@ -47,3 +47,36 @@ func adminRateLimitKey(r *http.Request) string {
 	}
 	return host
 }
+
+// publicRateLimitMiddleware enforces per-IP rate limiting on the public /api/v1
+// route group (CR-2).  The key is derived from extractClientIP so that trusted
+// proxy CIDRs are respected and the real caller IP is used rather than the
+// proxy's address.
+func (app *App) publicRateLimitMiddleware(next http.Handler) http.Handler {
+	limit := app.config.RateLimitRequests
+	if limit <= 0 {
+		limit = defaultPublicRateLimitPerMinute
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := app.extractClientIP(r)
+
+		result, err := app.publicRateLimiter.Check(r.Context(), key)
+		if err != nil {
+			http.Error(w, "internal rate limiter error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(result.ResetAfter).Unix(), 10))
+
+		if !result.Allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())+1))
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}

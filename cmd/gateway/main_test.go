@@ -70,15 +70,49 @@ func TestValidateAdminAuth(t *testing.T) {
 			tenantID:  "tenant-1",
 			expectErr: false,
 		},
+		// --- Staging (CR-3: JWT required in staging too) ---
 		{
-			name: "staging_no_jwks_allowed",
+			name: "staging_missing_jwks_uri_requires_error",
 			cfg: config.GatewayConfig{
 				NodeEnv:     config.EnvStaging,
 				AdminAPIKey: "some-key",
 			},
 			tenantID:  "tenant-1",
+			expectErr: true,
+			errMsg:    "GATEWAY_ADMIN_JWKS_URI is required in staging",
+		},
+		{
+			name: "staging_missing_jwt_audience",
+			cfg: config.GatewayConfig{
+				NodeEnv:      config.EnvStaging,
+				AdminJWKSURI: "https://auth.example.com/.well-known/jwks.json",
+			},
+			tenantID:  "tenant-1",
+			expectErr: true,
+			errMsg:    "GATEWAY_ADMIN_JWT_AUDIENCE is required in staging",
+		},
+		{
+			name: "staging_jwt_requires_tenant",
+			cfg: config.GatewayConfig{
+				NodeEnv:          config.EnvStaging,
+				AdminJWKSURI:     "https://auth.example.com/.well-known/jwks.json",
+				AdminJWTAudience: "gateway-admin",
+			},
+			expectErr: true,
+			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in staging",
+		},
+		{
+			name: "staging_with_full_jwt_config",
+			cfg: config.GatewayConfig{
+				NodeEnv:          config.EnvStaging,
+				AdminAPIKey:      "some-key",
+				AdminJWKSURI:     "https://auth.example.com/.well-known/jwks.json",
+				AdminJWTAudience: "gateway-admin",
+			},
+			tenantID:  "tenant-1",
 			expectErr: false,
 		},
+		// --- Production ---
 		{
 			name: "production_missing_jwks_uri",
 			cfg: config.GatewayConfig{
@@ -107,7 +141,7 @@ func TestValidateAdminAuth(t *testing.T) {
 				AdminJWTAudience: "gateway-admin",
 			},
 			expectErr: true,
-			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled",
+			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required in production",
 		},
 		{
 			name: "production_with_jwks_uri",
@@ -129,16 +163,6 @@ func TestValidateAdminAuth(t *testing.T) {
 			},
 			tenantID:  "tenant-1",
 			expectErr: false,
-		},
-		{
-			name: "staging_jwt_requires_tenant",
-			cfg: config.GatewayConfig{
-				NodeEnv:          config.EnvStaging,
-				AdminJWKSURI:     "https://auth.example.com/.well-known/jwks.json",
-				AdminJWTAudience: "gateway-admin",
-			},
-			expectErr: true,
-			errMsg:    "TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled",
 		},
 	}
 

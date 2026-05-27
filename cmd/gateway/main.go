@@ -258,27 +258,36 @@ func (v *noopVerifier) VerifyToken(_ context.Context, _ string) (*capability.Tok
 }
 
 // validateAdminAuth checks that admin authentication is properly configured for the
-// deployment environment. In production, JWT auth via JWKS is required (CR-3).
+// deployment environment.
+//
+// JWT auth via JWKS is required in production AND staging (CR-3): staging often
+// shares infrastructure with production data, so a stolen static admin key grants
+// the same kill-switch and revocation powers.  Only the development environment
+// may omit GATEWAY_ADMIN_JWKS_URI and fall back to a static API key.
 func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
 	adminJWKSURI := strings.TrimSpace(cfg.AdminJWKSURI)
 	adminJWTAudience := strings.TrimSpace(cfg.AdminJWTAudience)
 	tenantID = strings.TrimSpace(tenantID)
 
-	if adminJWKSURI != "" && tenantID == "" {
-		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled")
-	}
-
-	if cfg.NodeEnv != config.EnvProduction {
+	// Development is the only environment exempt from JWT admin auth.
+	// In development, a static admin key is acceptable; but if a JWKS URI is
+	// provided, the tenant ID is still required for routing.
+	if cfg.NodeEnv == config.EnvDevelopment {
+		if adminJWKSURI != "" && tenantID == "" {
+			return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled")
+		}
 		return nil
 	}
+
+	// Production and staging both require JWT auth (CR-3).
 	if adminJWKSURI == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in production; static admin key alone is insecure (see CR-3 in ARCHITECTURE_REVIEW.md)")
+		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %s; static admin key alone is insecure (see CR-3 in ARCHITECTURE_REVIEW.md)", cfg.NodeEnv)
 	}
 	if adminJWTAudience == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in production when admin JWT auth is enabled")
+		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in %s when admin JWT auth is enabled", cfg.NodeEnv)
 	}
 	if tenantID == "" {
-		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required in production when admin JWT auth is enabled")
+		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required in %s when admin JWT auth is enabled", cfg.NodeEnv)
 	}
 	return nil
 }

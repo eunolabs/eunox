@@ -103,17 +103,27 @@ func TestInMemoryStore_RevokeKey(t *testing.T) {
 	_ = store.CreateKey(ctx, key)
 
 	revokedAt := time.Now()
-	if err := store.RevokeKey(ctx, "revoke-me", revokedAt); err != nil {
+	revoked, err := store.RevokeKey(ctx, "revoke-me", revokedAt)
+	if err != nil {
 		t.Fatalf("RevokeKey: %v", err)
+	}
+	if revoked == nil {
+		t.Fatal("RevokeKey: expected non-nil revoked key snapshot")
+	}
+	if revoked.KeyID != "revoke-me" {
+		t.Errorf("RevokeKey: keyID = %q, want %q", revoked.KeyID, "revoke-me")
+	}
+	if !revoked.IsRevoked() {
+		t.Error("RevokeKey: returned snapshot should have RevokedAt set")
 	}
 
 	got, _ := store.GetKey(ctx, "revoke-me")
 	if !got.IsRevoked() {
-		t.Error("key should be revoked")
+		t.Error("key should be revoked in store after RevokeKey")
 	}
 
-	// Revoking again should return ErrKeyRevoked.
-	if err := store.RevokeKey(ctx, "revoke-me", time.Now()); err != ErrKeyRevoked {
+	// Revoking again should return ErrKeyRevoked with a nil key.
+	if _, err := store.RevokeKey(ctx, "revoke-me", time.Now()); err != ErrKeyRevoked {
 		t.Errorf("expected ErrKeyRevoked, got %v", err)
 	}
 }
@@ -123,7 +133,7 @@ func TestInMemoryStore_RevokeKey_NotFound(t *testing.T) {
 	store := NewInMemoryStore()
 	ctx := context.Background()
 
-	if err := store.RevokeKey(ctx, "nonexistent", time.Now()); err != ErrKeyNotFound {
+	if _, err := store.RevokeKey(ctx, "nonexistent", time.Now()); err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
 }

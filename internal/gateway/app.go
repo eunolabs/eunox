@@ -27,6 +27,7 @@ import (
 )
 
 const defaultAdminRateLimitPerMinute = 10
+const defaultPublicRateLimitPerMinute = 600
 
 // Config holds the gateway application configuration.
 type Config struct {
@@ -92,20 +93,21 @@ type Dependencies struct {
 
 // App is the gateway HTTP application.
 type App struct {
-	config           Config
-	deps             Dependencies
-	router           chi.Router
-	adminRouter      chi.Router
-	proxy            *httputil.ReverseProxy
-	metrics          *gatewayMetrics
-	dpopStore        DPoPJTIStore
-	adminAuth        AdminAuthenticator
-	adminRateLimiter *ratelimit.InMemoryLimiter
-	idempotency      *IdempotencyStore
-	usageTracker     *UsageTracker
-	adminDeps        AdminDependencies
-	ionHealthChecker *IONHealthChecker
-	trustedProxyNets []*net.IPNet
+	config            Config
+	deps              Dependencies
+	router            chi.Router
+	adminRouter       chi.Router
+	proxy             *httputil.ReverseProxy
+	metrics           *gatewayMetrics
+	dpopStore         DPoPJTIStore
+	adminAuth         AdminAuthenticator
+	adminRateLimiter  *ratelimit.InMemoryLimiter
+	publicRateLimiter *ratelimit.InMemoryLimiter
+	idempotency       *IdempotencyStore
+	usageTracker      *UsageTracker
+	adminDeps         AdminDependencies
+	ionHealthChecker  *IONHealthChecker
+	trustedProxyNets  []*net.IPNet
 }
 
 type gatewayMetrics struct {
@@ -201,6 +203,23 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 		Burst:  adminRateLimit,
 	})
 
+	// Initialize public API rate limiter (CR-2).
+	// Keyed on client IP (respects trusted proxy CIDRs for XFF) to defend
+	// against unauthenticated callers hammering /api/v1/enforce or /validate.
+	publicRateLimit := cfg.RateLimitRequests
+	if publicRateLimit <= 0 {
+		publicRateLimit = defaultPublicRateLimitPerMinute
+	}
+	publicRateLimitWindow := cfg.RateLimitWindow
+	if publicRateLimitWindow <= 0 {
+		publicRateLimitWindow = time.Minute
+	}
+	app.publicRateLimiter = ratelimit.NewInMemory(ratelimit.Config{
+		Rate:   publicRateLimit,
+		Window: publicRateLimitWindow,
+		Burst:  publicRateLimit,
+	})
+
 	app.router = app.buildRouter()
 	app.adminRouter = app.buildAdminRouter()
 
@@ -277,6 +296,7 @@ func (app *App) buildRouter() chi.Router {
 
 	// Public API routes
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(app.publicRateLimitMiddleware)
 		r.Post("/enforce", app.handleEnforce)
 		r.Post("/validate", app.handleValidate)
 

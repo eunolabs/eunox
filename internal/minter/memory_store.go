@@ -67,18 +67,24 @@ func (s *InMemoryStore) ListKeys(_ context.Context, tenantID string, limit, offs
 }
 
 // RevokeKey implements KeyStore.
-func (s *InMemoryStore) RevokeKey(_ context.Context, keyID string, revokedAt time.Time) error {
+// It marks the key as revoked and returns a copy of the key with RevokedAt set.
+// The returned snapshot is safe for the caller to use without re-querying the store,
+// eliminating the TOCTOU race that arises from a separate GetKey call (CR-5).
+func (s *InMemoryStore) RevokeKey(_ context.Context, keyID string, revokedAt time.Time) (*APIKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k, ok := s.keys[keyID]
 	if !ok {
-		return ErrKeyNotFound
+		return nil, ErrKeyNotFound
 	}
 	if k.RevokedAt != nil {
-		return ErrKeyRevoked
+		return nil, ErrKeyRevoked
 	}
 	k.RevokedAt = &revokedAt
-	return nil
+	// Return a shallow copy so the caller's snapshot is stable even if the
+	// in-memory entry is mutated later.
+	snapshot := *k
+	return &snapshot, nil
 }
 
 // CreatePolicy implements KeyStore.
