@@ -46,7 +46,7 @@ return {allowed, count, earliest}
 `
 
 type redisEvaler interface {
-	Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error)
+	Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error)
 }
 
 type redisClientAdapter struct {
@@ -54,7 +54,7 @@ type redisClientAdapter struct {
 }
 
 // Eval delegates script execution to the underlying Redis client.
-func (a *redisClientAdapter) Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
+func (a *redisClientAdapter) Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error) {
 	result, err := a.client.Eval(ctx, script, keys, args...).Result()
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ type redisCmdableAdapter struct {
 }
 
 // Eval delegates script execution to the underlying redis.Cmdable.
-func (a *redisCmdableAdapter) Eval(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
+func (a *redisCmdableAdapter) Eval(ctx context.Context, script string, keys []string, args ...any) ([]interface{}, error) {
 	result, err := a.client.Eval(ctx, script, keys, args...).Result()
 	if err != nil {
 		return nil, err

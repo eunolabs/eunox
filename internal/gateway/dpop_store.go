@@ -181,11 +181,15 @@ func (s *ResilientRedisDPoPStore) MarkUsed(ctx context.Context, jti string) (boo
 	return alreadyUsed, nil
 }
 
-// safeJTIPrefix returns the first 8 characters of a JTI for log context
+// safeJTIPrefixLen is the number of characters of a JTI that are safe to log
+// for correlation without exposing the full token identifier.
+const safeJTIPrefixLen = 8
+
+// safeJTIPrefix returns the first safeJTIPrefixLen characters of a JTI for log context
 // without exposing the full value.
 func safeJTIPrefix(jti string) string {
-	if len(jti) <= 8 {
+	if len(jti) <= safeJTIPrefixLen {
 		return jti
 	}
-	return jti[:8] + "…"
+	return jti[:safeJTIPrefixLen] + "…"
 }
