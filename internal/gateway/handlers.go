@@ -294,6 +294,19 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check revocation before kill-switch (aligns with handleEnforce order, B-3 fix).
+	if app.deps.Revocation != nil && claims.JWTID != "" {
+		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+		if revErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+			return
+		}
+		if revoked {
+			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+			return
+		}
+	}
+
 	// Check kill switch
 	if app.deps.KillSwitch != nil {
 		sessionID := r.Header.Get("X-Session-ID")
@@ -308,15 +321,29 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check revocation
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+	// DPoP sender-constraint enforcement (F-2 fix).
+	// When the capability token carries a cnf.jkt binding, a valid DPoP proof
+	// from the DPoP header is required so stolen tokens cannot be replayed.
+	if claims.Confirmation != nil && claims.Confirmation.JKT != "" {
+		dpopProof := r.Header.Get("DPoP")
+		if dpopProof == "" {
+			writeJSON(w, http.StatusUnauthorized, errorResponse("DPoP proof required for sender-constrained token"))
 			return
 		}
-		if revoked {
-			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		requestURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
+
+		dpop := &capability.DPoPProof{
+			Proof:      dpopProof,
+			HTTPMethod: r.Method,
+			HTTPURL:    requestURL,
+		}
+		if err := app.verifyDPoP(r.Context(), dpop, claims); err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse(fmt.Sprintf("DPoP verification failed: %v", err)))
 			return
 		}
 	}

@@ -37,10 +37,11 @@ func (r *ResilientRedis) Start(ctx context.Context) {
 	r.inner.Start(ctx)
 	r.started = true
 
-	// Verify that the initial state load succeeded. refreshState now propagates
-	// real connectivity errors (distinct from redis.Nil / key-not-found), so a
-	// non-nil return here means Redis is unreachable and we must stay degraded.
-	if err := r.inner.refreshState(ctx); err != nil {
+	// Use HealthStatus() to determine if the initial load that ran inside
+	// Start succeeded, rather than calling refreshState a second time with
+	// the parent context (which would race the pub/sub goroutine and use a
+	// different context lifetime — S-1 fix).
+	if err := r.inner.HealthStatus(); err != nil {
 		r.reporter.MarkDegraded()
 	} else {
 		r.reporter.MarkHealthy()
