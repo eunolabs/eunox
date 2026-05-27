@@ -130,11 +130,11 @@ func (s *PostgresKeyStore) ListKeys(ctx context.Context, tenantID string, limit,
 }
 
 // CountAndListKeys returns the total key count and a page of keys for the
-// given tenant inside a single read-committed transaction so that the count
-// and the page always reflect a consistent snapshot, preventing the TOCTOU
-// race that arises from separate CountKeys and ListKeys calls.
+// given tenant inside a single repeatable-read transaction so that COUNT(*)
+// and SELECT see the same consistent snapshot, preventing the TOCTOU race
+// that arises from separate CountKeys and ListKeys calls.
 func (s *PostgresKeyStore) CountAndListKeys(ctx context.Context, tenantID string, limit, offset int) (int, []*APIKey, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return 0, nil, fmt.Errorf("postgres key store: begin count-and-list tx: %w", err)
 	}
